@@ -160,7 +160,10 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
 
   await expectJwtGatedOperatorRoute(request, `${baseUrl}/harbor`, accessToken);
   await expectJwtGatedOperatorRoute(request, `${baseUrl}/pulsar/admin/admin/v2/clusters`, accessToken);
-  await expectJwtGatedOperatorRoute(request, `${baseUrl}/minio/s3`, accessToken);
+  // Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed, so it
+  // no longer reaches MinIO (it falls through to the demo SPA route, non-2xx).
+  const minioRouteResponse = await request.get(`${baseUrl}/minio/s3/models/demo.bin`);
+  expect(minioRouteResponse.ok()).toBeFalsy();
 
   const validResult = await probeWebSocket(page, websocketUrl(baseUrl, accessToken));
   expect(validResult.opened).toBe(true);
@@ -194,7 +197,7 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   expect(expiredResult.opened).toBe(false);
 });
 
-test("routed object grants isolate users by Keycloak subject", async ({ page, browser, request, infernixFixture }) => {
+test("webapp object-proxy isolates users by Keycloak subject", async ({ page, browser, request, infernixFixture }) => {
   test.setTimeout(120000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
@@ -208,93 +211,110 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
   const claims = decodeJwtPayload(accessToken);
   expect(claims.sub).toBeTruthy();
   const contextId = `ctx-${randomUUID()}`;
-  const displayName = `jwt-grant-${randomUUID()}.txt`;
-  const grantRequest = {
+  const displayName = `proxy-object-${randomUUID()}.txt`;
+  const expectedKey = `users/${claims.sub}/contexts/${contextId}/uploads/${displayName}`;
+  const objectBody = `hello from ${contextId}\n`;
+  const uploadUrl = (ctx, name) =>
+    `${baseUrl}/api/objects/upload?contextId=${encodeURIComponent(ctx)}&displayName=${encodeURIComponent(name)}`;
+  const bytesUrl = (key, mime) =>
+    `${baseUrl}/api/objects/download?key=${encodeURIComponent(key)}&mimeType=${encodeURIComponent(mime)}`;
+  const downloadGrantRequest = {
     artifactUploadRequestContextId: contextId,
     artifactUploadRequestMimeType: "text/plain",
     artifactUploadRequestDisplayName: displayName,
   };
 
-  const invalidGrant = await request.post(`${baseUrl}/api/objects/upload`, {
-    headers: { Authorization: "Bearer not-a-real-token" },
-    data: grantRequest,
-  });
-  expect(invalidGrant.status()).toBe(401);
-
-  const wrongRealmToken = await keycloakAdminAccessToken(request, baseUrl);
-  const wrongRealmGrant = await request.post(`${baseUrl}/api/objects/upload`, {
-    headers: { Authorization: `Bearer ${wrongRealmToken}` },
-    data: grantRequest,
-  });
-  expect(wrongRealmGrant.status()).toBe(401);
-
-  const uploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    data: grantRequest,
-  });
-  expect(uploadGrantResponse.ok()).toBeTruthy();
-  const uploadGrant = await uploadGrantResponse.json();
-  expect(uploadGrant.artifactUploadGrantObjectRef.objectBucket).toBe("infernix-demo-objects");
-  expect(uploadGrant.artifactUploadGrantObjectRef.objectKey).toBe(`users/${claims.sub}/contexts/${contextId}/uploads/${displayName}`);
-  expect(uploadGrant.artifactUploadGrantPresignedUrl).toContain("/minio/s3/infernix-demo-objects/");
-
-  const objectBody = `hello from ${contextId}\n`;
-  const putObjectResponse = await request.put(uploadGrant.artifactUploadGrantPresignedUrl, {
-    headers: {
-      "Content-Type": "text/plain",
-      Cookie: operatorTokenCookieHeader(accessToken),
-    },
+  // Phase 7 Sprint 7.25: the upload proxy requires a valid bearer JWT.
+  const invalidUpload = await request.post(uploadUrl(contextId, displayName), {
+    headers: { Authorization: "Bearer not-a-real-token", "Content-Type": "text/plain" },
     data: objectBody,
   });
-  expect(putObjectResponse.ok()).toBeTruthy();
+  expect(invalidUpload.status()).toBe(401);
 
+  const wrongRealmToken = await keycloakAdminAccessToken(request, baseUrl);
+  const wrongRealmUpload = await request.post(uploadUrl(contextId, displayName), {
+    headers: { Authorization: `Bearer ${wrongRealmToken}`, "Content-Type": "text/plain" },
+    data: objectBody,
+  });
+  expect(wrongRealmUpload.status()).toBe(401);
+
+  // Upload bytes through the webapp proxy; the response carries only the
+  // server-derived ObjectRef (no browser presigned URL).
+  const uploadResponse = await request.post(uploadUrl(contextId, displayName), {
+    headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "text/plain" },
+    data: objectBody,
+  });
+  expect(uploadResponse.ok()).toBeTruthy();
+  const uploadGrant = await uploadResponse.json();
+  expect(uploadGrant.artifactUploadGrantObjectRef.objectBucket).toBe("infernix-demo-objects");
+  expect(uploadGrant.artifactUploadGrantObjectRef.objectKey).toBe(expectedKey);
+  expect(uploadGrant.artifactUploadGrantPresignedUrl).toBeUndefined();
+
+  // The download grant carries the authoritative disposition, no URL.
   const downloadGrantResponse = await request.post(`${baseUrl}/api/objects/download`, {
     headers: { Authorization: `Bearer ${accessToken}` },
-    data: grantRequest,
+    data: downloadGrantRequest,
   });
   expect(downloadGrantResponse.ok()).toBeTruthy();
   const downloadGrant = await downloadGrantResponse.json();
-  expect(downloadGrant.artifactDownloadGrantObjectRef).toEqual(uploadGrant.artifactUploadGrantObjectRef);
+  expect(downloadGrant.artifactDownloadGrantObjectRef.objectKey).toBe(expectedKey);
   expect(downloadGrant.artifactDownloadGrantMimeType).toBe("text/plain");
   expect(renderDispositionTag(downloadGrant)).toBe("BoundedTextPreview");
-  expect(downloadGrant.artifactDownloadGrantPresignedUrl).toContain("/minio/s3/infernix-demo-objects/");
+  expect(downloadGrant.artifactDownloadGrantPresignedUrl).toBeUndefined();
 
-  const getObjectResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
+  // Bytes stream from the webapp proxy under header auth and under the
+  // operator cookie (the browser media src path).
+  const headerGet = await request.get(bytesUrl(expectedKey, "text/plain"), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(headerGet.ok()).toBeTruthy();
+  expect(await headerGet.text()).toBe(objectBody);
+
+  const cookieGet = await request.get(bytesUrl(expectedKey, "text/plain"), {
     headers: { Cookie: operatorTokenCookieHeader(accessToken) },
   });
-  expect(getObjectResponse.ok()).toBeTruthy();
-  expect(await getObjectResponse.text()).toBe(objectBody);
+  expect(cookieGet.ok()).toBeTruthy();
+  expect(await cookieGet.text()).toBe(objectBody);
 
+  // Render-disposition matrix (Phase 7 Sprint 7.27 flips MIDI/MusicXML/ZIP).
   const dispositionCases = [
     { mimeType: "image/png", displayName: "inline-image.png", disposition: "RenderInline" },
     { mimeType: "audio/wav", displayName: "inline-audio.wav", disposition: "RenderInline" },
     { mimeType: "video/mp4", displayName: "inline-video.mp4", disposition: "RenderInline" },
     { mimeType: "application/pdf", displayName: "document.pdf", disposition: "BrowserNativePdf" },
     { mimeType: "application/json", displayName: "preview.json", disposition: "BoundedTextPreview" },
-    { mimeType: "audio/midi", displayName: "score.mid", disposition: "DownloadOnly" },
-    { mimeType: "application/vnd.recordare.musicxml+xml", displayName: "score.musicxml", disposition: "DownloadOnly" },
+    { mimeType: "audio/midi", displayName: "score.mid", disposition: "RenderMidi" },
+    { mimeType: "application/vnd.recordare.musicxml+xml", displayName: "score.musicxml", disposition: "RenderMusicXml" },
+    { mimeType: "application/zip", displayName: "stems.zip", disposition: "RenderZipStems" },
     { mimeType: "application/octet-stream", displayName: "artifact.bin", disposition: "DownloadOnly" },
   ];
 
   for (const artifactCase of dispositionCases) {
-    const caseRequest = {
-      artifactUploadRequestContextId: contextId,
-      artifactUploadRequestMimeType: artifactCase.mimeType,
-      artifactUploadRequestDisplayName: artifactCase.displayName,
-    };
     const caseGrantResponse = await request.post(`${baseUrl}/api/objects/download`, {
       headers: { Authorization: `Bearer ${accessToken}` },
-      data: caseRequest,
+      data: {
+        artifactUploadRequestContextId: contextId,
+        artifactUploadRequestMimeType: artifactCase.mimeType,
+        artifactUploadRequestDisplayName: artifactCase.displayName,
+      },
     });
     expect(caseGrantResponse.ok()).toBeTruthy();
     const caseGrant = await caseGrantResponse.json();
     expect(caseGrant.artifactDownloadGrantMimeType).toBe(artifactCase.mimeType);
     expect(renderDispositionTag(caseGrant)).toBe(artifactCase.disposition);
-    expect(caseGrant.artifactDownloadGrantObjectRef.objectKey).toBe(
-      `users/${claims.sub}/contexts/${contextId}/uploads/${artifactCase.displayName}`,
-    );
   }
 
+  // The Files list (Phase 7 Sprint 7.26) includes the uploaded object.
+  const listResponse = await request.get(`${baseUrl}/api/objects/list`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(listResponse.ok()).toBeTruthy();
+  const listJson = await listResponse.json();
+  expect(listJson.some((ref) => ref.objectKey === expectedKey)).toBe(true);
+  expect(listJson.every((ref) => ref.objectKey.startsWith(`users/${claims.sub}/`))).toBe(true);
+
+  // Cross-user isolation: a second user cannot read, list, or delete the
+  // first user's object key.
   const secondContext = await browser.newContext();
   const secondPage = await secondContext.newPage();
   try {
@@ -303,55 +323,43 @@ test("routed object grants isolate users by Keycloak subject", async ({ page, br
     const secondAccessToken = secondTokenPayload.access_token;
     expect(secondAccessToken).toBeTruthy();
     const secondClaims = decodeJwtPayload(secondAccessToken);
-    expect(secondClaims.sub).toBeTruthy();
     expect(secondClaims.sub).not.toBe(claims.sub);
 
-    const secondDownloadGrantResponse = await request.post(`${baseUrl}/api/objects/download`, {
+    const crossUserGet = await request.get(bytesUrl(expectedKey, "text/plain"), {
       headers: { Authorization: `Bearer ${secondAccessToken}` },
-      data: grantRequest,
     });
-    expect(secondDownloadGrantResponse.ok()).toBeTruthy();
-    const secondDownloadGrant = await secondDownloadGrantResponse.json();
-    expect(secondDownloadGrant.artifactDownloadGrantObjectRef.objectKey).toBe(`users/${secondClaims.sub}/contexts/${contextId}/uploads/${displayName}`);
-    expect(secondDownloadGrant.artifactDownloadGrantObjectRef.objectKey).not.toBe(uploadGrant.artifactUploadGrantObjectRef.objectKey);
+    expect(crossUserGet.status()).toBe(403);
 
-    const secondMissingObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl, {
-      headers: { Cookie: operatorTokenCookieHeader(secondAccessToken) },
-    });
-    expect(secondMissingObjectResponse.status()).toBe(404);
-
-    const secondUploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
+    const crossUserDelete = await request.delete(`${baseUrl}/api/objects?key=${encodeURIComponent(expectedKey)}`, {
       headers: { Authorization: `Bearer ${secondAccessToken}` },
-      data: grantRequest,
     });
-    expect(secondUploadGrantResponse.ok()).toBeTruthy();
-    const secondUploadGrant = await secondUploadGrantResponse.json();
-    expect(secondUploadGrant.artifactUploadGrantObjectRef).toEqual(secondDownloadGrant.artifactDownloadGrantObjectRef);
+    expect(crossUserDelete.status()).toBe(403);
 
-    const secondObjectBody = `hello from ${contextId} as ${secondClaims.sub}\n`;
-    const secondPutObjectResponse = await request.put(secondUploadGrant.artifactUploadGrantPresignedUrl, {
-      headers: {
-        "Content-Type": "text/plain",
-        Cookie: operatorTokenCookieHeader(secondAccessToken),
-      },
-      data: secondObjectBody,
+    const secondList = await request.get(`${baseUrl}/api/objects/list`, {
+      headers: { Authorization: `Bearer ${secondAccessToken}` },
     });
-    expect(secondPutObjectResponse.ok()).toBeTruthy();
+    expect(secondList.ok()).toBeTruthy();
+    const secondListJson = await secondList.json();
+    expect(secondListJson.every((ref) => ref.objectKey.startsWith(`users/${secondClaims.sub}/`))).toBe(true);
 
-    const secondReadableObjectResponse = await request.get(secondDownloadGrant.artifactDownloadGrantPresignedUrl, {
-      headers: { Cookie: operatorTokenCookieHeader(secondAccessToken) },
+    const firstStillReadable = await request.get(bytesUrl(expectedKey, "text/plain"), {
+      headers: { Authorization: `Bearer ${accessToken}` },
     });
-    expect(secondReadableObjectResponse.ok()).toBeTruthy();
-    expect(await secondReadableObjectResponse.text()).toBe(secondObjectBody);
-
-    const firstObjectStillReadableResponse = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
-      headers: { Cookie: operatorTokenCookieHeader(accessToken) },
-    });
-    expect(firstObjectStillReadableResponse.ok()).toBeTruthy();
-    expect(await firstObjectStillReadableResponse.text()).toBe(objectBody);
+    expect(firstStillReadable.ok()).toBeTruthy();
+    expect(await firstStillReadable.text()).toBe(objectBody);
   } finally {
     await secondContext.close();
   }
+
+  // Delete (Phase 7 Sprint 7.26) removes the caller's own object.
+  const deleteResponse = await request.delete(`${baseUrl}/api/objects?key=${encodeURIComponent(expectedKey)}`, {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(deleteResponse.ok()).toBeTruthy();
+  const missingAfterDelete = await request.get(bytesUrl(expectedKey, "text/plain"), {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  expect(missingAfterDelete.status()).toBe(404);
 });
 
 test("self-service account deletion reaps demo state before Keycloak account action", async ({ page, request, infernixFixture }) => {
@@ -411,34 +419,21 @@ test("self-service account deletion reaps demo state before Keycloak account act
   );
 
   const displayName = `account-delete-${randomUUID()}.txt`;
-  const grantRequest = {
-    artifactUploadRequestContextId: contextId,
-    artifactUploadRequestMimeType: "text/plain",
-    artifactUploadRequestDisplayName: displayName,
-  };
-  const uploadGrantResponse = await request.post(`${baseUrl}/api/objects/upload`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-    data: grantRequest,
-  });
-  expect(uploadGrantResponse.ok()).toBeTruthy();
-  const uploadGrant = await uploadGrantResponse.json();
+  const objectKey = `users/${claims.sub}/contexts/${contextId}/uploads/${displayName}`;
+  const objectBytesUrl = `${baseUrl}/api/objects/download?key=${encodeURIComponent(objectKey)}&mimeType=${encodeURIComponent("text/plain")}`;
   const objectBody = `delete me ${randomUUID()}\n`;
-  const putObjectResponse = await request.put(uploadGrant.artifactUploadGrantPresignedUrl, {
-    headers: {
-      "Content-Type": "text/plain",
-      Cookie: operatorTokenCookieHeader(accessToken),
+  const uploadResponse = await request.post(
+    `${baseUrl}/api/objects/upload?contextId=${encodeURIComponent(contextId)}&displayName=${encodeURIComponent(displayName)}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}`, "Content-Type": "text/plain" },
+      data: objectBody,
     },
-    data: objectBody,
-  });
-  expect(putObjectResponse.ok()).toBeTruthy();
-  const downloadGrantResponse = await request.post(`${baseUrl}/api/objects/download`, {
+  );
+  expect(uploadResponse.ok()).toBeTruthy();
+  const uploadGrant = await uploadResponse.json();
+  expect(uploadGrant.artifactUploadGrantObjectRef.objectKey).toBe(objectKey);
+  const readableBeforeDelete = await request.get(objectBytesUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
-    data: grantRequest,
-  });
-  expect(downloadGrantResponse.ok()).toBeTruthy();
-  const downloadGrant = await downloadGrantResponse.json();
-  const readableBeforeDelete = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
-    headers: { Cookie: operatorTokenCookieHeader(accessToken) },
   });
   expect(readableBeforeDelete.ok()).toBeTruthy();
   expect(await readableBeforeDelete.text()).toBe(objectBody);
@@ -464,8 +459,8 @@ test("self-service account deletion reaps demo state before Keycloak account act
   const deleteActionRequest = await deleteActionRequestPromise;
   expect(new URL(deleteActionRequest.url()).searchParams.get("kc_action")).toBe("delete_account");
 
-  const missingAfterDelete = await request.get(downloadGrant.artifactDownloadGrantPresignedUrl, {
-    headers: { Cookie: operatorTokenCookieHeader(accessToken) },
+  const missingAfterDelete = await request.get(objectBytesUrl, {
+    headers: { Authorization: `Bearer ${accessToken}` },
   });
   expect(missingAfterDelete.status()).toBe(404);
 
@@ -639,7 +634,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     mimeType: "audio/midi",
     buffer: tinyMidiBuffer(),
   });
-  await expectDownloadOnlyReady(midiCard);
+  await expectInBrowserRenderReady(midiCard, "RenderMidi", ".artifact-preview-midi");
 
   const musicXmlName = `browser-musicxml-${randomUUID()}.musicxml`;
   const musicXmlCard = await uploadAndDownloadArtifact(page, {
@@ -647,7 +642,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     mimeType: "application/vnd.recordare.musicxml+xml",
     buffer: musicXmlBuffer(),
   });
-  await expectDownloadOnlyReady(musicXmlCard);
+  await expectInBrowserRenderReady(musicXmlCard, "RenderMusicXml", ".artifact-preview-musicxml");
 
   const binaryName = `browser-binary-${randomUUID()}.bin`;
   const binaryCard = await uploadAndDownloadArtifact(page, {
@@ -1594,7 +1589,8 @@ async function expectOperatorRibbon(page) {
   await expect(ribbon).toBeVisible();
   await expect(ribbon.locator("[data-operator-route='/harbor']")).toHaveAttribute("href", "/harbor");
   await expect(ribbon.locator("[data-operator-route='/pulsar/admin']")).toHaveAttribute("href", "/pulsar/admin/admin/v2/clusters");
-  await expect(ribbon.locator("[data-operator-route='/minio/s3']")).toHaveAttribute("href", "/minio/s3");
+  // Phase 3 Sprint 3.13: the MinIO S3 operator-ribbon link is removed.
+  await expect(ribbon.locator("[data-operator-route='/minio/s3']")).toHaveCount(0);
 }
 
 async function browserAccessToken(page) {
@@ -1861,25 +1857,29 @@ async function fillIfPresent(page, selector, value) {
 }
 
 async function uploadArtifactThroughBrowser(page, artifact) {
-  await page.locator("input[name='artifact-file']").setInputFiles({
+  // Phase 7 Sprint 7.26 added a Files view that reuses the upload panel, so the
+  // upload selectors are scoped to the Artifacts view to stay unambiguous.
+  const artifactsRoot = page.locator("#artifacts-root");
+  await artifactsRoot.locator("input[name='artifact-file']").setInputFiles({
     name: artifact.name,
     mimeType: artifact.mimeType,
     buffer: artifact.buffer,
   });
-  await page.locator("input[name='artifact-mime']").fill(artifact.mimeType);
-  await page.locator("input[name='artifact-display-name']").fill(artifact.name);
-  await page.locator("form[data-role='artifact-upload']").evaluate((form) => form.requestSubmit());
-  await expect(page.locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first()).toBeVisible({ timeout: 60000 });
+  await artifactsRoot.locator("input[name='artifact-mime']").fill(artifact.mimeType);
+  await artifactsRoot.locator("input[name='artifact-display-name']").fill(artifact.name);
+  await artifactsRoot.locator("form[data-role='artifact-upload']").evaluate((form) => form.requestSubmit());
+  await expect(artifactsRoot.locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first()).toBeVisible({ timeout: 60000 });
 }
 
 async function uploadAndDownloadArtifact(page, artifact) {
   await uploadArtifactThroughBrowser(page, artifact);
-  const card = page.locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first();
+  const card = page.locator("#artifacts-root").locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first();
   await expect(card).toBeVisible();
   const downloadButton = card.locator("[data-role='artifact-download']");
   await downloadButton.click();
   await expect(downloadButton).toHaveAttribute("data-download-status", "ready");
-  await expect(downloadButton).toHaveAttribute("data-presigned-url", /\/minio\/s3\/infernix-demo-objects\//);
+  // Phase 7 Sprint 7.25: the bytes URL is the webapp proxy, never a presigned MinIO URL.
+  await expect(downloadButton).toHaveAttribute("data-download-url", /\/api\/objects\/download\?key=/);
   return card;
 }
 
@@ -1941,10 +1941,22 @@ async function expectConversationUploadVisible(
 async function expectRoutedPreviewSource(card, selector) {
   const preview = card.locator(selector);
   await expect(preview).toHaveAttribute("data-preview-status", "ready");
-  await expect(preview).toHaveAttribute("src", /\/minio\/s3\/infernix-demo-objects\//);
+  // Phase 7 Sprint 7.25: media src is the webapp proxy, never a presigned MinIO URL.
+  await expect(preview).toHaveAttribute("src", /\/api\/objects\/download\?key=/);
 }
 
 async function expectDownloadOnlyReady(card) {
   await expect(card).toHaveAttribute("data-render-disposition", "DownloadOnly");
   await expect(card.locator(".artifact-preview-download-only")).toHaveAttribute("data-preview-status", "ready");
+}
+
+// Phase 7 Sprint 7.27: MIDI / MusicXML / ZIP flip from download-only to an
+// in-browser render disposition. The download handler sets the card's
+// disposition and emits the matching mount node; the dynamically-imported FFI
+// renderer (validated by the bundle) populates it from the fetched bytes. This
+// asserts the disposition flip + mount node (the contract change); rendering a
+// real score from a valid fixture is the deeper cohort check.
+async function expectInBrowserRenderReady(card, dispositionTag, previewSelector) {
+  await expect(card).toHaveAttribute("data-render-disposition", dispositionTag);
+  await expect(card.locator(previewSelector)).toHaveCount(1);
 }

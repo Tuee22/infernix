@@ -80,7 +80,6 @@ pulsarFieldOptions =
 -- in `InfernixSecrets.dhall` under `minio.credentialsPath`).
 data MinioWiring = MinioWiring
   { minioEndpoint :: Text,
-    minioPresignPublicEndpoint :: Text,
     minioRegion :: Text,
     minioPresignExpirySeconds :: Natural,
     minioModelsBucket :: Text,
@@ -96,7 +95,6 @@ minioFieldOptions =
   Dhall.defaultInterpretOptions
     { Dhall.fieldModifier = \case
         "minioEndpoint" -> "endpoint"
-        "minioPresignPublicEndpoint" -> "presignPublicEndpoint"
         "minioRegion" -> "region"
         "minioPresignExpirySeconds" -> "presignExpirySeconds"
         "minioModelsBucket" -> "modelsBucket"
@@ -305,8 +303,6 @@ renderMinioWiring :: MinioWiring -> String
 renderMinioWiring value =
   "{ endpoint = "
     <> dhallText (minioEndpoint value)
-    <> ", presignPublicEndpoint = "
-    <> dhallText (minioPresignPublicEndpoint value)
     <> ", region = "
     <> dhallText (minioRegion value)
     <> ", presignExpirySeconds = "

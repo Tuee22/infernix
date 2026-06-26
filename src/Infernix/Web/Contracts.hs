@@ -189,6 +189,9 @@ data ArtifactRenderDisposition
   | DownloadOnly
   | BoundedTextPreview
   | BrowserNativePdf
+  | RenderMidi
+  | RenderMusicXml
+  | RenderZipStems
   deriving (Eq, Generic, Show)
 
 instance ToJSON ArtifactRenderDisposition where
@@ -496,9 +499,12 @@ instance ToJSON ArtifactUploadRequest
 
 instance FromJSON ArtifactUploadRequest
 
+-- | Result of a webapp-proxied artifact upload. Phase 7 Sprint 7.25 retired
+-- the browser-direct presigned-PUT path: the webapp now stores the bytes
+-- server-side over the internal MinIO endpoint and returns only the typed
+-- 'ObjectRef'. There is no browser-facing presigned URL.
 data ArtifactUploadGrant = ArtifactUploadGrant
   { artifactUploadGrantObjectRef :: ObjectRef,
-    artifactUploadGrantPresignedUrl :: Text.Text,
     artifactUploadGrantExpiresAtIso8601 :: Text.Text
   }
   deriving (Eq, Generic, Show)
@@ -507,9 +513,13 @@ instance ToJSON ArtifactUploadGrant
 
 instance FromJSON ArtifactUploadGrant
 
+-- | Metadata for a webapp-proxied artifact download. Phase 7 Sprint 7.25
+-- retired the browser-direct presigned-GET path: this grant carries the
+-- authoritative MIME and render disposition, and the browser fetches the
+-- bytes from the webapp @GET \/api\/objects\/download@ proxy keyed by the
+-- 'ObjectRef'. There is no browser-facing presigned URL.
 data ArtifactDownloadGrant = ArtifactDownloadGrant
   { artifactDownloadGrantObjectRef :: ObjectRef,
-    artifactDownloadGrantPresignedUrl :: Text.Text,
     artifactDownloadGrantMimeType :: ArtifactMimeType,
     artifactDownloadGrantRenderDisposition :: ArtifactRenderDisposition,
     artifactDownloadGrantExpiresAtIso8601 :: Text.Text
@@ -933,7 +943,10 @@ phase7Sums =
       [ PursNullary "RenderInline",
         PursNullary "DownloadOnly",
         PursNullary "BoundedTextPreview",
-        PursNullary "BrowserNativePdf"
+        PursNullary "BrowserNativePdf",
+        PursNullary "RenderMidi",
+        PursNullary "RenderMusicXml",
+        PursNullary "RenderZipStems"
       ]
     ),
     ( "ConversationEvent",

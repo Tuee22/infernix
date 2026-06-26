@@ -48,9 +48,12 @@ spec = do
       dispositionFor "application/json" `shouldEqual` BoundedTextPreview
       dispositionFor "text/plain" `shouldEqual` BoundedTextPreview
 
-    it "downloads MIDI and notation formats by default" do
-      dispositionFor "audio/midi" `shouldEqual` DownloadOnly
-      dispositionFor "application/vnd.recordare.musicxml+xml" `shouldEqual` DownloadOnly
+    it "renders MIDI, MusicXML, and ZIP archives in the browser" do
+      dispositionFor "audio/midi" `shouldEqual` RenderMidi
+      dispositionFor "audio/x-midi" `shouldEqual` RenderMidi
+      dispositionFor "application/vnd.recordare.musicxml+xml" `shouldEqual` RenderMusicXml
+      dispositionFor "application/vnd.recordare.musicxml" `shouldEqual` RenderMusicXml
+      dispositionFor "application/zip" `shouldEqual` RenderZipStems
 
     it "downloads unknown MIME types by default" do
       dispositionFor "application/octet-stream" `shouldEqual` DownloadOnly

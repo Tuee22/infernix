@@ -9,12 +9,18 @@
 
 - One Haskell-owned route registry defines the supported public prefixes, rendered HTTPRoutes,
   route-aware docs, and route validation expectations.
-- The routed surface always publishes Harbor, MinIO, and Pulsar, and publishes the demo routes
-  only when the active generated config enables the demo UI.
+- The routed surface always publishes Harbor and Pulsar, and publishes the demo routes
+  only when the active generated config enables the demo UI. MinIO has no external gateway route.
 - When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` requires the
-  Keycloak JWT for direct browser access to `/harbor`, `/pulsar/admin`, and `/minio/s3`.
+  Keycloak JWT for direct browser access to `/harbor` and `/pulsar/admin`.
   The policy accepts the SPA's `infernix_operator_token` cookie and direct
   `Authorization: Bearer ...` headers.
+- The `/minio/s3` edge route is removed (Phase 3 Sprint 3.13): the `infernix-demo`
+  webapp is the sole externally routed surface for file storage, mediating every browser
+  artifact upload and download server-side through its `/api/objects` endpoints, and the browser
+  never reaches MinIO through the gateway. See
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) for the
+  webapp-mediated single-mediator contract.
 - That JWT gate governs browser/operator access through the Envoy edge only. Trusted in-cluster
   daemons and host-side launcher tooling reach Pulsar's admin surface through the proxy Service
   (`ClusterConfig.pulsar.adminUrl`) or its un-gated NodePort directly, not through the gated
@@ -33,7 +39,14 @@ upstream responses on the tool-route probes rather than any direct `infernix-dem
 compatibility payload.
 The auth-UX surface adds an Envoy Gateway `SecurityPolicy` for the operator console route family
 when Keycloak is present. The routes remain in the always-published inventory, but browser access
-to `/harbor`, `/pulsar/admin`, and `/minio/s3` is JWT-gated whenever the demo surface is enabled.
+to `/harbor` and `/pulsar/admin` is JWT-gated whenever the demo surface is enabled.
+
+Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route, the `infernix-minio-s3` SecurityPolicy
+target, and the `presignPublicEndpoint` cluster-config field. MinIO is no longer browser-reachable;
+the `infernix-demo` webapp `/api/objects` proxy is the only external file-storage surface, per
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md). The
+generated route-inventory table below reflects the de-exposed surface (no `/minio/s3` row). The
+`linux-cpu` plus chosen-accelerator real per-user attestation is the remaining Wave M residual.
 
 ## Route Inventory
 
@@ -48,12 +61,11 @@ to `/harbor`, `/pulsar/admin`, and `/minio/s3` is JWT-gated whenever the demo su
 | `/api` | demo-only | Demo API | `infernix-demo:80` | no rewrite |
 | `/harbor/api` | always published | Harbor API | `infernix-harbor-core:80` | `/harbor/api` -> `/api` |
 | `/harbor` | always published | Harbor portal | `infernix-harbor-portal:80` | `/harbor` -> `/` |
-| `/minio/s3` | always published | MinIO S3 API | `infernix-minio:9000` | `/minio/s3` -> `/` |
 | `/pulsar/admin` | always published | Pulsar admin surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/admin` -> `/` |
 | `/pulsar/ws` | always published | Pulsar websocket surface | `infernix-infernix-pulsar-proxy:80` | `/pulsar/ws` -> `/ws` |
 | `/auth` | demo-only | Keycloak SSO | `infernix-keycloak:8080` | no rewrite |
 | `/ws` | demo-only | Demo durable-context WebSocket | `infernix-demo:80` | no rewrite |
-| `/api/objects` | demo-only | Demo MinIO presigned URL minting | `infernix-demo:80` | no rewrite |
+| `/api/objects` | demo-only | Demo webapp object-proxy (upload/download/list/delete) | `infernix-demo:80` | no rewrite |
 <!-- infernix:route-registry:edge-routing:end -->
 
 - when the demo surface is enabled, `/`, the demo `/api*` routes, `/auth`, `/ws`, and

@@ -60,8 +60,9 @@ parallel long-form workflow contracts.
   the active `.dhall` and accept inference work via Pulsar subscription only
 - routing is owned by Gateway API resources and repo-owned HTTPRoute / SecurityPolicy manifests;
   the demo cluster remains local-only, and when the demo UI is enabled the operator route family
-  (`/harbor`, `/pulsar/admin`, `/minio/s3`) is protected by the Keycloak JWT edge policy while
-  demo routes keep their application-level JWT checks
+  (`/harbor`, `/pulsar/admin`) is protected by the Keycloak JWT edge policy while
+  demo routes keep their application-level JWT checks (MinIO has no external gateway route; the
+  webapp `/api/objects` proxy is its only browser-facing surface)
 - custom platform logic is Haskell; Python is permitted only under `python/adapters/` and only
   when the bound inference engine has no non-Python binding
 - the shared Poetry project lives at `python/pyproject.toml`; all adapter execution goes through

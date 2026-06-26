@@ -27,7 +27,7 @@ Demo-only prefixes:
 | `/api` | Demo API | Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`. |
 | `/auth` | Keycloak SSO | Registry-defined route. |
 | `/ws` | Demo durable-context WebSocket | Registry-defined route. |
-| `/api/objects` | Demo MinIO presigned URL minting | Registry-defined route. |
+| `/api/objects` | Demo webapp object-proxy (upload/download/list/delete) | Registry-defined route. |
 
 Always-published operator prefixes:
 
@@ -35,7 +35,6 @@ Always-published operator prefixes:
 |---------------|---------|-------|
 | `/harbor/api` | Harbor API | Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`. |
 | `/harbor` | Harbor portal | Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`. |
-| `/minio/s3` | MinIO S3 API | Rewrites to upstream `/` before forwarding to `infernix-minio:9000`. |
 | `/pulsar/admin` | Pulsar admin surface | Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
 | `/pulsar/ws` | Pulsar websocket surface | Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`. |
 <!-- infernix:route-registry:web-portal:end -->
@@ -43,11 +42,13 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
-When the demo UI is enabled, direct browser access to `/harbor`, `/pulsar/admin`, and
-`/minio/s3` is additionally protected by
+When the demo UI is enabled, direct browser access to `/harbor` and `/pulsar/admin`
+is additionally protected by
 `SecurityPolicy/infernix-operator-routes-jwt`. The policy validates the same Keycloak JWT the SPA
 uses for `/ws` and `/api/objects`, accepting either the `infernix_operator_token` cookie written by
 the SPA after login / refresh or an `Authorization: Bearer ...` header for direct operator probes.
+There is no `/minio/s3` edge route (Phase 3 Sprint 3.13): MinIO is reachable only through the
+webapp `/api/objects` proxy.
 
 ## Durable Context Surface
 
@@ -60,10 +61,22 @@ when the active substrate's generated `.dhall` carries `demo_ui = false`:
   send/receive, context list/create/delete, draft sync, inference progress, and artifact-ready
   notifications. JWT is presented on the WS handshake; envelope wire format is
   `purescript-bridge`-generated typed sums (`WsClientMessage` / `WsServerMessage`).
-- `/api/objects` — HTTP endpoint that mints presigned MinIO PUT/GET URLs scoped to the
-  authenticated user. Artifact bytes are uploaded and downloaded directly to and from MinIO;
-  they never traverse the demo backend. See [api_surface.md](api_surface.md) and
-  [../tools/minio.md](../tools/minio.md).
+- `/api/objects` — webapp-mediated HTTP endpoint for browser artifact I/O. The
+  `infernix-demo` webapp is the single mediator for every artifact upload and download: the
+  browser POSTs upload bytes to `/api/objects/upload` and GETs download bytes from
+  `/api/objects/download`, and the webapp reads and writes
+  MinIO server-side over the cluster-internal endpoint. The browser holds only the webapp origin
+  and an `ObjectRef`; it never receives a MinIO credential or a presigned MinIO URL, and never
+  reaches MinIO through the gateway. Per-user isolation is enforced at this one server-side choke
+  point on every request. See [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md),
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md),
+  [api_surface.md](api_surface.md), and [../tools/minio.md](../tools/minio.md).
+
+  **Current Status.** Implemented (Phase 7 Sprint 7.25; code-side closed). The webapp object-proxy
+  is the live path, the browser-direct presigned-URL path is gone, and Phase 3 Sprint 3.13 removed
+  the `/minio/s3` route, its SecurityPolicy target, and the `presignPublicEndpoint` field. The
+  `linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
 cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
@@ -109,13 +122,19 @@ Authenticated users see an operator ribbon in the app shell with direct links to
 
 - `Harbor` at `/harbor`
 - `Pulsar Admin` at `/pulsar/admin/admin/v2/clusters`
-- `MinIO S3` at `/minio/s3`
 
 The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing state. The SPA writes
 the `infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token,
 and clears the cookie on logout. That cookie is what lets ordinary browser navigation to the
 operator links pass the edge JWT policy while keeping those same route prefixes closed to
-anonymous traffic.
+anonymous traffic. The same cookie authenticates browser-issued media `src` GETs against the
+webapp `/api/objects/download` proxy, which `img`/`audio`/`video`/`iframe` elements cannot set
+headers on.
+
+The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. The former
+`MinIO S3` ribbon link is removed (Phase 3 Sprint 3.13): MinIO is no longer browser-reachable;
+browser object access flows through the webapp's `/api/objects` endpoints
+(see [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
 
 ## Account Deletion
 
@@ -165,9 +184,26 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
   production daemon, including shared Python adapters under `python/adapters/` when the bound
   engine is Python-native
 - large outputs surface as typed `ObjectRef` results that point into the `infernix-demo-objects`
-  MinIO bucket; the browser fetches them via presigned GET URLs minted at `/api/objects`
+  MinIO bucket; the browser fetches the bytes through the webapp-mediated
+  `/api/objects/download` endpoint, which streams them server-side from MinIO with the correct
+  `Content-Type` and `Content-Disposition`. The browser holds only the `ObjectRef` and the webapp
+  origin — never a presigned MinIO URL. See
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md).
+- a `Files` view lists the authenticated user's artifacts and drives webapp-mediated upload and
+  download for the supported artifact classes. Like every other per-user surface, the listing is
+  scoped server-side to the caller's `users/<sub>/…` object prefix derived from the verified
+  Keycloak `sub`, so a user only ever sees their own files; cross-user object keys are rejected at
+  the server-side trust boundary. See
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
 - switching runtime modes changes the generated catalog and selected engine bindings without
   changing the browser route structure
+
+**Current Status.** The webapp-mediated `/api/objects` byte proxy is implemented (Phase 7
+Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3` route): the SPA uploads and downloads
+through the webapp, never a presigned MinIO URL. The per-user `Files` navigational view backed by
+`GET /api/objects/list` + `DELETE /api/objects` is implemented by Phase 7 Sprint 7.26. The
+`linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
+[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 ## Cross-References
 
@@ -176,5 +212,7 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 - [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../tools/minio.md](../tools/minio.md)

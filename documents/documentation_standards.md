@@ -151,6 +151,14 @@ Rules:
   document in the same change
 - when route prefixes change, update `documents/engineering/edge_routing.md`,
   `documents/reference/web_portal_surface.md`, and the relevant phase document in the same change
+- when the object-access paradigm changes (how the browser reaches MinIO — presigned URL versus
+  webapp object-proxy, the external file-gateway surface), update
+  `documents/architecture/object_access_doctrine.md`, `documents/engineering/edge_routing.md`,
+  `documents/engineering/object_storage.md`, and the relevant phase document in the same change
+- when per-user isolation rules change (the canonical identity claim, server-side namespacing, or
+  the trust-boundary authorization for objects and chat), update
+  `documents/architecture/tenant_isolation_doctrine.md`, `documents/architecture/object_access_doctrine.md`,
+  and the relevant phase document in the same change
 - when assistant-facing repository workflow rules change, update
   `documents/development/assistant_workflow.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
 - when the root workflow changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change

@@ -171,8 +171,8 @@ main :: IO ()
 main = do
   unitTestRoot <- testRootPath "unit"
   assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxCpu) == 11) "linux-cpu runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxGpu) == 15) "linux-gpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxCpu) == 10) "linux-cpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxGpu) == 14) "linux-gpu runnable catalog count matches the revised matrix"
   assert
     (expectedDaemonLocationForRuntime AppleSilicon == "cluster-pod")
     "apple-silicon publication reports the cluster service daemon location"
@@ -242,8 +242,11 @@ main = do
     ("`/pulsar/ws`" `isInfixOf` renderEdgeRoutingInventorySection)
     "the edge-routing route table includes the Pulsar websocket prefix from the route registry"
   assert
-    ("`/minio/s3` -> `infernix-minio:9000`" `isInfixOf` renderChartRouteRegistryCommentSection)
-    "the chart route summary includes the MinIO S3 backend from the route registry"
+    ("`/pulsar/admin` -> `infernix-infernix-pulsar-proxy:80`" `isInfixOf` renderChartRouteRegistryCommentSection)
+    "the chart route summary includes the Pulsar admin backend from the route registry"
+  assert
+    (not ("/minio/s3" `isInfixOf` renderChartRouteRegistryCommentSection))
+    "Phase 3 Sprint 3.13 removed the external /minio/s3 gateway route from the route registry"
   -- Phase 1 Sprint 1.11 — compose.yaml shrunk to the supported shape:
   -- one infernix service, one Dockerfile-free Compose file, and a
   -- bootstrap-owned image selector so CPU hosts do not carry CUDA
@@ -1524,7 +1527,6 @@ unitTestClusterConfigFixture demoConfigPathValue =
       clusterMinio =
         MinioWiring
           { minioEndpoint = "http://127.0.0.1:9000",
-            minioPresignPublicEndpoint = "http://127.0.0.1:9090/minio/s3",
             minioRegion = "us-east-1",
             minioPresignExpirySeconds = 900,
             minioModelsBucket = "infernix-models",
@@ -1648,6 +1650,9 @@ assertPhase7JsonRoundtrips = do
   assertJsonRoundtrip "DownloadOnly" Contracts.DownloadOnly
   assertJsonRoundtrip "BoundedTextPreview" Contracts.BoundedTextPreview
   assertJsonRoundtrip "BrowserNativePdf" Contracts.BrowserNativePdf
+  assertJsonRoundtrip "RenderMidi" Contracts.RenderMidi
+  assertJsonRoundtrip "RenderMusicXml" Contracts.RenderMusicXml
+  assertJsonRoundtrip "RenderZipStems" Contracts.RenderZipStems
   assertJsonRoundtrip "UserPromptPayload" promptPayload
   assertJsonRoundtrip "ConversationInferenceResultPayload" inferenceResultPayload
   assertJsonRoundtrip "ConversationCancelPayload" cancelPayload
@@ -1734,7 +1739,6 @@ assertPhase7JsonRoundtrips = do
     "ArtifactUploadGrant"
     ( Contracts.ArtifactUploadGrant
         { Contracts.artifactUploadGrantObjectRef = objectRef,
-          Contracts.artifactUploadGrantPresignedUrl = "https://minio/put",
           Contracts.artifactUploadGrantExpiresAtIso8601 = "2026-05-21T00:00:00Z"
         }
     )
@@ -1742,7 +1746,6 @@ assertPhase7JsonRoundtrips = do
     "ArtifactDownloadGrant"
     ( Contracts.ArtifactDownloadGrant
         { Contracts.artifactDownloadGrantObjectRef = objectRef,
-          Contracts.artifactDownloadGrantPresignedUrl = "https://minio/get",
           Contracts.artifactDownloadGrantMimeType = mimeType,
           Contracts.artifactDownloadGrantRenderDisposition = Contracts.RenderInline,
           Contracts.artifactDownloadGrantExpiresAtIso8601 = "2026-05-21T00:00:00Z"
@@ -2386,6 +2389,30 @@ assertObjectsLayoutAndPresigning = do
   assert
     (ObjLayout.pathBelongsToUser bob "users/bob/contexts/ctx-200/generated/y.wav")
     "pathBelongsToUser admits bob's own prefix"
+
+  -- Phase 7 Sprint 7.25: sanitizeFilename neutralizes the only client-controlled
+  -- component of a server-derived upload key.
+  assert
+    (ObjLayout.sanitizeFilename "report.png" == "report.png")
+    "sanitizeFilename keeps a plain safe filename"
+  assert
+    (ObjLayout.sanitizeFilename "../../etc/passwd" == "passwd")
+    "sanitizeFilename strips path traversal and directory components"
+  assert
+    (ObjLayout.sanitizeFilename "a/b/c.wav" == "c.wav")
+    "sanitizeFilename keeps only the last path segment"
+  assert
+    (ObjLayout.sanitizeFilename "weird name*?.txt" == "weird_name__.txt")
+    "sanitizeFilename collapses unsafe characters to underscore"
+  assert
+    (ObjLayout.sanitizeFilename ".hidden" == "hidden")
+    "sanitizeFilename forbids a leading dot"
+  assert
+    (ObjLayout.sanitizeFilename "" == "file")
+    "sanitizeFilename falls back to a safe default when nothing remains"
+  assert
+    (ObjLayout.sanitizeFilename (ObjLayout.sanitizeFilename "weird name*?.txt") == ObjLayout.sanitizeFilename "weird name*?.txt")
+    "sanitizeFilename is idempotent so download re-derivation matches the stored key"
 
   -- Presigned URL minting determinism
   let cfg =
@@ -3184,8 +3211,11 @@ assertArtifactDownloadDispositionMatrix = do
   assertDisposition "application/pdf" Contracts.BrowserNativePdf
   assertDisposition "application/json" Contracts.BoundedTextPreview
   assertDisposition "text/plain" Contracts.BoundedTextPreview
-  assertDisposition "audio/midi" Contracts.DownloadOnly
-  assertDisposition "application/vnd.recordare.musicxml+xml" Contracts.DownloadOnly
+  assertDisposition "audio/midi" Contracts.RenderMidi
+  assertDisposition "audio/x-midi" Contracts.RenderMidi
+  assertDisposition "application/vnd.recordare.musicxml+xml" Contracts.RenderMusicXml
+  assertDisposition "application/vnd.recordare.musicxml" Contracts.RenderMusicXml
+  assertDisposition "application/zip" Contracts.RenderZipStems
   assertDisposition "application/octet-stream" Contracts.DownloadOnly
 
 -- Phase 7 Sprint 7.14 — WebSocket client frames publish typed JSON

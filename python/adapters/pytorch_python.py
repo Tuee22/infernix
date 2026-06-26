@@ -36,8 +36,10 @@ def transform(context: AdapterContext) -> ArtifactResult:
     model_id = context.model_id
     if "bark" in model_id:
         return _generate_bark(context)
-    if "demucs" in model_id or "unmix" in model_id:
+    if "demucs" in model_id:
         return _separate_sources(context)
+    if "unmix" in model_id:
+        return _separate_open_unmix(context)
     if "omnizart" in model_id:
         return _transcribe_piano(context)
     if "mt3" in model_id:
@@ -86,10 +88,61 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
         import soundfile
         import torch
         from demucs.apply import apply_model
-        from demucs.pretrained import get_model
+        from demucs.states import load_model
     except ImportError as exc:
         raise RuntimeError(
             "torch/soundfile/demucs are not installed in this engine venv; "
+            "install the prebuilt host wheels for the source-separation engine."
+        ) from exc
+    weights_dir = get_model_path(context.model_id)
+    checkpoint_path = weights_dir / "payload"
+    device = _preferred_torch_device(torch)
+    input_audio = download_demo_object(context.input_object_ref)
+    audio_array, sample_rate = soundfile.read(
+        io.BytesIO(input_audio),
+        dtype="float32",
+        always_2d=True,
+    )
+    waveform = torch.as_tensor(audio_array.T.copy())
+    try:
+        # The Demucs checkpoint is the trusted, content-addressed first-party
+        # weight staged from `dl.fbaipublicfiles.com` into the model cache.
+        # torch>=2.6 defaults `weights_only=True`, which rejects the demucs
+        # model classes pickled in the package, so the trusted package dict is
+        # loaded explicitly and handed to demucs `load_model` (which accepts a
+        # dict and reconstructs the model from its klass/args/kwargs/state).
+        package = torch.load(
+            str(checkpoint_path), map_location="cpu", weights_only=False
+        )
+        model = load_model(package)
+    except Exception as exc:
+        raise RuntimeError(
+            f"unable to load source-separation model from {checkpoint_path}"
+        ) from exc
+    model.eval()
+    # Wave I real-output fix: run separation on the GPU/MPS accelerator; demucs
+    # `apply_model` moves the model and per-chunk tensors to the named device.
+    stems = apply_model(model, waveform.unsqueeze(0), device=device)[0]
+    archive = io.BytesIO()
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for index, source_name in enumerate(model.sources):
+            stem_buffer = io.BytesIO()
+            stem_audio = stems[index].detach().cpu().transpose(0, 1).numpy()
+            soundfile.write(stem_buffer, stem_audio, sample_rate, format="WAV")
+            bundle.writestr(f"{source_name}.wav", stem_buffer.getvalue())
+    return ArtifactResult(
+        data=archive.getvalue(), content_type="application/zip", suffix=".zip"
+    )
+
+
+def _separate_open_unmix(context: AdapterContext) -> ArtifactResult:
+    try:
+        import openunmix
+        import soundfile
+        import torch
+    except ImportError as exc:
+        raise RuntimeError(
+            "torch/soundfile/openunmix are not installed in this engine venv; "
             "install the prebuilt host wheels for the source-separation engine."
         ) from exc
     weights_dir = get_model_path(context.model_id)
@@ -100,21 +153,35 @@ def _separate_sources(context: AdapterContext) -> ArtifactResult:
         dtype="float32",
         always_2d=True,
     )
-    waveform = torch.as_tensor(audio_array.T.copy())
+    # Open-Unmix consumes (batch, channels, samples) at 44.1 kHz stereo.
+    waveform = torch.as_tensor(audio_array.T.copy()).unsqueeze(0)
     try:
-        model = get_model(str(weights_dir))
+        # Build the umxhq architecture and load the real per-target state dicts
+        # staged from the first-party Zenodo weights. `strict=False` mirrors
+        # `openunmix.umxhq_spec`: the checkpoints carry extra recomputed STFT
+        # window / sample-rate buffers the rebuilt model does not expose.
+        separator = openunmix.umxhq(pretrained=False, device=device)
+        for target, target_model in separator.target_models.items():
+            state = torch.load(
+                str(weights_dir / f"{target}.pth"),
+                map_location="cpu",
+                weights_only=False,
+            )
+            target_model.load_state_dict(state, strict=False)
+            target_model.eval()
+        separator.eval()
     except Exception as exc:
         raise RuntimeError(
-            f"unable to load source-separation model from {weights_dir}"
+            f"unable to load Open-Unmix model from {weights_dir}"
         ) from exc
-    # Wave I real-output fix: run separation on the GPU/MPS accelerator; demucs
-    # `apply_model` moves the model and per-chunk tensors to the named device.
-    stems = apply_model(model, waveform.unsqueeze(0), device=device)[0]
+    targets = list(separator.target_models.keys())
+    with torch.no_grad():
+        estimates = separator(waveform.to(device))[0]
     archive = io.BytesIO()
     with zipfile.ZipFile(archive, "w") as bundle:
-        for index, source_name in enumerate(model.sources):
+        for index, source_name in enumerate(targets):
             stem_buffer = io.BytesIO()
-            stem_audio = stems[index].detach().cpu().transpose(0, 1).numpy()
+            stem_audio = estimates[index].detach().cpu().transpose(0, 1).numpy()
             soundfile.write(stem_buffer, stem_audio, sample_rate, format="WAV")
             bundle.writestr(f"{source_name}.wav", stem_buffer.getvalue())
     return ArtifactResult(

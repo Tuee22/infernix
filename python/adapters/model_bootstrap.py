@@ -9,6 +9,18 @@ from typing import Any
 
 READY_SENTINEL_NAME = ".ready"
 
+# Open-Unmix `umxhq` is published as four first-party per-target state dicts on
+# Zenodo (record 3370489), not a single file or a HuggingFace repo. The catalog
+# download URL is that record; the bootstrap stages each target as
+# `<target>.pth` so the adapter can rebuild the umxhq architecture and load them.
+_OPEN_UNMIX_UMXHQ_RECORD = "zenodo.org/records/3370489"
+_OPEN_UNMIX_UMXHQ_TARGETS = {
+    "vocals": "https://zenodo.org/records/3370489/files/vocals-b62c91ce.pth",
+    "drums": "https://zenodo.org/records/3370489/files/drums-9619578f.pth",
+    "bass": "https://zenodo.org/records/3370489/files/bass-8d85a5bd.pth",
+    "other": "https://zenodo.org/records/3370489/files/other-b52fbbf7.pth",
+}
+
 
 def run_model_bootstrap_from_argv() -> int:
     parser = argparse.ArgumentParser(
@@ -38,7 +50,11 @@ def run_model_bootstrap_from_argv() -> int:
 
     repo_id = _hugging_face_repo_id(args.download_url)
     with tempfile.TemporaryDirectory(prefix="infernix-model-bootstrap-") as temp_root:
-        if repo_id is None:
+        if _is_open_unmix_umxhq(args.download_url):
+            snapshot_root = Path(temp_root) / "snapshot"
+            _download_open_unmix_umxhq(snapshot_root)
+            _upload_directory(client, args.models_bucket, args.model_id, snapshot_root)
+        elif repo_id is None:
             payload_path = Path(temp_root) / "payload"
             _download_single_payload(args.download_url, payload_path)
             _upload_file(
@@ -190,6 +206,16 @@ def _download_single_payload(download_url: str, destination: Path) -> None:
 def _looks_like_html(data: bytes) -> bool:
     head = data[:512].lstrip().lower()
     return head.startswith((b"<!doctype", b"<html", b"<head", b"<?xml"))
+
+
+def _is_open_unmix_umxhq(download_url: str) -> bool:
+    return _OPEN_UNMIX_UMXHQ_RECORD in download_url
+
+
+def _download_open_unmix_umxhq(destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for target, target_url in _OPEN_UNMIX_UMXHQ_TARGETS.items():
+        _download_single_payload(target_url, destination / f"{target}.pth")
 
 
 def _upload_directory(client: Any, bucket: str, model_id: str, root: Path) -> None:

@@ -93,14 +93,26 @@ operator route family:
 
 - `Harbor` -> `/harbor`
 - `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
-- `MinIO S3` -> `/minio/s3`
 
 The ribbon is part of `.app-shell`, so the existing auth gate hides it before login. The browser
 auth module writes the Keycloak access token into the same-origin `infernix_operator_token` cookie
 when login or refresh succeeds and clears it on logout. Envoy Gateway's
 `SecurityPolicy/infernix-operator-routes-jwt` validates that cookie, or an explicit
-`Authorization: Bearer ...` header, before forwarding `/harbor`, `/pulsar/admin`, or `/minio/s3`
-to their upstream services.
+`Authorization: Bearer ...` header, before forwarding `/harbor` or `/pulsar/admin`
+to their upstream services. The same cookie authenticates browser-issued media `src` GETs against
+the webapp `/api/objects/download` proxy.
+
+There is no `MinIO S3` ribbon link: Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route.
+End-user artifact upload, download, and preview flow through the webapp's `/api/objects` endpoints,
+which derive each object key server-side from the verified `sub` so the browser never holds a MinIO
+credential or presigned MinIO URL (see
+[object_access_doctrine.md](object_access_doctrine.md) and
+[tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)).
+
+**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
+route + `presignPublicEndpoint`). The user artifact path is the webapp-mediated `/api/objects`
+proxy; there is no presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
+attestation is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 ## Account Deletion
 
@@ -156,8 +168,16 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
 - new authenticated WebSocket endpoint at `/ws` carries chat, drafts, context list/create/delete,
   progress, and artifact-ready notifications; demo-gated
 - Keycloak provides identity at `/auth`; demo-gated; see [../tools/keycloak.md](../tools/keycloak.md)
-- HTTP endpoint `/api/objects` mints presigned MinIO PUT/GET URLs for artifact upload and
-  download; bytes never traverse the demo backend; demo-gated
+- HTTP endpoint `/api/objects` is the webapp-mediated artifact surface for upload, download, and
+  listing: the demo backend derives each object key server-side from the verified `sub`, reads and
+  writes MinIO itself over the cluster-internal endpoint, and the browser holds only the webapp
+  origin — never a MinIO credential or presigned MinIO URL; demo-gated. See
+  [object_access_doctrine.md](object_access_doctrine.md) and
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md). **Current Status:** the current
+  build instead mints presigned MinIO PUT/GET URLs at `/api/objects` and the browser transfers
+  bytes directly to MinIO through `/minio/s3`; the migration to webapp mediation is tracked by
+  reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25 under
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - HTTP endpoint `/api/account` reaps the caller's demo-owned MinIO prefix and Pulsar topics before
   the browser starts Keycloak account deletion; demo-gated
 - the demo `Service` sets `sessionAffinity: None` so any replica can host any WS connection;
@@ -221,6 +241,8 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
 - [durable_context_design.md](durable_context_design.md)
 - [demo_app_design.md](demo_app_design.md)
 - [daemon_topology.md](daemon_topology.md)
+- [object_access_doctrine.md](object_access_doctrine.md) — webapp as the single mediator for browser artifact I/O
+- [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md) — per-user `sub`-derived isolation at one server-side boundary
 - [../tools/keycloak.md](../tools/keycloak.md)
 - [../development/frontend_contracts.md](../development/frontend_contracts.md)
 - [../development/purescript_policy.md](../development/purescript_policy.md)

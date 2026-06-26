@@ -26,22 +26,31 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/cache` returns manifest-backed cache status for the active runtime mode
 - `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
 - `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
-- `POST /api/objects/upload` and `POST /api/objects/download` mint a presigned MinIO URL for
-  the authenticated user and the requested context. The bearer JWT is verified against the
-  cached Keycloak JWKS, `userId` is derived from the `sub` claim, the request body names the
-  target `contextId` plus artifact metadata (kind, MIME/content type, display name, byte count
-  for uploads), the requested object key is scoped against
-  `users/<userId>/contexts/<contextId>/{uploads,generated}/`, and the response carries the
-  presigned URL plus the canonical MinIO object reference and a typed render disposition
-  (`RenderInline`, `BoundedTextPreview`, `BrowserNativePdf`, or `DownloadOnly`). The routed E2E
-  suite validates the disposition matrix for image/audio/video, PDF, JSON, text, MIDI, MusicXML,
-  and generic binary MIME cases. The route derives the object path from the authenticated `sub`,
-  so another user with the same context/display name receives a distinct `users/<sub>/...`
-  prefix. Presigned URLs are bearer capabilities until expiry. The browser E2E flow exercises
-  bounded text/JSON preview, inline image/audio/video media URLs, browser-native PDF URL wiring,
-  and MIDI / MusicXML / generic-binary download-only states through these presigned grants.
+- the `/api/objects` family is the webapp object-proxy (Phase 7 Sprint 7.25): the browser
+  uploads and downloads artifact **bytes** through the webapp, which reads and writes MinIO
+  server-side over the cluster-internal endpoint. The browser never receives a presigned MinIO URL.
+  The bearer JWT is verified against the cached Keycloak JWKS and `userId` is derived from the
+  `sub` claim; the object key is derived server-side under
+  `users/<userId>/contexts/<contextId>/{uploads,generated}/` and re-authorized with
+  `pathBelongsToUser` on every request:
+  - `POST /api/objects/upload?contextId=…&displayName=…` carries the file bytes as the request
+    body (with the `Content-Type` MIME); the webapp sanitizes the display name, stores the bytes,
+    and returns the typed `ObjectRef`.
+  - `GET /api/objects/download?key=…&mimeType=…` streams the bytes back with the correct
+    `Content-Type` and `Content-Disposition`. It authenticates via the `Authorization` header or
+    the `infernix_operator_token` cookie (for browser-issued media `src` GETs). A cross-user key is
+    rejected with HTTP 403 before any MinIO access.
+  - `POST /api/objects/download` returns the typed render disposition
+    (`RenderInline`, `BoundedTextPreview`, `BrowserNativePdf`, the in-browser MIDI/MusicXML/ZIP
+    dispositions, or `DownloadOnly`) for the MIME type so the SPA knows how to render the bytes.
+  - `GET /api/objects/list` (Phase 7 Sprint 7.26) returns the caller's own objects as a JSON array
+    of `ObjectRef`, scoped server-side to the `users/<sub>/` prefix; the caller never names a prefix.
+  - `DELETE /api/objects?key=…` (Phase 7 Sprint 7.26) removes a single caller-owned object after the
+    same `pathBelongsToUser` check (HTTP 403 on a cross-user key, 404 when absent). These back the
+    per-user Files navigational view.
   Demo-gated and absent when `demo_ui = false`. See
-  [../tools/minio.md](../tools/minio.md) and
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md),
+  [../tools/minio.md](../tools/minio.md), and
   [../architecture/demo_app_design.md](../architecture/demo_app_design.md).
 
 ## Rules
@@ -55,8 +64,8 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - large outputs from generative engines (image, audio, video, large structured-text) are
   PUT by the engine adapter directly to the `infernix-demo-objects` MinIO bucket at the
   appropriate per-user prefix; the inference result message carries an `ObjectRef`, and the
-  browser fetches the bytes via presigned GET URLs minted at `/api/objects`. Text outputs
-  ride inline in the result message
+  browser fetches the bytes through the webapp `GET /api/objects/download` proxy (never directly
+  from MinIO). Text outputs ride inline in the result message
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the
   generated catalog or publication contract
 - cache status exposes the supported `minio://infernix-models/<modelId>/` durable

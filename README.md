@@ -200,9 +200,9 @@ The supported local platform is built around:
   create or delete so lifecycle-owned lock files never become part of the supported repo contract
 
 <!-- infernix:route-registry:readme:start -->
-- always-published routed prefixes: `/harbor/api`, `/harbor`, `/minio/s3`, `/pulsar/admin`, `/pulsar/ws`
+- always-published routed prefixes: `/harbor/api`, `/harbor`, `/pulsar/admin`, `/pulsar/ws`
 - demo-only routed prefixes (present when `.dhall` `demo_ui = True`): `/`, `/api`, `/auth`, `/ws`, `/api/objects`
-- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/minio/s3` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
+- registry-owned rewrites: `/harbor/api` -> `/api`; `/harbor` -> `/`; `/pulsar/admin` -> `/`; `/pulsar/ws` -> `/ws`
 <!-- infernix:route-registry:readme:end -->
 
 The optional demo UI runs in the cluster as the `infernix-demo` workload when the active `.dhall`
@@ -220,9 +220,10 @@ and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and man
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
 registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
 Keycloak image remains unchanged. When the demo surface is enabled, the app shell also exposes an
-operator console ribbon for Harbor, Pulsar Admin, and MinIO S3; Envoy Gateway validates the same
-Keycloak JWT on `/harbor`, `/pulsar/admin`, and `/minio/s3` through a cookie written by the SPA or
-a direct bearer token header. The signed-in shell also offers `Delete account`, which first calls
+operator console ribbon for Harbor and Pulsar Admin; Envoy Gateway validates the same
+Keycloak JWT on `/harbor` and `/pulsar/admin` through a cookie written by the SPA or
+a direct bearer token header. MinIO has no external gateway route — the webapp `/api/objects` proxy
+is its only browser-facing surface. The signed-in shell also offers `Delete account`, which first calls
 `DELETE /api/account` to synchronously remove the caller's `infernix-demo-objects` prefix and
 demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
 The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults.
@@ -235,8 +236,14 @@ weights are pulled from the `infernix-models` MinIO bucket on first use (lazy bo
 Pulsar Failover subscription owned by the coordinator with exactly-once semantics) and staged
 into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
 wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
-artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket; the
-browser reads and writes them through presigned URLs minted at `/api/objects`. On Apple,
+artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket. Object access
+is webapp-mediated and per-user: the `infernix-demo` webapp is the single mediator
+for every browser artifact upload, download, and preview, deriving each object key server-side from
+the Keycloak `sub` so the browser never holds a MinIO credential or presigned MinIO URL, and each
+user sees only their own objects and conversations
+(see [documents/architecture/object_access_doctrine.md](documents/architecture/object_access_doctrine.md)
+and [documents/architecture/tenant_isolation_doctrine.md](documents/architecture/tenant_isolation_doctrine.md)).
+On Apple,
 `./.build/infernix` builds and drives the control plane from the host while `cluster up` keeps
 Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and the stateless
 `infernix-coordinator` Deployment in Kind. Routed manual inference enters the coordinator before
@@ -835,11 +842,16 @@ contracts.
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
 - when the demo UI is enabled, the supported product shape is a multi-user durable-context chat
   application: Keycloak self-signup (no email verification), WebSocket post-login transport,
-  per-context durable conversation history backed by Pulsar conversation topics, MinIO-backed
-  artifact upload/download via presigned URLs, and a dedicated artifacts view that renders
+  per-context durable conversation history backed by Pulsar conversation topics, webapp-mediated
+  per-user artifact upload/download through `/api/objects` (the webapp is the single object-access
+  mediator and each user sees only their own objects and chats — see
+  [documents/architecture/object_access_doctrine.md](documents/architecture/object_access_doctrine.md)
+  and [documents/architecture/tenant_isolation_doctrine.md](documents/architecture/tenant_isolation_doctrine.md)),
+  and a dedicated artifacts
+  view plus a per-user Files view that render
   image, playable audio, and video artifacts inline, previews bounded text/JSON, uses
-  browser-native PDF handling, and treats MIDI, MusicXML/MXL notation, unknown, and generic
-  binary artifacts as download-only by default; backend pods are stateless and the browser
+  browser-native PDF handling, and renders MIDI, MusicXML/MXL notation, and ZIP-stem archives
+  inline (Phase 7 Sprint 7.27); backend pods are stateless and the browser
   holds no durable state, so signing in on any device fully reconstitutes the user's
   contexts, drafts, transcripts, and artifacts; business logic — reducer, dispatcher, prefix-
   hash, idempotency — lives only in Haskell and surfaces to the SPA as typed snapshots and
@@ -867,11 +879,11 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | LLM (Apple-native) | MLX | Qwen1.5-1.8B-Chat-4bit (MLX) | https://huggingface.co/mlx-community/Qwen1.5-1.8B-Chat-4bit | Not recommended | Not recommended | MLX / MLX-LM | Apple-native converted artifact family |
 | Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path |
 | Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | CTranslate2 (CPU) | Viable Apple CPU path; CUDA remains the throughput-oriented lane |
-| Source separation | PyTorch checkpoint | htdemucs | https://github.com/facebookresearch/demucs | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
-| Source separation | PyTorch checkpoint | Open-Unmix | https://github.com/sigsep/open-unmix-pytorch | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
+| Source separation | PyTorch checkpoint | htdemucs | https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
+| Source separation | PyTorch checkpoint | Open-Unmix | https://zenodo.org/records/3370489 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
-| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack; declared-runnable target, its test is red until the adapter binding lands |
+| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | Not recommended | Not recommended | PyTorch MPS | Modern PyTorch reimplementation (YourMT3+ / mt3-infer); deferred (too-heavy MoE, no maintained pip package), Not-recommended on the Linux substrates and retained only as an apple-silicon declarative target |
 | Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed code-side, real-output pending the cohort gate |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion conversion toolchain | https://github.com/apple/ml-stable-diffusion | Not recommended | Not recommended | Core ML | Best Apple-native exported path when available |

@@ -748,7 +748,7 @@ matrixRows =
       "Source separation using the canonical Demucs path."
       "PyTorch checkpoint"
       "htdemucs"
-      "https://github.com/facebookresearch/demucs"
+      "https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th"
       "Canonical Demucs execution path."
       "Audio Input"
       (Just (ModeBinding "PyTorch MPS" False))
@@ -762,7 +762,7 @@ matrixRows =
       "Alternative source separation path."
       "PyTorch checkpoint"
       "Open-Unmix"
-      "https://github.com/sigsep/open-unmix-pytorch"
+      "https://zenodo.org/records/3370489"
       "Alternate separation path."
       "Audio Input"
       (Just (ModeBinding "PyTorch MPS" False))
@@ -805,11 +805,11 @@ matrixRows =
       "PyTorch"
       "YourMT3+"
       "https://github.com/mimbres/YourMT3"
-      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack; runs on the shared pytorch adapter. Declared-runnable target; its test is red until the adapter binding lands."
+      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack. Deferred: too-heavy MoE with no maintained pip package, so it is Not-recommended on the Linux substrates and retained only as an apple-silicon declarative target until a feasible engine lands."
       "Audio Input"
       (Just (ModeBinding "PyTorch MPS" False))
-      (Just (ModeBinding "PyTorch CPU" False))
-      (Just (ModeBinding "PyTorch CUDA" True)),
+      Nothing
+      Nothing,
     mkRow
       "music-omnizart-tensorflow"
       "music-omnizart"

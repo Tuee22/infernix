@@ -110,7 +110,6 @@ clusterConfig:
   pulsar:
     systemNamespace: system
   minio:
-    presignPublicEndpoint: http://127.0.0.1/minio/s3
     region: us-east-1
     presignExpirySeconds: 900
     modelsBucket: infernix-models

@@ -28,7 +28,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
-import Data.Maybe (listToMaybe)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -58,6 +58,7 @@ import Infernix.Objects.Layout
     UserPrefix (..),
     defaultDemoObjectsBucket,
     pathBelongsToUser,
+    sanitizeFilename,
     uploadObjectKey,
     userPrefix,
   )
@@ -86,6 +87,7 @@ import Infernix.Web.Contracts
     ArtifactRenderDisposition (..),
     ArtifactUploadGrant (..),
     ArtifactUploadRequest (..),
+    ContextId (..),
     ObjectRef (..),
     UserId (..),
   )
@@ -106,6 +108,7 @@ import Network.HTTP.Types
   ( Status,
     hAuthorization,
     hContentType,
+    hCookie,
     methodDelete,
     methodGet,
     methodPost,
@@ -117,6 +120,7 @@ import Network.HTTP.Types
     status403,
     status404,
     status500,
+    status502,
     status503,
   )
 import Network.HTTP.Types.Status (statusCode)
@@ -125,6 +129,7 @@ import Network.Wai
     Request,
     Response,
     pathInfo,
+    queryString,
     requestHeaders,
     requestMethod,
     responseFile,
@@ -344,10 +349,19 @@ application options jwksCache realmConfig maybeClusterConfig request respond = d
           handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond
     ["api", "objects", "upload"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant jwksCache realmConfig request ObjectsUpload respond
+          handleObjectsUpload jwksCache realmConfig request respond
     ["api", "objects", "download"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsGrant jwksCache realmConfig request ObjectsDownload respond
+          handleObjectsDownloadGrant jwksCache realmConfig request respond
+    ["api", "objects", "download"]
+      | requestMethod request == methodGet && demoEnabled ->
+          handleObjectsDownloadBytes jwksCache realmConfig request respond
+    ["api", "objects", "list"]
+      | requestMethod request == methodGet && demoEnabled ->
+          handleObjectsList jwksCache realmConfig request respond
+    ["api", "objects"]
+      | requestMethod request == methodDelete && demoEnabled ->
+          handleObjectsDelete jwksCache realmConfig request respond
     ["ws"]
       | demoEnabled ->
           DemoWebSocket.wsApplication
@@ -418,13 +432,15 @@ mapDispatchError action = do
                   }
             )
 
--- | Phase 7 Sprint 7.9: /api/objects upload-grant + download-grant
--- handlers. Both endpoints consume a Keycloak-signed JWT in the
--- @Authorization: Bearer ...@ header, derive the @UserId@ from the
--- token's @sub@ claim, scope the requested artifact to
--- @users/<userId>/contexts/<contextId>/{uploads,generated}/@, and mint a
--- presigned PUT or GET URL the browser uses to talk to MinIO directly.
--- The demo backend never proxies the binary bytes.
+-- | Phase 7 Sprint 7.25: /api/objects is a webapp object-proxy. The browser
+-- never holds a MinIO credential, never receives a presigned MinIO URL, and
+-- never reaches MinIO through the gateway. Every endpoint authenticates the
+-- caller (Keycloak JWT -> @UserId@ from @sub@), derives the object key
+-- server-side from that @sub@ (never from a client-supplied full key), and
+-- authorizes it with 'pathBelongsToUser' before reading or writing MinIO over
+-- the cluster-internal endpoint ('loadInternalMinioPresignedConfig'). This
+-- realizes documents/architecture/object_access_doctrine.md and
+-- documents/architecture/tenant_isolation_doctrine.md.
 data AuthFailure = AuthFailure Status String
 
 authenticateBearerUser ::
@@ -435,103 +451,347 @@ authenticateBearerUser ::
 authenticateBearerUser jwksCache realmConfig request =
   case extractBearerToken request of
     Nothing -> pure (Left (AuthFailure status401 "missing bearer token"))
-    Just token -> do
-      jwksResult <- loadJwksCached jwksCache realmConfig
-      case jwksResult of
-        Left jwksError ->
-          pure (Left (AuthFailure status503 ("JWKS fetch failed: " <> jwksError)))
-        Right jwks -> do
-          now <- getCurrentTime
-          pure $
-            case verifyAndParseJwt (realmValidationConfig realmConfig) now jwks token of
-              Left jwtError ->
-                Left (AuthFailure status401 ("invalid JWT: " <> renderJwtError jwtError))
-              Right claims ->
-                Right (UserId (Jwt.jwtClaimSubject claims))
+    Just token -> validateBearerToken jwksCache realmConfig token
+
+-- | Like 'authenticateBearerUser' but also accepts the JWT from the
+-- @infernix_operator_token@ cookie when no @Authorization@ header is present.
+-- Browser-issued media @src@ fetches (@\<img\>@, @\<audio\>@, @\<video\>@,
+-- @\<iframe\>@) cannot set request headers, so the streaming download endpoint
+-- accepts the same cookie the operator console already writes.
+authenticateRequestUser ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  IO (Either AuthFailure UserId)
+authenticateRequestUser jwksCache realmConfig request =
+  case requestToken of
+    Nothing -> pure (Left (AuthFailure status401 "missing bearer token"))
+    Just token -> validateBearerToken jwksCache realmConfig token
+  where
+    requestToken =
+      case extractBearerToken request of
+        Just token -> Just token
+        Nothing -> cookieBearerToken request
+
+validateBearerToken ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Text ->
+  IO (Either AuthFailure UserId)
+validateBearerToken jwksCache realmConfig token = do
+  jwksResult <- loadJwksCached jwksCache realmConfig
+  case jwksResult of
+    Left jwksError ->
+      pure (Left (AuthFailure status503 ("JWKS fetch failed: " <> jwksError)))
+    Right jwks -> do
+      now <- getCurrentTime
+      pure $
+        case verifyAndParseJwt (realmValidationConfig realmConfig) now jwks token of
+          Left jwtError ->
+            Left (AuthFailure status401 ("invalid JWT: " <> renderJwtError jwtError))
+          Right claims ->
+            Right (UserId (Jwt.jwtClaimSubject claims))
+
+-- | The operator-console cookie the SPA writes after login
+-- (chart values @operatorConsole.jwtGating.cookieName@; the Keycloak edge
+-- SecurityPolicy reads the same cookie for operator routes).
+operatorTokenCookieName :: Text
+operatorTokenCookieName = "infernix_operator_token"
+
+cookieBearerToken :: Request -> Maybe Text
+cookieBearerToken request = do
+  cookieHeader <- TextEncoding.decodeUtf8 <$> lookup hCookie (requestHeaders request)
+  let pairs =
+        [ (Text.strip name, Text.drop 1 rest)
+        | rawPair <- Text.splitOn ";" cookieHeader,
+          let (name, rest) = Text.breakOn "=" rawPair
+        ]
+  value <- lookup operatorTokenCookieName pairs
+  if Text.null value then Nothing else Just value
 
 respondAuthFailure :: AuthFailure -> (Response -> IO responseReceived) -> IO responseReceived
 respondAuthFailure (AuthFailure responseStatus message) respond =
   respond (textResponse responseStatus message)
 
-data ObjectsAction = ObjectsUpload | ObjectsDownload
-
-handleObjectsGrant ::
+-- | @POST \/api\/objects\/upload@ — the webapp stores the request body bytes
+-- in MinIO server-side over the internal endpoint. Metadata
+-- (@contextId@, @displayName@) arrives as query parameters; the object key is
+-- derived entirely server-side from the verified @sub@ plus the sanitized
+-- display name, so the caller can never write outside its own prefix.
+handleObjectsUpload ::
   JwksCache ->
   KeycloakRealmConfig ->
   Request ->
-  ObjectsAction ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-handleObjectsGrant jwksCache realmConfig request action respond = do
+handleObjectsUpload jwksCache realmConfig request respond = do
   authResult <- authenticateBearerUser jwksCache realmConfig request
   case authResult of
     Left authFailure -> respondAuthFailure authFailure respond
     Right userId -> do
-      now <- getCurrentTime
+      let query = queryString request
+      case (,) <$> lookupQueryText "contextId" query <*> lookupQueryText "displayName" query of
+        Nothing ->
+          respond (textResponse status400 "upload requires contextId and displayName query parameters")
+        Just (contextIdValue, displayNameValue) -> do
+          let contextId = ContextId contextIdValue
+              objectReference = uploadObjectKey userId contextId (sanitizeFilename displayNameValue)
+          if not (pathBelongsToUser userId (objectKey objectReference))
+            then respond (textResponse status403 "object key is outside the caller's scope")
+            else do
+              presignedResult <- loadInternalMinioPresignedConfig
+              case presignedResult of
+                Left configError ->
+                  respond (textResponse status503 ("object storage config missing: " <> configError))
+                Right presigned -> do
+                  bodyBytes <- strictRequestBody request
+                  now <- getCurrentTime
+                  putResult <- putMinioObjectBytes presigned objectReference bodyBytes
+                  case putResult of
+                    Left err ->
+                      respond (textResponse status502 ("object upload failed: " <> err))
+                    Right () ->
+                      respond
+                        ( jsonResponse
+                            status200
+                            ArtifactUploadGrant
+                              { artifactUploadGrantObjectRef = objectReference,
+                                artifactUploadGrantExpiresAtIso8601 = isoExpiryFor presigned now
+                              }
+                        )
+
+-- | @POST \/api\/objects\/download@ — returns the typed download metadata
+-- (canonical server-derived 'ObjectRef', MIME, render disposition) so the
+-- browser knows the object key and how to render it. The bytes are fetched
+-- separately from @GET \/api\/objects\/download@; no presigned MinIO URL is
+-- ever handed to the browser.
+handleObjectsDownloadGrant ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+handleObjectsDownloadGrant jwksCache realmConfig request respond = do
+  authResult <- authenticateBearerUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
       bodyBytes <- strictRequestBody request
       case eitherDecode bodyBytes of
         Left decodeError ->
           respond (textResponse status400 ("invalid request body: " <> decodeError))
-        Right uploadRequest -> do
-          presignedResult <- loadPresignedConfig
+        Right downloadRequest -> do
+          presignedResult <- loadInternalMinioPresignedConfig
           case presignedResult of
             Left configError ->
-              respond (textResponse status503 ("presigned URL config missing: " <> configError))
+              respond (textResponse status503 ("object storage config missing: " <> configError))
             Right presigned -> do
-              let contextId = artifactUploadRequestContextId uploadRequest
-                  displayName = artifactUploadRequestDisplayName uploadRequest
-                  mimeType = artifactUploadRequestMimeType uploadRequest
-                  objectReference = uploadObjectKey userId contextId displayName
+              now <- getCurrentTime
+              let contextId = artifactUploadRequestContextId downloadRequest
+                  mimeType = artifactUploadRequestMimeType downloadRequest
+                  objectReference =
+                    uploadObjectKey userId contextId (sanitizeFilename (artifactUploadRequestDisplayName downloadRequest))
               if not (pathBelongsToUser userId (objectKey objectReference))
                 then respond (textResponse status403 "object key is outside the caller's scope")
-                else mintAndRespond action presigned objectReference mimeType now respond
+                else
+                  respond
+                    ( jsonResponse
+                        status200
+                        ArtifactDownloadGrant
+                          { artifactDownloadGrantObjectRef = objectReference,
+                            artifactDownloadGrantMimeType = mimeType,
+                            artifactDownloadGrantRenderDisposition = renderDispositionForMime mimeType,
+                            artifactDownloadGrantExpiresAtIso8601 = isoExpiryFor presigned now
+                          }
+                    )
 
--- | Mint a presigned URL for the requested action and respond with the
--- matching upload-or-download grant JSON.
-mintAndRespond ::
-  ObjectsAction ->
-  PresignedUrlConfig ->
-  ObjectRef ->
-  ArtifactMimeType ->
-  UTCTime ->
+-- | @GET \/api\/objects\/download?key=...&mimeType=...@ — streams the object
+-- bytes back through the webapp. Authenticates via the @Authorization@ header
+-- or the operator cookie (for browser-issued media @src@ fetches), forces the
+-- demo-objects bucket, and rejects any key outside the caller's @users\/<sub>\/@
+-- prefix with HTTP 403 before touching MinIO.
+handleObjectsDownloadBytes ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
   (Response -> IO responseReceived) ->
   IO responseReceived
-mintAndRespond action presigned objectReference mimeType now respond =
-  case action of
-    ObjectsUpload ->
-      let signed =
-            presignedUrlForRequest
-              presigned
-              PresignedRequest
-                { presignedRequestMethod = HttpPut,
-                  presignedRequestObject = objectReference,
-                  presignedRequestNow = now
-                }
-          grant =
-            ArtifactUploadGrant
-              { artifactUploadGrantObjectRef = objectReference,
-                artifactUploadGrantPresignedUrl = unPresignedUrl signed,
-                artifactUploadGrantExpiresAtIso8601 = isoExpiryFor presigned now
-              }
-       in respond (jsonResponse status200 grant)
-    ObjectsDownload ->
-      let signed =
-            presignedUrlForRequest
-              presigned
-              PresignedRequest
-                { presignedRequestMethod = HttpGet,
-                  presignedRequestObject = objectReference,
-                  presignedRequestNow = now
-                }
-          grant =
-            ArtifactDownloadGrant
-              { artifactDownloadGrantObjectRef = objectReference,
-                artifactDownloadGrantPresignedUrl = unPresignedUrl signed,
-                artifactDownloadGrantMimeType = mimeType,
-                artifactDownloadGrantRenderDisposition = renderDispositionForMime mimeType,
-                artifactDownloadGrantExpiresAtIso8601 = isoExpiryFor presigned now
-              }
-       in respond (jsonResponse status200 grant)
+handleObjectsDownloadBytes jwksCache realmConfig request respond = do
+  authResult <- authenticateRequestUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
+      let query = queryString request
+      case lookupQueryText "key" query of
+        Nothing ->
+          respond (textResponse status400 "download requires a key query parameter")
+        Just keyValue ->
+          if not (pathBelongsToUser userId keyValue)
+            then respond (textResponse status403 "object key is outside the caller's scope")
+            else do
+              presignedResult <- loadInternalMinioPresignedConfig
+              case presignedResult of
+                Left configError ->
+                  respond (textResponse status503 ("object storage config missing: " <> configError))
+                Right presigned -> do
+                  let DemoObjectsBucket bucket = defaultDemoObjectsBucket
+                      objectReference = ObjectRef {objectBucket = bucket, objectKey = keyValue}
+                      mimeType = fromMaybe "application/octet-stream" (lookupQueryText "mimeType" query)
+                      disposition = renderDispositionForMime (ArtifactMimeType mimeType)
+                  getResult <- getMinioObjectBytes presigned objectReference
+                  case getResult of
+                    Left err ->
+                      respond (textResponse status502 ("object download failed: " <> err))
+                    Right (404, _) ->
+                      respond (textResponse status404 "object not found")
+                    Right (200, body) ->
+                      respond (objectBytesResponse mimeType disposition (downloadFilename keyValue) body)
+                    Right (code, _) ->
+                      respond (textResponse status502 ("object download failed: MinIO HTTP " <> show code))
+
+-- | @GET \/api\/objects\/list@ — Phase 7 Sprint 7.26. Lists the caller's own
+-- objects scoped server-side to the @users\/<sub>\/@ prefix (derived from the
+-- verified token) and returns them as a JSON array of typed 'ObjectRef'. The
+-- browser never names a prefix; the scope is the caller's own by construction.
+handleObjectsList ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+handleObjectsList jwksCache realmConfig request respond = do
+  authResult <- authenticateBearerUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
+      presignedResult <- loadInternalMinioPresignedConfig
+      case presignedResult of
+        Left configError ->
+          respond (textResponse status503 ("object storage config missing: " <> configError))
+        Right presigned -> do
+          listResult <- try @SomeException (listMinioUserObjectKeys presigned userId)
+          case listResult of
+            Left err ->
+              respond (textResponse status502 ("object listing failed: " <> show err))
+            Right keys -> do
+              let DemoObjectsBucket bucket = defaultDemoObjectsBucket
+                  refs = [ObjectRef {objectBucket = bucket, objectKey = key} | key <- keys]
+              respond (jsonResponse status200 refs)
+
+-- | @DELETE \/api\/objects?key=…@ — Phase 7 Sprint 7.26. Removes a single
+-- caller-owned object. The key is authorized through the same
+-- 'pathBelongsToUser' choke point on the verified @sub@ before any MinIO
+-- operation, so a cross-user key is rejected with HTTP 403.
+handleObjectsDelete ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+handleObjectsDelete jwksCache realmConfig request respond = do
+  authResult <- authenticateBearerUser jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right userId -> do
+      let query = queryString request
+      case lookupQueryText "key" query of
+        Nothing ->
+          respond (textResponse status400 "delete requires a key query parameter")
+        Just keyValue ->
+          if not (pathBelongsToUser userId keyValue)
+            then respond (textResponse status403 "object key is outside the caller's scope")
+            else do
+              presignedResult <- loadInternalMinioPresignedConfig
+              case presignedResult of
+                Left configError ->
+                  respond (textResponse status503 ("object storage config missing: " <> configError))
+                Right presigned -> do
+                  deleteResult <- try @SomeException (deleteMinioObject presigned keyValue)
+                  case deleteResult of
+                    Left err ->
+                      respond (textResponse status502 ("object deletion failed: " <> show err))
+                    Right True ->
+                      respond (jsonResponse status200 (object ["objectKey" .= keyValue, "deleted" .= True]))
+                    Right False ->
+                      respond (textResponse status404 "object not found")
+
+-- | Server-side PUT of the upload bytes against the internal MinIO endpoint.
+putMinioObjectBytes :: PresignedUrlConfig -> ObjectRef -> LazyByteString.ByteString -> IO (Either String ())
+putMinioObjectBytes config objectReference body = do
+  now <- getCurrentTime
+  let signed =
+        presignedUrlForRequest
+          config
+          PresignedRequest
+            { presignedRequestMethod = HttpPut,
+              presignedRequestObject = objectReference,
+              presignedRequestNow = now
+            }
+  attempt <- try @SomeException $ do
+    manager <- newManager defaultManagerSettings
+    base <- parseRequest (Text.unpack (unPresignedUrl signed))
+    httpLbs
+      ( base
+          { method = methodPut,
+            requestBody = RequestBodyLBS body,
+            responseTimeout = responseTimeoutMicro 60000000
+          }
+      )
+      manager
+  case attempt of
+    Left err -> pure (Left (show err))
+    Right response ->
+      let code = statusCode (responseStatus response)
+       in if code >= 200 && code < 300
+            then pure (Right ())
+            else pure (Left ("MinIO PUT returned HTTP " <> show code <> ": " <> lazyBodyToString (responseBody response)))
+
+-- | Server-side GET of an object's bytes against the internal MinIO endpoint.
+-- Returns @Right (status, body)@ on a completed HTTP exchange (so 404 is
+-- distinguishable from 200) and @Left@ on a transport failure.
+getMinioObjectBytes :: PresignedUrlConfig -> ObjectRef -> IO (Either String (Int, LazyByteString.ByteString))
+getMinioObjectBytes config objectReference = do
+  now <- getCurrentTime
+  let signed =
+        presignedUrlForRequest
+          config
+          PresignedRequest
+            { presignedRequestMethod = HttpGet,
+              presignedRequestObject = objectReference,
+              presignedRequestNow = now
+            }
+  attempt <- try @SomeException $ do
+    manager <- newManager defaultManagerSettings
+    base <- parseRequest (Text.unpack (unPresignedUrl signed))
+    httpLbs (base {responseTimeout = responseTimeoutMicro 60000000}) manager
+  case attempt of
+    Left err -> pure (Left (show err))
+    Right response -> pure (Right (statusCode (responseStatus response), responseBody response))
+
+-- | Build a byte-streaming response with the correct @Content-Type@ and
+-- @Content-Disposition@. Download-only artifacts force @attachment@; everything
+-- else renders @inline@ so the browser can preview it.
+objectBytesResponse :: Text -> ArtifactRenderDisposition -> Text -> LazyByteString.ByteString -> Response
+objectBytesResponse mimeType disposition filename =
+  responseLBS
+    status200
+    [ (hContentType, TextEncoding.encodeUtf8 mimeType),
+      ("Content-Disposition", TextEncoding.encodeUtf8 (dispositionPrefix <> "; filename=\"" <> filename <> "\""))
+    ]
+  where
+    dispositionPrefix = case disposition of
+      DownloadOnly -> "attachment"
+      _ -> "inline"
+
+downloadFilename :: Text -> Text
+downloadFilename key = sanitizeFilename (last ("file" : Text.splitOn "/" key))
+
+lookupQueryText :: ByteString.ByteString -> [(ByteString.ByteString, Maybe ByteString.ByteString)] -> Maybe Text
+lookupQueryText name query = do
+  maybeValue <- lookup name query
+  rawValue <- maybeValue
+  let decoded = TextEncoding.decodeUtf8 rawValue
+  if Text.null decoded then Nothing else Just decoded
 
 handleAccountDeletion ::
   DemoApiOptions ->
@@ -774,13 +1034,10 @@ loadJwksFromKeycloak realmConfig = do
 -- `SecretsConfig.minio.credentialsPath`. The retired `INFERNIX_MINIO_*`
 -- env reads are gone; cluster-resident deployments mount both
 -- ConfigMaps + Secret at the supported paths, and the function
--- surfaces a typed diagnostic when either is absent.
-loadPresignedConfig :: IO (Either String PresignedUrlConfig)
-loadPresignedConfig =
-  loadPresignedConfigWithEndpoint
-    ClusterConfig.minioPresignPublicEndpoint
-    splitMinioPublicEndpoint
-
+-- surfaces a typed diagnostic when either is absent. Phase 7 Sprint 7.25
+-- retired the public-endpoint variant: the webapp object-proxy and account
+-- cleanup both sign against the cluster-internal endpoint, and there is no
+-- browser-facing presigned URL.
 loadInternalMinioPresignedConfig :: IO (Either String PresignedUrlConfig)
 loadInternalMinioPresignedConfig =
   loadPresignedConfigWithEndpoint
@@ -840,25 +1097,22 @@ splitMinioEndpoint raw =
         Just hostPort -> ("http", hostPort)
         Nothing -> ("http", raw)
 
-splitMinioPublicEndpoint :: Text -> (Text, Text, Text)
-splitMinioPublicEndpoint raw =
-  let (scheme, withoutScheme) = splitMinioEndpoint raw
-      (hostPort, pathPrefix) = Text.breakOn "/" withoutScheme
-   in (scheme, hostPort, pathPrefix)
-
 renderJwtError :: JwtError -> String
 renderJwtError = show
 
 renderDispositionForMime :: ArtifactMimeType -> ArtifactRenderDisposition
 renderDispositionForMime (ArtifactMimeType mimeType)
-  | mimeType == "audio/midi" = DownloadOnly
-  | mimeType == "audio/x-midi" = DownloadOnly
+  | mimeType == "audio/midi" = RenderMidi
+  | mimeType == "audio/x-midi" = RenderMidi
   | "image/" `Text.isPrefixOf` mimeType = RenderInline
   | "audio/" `Text.isPrefixOf` mimeType = RenderInline
   | "video/" `Text.isPrefixOf` mimeType = RenderInline
   | mimeType == "application/pdf" = BrowserNativePdf
   | mimeType == "application/json" = BoundedTextPreview
   | "text/" `Text.isPrefixOf` mimeType = BoundedTextPreview
+  | mimeType == "application/vnd.recordare.musicxml+xml" = RenderMusicXml
+  | mimeType == "application/vnd.recordare.musicxml" = RenderMusicXml
+  | mimeType == "application/zip" = RenderZipStems
   | otherwise = DownloadOnly
 
 data CacheMutation = EvictCache | RebuildCache

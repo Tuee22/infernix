@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active
+**Status**: Done — reopened and re-closed (Wave K fully closed: `linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -1745,8 +1745,9 @@ Implementation **done + validated code-side 2026-06-24**: `validateServiceRuntim
 per-family fixture and asserts completion + the `ResultFamily` contract; `assertCompletedResultPayload`
 is `ResultFamily`-aware and fail-closed (non-empty inline text for LLM/speech, a non-empty
 `inferenceResultArtifacts` object ref for artifact families) across all five chaos/throughput/HA call
-sites. The [Wave K](cohort-validation-waves.md) `linux-gpu` + `linux-cpu` real-output cohort gate is the
-remaining residual.
+sites. The [Wave K](cohort-validation-waves.md) `linux-gpu` + `linux-cpu` real-output cohort gate is
+**closed** (`linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26): both Linux accelerators pass the full
+integration suite (per-model real output + HA/chaos) and 9/9 routed Playwright specs.
 
 ---
 

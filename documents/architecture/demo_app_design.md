@@ -13,7 +13,7 @@
 
 - The `infernix-demo` workload is the first concrete binding of the
   durable-context primitives. The reusable shape — event log, reducer,
-  dispatcher, prefix-hash chain, presigned object storage, JWT
+  dispatcher, prefix-hash chain, webapp-mediated object storage, JWT
   validation, stateless WS coordination — lives in
   [durable_context_design.md](durable_context_design.md). This doc names
   the demo's concrete choices.
@@ -22,16 +22,22 @@
   `<jwtIssuer>`; the public SPA client is the `<jwtAudience>`. `userId =
   sub`.
 - Routes: `/auth` for the Keycloak login surface, `/ws` for authenticated
-  session traffic, `/api/objects` for presigned MinIO PUT/GET URLs.
+  session traffic, `/api/objects` for webapp-mediated artifact upload and
+  download. The webapp is the single mediator for all artifact I/O — the
+  browser holds only the webapp origin and never receives a MinIO
+  credential or presigned MinIO URL (see
+  [object_access_doctrine.md](object_access_doctrine.md) and
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)).
 - Anonymous browser visitors see only the pre-auth landing card with
   peer `Sign in` and `Create account` actions. The durable-context app
   shell renders only after the SPA has a Keycloak JWT in memory.
 - Topic and bucket bindings: `<topicNamespace> = infernix/demo`;
   `<objectsBucket> = infernix-demo-objects`.
 - SPA views: Chat (left rail, conversation pane, drafts, cancel, queued
-  indicator), Artifacts (per-context list, per-user library, MIME-family
-  rendering), Model picker (catalog from the active substrate's
-  generated `.dhall`).
+  indicator), Artifacts (per-context list, MIME-family rendering), Files
+  (the signed-in user's whole per-user object library across contexts,
+  scoped server-side to the caller's `sub`), Model picker (catalog from
+  the active substrate's generated `.dhall`).
 - Every demo surface is gated by the active substrate's generated `.dhall`
   `demo_ui` flag. When `demo_ui = false`, the Keycloak release, demo
   Pulsar topic namespaces, demo MinIO bucket, `infernix-demo` workload,
@@ -58,10 +64,10 @@ dispatcher, engine, and result bridge run, and exercises runtime
 KV-cache rebuild/reuse decisions through the engine path. The routed
 Playwright E2E suite registers a real Keycloak user, exchanges the
 authorization code for an access token, verifies malformed bearer
-rejection, proves the `/api/objects` handlers mint user-scoped
-upload/download grants from that real JWT, and validates same-user
-routed presigned MinIO PUT/GET byte equality plus cross-user
-object-prefix isolation. The same suite opens `/ws` with the real
+rejection, proves the `/api/objects` webapp proxy stores and streams
+user-scoped artifact bytes from that real JWT, and validates same-user
+routed upload/download byte equality plus cross-user object-key
+rejection (HTTP 403). The same suite opens `/ws` with the real
 token, verifies a malformed token does not open a browser WebSocket,
 and asserts a tagged `ServerError` for a malformed frame on the valid
 connection. The browser artifact flow completes the app-owned PKCE
@@ -157,9 +163,9 @@ realm import, and the post-rollout Keycloak admin reconcile preserves
 
 The signed-in shell writes the current Keycloak access token to the
 `infernix_operator_token` same-origin cookie. Envoy Gateway validates that cookie (or a direct
-`Authorization: Bearer ...` header) before forwarding browser traffic to `/harbor`,
-`/pulsar/admin`, or `/minio/s3`, so the operator ribbon can link to those route prefixes without
-making them anonymous.
+`Authorization: Bearer ...` header) before forwarding browser traffic to `/harbor` or
+`/pulsar/admin`, so the operator ribbon can link to those route prefixes without
+making them anonymous. There is no `/minio/s3` route (Phase 3 Sprint 3.13).
 
 The signed-in shell also exposes `Delete account`. That command confirms in the browser, calls
 `DELETE /api/account` with the in-memory bearer token, and only starts Keycloak's
@@ -179,10 +185,24 @@ to these concrete routes:
   Carries: chat send/receive, context list (server-streamed snapshots
   and patches), context create, rename, soft-delete, draft updates
   (client-debounced), inference progress, artifact-ready notifications.
-- **`/api/objects` (HTTP, same JWT).** Artifact upload and download via
-  presigned MinIO PUT/GET URLs minted by the demo backend. Binary bytes
-  never traverse the demo backend; the browser uploads directly to MinIO
-  and downloads directly from MinIO via the presigned URL.
+- **`/api/objects` (HTTP, same JWT).** Webapp-mediated artifact upload,
+  download, and listing. The demo backend authenticates the caller,
+  derives the object key server-side from the verified `sub`, and reads
+  and writes MinIO itself over the cluster-internal endpoint; the
+  artifact bytes flow through the webapp on `POST /api/objects/upload`
+  and `GET /api/objects/download`. The browser holds only the webapp
+  origin — never a MinIO credential and never a presigned MinIO URL.
+  This is the single per-user trust boundary defined in
+  [object_access_doctrine.md](object_access_doctrine.md) and
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md).
+
+  **Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13
+  removed the `/minio/s3` route + `presignPublicEndpoint`). The webapp proxies
+  the bytes server-side and the browser never receives a presigned MinIO URL.
+  Per-user isolation holds at one server-side choke point (`pathBelongsToUser`
+  on the verified `sub`). The `linux-cpu` plus chosen-accelerator real per-user
+  attestation is the remaining
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 - **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The backend
   validates the JWT, derives `userId = sub`, removes
   `infernix-demo-objects/users/<userId>/`, deletes the user's demo Pulsar topics, and returns a
@@ -202,7 +222,12 @@ The demo binds the three-role daemon model in
 
 - **Frontend.** The `infernix-demo` Deployment owns WS upgrade, JWT
   validation, route handlers for `/auth`, `/ws`, and `/api/objects`,
-  and SPA asset serving. Stateless, replicas ≥ 2 by default.
+  and SPA asset serving. As the webapp it is the single mediator for
+  browser artifact I/O: it derives each object key server-side from the
+  verified `sub` and performs the MinIO read/write itself over the
+  cluster-internal endpoint, so the browser never reaches MinIO
+  directly (see [object_access_doctrine.md](object_access_doctrine.md)).
+  Stateless, replicas ≥ 2 by default.
 - **Coordinator.** The `infernix-coordinator` Deployment runs the
   single-flight dispatcher and the result-bridge on the demo's
   conversation and result topics. Stateless, replicas ≥ 2 by default;
@@ -249,7 +274,7 @@ does not add platform-level inference topics.
 
 ## SPA Views
 
-Three primary views in the SPA, all consuming the same generated
+Four primary views in the SPA, all consuming the same generated
 PureScript contract module and the same WS envelope.
 
 - **Chat.** Left rail context list (derived from `ContextListState` +
@@ -257,10 +282,18 @@ PureScript contract module and the same WS envelope.
   `ConversationState` + `ConversationStatePatch`). Draft text box per
   context (derived from `DraftMapState` + `DraftMapPatch`). Cancel
   button on in-flight prompts. Two-prompt-in-a-row queued indicator.
-- **Artifacts.** Per-context artifact list and per-user library. Upload
-  via presigned PUT with progress indicator. Download via presigned GET.
-  Inline rendering via `<img>`, `<audio>`, `<video>` against presigned
-  URLs. Generic-binary download fallback.
+- **Artifacts.** Per-context artifact list. Upload, download, and
+  inline rendering all flow through the webapp's `/api/objects`
+  endpoints — `<img>`, `<audio>`, `<video>` source from the
+  webapp-served bytes rather than a presigned MinIO URL, with a
+  generic-binary download fallback through the same surface.
+- **Files.** The signed-in user's whole per-user object library across
+  every context, listed through the webapp's `/api/objects/list`
+  surface. The listing is scoped server-side to the caller's `sub` (see
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)), so the
+  view shows only the caller's own objects; each entry renders or
+  downloads through the same webapp-mediated transport as the Artifacts
+  view.
 - **Model picker.** Modal opened on new-context creation. Catalog
   sourced from the active substrate's generated `.dhall`. Selection pins
   the model on context creation. The frontend does not create backend
@@ -268,55 +301,70 @@ PureScript contract module and the same WS envelope.
   with `ServerError` code `unknown-model`. Switching models mid-context
   is not supported.
 
+**Current Status.** The SPA ships Chat, Artifacts (webapp-mediated transport, Phase 7 Sprint 7.25),
+the per-user Files view (Phase 7 Sprint 7.26), and the Model picker. Phase 3 Sprint 3.13 removed the
+`/minio/s3` browser-direct path. The `linux-cpu` plus chosen-accelerator real per-user attestation
+is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+
 All views are renderers. They apply patches mechanically and render.
 They call no business-rule code. User actions produce typed
 `WsClientMessage`s; the server interprets them.
 
 ## Artifacts View Contract
 
-Supported MIME families:
+Supported MIME families (all sourced from the webapp's `/api/objects`
+bytes, never a presigned MinIO URL):
 
-- `image/*` — rendered via `<img>` against presigned GET URL.
-- `audio/*` — rendered via `<audio>` against presigned GET URL.
-- `video/*` — rendered via `<video>` against presigned GET URL.
+- `image/*` — rendered via `<img>` against the webapp download surface.
+- `audio/*` — rendered via `<audio>` against the webapp download surface.
+- `video/*` — rendered via `<video>` against the webapp download surface.
 - `application/pdf` — delegated to the browser-native PDF viewer.
 - `text/*` and `application/json` — rendered through a bounded preview.
-- MIDI and MusicXML/MXL notation — download-only by default.
-- arbitrary binary — generic download via presigned GET URL with the
-  browser's native save dialog.
+- MIDI, MusicXML/MXL notation, and ZIP archives — inline rendering
+  (notation rendering for MIDI/MusicXML, in-browser archive listing for
+  ZIP) rather than download-only.
+- arbitrary binary — generic download through the webapp download
+  surface with the browser's native save dialog.
+
+**Current Status.** Every family is sourced through the webapp `/api/objects/download` proxy
+(Phase 7 Sprint 7.25). MIDI, MusicXML/MXL, and ZIP inline rendering is delivered by Phase 7
+Sprint 7.27. The `linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
+[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 Upload flow:
 
 1. User selects a file in the Artifacts view.
-2. Browser sends a typed `ArtifactUploadRequest` to `POST /api/objects/upload`.
-3. Backend returns an `ArtifactUploadGrant` with a presigned PUT URL plus
-   the canonical object key.
-4. Browser performs the multipart PUT directly to MinIO with progress
-   events.
-5. Current browser wiring records the uploaded object in the Artifacts
-   view state after the MinIO PUT succeeds.
-6. Browser publishes a typed `ClientRecordUpload` frame over the WS;
+2. Browser sends the file bytes to `POST /api/objects/upload`.
+3. The webapp authenticates the caller, derives the canonical object key
+   server-side from the verified `sub`, writes the bytes to MinIO over
+   the cluster-internal endpoint, and returns the typed `ObjectRef`.
+4. Browser records the uploaded object in the Artifacts view state after
+   the webapp confirms the write.
+5. Browser publishes a typed `ClientRecordUpload` frame over the WS;
    backend writes the matching `UserUpload` event to the conversation
    topic with producer dedup keyed by the uploaded `ObjectRef`.
-7. Reducer emits an `AppendArtifact` patch for that log append.
-8. The per-context conversation stream returns upload append patches to
+6. Reducer emits an `AppendArtifact` patch for that log append.
+7. The per-context conversation stream returns upload append patches to
    subscribed browsers, and the Chat conversation renders the uploaded
    artifact display name plus MIME type.
 
 Download flow:
 
-1. User clicks an artifact in the Artifacts view.
-2. Browser sends a typed artifact request to `POST /api/objects/download`.
-3. Backend returns an `ArtifactDownloadGrant` with a presigned GET URL and
-   typed render disposition.
-4. Browser renders inline (image/audio/video), opens the browser PDF path,
-   renders bounded text/JSON, or initiates a download-only flow.
+1. User clicks an artifact in the Artifacts or Files view.
+2. Browser sends a typed artifact request to `GET /api/objects/download`.
+3. The webapp authorizes the key against the caller's `sub`, streams the
+   bytes back with the correct `Content-Type` and `Content-Disposition`,
+   and the browser uses the typed render disposition.
+4. Browser renders inline (image/audio/video, plus MIDI/MusicXML/ZIP at
+   the target), opens the browser PDF path, renders bounded text/JSON, or
+   initiates a download-only flow.
 
-The routed E2E flow validates the backend `/api/objects/download`
-disposition matrix for the supported MIME classes and the browser
-upload/download/render path for bounded text/JSON previews, inline
-image/audio/video media URLs, browser-native PDF URL wiring, and MIDI /
-MusicXML / generic-binary download-only states.
+**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
+route). `POST /api/objects/upload` carries the bytes and returns an `ArtifactUploadGrant` with the
+canonical `ObjectRef` (no URL); `POST /api/objects/download` returns an `ArtifactDownloadGrant` with
+the render disposition (no URL); `GET /api/objects/download` streams the bytes server-side. The
+browser never receives a presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
+attestation is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 ## Gating
 
@@ -350,8 +398,11 @@ and covers three layers:
   `WsServerMessage` variants.
 - **Integration** — real Pulsar / MinIO / Keycloak round-trips against
   the demo bindings; producer-dedup verification across simulated
-  dispatcher restart; Failover handoff; cross-user presigned URL
-  negative; chaos tests; multi-user throughput / fan-in batching /
+  dispatcher restart; Failover handoff; cross-user object-access
+  negative (a caller's JWT receives HTTP 403 on another user's object
+  key through the webapp object-proxy per
+  [object_access_doctrine.md](object_access_doctrine.md)); chaos tests;
+  multi-user throughput / fan-in batching /
   fan-out test (N users × K contexts × P prompts on one model)
   asserting per-context ordering, no duplicates or losses, cross-context
   independence, batching gain, bounded p95 latency, dedup correctness.
@@ -368,6 +419,8 @@ and covers three layers:
 ## Cross-References
 
 - [durable_context_design.md](durable_context_design.md) — product-agnostic primitives (authoritative for the reusable shape)
+- [object_access_doctrine.md](object_access_doctrine.md) — webapp as the single mediator for browser artifact I/O
+- [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md) — per-user `sub`-derived isolation at one server-side boundary
 - [daemon_topology.md](daemon_topology.md) — three-role daemon model and per-substrate placement
 - [overview.md](overview.md) — platform topology
 - [web_ui_architecture.md](web_ui_architecture.md) — PureScript demo UI topology and image layout

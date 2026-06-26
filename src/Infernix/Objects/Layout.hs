@@ -17,9 +17,11 @@ module Infernix.Objects.Layout
     modelReadySentinelKey,
     engineArtifactObjectKey,
     pathBelongsToUser,
+    sanitizeFilename,
   )
 where
 
+import Data.Char (isAlphaNum)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Web.Contracts
@@ -136,3 +138,24 @@ pathBelongsToUser :: UserId -> Text -> Bool
 pathBelongsToUser uid key =
   let UserPrefix prefix = userPrefix uid
    in Text.isPrefixOf prefix key
+
+-- | Neutralize a client-supplied artifact display name before it becomes part
+-- of a server-derived object key. Phase 7 Sprint 7.25 makes the webapp the
+-- single object mediator, so the only client-controlled component of an upload
+-- key is the display name; this strips any directory components and path
+-- traversal, keeps a conservative @[A-Za-z0-9._-]@ character set (other
+-- characters collapse to @_@), forbids a leading dot, bounds the length, and
+-- falls back to @file@ when nothing safe remains. The owning per-user prefix is
+-- always derived from the verified @sub@, never from this value.
+sanitizeFilename :: Text -> Text
+sanitizeFilename raw =
+  let lastSegment = last (Text.splitOn "/" (Text.replace "\\" "/" raw))
+      mapped = Text.map keepOrUnderscore (Text.strip lastSegment)
+      deDotted = Text.dropWhile (== '.') mapped
+      bounded = Text.take 200 deDotted
+   in if Text.null bounded then "file" else bounded
+  where
+    keepOrUnderscore c
+      | isAlphaNum c = c
+      | c `elem` ['.', '_', '-'] = c
+      | otherwise = '_'

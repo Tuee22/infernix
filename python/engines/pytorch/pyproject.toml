@@ -23,6 +23,7 @@ torch = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_syste
 torchaudio = { version = ">=2.7", source = "pytorch-cu128", markers = "platform_system == 'Linux' and platform_machine == 'x86_64'" }
 transformers = ">=4.46"
 demucs = ">=4.0"
+openunmix = ">=1.2"
 scipy = ">=1.13"
 soundfile = ">=0.12"
 librosa = ">=0.10"
@@ -37,6 +38,7 @@ torch = { version = ">=2.7,<2.12", source = "pytorch-cpu", markers = "platform_s
 torchaudio = { version = ">=2.7,<2.12", source = "pytorch-cpu", markers = "platform_system == 'Linux' and platform_machine != 'x86_64'" }
 transformers = ">=4.46"
 demucs = ">=4.0"
+openunmix = ">=1.2"
 scipy = ">=1.13"
 soundfile = ">=0.12"
 librosa = ">=0.10"
@@ -51,6 +53,7 @@ torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform
 torchaudio = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
 transformers = ">=4.46"
 demucs = ">=4.0"
+openunmix = ">=1.2"
 scipy = ">=1.13"
 soundfile = ">=0.12"
 numpy = ">=1.26"

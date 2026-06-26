@@ -107,10 +107,13 @@
   `loginTheme = infernix`, so the routed login and registration pages carry the Infernix-specific
   titles without building a custom Keycloak image
 - when the demo UI is enabled, the signed-in SPA shell exposes an operator console ribbon for
-  `/harbor`, `/pulsar/admin`, and `/minio/s3`. `web/src/Infernix/Web/Auth.js` mirrors the active
+  `/harbor` and `/pulsar/admin` (Phase 3 Sprint 3.13 removed the `/minio/s3` route; MinIO is reached
+  only through the webapp `/api/objects` proxy). `web/src/Infernix/Web/Auth.js` mirrors the active
   Keycloak access token into the `infernix_operator_token` cookie on login and refresh, clears it
   on logout, and `SecurityPolicy/infernix-operator-routes-jwt` accepts that cookie or a direct
-  `Authorization: Bearer ...` header before forwarding those operator route prefixes
+  `Authorization: Bearer ...` header before forwarding those operator route prefixes (the same
+  cookie authenticates browser-issued media `src` GETs against the webapp `/api/objects/download`
+  proxy)
 - the signed-in SPA shell exposes `Delete account`. The browser waits for `DELETE /api/account` to
   synchronously remove the caller's `infernix-demo-objects/users/<userId>/` prefix and user-owned
   demo Pulsar topics before redirecting to Keycloak with `kc_action=delete_account`
@@ -193,7 +196,7 @@
 | Python quality gate | `poetry run check-code` | host or Linux outer-container image | runs `mypy --strict`, `black --check`, and `ruff check` against the shared adapter tree | none |
 | Keycloak identity | Keycloak Helm release | Kind cluster, demo-gated | OIDC identity provider for the durable-context demo: self-signup on, email verification off, public SPA client reconciled for the routed edge URL; the local demo runs one Keycloak application pod until proxy-affinity or clustered-cache validation lands, and is absent when `demo_ui = false`; see [../documents/tools/keycloak.md](../documents/tools/keycloak.md) | Keycloak Patroni Postgres state under `./.data/kind/<runtime-mode>/...` |
 | Keycloak Patroni Postgres | Percona PostgreSQL operator | Kind cluster, demo-gated | dedicated HA Patroni cluster backing Keycloak per the per-service rule in [../documents/tools/postgresql.md](../documents/tools/postgresql.md); absent when `demo_ui = false` | `./.data/kind/<runtime-mode>/...` |
-| Demo artifact bucket | MinIO bucket `infernix-demo-objects` | Kind cluster, demo-gated | single shared bucket holding per-user prefix trees `users/<userId>/contexts/<contextId>/{uploads,generated}/`; presigned PUT/GET URLs minted by `/api/objects` with per-user scope; absent when `demo_ui = false`; see [../documents/tools/minio.md](../documents/tools/minio.md) | MinIO durable state under `./.data/kind/<runtime-mode>/...` |
+| Demo artifact bucket | MinIO bucket `infernix-demo-objects` | Kind cluster, demo-gated | single shared bucket holding per-user prefix trees `users/<userId>/contexts/<contextId>/{uploads,generated}/`; the webapp `/api/objects` proxy reads/writes it server-side per user (no browser presigned URL); absent when `demo_ui = false`; see [../documents/tools/minio.md](../documents/tools/minio.md) | MinIO durable state under `./.data/kind/<runtime-mode>/...` |
 | Demo conversation Pulsar topics | Pulsar topic family `persistent://infernix/demo/demo.conversation.<userId>.<contextId>` | Pulsar broker, demo-gated | per-context append-only conversation log; single-partition, broker-assigned `MessageId` is the canonical sequence; producer-side dedup enabled; the integration suite validates real publish + Reader decode, duplicate frontend publish collapse, completed result writeback from a non-chaos dispatcher/result-bridge prompt roundtrip, and exactly-one request/batch/result/conversation-result counts through frontend, coordinator, engine, and node-drain chaos paths; absent when `demo_ui = false` | Pulsar BookKeeper state |
 | Demo per-user metadata topics | Pulsar topic families `demo.user.<userId>.contexts` and `demo.user.<userId>.drafts` | Pulsar broker, demo-gated | compacted per-user metadata for the left-rail context list and drafts; broker message key is `contextId`; the integration suite validates real publish + Reader decode with key assertions, admin compaction threshold readback, explicit topic compaction, compacted-reader latest-per-key behavior, and duplicate draft publish collapse; absent when `demo_ui = false` | Pulsar BookKeeper state |
 | Inference batch topics | Derived pool/model topic family `persistent://infernix/demo/inference.batch.<mode>.pool.<poolId>.model.<modelId>` plus pinned-member topic family `persistent://infernix/demo/inference.batch.<mode>.member.<memberId>.model.<modelId>` | Pulsar broker | the coordinator publishes pre-batched inference work only to topics derived from the validated engine-pool graph. Normal pool topics use `Shared` so broker permits and receiver backlog distribute work; pinned member topics use `Exclusive`. The old `inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and Apple `.host` helper topics are removed from supported routing. | Pulsar BookKeeper state |
@@ -230,10 +233,9 @@
 | `/api/cache` | `GET` and `POST` endpoints on the `/api` route -> `infernix-demo` Service | demo cache lifecycle API | absent when `demo_ui` is false |
 | `/auth` | HTTPRoute -> Keycloak Service | Keycloak login pages and OIDC endpoints for the durable-context demo; routed E2E covers self-registration to OIDC authorization-code redirect | absent when `demo_ui` is false |
 | `/ws` | HTTPRoute -> `infernix-demo` Service | WebSocket endpoint for authenticated durable-context sessions; carries chat, drafts, context list, progress, and artifact-ready notifications | absent when `demo_ui` is false |
-| `/api/objects` | HTTPRoute -> `infernix-demo` Service | HTTP endpoint that mints presigned MinIO PUT/GET URLs scoped per user; artifact bytes never traverse the demo backend | absent when `demo_ui` is false |
+| `/api/objects` | HTTPRoute -> `infernix-demo` Service | webapp object-proxy: `POST /upload` (bytes), `GET /download` (streamed bytes), `POST /download` (render disposition), `GET /list`, and `DELETE` — all per-user scoped server-side; artifact bytes flow through the demo backend (no presigned MinIO URL) | absent when `demo_ui` is false |
 | `/harbor/api` | HTTPRoute -> Harbor core Service | Harbor API surface | always published |
 | `/harbor` | HTTPRoute -> Harbor portal Service | Harbor browser portal | always published |
-| `/minio/s3` | HTTPRoute -> MinIO S3 Service | MinIO S3 API | always published |
 | `/pulsar/admin` | HTTPRoute -> Pulsar admin Service | Pulsar admin surface | always published |
 | `/pulsar/ws` | HTTPRoute -> Pulsar HTTP or WebSocket Service | Pulsar browser-facing HTTP surface | always published |
 
@@ -279,7 +281,7 @@
 | Generated frontend dist | `npm --prefix web run build` | `web/dist/` | ignored static output served by `infernix-demo` |
 | Apple adapter venv | Poetry on demand | `python/.venv/` | Apple-only materialized virtualenv for shared adapter project |
 | Playwright and test artifacts | validation flows | `./.data/` | repo-local test output location |
-| Demo artifact bucket prefixes | demo backend + presigned URL clients | MinIO bucket `infernix-demo-objects` (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) | per-user prefix layout; absent when `demo_ui = false` |
+| Demo artifact bucket prefixes | demo backend (webapp object-proxy, server-side) | MinIO bucket `infernix-demo-objects` (`users/<userId>/contexts/<contextId>/{uploads,generated}/`) | per-user prefix layout; browsers reach it only through the webapp `/api/objects` proxy; absent when `demo_ui = false` |
 | Demo conversation Pulsar topics | demo backend | Pulsar BookKeeper | append-only per-context conversation logs; SSoT for sequencing and text; the integration suite validates real publish + Reader decode, duplicate frontend publish collapse, and completed result writeback from a non-chaos dispatcher/result-bridge prompt roundtrip; absent when `demo_ui = false` |
 | Demo metadata Pulsar topics | demo backend | Pulsar BookKeeper | compacted per-user contexts and drafts topics keyed by `contextId`; SSoT for the left-rail list and unsubmitted drafts; the integration suite validates real publish + Reader decode with key assertions, admin compaction threshold readback, explicit topic compaction, compacted-reader latest-per-key behavior, and duplicate draft publish collapse; absent when `demo_ui = false` |
 

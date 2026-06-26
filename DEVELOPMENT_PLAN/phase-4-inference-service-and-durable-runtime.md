@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active
+**Status**: Done — reopened and re-closed (Wave K fully closed: `linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -1319,13 +1319,57 @@ the baked `nmp.onnx` over the real audio (not zeros), reproduces the upstream po
 note-creation, and writes a real `.mid` (every failure exits non-zero). Its real-MIDI output is the
 cohort-gate residual.
 
-**Remaining real engines** (a multi-agent research pass de-risked these — see Sprint 4.22 for the music
-rows): **Demucs → ONNX** is a decision (a single-vendor htdemucs-onnx export exists but is unproven, vs.
-keeping PyTorch + real multi-file weights); **Open-Unmix → ONNX is INFEASIBLE** (no public single-file
-ONNX export — its LSTM+Wiener graph does not lower to one ONNX session), so it stays declared-runnable and
-fails closed via the weight guard until a real engine (PyTorch) lands or the row is dropped. Each real
-engine proves real only on the `linux-gpu` (or `linux-cpu` for CPU paths) cohort gate with the Sprint
-4.23 real fixtures. Machine-independent gates (`cabal build all`, `cabal test infernix-unit`/
+**Demucs → real, landed code-side 2026-06-25.** The decision resolved in favor of **PyTorch + the real
+first-party single-file weight** (not the unproven ONNX export). The htdemucs row's `downloadUrl` now
+points at the canonical first-party checkpoint
+`https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th` (a single binary `.th`
+that passes the weight guard and stages as `payload`), and `_separate_sources` loads it correctly:
+torch≥2.6 defaults `weights_only=True`, which rejects the demucs model classes pickled in the package, so
+the adapter loads the trusted package dict with `weights_only=False` and hands it to
+`demucs.states.load_model` (the prior `demucs.pretrained.get_model(dir)` failed — `get_model` cannot load
+a directory). Proven end-to-end in the `infernix-linux-cpu:local` pytorch venv: `load_model(package)` →
+`HTDemucs` (sources drums/bass/other/vocals), `apply_model` on CPU over a real stereo mixture in ~1.5 s →
+a real ~1 MB stem ZIP (`PK` magic, one `.wav` per source). Machine-independent gates green
+(`cabal build all`, `poetry run check-code` mypy/black/ruff/realness).
+
+**Open-Unmix → real, landed code-side 2026-06-25.** It now has a dedicated `_separate_open_unmix`
+adapter path (it is not a demucs checkpoint, so it no longer routes through the Demucs loader): the
+`openunmix` PyTorch package is added to the pytorch engine venv (`openunmix>=1.2`, resolves to 1.3.0 via
+`poetry lock`), the `audio-open-unmix` row's `downloadUrl` is the first-party Zenodo `umxhq` record
+(`zenodo.org/records/3370489`), and a new multi-file bootstrap path stages the four per-target state dicts
+as `<target>.pth` (Haskell `isMultiFileModelRepoUrl` routes the record to the snapshot helper; Python
+`_download_open_unmix_umxhq` downloads each target). The adapter rebuilds the `umxhq` architecture
+(`openunmix.umxhq(pretrained=False)`) and loads the staged state dicts with `strict=False` (mirroring
+`umxhq_spec`), then runs the `Separator` over the input → stem ZIP. Proven in the `infernix-linux-cpu:local`
+pytorch venv: all 4 targets load, `Separator(wav)` → real 4-stem ZIP (`PK`, ~1 MB) in ~0.1 s.
+Machine-independent gates green (`cabal build all`, `poetry run check-code`).
+
+**MT3/YourMT3+ matrix decision (2026-06-25):** `music-mt3-jax` is now **`Not recommended` on
+`linux-cpu` and `linux-gpu`** (kept as an `apple-silicon` declarative target so the matrix coverage rule
+still holds). The realness doctrine defines a row as supported only when its substrate column names a
+*real* engine; YourMT3+ has none on any substrate (too-heavy MoE, no maintained pip package, contradictory
+checkpoint sourcing), so `Not recommended` is the honest Linux value and removes it from the tested Linux
+catalogs. Unit catalog counts updated (linux-cpu 11→10, linux-gpu 15→14; apple-silicon unchanged at 15).
+
+**Audiveris OMR fix (2026-06-25):** the `tool-audiveris` JVM runner aborted at class init with
+`HOME environment variable is not set` (the worker runs with a minimal environment, and Audiveris derives
+its data/config folders from `HOME`). The generated `linux-native` runner now passes a writable
+per-invocation `HOME` (`mktemp -d`) to just the Audiveris child — a tool-invocation requirement, not
+configuration-via-env, so it is compatible with the no-env-var doctrine and the env lint.
+
+With Demucs + Open-Unmix real, MT3 removed from the Linux catalogs, and the Audiveris fixes (per-invocation
+`HOME` + uncompressed `.musicxml`/`.xml` export fed a real Verovio-engraved score fixture), the
+**`linux-cpu` per-model inference step is fully green on a real Kind cluster (2026-06-25)** — all ten
+linux-cpu rows produce real output: qwen2.5 (safetensors), tinyllama (GGUF/llama.cpp), whisper-small
+(whisper.cpp), faster-whisper-ct2 (CTranslate2), demucs + open-unmix (stem ZIPs), basic-pitch-onnx (MIDI),
+omnizart (ByteDance piano MIDI), bark (audio), and audiveris (OMR → MusicXML). The full
+`infernix test integration` (22/22 steps) and `infernix test e2e` (9/9 specs, including the per-model
+browser matrix) pass. **The `linux-gpu` lane (2026-06-26) is also green** on the rebuilt CUDA image
+(RTX 5090): integration PASS over the full 14-row GPU catalog — the GPU-only rows (AWQ + GPTQ via vLLM,
+SDXL-Turbo + Wan2.1 video via Diffusers) were already real engine code with valid HuggingFace weight URLs,
+so the CPU-lane fixes carried over and the GPU lane went green on the first cluster run — plus 9/9 e2e
+specs. [Wave K](cohort-validation-waves.md) is therefore **fully closed** (both Linux accelerators). Real
+Apple engines remain the Phase 1 / Wave L residual. Machine-independent gates (`cabal build all`, `cabal test infernix-unit`/
 `infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
 `poetry run check-code`) gate the next step.
 **Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu` real per-family

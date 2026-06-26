@@ -34,7 +34,6 @@ let PulsarConfig =
 
 let MinioConfig =
       { endpoint : Url
-      , presignPublicEndpoint : Url
       , region : Text
       , presignExpirySeconds : Natural
       , modelsBucket : Text
@@ -135,10 +134,11 @@ when the local Gateway publishes Keycloak there. `keycloak.clientId` is the publ
 the same realm's signing keys; it may use the in-cluster Keycloak Service, but it must include the
 Service port and the same `/auth/realms/<realm>/protocol/openid-connect/certs` path.
 
-`minio.endpoint` is the in-cluster Service URL used by coordinator/bootstrap code that talks to
-MinIO from inside Kubernetes. `minio.presignPublicEndpoint` is the browser-facing base used only
-when the demo backend mints `/api/objects` grants; on the local Gateway it is
-`<edge>/minio/s3`, and the route rewrites that prefix away before the request reaches MinIO.
+`minio.endpoint` is the in-cluster Service URL used by coordinator/bootstrap code and the webapp
+object-proxy to talk to MinIO from inside Kubernetes. Phase 3 Sprint 3.13 removed the
+`minio.presignPublicEndpoint` field: there is no browser-facing presign base because the browser
+never receives a presigned MinIO URL — the webapp `/api/objects` proxy signs against the internal
+`minio.endpoint` and streams bytes itself.
 
 ## Validation
 
@@ -147,9 +147,8 @@ when the demo backend mints `/api/objects` grants; on the local Gateway it is
 - `infernix lint files` rejects any new project-prefixed env lookup in the Haskell sources.
 - `infernix test e2e` proves the demo pod reads the mounted `keycloak.*` fields correctly by
   exchanging a real routed Keycloak auth code, rejecting a malformed bearer token, accepting the
-  real access token for `/api/objects` upload/download grant minting, and using
-  `minio.presignPublicEndpoint` for same-user routed presigned PUT/GET byte equality plus
-  cross-user object-prefix isolation.
+  real access token for `/api/objects` byte upload/download through the webapp proxy, and proving
+  cross-user object-prefix isolation (HTTP 403) at the server-side trust boundary.
 
 ## Cross-References
 

@@ -9,7 +9,6 @@
     }
 , minio :
     { endpoint : Text
-    , presignPublicEndpoint : Text
     , region : Text
     , presignExpirySeconds : Natural
     , modelsBucket : Text

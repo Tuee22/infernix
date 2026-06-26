@@ -46,6 +46,14 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   - `ArtifactUploadRequest`, `ArtifactUploadGrant`, `ArtifactDownloadGrant`
   - `ObjectRef`, `ArtifactKind`, `ArtifactMimeType`, `ArtifactRenderDisposition`
   - newtypes for `UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`
+- object-access grant minting is Haskell-owned and stays on the server side of the trust
+  boundary. The presigned-URL helpers and the `pathBelongsToUser` scope check live in the
+  `infernix` library, never in PureScript; the browser holds no MinIO credential and mints no
+  grant of its own. The browser receives typed object references (`ObjectRef`) and
+  drives upload/download through the webapp's `/api/objects` endpoints rather than receiving a
+  presigned MinIO URL — the webapp reads and writes MinIO server-side. See
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) and
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
 - generated `Simple.JSON` instances stay in lockstep with Haskell `ToJSON`/`FromJSON` instances
   so both sides agree on wire format mechanically
 - the generator pipeline extends this lockstep to every Phase 7 sum and newtype:
@@ -57,6 +65,12 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   beside the `tag` key (matching Aeson's `TaggedObject "tag" "contents"` behavior). The
   PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` covers 43 cases
   across every Phase 7 type to keep the lockstep mechanically enforced.
+
+**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
+route + `presignPublicEndpoint`). The browser receives only object refs and the webapp performs
+every MinIO read/write server-side; the grant carries no presigned URL. The `linux-cpu` plus
+chosen-accelerator real per-user attestation is the remaining
+[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 ## Validation
 
@@ -82,3 +96,5 @@ and the discipline that PureScript is a thin renderer is a governed contract:
 - [testing_strategy.md](testing_strategy.md)
 - [../reference/api_surface.md](../reference/api_surface.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)

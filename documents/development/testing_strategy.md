@@ -26,8 +26,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 - the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu` on
   native Linux, and real-cluster `linux-gpu`
-- the routed auxiliary checks below describe current behavior precisely: `/harbor`, `/minio/s3`,
-  and `/pulsar/ws` publication is required through the live upstream services only
+- the routed auxiliary checks below describe current behavior precisely: `/harbor`
+  and `/pulsar/ws` publication is required through the live upstream services only (MinIO has no
+  external gateway route since Phase 3 Sprint 3.13; the webapp `/api/objects` proxy is its only
+  browser-facing surface)
 - the implemented lifecycle progress surface now persists the active phase, child operation, and
   heartbeat in `cluster status` while supported `cluster up` or `cluster down` work is still in
   flight
@@ -141,8 +143,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - `infernix test integration` also validates the routed `GET /api/cache`,
   `POST /api/cache/evict`, and `POST /api/cache/rebuild` contract against manifest-backed durable
   state
-- `infernix test integration` also validates that `/harbor`, `/minio/s3`, and `/pulsar/ws`
-  resolve through the shared routed surface through the live Harbor, MinIO, and Pulsar upstreams
+- `infernix test integration` also validates that `/harbor` and `/pulsar/ws`
+  resolve through the shared routed surface through the live Harbor and Pulsar upstreams (MinIO is
+  reached only through the webapp `/api/objects` proxy, not a gateway route)
 - the target `/pulsar/ws` contract remains specific: the public prefix rewrites to Pulsar's real
   `/ws` upstream context root so routed `/pulsar/ws/v2/...` requests terminate on the WebSocket
   servlet
@@ -280,7 +283,7 @@ relationship to the existing entrypoints.
   in PureScript.
 - **Integration layer** (`infernix test integration`) — real Pulsar / MinIO / Keycloak
   round-trips, producer-dedup verification across simulated dispatcher restart, Pulsar Failover
-  handoff, cross-user presigned URL negative, chaos tests (WS pod kill, dispatcher kill, engine
+  handoff, cross-user object-key 403 negative through the webapp object-proxy, chaos tests (WS pod kill, dispatcher kill, engine
   pod kill mid-inference, coordinator kill mid-bootstrap upload, concurrent model-bootstrap
   requests, one-engine-per-node enforcement), and the **multi-user throughput / fan-in batching
   / fan-out** test (N users × K contexts × P prompts on one model) asserting per-context

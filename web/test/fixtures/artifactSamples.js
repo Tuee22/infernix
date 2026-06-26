@@ -1,5 +1,5 @@
 import { Buffer } from "node:buffer";
-import { deflateSync } from "node:zlib";
+import { readFileSync } from "node:fs";
 
 export const textPreviewBody = "browser text preview from routed artifact upload\n";
 export const jsonPreviewBody = "{\"source\":\"browser\",\"preview\":\"json\"}";
@@ -154,89 +154,12 @@ export function instrumentArpeggioWavBuffer() {
   return encodePcm16Wav(sampleRate, 1, samples);
 }
 
-// A real single-staff score IMAGE (grayscale PNG, not MusicXML): five staff
-// lines, a clef-like glyph, and a few filled noteheads rasterized into a real
-// pixel buffer and zlib-encoded via node:zlib. This is the fixture that fixes
-// the OMR input-type bug where the tool row used to be fed MusicXML.
+// A real single-staff score IMAGE (grayscale PNG): a genuine engraved score
+// (treble clef, 4/4, two bars of quarter notes) rendered by Verovio from
+// MusicXML and rasterized to a 1400px grayscale PNG (interline ~27px) that
+// Audiveris transcribes to real MusicXML. The prior synthetic 240x80 staff was
+// below Audiveris's interline/resolution threshold and was correctly rejected
+// as un-transcribable. Loaded from the committed test/fixtures binary.
 export function scoreImagePngBuffer() {
-  const width = 240;
-  const height = 80;
-  const staffLineRows = [20, 30, 40, 50, 60];
-  const noteheads = [
-    [70, 50],
-    [110, 40],
-    [150, 30],
-    [190, 45],
-  ];
-  const isStaffLine = (y) => staffLineRows.includes(y);
-  const isClef = (x, y) => x >= 14 && x <= 18 && y >= 16 && y <= 64;
-  const isNotehead = (x, y) =>
-    noteheads.some(([cx, cy]) => {
-      const dx = x - cx;
-      const dy = y - cy;
-      return dx * dx + dy * dy <= 36;
-    });
-  // Each scanline is prefixed by a 0 filter-type byte.
-  const raw = Buffer.alloc(height * (width + 1));
-  let offset = 0;
-  for (let y = 0; y < height; y += 1) {
-    raw[offset] = 0;
-    offset += 1;
-    for (let x = 0; x < width; x += 1) {
-      const ink =
-        isClef(x, y) ||
-        isNotehead(x, y) ||
-        (isStaffLine(y) && x >= 8 && x <= width - 8);
-      raw[offset] = ink ? 0 : 255;
-      offset += 1;
-    }
-  }
-  return encodeGrayscalePng(width, height, raw);
-}
-
-function pngChunk(type, data) {
-  const typeBuffer = Buffer.from(type, "ascii");
-  const lengthBuffer = Buffer.alloc(4);
-  lengthBuffer.writeUInt32BE(data.length, 0);
-  const crcBuffer = Buffer.alloc(4);
-  crcBuffer.writeUInt32BE(crc32(Buffer.concat([typeBuffer, data])) >>> 0, 0);
-  return Buffer.concat([lengthBuffer, typeBuffer, data, crcBuffer]);
-}
-
-function encodeGrayscalePng(width, height, rawScanlines) {
-  const signature = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
-  const ihdr = Buffer.alloc(13);
-  ihdr.writeUInt32BE(width, 0);
-  ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 0; // grayscale color type
-  ihdr[10] = 0; // compression
-  ihdr[11] = 0; // filter
-  ihdr[12] = 0; // interlace
-  return Buffer.concat([
-    signature,
-    pngChunk("IHDR", ihdr),
-    pngChunk("IDAT", deflateSync(rawScanlines)),
-    pngChunk("IEND", Buffer.alloc(0)),
-  ]);
-}
-
-const crc32Table = (() => {
-  const table = new Uint32Array(256);
-  for (let n = 0; n < 256; n += 1) {
-    let c = n;
-    for (let k = 0; k < 8; k += 1) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[n] = c >>> 0;
-  }
-  return table;
-})();
-
-function crc32(buffer) {
-  let crc = 0xffffffff;
-  for (let index = 0; index < buffer.length; index += 1) {
-    crc = crc32Table[(crc ^ buffer[index]) & 0xff] ^ (crc >>> 8);
-  }
-  return (crc ^ 0xffffffff) >>> 0;
+  return readFileSync(new URL("./omr-score.png", import.meta.url));
 }

@@ -19,19 +19,25 @@ module Infernix.Web.Artifacts
   ( ArtifactEntry
   , ArtifactsViewState
   , ArtifactsRenderOptions
+  , FilesViewState
+  , FilesRenderOptions
   , initialArtifactsViewState
+  , initialFilesViewState
   , dispositionFor
   , artifactEntryFromReady
+  , fileEntryFromObjectRef
+  , filesEntriesFromObjectRefs
   , recordArtifactReady
   , buildUploadRequest
   , artifactsForContext
   , handleArtifactsServerMessage
   , renderArtifactsView
+  , renderFilesView
   ) where
 
 import Prelude
 
-import Data.Array (filter, last, snoc)
+import Data.Array (filter, index, last, snoc)
 import Data.Foldable (traverse_)
 import Data.Maybe (Maybe(..), fromMaybe, isJust)
 import Data.String (Pattern(..), split, stripPrefix, stripSuffix)
@@ -69,6 +75,50 @@ initialArtifactsViewState :: ArtifactsViewState
 initialArtifactsViewState =
   { entries: [] }
 
+-- | Phase 7 Sprint 7.26 — per-user Files view. The list is populated from
+-- | @GET /api/objects/list@ (scoped server-side to the caller's
+-- | @users/<sub>/@ prefix), so every entry the view holds is already
+-- | owned by the caller.
+type FilesViewState =
+  { entries :: Array ArtifactEntry
+  , status :: String
+  }
+
+type FilesRenderOptions =
+  { activeContextId :: Maybe ContextId
+  }
+
+initialFilesViewState :: FilesViewState
+initialFilesViewState =
+  { entries: [], status: "" }
+
+-- | Build a Files-view entry from a bare 'ObjectRef' returned by
+-- | @GET /api/objects/list@. The owning context and artifact kind are
+-- | recovered from the canonical key shape
+-- | @users/<sub>/contexts/<ctx>/<uploads|generated>/<name>@; the MIME type
+-- | is inferred from the key suffix and drives the render disposition.
+fileEntryFromObjectRef :: ObjectRef -> ArtifactEntry
+fileEntryFromObjectRef ref =
+  let
+    key = objectKeyValue ref
+    parts = split (Pattern "/") key
+    contextIdValue = fromMaybe "" (index parts 3)
+    kind =
+      case index parts 4 of
+        Just "generated" -> ArtifactKindGenerated
+        _ -> ArtifactKindUpload
+    mimeType = mimeFromObjectKey key
+  in
+    { contextId: ContextId { unContextId: contextIdValue }
+    , objectRef: ref
+    , kind: kind
+    , mimeType: mimeType
+    , disposition: dispositionFor mimeType
+    }
+
+filesEntriesFromObjectRefs :: Array ObjectRef -> Array ArtifactEntry
+filesEntriesFromObjectRefs = map fileEntryFromObjectRef
+
 -- | Mechanical mapping from a MIME type to the render disposition the
 -- | Artifacts view should use. The Haskell @/api/objects/download@
 -- | response already carries a typed disposition; this helper is the
@@ -76,14 +126,17 @@ initialArtifactsViewState =
 -- | 'ServerArtifactReady' where only the MIME type is known.
 dispositionFor :: String -> ArtifactRenderDisposition
 dispositionFor mimeType
-  | mimeType == "audio/midi" = DownloadOnly
-  | mimeType == "audio/x-midi" = DownloadOnly
+  | mimeType == "audio/midi" = RenderMidi
+  | mimeType == "audio/x-midi" = RenderMidi
   | hasPrefix "image/" mimeType = RenderInline
   | hasPrefix "audio/" mimeType = RenderInline
   | hasPrefix "video/" mimeType = RenderInline
   | mimeType == "application/pdf" = BrowserNativePdf
   | mimeType == "application/json" = BoundedTextPreview
   | hasPrefix "text/" mimeType = BoundedTextPreview
+  | mimeType == "application/vnd.recordare.musicxml+xml" = RenderMusicXml
+  | mimeType == "application/vnd.recordare.musicxml" = RenderMusicXml
+  | mimeType == "application/zip" = RenderZipStems
   | otherwise = DownloadOnly
 
 hasPrefix :: String -> String -> Boolean
@@ -198,6 +251,7 @@ mimeFromObjectKey key =
   else if endsWith ".mid" key || endsWith ".midi" key then "audio/midi"
   else if endsWith ".xml" key || endsWith ".musicxml" key then "application/vnd.recordare.musicxml+xml"
   else if endsWith ".mxl" key then "application/vnd.recordare.musicxml"
+  else if endsWith ".zip" key then "application/zip"
   else "application/octet-stream"
 
 endsWith :: String -> String -> Boolean
@@ -311,8 +365,24 @@ renderArtifactPreview document entry =
       mediaElement document "iframe" "artifact-preview-pdf" entry
     BoundedTextPreview ->
       textElement document "pre" "artifact-preview-text" "Preview waits for a download grant."
+    RenderMidi ->
+      notationMountElement document "artifact-preview-midi" entry "MIDI playback waits for a download grant."
+    RenderMusicXml ->
+      notationMountElement document "artifact-preview-musicxml" entry "Notation waits for a download grant."
+    RenderZipStems ->
+      notationMountElement document "artifact-preview-zip" entry "Stems wait for a download grant."
     DownloadOnly ->
       textElement document "p" "artifact-preview-download-only" "Download-only artifact."
+
+-- | A mount node for an in-browser renderer (MIDI piano-roll, MusicXML SVG,
+-- | or ZIP-stem audio list). The shell's download handler fetches the bytes
+-- | and the FFI renderer populates this node in place (Phase 7 Sprint 7.27).
+notationMountElement :: Document.Document -> String -> ArtifactEntry -> String -> Effect Element.Element
+notationMountElement document classNameValue entry placeholder = do
+  mount <- textElement document "div" classNameValue placeholder
+  Element.setAttribute "data-object-bucket" (objectBucketValue entry.objectRef) mount
+  Element.setAttribute "data-object-key" (objectKeyValue entry.objectRef) mount
+  pure mount
 
 mediaElement :: Document.Document -> String -> String -> ArtifactEntry -> Effect Element.Element
 mediaElement document tagName classNameValue entry = do
@@ -358,6 +428,9 @@ dispositionLabel disposition =
     DownloadOnly -> "download"
     BoundedTextPreview -> "text preview"
     BrowserNativePdf -> "PDF"
+    RenderMidi -> "MIDI"
+    RenderMusicXml -> "notation"
+    RenderZipStems -> "stems"
 
 dispositionClass :: ArtifactRenderDisposition -> String
 dispositionClass disposition =
@@ -366,6 +439,9 @@ dispositionClass disposition =
     DownloadOnly -> "download-only"
     BoundedTextPreview -> "text-preview"
     BrowserNativePdf -> "pdf"
+    RenderMidi -> "midi"
+    RenderMusicXml -> "musicxml"
+    RenderZipStems -> "zip"
 
 dispositionTag :: ArtifactRenderDisposition -> String
 dispositionTag disposition =
@@ -374,6 +450,9 @@ dispositionTag disposition =
     DownloadOnly -> "DownloadOnly"
     BoundedTextPreview -> "BoundedTextPreview"
     BrowserNativePdf -> "BrowserNativePdf"
+    RenderMidi -> "RenderMidi"
+    RenderMusicXml -> "RenderMusicXml"
+    RenderZipStems -> "RenderZipStems"
 
 contextIdRawValue :: ContextId -> String
 contextIdRawValue (ContextId inner) = inner.unContextId
@@ -382,6 +461,84 @@ objectDisplayName :: ObjectRef -> String
 objectDisplayName objectRef =
   let key = objectKeyValue objectRef
   in fromMaybe key (last (split (Pattern "/") key))
+
+-- | Render the per-user Files surface (Phase 7 Sprint 7.26). It reuses the
+-- | upload panel and the artifact render dispositions, draws a flat list of
+-- | every object the caller owns, and adds a delete action per entry. The
+-- | list bytes and the delete request are driven by the shell's transport
+-- | (`Infernix.Web.FilesTransport`); this renderer only emits stable data
+-- | attributes those handlers read.
+renderFilesView
+  :: Document.Document
+  -> Element.Element
+  -> FilesRenderOptions
+  -> FilesViewState
+  -> Effect Unit
+renderFilesView document container options state = do
+  clearChildren container
+  shell <- createElement document "section" "files-view"
+  heading <- textElement document "h2" "artifacts-section-title" "Files"
+  status <- textElement document "p" "files-status" state.status
+  Element.setAttribute "data-role" "files-status" status
+  upload <- renderUploadPanel document { activeContextId: options.activeContextId }
+  list <- renderFileList document state.entries
+  appendElement shell heading
+  appendElement shell status
+  appendElement shell upload
+  appendElement shell list
+  appendElement container shell
+
+renderFileList :: Document.Document -> Array ArtifactEntry -> Effect Element.Element
+renderFileList document entries = do
+  section <- createElement document "section" "artifact-list-section"
+  header <- textElement document "h3" "artifacts-section-title" "Your files"
+  list <- createElement document "div" "artifact-list"
+  appendElement section header
+  if entries == [] then do
+    empty <- textElement document "p" "artifact-empty-state" "No files."
+    appendElement list empty
+  else
+    traverse_ (appendFileEntry document list) entries
+  appendElement section list
+  pure section
+
+appendFileEntry :: Document.Document -> Element.Element -> ArtifactEntry -> Effect Unit
+appendFileEntry document list entry = do
+  card <- createElement document "article" ("artifact-entry " <> dispositionClass entry.disposition)
+  Element.setAttribute "data-object-bucket" (objectBucketValue entry.objectRef) card
+  Element.setAttribute "data-object-key" (objectKeyValue entry.objectRef) card
+  Element.setAttribute "data-context-id" (contextIdRawValue entry.contextId) card
+  Element.setAttribute "data-mime-type" entry.mimeType card
+  Element.setAttribute "data-display-name" (objectDisplayName entry.objectRef) card
+  Element.setAttribute "data-render-disposition" (dispositionTag entry.disposition) card
+  title <- textElement document "h3" "artifact-title" (kindLabel entry.kind <> " - " <> objectKeyValue entry.objectRef)
+  metadata <- textElement document "p" "artifact-metadata" (entry.mimeType <> " - " <> dispositionLabel entry.disposition)
+  preview <- renderArtifactPreview document entry
+  actions <- renderFileActions document entry
+  appendElement card title
+  appendElement card metadata
+  appendElement card preview
+  appendElement card actions
+  appendElement list card
+
+renderFileActions :: Document.Document -> ArtifactEntry -> Effect Element.Element
+renderFileActions document entry = do
+  actions <- createElement document "div" "artifact-actions"
+  download <- textElement document "button" "artifact-download-button" "Download"
+  Element.setAttribute "type" "button" download
+  Element.setAttribute "data-role" "artifact-download" download
+  Element.setAttribute "data-object-bucket" (objectBucketValue entry.objectRef) download
+  Element.setAttribute "data-object-key" (objectKeyValue entry.objectRef) download
+  Element.setAttribute "data-context-id" (contextIdRawValue entry.contextId) download
+  Element.setAttribute "data-mime-type" entry.mimeType download
+  Element.setAttribute "data-display-name" (objectDisplayName entry.objectRef) download
+  delete <- textElement document "button" "artifact-delete-button" "Delete"
+  Element.setAttribute "type" "button" delete
+  Element.setAttribute "data-role" "file-delete" delete
+  Element.setAttribute "data-object-key" (objectKeyValue entry.objectRef) delete
+  appendElement actions download
+  appendElement actions delete
+  pure actions
 
 createElement :: Document.Document -> String -> String -> Effect Element.Element
 createElement document tagName classNameValue = do

@@ -67,7 +67,19 @@ The per-app pod. Owns the user-facing surface:
 - WebSocket upgrade on `<wsPath>` plus JWT validation on handshake via
   `Infernix.Auth.Jwt`
 - HTTP route handlers for `<authPath>` (OIDC) and `<objectsApiPath>`
-  (presigned URL minting)
+  (webapp-mediated artifact upload, download, and listing). The frontend
+  is the single mediator for browser object access: it derives every
+  object key server-side from the verified `sub`, authorizes it with
+  `Infernix.Objects.Layout.pathBelongsToUser`, and performs the MinIO
+  read/write itself over the cluster-internal endpoint, so the browser
+  never holds a MinIO credential or presigned MinIO URL (see
+  [object_access_doctrine.md](object_access_doctrine.md) and
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)). **Current
+  Status:** the present build mints presigned MinIO URLs at
+  `<objectsApiPath>` and the browser transfers bytes directly through the
+  `/minio/s3` gateway route; the migration to webapp mediation is tracked
+  by reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25 under
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - SPA asset serving
 - Per-WS Pulsar `Reader` subscriptions on the user's conversation,
   contexts, and drafts topics; forwards events as typed
@@ -422,6 +434,8 @@ resolution of this doc.
 
 - [durable_context_design.md](durable_context_design.md) — product-agnostic durable-context primitives
 - [demo_app_design.md](demo_app_design.md) — demo-specific bindings
+- [object_access_doctrine.md](object_access_doctrine.md) — frontend as the single mediator for browser artifact I/O
+- [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md) — per-user `sub`-derived isolation at one server-side boundary
 - [runtime_modes.md](runtime_modes.md) — control-plane execution contexts and service placement
 - [overview.md](overview.md) — platform topology
 - [web_ui_architecture.md](web_ui_architecture.md) — PureScript topology and image layout

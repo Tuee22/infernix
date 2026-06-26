@@ -12,9 +12,6 @@ spec:
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
       name: infernix-pulsar-admin
-    - group: gateway.networking.k8s.io
-      kind: HTTPRoute
-      name: infernix-minio-s3
   jwt:
     providers:
       - name: infernix-keycloak

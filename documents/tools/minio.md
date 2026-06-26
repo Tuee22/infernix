@@ -41,7 +41,7 @@
 ## Routed Surfaces
 
 <!-- infernix:route-registry:minio:start -->
-- `/minio/s3` -> `infernix-minio:9000`; rewrites to upstream `/`
+- MinIO has no external gateway route; the browser reaches objects only through the `infernix-demo` webapp `/api/objects` proxy.
 <!-- infernix:route-registry:minio:end -->
 - the supported Gateway contract targets the live MinIO console and S3 surfaces, and integration
   requires those real upstream responses on the shared edge
@@ -57,13 +57,22 @@ The `infernix-demo-objects` bucket lives alongside the always-on `infernix-model
   - `users/<userId>/contexts/<contextId>/generated/<objectKey>` — model-generated artifacts
   - `users/<userId>/contexts/<contextId>/snapshots/...` is reserved but unused in the supported
     contract; conversation rehydration is direct Pulsar replay, not snapshot replay
-- `userId` is the Keycloak `sub` claim, stable across login/logout/password change/device
-- the `infernix-demo` backend mints presigned PUT and GET URLs via `/api/objects`; grant minting
-  is scoped to the authenticated user's prefix, so a user cannot mint the default route for
-  another user's object key. Presigned URLs remain bearer capabilities until expiry and should not
-  be shared outside the authenticated session.
-- artifact bytes never traverse the demo backend; the browser performs multipart upload
-  directly to MinIO using the presigned URL and downloads directly using the presigned GET
+- `userId` is the Keycloak `sub` claim, stable across login/logout/password change/device; the
+  `users/<sub>/` prefix is derived server-side from the verified token and is the per-user
+  isolation boundary. The client never names its own user id or full object key. See
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md) for
+  the canonical `sub`-derived isolation rule.
+- the `infernix-demo` webapp is the single server-side mediator for
+  every browser upload and download via `/api/objects`: it derives the key from the verified `sub`,
+  authorizes it with `pathBelongsToUser`, and performs the MinIO read/write itself over the
+  cluster-internal endpoint, so the browser never receives a presigned MinIO URL. See
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) for the
+  single-mediator contract. **Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3
+  Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`). The `linux-cpu` plus
+  chosen-accelerator real per-user attestation is the remaining Wave M residual.
+- artifact bytes always traverse the demo backend: the browser POSTs upload bytes to
+  `/api/objects/upload` and GETs download bytes from `/api/objects/download`, and the webapp signs
+  internal presigned URLs and performs the PUT/GET against MinIO server-side
 - `DELETE /api/account` lists `infernix-demo-objects` with an S3 ListObjectsV2 query scoped to
   `users/<userId>/` and deletes each returned object before the browser starts Keycloak account
   deletion
@@ -71,18 +80,15 @@ The `infernix-demo-objects` bucket lives alongside the always-on `infernix-model
   `infernix-demo` backend also runs a startup repair pass from mounted `ClusterConfig` /
   `SecretsConfig` and creates the required buckets with presigned bucket-level PUTs when
   chart-time provisioning was bypassed or raced
-- `infernix test e2e` validates `/api/objects` grant minting with a real Keycloak access token,
-  verifies malformed bearer rejection plus per-user key scoping in the grant response, and
-  performs a same-user routed presigned PUT/GET byte roundtrip with exact content equality. A
-  second Keycloak user registered for the same context/display name confirms the grant points at
-  the second user's `sub` prefix, observes `404` before the second upload, and verifies each
-  user reads only that user's bytes by default. The routed download-grant MIME disposition
-  matrix covers inline image/audio/video, browser-native PDF, bounded JSON/text preview, and
-  download-only MIDI / MusicXML / generic-binary grants. The browser artifact flow covers
-  bounded text/JSON previews, inline image/audio/video rendering, browser-native PDF URL wiring,
-  and MIDI / MusicXML / generic-binary download-only states through routed presigned URLs. The
-  account-deletion smoke verifies the previously readable presigned GET returns `404` after the
-  backend cleanup succeeds.
+- `infernix test e2e` validates `/api/objects` byte upload/download through the webapp proxy with a
+  real Keycloak access token, verifies malformed bearer rejection, and performs a same-user routed
+  upload/download byte roundtrip with exact content equality. A second Keycloak user registered for
+  the same context/display name reads only that user's bytes, and a request for another user's
+  object key is rejected with HTTP 403 at the server-side trust boundary. The routed download-grant
+  MIME disposition matrix covers inline image/audio/video, browser-native PDF, bounded JSON/text
+  preview, and the in-browser MIDI / MusicXML / ZIP render dispositions (Phase 7 Sprint 7.27). The
+  account-deletion smoke verifies the previously readable object returns `404` through the webapp
+  proxy after the backend cleanup succeeds.
 - supported artifact MIME families on the UI side: `image/*`, playable `audio/*`, `video/*`,
   text/structured-text artifacts (`text/*`, `application/json`), PDF documents
   (`application/pdf`), MIDI variants (`audio/midi`, `audio/x-midi`, `application/x-midi`),
@@ -110,11 +116,16 @@ of the supported contract.
 | Volume-permissions init container | `busybox` | Multi-arch; provides the `sh`/`chmod`/`chown` the chart's `defaultInitContainers.volumePermissions` block runs to seed PV permissions before MinIO starts |
 
 The standalone Console deployment (`bitnamilegacy/minio-object-browser`) is disabled
-(`minio.console.enabled: false`). There is no supported `/minio` browser route — operators
-access object data through presigned URLs from the demo backend rather than a browser
-console. If a future plan reintroduces the browser UI, it will use a multi-arch upstream
-image at a known tag and the change will land in the chart together with a new supported
-route.
+(`minio.console.enabled: false`). There is no supported `/minio` browser route — at the
+declarative target operators and users reach object data only through the `infernix-demo`
+webapp's `/api/objects` endpoints rather than a browser console, with the webapp as the single
+externally routed file surface (see
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
+**Current Status**: implemented. Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route and the
+MinIO console; browser file access flows only through the webapp-mediated `/api/objects` path
+(Phase 7 Sprint 7.25). If a future plan reintroduces the MinIO browser console, it will use a
+multi-arch upstream image at a known tag and the change will land in the chart together with a new
+supported route.
 
 The substrate → container architecture mapping is owned by
 [../architecture/runtime_modes.md](../architecture/runtime_modes.md); Harbor publication
@@ -128,4 +139,6 @@ single-platform variant into the cluster's Harbor namespace.
 - [postgresql.md](postgresql.md)
 - [keycloak.md](keycloak.md)
 - [../engineering/object_storage.md](../engineering/object_storage.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)

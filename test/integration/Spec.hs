@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 
 module Main (main) where
 
@@ -9,13 +10,13 @@ import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
 import Data.Aeson.KeyMap qualified as AesonKeyMap
-import Data.Bits (shiftR, testBit, xor)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
+import Data.FileEmbed (embedFile)
 import Data.List (find, intercalate, isInfixOf, isPrefixOf, nub, partition, sort)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
@@ -24,7 +25,6 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Data.Word (Word32, Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
 import Infernix.Config (Paths (..))
@@ -178,12 +178,6 @@ exerciseRuntimeMode paths runtimeMode = do
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       (harborPortalStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor")
       (harborApiStatus, harborApiResponse) <- waitForRoutedHarborProjectsApi paths state
-      -- Phase 3 Sprint 3.11 (2026-05-30): the standalone MinIO Console
-      -- Deployment was retired together with the bitnami sub-chart;
-      -- the `/minio/console` route is gone and operators reach
-      -- artifacts through presigned MinIO URLs minted by the demo
-      -- backend instead.
-      (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
       (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
       assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
@@ -226,8 +220,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
         "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
       assert
-        (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
-        "minio S3 route stays published and reaches the live MinIO S3 upstream on the cluster path"
+        (not (any ((== "/minio/s3") . path) (routes state)))
+        "Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed from the published route inventory"
       assert
         (pulsarAdminStatus `elem` [401, 403])
         "pulsar admin route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
@@ -842,137 +836,15 @@ encodePcm16Wav sampleRate channels samples =
     sampleBytes = ByteString.concat (map (littleEndian16 . wrapInt16) samples)
     payloadLength = ByteString.length sampleBytes
 
--- | Phase 4 Sprint 4.23 — a real single-staff score IMAGE (grayscale PNG, not
--- MusicXML). We rasterize five staff lines, a clef-like vertical glyph, and a
--- few filled noteheads into a real pixel buffer, then emit a standards-valid
--- PNG (zlib stored/uncompressed deflate blocks with a real Adler-32 trailer
--- and per-chunk CRC-32). This is the fixture that fixes the OMR input-type bug
--- where the row used to be fed MusicXML instead of an image.
+-- | Phase 4 Sprint 4.23 / Wave K -- a real single-staff score IMAGE
+-- (grayscale PNG). A genuine engraved score (treble clef, 4/4, two bars of
+-- quarter notes) rendered by Verovio from MusicXML and rasterized to a 1400px
+-- grayscale PNG (interline ~27px) that Audiveris transcribes to real
+-- MusicXML. The prior synthetic 240x80 staff was below Audiveris's interline
+-- and resolution threshold and was correctly rejected as un-transcribable.
+-- Bytes are embedded from test/fixtures/omr-score.png at compile time.
 scoreImagePngBytes :: ByteString.ByteString
-scoreImagePngBytes = encodeGrayscalePng scoreImageWidth scoreImageHeight scoreImagePixels
-
-scoreImageWidth :: Int
-scoreImageWidth = 240
-
-scoreImageHeight :: Int
-scoreImageHeight = 80
-
--- | Pixel rows (top to bottom), each a list of 8-bit grayscale values
--- (0 = black ink, 255 = white paper).
-scoreImagePixels :: [[Int]]
-scoreImagePixels =
-  [ [pixelAt x y | x <- [0 .. scoreImageWidth - 1]]
-  | y <- [0 .. scoreImageHeight - 1]
-  ]
-  where
-    staffLineRows = [20, 30, 40, 50, 60] :: [Int]
-    isStaffLine y = y `elem` staffLineRows
-    -- A clef-like vertical glyph near the left margin.
-    isClef x y = x >= 14 && x <= 18 && y >= 16 && y <= 64
-    -- Filled noteheads centered on staff positions across the bar.
-    noteheads = [(70, 50), (110, 40), (150, 30), (190, 45)] :: [(Int, Int)]
-    isNotehead x y =
-      any
-        (\(cx, cy) -> let dx = x - cx; dy = y - cy in dx * dx + dy * dy <= 36)
-        noteheads
-    pixelAt x y
-      | isClef x y = 0
-      | isNotehead x y = 0
-      | isStaffLine y && x >= 8 && x <= scoreImageWidth - 8 = 0
-      | otherwise = 255
-
--- | Encode an 8-bit grayscale image as a valid PNG using uncompressed zlib
--- (deflate stored blocks). No external zlib dependency: we compute the
--- Adler-32 (zlib trailer) and CRC-32 (PNG chunk) checksums directly.
-encodeGrayscalePng :: Int -> Int -> [[Int]] -> ByteString.ByteString
-encodeGrayscalePng width height rows =
-  ByteString.concat
-    [ pngSignature,
-      pngChunk "IHDR" ihdr,
-      pngChunk "IDAT" (zlibStored rawScanlines),
-      pngChunk "IEND" ByteString.empty
-    ]
-  where
-    pngSignature = ByteString.pack [137, 80, 78, 71, 13, 10, 26, 10]
-    ihdr =
-      ByteString.concat
-        [ bigEndian32 width,
-          bigEndian32 height,
-          ByteString.pack [8, 0, 0, 0, 0] -- 8-bit depth, grayscale, default filters
-        ]
-    -- Each scanline is prefixed by a 0 filter-type byte.
-    rawScanlines =
-      ByteString.concat
-        [ ByteString.cons 0 (ByteString.pack (map (fromIntegral . clampByte) row))
-        | row <- rows
-        ]
-    clampByte value = max 0 (min 255 value)
-
--- | A PNG chunk: length, type, data, CRC-32 of (type ++ data).
-pngChunk :: String -> ByteString.ByteString -> ByteString.ByteString
-pngChunk chunkType chunkData =
-  ByteString.concat
-    [ bigEndian32 (ByteString.length chunkData),
-      typeBytes,
-      chunkData,
-      bigEndian32 (fromIntegral (crc32 (typeBytes <> chunkData)))
-    ]
-  where
-    typeBytes = ByteString8.pack chunkType
-
--- | Wrap a raw byte payload in a zlib stream using only deflate stored
--- (uncompressed) blocks, with the trailing Adler-32 checksum.
-zlibStored :: ByteString.ByteString -> ByteString.ByteString
-zlibStored payload =
-  ByteString.concat
-    [ ByteString.pack [0x78, 0x01], -- zlib header: deflate, 32K window, no dict
-      ByteString.concat (storedBlocks (chunkBytes maxBlock payload)),
-      bigEndian32 (fromIntegral (adler32 payload))
-    ]
-  where
-    maxBlock = 65535
-    storedBlocks [] = [ByteString.pack [1, 0, 0, 0xFF, 0xFF]] -- empty final block
-    storedBlocks blocks = zipWith storedBlock (markFinal blocks) blocks
-    markFinal blocks = replicate (length blocks - 1) False <> [True]
-    storedBlock isFinal block =
-      let len = ByteString.length block
-       in ByteString.concat
-            [ ByteString.singleton (if isFinal then 1 else 0), -- BFINAL, BTYPE=00
-              littleEndian16 len,
-              littleEndian16 (complement16 len),
-              block
-            ]
-    complement16 value = 0xFFFF - value
-
--- | Split a ByteString into chunks of at most @size@ bytes.
-chunkBytes :: Int -> ByteString.ByteString -> [ByteString.ByteString]
-chunkBytes size bytes
-  | ByteString.null bytes = []
-  | otherwise =
-      let (chunk, rest) = ByteString.splitAt size bytes
-       in chunk : chunkBytes size rest
-
--- | Adler-32 (RFC 1950), table-free.
-adler32 :: ByteString.ByteString -> Integer
-adler32 bytes =
-  let (finalA, finalB) = ByteString.foldl' step (1, 0) bytes
-   in (finalB * 65536) + finalA
-  where
-    step (a, b) byte =
-      let a' = (a + fromIntegral byte) `mod` 65521
-       in (a', (b + a') `mod` 65521)
-
--- | CRC-32 (IEEE 802.3 / zlib polynomial 0xEDB88320), table-free.
-crc32 :: ByteString.ByteString -> Integer
-crc32 bytes =
-  toInteger (ByteString.foldl' step 0xFFFFFFFF bytes `xor` 0xFFFFFFFF)
-  where
-    step :: Word32 -> Word8 -> Word32
-    step acc byte =
-      iterate stepBit (acc `xor` fromIntegral byte) !! (8 :: Int)
-    stepBit value
-      | testBit value 0 = (value `shiftR` 1) `xor` 0xEDB88320
-      | otherwise = value `shiftR` 1
+scoreImagePngBytes = $(embedFile "test/fixtures/omr-score.png")
 
 wrapInt16 :: Int -> Int
 wrapInt16 value = value `mod` 65536
@@ -988,15 +860,6 @@ littleEndian32 value =
       fromIntegral (value `div` 256),
       fromIntegral (value `div` 65536),
       fromIntegral (value `div` 16777216)
-    ]
-
-bigEndian32 :: Int -> ByteString.ByteString
-bigEndian32 value =
-  ByteString.pack
-    [ fromIntegral (value `div` 16777216),
-      fromIntegral (value `div` 65536),
-      fromIntegral (value `div` 256),
-      fromIntegral value
     ]
 
 linuxGpuModelUsesPythonNativeEngine :: ModelDescriptor -> Bool
@@ -1724,10 +1587,16 @@ validateModelBootstrapDeduplication paths state runtimeMode = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
   runToken <- Text.pack <$> integrationRunToken
   let modelIdText = "integration-bootstrap-chaos-" <> runToken
+      -- This chaos test exercises bootstrap coordinator failover + producer
+      -- dedup, not real weight staging, so it needs any in-cluster URL the
+      -- staging path accepts. The webapp root serves HTML, which the Sprint
+      -- 4.21 realness weight guard (`bodyLooksLikeHtml`) now fails closed; use
+      -- the `/healthz` endpoint (plain-text "ok") so the bootstrap completes and
+      -- the failover/dedup mechanics can be observed.
       request =
         BootstrapModels.ModelBootstrapRequest
           { BootstrapModels.bootstrapRequestModelId = modelIdText,
-            BootstrapModels.bootstrapRequestDownloadUrl = "http://infernix-demo.platform.svc.cluster.local/",
+            BootstrapModels.bootstrapRequestDownloadUrl = "http://infernix-demo.platform.svc.cluster.local/healthz",
             BootstrapModels.bootstrapRequestRequestedAtIso8601 = "2026-06-02T00:00:00Z"
           }
       readyTopic =
@@ -2235,14 +2104,13 @@ validateDemoUiDisabled paths runtimeMode =
         disabledPublicationResult <- try (httpGet (baseUrl <> "/api/publication")) :: IO (Either IOError String)
         harborResponse <- httpGet (baseUrl <> "/harbor")
         pulsarAdminResponse <- httpGet (baseUrl <> "/pulsar/admin/admin/v2/clusters")
-        (minioS3Status, minioS3Response) <- httpGetWithStatus (baseUrl <> "/minio/s3/models/demo.bin")
         (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
         assert (either (const True) (const False) disabledHomeResult) "the browser root is absent when demo_ui is disabled"
         assert (either (const True) (const False) disabledPublicationResult) "the demo API is absent when demo_ui is disabled"
         assert ("Harbor" `isInfixOf` harborResponse) "harbor remains published when demo_ui is disabled"
         assert
-          (minioS3Status `elem` [200, 401, 403, 404] && "\"rewrittenPath\"" `notElemString` compact minioS3Response)
-          "minio remains published when demo_ui is disabled"
+          (not (any ((== "/minio/s3") . path) (routes state)))
+          "Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed from the published route inventory"
         assert
           ("[\"infernix-infernix-pulsar\"]" `isInfixOf` compact pulsarAdminResponse)
           "pulsar admin remains published when demo_ui is disabled"

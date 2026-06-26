@@ -44,10 +44,18 @@ The supported shape uses three MinIO buckets and nothing else:
   are content-addressed and immutable; mutable adapter pointers, when
   present, are compare-and-swap style publication records rather than
   payload overwrites.
-- `infernix-demo-objects` uses per-user grant-minting scope checks that restrict
-  the default object path to the authenticated user's prefix. Presigned URLs are bearer
-  capabilities until expiry, so callers must treat them as session-confidential. See
-  [../tools/minio.md](../tools/minio.md) for the policy details.
+- `infernix-demo-objects` restricts every object path to the authenticated user's `sub`-derived
+  prefix. The `infernix-demo` webapp is the single server-side mediator
+  for these objects: the browser uploads and downloads through the webapp's `/api/objects`
+  endpoints, the key is derived server-side from the verified `sub`, and the browser is never handed
+  a presigned MinIO URL. See
+  [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) for the
+  single-mediator contract and
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md) for
+  the per-user `sub`-prefix isolation rule, and [../tools/minio.md](../tools/minio.md) for the
+  bucket layout. **Current Status**: implemented (Phase 7 Sprint 7.25 webapp object-proxy; Phase 3
+  Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`). The `linux-cpu` plus
+  chosen-accelerator real per-user attestation is the remaining Wave M residual.
 - Cross-bucket access is not part of the supported contract.
 
 ## Engine Software Artifacts
@@ -184,17 +192,28 @@ on-host engine daemon, an equivalent host-local cache lives under
 `./.data/runtime/model-cache/`; it is purgeable host state on the
 operator's machine, not durable cluster state.
 
-Browsers fetch generated artifacts exclusively through `/api/objects`-
-minted presigned URLs against the `infernix-demo-objects` MinIO
-bucket.
+Browsers fetch generated artifacts exclusively through the webapp's
+`/api/objects` endpoints against the `infernix-demo-objects` MinIO
+bucket. Those endpoints stream the bytes
+server-side and the browser never receives a presigned MinIO URL (see
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
+**Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the
+`/minio/s3` route). The `linux-cpu` plus chosen-accelerator real per-user attestation is the
+remaining Wave M residual.
 
 ## Routed Surface
 
-The `/api/objects` HTTP endpoint on the demo backend (demo-only,
-JWT-validated) mints presigned PUT and GET URLs scoped to the
-authenticated user's prefix in `infernix-demo-objects`. Artifact bytes
-flow directly between the browser and MinIO; the demo backend never
-proxies artifact bytes on the durable-context path. The supported
+The `/api/objects` HTTP endpoints on the demo backend (demo-only,
+JWT-validated) are the single mediator for browser artifact I/O against
+the authenticated user's `sub`-derived prefix in `infernix-demo-objects`.
+The webapp reads and writes MinIO server-side
+over the cluster-internal endpoint and streams artifact bytes through
+its own `/api/objects/{upload,download}` surface; the browser holds only
+the webapp origin and never a presigned MinIO URL (see
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
+**Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the
+`/minio/s3` route + `presignPublicEndpoint`); the `linux-cpu` plus chosen-accelerator real
+per-user attestation is the remaining Wave M residual. The supported
 MIME contract for browser-rendered artifacts (image, audio, video,
 text/JSON preview, browser-native PDF, MIDI / MusicXML download-only,
 and generic-binary download) lives in
@@ -231,6 +250,8 @@ The routed Linux GPU E2E flow validates the server-side
 - [implementation_boundaries.md](implementation_boundaries.md)
 - [k8s_storage.md](k8s_storage.md)
 - [../architecture/runtime_modes.md](../architecture/runtime_modes.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)

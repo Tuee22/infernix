@@ -4432,8 +4432,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         <> if demoUiEnabledValue
           then
             [ "clusterConfig:",
-              "  minio:",
-              "    presignPublicEndpoint: " <> clusterEdgeBaseUrl paths state <> "/minio/s3",
               "  keycloak:",
               "    baseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
               "    clientId: " <> keycloakSpaClientId,

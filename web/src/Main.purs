@@ -39,11 +39,15 @@ import Infernix.Web.ArtifactTransport
 import Infernix.Web.Artifacts
   ( ArtifactEntry
   , ArtifactsViewState
+  , FilesViewState
   , dispositionFor
+  , filesEntriesFromObjectRefs
   , handleArtifactsServerMessage
   , initialArtifactsViewState
+  , initialFilesViewState
   , recordArtifactReady
   , renderArtifactsView
+  , renderFilesView
   )
 import Infernix.Web.Auth
   ( TokenStore
@@ -74,6 +78,7 @@ import Infernix.Web.Chat
   , renderChatView
   )
 import Infernix.Web.DomEvents (bindChatChrome)
+import Infernix.Web.FilesTransport (bindFilesActions, refreshFilesList)
 import Infernix.Web.Router (Route(..), routePath)
 import Infernix.Web.WebSocket
   ( WsConnection
@@ -123,6 +128,7 @@ type AppState =
   , activeContextId :: Maybe ContextId
   , chat :: ChatViewState
   , artifacts :: ArtifactsViewState
+  , files :: FilesViewState
   , authenticated :: Boolean
   , token :: Maybe String
   , wsConnection :: Maybe WsConnection
@@ -140,6 +146,7 @@ type Refs =
   , deleteAccountButton :: Element.Element
   , routeChat :: Element.Element
   , routeArtifacts :: Element.Element
+  , routeFiles :: Element.Element
   , runtimeModeValue :: Element.Element
   , controlPlaneContext :: Element.Element
   , daemonLocation :: Element.Element
@@ -150,6 +157,7 @@ type Refs =
   , routeList :: Element.Element
   , chatRoot :: Element.Element
   , artifactsRoot :: Element.Element
+  , filesRoot :: Element.Element
   }
 
 main :: Effect Unit
@@ -190,6 +198,7 @@ main = do
       , activeContextId: restoredActiveContextId
       , chat: initialChatViewState { activeConversation = restoredConversation }
       , artifacts: initialArtifactsViewState
+      , files: initialFilesViewState
       , authenticated: case maybeToken of
           Just _ -> true
           Nothing -> false
@@ -200,6 +209,9 @@ main = do
       }
   bindEvents tokenStore stateRef refs
   bindArtifactTransport refs.artifactsRoot (handleUploadedArtifact stateRef refs) (handleArtifactError refs)
+  -- The Files view reuses the same upload/download transport, plus list + delete.
+  bindArtifactTransport refs.filesRoot (handleUploadedArtifact stateRef refs) (handleArtifactError refs)
+  bindFilesActions refs.filesRoot (handleDeletedFile stateRef refs) (handleArtifactError refs)
   renderAll stateRef refs
   completeRedirect tokenStore defaultInfernixRealmConfig (establishAuthenticatedSession stateRef refs)
   case maybeToken of
@@ -228,6 +240,7 @@ captureRefs htmlDocument = do
   deleteAccountButton <- requireElement htmlDocument "delete-account-button"
   routeChat <- requireElement htmlDocument "route-chat"
   routeArtifacts <- requireElement htmlDocument "route-artifacts"
+  routeFiles <- requireElement htmlDocument "route-files"
   runtimeModeValue <- requireElement htmlDocument "runtime-mode"
   controlPlaneContext <- requireElement htmlDocument "control-plane-context"
   daemonLocation <- requireElement htmlDocument "daemon-location"
@@ -238,6 +251,7 @@ captureRefs htmlDocument = do
   routeList <- requireElement htmlDocument "route-list"
   chatRoot <- requireElement htmlDocument "chat-root"
   artifactsRoot <- requireElement htmlDocument "artifacts-root"
+  filesRoot <- requireElement htmlDocument "files-root"
   pure
     { document
     , body
@@ -248,6 +262,7 @@ captureRefs htmlDocument = do
     , deleteAccountButton
     , routeChat
     , routeArtifacts
+    , routeFiles
     , runtimeModeValue
     , controlPlaneContext
     , daemonLocation
@@ -258,6 +273,7 @@ captureRefs htmlDocument = do
     , routeList
     , chatRoot
     , artifactsRoot
+    , filesRoot
     }
 
 bindEvents :: TokenStore -> Ref.Ref AppState -> Refs -> Effect Unit
@@ -339,6 +355,14 @@ bindEvents tokenStore stateRef refs = do
       Ref.modify_ (_ { route = RouteArtifacts }) stateRef
       renderAll stateRef refs
   EventTarget.addEventListener EventTypes.click artifactsListener false (Element.toEventTarget refs.routeArtifacts)
+
+  filesListener <-
+    EventTarget.eventListener \event -> do
+      Event.preventDefault event
+      Ref.modify_ (_ { route = RouteFiles }) stateRef
+      renderAll stateRef refs
+      refreshFiles stateRef refs
+  EventTarget.addEventListener EventTypes.click filesListener false (Element.toEventTarget refs.routeFiles)
 
   bindChatChrome
     refs.chatRoot
@@ -749,6 +773,7 @@ handleUploadedArtifact stateRef refs rawPayload =
         stateRef
       setStatus refs.appStatus "app-status ready" "Uploaded"
       renderAll stateRef refs
+      refreshFiles stateRef refs
 
 uploadedArtifactEntry :: UploadedArtifact -> ArtifactEntry
 uploadedArtifactEntry uploaded =
@@ -822,6 +847,35 @@ draftEntryMatches contextId (DraftEntry draft) =
 handleArtifactError :: Refs -> String -> Effect Unit
 handleArtifactError refs message =
   setStatus refs.appStatus "app-status error" message
+
+-- | Phase 7 Sprint 7.26 — refresh the per-user Files list from
+-- | @GET /api/objects/list@ (scoped server-side to the caller's prefix).
+refreshFiles :: Ref.Ref AppState -> Refs -> Effect Unit
+refreshFiles stateRef refs = do
+  state <- Ref.read stateRef
+  if state.authenticated then
+    refreshFilesList (handleFilesLoaded stateRef refs) (handleArtifactError refs)
+  else
+    pure unit
+
+handleFilesLoaded :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleFilesLoaded stateRef refs rawBody =
+  case JSON.readJSON rawBody of
+    Left decodeError ->
+      setStatus refs.appStatus "app-status error" ("Unable to decode file list: " <> show decodeError)
+    Right refsList -> do
+      let entries = filesEntriesFromObjectRefs (refsList :: Array ObjectRef)
+      Ref.modify_
+        ( \current ->
+            current { files = current.files { entries = entries, status = show (length entries) <> " files" } }
+        )
+        stateRef
+      renderAll stateRef refs
+
+handleDeletedFile :: Ref.Ref AppState -> Refs -> String -> Effect Unit
+handleDeletedFile stateRef refs _objectKey = do
+  setStatus refs.appStatus "app-status ready" "File deleted"
+  refreshFiles stateRef refs
 
 loadPublication :: Ref.Ref AppState -> Refs -> Aff Unit
 loadPublication stateRef refs = do
@@ -897,6 +951,7 @@ renderAll stateRef refs = do
   renderRouteChrome refs state.route
   renderChatSection refs state
   renderArtifactsSection refs state
+  renderFilesSection refs state
 
 renderAuthGate :: Refs -> AppState -> Effect Unit
 renderAuthGate refs state =
@@ -941,6 +996,14 @@ renderArtifactsSection refs state =
     refs.artifactsRoot
     { activeContextId: state.activeContextId }
     state.artifacts
+
+renderFilesSection :: Refs -> AppState -> Effect Unit
+renderFilesSection refs state =
+  renderFilesView
+    refs.document
+    refs.filesRoot
+    { activeContextId: state.activeContextId }
+    state.files
 
 renderSummary :: Refs -> AppState -> Effect Unit
 renderSummary refs state = do
@@ -992,8 +1055,10 @@ renderRouteChrome :: Refs -> Route -> Effect Unit
 renderRouteChrome refs route = do
   Element.setClassName (routeButtonClass RouteChat route) refs.routeChat
   Element.setClassName (routeButtonClass RouteArtifacts route) refs.routeArtifacts
+  Element.setClassName (routeButtonClass RouteFiles route) refs.routeFiles
   Element.setAttribute "href" (routePath RouteChat) refs.routeChat
   Element.setAttribute "href" (routePath RouteArtifacts) refs.routeArtifacts
+  Element.setAttribute "href" (routePath RouteFiles) refs.routeFiles
 
 routeButtonClass :: Route -> Route -> String
 routeButtonClass candidate active =

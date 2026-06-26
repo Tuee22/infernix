@@ -97,9 +97,13 @@ renderHarborRouteSummarySection :: String
 renderHarborRouteSummarySection =
   renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec `elem` ["/harbor/api", "/harbor"]) routeSpecs)
 
+-- | Phase 3 Sprint 3.13 removed the external @/minio/s3@ gateway route. MinIO
+-- is no longer browser-reachable; the @infernix-demo@ webapp @/api/objects@
+-- proxy is the only external file-storage surface, so this section states the
+-- de-exposed posture rather than enumerating a removed route.
 renderMinioRouteSummarySection :: String
 renderMinioRouteSummarySection =
-  renderToolRouteSummarySection (filter (\routeSpec -> routePathPrefix routeSpec == "/minio/s3") routeSpecs)
+  "- MinIO has no external gateway route; the browser reaches objects only through the `infernix-demo` webapp `/api/objects` proxy.\n"
 
 renderPulsarRouteSummarySection :: String
 renderPulsarRouteSummarySection =
@@ -110,7 +114,6 @@ renderClusterBootstrapRouteChecksSection =
   unlines
     [ "- `curl http://127.0.0.1:<port>/harbor` checks the Harbor portal route.",
       "- `curl http://127.0.0.1:<port>/harbor/api/v2.0/projects` checks the `/harbor/api -> /api` rewrite into the Harbor core service.",
-      "- `curl http://127.0.0.1:<port>/minio/s3/models/demo.bin` checks the `/minio/s3 -> /` rewrite into the MinIO S3 service.",
       "- `curl http://127.0.0.1:<port>/pulsar/admin/admin/v2/clusters` checks the `/pulsar/admin -> /` rewrite into Pulsar's `/admin/v2` surface.",
       "- `curl http://127.0.0.1:<port>/pulsar/ws/v2/producer/infernix/demo/demo` checks the `/pulsar/ws -> /ws` rewrite and returns `405 Method Not Allowed` on the real cluster path."
     ]
@@ -200,17 +203,6 @@ routeSpecs =
       (Just "HTTPRoute -> Harbor portal Service")
       (Just "envoy-gateway-routed harbor deployment"),
     RouteSpec
-      "infernix-minio-s3"
-      "/minio/s3"
-      "MinIO S3 API"
-      "infernix-minio"
-      9000
-      (Just "/")
-      False
-      (Just "minio")
-      (Just "HTTPRoute -> MinIO Service")
-      (Just "envoy-gateway-routed minio deployment"),
-    RouteSpec
       "infernix-pulsar-admin"
       "/pulsar/admin"
       "Pulsar admin surface"
@@ -257,7 +249,7 @@ routeSpecs =
     RouteSpec
       "infernix-demo-objects-api"
       "/api/objects"
-      "Demo MinIO presigned URL minting"
+      "Demo webapp object-proxy (upload/download/list/delete)"
       "infernix-demo"
       80
       Nothing
@@ -373,7 +365,6 @@ webPortalNotes routeSpec =
     "/api" -> "Covers `/api/publication`, `/api/cache`, `/api/models`, and `/api/demo-config`."
     "/harbor/api" -> "Rewrites to upstream `/api` before forwarding to `infernix-harbor-core:80`."
     "/harbor" -> "Rewrites to upstream `/` before forwarding to `infernix-harbor-portal:80`."
-    "/minio/s3" -> "Rewrites to upstream `/` before forwarding to `infernix-minio:9000`."
     "/pulsar/admin" -> "Rewrites to upstream `/` before forwarding to `infernix-infernix-pulsar-proxy:80`."
     "/pulsar/ws" -> "Rewrites to upstream `/ws` before forwarding to `infernix-infernix-pulsar-proxy:80`."
     _ -> "Registry-defined route."

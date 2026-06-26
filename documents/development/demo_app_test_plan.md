@@ -26,6 +26,36 @@
 - The Playwright source is identical across `apple-silicon`, `linux-cpu`, and `linux-gpu`;
   substrate selection lives only in the generated `.dhall` the demo app reads.
 
+## Webapp-Mediated Object E2E (target)
+
+At the target the object-grant and isolation e2e prove the webapp is the single mediator for every
+browser artifact upload and download (see
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) and
+[../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)). The
+suite POSTs upload bytes to the webapp's `/api/objects/upload`, the webapp writes MinIO
+server-side and returns the typed `ObjectRef`, and a subsequent `/api/objects/download` streams
+the same bytes back through the webapp with exact content equality — the browser never holds a
+MinIO credential, never receives a presigned MinIO URL, and never reaches MinIO through the
+gateway. Cross-user isolation is asserted at the single server-side trust boundary: a second
+registered user's JWT presented against the first user's `users/<sub>/…` object key receives HTTP
+403 on list, get, put, and delete, and each user reads only that user's own bytes. The
+render-disposition matrix (inline image/audio/video, browser-native PDF, bounded JSON/text
+preview, download-only MIDI / MusicXML / generic-binary) is asserted from the webapp's
+`/api/objects/download` response and the corresponding rendered browser surface — the dedicated
+artifact-rendering coverage added under Sprint 7.27, which drives each supported artifact class
+through the rendered `Files` and Artifacts surfaces and asserts the family-appropriate rendered
+shape (never a golden string).
+
+**Current Status.** The webapp-mediated upload/download, the cross-user-403 boundary assertions,
+and the Sprint 7.27 rendering tests above describe the declarative target. The present routed
+Playwright suite (described under Current Status below) still exchanges the Keycloak code for an
+access token, mints presigned MinIO grants at `/api/objects`, and PUT/GETs bytes directly through
+the routed MinIO URLs over the gateway `/minio/s3` route; per-user isolation holds today via
+per-object scoped grants plus the mint-time `pathBelongsToUser` check. The migration to
+webapp-mediated object I/O is tracked by reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25
+(with the rendering coverage under Sprint 7.27), validated under
+[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+
 ## Current Status
 
 The durable-context surface this test plan covers is implemented over
@@ -410,6 +440,8 @@ substrate carries all 18 rows.
 - [../architecture/model_catalog.md](../architecture/model_catalog.md)
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../engineering/testing.md](../engineering/testing.md)
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)

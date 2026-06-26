@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Done
+**Status**: Active — reopened
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -21,6 +21,16 @@ creation. The clarified Apple daemon-role model is
 implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
 executor location in publication metadata.
 
+Phase 3 is reopened (`Active`) for Sprint 3.13, which de-exposes the `/minio/s3` external gateway
+route so the `infernix-demo` webapp becomes the **sole** externally routed file-storage service: the
+browser reaches MinIO only through the webapp object-proxy (Phase 7 Sprint 7.25), never through a
+gateway route or a presigned MinIO URL. This realizes the
+[../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
+Sprints 3.1–3.12 remain `Done`; the reopen depends only on earlier phases (0–2). Sprint 3.13 is
+**code-side closed (2026-06-24, machine-independent gates green)** with only the
+[Wave M](cohort-validation-waves.md) cohort gate remaining. The route-inventory prose below now
+reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint`).
+
 ## HA Reconcile Surface
 
 - `infernix cluster up` is the declarative and idempotent entrypoint for the mandatory local HA topology
@@ -38,8 +48,9 @@ executor location in publication metadata.
 
 - substrate changes do not fork the browser entrypoint
 - when the demo UI is enabled, `/`, `/api`, `/api/objects`, `/auth`, `/ws`, `/harbor/api`,
-  `/harbor`, `/minio/s3`, `/pulsar/admin`, and `/pulsar/ws` remain the published route
-  inventory
+  `/harbor`, `/pulsar/admin`, and `/pulsar/ws` are the published route inventory; MinIO has no
+  external gateway route (Sprint 3.13), so the webapp `/api/objects` proxy is its only
+  browser-facing surface
 - `/api/publication` and `/api/cache` remain stable routed demo endpoints under the `/api` prefix
 - the final Apple split-executor path keeps the same browser base URL while routed cluster
   surfaces enter the cluster daemon first and Apple inference batches move through Pulsar to the
@@ -703,10 +714,77 @@ None.
 
 ---
 
+## Sprint 3.13: MinIO Gateway De-Exposure [Active]
+
+**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Code-side closure**: Done (2026-06-24, machine-independent). The `infernix-minio-s3` `RouteSpec`
+is removed from `src/Infernix/Routes.hs` (so the rendered `chart/templates/httproutes.yaml`
+`.Values.routes` loop and its generated registry comment carry no `/minio/s3`), the
+`infernix-minio-s3` SecurityPolicy target is dropped from
+`chart/templates/securitypolicy-operator-routes.yaml` (and from the `infernix lint chart`
+required-phrase set), and `clusterConfig.minio.presignPublicEndpoint` is retired from the typed
+cluster config (`dhall/InfernixCluster.dhall` regenerated from the decoder-reflected schema,
+`ClusterConfig.hs`, `chart/templates/configmap-cluster-config.yaml`, `chart/values.yaml`, and the
+`Cluster.hs` Helm-values renderer). The route registry, generated route summaries (README,
+`edge_routing.md`, `web_portal_surface.md`, `tools/minio.md`, `cluster_bootstrap_runbook.md`), and
+rendered chart expose no `/minio/s3` route and no `presignPublicEndpoint`. Gates green:
+`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`infernix lint files/chart/docs/proto`, and `infernix docs check` all exit zero on the host
+toolchain. Implemented jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) (the
+webapp object-proxy) because the `presignPublicEndpoint` field's only consumer was the presigned-URL
+grant handler that 7.25 replaces.
+**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Implementation**: `chart/templates/httproutes.yaml`, `chart/templates/securitypolicy-operator-routes.yaml`, `dhall/InfernixCluster.dhall`
+**Docs to update**: `documents/engineering/edge_routing.md`, `documents/architecture/object_access_doctrine.md`, `documents/reference/web_portal_surface.md`
+
+### Objective
+
+Make the webapp the single external file gateway by removing every browser-reachable MinIO surface:
+the `/minio/s3` gateway route, its SecurityPolicy, and the public presign endpoint. The browser
+reaches MinIO only via the webapp object-proxy ([Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md)),
+per the [../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
+
+### Deliverables
+
+- removal of the `/minio/s3` HTTPRoute (`chart/templates/httproutes.yaml`)
+- removal of the `infernix-minio-s3` SecurityPolicy (`chart/templates/securitypolicy-operator-routes.yaml`)
+- removal of `clusterConfig.minio.presignPublicEndpoint` from the typed cluster config
+- regenerated route registry, route summaries, and rendered chart that expose no `/minio/s3` route
+
+### Validation
+
+- `infernix lint chart` plus `infernix lint docs` confirm the rendered chart and generated route
+  summaries name no `/minio/s3` route and no `presignPublicEndpoint` — both pass (2026-06-24).
+  `rg -n 'minio-s3|presignPublicEndpoint' src chart dhall` returns only retirement comments and
+  legacy-tracking references.
+- the [Wave M](cohort-validation-waves.md) `linux-cpu` plus chosen-accelerator full suite proves
+  the routed surface exposes the webapp as the only external file gateway and the browser never
+  reaches MinIO directly
+
+### Remaining Work
+
+Code-side closed 2026-06-24 (machine-independent gates green). Only the
+[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator) remains.
+Delivered jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md).
+
+### Documentation Requirements
+
+- update `documents/engineering/edge_routing.md` to drop `/minio/s3` from the route inventory and
+  name the webapp `/api/objects` surface as the only external file gateway
+- keep `documents/architecture/object_access_doctrine.md` and
+  `documents/reference/web_portal_surface.md` aligned with the de-exposed route surface
+- record the retired `/minio/s3` route, `infernix-minio-s3` SecurityPolicy, and
+  `presignPublicEndpoint` in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+---
+
 ## Remaining Work
 
-None. Sprints 3.1-3.12 are `Done`; Apple cohort validation closed in Waves A/A.2, CUDA Linux
-cohort validation closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
+Phase 3 is reopened (`Active`) for Sprint 3.13 (MinIO gateway de-exposure), gated by
+[Wave M](cohort-validation-waves.md) (`linux-cpu` plus the chosen accelerator). Sprints 3.1-3.12
+remain `Done`; Apple cohort validation closed in Waves A/A.2, CUDA Linux cohort validation closed in
+Wave C, and native arm64 `linux-cpu` validation closed in Wave F. The reopen depends only on earlier
+phases (0-2), so no earlier-phase validation is blocked by Phase 3.
 
 ---
 

@@ -30,6 +30,14 @@
   bindings on top of `durable_context_design.md`: Keycloak as the IdP, the concrete
   `infernix/demo` topic namespace and `infernix-demo-objects` bucket, the `/auth` / `/ws` /
   `/api/objects` routes, the SPA view contract, and the `demo_ui` gating
+- [architecture/object_access_doctrine.md](architecture/object_access_doctrine.md) defines the rule
+  that the `infernix-demo` webapp is the single mediator for every browser artifact upload and
+  download: the browser never holds a MinIO credential or a presigned MinIO URL and never reaches
+  MinIO through the gateway; all artifact bytes flow through the webapp's `/api/objects` endpoints
+- [architecture/tenant_isolation_doctrine.md](architecture/tenant_isolation_doctrine.md) defines how
+  each authenticated user's MinIO objects and chat conversations are isolated: the Keycloak `sub` is
+  the canonical identity, all namespacing is derived server-side from it, and a single server-side
+  trust boundary (`pathBelongsToUser` / `topicBelongsToUser`) authorizes every operation
 - [architecture/daemon_topology.md](architecture/daemon_topology.md) defines the supported
   three-role daemon model — stateless frontend, stateless coordinator, and substrate-specific
   engine pools — including HA replica policy, per-substrate placement, library footprint per role,

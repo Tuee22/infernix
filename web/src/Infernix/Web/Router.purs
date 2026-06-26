@@ -18,19 +18,23 @@ import Prelude
 data Route
   = RouteChat
   | RouteArtifacts
+  | RouteFiles
 
 derive instance eqRoute :: Eq Route
 
 instance showRoute :: Show Route where
   show RouteChat = "RouteChat"
   show RouteArtifacts = "RouteArtifacts"
+  show RouteFiles = "RouteFiles"
 
 parseRoute :: String -> Route
 parseRoute path = case path of
   "/artifacts" -> RouteArtifacts
+  "/files" -> RouteFiles
   _ -> RouteChat
 
 routePath :: Route -> String
 routePath = case _ of
   RouteChat -> "/"
   RouteArtifacts -> "/artifacts"
+  RouteFiles -> "/files"

@@ -12,6 +12,12 @@
     "build": "npm run generate:contracts && npm run build:purs",
     "test:unit": "npm run build && npm exec -- spago test"
   },
+  "dependencies": {
+    "@tonejs/midi": "2.0.28",
+    "fflate": "0.8.2",
+    "opensheetmusicdisplay": "1.9.0",
+    "smplr": "0.16.2"
+  },
   "devDependencies": {
     "esbuild": "0.28.0",
     "playwright": "1.57.0",

@@ -77,6 +77,8 @@ module = [
   "soundfile.*",
   "demucs",
   "demucs.*",
+  "openunmix",
+  "openunmix.*",
   "basic_pitch",
   "basic_pitch.*",
   "omnizart",

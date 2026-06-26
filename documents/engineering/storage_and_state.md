@@ -19,7 +19,8 @@
 The repository follows this split. Model weights live in MinIO
 `infernix-models` (always-on, populated lazily by the coordinator's
 bootstrap subscription), user artifacts live in MinIO
-`infernix-demo-objects` (demo-gated), and the runtime model cache is
+`infernix-demo-objects` (demo-gated) under each user's `sub`-derived
+prefix, and the runtime model cache is
 ephemeral state under `./.data/runtime/model-cache/` (on the Apple
 host) or the engine pod's `emptyDir` (on Linux substrates). Durable
 state: Kind PV data, reserved MinIO cluster objects, Pulsar ledgers,
@@ -29,6 +30,20 @@ publication mirrors, the runtime model cache, Playwright output,
 transient Kind or `nvkind` scratch kubeconfig files, and stale
 repo-local kubeconfig lock files.
 
+The durability split is unchanged by the object-access target, but how
+the browser reaches the user-visible `infernix-demo-objects` bytes is
+moving: at the declarative target the `infernix-demo` webapp is the
+single server-side mediator for every browser upload and download
+through `/api/objects`, with per-user isolation derived server-side from
+the Keycloak `sub` claim. See
+[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+and
+[../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
+**Current Status**: implemented (Phase 7 Sprint 7.25 webapp object-proxy; Phase 3 Sprint 3.13
+removed the `/minio/s3` route + `presignPublicEndpoint`). The webapp reads and writes MinIO
+server-side; the browser never holds a presigned MinIO URL. The `linux-cpu` plus
+chosen-accelerator real per-user attestation is the remaining Wave M residual.
+
 ## Owner And Durability Table
 
 | State class | Owner | Authoritative home | Durability | Rebuild rule |
@@ -36,7 +51,7 @@ repo-local kubeconfig lock files.
 | PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths within the active runtime lane |
 | Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/<runtime-mode>/...` | durable | loss is a platform failure, not a cache miss |
 | MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; populated lazily on first use and never disposed except by deliberate operator intent |
-| MinIO `infernix-demo-objects` bucket contents | demo backend (presigned URL minting) + engine adapters (PUT for generated artifacts) + browsers (presigned PUT/GET) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; bucket only exists when `demo_ui = true` |
+| MinIO `infernix-demo-objects` bucket contents | demo backend (webapp object-proxy, server-side PUT/GET) + engine adapters (PUT for generated artifacts) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; browsers reach it only through the webapp `/api/objects` proxy; bucket only exists when `demo_ui = true` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
 | Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files |
 | Cache manifests used to inspect model-cache state | Haskell service runtime | `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` | derived | manifests now sit beside the cached weights inside the model-cache root; rebuilding the manifest is part of `infernix cache rebuild` |
@@ -99,4 +114,6 @@ repo-local kubeconfig lock files.
 - [k8s_storage.md](k8s_storage.md)
 - [model_lifecycle.md](model_lifecycle.md)
 - [../architecture/overview.md](../architecture/overview.md)
+- [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../tools/postgresql.md](../tools/postgresql.md)

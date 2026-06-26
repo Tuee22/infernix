@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is a superseded Apple singleton stopgap; Sprint 7.24 is closed for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Desired-state hot reload is a future extension, not part of the current closure.)
+**Status**: Active — reopened (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is a superseded Apple singleton stopgap; Sprint 7.24 is closed for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Reopened for Sprints 7.25–7.27: the webapp object-proxy and per-user isolation hardening, a per-user Files navigational view, and in-browser MIDI/MusicXML/ZIP rendering — all **code-side closed + validated machine-independent 2026-06-24**, with [Wave M](cohort-validation-waves.md) the real per-user cohort residual. Desired-state hot reload is a future extension, not part of the current closure.)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -21,12 +21,26 @@
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), not as open Phase 7
 > validation work.
 
-Phase 7 is `Done`. Sprints 7.1–7.18 remain closed, and Sprints 7.19–7.22 closed
-the auth-UX quad described in the Status block on the Wave G routed E2E validation. Sprint 7.23's
-Apple `Exclusive` / `Failover` singleton design is retained only as historical plan context
-and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared` across
-distinct host ids, exact-host routes use `Exclusive`, and the coordinator chooses pool/model topics
-rather than concrete nodes.
+Phase 7 is reopened (`Active`) for Sprints 7.25–7.27. Sprints 7.1–7.18 remain closed, and Sprints
+7.19–7.22 closed the auth-UX quad described in the Status block on the Wave G routed E2E validation.
+Sprint 7.23's Apple `Exclusive` / `Failover` singleton design is retained only as historical plan
+context and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared`
+across distinct host ids, exact-host routes use `Exclusive`, and the coordinator chooses pool/model
+topics rather than concrete nodes.
+
+The reopen moves browser file storage behind the webapp. Sprint 7.25 makes `Demo/Api.hs` proxy the
+upload/download bytes through the internal MinIO endpoint and drops the browser-direct presigned-URL
+path, realizing the
+[../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md)
+and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md);
+Sprint 7.26 adds a per-user Files navigational view scoped to `users/<sub>/`; and Sprint 7.27 adds
+in-browser MIDI/MusicXML/ZIP rendering. Sprint 7.25 (delivered jointly with
+[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md), the `/minio/s3`
+de-exposure) is **code-side closed 2026-06-24** with only the [Wave M](cohort-validation-waves.md)
+cohort gate remaining; Sprints 7.26 and 7.27 build on it. All three are gated by
+[Wave M](cohort-validation-waves.md). The Sprint 7.9 presigned-URL prose describes the superseded
+pre-7.25 path; the Sprint 7.11 download-only artifact prose describes current state until Sprint
+7.27 lands.
 
 Code-side closure: Sprints 7.1–7.17 are code-side closed covering the daemon-split topology
 (stateless `infernix-demo` frontend, two-replica stateless `infernix-coordinator` with per-context
@@ -3229,6 +3243,199 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 
 **Plan docs to update:**
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — completed cleanup rows for the single Apple host topic and Apple `Failover`, plus the pending cleanup row for demo-off engine-only topology.
+
+---
+
+## Sprint 7.25: Webapp Object-Proxy and Per-User Isolation Hardening [Active]
+
+**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Code-side closure**: Done (2026-06-24, machine-independent). The webapp is the single mediator for
+browser file I/O. `src/Infernix/Demo/Api.hs` proxies the bytes server-side over the internal MinIO
+endpoint (`loadInternalMinioPresignedConfig` + the new `putMinioObjectBytes` / `getMinioObjectBytes`
+helpers, matching the file's existing account-cleanup signing pattern): `handleObjectsUpload`
+(`POST /api/objects/upload`) stores the request-body bytes and returns the typed `ObjectRef`;
+`handleObjectsDownloadBytes` (`GET /api/objects/download?key=…`) streams the bytes with
+`Content-Type` + `Content-Disposition`, authenticated by the `Authorization` header **or** the
+`infernix_operator_token` cookie (for browser-issued media `src` GETs); `handleObjectsDownloadGrant`
+(`POST /api/objects/download`) returns the authoritative render disposition. The
+`mintAndRespond` grants, the `artifactUploadGrantPresignedUrl` / `artifactDownloadGrantPresignedUrl`
+fields in `src/Infernix/Web/Contracts.hs`, and the public-endpoint `loadPresignedConfig` are deleted.
+`Infernix.Objects.Layout.sanitizeFilename` neutralizes the client display name, and
+`pathBelongsToUser` on the verified `sub` is the single server-side choke point for every object
+operation (re-checked on the streaming GET against the client-supplied key). The browser
+`web/src/Infernix/Web/ArtifactTransport.js` now does a one-leg authenticated POST upload and a
+GET-by-key download; `web/src/index.html` drops the MinIO S3 operator-ribbon link. This realizes the
+[../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md)
+and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md).
+Gates green: `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`infernix lint files/chart/docs/proto`, `infernix docs check` (host toolchain); `node --check` on the
+rewritten JS. The web unit suite + bundle and `poetry run check-code` are unaffected by 7.25 (no
+PureScript or Python changes) and run in the Wave M container batch. Delivered jointly with
+[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md). **Note:** the implementation
+keeps `ArtifactDownloadGrant` (minus its URL field) as the disposition carrier and uses the file-local
+`putMinioObjectBytes`/`getMinioObjectBytes` signers rather than `Infernix.Objects.Upload`'s
+`ObjectUploadConfig`-typed helpers, matching the established `Demo/Api.hs` MinIO-access pattern; the
+contract module is `src/Infernix/Web/Contracts.hs` (there is no `src/Infernix/Demo/Contracts.hs`).
+**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Implementation**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Objects/Layout.hs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/src/index.html`
+**Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Replace the browser-direct presigned MinIO path with a webapp object-proxy, and make one
+server-side trust boundary the sole authority for every per-user object and chat operation, so
+cross-user access is impossible by construction.
+
+### Deliverables
+
+- `Demo/Api.hs` proxies upload/download bytes over the internal MinIO endpoint
+  (`loadInternalMinioPresignedConfig` plus `Objects/Upload.hs` put/get helpers)
+- `artifactUploadGrantPresignedUrl` and `artifactDownloadGrantPresignedUrl` removed from `Contracts.hs`
+- `sanitizeFilename` applied to the client-supplied display name
+- `pathBelongsToUser` plus `topicBelongsToUser` reused as the single server-side choke point
+
+### Validation
+
+- cross-user-403 integration: a user's JWT receives HTTP 403 on another user's object key (list /
+  get / put / delete) and cannot read another user's chat context
+- e2e: the browser uploads and downloads only through the webapp `/api/objects` surface, never a
+  presigned MinIO URL
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator real
+  per-user attestation
+
+### Remaining Work
+
+Code-side closed 2026-06-24 (machine-independent gates green). Only the
+[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator, including
+the real cross-user-403 e2e) remains. Delivered jointly with
+[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md). Unblocks Sprints 7.26 and
+7.27.
+
+### Documentation Requirements
+
+- keep `documents/architecture/object_access_doctrine.md` and
+  `documents/architecture/tenant_isolation_doctrine.md` aligned with the implemented choke point
+- update `documents/reference/api_surface.md` and `documents/reference/web_portal_surface.md` to
+  describe the proxied `/api/objects` byte upload/download surface
+- record the retired browser-direct presigned path (the `Demo/Api.hs` `mintAndRespond` grants, the
+  `artifact*GrantPresignedUrl` contract fields, and the browser PUT/GET to the presign endpoint) in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+---
+
+## Sprint 7.26: Per-User Files Navigational View [Active]
+
+**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Code-side closure**: Done (2026-06-24, machine-independent). `src/Infernix/Demo/Api.hs` adds
+`handleObjectsList` (`GET /api/objects/list`, returns the caller's objects as a JSON array of
+`ObjectRef` scoped server-side to `users/<sub>/` via the existing `listMinioUserObjectKeys`) and
+`handleObjectsDelete` (`DELETE /api/objects?key=…`, removes a single caller-owned object via the
+existing `deleteMinioObject`); both authorize through the same `pathBelongsToUser` choke point as
+Sprint 7.25 (HTTP 403 on a cross-user key). The SPA gains a Files nav tab + `files-root` view
+(`web/src/index.html`, `web/src/Infernix/Web/Router.purs` `RouteFiles`): `renderFilesView` /
+`fileEntryFromObjectRef` / `filesEntriesFromObjectRefs` in `web/src/Infernix/Web/Artifacts.purs`
+render a flat per-user list (list / upload / download / preview / delete) reusing the artifact render
+dispositions; `web/src/Infernix/Web/FilesTransport.{purs,js}` wraps the authenticated list refresh
+and the delete request; `web/src/Main.purs` wires the route, transport, and refresh-after-upload.
+Gates green: `cabal build all`, `cabal test infernix-haskell-style` (ormolu + hlint clean on the new
+handlers), `infernix lint files/chart/docs/proto`, `infernix docs check`, and the containerized web
+suite (`spago build` clean, `spago test` 71/71).
+**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Implementation**: `src/Infernix/Demo/Api.hs`, `web/src/index.html`, `web/src/Infernix/Web/Router.purs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/FilesTransport.purs`, `web/src/Infernix/Web/FilesTransport.js`, `web/src/Main.purs`
+**Docs to update**: `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`, `documents/architecture/demo_app_design.md`, `documents/architecture/tenant_isolation_doctrine.md`
+
+### Objective
+
+Give each user a navigational Files view over their own MinIO objects, prefix-scoped to
+`users/<sub>/` and authorized through the Sprint 7.25 choke point, reusing the existing render
+dispositions for preview.
+
+### Deliverables
+
+- `GET /api/objects/list` prefix-scoped to `users/<sub>/` (derived server-side)
+- `DELETE /api/objects` for a single caller-owned object
+- a Files nav section in the SPA (list / upload / download / preview / delete) reusing the artifact
+  render dispositions
+
+### Validation
+
+- scoping e2e: the Files view lists only the caller's objects, and list / download / delete on
+  another user's key is rejected
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator attestation
+
+### Remaining Work
+
+Code-side closed 2026-06-24 (machine-independent gates green). Only the
+[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator, including
+the scoping e2e) remains.
+
+### Documentation Requirements
+
+- update `documents/reference/web_portal_surface.md` and `documents/reference/api_surface.md` for
+  the Files view and the `list` / `delete` object endpoints
+- keep `documents/architecture/tenant_isolation_doctrine.md` aligned with the prefix-scoped listing
+  and deletion behavior
+
+---
+
+## Sprint 7.27: In-Browser MIDI/MusicXML/ZIP Rendering [Active]
+
+**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Code-side closure**: Done (2026-06-24, machine-independent). New `ArtifactRenderDisposition`
+variants `RenderMidi` / `RenderMusicXml` / `RenderZipStems` are added to
+`src/Infernix/Web/Contracts.hs` (data type + `phase7Sums` so the regenerated `Generated.Contracts`
+carries them), the `src/Infernix/Demo/Api.hs.renderDispositionForMime` classifier, and the
+PureScript `web/src/Infernix/Web/Artifacts.purs` classifier (`dispositionFor`), `mimeFromObjectKey`
+(`.zip`), the `dispositionLabel`/`dispositionClass`/`dispositionTag` helpers, and the
+`renderArtifactPreview` mount nodes. `web/src/Infernix/Web/ArtifactTransport.js` renders the three
+families in-browser through **dynamically-imported** FFI — `@tonejs/midi` + `smplr` (MIDI piano-roll
+canvas + playback against self-hosted samples at `/samples/smplr`), `opensheetmusicdisplay`
+(MusicXML/`.mxl` → SVG, code-split via dynamic `import()`), and `fflate` (ZIP-stems → inline
+`<audio>`) — wired into `handleDownload`; `web/package.json` adds the runtime deps. The dynamic
+imports keep the unit suite free of the runtime deps (resolved only by esbuild at bundle time). Gates
+green: `cabal build all`, `cabal test infernix-unit` (disposition matrix + roundtrip extended),
+`cabal test infernix-haskell-style`, `infernix lint files/chart/docs/proto`, `infernix docs check`,
+and the containerized web suite (`spago build` clean, `spago test` 71/71 with the updated
+`ArtifactsSpec`).
+**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator. The
+esbuild bundle of the new deps, the self-hosted smplr sample provisioning, and the in-browser render
+e2e (MIDI plays + piano-roll, MusicXML SVG, ZIP-stem audio) are the Wave M residual.
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/Demo/Api.hs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/package.json`
+**Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Render MIDI, MusicXML/`.mxl`, and ZIP-stem artifacts in the browser through new render dispositions
+and self-hosted PureScript FFI, replacing the download-only fallback for those families.
+
+### Deliverables
+
+- new `ArtifactRenderDisposition` variants for audio/MIDI, MusicXML, and ZIP
+- PureScript FFI for `fflate` (ZIP stems to inline audio), `@tonejs/midi` plus `smplr` (MIDI
+  playback and piano-roll with self-hosted samples), and `opensheetmusicdisplay` (MusicXML/`.mxl` to
+  SVG, code-split)
+- flipped `DownloadOnly` disposition for `audio/midi`, MusicXML, and `application/zip`
+
+### Validation
+
+- e2e: a MIDI artifact plays and renders a piano-roll, a MusicXML/`.mxl` artifact renders SVG, and a
+  ZIP stem set renders inline audio — none falls back to download-only
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator attestation
+
+### Remaining Work
+
+Code-side closed 2026-06-24 (machine-independent gates green). Only the
+[Wave M](cohort-validation-waves.md) cohort gate (the esbuild bundle of the new deps, self-hosted
+smplr sample provisioning, and the in-browser render e2e) remains.
+
+### Documentation Requirements
+
+- update `documents/reference/web_portal_surface.md` and `documents/architecture/demo_app_design.md`
+  for the new render dispositions and in-browser MIDI/MusicXML/ZIP behavior
+- record the retired `DownloadOnly` disposition for `audio/midi`, MusicXML, and `application/zip` in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+---
 
 ## Documentation Requirements
 

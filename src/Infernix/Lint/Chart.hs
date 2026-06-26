@@ -217,7 +217,6 @@ requiredPhrases =
         "name: infernix-operator-routes-jwt",
         "name: infernix-harbor-portal",
         "name: infernix-pulsar-admin",
-        "name: infernix-minio-s3",
         "jwt:",
         "cookies:",
         ".Values.operatorConsole.jwtGating.cookieName",

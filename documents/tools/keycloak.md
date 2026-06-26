@@ -39,7 +39,13 @@
   `/auth/realms/<realm>/protocol/openid-connect/certs` path
 - the Keycloak `sub` claim is the canonical per-user identifier and is stable across login,
   logout, password change, and device change; demo backend code derives Pulsar topic
-  namespaces and MinIO prefixes from `sub`, not from username
+  namespaces and MinIO prefixes from `sub`, not from username. `sub` is the single source of
+  caller identity — it is extracted server-side from a cryptographically verified token and the
+  client never names its own user id, full object key, or topic name. This is the canonical
+  per-user isolation key; see
+  [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
+  for the doctrine that derives every per-user MinIO prefix and Pulsar topic from `sub` and
+  enforces it at a single server-side trust boundary
 - when `demo_ui = false`, the Keycloak release, its Patroni cluster, the `/auth` route, and
   the demo MinIO bucket are absent from the cluster
 - the production-shape integration test confirms that `demo_ui = false` omits the Keycloak
@@ -117,6 +123,7 @@ reconstitution sequence.
 ## Cross-References
 
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
+- [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [postgresql.md](postgresql.md)
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)

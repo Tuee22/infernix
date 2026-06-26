@@ -3275,6 +3275,7 @@ processBootstrapRequest transport systemNamespace request = do
         then publishBootstrapReadyEvent transport systemNamespace request
         else do
           if isHuggingFaceModelRepoUrl (BootstrapModels.bootstrapRequestDownloadUrl request)
+            || isMultiFileModelRepoUrl (BootstrapModels.bootstrapRequestDownloadUrl request)
             then runModelBootstrapSnapshotHelper presigned request
             else do
               downloadedBytes <-
@@ -3282,6 +3283,14 @@ processBootstrapRequest transport systemNamespace request = do
               putMinioObject presigned manager now payloadObject downloadedBytes
               putMinioObject presigned manager now sentinelObject "ready\n"
           publishBootstrapReadyEvent transport systemNamespace request
+
+-- | Multi-file model sources (e.g. Open-Unmix `umxhq`, which is four per-target
+-- Zenodo state dicts, not one file or a HuggingFace repo) are staged through the
+-- snapshot helper, which downloads each file and mirrors the directory into
+-- `infernix-models/<modelId>/`.
+isMultiFileModelRepoUrl :: Text.Text -> Bool
+isMultiFileModelRepoUrl rawUrl =
+  "zenodo.org/records/3370489" `Text.isInfixOf` rawUrl
 
 isHuggingFaceModelRepoUrl :: Text.Text -> Bool
 isHuggingFaceModelRepoUrl rawUrl =
