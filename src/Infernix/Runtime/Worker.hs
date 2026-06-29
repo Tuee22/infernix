@@ -215,7 +215,9 @@ perEngineFrameworkGroups :: RuntimeMode -> EngineBinding -> [String]
 perEngineFrameworkGroups runtimeMode engineBinding =
   case runtimeMode of
     AppleSilicon
-      | engineBindingAdapterId engineBinding `elem` appleSiliconFrameworkAdapterIds -> ["apple-silicon"]
+      | SystemInfo.os == "darwin"
+          && engineBindingAdapterId engineBinding `elem` appleSiliconFrameworkAdapterIds ->
+          ["apple-silicon"]
     LinuxCpu
       | SystemInfo.os == "linux"
           && engineBindingAdapterId engineBinding `elem` linuxCpuFrameworkAdapterIds ->

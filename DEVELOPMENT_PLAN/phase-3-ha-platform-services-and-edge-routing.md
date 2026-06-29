@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active — reopened
+**Status**: Done — reopened and re-closed
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -21,14 +21,14 @@ creation. The clarified Apple daemon-role model is
 implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
 executor location in publication metadata.
 
-Phase 3 is reopened (`Active`) for Sprint 3.13, which de-exposes the `/minio/s3` external gateway
+Phase 3 reopened and re-closed for Sprint 3.13, which de-exposes the `/minio/s3` external gateway
 route so the `infernix-demo` webapp becomes the **sole** externally routed file-storage service: the
 browser reaches MinIO only through the webapp object-proxy (Phase 7 Sprint 7.25), never through a
 gateway route or a presigned MinIO URL. This realizes the
 [../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
-Sprints 3.1–3.12 remain `Done`; the reopen depends only on earlier phases (0–2). Sprint 3.13 is
-**code-side closed (2026-06-24, machine-independent gates green)** with only the
-[Wave M](cohort-validation-waves.md) cohort gate remaining. The route-inventory prose below now
+Sprints 3.1–3.13 are `Done`; Sprint 3.13 is code-side closed (2026-06-24, machine-independent gates
+green) and cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with the selected
+`linux-gpu` accelerator plus `linux-cpu` full-suite evidence. The route-inventory prose below now
 reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint`).
 
 ## HA Reconcile Surface
@@ -714,9 +714,9 @@ None.
 
 ---
 
-## Sprint 3.13: MinIO Gateway De-Exposure [Active]
+## Sprint 3.13: MinIO Gateway De-Exposure [Done]
 
-**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Status**: Done
 **Code-side closure**: Done (2026-06-24, machine-independent). The `infernix-minio-s3` `RouteSpec`
 is removed from `src/Infernix/Routes.hs` (so the rendered `chart/templates/httproutes.yaml`
 `.Values.routes` loop and its generated registry comment carry no `/minio/s3`), the
@@ -733,7 +733,8 @@ rendered chart expose no `/minio/s3` route and no `presignPublicEndpoint`. Gates
 toolchain. Implemented jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) (the
 webapp object-proxy) because the `presignPublicEndpoint` field's only consumer was the presigned-URL
 grant handler that 7.25 replaces.
-**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
+chosen `linux-gpu` accelerator.
 **Implementation**: `chart/templates/httproutes.yaml`, `chart/templates/securitypolicy-operator-routes.yaml`, `dhall/InfernixCluster.dhall`
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/architecture/object_access_doctrine.md`, `documents/reference/web_portal_surface.md`
 
@@ -757,15 +758,16 @@ per the [../documents/architecture/object_access_doctrine.md](../documents/archi
   summaries name no `/minio/s3` route and no `presignPublicEndpoint` — both pass (2026-06-24).
   `rg -n 'minio-s3|presignPublicEndpoint' src chart dhall` returns only retirement comments and
   legacy-tracking references.
-- the [Wave M](cohort-validation-waves.md) `linux-cpu` plus chosen-accelerator full suite proves
-  the routed surface exposes the webapp as the only external file gateway and the browser never
-  reaches MinIO directly
+- [Wave M](cohort-validation-waves.md) closed the `linux-cpu` plus chosen `linux-gpu` full suite:
+  the paired `linux-cpu` gate passed on 2026-06-29, and `./bootstrap/linux-gpu.sh test` passed on
+  2026-06-29 with full integration, routed Playwright `9/9`, and the browser per-model matrix
+  (`28.5m`) proving the routed surface exposes the webapp as the only external file gateway and the
+  browser never reaches MinIO directly.
 
 ### Remaining Work
 
-Code-side closed 2026-06-24 (machine-independent gates green). Only the
-[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator) remains.
-Delivered jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md).
+None. Delivered jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) and closed
+by [Wave M](cohort-validation-waves.md).
 
 ### Documentation Requirements
 
@@ -780,11 +782,10 @@ Delivered jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md
 
 ## Remaining Work
 
-Phase 3 is reopened (`Active`) for Sprint 3.13 (MinIO gateway de-exposure), gated by
-[Wave M](cohort-validation-waves.md) (`linux-cpu` plus the chosen accelerator). Sprints 3.1-3.12
-remain `Done`; Apple cohort validation closed in Waves A/A.2, CUDA Linux cohort validation closed in
-Wave C, and native arm64 `linux-cpu` validation closed in Wave F. The reopen depends only on earlier
-phases (0-2), so no earlier-phase validation is blocked by Phase 3.
+None. Sprints 3.1-3.13 are `Done`; Sprint 3.13 closed in
+[Wave M](cohort-validation-waves.md) with the selected `linux-gpu` accelerator plus `linux-cpu`.
+Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Linux cohort validation
+closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
 
 ---
 

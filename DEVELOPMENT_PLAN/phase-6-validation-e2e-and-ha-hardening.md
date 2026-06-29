@@ -17,15 +17,15 @@
 > checks shape/extension only and never fetches an artifact (the "deeper byte/dimension checks on cohort
 > hardware" comment is unimplemented), the per-row inputs are degenerate (silence WAV, 1×1 PNG), the OMR
 > row is fed `musicXmlBuffer()` instead of a score image, and `validateServiceRuntimeLoop` /
-> `assertCompletedResultPayload` assert neither completion nor shape. Phase 6 therefore **reopens**
-> (`Active`, Sprint 6.33) to strengthen the HA / chaos / service-loop assertions so they fail closed on a
+> `assertCompletedResultPayload` assert neither completion nor shape. Phase 6 therefore **reopened**
+> Sprint 6.33 to strengthen the HA / chaos / service-loop assertions so they fail closed on a
 > non-real or incomplete result. The machine-independent realness lint that mechanically forbids
 > fabrication is owned by Phase 0 (governance, Sprint 0.12); the real per-family fixtures, the OMR
 > input-type fix, and the fail-closed per-row int/e2e are owned by Phase 4 (Sprint 4.23); this phase
 > builds on both rather than re-owning them. Realness is guaranteed by the engine code (reopened Phase 4
 > / Phase 1); the tests trust the result and fail loudly on `status=failed`. The Linux gate is [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`);
 > the same DRY suite re-runs on `apple-silicon` under [Wave L](cohort-validation-waves.md) (reopened
-> Phase 1), whose incompleteness does not block the Linux closure.
+> Phase 1), which closed on 2026-06-29.
 
 > **Common-shape reopen (single-accelerator phasing).** Phase 6 reopens to adopt the
 > **single-accelerator-per-phase** rule (see [README.md](README.md) → Common-Shape
@@ -60,9 +60,9 @@ suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 m
 (Node 22) / cohort batch. The real-engine integration and routed E2E assertions closed on
 2026-06-20 through the Stage 2 single-accelerator gate for `linux-gpu` plus `linux-cpu`,
 re-validated in [Wave I](cohort-validation-waves.md), never a per-sprint machine switch (see
-[development_plan_standards.md](development_plan_standards.md) Section Q). Current Apple Wave L
+[development_plan_standards.md](development_plan_standards.md) Section Q). Apple Wave L
 real-engine reruns have passed the full integration layer and the focused routed Playwright gate
-(`9 passed (21.1m)`); the paired `linux-cpu` Wave L gate remains open as recorded in
+(`9 passed (21.1m)`), and the paired `linux-cpu` Wave L gate closed on 2026-06-29 as recorded in
 [Wave L](cohort-validation-waves.md). The current CUDA Linux image strict-smokes the
 runtime-backed Linux native payload layer. The final CUDA Linux closure passed full
 `./bootstrap/linux-gpu.sh test` and full rebuilt-image `./bootstrap/linux-cpu.sh test`, including
@@ -1593,7 +1593,7 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 **Status**: Done
 **Code-side closure**: Complete on the recorded Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
-**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — the selected `linux-gpu` plus `linux-cpu` per-family full-suite reruns passed on 2026-06-20. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, recorded Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have also passed on the Apple host for the host-routing and headless-materialization surfaces; Sprint 1.15 / Wave L now records green Apple real-payload integration and focused routed Playwright evidence, with the paired `linux-cpu` gate still open. Linux native payload strict smoke passes in the CUDA image and the full routed service-path evidence is recorded in Wave I.
+**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — the selected `linux-gpu` plus `linux-cpu` per-family full-suite reruns passed on 2026-06-20. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, recorded Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have also passed on the Apple host for the host-routing and headless-materialization surfaces; Sprint 1.15 / Wave L records green Apple real-payload integration and focused routed Playwright evidence, plus the paired `linux-cpu` full gate closed on 2026-06-29. Linux native payload strict smoke passes in the CUDA image and the full routed service-path evidence is recorded in Wave I.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1706,10 +1706,10 @@ single-host logical backpressure gate.
 
 ---
 
-## Sprint 6.33: Fail-Closed HA and Service-Loop Assertions [Active]
+## Sprint 6.33: Fail-Closed HA and Service-Loop Assertions [Done]
 
-**Status**: Active
-**Code-side closure**: Done + validated 2026-06-24 (code-side: the rebuilt `linux-cpu` image compiles
+**Status**: Done
+**Code-side closure**: Complete and validated 2026-06-24 (code-side: the rebuilt `linux-cpu` image compiles
 `test:infernix-integration`, with `infernix lint docs` / `test unit` / `test lint` green). Built on the
 realness enforcement established by Phase 0 (the `infernix-haskell-style` realness check + the
 `check-code` AST guard) and the real Linux engines + real per-family fixtures + fail-closed per-row
@@ -1720,8 +1720,8 @@ result shape (it previously asserted neither), and `assertCompletedResultPayload
 `ConversationInferenceResultPayload.inferenceResultArtifacts` across its chaos/throughput call sites
 (frontend / coordinator / engine pod replacement, engine node drain, multi-user durable throughput,
 fan-in batching, fan-out). This sprint does **not** re-own the realness lint (Phase 0) or the real
-per-family fixtures (Phase 4); it consumes them. Machine-independent gates gate the next step.
-**Cohort gate**: [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`.
+per-family fixtures (Phase 4); it consumes them.
+**Cohort gate**: Closed [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`.
 **Implementation**: `test/integration/Spec.hs`
 **Docs to update**: `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
@@ -1742,24 +1742,13 @@ not duplicating — the realness enforcement (Phase 0) and the real-engine fixtu
 
 ### Remaining Work
 
-Implementation **done + validated code-side 2026-06-24**: `validateServiceRuntimeLoop` uploads the
-per-family fixture and asserts completion + the `ResultFamily` contract; `assertCompletedResultPayload`
-is `ResultFamily`-aware and fail-closed (non-empty inline text for LLM/speech, a non-empty
-`inferenceResultArtifacts` object ref for artifact families) across all five chaos/throughput/HA call
-sites. The [Wave K](cohort-validation-waves.md) `linux-gpu` + `linux-cpu` real-output cohort gate is
-**closed** (`linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26): both Linux accelerators pass the full
-integration suite (per-model real output + HA/chaos) and 9/9 routed Playwright specs.
+None.
 
 ---
 
 ## Remaining Work
 
-Phase 6 is reopened (`Active`) for the fail-closed HA and service-loop assertions (Sprint 6.33), building
-on the Phase 0 realness lint (Sprint 0.12) and the Phase 4 real fixtures + fail-closed per-row tests
-(Sprint 4.23). The Sprint 6.1–6.32 closure stands; Sprint 6.33 makes the HA / chaos / service-loop suites
-fail closed on a non-real or incomplete result, gated by [Wave K](cohort-validation-waves.md)
-(`linux-gpu` + `linux-cpu`). It depends only on earlier phases (0 and 4), so no earlier-phase validation
-is blocked by Phase 6.
+None.
 
 ## Documentation Requirements
 

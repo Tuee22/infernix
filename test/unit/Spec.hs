@@ -160,6 +160,7 @@ import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
+import System.Info qualified
 import System.Process (proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 import Test.QuickCheck
@@ -326,6 +327,55 @@ main = do
   assert
     (not ("colima" `isInfixOf` linuxDockerfileContents))
     "Linux launcher image host manifest does not carry the retired Colima tool field"
+  chartValuesContents <- readFile "chart/values.yaml"
+  let expectedBasePulsarAutorecoveryBlock =
+        unlines
+          [ "  autorecovery:",
+            "    replicaCount: 3",
+            "    podMonitor:",
+            "      enabled: false",
+            "    configData:",
+            "      BOOKIE_MEM: \"-Xms64m -Xmx256m -XX:MaxDirectMemorySize=128m\"",
+            "    resources:",
+            "      requests:",
+            "        memory: 192Mi",
+            "        cpu: 0.05",
+            "      limits:",
+            "        memory: 512Mi"
+          ]
+      expectedBaseHarborRegistryResourcesBlock =
+        unlines
+          [ "    registry:",
+            "      resources:",
+            "        requests:",
+            "          cpu: 100m",
+            "          memory: 512Mi",
+            "        limits:",
+            "          memory: 2Gi",
+            "    controller:"
+          ]
+      expectedBaseMinioPersistenceBlock =
+        unlines
+          [ "  persistence:",
+            "    storageClass: infernix-manual",
+            "    # The linux-gpu full catalog retains large lazy-bootstrap model bundles",
+            "    # (Wan2.1 T2V plus SDXL and quantized LLM/audio rows) in `infernix-models`.",
+            "    # Keep each distributed MinIO drive above the complete retained model set so",
+            "    # later rows can publish without tripping MinIO's low-free-space guard.",
+            "    size: 64Gi"
+          ]
+  assert
+    ("      BOOKIE_MEM: \"-Xms64m -Xmx256m -XX:MaxDirectMemorySize=128m\"" `isInfixOf` chartValuesContents)
+    "base Pulsar autorecovery values set an explicit JVM envelope for real Linux hosts"
+  assert
+    (expectedBasePulsarAutorecoveryBlock `isInfixOf` chartValuesContents)
+    "base Pulsar autorecovery values avoid the 192Mi OOMKilled recovery rollout"
+  assert
+    (expectedBaseHarborRegistryResourcesBlock `isInfixOf` chartValuesContents)
+    "base Harbor registry values avoid the 640Mi OOMKilled large-image publication rollout"
+  assert
+    (expectedBaseMinioPersistenceBlock `isInfixOf` chartValuesContents)
+    "base MinIO persistence keeps enough retained model capacity for the linux-gpu catalog"
   dockerIgnoreContents <- readFile ".dockerignore"
   dockerIgnorePatterns <-
     expectRight
@@ -1377,7 +1427,12 @@ main = do
     invalidConfigResult <- try (decodeDemoConfigFile invalidDemoConfigPath) :: IO (Either IOError DemoConfig)
     assert (either (const True) (const False) invalidConfigResult) "invalid demo configs are rejected"
 
-    let linuxCpuOuterFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
+    let linuxCpuOuterFixture =
+          linuxOuterContainerUnitTestFixtureForArchitecture
+            realRepoRoot
+            unitTestRoot
+            (unitTestRoot </> "outer-container" </> "build")
+            "arm64"
     linuxCpuOuterPaths <- discoverPathsWithHostManifest (Just linuxCpuOuterFixture)
     linuxCpuFinalNow <- getCurrentTime
     let linuxCpuFinalState =
@@ -1427,6 +1482,54 @@ main = do
     assert
       ("      httpNumThreads: \"8\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values keep enough local Pulsar proxy HTTP threads for Jetty startup"
+
+    let linuxGpuOuterFixture =
+          linuxOuterContainerUnitTestFixtureForArchitecture
+            realRepoRoot
+            unitTestRoot
+            (unitTestRoot </> "outer-container-gpu" </> "build")
+            "amd64"
+    linuxGpuOuterPaths <- discoverPathsWithHostManifest (Just linuxGpuOuterFixture)
+    linuxGpuFinalNow <- getCurrentTime
+    let linuxGpuFinalState =
+          ClusterState
+            { clusterPresent = True,
+              edgePort = 30090,
+              harborPort = 30002,
+              routes = [RouteInfo "/" "demo web UI"],
+              storageClass = "standard",
+              claims = [],
+              clusterRuntimeMode = LinuxGpu,
+              kubeconfigPath = Config.generatedKubeconfigPath linuxGpuOuterPaths,
+              generatedDemoConfigPath = Config.generatedDemoConfigPath linuxGpuOuterPaths,
+              publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxGpuOuterPaths,
+              publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath linuxGpuOuterPaths,
+              mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
+              lifecycleProgress = Nothing,
+              updatedAt = linuxGpuFinalNow
+            }
+        linuxGpuFinalValues =
+          renderHelmValues
+            linuxGpuOuterPaths
+            OuterContainer
+            linuxGpuFinalState
+            "{}"
+            FinalPhase
+            []
+        expectedLinuxGpuEngineResources =
+          unlines
+            [ "  resources:",
+              "    requests:",
+              "      cpu: 500m",
+              "      memory: 4Gi",
+              "    limits:",
+              "      cpu: \"2\"",
+              "      memory: 16Gi",
+              "  perEngine:"
+            ]
+    assert
+      (expectedLinuxGpuEngineResources `isInfixOf` linuxGpuFinalValues)
+      "linux-gpu final Helm values keep enough engine memory for the routed Wan diffusers row"
 
     let renderedChartPath = unitTestRoot </> "rendered-chart.yaml"
     writeFile renderedChartPath sampleRenderedChart
@@ -1653,7 +1756,19 @@ hostNativeUnitTestFixture repoRootPath testRoot =
 -- 'controlPlaneContext'.
 linuxOuterContainerUnitTestFixture :: FilePath -> FilePath -> FilePath -> HostConfig.HostConfig
 linuxOuterContainerUnitTestFixture repoRootPath testRoot buildRootPath =
-  let base = HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
+  linuxOuterContainerUnitTestFixtureForArchitecture repoRootPath testRoot buildRootPath System.Info.arch
+
+linuxOuterContainerUnitTestFixtureForArchitecture ::
+  FilePath ->
+  FilePath ->
+  FilePath ->
+  String ->
+  HostConfig.HostConfig
+linuxOuterContainerUnitTestFixtureForArchitecture repoRootPath testRoot buildRootPath architecture =
+  let base =
+        HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture
+          (Text.pack "/root")
+          (Text.pack architecture)
    in base
         { HostConfig.hostFilesystem =
             (HostConfig.hostFilesystem base)
@@ -2708,8 +2823,8 @@ assertBootstrapModels = do
     (BootstrapModels.bootstrapRequestDedupKey req == "qwen2.5-7b@2026-05-21T00:00:00Z")
     "bootstrap request dedup key is scoped to the request attempt"
   assert
-    (BootstrapModels.readyEventDedupKey ev == "qwen2.5-7b")
-    "ready event dedup key is the modelId"
+    (BootstrapModels.readyEventDedupKey ev == "qwen2.5-7b@2026-05-21T00:01:00Z")
+    "ready event dedup key is scoped to the ready event"
   assert
     (BootstrapModels.bootstrapReadyTopicFor "persistent://infernix/system" "qwen2.5-7b" == "persistent://infernix/system/model.bootstrap.ready.qwen2.5-7b")
     "ready topic name follows the supported infernix/system namespace pattern"

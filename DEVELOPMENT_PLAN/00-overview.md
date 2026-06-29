@@ -95,17 +95,22 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Cohort validation status (present development host = Apple Silicon).** Consistent with the
+**Cohort validation status (present development host = CUDA Linux).** Consistent with the
 single-accelerator doctrine — implement and run code-side closure on whichever single machine is
 present, and validate each phase on **one** accelerator (`apple-silicon` or `linux-gpu`) plus
-`linux-cpu`, never both — the current workspace is Apple Silicon (`Darwin arm64`). The latest Apple
-Sprint 1.15 pass builds the host binaries, materializes the `apple-silicon` substrate and real Apple
-native engine roots, proves the generated Metal runtime bridge smoke, smoke-loads the installed Core
-ML/CTranslate2/MLX/ONNX/Audiveris runner roots, and verifies the Core ML venv imports Basic Pitch
-plus Apple's Stable Diffusion pipeline. The 2026-06-20 CUDA Linux closure validated the architecture
+`linux-cpu`, never both — the current workspace is a real Linux CUDA host. Phase 1 Wave L's paired
+`linux-cpu` gate closed here on 2026-06-29 with rebuilt image
+`sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`:
+`./bootstrap/linux-cpu.sh test` passed style, Python `check-code`, unit, web `71/71`, full integration with all real
+`linux-cpu` outputs plus the HA/chaos tail, and routed Playwright `9/9`. The Apple Sprint 1.15 pass
+on the Apple host builds the host binaries, materializes the `apple-silicon` substrate and real
+Apple native engine roots, proves the generated Metal runtime bridge smoke, smoke-loads the
+installed Core ML/CTranslate2/MLX/ONNX/Audiveris runner roots, verifies the Core ML venv imports
+Basic Pitch plus Apple's Stable Diffusion pipeline, and passes Apple integration plus focused
+routed Playwright. The 2026-06-20 CUDA Linux closure validated the architecture
 and HA, but its inference real-output evidence was satisfied by stub/wrapper engines for several rows
 and is **reopened** — Phases 4/6 re-attest real Linux output under Wave K, enforced by the realness
-lint. The latest Apple integration rerun passed after rebuilding the changed repo-owned
+lint. The Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
@@ -125,8 +130,8 @@ rename failure. The 2026-06-16 Linux CPU rebuilt-image integration pass on the n
 lane proves two-worker engine-pool placement, unique-topic `Shared` backlog/backpressure, pod
 replacement, node drain, anti-affinity, lifecycle rebinding, demo-off publication, Linux CPU
 framework-venv smoke paths, and clean teardown against image digest
-`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. The current CUDA Linux
-cycle also rebuilt `infernix-linux-gpu:local`, strict-smoked the baked Linux native payload layer
+`sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. The CUDA Linux
+Wave K cycle also rebuilt `infernix-linux-gpu:local`, strict-smoked the baked Linux native payload layer
 for all five native adapters with `--require-native-payload`, and then passed full
 `./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test` on 2026-06-20.
 That closure proved the routed `linux-gpu` plus `linux-cpu` architecture, HA, and Linux payload
@@ -151,7 +156,10 @@ full-suite gate passed on the recorded validation. [Wave F](cohort-validation-wa
 with native `linux/arm64` `linux-cpu` validation through the selected Docker daemon
 (`server=linux/arm64`, runtime probe `aarch64` / `arm64`) and a full
 `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
-PASS.
+PASS. [Wave M](cohort-validation-waves.md) closed the webapp-mediated file-storage reopen on
+2026-06-29 with the selected `linux-gpu` accelerator plus `linux-cpu`: the paired `linux-cpu` full
+gate and `./bootstrap/linux-gpu.sh test` both passed, including full integration and routed
+Playwright `9/9`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
@@ -177,9 +185,11 @@ Monitoring is not a supported first-class surface.
 Phase 7 adds the multi-user durable-context demo application on top of this platform.
 The platform contract above is implemented in the worktree. Real-cluster validation is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
-[Wave A](cohort-validation-waves.md) on the recorded validation, and the CUDA Linux cohort gate closed in
-[Wave C](cohort-validation-waves.md) with `linux-cpu` passing on the recorded validation and `linux-gpu`
-passing on the recorded validation. The product-agnostic primitives live at
+[Wave A](cohort-validation-waves.md) on the recorded validation, the CUDA Linux cohort gate closed in
+[Wave C](cohort-validation-waves.md) with `linux-cpu` passing on the recorded validation and
+`linux-gpu` passing on the recorded validation, and the webapp-mediated object-proxy / Files /
+in-browser-rendering reopen closed in [Wave M](cohort-validation-waves.md) on 2026-06-29 with
+`linux-cpu` plus the selected `linux-gpu` full-suite gates. The product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);

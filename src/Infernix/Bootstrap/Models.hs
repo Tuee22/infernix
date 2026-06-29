@@ -96,11 +96,12 @@ bootstrapRequestDedupKey :: ModelBootstrapRequest -> Text
 bootstrapRequestDedupKey request =
   bootstrapRequestModelId request <> "@" <> bootstrapRequestRequestedAtIso8601 request
 
--- | Producer-side dedup sequence ID for a ready event. Same semantics as
--- the request key: one upstream download yields one ready event regardless
--- of how many times the coordinator restarts mid-bootstrap.
+-- | Producer-side dedup sequence ID for a ready event. Include the event
+-- timestamp so a later cluster lifecycle can publish a fresh ready signal
+-- even when broker-side dedup state from an earlier run is still retained.
 readyEventDedupKey :: ModelBootstrapReadyEvent -> Text
-readyEventDedupKey = readyEventModelId
+readyEventDedupKey event =
+  readyEventModelId event <> "@" <> readyEventReadyAtIso8601 event
 
 -- | Per-model ready-event topic name. Engines @Reader@-subscribe to this
 -- topic with a bounded timeout; the broker preserves the latest message

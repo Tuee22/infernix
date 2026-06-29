@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active — reopened (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is a superseded Apple singleton stopgap; Sprint 7.24 is closed for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Reopened for Sprints 7.25–7.27: the webapp object-proxy and per-user isolation hardening, a per-user Files navigational view, and in-browser MIDI/MusicXML/ZIP rendering — all **code-side closed + validated machine-independent 2026-06-24**, with [Wave M](cohort-validation-waves.md) the real per-user cohort residual. Desired-state hot reload is a future extension, not part of the current closure.)
+**Status**: Done — reopened and re-closed (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is a superseded Apple singleton stopgap; Sprint 7.24 is closed for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Sprints 7.25–7.27 — the webapp object-proxy and per-user isolation hardening, a per-user Files navigational view, and in-browser MIDI/MusicXML/ZIP rendering — are code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with the selected `linux-gpu` accelerator plus `linux-cpu`. Desired-state hot reload is a future extension, not part of the current closure.)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -21,7 +21,7 @@
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), not as open Phase 7
 > validation work.
 
-Phase 7 is reopened (`Active`) for Sprints 7.25–7.27. Sprints 7.1–7.18 remain closed, and Sprints
+Phase 7 reopened and re-closed for Sprints 7.25–7.27. Sprints 7.1–7.18 remain closed, and Sprints
 7.19–7.22 closed the auth-UX quad described in the Status block on the Wave G routed E2E validation.
 Sprint 7.23's Apple `Exclusive` / `Failover` singleton design is retained only as historical plan
 context and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared`
@@ -36,11 +36,11 @@ and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/ar
 Sprint 7.26 adds a per-user Files navigational view scoped to `users/<sub>/`; and Sprint 7.27 adds
 in-browser MIDI/MusicXML/ZIP rendering. Sprint 7.25 (delivered jointly with
 [Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md), the `/minio/s3`
-de-exposure) is **code-side closed 2026-06-24** with only the [Wave M](cohort-validation-waves.md)
-cohort gate remaining; Sprints 7.26 and 7.27 build on it. All three are gated by
-[Wave M](cohort-validation-waves.md). The Sprint 7.9 presigned-URL prose describes the superseded
-pre-7.25 path; the Sprint 7.11 download-only artifact prose describes current state until Sprint
-7.27 lands.
+de-exposure) is code-side closed 2026-06-24 and cohort-closed by
+[Wave M](cohort-validation-waves.md) on 2026-06-29; Sprints 7.26 and 7.27 build on it and are closed
+by the same wave. The Sprint 7.9 presigned-URL prose describes the superseded
+pre-7.25 path; Sprint 7.27 replaces the prior download-only behavior for MIDI, MusicXML, and ZIP
+stem artifacts with in-browser render dispositions.
 
 Code-side closure: Sprints 7.1–7.17 are code-side closed covering the daemon-split topology
 (stateless `infernix-demo` frontend, two-replica stateless `infernix-coordinator` with per-context
@@ -100,6 +100,15 @@ browser matrix on the selected CUDA Linux accelerator plus `linux-cpu`. Physical
 routing is hardware-deferred proof while no second Apple host is available. The earlier
 durable-context and auth-UX scopes
 remain closed on their recorded validation.
+
+Phase 7 closed Sprints 7.25–7.27 in [Wave M](cohort-validation-waves.md) on 2026-06-29. The paired
+`linux-cpu` gate passed with the full real-output suite, and the selected `linux-gpu` accelerator
+gate passed `./bootstrap/linux-gpu.sh test`: Haskell style, Python `check-code`, Haskell unit, web
+contracts `71/71`, full integration with every `linux-gpu` catalog row producing real output plus
+the service/cache/durable-topic and HA lifecycle tail, and routed Playwright `9/9` including the
+28.5-minute browser per-model smoke matrix. The routed browser evidence covers the Wave M-owned
+object-proxy, cross-user isolation, Files view, proxied media previews, and in-browser
+MIDI/MusicXML/ZIP rendering.
 
 ## Current Repo Assessment
 
@@ -2739,6 +2748,8 @@ None.
 
 None. Sprint 7.24 closed on 2026-06-20 through [Wave J](cohort-validation-waves.md): the selected
 `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
+Sprints 7.25-7.27 closed on 2026-06-29 through [Wave M](cohort-validation-waves.md): the selected
+`linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
 Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
 
 ---
@@ -3247,9 +3258,9 @@ exact-member routes stay explicit through `Exclusive` pinned topics.
 
 ---
 
-## Sprint 7.25: Webapp Object-Proxy and Per-User Isolation Hardening [Active]
+## Sprint 7.25: Webapp Object-Proxy and Per-User Isolation Hardening [Done]
 
-**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Status**: Done
 **Code-side closure**: Done (2026-06-24, machine-independent). The webapp is the single mediator for
 browser file I/O. `src/Infernix/Demo/Api.hs` proxies the bytes server-side over the internal MinIO
 endpoint (`loadInternalMinioPresignedConfig` + the new `putMinioObjectBytes` / `getMinioObjectBytes`
@@ -3277,7 +3288,8 @@ keeps `ArtifactDownloadGrant` (minus its URL field) as the disposition carrier a
 `putMinioObjectBytes`/`getMinioObjectBytes` signers rather than `Infernix.Objects.Upload`'s
 `ObjectUploadConfig`-typed helpers, matching the established `Demo/Api.hs` MinIO-access pattern; the
 contract module is `src/Infernix/Web/Contracts.hs` (there is no `src/Infernix/Demo/Contracts.hs`).
-**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
+chosen `linux-gpu` accelerator.
 **Implementation**: `src/Infernix/Demo/Api.hs`, `src/Infernix/Web/Contracts.hs`, `src/Infernix/Objects/Layout.hs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/src/index.html`
 **Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -3301,16 +3313,14 @@ cross-user access is impossible by construction.
   get / put / delete) and cannot read another user's chat context
 - e2e: the browser uploads and downloads only through the webapp `/api/objects` surface, never a
   presigned MinIO URL
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator real
-  per-user attestation
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` real
+  per-user attestation, including the routed cross-user-403 e2e and proxied byte upload/download
+  evidence.
 
 ### Remaining Work
 
-Code-side closed 2026-06-24 (machine-independent gates green). Only the
-[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator, including
-the real cross-user-403 e2e) remains. Delivered jointly with
-[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md). Unblocks Sprints 7.26 and
-7.27.
+None. Delivered jointly with [Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md)
+and closed by [Wave M](cohort-validation-waves.md).
 
 ### Documentation Requirements
 
@@ -3324,9 +3334,9 @@ the real cross-user-403 e2e) remains. Delivered jointly with
 
 ---
 
-## Sprint 7.26: Per-User Files Navigational View [Active]
+## Sprint 7.26: Per-User Files Navigational View [Done]
 
-**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Status**: Done
 **Code-side closure**: Done (2026-06-24, machine-independent). `src/Infernix/Demo/Api.hs` adds
 `handleObjectsList` (`GET /api/objects/list`, returns the caller's objects as a JSON array of
 `ObjectRef` scoped server-side to `users/<sub>/` via the existing `listMinioUserObjectKeys`) and
@@ -3341,7 +3351,8 @@ and the delete request; `web/src/Main.purs` wires the route, transport, and refr
 Gates green: `cabal build all`, `cabal test infernix-haskell-style` (ormolu + hlint clean on the new
 handlers), `infernix lint files/chart/docs/proto`, `infernix docs check`, and the containerized web
 suite (`spago build` clean, `spago test` 71/71).
-**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator.
+**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
+chosen `linux-gpu` accelerator.
 **Implementation**: `src/Infernix/Demo/Api.hs`, `web/src/index.html`, `web/src/Infernix/Web/Router.purs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/FilesTransport.purs`, `web/src/Infernix/Web/FilesTransport.js`, `web/src/Main.purs`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`, `documents/architecture/demo_app_design.md`, `documents/architecture/tenant_isolation_doctrine.md`
 
@@ -3362,13 +3373,11 @@ dispositions for preview.
 
 - scoping e2e: the Files view lists only the caller's objects, and list / download / delete on
   another user's key is rejected
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator attestation
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` attestation
 
 ### Remaining Work
 
-Code-side closed 2026-06-24 (machine-independent gates green). Only the
-[Wave M](cohort-validation-waves.md) cohort gate (`linux-cpu` plus the chosen accelerator, including
-the scoping e2e) remains.
+None. Closed by [Wave M](cohort-validation-waves.md).
 
 ### Documentation Requirements
 
@@ -3379,9 +3388,9 @@ the scoping e2e) remains.
 
 ---
 
-## Sprint 7.27: In-Browser MIDI/MusicXML/ZIP Rendering [Active]
+## Sprint 7.27: In-Browser MIDI/MusicXML/ZIP Rendering [Done]
 
-**Status**: Active — code-side closed 2026-06-24; [Wave M](cohort-validation-waves.md) cohort gate pending
+**Status**: Done
 **Code-side closure**: Done (2026-06-24, machine-independent). New `ArtifactRenderDisposition`
 variants `RenderMidi` / `RenderMusicXml` / `RenderZipStems` are added to
 `src/Infernix/Web/Contracts.hs` (data type + `phase7Sums` so the regenerated `Generated.Contracts`
@@ -3398,9 +3407,10 @@ green: `cabal build all`, `cabal test infernix-unit` (disposition matrix + round
 `cabal test infernix-haskell-style`, `infernix lint files/chart/docs/proto`, `infernix docs check`,
 and the containerized web suite (`spago build` clean, `spago test` 71/71 with the updated
 `ArtifactsSpec`).
-**Cohort gate**: [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the chosen accelerator. The
-esbuild bundle of the new deps, the self-hosted smplr sample provisioning, and the in-browser render
-e2e (MIDI plays + piano-roll, MusicXML SVG, ZIP-stem audio) are the Wave M residual.
+**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
+chosen `linux-gpu` accelerator. The esbuild bundle of the new deps, self-hosted smplr sample
+provisioning, and in-browser render e2e (MIDI plays + piano-roll, MusicXML SVG, ZIP-stem audio) are
+validated by the Wave M routed browser suite.
 **Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/Demo/Api.hs`, `web/src/Infernix/Web/Artifacts.purs`, `web/src/Infernix/Web/ArtifactTransport.js`, `web/package.json`
 **Docs to update**: `documents/reference/web_portal_surface.md`, `documents/architecture/demo_app_design.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -3421,13 +3431,11 @@ and self-hosted PureScript FFI, replacing the download-only fallback for those f
 
 - e2e: a MIDI artifact plays and renders a piano-roll, a MusicXML/`.mxl` artifact renders SVG, and a
   ZIP stem set renders inline audio — none falls back to download-only
-- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen-accelerator attestation
+- [Wave M](cohort-validation-waves.md) records the `linux-cpu` plus chosen `linux-gpu` attestation
 
 ### Remaining Work
 
-Code-side closed 2026-06-24 (machine-independent gates green). Only the
-[Wave M](cohort-validation-waves.md) cohort gate (the esbuild bundle of the new deps, self-hosted
-smplr sample provisioning, and the in-browser render e2e) remains.
+None. Closed by [Wave M](cohort-validation-waves.md).
 
 ### Documentation Requirements
 

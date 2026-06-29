@@ -4788,6 +4788,15 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
             "      cpu: \"2\"",
             "      memory: 3584Mi"
           ]
+      | clusterRuntimeMode state == LinuxGpu =
+          [ "  resources:",
+            "    requests:",
+            "      cpu: 500m",
+            "      memory: 4Gi",
+            "    limits:",
+            "      cpu: \"2\"",
+            "      memory: 16Gi"
+          ]
       | otherwise = []
 
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int

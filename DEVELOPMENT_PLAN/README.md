@@ -141,9 +141,9 @@ inference, and result publication. The worker dispatches through the selected en
 fetches model weights lazily from `infernix-models`, and publishes the typed per-family result
 surface; the selected `linux-gpu` plus `linux-cpu` real-output proof closed on 2026-06-20, while
 unsupported adapter ids fail fast instead of falling through to a generic success path. The
-current Apple Wave L rerun has passed the machine-independent front-loaded gates and reached
-Harbor publication after the PyPI torch-source and YourMT3+ residual fixes; the latest remaining
-Apple lifecycle remediation treats Harbor's MinIO-backed `harbor-registry` bucket and registry
+A prior Apple Wave L rerun passed the machine-independent front-loaded gates and reached
+Harbor publication after the PyPI torch-source and YourMT3+ residual fixes; the later
+Apple lifecycle remediation treated Harbor's MinIO-backed `harbor-registry` bucket and registry
 scratch metadata as rebuildable cache on both retained-state replay directions so failed large
 image pushes do not exhaust MinIO free-drive thresholds on the next run. The follow-on validation
 confirmed that retained-state scrub, then hit current-daemon capacity during the fresh runtime
@@ -292,8 +292,9 @@ OOM: Jetty rejected the local `httpNumThreads: "4"` cap with `Insufficient confi
 required=4 < max=4`. `./bootstrap/linux-cpu.sh down` completed cleanly. Current source keeps the
 tightened memory profile and raises the local Pulsar proxy `httpNumThreads` to `8`; local
 `cabal build all`, serial `cabal test infernix-haskell-style`, and serial
-`cabal test infernix-unit` are green. Wave L remains open pending a rebuilt-image full gate with
-that proxy-thread remediation.
+`cabal test infernix-unit` are green. The follow-on real Linux host rebuild and full
+`./bootstrap/linux-cpu.sh test` rerun closed Wave L on 2026-06-29 with image
+`sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`.
 The worktree omits the
 direct Harbor, MinIO, and Pulsar tool-route compatibility handlers, requires the real routed
 upstream behavior in integration, and persists Linux cluster state before later rollout phases.
@@ -322,16 +323,10 @@ materialization lane under the Section Q single-accelerator rule: it removes the
 `materialize-metal-engines` command to typed engine-artifact manifests. Phase 1 Sprint 1.15 builds
 on that lane by replacing the former validation-wrapper payloads with real Apple native runner
 roots for Core ML, MLX, llama.cpp/whisper.cpp Metal, CTranslate2, ONNX Runtime, and Audiveris,
-plus indexed native snapshot hydration for Core ML Stable Diffusion. The remaining Phase 1
-residual is the Wave L paired `linux-cpu` full routed real-output gate on a rebuilt image from
-current source, which contains the prior direct-bootstrap streaming fix, engine-node-drain
-target-preparation fix, native MinIO input-fetch timeout/retry fix, browser-matrix
-redelivery-envelope fix, result-poll remediation, the tighter Apple-hosted `linux-cpu` local
-memory profile introduced after image
-`sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb` exposed aggregate
-Kind-node `SystemOOM`, and the proxy `httpNumThreads: "8"` remediation introduced after image
-`sha256:f5e3ba564b4f431815fce4ed3452f39f944003075fedc965e3a31705b4bbbfb7` exposed the
-Jetty-invalid four-thread cap.
+plus indexed native snapshot hydration for Core ML Stable Diffusion. Phase 1 is fully closed by
+Wave L: Apple Stage 2 integration/focused routed Playwright are green, and the paired
+`linux-cpu` full gate passed on the real Linux host on 2026-06-29 with rebuilt image
+`sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`.
 The target has no Tart VM, user
 keychain dependency, host Xcode UI flow, or request-time toolchain install. The
 Poetry bootstrap may reuse an already available
@@ -362,35 +357,19 @@ Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhal
 typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
 `dhall/InfernixSubstrate.dhall`.
 
-**Cohort validation status (present development host = Apple Silicon).** The current workspace is
-native Apple Silicon (`Darwin arm64`). Consistent with the Section Q single-accelerator doctrine,
-Phase 1 Sprint 1.15 was implemented and code-side validated on this host without switching
-machines: `./bootstrap/apple-silicon.sh build`, `./.build/infernix internal materialize-substrate
-apple-silicon`, `./.build/infernix internal materialize-metal-engines`, installed Metal/Core
-ML/CTranslate2/MLX/ONNX/Audiveris smokes, direct Core ML imports for Basic Pitch plus Apple's
-Stable Diffusion pipeline, `./.build/infernix test unit`, and `./.build/infernix test lint` pass.
-Wave L remains open for the paired `linux-cpu` full routed real-output gate after the previous
-rebuilt redelivery image passed integration but hit routed E2E node-level `SystemOOM`; rebuilt
-local-pressure image `sha256:fbbb0af5bb59366c6144c28e5bd70dd90185e52519e21a5cb136bbf94b1d02a9`
-contained the coordinator/demo resource and browser one-engine remediation, then exposed the
-coordinator memory limit during final rollout; rebuilt image
-`sha256:0f3555612d15b8278e145d6711512642baf6ff08d4b11457e514c7b0ff274ff8` contained that
-`1Gi` coordinator-limit remediation and reached real per-model inference, then exposed
-coordinator-side direct single-file bootstrap memory pressure; current source streams those
-downloads through a temp file into MinIO. Rebuilt image
-`sha256:20b1146c267046b4c5fbe3f4dbb1168bba161a99040ccce734a5fccb7ad7dceb`
-proved that streaming remediation by clearing the previous direct-bootstrap OOM and advancing
-through per-model inference and the HA tail, then failed at the engine-node-drain case because the
-target node also hosted the single local Pulsar broker/proxy path. Current source prepares the
-drain target by avoiding or relocating drain-sensitive Pulsar stateful pods first. Rebuilt image
-`sha256:68afca38e206d8b4c99561909bb878b3c17c7592f43829efe7e28a5b5cc8c349` contains both
-remediations and reached `speech-faster-whisper-ct2` before exposing a native MinIO input-object
-download timeout. Current source extends the object GET timeout and retries native input
-downloads. Subsequent rebuilt images proved the input-fetch and browser redelivery remediations,
-then exposed the local-memory ceilings and proxy-thread floor described in Wave L. Current source
-contains the tightened Apple-hosted `linux-cpu` local profile plus the proxy
-`httpNumThreads: "8"` remediation; the paired gate now awaits a rebuilt-image full rerun. The
-first Stage 2 retries on this host exposed, and the current source remediates, the native arm64
+**Cohort validation status (present development host = CUDA Linux).** The current workspace is a
+real Linux CUDA host. Consistent with the Section Q single-accelerator doctrine, the remaining
+Phase 1 Wave L paired `linux-cpu` gate was validated here before moving to the next open phase:
+`./bootstrap/linux-cpu.sh test` passed on 2026-06-29 with rebuilt image
+`sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`, covering Haskell style,
+Python `check-code`, Haskell unit, web `71/71`, full integration with all real `linux-cpu` catalog
+outputs and the HA/chaos tail, and routed Playwright `9/9`. The Apple-side Sprint 1.15 evidence
+remains the prior Apple host validation: `./bootstrap/apple-silicon.sh build`,
+`./.build/infernix internal materialize-substrate apple-silicon`, `./.build/infernix internal
+materialize-metal-engines`, installed Metal/Core ML/CTranslate2/MLX/ONNX/Audiveris smokes, direct
+Core ML imports for Basic Pitch plus Apple's Stable Diffusion pipeline, `./.build/infernix test
+unit`, `./.build/infernix test lint`, Apple integration, and focused routed Playwright. The first
+Stage 2 retries on the Apple host exposed, and the current source remediates, the native arm64
 llama.cpp/whisper.cpp payload-selection bug and the default 8 GiB Apple Docker-daemon rollout
 pressure by generating a single-replica Apple host-native local topology for Harbor, Pulsar,
 coordinator, and demo while preserving the Linux HA-shaped defaults. Later Apple reruns advanced
@@ -489,13 +468,13 @@ construction, `nvkind`, or NVIDIA scheduling.
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|
 | 0 | Documentation and Governance | Done — reopened and re-closed (Sprints 0.1-0.12 done; Sprint 0.11 reconciled the governed docs — README matrix, `model_catalog`, `testing_strategy`, `python_policy`, realness doctrine — to the code-enforced realness invariant in lockstep with the Phase 4 catalog change, and Sprint 0.12 added the machine-independent realness lint enforcement (Python `check-code` AST + Haskell `realnessFabricationViolations`, scope extended per accelerator phase); validated 2026-06-23, machine-independent) | [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md) |
-| 1 | Repository and Control-Plane Foundation | Active — reopened (Sprints 1.1-1.14 remain closed for the scaffold/topology/materialization-lane foundation; Sprint 1.15 is **code-side closed + Apple-host smoke validated 2026-06-26** — validation wrappers are deleted, real runner roots materialize for Core ML, MLX, llama.cpp/whisper.cpp Metal, CTranslate2, ONNX, and Audiveris, indexed native snapshot hydration supports Core ML Stable Diffusion, and the Apple integration + focused routed Playwright gates are green. The paired `linux-cpu` full gate has proved the staged Keycloak startup path and service-consumer redelivery remediation through full integration on image `sha256:451c214fd55aacbe6a67e5e5bf11907ffc9ad7d23a993df90268d3d7d470f6cd`; routed E2E then exposed local Apple-hosted CPU `SystemOOM`. Rebuilt image `sha256:fbbb0af5bb59366c6144c28e5bd70dd90185e52519e21a5cb136bbf94b1d02a9` contained the coordinator/demo resource + browser one-engine remediation, then exposed a `512Mi` coordinator memory limit during final rollout; rebuilt image `sha256:0f3555612d15b8278e145d6711512642baf6ff08d4b11457e514c7b0ff274ff8` reached real per-model inference, then exposed coordinator-side single-file model bootstrap memory pressure. Rebuilt image `sha256:20b1146c267046b4c5fbe3f4dbb1168bba161a99040ccce734a5fccb7ad7dceb` cleared that bootstrap OOM and advanced into the HA tail, then failed in engine node drain because the selected engine node also hosted the single local Pulsar broker/proxy path. Rebuilt image `sha256:68afca38e206d8b4c99561909bb878b3c17c7592f43829efe7e28a5b5cc8c349` contained both the streaming and drain-target remediations, reached `speech-faster-whisper-ct2`, then exposed a native MinIO input-object `ResponseTimeout`. Rebuilt image `sha256:7f3bea81330bf0cafb5f0bb0024276e23ec7b53a41cae958aa83a4781a694a74` contains the object timeout/retry remediation and passed full integration, then routed E2E passed eight Playwright specs before the browser matrix timed out on `speech-faster-whisper-ct2` after single-engine restarts. Rebuilt image `sha256:0feec8141c67aa4879d9ecc6fb0c955afe907121488ac48b5561bf4d70d23ed3` contains the browser-matrix redelivery-envelope remediation, then the full rerun reached per-model inference and exposed Apple-hosted `linux-cpu` local resource OOM at the `3Gi` engine limit and `512Mi` single-broker limit. Rebuilt image `sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb` contains the `4Gi` local engine limit, `384Mi`/`1Gi` broker envelope, and one-second integration result-poll cadence; its full rerun passed the front gates, final rollout, Keycloak/route probes, and reached per-model inference before live diagnostics showed aggregate `SystemOOM` across all three Kind nodes (`java`/`infernix` victims and a Pulsar proxy `OOMKilled` at `512Mi`). Rebuilt image `sha256:f5e3ba564b4f431815fce4ed3452f39f944003075fedc965e3a31705b4bbbfb7` contains the tightened Apple-hosted `linux-cpu` local memory profile after the cold in-image build/materialization/web/Python/Playwright/CLI-help smoke path, then reached final rollout before the local Pulsar proxy failed startup because `httpNumThreads: "4"` was below Jetty's required thread budget. Current source raises the proxy cap to `8`; Wave L remains open pending a rebuilt-image full gate with that remediation.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
+| 1 | Repository and Control-Plane Foundation | Done — reopened and re-closed (Sprints 1.1-1.14 remain closed for the scaffold/topology/materialization-lane foundation; Sprint 1.15 is closed for real Apple native runner materialization and native snapshot hydration. Apple Stage 2 integration plus focused routed Playwright are green, and the paired `linux-cpu` full gate closed on 2026-06-29 with rebuilt image `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`: `./bootstrap/linux-cpu.sh test` passed style, Python `check-code`, unit, web `71/71`, full integration with all real `linux-cpu` model outputs plus the HA/chaos tail, and routed Playwright `9/9`.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
-| 3 | HA Platform Services and Edge Routing | Active — reopened (Sprints 3.1-3.12 remain closed — Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F, Sprints 3.10–3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C; Sprint 3.13 — de-exposes the `/minio/s3` external gateway route + `infernix-minio-s3` SecurityPolicy + `presignPublicEndpoint` so the webapp object-proxy is the sole external file-storage service — is **code-side closed + validated machine-independent 2026-06-24**, with [Wave M](cohort-validation-waves.md) the cohort residual) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
+| 3 | HA Platform Services and Edge Routing | Done — reopened and re-closed (Sprints 3.1-3.12 remain closed — Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F, Sprints 3.10-3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C; Sprint 3.13 de-exposes the `/minio/s3` external gateway route + `infernix-minio-s3` SecurityPolicy + `presignPublicEndpoint` so the webapp object-proxy is the sole external file-storage service. Sprint 3.13 is code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates.) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Done — reopened and re-closed (Sprints 4.1-4.20 closed for the typed dispatch/catalog/pool-routing architecture; the audit established that the prior real-output closure was satisfied by fabrication for several rows, so Sprints 4.21-4.23 reopen to deliver realness-by-construction. **Code-side closed + validated 2026-06-24**: every fabrication path removed + JAX/TF adapter retirement; the real Linux engines (real Audiveris OMR, the weight-staging fail-closed guard, real no-TensorFlow basic-pitch→MIDI, real piano/Omnizart ByteDance CRNN); the modern PyTorch music rebind (Omnizart real, MT3 honest-fail deferred); plus Phase 4's own real input fixtures + fail-closed per-row tests (Sprint 4.23). Demucs (real first-party PyTorch `.th` weight) and Open-Unmix (real `openunmix` umxhq) are now real, and MT3/YourMT3+ is `Not recommended` on every substrate (no real engine on any substrate). **Wave K is fully closed: `linux-cpu` Stage-2 GREEN 2026-06-25 and `linux-gpu` Stage-2 GREEN 2026-06-26** — `infernix test integration` + `infernix test e2e` (9/9, incl. the per-model browser matrix) pass on real clusters for both Linux accelerators, every catalog model producing real output (LLM/whisper/Demucs/Open-Unmix/basic-pitch/omnizart/bark/Audiveris on CPU; plus AWQ/GPTQ/SDXL-Turbo/Wan2.1 video on GPU). Real Apple engines are owned by the reopened Phase 1 under Wave L.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
 | 6 | Validation, E2E, and HA Hardening | Done — reopened and re-closed (Sprints 6.1-6.32 closed for the validation/HA architecture; so Sprint 6.33 adds the fail-closed HA / chaos / service-loop assertions on top of the Phase 0 realness lint (Sprint 0.12) and the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23). **Code-side closed + validated 2026-06-24**: `validateServiceRuntimeLoop` now uploads the per-family fixture and asserts completion + the `ResultFamily` contract (was neither), and `assertCompletedResultPayload` is `ResultFamily`-aware + fail-closed across all five chaos/throughput/HA call sites. **Wave K fully closed (`linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26):** all HA/chaos hardening steps pass on real clusters for both Linux accelerators (engine pool placement, backpressure, frontend/coordinator/engine failover, node drain, bootstrap failover + dedup — fixed to use `/healthz` after the Sprint 4.21 realness guard failed closed on the prior HTML URL — throughput, harbor/minio/pulsar recovery, postgres failover + lifecycle rebinding, anti-affinity), plus 9/9 routed Playwright specs.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Active — reopened (Sprints 7.1-7.24 remain closed — Sprint 7.23 superseded as an Apple singleton stopgap, Sprint 7.24 closes startup-time substrate-neutral engine pools, pinned Apple `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, production demo-off assertions, and live broker-native backpressure; Wave J closed on 2026-06-20 with full `linux-gpu` plus rebuilt-image `linux-cpu` validation; reopened for Sprints 7.25–7.27, which move browser file storage behind the webapp object-proxy with per-user isolation hardening, add a per-user Files navigational view, and add in-browser MIDI/MusicXML/ZIP rendering. Sprints 7.25 (webapp object-proxy, jointly with Phase 3 Sprint 3.13), 7.26 (per-user Files view), and 7.27 (in-browser MIDI/MusicXML/ZIP rendering) are all **code-side closed + validated machine-independent 2026-06-24** (Haskell gates + containerized `spago build`/`spago test` 71/71), with [Wave M](cohort-validation-waves.md) the real per-user cohort residual. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 7 | Demo App Multi-User Durable Context | Done — reopened and re-closed (Sprints 7.1-7.24 remain closed — Sprint 7.23 superseded as an Apple singleton stopgap, Sprint 7.24 closes startup-time substrate-neutral engine pools, pinned Apple `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, production demo-off assertions, and live broker-native backpressure; Wave J closed on 2026-06-20 with full `linux-gpu` plus rebuilt-image `linux-cpu` validation. Sprints 7.25-7.27 move browser file storage behind the webapp object-proxy with per-user isolation hardening, add a per-user Files navigational view, and add in-browser MIDI/MusicXML/ZIP rendering. They are code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
@@ -619,7 +598,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, and Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J, and Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed in Wave M. |
 
 ## Cross-References
 

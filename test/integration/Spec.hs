@@ -246,9 +246,11 @@ exerciseRuntimeMode paths runtimeMode = do
         "cache status endpoint returns a JSON array (the engine-pod manifest contents are not visible from the demo pod after the daemon split)"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
+      ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
       validateServiceRuntimeLoop paths state runtimeMode representativeModelId
 
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
+      ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
       -- Compatibility guard for pinned Apple host-engine ownership. The
@@ -480,6 +482,21 @@ validateLinuxGpuCatalogModelInferenceSerially paths state activeModels = do
       ]
       (validateCatalogModelInference paths state LinuxGpu)
   prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+
+ensureLinuxGpuRepresentativeEngineDeployment :: ClusterState -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
+ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId =
+  when (runtimeMode == LinuxGpu) $ do
+    let pythonNativeModels = filter linuxGpuModelUsesPythonNativeEngine activeModels
+        perEngineNames =
+          sort
+            . nub
+            $ map linuxGpuPerEngineDeploymentName pythonNativeModels
+    case find ((== Text.pack representativeModelId) . modelId) activeModels of
+      Just model
+        | linuxGpuModelUsesPythonNativeEngine model ->
+            prepareLinuxGpuEngineDeployment state perEngineNames (Just (linuxGpuPerEngineDeploymentName model))
+      _ ->
+        prepareLinuxGpuEngineDeployment state perEngineNames Nothing
 
 ensureCatalogInputObject :: Paths -> ClusterState -> RuntimeMode -> ModelDescriptor -> IO (Maybe Text.Text)
 ensureCatalogInputObject paths state runtimeMode model =

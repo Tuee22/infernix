@@ -9,7 +9,9 @@
 
 - MinIO is the chart-owned object-store target on the supported Kind path and the only
   supported durable home for binary blobs
-- MinIO runs as a four-node distributed cluster on the supported Kind path
+- MinIO runs as a four-node distributed cluster on the supported Kind path; each MinIO drive
+  requests `64Gi` so the retained `infernix-models` bucket can hold the linux-gpu full-catalog
+  lazy-bootstrap set without hitting MinIO's low-free-space guard during later model rows
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
 - the supported durable target shape uses **three MinIO buckets**:

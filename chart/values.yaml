@@ -245,7 +245,11 @@ infernixMinio:
     nodePort: 30011
   persistence:
     storageClass: infernix-manual
-    size: 20Gi
+    # The linux-gpu full catalog retains large lazy-bootstrap model bundles
+    # (Wan2.1 T2V plus SDXL and quantized LLM/audio rows) in `infernix-models`.
+    # Keep each distributed MinIO drive above the complete retained model set so
+    # later rows can publish without tripping MinIO's low-free-space guard.
+    size: 64Gi
   buckets:
     - harbor-registry
     # Phase 7 Sprint 7.7: always-on platform model-weights bucket. The
@@ -409,9 +413,9 @@ harbor:
       resources:
         requests:
           cpu: 100m
-          memory: 256Mi
+          memory: 512Mi
         limits:
-          memory: 640Mi
+          memory: 2Gi
     controller:
       resources:
         requests:
@@ -795,12 +799,14 @@ pulsar:
     replicaCount: 3
     podMonitor:
       enabled: false
+    configData:
+      BOOKIE_MEM: "-Xms64m -Xmx256m -XX:MaxDirectMemorySize=128m"
     resources:
       requests:
-        memory: 96Mi
-        cpu: 0.025
-      limits:
         memory: 192Mi
+        cpu: 0.05
+      limits:
+        memory: 512Mi
   toolset:
     resources:
       requests:

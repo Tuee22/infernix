@@ -61,7 +61,7 @@ expectedModelCount mode =
   case mode of
     "apple-silicon" -> 14
     "linux-cpu" -> 10
-    "linux-gpu" -> 15
+    "linux-gpu" -> 14
     _ -> 0
 
 expectedEngineCount :: String -> Int
