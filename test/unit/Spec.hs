@@ -2,7 +2,7 @@
 
 module Main (main) where
 
-import Control.Exception (try)
+import Control.Exception (toException, try)
 import Crypto.Hash.Algorithms qualified
 import Crypto.PubKey.RSA qualified
 import Crypto.PubKey.RSA.PKCS15 qualified
@@ -22,7 +22,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (writeGeneratedPursContracts)
-import Infernix.Cluster (clusterWorkloadArchitectureForHostArchitecture, linuxGpuNvkindConfigMapBug, writeGeneratedKindConfig)
+import Infernix.Cluster (HelmDeployPhase (..), clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
 import Infernix.Cluster.PublishImages
@@ -55,7 +55,7 @@ import Infernix.CommandRegistry
     renderCliReferenceCommandsSection,
     renderCliSurfaceFamiliesSection,
   )
-import Infernix.Config
+import Infernix.Config hiding (generatedDemoConfigPath, publishedConfigMapManifestPath)
 import Infernix.Config qualified as Config
 import Infernix.Conversation.Event qualified as ConversationEvent
 import Infernix.Conversation.Hash qualified as ConversationHash
@@ -118,14 +118,20 @@ import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
+    PulsarWebSocketBase (..),
+    buildServiceConsumerSocketPath,
     drainTopic,
     inferenceRequestProducerNameForFields,
     inferenceRequestSequenceIdForFields,
+    isPackageBackedNativeModel,
+    isRetryablePulsarWebSocketClientFailure,
     modelBootstrapReadyWaitMaxSeconds,
     modelCacheBootstrapRetryableError,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
     publishInferenceRequest,
+    requireTopicRef,
+    serviceConsumerAckTimeoutMillis,
     serviceConsumerName,
     serviceConsumerSubscriptionType,
     serviceConsumerSubscriptionTypeForTopic,
@@ -139,6 +145,7 @@ import Infernix.Runtime.Worker
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
+    nativeModelCacheObjectKeys,
     nativeRunnerArgs,
     workerRequestModelCacheConfig,
   )
@@ -147,9 +154,10 @@ import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
+import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Exit (ExitCode (..))
-import System.FilePath ((<.>), (</>))
+import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Process (proc, readCreateProcessWithExitCode)
@@ -170,7 +178,7 @@ import Test.QuickCheck
 main :: IO ()
 main = do
   unitTestRoot <- testRootPath "unit"
-  assert (length (catalogForMode AppleSilicon) == 15) "apple-silicon runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode AppleSilicon) == 14) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 10) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 14) "linux-gpu runnable catalog count matches the revised matrix"
   assert
@@ -202,6 +210,47 @@ main = do
   assert
     (null (platformClaimsForRuntime LinuxCpu) && null (platformClaimsForRuntime LinuxGpu))
     "linux split topologies have no daemon PVCs"
+  assert
+    ( not
+        ( pulsarBootstrapLogIndicatesDirtyState
+            "INFO The current epoch is 1\nINFO Got zxid 0x1 while starting ZooKeeper\n"
+        )
+    )
+    "Pulsar dirty-state detection ignores standalone ZooKeeper epoch/zxid startup fragments"
+  assert
+    ( pulsarBootstrapLogIndicatesDirtyState
+        "ERROR The current epoch 1 is older than the last zxid 0x200000001\n"
+    )
+    "Pulsar dirty-state detection catches ZooKeeper epoch regression"
+  assert
+    ( pulsarBootstrapLogIndicatesDirtyState
+        "org.apache.bookkeeper.bookie.BookieException$InvalidCookieException: Cookie instanceId is not matching with metadata"
+    )
+    "Pulsar dirty-state detection catches BookKeeper cookie mismatch"
+  assert
+    (isRetryablePulsarWebSocketClientFailure (toException WebSockets.ConnectionClosed))
+    "Pulsar WebSocket client retries an early connection close during startup"
+  assert
+    (isRetryablePulsarWebSocketClientFailure (toException WebSockets.ConnectionTimeout))
+    "Pulsar WebSocket client retries a handshake timeout during startup"
+  let missingHandshakeResponse =
+        WebSockets.OtherHandshakeException
+          "Network.WebSockets.Client.newClientConnection: no handshake response from server"
+  assert
+    (isRetryablePulsarWebSocketClientFailure (toException missingHandshakeResponse))
+    "Pulsar WebSocket client retries a missing handshake response during startup"
+  let transientProxyServerError =
+        WebSockets.OtherHandshakeException
+          "Network.WebSockets.Http.HandshakeException: MalformedResponse (ResponseHead {responseCode = 500, responseMessage = \"Server Error\", responseHeaders = [(\"Server\",\"Jetty(9.4.58.v20250814)\")]}) \"Wrong response status or message.\""
+  assert
+    (isRetryablePulsarWebSocketClientFailure (toException transientProxyServerError))
+    "Pulsar WebSocket client retries a transient Pulsar proxy 5xx handshake response during startup"
+  let invalidHandshakePath =
+        WebSockets.OtherHandshakeException
+          "Network.WebSockets.Http.HandshakeException: MalformedResponse (ResponseHead {responseCode = 404, responseMessage = \"Not Found\", responseHeaders = [(\"Server\",\"Jetty(9.4.58.v20250814)\")]}) \"Wrong response status or message.\""
+  assert
+    (not (isRetryablePulsarWebSocketClientFailure (toException invalidHandshakePath)))
+    "Pulsar WebSocket client does not retry non-transient handshake status responses"
   assert (isJust (findModel LinuxGpu "llm-qwen25-awq")) "linux-gpu includes the AWQ row"
   assert (isNothing (findModel AppleSilicon "llm-qwen25-awq")) "apple-silicon omits unsupported AWQ rows"
   assert
@@ -386,8 +435,8 @@ main = do
       let legacyOnlyResult =
             InferenceResult
               { requestId = "legacy-only-request",
-                resultModelId = "llm-qwen25-safetensors",
-                resultMatrixRowId = "apple-qwen25-safetensors",
+                resultModelId = "llm-smollm2-safetensors",
+                resultMatrixRowId = "apple-smollm2-safetensors",
                 resultRuntimeMode = AppleSilicon,
                 resultSelectedEngine = "transformers-python",
                 status = "completed",
@@ -586,13 +635,13 @@ main = do
         (not ("\"runtimeMode\":" `isInfixOf` demoConfigContents))
         "generated substrate materialization no longer writes banner-prefixed JSON"
       assert
-        (not ("engineDaemons" `isInfixOf` demoConfigContents) && not ("host_batch_topic" `isInfixOf` demoConfigContents))
-        "generated substrate materialization omits legacy daemon projection and host-batch fields"
+        ("engineDaemons" `isInfixOf` demoConfigContents && not ("host_batch_topic" `isInfixOf` demoConfigContents))
+        "generated substrate materialization writes explicit daemon metadata and omits legacy host-batch fields"
       decodedJsonConfig <-
         maybe (fail "public JSON demo config decode failed") pure (Aeson.decode (Aeson.encode demoConfig))
       assert
         (not (null (engineDaemons decodedJsonConfig)))
-        "public JSON demo-config decode derives engine daemon metadata from engine pools and members"
+        "public JSON demo-config decode preserves engine daemon metadata"
       decodedConfig <- decodeDemoConfigFile demoConfigPath
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
@@ -611,7 +660,7 @@ main = do
         (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
         "Sprint 4.19: normal pool topics are derived from runtime, pool id, and model id"
       assert
-        (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-qwen25-safetensors")
+        (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-smollm2-safetensors")
         "Sprint 4.19: pinned member topics are derived from runtime, member id, and model id"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
@@ -795,7 +844,17 @@ main = do
         "Sprint 7.24: apple host engine metadata defaults to Shared pool subscription ownership"
       case engineDaemons decodedAppleConfig of
         [appleEngineDaemon] -> do
-          let appleFailoverDaemon =
+          let pinnedAppleTopic = engineMemberPinnedTopicForMode AppleSilicon "apple-host-default" "image-sdxl-turbo"
+              pinnedAppleConfig =
+                appleHostConfig
+                  { engineDaemons =
+                      [ appleEngineDaemon
+                          { daemonConfigRequestTopics = [pinnedAppleTopic]
+                          }
+                      ]
+                  }
+              pinnedAppleConfigPath = buildRoot paths </> "apple-host-pinned-demo-config-test.dhall"
+              appleFailoverDaemon =
                 appleEngineDaemon
                   { daemonConfigConsumerSubscriptionType = Just ConsumerFailover
                   }
@@ -803,6 +862,11 @@ main = do
                 appleEngineDaemon
                   { daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
                   }
+          Lazy.writeFile pinnedAppleConfigPath (encodeDemoConfig pinnedAppleConfig)
+          decodedPinnedAppleConfig <- decodeDemoConfigFile pinnedAppleConfigPath
+          assert
+            (map daemonConfigRequestTopics (engineDaemons decodedPinnedAppleConfig) == [[pinnedAppleTopic]])
+            "apple host Dhall demo-config roundtrip preserves explicit pinned engine daemon topics"
           assert
             (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerShared)
             "Sprint 7.24: apple host engine consumers select Shared by default"
@@ -810,7 +874,7 @@ main = do
             ( serviceConsumerSubscriptionTypeForTopic
                 AppleSilicon
                 appleEngineDaemon
-                (engineMemberPinnedTopicForMode AppleSilicon "apple-host-default" "image-sdxl-turbo")
+                pinnedAppleTopic
                 == Right ConsumerExclusive
             )
             "Sprint 7.24: pinned apple host engine topics select Exclusive ownership"
@@ -835,6 +899,18 @@ main = do
                 == serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
             )
             "Sprint 7.24: service consumer names keep the subscription name as their stable prefix"
+          serviceConsumerTopicRef <-
+            requireTopicRef "persistent://infernix/demo/inference.batch.linux-cpu.pool.pytorch.model.audio-open-unmix"
+          let serviceConsumerPath =
+                buildServiceConsumerSocketPath
+                  (PulsarWebSocketBase "pulsar-proxy.platform.svc.cluster.local" 80 "/ws/v2")
+                  serviceConsumerTopicRef
+                  "infernix-service-demo-topic"
+                  "infernix-service-demo-topic-consumer-member-a"
+                  ConsumerShared
+          assert
+            (("ackTimeoutMillis=" <> show serviceConsumerAckTimeoutMillis) `isInfixOf` serviceConsumerPath)
+            "Phase 1 Wave L: service consumer WebSocket URLs bound unacked engine work for redelivery after pod restarts"
         _ -> fail "apple host demo-config must decode exactly one engine daemon"
       assert
         (serviceDemoConfigPath paths (Just (unitTestClusterConfigFixture appleConfigPath)) Nothing == appleConfigPath)
@@ -860,7 +936,7 @@ main = do
 
       let request =
             InferenceRequest
-              { requestModelId = "llm-qwen25-safetensors",
+              { requestModelId = "llm-smollm2-safetensors",
                 inputText = Text.replicate 96 "x",
                 inputObjectRef = Nothing
               }
@@ -874,7 +950,7 @@ main = do
       -- success.
       case inferenceResult of
         Right result ->
-          assert (resultModelId result == "llm-qwen25-safetensors") "inference result records the selected model id"
+          assert (resultModelId result == "llm-smollm2-safetensors") "inference result records the selected model id"
         Left err ->
           assert
             (not (Text.null (errorCode err)))
@@ -885,11 +961,11 @@ main = do
       bootstrapContents <- readFile bootstrapManifestPath
       assert ("transformers-python" `isInfixOf` bootstrapContents) "adapter bootstrap manifests record the adapter id"
       manifests <- listCacheManifests paths AppleSilicon
-      let maybeManifest = find ((== "llm-qwen25-safetensors") . cacheModelId) manifests
+      let maybeManifest = find ((== "llm-smollm2-safetensors") . cacheModelId) manifests
       assert (isJust maybeManifest) "inference execution materializes a cache manifest"
-      evictedCount <- evictCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+      evictedCount <- evictCache paths AppleSilicon (Just "llm-smollm2-safetensors")
       assert (evictedCount == 1) "cache eviction removes the selected cache entry"
-      rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-qwen25-safetensors")
+      rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-smollm2-safetensors")
       assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
 
       -- Phase 4 Sprint 4.15: buildPayload routes text families to inlineOutput
@@ -900,8 +976,8 @@ main = do
       let textPayloadResult =
             InferenceResult
               { requestId = "req-unit-text",
-                resultModelId = "llm-qwen25-safetensors",
-                resultMatrixRowId = "llm-general-text-qwen25",
+                resultModelId = "llm-smollm2-safetensors",
+                resultMatrixRowId = "llm-general-text-smollm2",
                 resultRuntimeMode = AppleSilicon,
                 resultSelectedEngine = "Transformers + PyTorch MPS",
                 status = "completed",
@@ -944,7 +1020,7 @@ main = do
         (maybe True (not . modelRequiresInputObject) (findModel AppleSilicon "audio-bark-small"))
         "dispatcher keeps text-to-audio generation on prompt text"
       assert
-        (maybe True (not . modelRequiresInputObject) (findModel AppleSilicon "llm-qwen25-safetensors"))
+        (maybe True (not . modelRequiresInputObject) (findModel AppleSilicon "llm-smollm2-safetensors"))
         "dispatcher keeps LLM models on prompt text"
       -- Phase 4 Sprint 4.18 / Phase 6 Sprint 6.31: the union of every
       -- runnable substrate catalog plus the explicit residual rows equals the
@@ -974,6 +1050,8 @@ main = do
         ( (selectedEngine <$> findModel AppleSilicon "speech-faster-whisper-ct2") == Just "CTranslate2 (CPU)"
             && isNothing (findModel LinuxGpu "audio-basic-pitch-tensorflow")
             && isNothing (findModel AppleSilicon "video-wan21-t2v")
+            && isNothing (findModel AppleSilicon "music-mt3-jax")
+            && "music-mt3-jax" `elem` residualMatrixRowIdsForMode AppleSilicon
         )
         "Sprint 4.18: researched matrix corrections are reflected in runnable catalog bindings"
       -- Phase 4 Sprint 4.17: per-engine image naming plus the Phase 4.19
@@ -985,7 +1063,7 @@ main = do
         (engineNameForSelectedEngine AppleSilicon "Transformers + PyTorch MPS" == "transformers")
         "Sprint 4.17: the transformers engine resolves to the transformers per-engine name"
       assert
-        (enginePoolTopicForMode LinuxGpu "vllm" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.linux-gpu.pool.vllm.model.llm-qwen25-safetensors")
+        (enginePoolTopicForMode LinuxGpu "vllm" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.linux-gpu.pool.vllm.model.llm-smollm2-safetensors")
         "Sprint 4.19: derived pool batch topics are inference.batch.<mode>.pool.<pool>.model.<model>"
       assert
         (perEngineImageName LinuxGpu "transformers" == "infernix-engine-transformers-linux-gpu:local")
@@ -995,14 +1073,31 @@ main = do
         "Sprint 4.17: the linux-gpu catalog deploys the vllm/diffusers/pytorch framework engines"
       transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
       pytorchEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "pytorch" </> "pyproject.toml")
+      let applePytorchDependencyBlock =
+            unlines
+              [ "[tool.poetry.group.apple-silicon.dependencies]",
+                "torch = { version = \">=2.7\", source = \"pypi\", markers = \"platform_system == 'Darwin' and platform_machine == 'arm64'\" }",
+                "torchaudio = { version = \">=2.7\", source = \"pypi\", markers = \"platform_system == 'Darwin' and platform_machine == 'arm64'\" }",
+                "transformers = \">=4.46\"",
+                "demucs = \">=4.0\"",
+                "openunmix = \">=1.2\"",
+                "scipy = \">=1.13\"",
+                "soundfile = \">=0.12\"",
+                "librosa = \">=0.10\"",
+                "piano-transcription-inference = \">=0.0.6\""
+              ]
       assert
         ( "[tool.poetry.group.apple-silicon.dependencies]" `isInfixOf` transformersEnginePyproject
             && "[tool.poetry.group.linux-cpu.dependencies]" `isInfixOf` transformersEnginePyproject
             && "source = \"pytorch-cpu\"" `isInfixOf` transformersEnginePyproject
+            && "source = \"pypi\"" `isInfixOf` transformersEnginePyproject
             && "platform_system == 'Darwin' and platform_machine == 'arm64'" `isInfixOf` transformersEnginePyproject
             && "platform_system == 'Linux' and platform_machine == 'x86_64'" `isInfixOf` transformersEnginePyproject
             && "[tool.poetry.group.linux-cpu.dependencies]" `isInfixOf` pytorchEnginePyproject
             && "source = \"pytorch-cpu\"" `isInfixOf` pytorchEnginePyproject
+            && "source = \"pypi\"" `isInfixOf` pytorchEnginePyproject
+            && "platform_system == 'Darwin' and platform_machine == 'arm64'" `isInfixOf` pytorchEnginePyproject
+            && applePytorchDependencyBlock `isInfixOf` pytorchEnginePyproject
             && "platform_system == 'Linux'" `isInfixOf` pytorchEnginePyproject
         )
         "Sprint 4.16/Wave I: framework per-engine venvs separate Apple, Linux CPU, and CUDA torch sources"
@@ -1131,7 +1226,7 @@ main = do
         maybe
           (fail "expected the linux-gpu vLLM row")
           pure
-          (findModel LinuxGpu "llm-qwen25-safetensors")
+          (findModel LinuxGpu "llm-smollm2-safetensors")
       let pythonBinding = engineBindingForSelectedEngine LinuxGpu (selectedEngine pythonModel)
           workerRequest =
             buildWorkerRequest
@@ -1141,7 +1236,7 @@ main = do
               pythonModel
               pythonBinding
               InferenceRequest
-                { requestModelId = "llm-qwen25-safetensors",
+                { requestModelId = "llm-smollm2-safetensors",
                   inputText = "worker request cache wiring",
                   inputObjectRef = Nothing
                 }
@@ -1154,7 +1249,7 @@ main = do
         ( modelCacheBootstrapRetryableError
             ErrorResponse
               { errorCode = "model_cache_not_populated",
-                message = "MinIO infernix-models/llm-qwen25-safetensors/ is missing the .ready sentinel object."
+                message = "MinIO infernix-models/llm-smollm2-safetensors/ is missing the .ready sentinel object."
               }
             && not
               ( modelCacheBootstrapRetryableError
@@ -1168,6 +1263,17 @@ main = do
       assert
         (modelBootstrapReadyWaitMaxSeconds >= 900)
         "model-bootstrap ready wait supports cold Hugging Face snapshot downloads"
+      assert
+        ( isPackageBackedNativeModel "audio-basic-pitch-coreml"
+            && isPackageBackedNativeModel "tool-audiveris"
+            && not (isPackageBackedNativeModel "audio-basic-pitch-onnx")
+        )
+        "model-bootstrap treats package-backed native tools as installed state, not landing-page payloads"
+      let audiverisDescriptor = maybe (fail "expected linux-cpu Audiveris row") pure (findModel LinuxCpu "tool-audiveris")
+      audiverisModel <- audiverisDescriptor
+      assert
+        (null (nativeModelCacheObjectKeys audiverisModel))
+        "worker hydration treats package-backed Audiveris as installed state, not a payload download"
       let hostWorkerState =
             ClusterState
               True
@@ -1208,7 +1314,7 @@ main = do
 
       assertRuntimeKVCachePath paths
 
-      let overrideModel = maybe (fail "expected the apple-silicon qwen row") pure (findModel AppleSilicon "llm-qwen25-safetensors")
+      let overrideModel = maybe (fail "expected the apple-silicon SmolLM2 row") pure (findModel AppleSilicon "llm-smollm2-safetensors")
       overrideModelDescriptor <- overrideModel
       let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
           overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
@@ -1249,7 +1355,7 @@ main = do
           AppleSilicon
           overrides
           InferenceRequest
-            { requestModelId = "llm-qwen25-safetensors",
+            { requestModelId = "llm-smollm2-safetensors",
               inputText = "  override payload  ",
               inputObjectRef = Nothing
             }
@@ -1271,8 +1377,65 @@ main = do
     invalidConfigResult <- try (decodeDemoConfigFile invalidDemoConfigPath) :: IO (Either IOError DemoConfig)
     assert (either (const True) (const False) invalidConfigResult) "invalid demo configs are rejected"
 
+    let linuxCpuOuterFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot (unitTestRoot </> "outer-container" </> "build")
+    linuxCpuOuterPaths <- discoverPathsWithHostManifest (Just linuxCpuOuterFixture)
+    linuxCpuFinalNow <- getCurrentTime
+    let linuxCpuFinalState =
+          ClusterState
+            { clusterPresent = True,
+              edgePort = 30090,
+              harborPort = 30002,
+              routes = [RouteInfo "/" "demo web UI"],
+              storageClass = "standard",
+              claims = [],
+              clusterRuntimeMode = LinuxCpu,
+              kubeconfigPath = Config.generatedKubeconfigPath linuxCpuOuterPaths,
+              generatedDemoConfigPath = Config.generatedDemoConfigPath linuxCpuOuterPaths,
+              publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxCpuOuterPaths,
+              publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath linuxCpuOuterPaths,
+              mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
+              lifecycleProgress = Nothing,
+              updatedAt = linuxCpuFinalNow
+            }
+        linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" FinalPhase []
+        linuxCpuPulsarReadyValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" PulsarReadyPhase []
+        expectedKeycloakExternalBaseUrl =
+          "  externalBaseUrl: http://"
+            <> kindControlPlaneNodeName linuxCpuOuterPaths LinuxCpu
+            <> ":30090/auth"
+        expectedPulsarReadyKeycloakBlock =
+          unlines
+            [ "keycloak:",
+              expectedKeycloakExternalBaseUrl,
+              "  enabled: true"
+            ]
+    assert
+      (length (filter (== expectedKeycloakExternalBaseUrl) (lines linuxCpuFinalValues)) == 2)
+      "linux-cpu final Helm values preserve Keycloak externalBaseUrl across the local resource override"
+    assert
+      (expectedPulsarReadyKeycloakBlock `isInfixOf` linuxCpuPulsarReadyValues)
+      "linux-cpu Pulsar-ready Helm values start Keycloak before final app workloads"
+    assert
+      ("      memory: 3584Mi" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values cap Apple-hosted local engine memory below the prior aggregate SystemOOM envelope"
+    assert
+      ("      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\"" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values override local Pulsar JVM GC away from the default pre-touch profile"
+    assert
+      ("      PULSAR_MEM: \"-Xms64m -Xmx128m -XX:MaxDirectMemorySize=64m\"" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values cap local Pulsar proxy heap and direct memory"
+    assert
+      ("      httpNumThreads: \"8\"" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values keep enough local Pulsar proxy HTTP threads for Jetty startup"
+
     let renderedChartPath = unitTestRoot </> "rendered-chart.yaml"
     writeFile renderedChartPath sampleRenderedChart
+    assert
+      ("CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;" `isInfixOf` sampleRenderedChart)
+      "rendered chart carries the Percona replication-role init SQL"
+    assert
+      ("databaseInitSQL:" `isInfixOf` sampleRenderedChart)
+      "rendered chart wires Percona clusters to their init SQL ConfigMap"
     discoveredImages <- discoverChartImagesFile renderedChartPath
     assert
       ( discoveredImages
@@ -2586,7 +2749,7 @@ assertResultBridgeAndBatchTopics = do
     (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
     "linux-cpu coordinator metadata derives pool/model request topics"
   assert
-    (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-qwen25-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-qwen25-safetensors")
+    (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-smollm2-safetensors")
     "apple pinned routes derive member/model request topics"
 
   -- Result-bridge subscription naming
@@ -2889,12 +3052,31 @@ sampleRenderedChart =
       "          requests:",
       "            storage: 7Gi",
       "---",
+      "apiVersion: v1",
+      "kind: ConfigMap",
+      "metadata:",
+      "  name: harbor-postgresql-init-sql",
+      "data:",
+      "  init.sql: |",
+      "    DO $$",
+      "    BEGIN",
+      "      IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '_crunchyrepl') THEN",
+      "        CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;",
+      "      ELSE",
+      "        ALTER ROLE _crunchyrepl WITH LOGIN REPLICATION;",
+      "      END IF;",
+      "    END",
+      "    $$;",
+      "---",
       "apiVersion: pgv2.percona.com/v2",
       "kind: PerconaPGCluster",
       "metadata:",
       "  name: harbor-postgresql",
       "spec:",
       "  image: docker.io/percona/percona-distribution-postgresql:18.3-1",
+      "  databaseInitSQL:",
+      "    key: init.sql",
+      "    name: harbor-postgresql-init-sql",
       "  instances:",
       "    - name: instance1",
       "      dataVolumeClaimSpec:",
@@ -3141,7 +3323,7 @@ assertContextModelMap = do
   let contextA = Contracts.ContextId "c-a"
       contextB = Contracts.ContextId "c-b"
 
-  ContextModelMap.recordContextModel contextModelMap contextA "llm-qwen25-safetensors"
+  ContextModelMap.recordContextModel contextModelMap contextA "llm-smollm2-safetensors"
   ContextModelMap.recordContextModel contextModelMap contextB "image-sdxl-turbo"
   afterDirectInsertSize <- ContextModelMap.contextModelMapSize contextModelMap
   assert
@@ -3152,7 +3334,7 @@ assertContextModelMap = do
   resolvedB <- ContextModelMap.lookupModelId contextModelMap contextB
   resolvedMissing <- ContextModelMap.lookupModelId contextModelMap (Contracts.ContextId "c-missing")
   assert
-    (resolvedA == Just "llm-qwen25-safetensors")
+    (resolvedA == Just "llm-smollm2-safetensors")
     "ContextModelMap returns the model id for a known context"
   assert
     (resolvedB == Just "image-sdxl-turbo")
@@ -3292,7 +3474,7 @@ assertDemoWebSocketPublicationPlanning = do
         planDemoClientMessagePublications
           ns
           userIdValue
-          (Contracts.ClientCreateContext contextIdValue "llm-qwen25-safetensors" "Research")
+          (Contracts.ClientCreateContext contextIdValue "llm-smollm2-safetensors" "Research")
   case createPublications of
     [publication] -> do
       assert
@@ -3305,14 +3487,14 @@ assertDemoWebSocketPublicationPlanning = do
         (demoClientPublicationMessageKey publication == Just (Contracts.unContextId contextIdValue))
         "ClientCreateContext keys the compacted contexts topic by context id"
       assert
-        (demoClientPublicationSequenceKey publication == "ctx-a:create:llm-qwen25-safetensors:Research")
+        (demoClientPublicationSequenceKey publication == "ctx-a:create:llm-smollm2-safetensors:Research")
         "ClientCreateContext uses an event-specific sequence key so later context updates are not deduplicated"
       assert
         ( decodeLazy (demoClientPublicationPayload publication)
             == Right
               ( Contracts.ContextCreated
                   { Contracts.contextCreatedContextId = contextIdValue,
-                    Contracts.contextCreatedModelId = "llm-qwen25-safetensors",
+                    Contracts.contextCreatedModelId = "llm-smollm2-safetensors",
                     Contracts.contextCreatedTitle = "Research"
                   }
               )
@@ -3539,6 +3721,18 @@ assertHostConfig testRoot = do
         ("/opt/infernix/native-payloads" `isInfixOf` sampleLinuxScript && "infernix-demo-objects" `isInfixOf` sampleLinuxScript)
         "Sprint 4.18: Linux native runtime-backed payloads return per-family result shapes"
       assert
+        ("whisper-bin-ubuntu-arm64" `isInfixOf` sampleLinuxScript && "whisper-bin-ubuntu-x64" `isInfixOf` sampleLinuxScript)
+        "Wave L: Linux native whisper.cpp runner resolves native arm64 and x64 payload roots without cross-architecture emulation"
+      let audiverisLinuxScript =
+            maybe "" linuxNativeRunnerScript $
+              find ((== "jvm-native") . linuxNativeEngineAdapterId) linuxNativeEngineBuildPlan
+      assert
+        ( "/opt/infernix/audiveris-jre/bin/java" `isInfixOf` audiverisLinuxScript
+            && "-cp \"$audiveris_classpath\" Audiveris" `isInfixOf` audiverisLinuxScript
+            && "run_audiveris -help >/dev/null" `isInfixOf` audiverisLinuxScript
+        )
+        "Wave L: Linux native Audiveris uses the image-architecture Temurin JRE and Java classpath smoke, not the x86 launcher"
+      assert
         ("--output-dir" `isInfixOf` sampleLinuxScript && "infernix-native-artifact-file:" `isInfixOf` sampleLinuxScript)
         "Phase 4 realness: Linux native artifact families (real basic-pitch ONNX, real Audiveris) emit real worker-upload artifact markers"
       assert
@@ -3603,7 +3797,8 @@ assertHostConfig testRoot = do
   assert
     (decoded == linuxConfig)
     "HostConfig round-trip through renderHostConfig + decodeHostConfigFile preserves every field"
-  paths <- discoverPathsWithHostManifest (Just (hostNativeUnitTestFixture testRoot testRoot))
+  let realRepoRoot = takeDirectory (takeDirectory testRoot)
+  paths <- discoverPathsWithHostManifest (Just (hostNativeUnitTestFixture realRepoRoot testRoot))
   case listToMaybe metalEngineBuildPlan of
     Nothing ->
       assert False "Sprint 1.14: the Apple materialization plan is non-empty for artifact writes"
@@ -3658,11 +3853,13 @@ assertHostConfig testRoot = do
       let coreMlRoot = metalEngineInstallRoot paths (metalEngineAdapterId coreMlArtifact)
           coreMlRunnerPath = coreMlRoot </> "bin" </> "coreml-runner"
           coreMlSmokeSourcePath = coreMlRoot </> "src" </> "infernix_coreml_runner_smoke.m"
+          coreMlRunnerLibraryPath = coreMlRoot </> "lib" </> "apple_native_runner.py"
       installedCoreMlRoot <- materializeMetalEngineArtifact paths coreMlArtifact
       coreMlManifestExists <- doesFileExist (engineArtifactManifestPath installedCoreMlRoot)
       coreMlRunnerExists <- doesFileExist coreMlRunnerPath
       coreMlSmokeSource <- readFile coreMlSmokeSourcePath
       coreMlRunner <- readFile coreMlRunnerPath
+      coreMlRunnerLibrary <- readFile coreMlRunnerLibraryPath
       assert
         (installedCoreMlRoot == coreMlRoot)
         "Sprint 1.14: coreml-native materialization returns the final adapter install root"
@@ -3682,22 +3879,45 @@ assertHostConfig testRoot = do
         ("-framework CoreML" `isInfixOf` coreMlRunner)
         "Sprint 1.14: coreml-native smoke command links Core ML through clang"
       assert
-        ( "real Apple" `isInfixOf` coreMlRunner
-            && "exit 70" `isInfixOf` coreMlRunner
+        ( "apple_native_runner.py" `isInfixOf` coreMlRunner
+            && "--install-root" `isInfixOf` coreMlRunner
+            && "--adapter-id" `isInfixOf` coreMlRunner
             && not ("native-validation" `isInfixOf` coreMlRunner)
             && not ("infernix_emit_validation_result" `isInfixOf` coreMlRunner)
         )
-        "Phase 1 Sprint 1.15 realness: coreml-native normal path honest-fails (exit 70) with no fabricated validation result"
+        "Phase 1 Sprint 1.15 realness: coreml-native delegates normal execution to the copied real runner module"
+      assert
+        ( "--model" `isInfixOf` coreMlRunnerLibrary
+            && "--input-text" `isInfixOf` coreMlRunnerLibrary
+            && "--input-file" `isInfixOf` coreMlRunnerLibrary
+            && "--model-cache-root" `isInfixOf` coreMlRunnerLibrary
+            && "--output-dir" `isInfixOf` coreMlRunnerLibrary
+            && "model_cache_not_populated" `isInfixOf` coreMlRunnerLibrary
+            && "NATIVE_ARTIFACT_PREFIX" `isInfixOf` coreMlRunnerLibrary
+            && not ("native-validation" `isInfixOf` coreMlRunnerLibrary)
+            && not ("infernix_emit_validation_result" `isInfixOf` coreMlRunnerLibrary)
+        )
+        "Phase 1 Sprint 1.15: the copied Apple runner module preserves the native worker contract"
+      assert
+        ( "--model-version" `isInfixOf` coreMlRunnerLibrary
+            && "runwayml/stable-diffusion-v1-5" `isInfixOf` coreMlRunnerLibrary
+            && "CPU_AND_GPU" `isInfixOf` coreMlRunnerLibrary
+            && "require_output=False" `isInfixOf` coreMlRunnerLibrary
+            && "timeout_seconds=900" `isInfixOf` coreMlRunnerLibrary
+        )
+        "Phase 1 Sprint 1.15: Core ML Stable Diffusion selects the v1.5 model version and accepts artifact-only stdout"
   case find ((== "llama-cpp-cli") . metalEngineAdapterId) metalEngineBuildPlan of
     Nothing ->
       assert False "Sprint 1.14: the Apple materialization plan includes llama-cpp-cli"
     Just llamaArtifact -> do
       let llamaRoot = metalEngineInstallRoot paths (metalEngineAdapterId llamaArtifact)
           appleLlamaRunnerPath = llamaRoot </> "bin" </> "llama-cli"
+          appleLlamaRunnerLibraryPath = llamaRoot </> "lib" </> "apple_native_runner.py"
       installedLlamaRoot <- materializeMetalEngineArtifact paths llamaArtifact
       llamaManifestExists <- doesFileExist (engineArtifactManifestPath installedLlamaRoot)
       llamaRunnerExists <- doesFileExist appleLlamaRunnerPath
       llamaRunner <- readFile appleLlamaRunnerPath
+      llamaRunnerLibrary <- readFile appleLlamaRunnerLibraryPath
       assert
         (installedLlamaRoot == llamaRoot)
         "Sprint 1.14: llama-cpp-cli materialization returns the final adapter install root"
@@ -3709,28 +3929,34 @@ assertHostConfig testRoot = do
         "Sprint 1.14: llama-cpp-cli materialization writes bin/llama-cli"
       assert
         ( "#!/bin/sh" `isPrefixOf` llamaRunner
-            && "--smoke|--help" `isInfixOf` llamaRunner
-            && "infernix apple native runner ok" `isInfixOf` llamaRunner
+            && "apple_native_runner.py" `isInfixOf` llamaRunner
+            && "--install-root" `isInfixOf` llamaRunner
+            && "--adapter-id" `isInfixOf` llamaRunner
             && "adapter_id='llama-cpp-cli'" `isInfixOf` llamaRunner
         )
-        "Phase 1 Sprint 1.15: llama-cpp-cli materialization writes a POSIX runner with a smoke-capable install-time presence probe"
+        "Phase 1 Sprint 1.15: llama-cpp-cli materialization writes a POSIX runner that delegates to the copied real runner module"
       assert
-        ( "--model" `isInfixOf` llamaRunner
-            && "--input-text" `isInfixOf` llamaRunner
-            && "--input-file" `isInfixOf` llamaRunner
-            && "--model-cache-root" `isInfixOf` llamaRunner
-            && "--output-dir" `isInfixOf` llamaRunner
-            && "model_cache_not_populated" `isInfixOf` llamaRunner
-            && "exit 75" `isInfixOf` llamaRunner
+        ( "--model" `isInfixOf` llamaRunnerLibrary
+            && "--input-text" `isInfixOf` llamaRunnerLibrary
+            && "--input-file" `isInfixOf` llamaRunnerLibrary
+            && "--model-cache-root" `isInfixOf` llamaRunnerLibrary
+            && "--output-dir" `isInfixOf` llamaRunnerLibrary
+            && "model_cache_not_populated" `isInfixOf` llamaRunnerLibrary
+            && "RunnerFailure" `isInfixOf` llamaRunnerLibrary
         )
-        "Phase 1 Sprint 1.15: Apple native runners preserve the full inference arg contract and the model-cache readiness gate"
+        "Phase 1 Sprint 1.15: Apple native runners preserve the full inference arg contract and model-cache readiness gate in the copied module"
       assert
-        ( "real Apple" `isInfixOf` llamaRunner
-            && "exit 70" `isInfixOf` llamaRunner
+        ( "_run_llama_cpp" `isInfixOf` llamaRunnerLibrary
+            && "/opt/homebrew/bin/llama-cli" `isInfixOf` llamaRunnerLibrary
+            && "--single-turn" `isInfixOf` llamaRunnerLibrary
+            && "timeout_seconds=120" `isInfixOf` llamaRunnerLibrary
+            && "subprocess.run" `isInfixOf` llamaRunnerLibrary
             && not ("native-validation" `isInfixOf` llamaRunner)
             && not ("infernix_emit_validation_result" `isInfixOf` llamaRunner)
+            && not ("native-validation" `isInfixOf` llamaRunnerLibrary)
+            && not ("infernix_emit_validation_result" `isInfixOf` llamaRunnerLibrary)
         )
-        "Phase 1 Sprint 1.15 realness: Apple native runners honest-fail (exit 70) on real invocation with no fabricated validation output"
+        "Phase 1 Sprint 1.15 realness: Apple native runners invoke real host-native tools without fabricated validation output"
 
 -- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
 assertClusterConfig :: FilePath -> FilePath -> IO ()

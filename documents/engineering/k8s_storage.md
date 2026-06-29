@@ -22,7 +22,7 @@
   PostgreSQL claims under the path doctrine above; **no `infernix` daemon (frontend,
   coordinator, or engine) has a PVC**. The coordinator's Pulsar subscription cursors are
   broker-side durable. The engine pod has no PVC and uses a single ephemeral `emptyDir`
-  volume mounted at `/model-cache` with hard `sizeLimit` (default `32Gi`, chart values knob
+  volume mounted at `/model-cache` with hard `sizeLimit` (default `64Gi`, chart values knob
   `engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota.
   The engine's KV cache is in-memory and rebuilds from the Pulsar conversation log on
   restart via `prefixHash`. Model weights themselves live in the `infernix-models` MinIO

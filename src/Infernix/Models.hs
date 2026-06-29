@@ -92,7 +92,8 @@ residualMatrixRowIdsForMode :: RuntimeMode -> [Text]
 residualMatrixRowIdsForMode runtimeMode =
   case runtimeMode of
     AppleSilicon ->
-      [ "video-wan21-diffusers"
+      [ "music-mt3-jax",
+        "video-wan21-diffusers"
       ]
     LinuxCpu ->
       []
@@ -643,15 +644,15 @@ laneFor runtimeMode requiresGpu = case runtimeMode of
 matrixRows :: [MatrixRow]
 matrixRows =
   [ mkRow
-      "llm-general-text-qwen25"
-      "llm-qwen25-safetensors"
-      "Qwen2.5-1.5B Instruct"
+      "llm-general-text-smollm2"
+      "llm-smollm2-safetensors"
+      "SmolLM2-135M Instruct"
       "llm"
-      "General text generation over the canonical safetensors checkpoint family."
+      "General text generation over a compact real safetensors checkpoint."
       "HF safetensors"
-      "Qwen2.5-1.5B-Instruct"
-      "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct"
-      "Canonical source format for many open-weight LLMs."
+      "SmolLM2-135M-Instruct"
+      "https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct"
+      "Small real safetensors checkpoint for constrained CPU and Apple lanes."
       "Prompt"
       (Just (ModeBinding "Transformers + PyTorch MPS" False))
       (Just (ModeBinding "Transformers + PyTorch CPU" False))
@@ -805,9 +806,9 @@ matrixRows =
       "PyTorch"
       "YourMT3+"
       "https://github.com/mimbres/YourMT3"
-      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack. Deferred: too-heavy MoE with no maintained pip package, so it is Not-recommended on the Linux substrates and retained only as an apple-silicon declarative target until a feasible engine lands."
+      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack. Deferred: too-heavy MoE with no maintained pip package, so it is Not-recommended on every substrate until a feasible engine lands."
       "Audio Input"
-      (Just (ModeBinding "PyTorch MPS" False))
+      Nothing
       Nothing
       Nothing,
     mkRow
@@ -845,9 +846,9 @@ matrixRows =
       "image"
       "Core ML image generation path produced by Apple conversion tooling."
       "Core ML"
-      "Apple Stable Diffusion conversion toolchain"
-      "https://github.com/apple/ml-stable-diffusion"
-      "Best Apple-native exported path when available."
+      "Apple Stable Diffusion Core ML v1.5 palettized"
+      "https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized"
+      "Apple-native exported Core ML path using preconverted Hugging Face packages."
       "Prompt"
       (Just (ModeBinding "Core ML" False))
       Nothing
@@ -888,7 +889,7 @@ matrixRows =
       "Optical music recognition and notation extraction tool."
       "JVM application"
       "Audiveris"
-      "https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb"
+      "https://github.com/Audiveris/audiveris/releases/tag/5.10.2"
       "Treat as tool runtime, not a separately managed ANN kernel family."
       "Score Input"
       (Just (ModeBinding "JVM" False))

@@ -49,13 +49,15 @@ numpy = ">=1.26"
 optional = true
 
 [tool.poetry.group.apple-silicon.dependencies]
-torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
-torchaudio = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
+torch = { version = ">=2.7", source = "pypi", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
+torchaudio = { version = ">=2.7", source = "pypi", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
 transformers = ">=4.46"
 demucs = ">=4.0"
 openunmix = ">=1.2"
 scipy = ">=1.13"
 soundfile = ">=0.12"
+librosa = ">=0.10"
+piano-transcription-inference = ">=0.0.6"
 numpy = ">=1.26"
 
 [[tool.poetry.source]]

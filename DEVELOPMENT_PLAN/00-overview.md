@@ -50,11 +50,9 @@ per-family output per accelerator (Waves K/L). On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
-manifests. The materializer now writes the fixed host Metal bridge source and smoke command, and it
-also writes and smoke-loads the `coreml-native` runner from the temp root before atomic install.
-The current Apple host pass executes both installed smoke commands against the validation-wrapper
-state; real Apple native engines (replacing those wrappers) are owned by the reopened Phase 1
-(Wave L). The Phase 1 headless materialization foundation stands; the prior Phase 4/6 `linux-gpu`
+manifests. Sprint 1.15 now materializes real Apple native runner roots for Core ML, MLX,
+llama.cpp/whisper.cpp Metal, CTranslate2, ONNX Runtime, and Audiveris, and validates installed
+smokes on the Apple host. The Phase 1 headless materialization foundation stands; the prior Phase 4/6 `linux-gpu`
 plus `linux-cpu` "real-output" closure (2026-06-20) was satisfied by stub/wrapper engines for several
 rows and is **reopened** — real output is now delivered and re-attested by Phases 4/6 (Wave K),
 enforced by the realness lint. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
@@ -97,22 +95,17 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Cohort validation status (present development host = CUDA Linux).** Consistent with the
+**Cohort validation status (present development host = Apple Silicon).** Consistent with the
 single-accelerator doctrine — implement and run code-side closure on whichever single machine is
 present, and validate each phase on **one** accelerator (`apple-silicon` or `linux-gpu`) plus
-`linux-cpu`, never both — the current workspace is native Ubuntu 24.04 amd64 (`Linux x86_64`) with
-an NVIDIA GeForce RTX 5090, driver `570.211.01`, and Docker reporting native `linux/x86_64` with
-the `nvidia` runtime available. CUDA Linux Wave I and Wave J selected-lane closure ran here without
-a machine switch. The latest Apple-side Wave I pass, recorded on the Apple host before this CUDA Linux cycle,
-builds the host binaries, materializes the `apple-silicon` substrate and typed Metal/Core ML engine
-manifests, proves the generated Metal runtime bridge smoke, and proves the installed
-`coreml-native` runtime-load smoke (`Core ML runtime probe passed`). It also materializes
-smoke-capable Apple native validation runners for the allowlisted native adapter ids. The current
-Apple integration evidence completes the active Apple catalog through the host engine daemon with
-deterministic validation-wrapper payloads (real Apple engines are owned by the reopened Phase 1,
-Wave L); the 2026-06-20 CUDA Linux closure validated the architecture and HA, but its inference
-real-output evidence was satisfied by stub/wrapper engines for several rows and is **reopened** —
-Phases 4/6 re-attest real Linux output under Wave K, enforced by the realness lint. The latest Apple integration rerun passed after rebuilding the changed repo-owned
+`linux-cpu`, never both — the current workspace is Apple Silicon (`Darwin arm64`). The latest Apple
+Sprint 1.15 pass builds the host binaries, materializes the `apple-silicon` substrate and real Apple
+native engine roots, proves the generated Metal runtime bridge smoke, smoke-loads the installed Core
+ML/CTranslate2/MLX/ONNX/Audiveris runner roots, and verifies the Core ML venv imports Basic Pitch
+plus Apple's Stable Diffusion pipeline. The 2026-06-20 CUDA Linux closure validated the architecture
+and HA, but its inference real-output evidence was satisfied by stub/wrapper engines for several rows
+and is **reopened** — Phases 4/6 re-attest real Linux output under Wave K, enforced by the realness
+lint. The latest Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
@@ -624,10 +617,14 @@ The plan keeps control-plane execution context separate from substrate.
 - Harbor and only Harbor-required bootstrap services may pull upstream before Harbor is ready
 - every remaining non-Harbor workload pulls from Harbor afterward
 
-### 7a. Mandatory Local HA Service Topology
+### 7a. Local Service Topology
 
-- Harbor, MinIO, Pulsar, and PostgreSQL close only on the mandatory local HA topology
-- no alternate single-replica supported profile is introduced
+- Linux validation lanes close Harbor, MinIO, Pulsar, and PostgreSQL on the mandatory local HA
+  topology
+- Apple host-native generated values may use a single-replica local Harbor/Pulsar/coordinator/demo
+  topology for the real Apple engine gate on the operator's already selected native arm64 Docker
+  daemon; this is an Apple validation fit for constrained Colima memory, not a replacement for the
+  Linux HA evidence
 
 ### 8. Stable Edge Port and Route Prefixes via Envoy Gateway API
 

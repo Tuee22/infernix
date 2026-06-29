@@ -31,6 +31,10 @@ const test = base.extend({
   infernixFixture: [undefined, { option: true }],
 });
 
+const serviceConsumerAckTimeoutMs = 900000;
+const browserMatrixResultTimeoutMs = serviceConsumerAckTimeoutMs + 900000;
+const browserMatrixTestTimeoutMs = 5400000;
+
 test("routed edge surfaces the SPA + the published platform state", async ({ page, request, infernixFixture }) => {
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
@@ -735,6 +739,20 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   const queuedPromptSentStartIndex = wsFrames.sent.length;
   const queuedPromptReceivedStartIndex = wsFrames.received.length;
   await page.locator("textarea[name='prompt']").fill(queuedPromptText);
+  await waitForSentFrameAfter(
+    wsFrames,
+    queuedPromptSentStartIndex,
+    (frame) => frame.tag === "ClientUpdateDraft" && frame.clientUpdateDraftText === queuedPromptText,
+  );
+  await waitForReceivedFrameAfter(
+    wsFrames,
+    queuedPromptReceivedStartIndex,
+    (frame) =>
+      frame.tag === "ServerDraftMapPatch" &&
+      JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId) &&
+      JSON.stringify(frame).includes(queuedPromptText),
+  );
+  await expect(page.locator("textarea[name='prompt']")).toHaveValue(queuedPromptText, { timeout: 30000 });
   await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
   const queuedSubmitFrame = await waitForSentFrameAfter(
     wsFrames,
@@ -925,7 +943,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
 // just the representative model the durable-context prompt roundtrip
 // spec exercises.
 test("browser per-model smoke matrix exercises every catalog model", async ({ page, request, infernixFixture }) => {
-  test.setTimeout(3600000);
+  test.setTimeout(browserMatrixTestTimeoutMs);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -1384,7 +1402,11 @@ async function fillDraftAndWaitForUpdate(page, frames, startIndex, contextId, dr
 }
 
 async function waitForCompletedConversationPatchAfter(frames, startIndex, details) {
-  const timeoutMs = 900000;
+  // Service work uses Pulsar's 900-second ack timeout. A restarted engine can
+  // redeliver just after that point, so the browser matrix waits through one
+  // full redelivery window plus a second execution window before declaring the
+  // row failed.
+  const timeoutMs = browserMatrixResultTimeoutMs;
   const deadline = Date.now() + timeoutMs;
   let lastContextPatch = null;
   while (Date.now() < deadline) {
@@ -1500,6 +1522,10 @@ async function fetchDemoConfig(request, baseUrl) {
 }
 
 function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
+  if (demoConfig?.runtimeMode === "linux-cpu") {
+    scaleGenericEngineDeployment(fixture, 1);
+    return;
+  }
   if (demoConfig?.runtimeMode !== "linux-gpu") {
     return;
   }
@@ -1543,13 +1569,23 @@ function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
       900000,
     );
   } else {
-    runInfernixKubectl(fixture, ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=1"]);
-    runInfernixKubectl(
-      fixture,
-      ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"],
-      900000,
-    );
+    scaleGenericEngineDeployment(fixture, 1);
   }
+}
+
+function scaleGenericEngineDeployment(fixture, replicas) {
+  runInfernixKubectl(fixture, [
+    "-n",
+    "platform",
+    "scale",
+    "deployment/infernix-engine",
+    `--replicas=${replicas}`,
+  ]);
+  runInfernixKubectl(
+    fixture,
+    ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"],
+    900000,
+  );
 }
 
 function perEngineNameFromAdapterId(adapterId) {

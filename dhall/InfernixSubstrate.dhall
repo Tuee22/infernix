@@ -13,6 +13,15 @@
     , result_topic : Text
     , pulsarConnectionMode : Text
     }
+, engineDaemons :
+    List
+      { role : Text
+      , location : Text
+      , memberId : Optional Text
+      , request_topics : List Text
+      , result_topic : Text
+      , pulsarConnectionMode : Text
+      }
 , enginePools :
     List
       { id : Text

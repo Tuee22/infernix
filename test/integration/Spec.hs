@@ -4,8 +4,8 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, bracket, bracketOnError, bracket_, displayException, finally, try)
-import Control.Monad (forM, forM_, when)
+import Control.Exception (IOException, SomeException, bracket, bracketOnError, bracket_, displayException, finally, onException, try)
+import Control.Monad (forM, forM_, unless, when)
 import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
@@ -1543,17 +1543,13 @@ validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> 
 validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-  (_, nodeName) <- requireReadyEnginePodNode state
+  (_, nodeName) <- prepareEngineDrainTargetNode state
   let restore =
         runKubectl state ["uncordon", nodeName]
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
           >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
-          -- The drain evicts every pod on the node, including Pulsar broker
-          -- StatefulSet pods. Restore the full cluster — not just the stateless
-          -- infernix Deployments — so a still-reconciling broker tier cannot
-          -- leak into later steps (e.g. routed pulsar recovery).
-          >> runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
+          >> waitForDrainSensitivePulsarRollouts state
   ( do
       runKubectl
         state
@@ -1567,6 +1563,7 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig represen
       waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
       waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
       waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 1
+      waitForDrainSensitivePulsarRollouts state
       _ <- waitForRoutedDemoConfig paths state
       context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
       waitForDispatcherDiscovery
@@ -2019,7 +2016,7 @@ waitForPublishedResult paths runtimeMode resultTopic requestIdValue = do
           if realToFrac (nowTime - startTime) >= deadlineSeconds
             then pure Nothing
             else do
-              threadDelay 100000
+              threadDelay 1000000
               go startTime
 
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
@@ -3465,15 +3462,8 @@ findPodByPrefix state namespaceName prefixValue = do
         ["-n", namespaceName, "get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"]
   pure (find (isPrefixOf prefixValue) podNames)
 
-requireReadyEnginePodNode :: ClusterState -> IO (String, String)
-requireReadyEnginePodNode state = do
-  maybePodNode <- findReadyEnginePodNode state
-  case maybePodNode of
-    Just podNode -> pure podNode
-    Nothing -> fail "did not find a Ready infernix-engine pod with an assigned node"
-
-findReadyEnginePodNode :: ClusterState -> IO (Maybe (String, String))
-findReadyEnginePodNode state = do
+listReadyEnginePodNodes :: ClusterState -> IO [(String, String, String, String)]
+listReadyEnginePodNodes state = do
   podLines <-
     lines
       <$> kubectlOutputForState
@@ -3487,10 +3477,135 @@ findReadyEnginePodNode state = do
           "-o",
           "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.nodeName}{\"\\t\"}{.status.phase}{\"\\t\"}{range .status.conditions[?(@.type==\"Ready\")]}{.status}{end}{\"\\n\"}{end}"
         ]
-  pure $
-    case find isReadyEnginePodNode (mapMaybe parseReadyPodNode podLines) of
-      Just (podName, nodeName, _, _) -> Just (podName, nodeName)
-      Nothing -> Nothing
+  pure (filter isReadyEnginePodNode (mapMaybe parseReadyPodNode podLines))
+
+prepareEngineDrainTargetNode :: ClusterState -> IO (String, String)
+prepareEngineDrainTargetNode state = do
+  readyEnginePodNodes <- listReadyEnginePodNodes state
+  case readyEnginePodNodes of
+    [] -> fail "did not find a Ready infernix-engine pod with an assigned node"
+    (podName, nodeName, _, _) : _ -> do
+      maybeSafePodNode <- findEngineDrainTargetAvoidingPulsar state readyEnginePodNodes
+      case maybeSafePodNode of
+        Just (safePodName, safeNodeName, _, _) -> pure (safePodName, safeNodeName)
+        Nothing -> do
+          ( do
+              runKubectl state ["cordon", nodeName]
+              relocateDrainSensitivePulsarPodsFromNode state nodeName
+              waitForDrainSensitivePulsarPodsOffNode state nodeName
+              waitForDrainSensitivePulsarRollouts state
+              remainingCriticalPods <- drainSensitivePulsarPodsOnNode state nodeName
+              case remainingCriticalPods of
+                [] -> pure (podName, nodeName)
+                _ ->
+                  fail
+                    ( "engine node drain target "
+                        <> nodeName
+                        <> " still hosts Pulsar pods after relocation: "
+                        <> intercalate ", " (map podNodePlacementPodName remainingCriticalPods)
+                    )
+            )
+            `onException` runKubectl state ["uncordon", nodeName]
+
+findEngineDrainTargetAvoidingPulsar :: ClusterState -> [(String, String, String, String)] -> IO (Maybe (String, String, String, String))
+findEngineDrainTargetAvoidingPulsar state readyEnginePodNodes = do
+  pulsarPods <- drainSensitivePulsarPodPlacements state
+  let pulsarNodes = Set.fromList (map podNodePlacementNodeName pulsarPods)
+  pure (find (\(_, nodeName, _, _) -> not (Set.member nodeName pulsarNodes)) readyEnginePodNodes)
+
+relocateDrainSensitivePulsarPodsFromNode :: ClusterState -> String -> IO ()
+relocateDrainSensitivePulsarPodsFromNode state nodeName =
+  forM_ drainSensitivePulsarStatefulSets $ \(podPrefix, workloadName) -> do
+    podsOnNode <-
+      filter ((== nodeName) . podNodePlacementNodeName)
+        <$> platformPodNodePlacementsByPrefixes state [podPrefix]
+    forM_ podsOnNode $ \placement ->
+      runKubectl
+        state
+        [ "-n",
+          "platform",
+          "delete",
+          "pod",
+          podNodePlacementPodName placement,
+          "--timeout=300s"
+        ]
+    unless (null podsOnNode) $
+      runKubectl state ["-n", "platform", "rollout", "status", workloadName, "--timeout=600s"]
+
+waitForDrainSensitivePulsarRollouts :: ClusterState -> IO ()
+waitForDrainSensitivePulsarRollouts state =
+  forM_ drainSensitivePulsarStatefulSets $ \(_, workloadName) ->
+    runKubectl state ["-n", "platform", "rollout", "status", workloadName, "--timeout=600s"]
+
+waitForDrainSensitivePulsarPodsOffNode :: ClusterState -> String -> IO ()
+waitForDrainSensitivePulsarPodsOffNode state nodeName = go (120 :: Int)
+  where
+    go remainingAttempts
+      | remainingAttempts <= 0 =
+          fail ("timed out waiting for drain-sensitive Pulsar pods to leave " <> nodeName)
+      | otherwise = do
+          remainingPods <- drainSensitivePulsarPodsOnNode state nodeName
+          if null remainingPods
+            then pure ()
+            else do
+              threadDelay 1000000
+              go (remainingAttempts - 1)
+
+drainSensitivePulsarPodsOnNode :: ClusterState -> String -> IO [PodNodePlacement]
+drainSensitivePulsarPodsOnNode state nodeName =
+  filter ((== nodeName) . podNodePlacementNodeName) <$> drainSensitivePulsarPodPlacements state
+
+drainSensitivePulsarPodPlacements :: ClusterState -> IO [PodNodePlacement]
+drainSensitivePulsarPodPlacements state =
+  platformPodNodePlacementsByPrefixes state (map fst drainSensitivePulsarStatefulSets)
+
+drainSensitivePulsarStatefulSets :: [(String, String)]
+drainSensitivePulsarStatefulSets =
+  [ ("infernix-infernix-pulsar-zookeeper-", "statefulset/infernix-infernix-pulsar-zookeeper"),
+    ("infernix-infernix-pulsar-bookie-", "statefulset/infernix-infernix-pulsar-bookie"),
+    ("infernix-infernix-pulsar-broker-", "statefulset/infernix-infernix-pulsar-broker"),
+    ("infernix-infernix-pulsar-proxy-", "statefulset/infernix-infernix-pulsar-proxy")
+  ]
+
+data PodNodePlacement = PodNodePlacement
+  { podNodePlacementPodName :: String,
+    podNodePlacementNodeName :: String,
+    podNodePlacementPhase :: String
+  }
+  deriving (Eq, Show)
+
+platformPodNodePlacementsByPrefixes :: ClusterState -> [String] -> IO [PodNodePlacement]
+platformPodNodePlacementsByPrefixes state podPrefixes = do
+  podLines <-
+    lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "-o",
+          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.nodeName}{\"\\t\"}{.status.phase}{\"\\n\"}{end}"
+        ]
+  pure
+    [ placement
+    | placement <- mapMaybe parsePodNodePlacement podLines,
+      any (`isPrefixOf` podNodePlacementPodName placement) podPrefixes,
+      not (null (podNodePlacementNodeName placement))
+    ]
+
+parsePodNodePlacement :: String -> Maybe PodNodePlacement
+parsePodNodePlacement lineValue =
+  case splitTabs lineValue of
+    [podName, nodeName, phaseValue]
+      | not (null podName) ->
+          Just
+            PodNodePlacement
+              { podNodePlacementPodName = podName,
+                podNodePlacementNodeName = nodeName,
+                podNodePlacementPhase = phaseValue
+              }
+    _ -> Nothing
 
 parseReadyPodNode :: String -> Maybe (String, String, String, String)
 parseReadyPodNode lineValue =

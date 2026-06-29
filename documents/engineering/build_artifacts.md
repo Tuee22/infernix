@@ -87,33 +87,31 @@ Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTa
 field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
 `infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
 for each allowlisted Apple adapter into its final engine root. The `apple-metal-runtime-bridge`
-root also carries the fixed bridge source and smoke command, and the `coreml-native` root carries
-the runner script plus CoreML/Foundation smoke source. The native adapter roots currently carry
-smoke-capable deterministic validation wrappers at their manifest entrypoints; these wrappers prove
-root/executable/result-shape wiring and are explicit placeholders being replaced with real Apple
-native engine payloads by the reopened Phase 1 (Wave L), after which the realness lint forbids any
-fabricated result. The current Apple host evidence executes the installed Metal/Core ML smoke commands and
-directly checks representative native validation-runner output. Apple integration evidence now
-completes the active Apple catalog through the host engine daemon with native validation-wrapper
-payloads in place, validates pinned Apple host-engine `Exclusive` duplicate rejection, proves
-same-machine Apple `Shared` subscription coexistence, and covers Apple production
-`demo_ui = false` assertions. It also proves the source-fingerprint rebuild/reuse path by
+root carries the fixed bridge source and smoke command. Sprint 1.15 replaces the former Apple
+validation-wrapper roots with real native runners: llama.cpp/whisper.cpp delegate to host CLIs,
+CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs the pinned macOS
+arm64 app. The current Apple host evidence executes installed Metal, Core ML, CTranslate2, MLX,
+ONNX Runtime, and Audiveris smokes and verifies the Core ML venv imports Basic Pitch plus Apple's
+Stable Diffusion pipeline. Apple integration evidence from the prior lane validates pinned Apple
+host-engine `Exclusive` duplicate rejection, proves same-machine Apple `Shared` subscription
+coexistence, and covers Apple production `demo_ui = false` assertions. It also proves the
+source-fingerprint rebuild/reuse path by
 rebuilding the changed repo-owned image once before reusing the stamped image on later edge-port
 validation cycles. Follow-up plain-progress probing of the earlier long Docker interval showed
 active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar readiness waits
 rather than a Docker daemon deadlock, and current source adds source-fingerprint image reuse plus
 Dockerfile dependency caching for that host-native Apple cluster-image path. The Apple-only cohort
-residual is the remaining real-payload e2e/all evidence recorded in
+residual is the remaining routed real-output e2e/all evidence recorded in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 Every materialized engine root should carry a typed manifest recording `adapterId`, `engineName`,
 `substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
 key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
-manifest contract and smoke-loads materialized Apple payloads before atomic rename on Darwin.
-Linux native roots now exercise runtime-backed payload smoke over the image-baked native layer,
-current Apple native roots still exercise validation-wrapper command validation pending the reopened
-Phase 1 real engines (Wave L), and the reopened Phases 4/6 own the routed full-suite real-output
-delivery (Wave K) that consumes the Linux payloads through the service path.
+manifest contract, smoke-loads materialized Apple payloads before atomic rename when possible, then
+hydrates and re-smokes package-backed installed roots. Linux native roots exercise runtime-backed
+payload smoke over the image-baked native layer, Apple native roots exercise real runner smoke, and
+Wave L owns the routed full-suite Apple real-output gate. Wave K closed the Linux routed full-suite
+real-output delivery that consumes the Linux payloads through the service path.
 
 ## Linux Native Engine Artifacts
 
@@ -132,10 +130,13 @@ tolerates reruns over roots baked into a Docker image layer: when Docker overlay
 existing-root backup rename with a cross-device operation error, the helper removes the existing
 generated root and renames the freshly smoke-validated temp root into place. The current Linux
 payloads are runtime-backed wrappers: strict image smoke requires the baked llama.cpp and
-whisper.cpp executables, Basic Pitch ONNX model, ONNX Runtime/CTranslate2/faster-whisper Python
-environment, and Audiveris executable to be present and loadable. Normal invocations parse native
-worker arguments, support `--output-dir` for artifact-producing families, fail with exit 75 until
-the requested model-cache entry has a `.ready` sentinel, and can emit the local
+whisper.cpp executables selected for the image architecture (`linux/amd64` or `linux/arm64`),
+Basic Pitch ONNX model, ONNX Runtime/CTranslate2/faster-whisper Python environment, and Audiveris
+app jars plus the image-architecture Temurin 25 JRE to be present and loadable. The Audiveris smoke
+launches the JVM classpath entrypoint so native arm64 images cannot silently retain an x86 launcher.
+Normal invocations parse native worker arguments, support `--output-dir` for artifact-producing
+families, fail with exit 75 until the requested model-cache entry has a `.ready` sentinel, and can
+emit the local
 `infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
 upload bridge. The reopened Phases 4/6 own full routed real-output delivery (Wave K), with realness
 enforced in the engine code by the realness lint.

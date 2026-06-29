@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 READY_SENTINEL_NAME = ".ready"
+NATIVE_SNAPSHOT_INDEX_NAME = ".infernix-native-snapshot-files"
 
 # Open-Unmix `umxhq` is published as four first-party per-target state dicts on
 # Zenodo (record 3370489), not a single file or a HuggingFace repo. The catalog
@@ -45,6 +46,9 @@ def run_model_bootstrap_from_argv() -> int:
         region=args.minio_region,
     )
     if _sentinel_exists(client, args.models_bucket, args.model_id):
+        _write_ready_sentinel(client, args.models_bucket, args.model_id)
+        return 0
+    if _is_package_backed_native_model(args.model_id):
         _write_ready_sentinel(client, args.models_bucket, args.model_id)
         return 0
 
@@ -165,6 +169,21 @@ def _download_hugging_face_snapshot(repo_id: str, destination: Path) -> None:
 
 def _snapshot_allow_patterns(repo_id: str) -> list[str] | None:
     normalized_repo_id = repo_id.lower()
+    if normalized_repo_id == "huggingfacetb/smollm2-135m-instruct":
+        return [
+            "config.json",
+            "generation_config.json",
+            "merges.txt",
+            "model.safetensors",
+            "special_tokens_map.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+            "vocab.json",
+        ]
+    if normalized_repo_id == "apple/coreml-stable-diffusion-v1-5-palettized":
+        return [
+            "original/packages/**",
+        ]
     if normalized_repo_id == "stabilityai/sdxl-turbo":
         return [
             "model_index.json",
@@ -212,6 +231,10 @@ def _is_open_unmix_umxhq(download_url: str) -> bool:
     return _OPEN_UNMIX_UMXHQ_RECORD in download_url
 
 
+def _is_package_backed_native_model(model_id: str) -> bool:
+    return model_id in {"audio-basic-pitch-coreml"}
+
+
 def _download_open_unmix_umxhq(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for target, target_url in _OPEN_UNMIX_UMXHQ_TARGETS.items():
@@ -219,11 +242,19 @@ def _download_open_unmix_umxhq(destination: Path) -> None:
 
 
 def _upload_directory(client: Any, bucket: str, model_id: str, root: Path) -> None:
+    uploaded_keys: list[str] = []
     for path in sorted(root.rglob("*")):
         if not path.is_file() or _skip_snapshot_file(root, path):
             continue
         relative_key = path.relative_to(root).as_posix()
         _upload_file(client, bucket, model_id, path, relative_key)
+        uploaded_keys.append(relative_key)
+    client.put_object(
+        Bucket=bucket,
+        Key=f"{model_id}/{NATIVE_SNAPSHOT_INDEX_NAME}",
+        Body=("\n".join(uploaded_keys) + "\n").encode("utf-8"),
+        ContentType="text/plain; charset=utf-8",
+    )
 
 
 def _skip_snapshot_file(root: Path, path: Path) -> bool:

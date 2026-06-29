@@ -172,9 +172,9 @@ topology — and validated them end-to-end on `linux-cpu`. The closure surfaces:
   `DemoConfig` record fields updated to `coordinatorDaemon` /
   `engineDaemons`; `parseDaemonRole` accepts prior `cluster` / `host`
   strings during transition. Dhall schema field names and the JSON wire
-  keys flipped to the new vocabulary. Later Phase 4 cleanup stopped emitting the
-  `engineDaemons` projection in supported Dhall/JSON output; runtime daemon metadata is now derived
-  internally from `enginePools` and `engineMembers`. `infernix service` reports
+  keys flipped to the new vocabulary. Later Phase 4 cleanup removed legacy raw
+  batch-topic projections while current Dhall rendering carries explicit `engineDaemons` metadata
+  derived from `enginePools` and `engineMembers`. `infernix service` reports
   `serviceDaemonRole: coordinator` in steady state.
 - `chart/templates/deployment-service.yaml` plus
   `chart/templates/persistentvolumeclaim-service-data.yaml` deleted;
@@ -544,7 +544,8 @@ Both fixes implemented the same day in `src/Infernix/Cluster.hs` and
 `src/Infernix/Cluster/PublishImages.hs`:
 
 - `Cluster.hs.reconcileFinalPhaseOperatorManagedPersistentVolumes`
-  runs after the FinalPhase `deployChart` call and waits for the
+  runs after the no-hooks FinalPhase chart apply creates the
+  `keycloak-postgresql` PerconaPGCluster CR and waits for the
   combined `harborPostgresExpectedOperatorClaims + keycloakPostgresExpectedOperatorClaims = 8`
   operator-managed PVCs, creates matching PVs, and binds them. The
   previous warmup-only `reconcileOperatorManagedPersistentVolumes`
@@ -591,8 +592,8 @@ the recorded cohort validation routed browser validation follow-on:
   Keycloak admin API.
 - `src/Infernix/Cluster.hs` now also keeps the production-shaped final phase honest when
   `demo_ui = false`: `upstreamCharts.keycloakpg.enabled`, `keycloak.enabled`, the
-  `infernix-coordinator` Deployment, the final Keycloak Patroni PV reconcile, and the
-  Keycloak realm reconcile all follow the active substrate's demo flag.
+  `infernix-coordinator` Deployment, the `prepare-keycloak-storage` Patroni PV reconcile, and
+  the Keycloak realm reconcile all follow the active substrate's demo flag.
 - `web/playwright/inference.spec.js` adds the routed Keycloak browser smoke. It starts an OIDC
   authorization-code + PKCE flow at `/auth`, follows the registration link, creates a fresh
   username/password account without email verification, and asserts the browser returns to `/`
@@ -1015,7 +1016,7 @@ Closure notes:
 ## Sprint 7.7: Truly Stateless Daemon Topology and HA Chart [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (batch forwarding + bootstrap subscription wiring), `src/Infernix/Models.hs` (`inference.batch.<mode>` for every substrate; `infernix/system/model.bootstrap.request` topic family), `src/Infernix/DemoConfig.hs` (split `cluster` role into `coordinator` + `engine`; add `modelsBucket` and `modelBootstrapTopic` fields), `src/Infernix/Runtime/Cache.hs` (prior `objectStoreRoot`, `localPathFromUri`, `cacheManifestProtoPath`, `durableArtifactPathFor`, `sourceManifestPathFor`, and the `s3://infernix-runtime/` URI scheme; replaced by a MinIO-backed model loader and an `emptyDir`-backed LRU eviction manager), `src/Infernix/Runtime.hs` (prior the 80-char `buildPayload` branch; text outputs always inline, binary outputs carry a MinIO `ObjectRef`), `src/Infernix/Demo/Api.hs` (prior `serveObject` and the `/objects/:objectRef` route), `src/Infernix/Routes.hs` (prior the `/objects` route entry), `src/Infernix/Service.hs` (retained `engine.lock` safety check for non-Apple engine roles; Apple uniqueness is superseded by stable host-id pool membership and pinned `Exclusive` routing), `src/Infernix/Cluster.hs` (Helm rollout for the new Deployments + buckets + `infernix/system` namespace + `model.bootstrap.request` topic), `src/Infernix/Bootstrap/Models.hs` (coordinator's bootstrap Failover subscription, download-from-upstream + upload-to-MinIO with `.ready` sentinel), `src/Infernix/Bridge/Result.hs` (shared-library result-bridge, replaces the previously planned `Infernix.Demo.ResultBridge`), `python/adapters/model_cache.py` (shared adapter helper exposing `get_model_path(model_id) -> path`, MinIO client + LRU eviction rooted at `/model-cache`, uniform across every engine), `python/adapters/common.py`, `python/adapters/diffusers_python.py`, `python/adapters/jax_python.py`, `python/adapters/pytorch_python.py`, `python/adapters/tensorflow_python.py`, `python/adapters/transformers_python.py`, `python/adapters/vllm_python.py` (adapter integration with typed cache/config helpers), `chart/templates/deployment-coordinator.yaml` (no PVC), `chart/templates/deployment-engine.yaml` (no PVC; single `emptyDir` volume `model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}`, default `32Gi`), `chart/templates/poddisruptionbudget-coordinator.yaml`, `chart/templates/poddisruptionbudget-engine.yaml`, `chart/templates/poddisruptionbudget-demo.yaml`, `chart/values.yaml` (`infernix-models` and `infernix-engine-artifacts` always-on; `infernix-demo-objects` demo-gated; `coordinator`/`engine`/`demo` HA stanzas; `engine.modelCache.sizeLimit` knob), `dhall/InfernixSubstrate.dhall` (coordinator + engine role schemas; `modelsBucket : Text`; `modelBootstrapTopic : Text`; per-model `downloadUrl : Text`), `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` (prior fused Deployment, service-data PVC, object-store URI, and placeholder-bucket cleanup ledger)
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (batch forwarding + bootstrap subscription wiring), `src/Infernix/Models.hs` (`inference.batch.<mode>` for every substrate; `infernix/system/model.bootstrap.request` topic family), `src/Infernix/DemoConfig.hs` (split `cluster` role into `coordinator` + `engine`; add `modelsBucket` and `modelBootstrapTopic` fields), `src/Infernix/Runtime/Cache.hs` (prior `objectStoreRoot`, `localPathFromUri`, `cacheManifestProtoPath`, `durableArtifactPathFor`, `sourceManifestPathFor`, and the `s3://infernix-runtime/` URI scheme; replaced by a MinIO-backed model loader and an `emptyDir`-backed LRU eviction manager), `src/Infernix/Runtime.hs` (prior the 80-char `buildPayload` branch; text outputs always inline, binary outputs carry a MinIO `ObjectRef`), `src/Infernix/Demo/Api.hs` (prior `serveObject` and the `/objects/:objectRef` route), `src/Infernix/Routes.hs` (prior the `/objects` route entry), `src/Infernix/Service.hs` (retained `engine.lock` safety check for non-Apple engine roles; Apple uniqueness is superseded by stable host-id pool membership and pinned `Exclusive` routing), `src/Infernix/Cluster.hs` (Helm rollout for the new Deployments + buckets + `infernix/system` namespace + `model.bootstrap.request` topic), `src/Infernix/Bootstrap/Models.hs` (coordinator's bootstrap Failover subscription, download-from-upstream + upload-to-MinIO with `.ready` sentinel), `src/Infernix/Bridge/Result.hs` (shared-library result-bridge, replaces the previously planned `Infernix.Demo.ResultBridge`), `python/adapters/model_cache.py` (shared adapter helper exposing `get_model_path(model_id) -> path`, MinIO client + LRU eviction rooted at `/model-cache`, uniform across every engine), `python/adapters/common.py`, `python/adapters/diffusers_python.py`, `python/adapters/jax_python.py`, `python/adapters/pytorch_python.py`, `python/adapters/tensorflow_python.py`, `python/adapters/transformers_python.py`, `python/adapters/vllm_python.py` (adapter integration with typed cache/config helpers), `chart/templates/deployment-coordinator.yaml` (no PVC), `chart/templates/deployment-engine.yaml` (no PVC; single `emptyDir` volume `model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}`, default `64Gi`, and explicit CPU/memory resources), `chart/templates/poddisruptionbudget-coordinator.yaml`, `chart/templates/poddisruptionbudget-engine.yaml`, `chart/templates/poddisruptionbudget-demo.yaml`, `chart/values.yaml` (`infernix-models` and `infernix-engine-artifacts` always-on; `infernix-demo-objects` demo-gated; `coordinator`/`engine`/`demo` HA stanzas; `engine.modelCache.sizeLimit` and `engine.resources` knobs), `dhall/InfernixSubstrate.dhall` (coordinator + engine role schemas; `modelsBucket : Text`; `modelBootstrapTopic : Text`; per-model `downloadUrl : Text`), `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md` (prior fused Deployment, service-data PVC, object-store URI, and placeholder-bucket cleanup ledger)
 **Docs to update**: `documents/architecture/daemon_topology.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/durable_context_design.md`, `documents/engineering/object_storage.md`, `documents/engineering/portability.md`, `documents/engineering/implementation_boundaries.md`, `documents/engineering/k8s_storage.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/operations/apple_silicon_runbook.md`, `documents/development/chaos_testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/testing_strategy.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`
 
 ### Objective
@@ -1037,7 +1038,7 @@ for the authoritative target shape.
 
 - **No PVC on any daemon.** The coordinator and demo Deployments are PVC-free; the engine
   Deployment mounts a single `emptyDir` volume `model-cache` with
-  `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `32Gi`) at `/model-cache`,
+  `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`) at `/model-cache`,
   enforced by kubelet so the pod cannot exhaust node disk
 - **Strict engine placement.** On Linux substrates this is enforced by
   `requiredDuringSchedulingIgnoredDuringExecution` pod anti-affinity on the engine Deployment's own
@@ -1177,7 +1178,7 @@ The pure-Haskell coordination layer plus the additive chart-side scaffolding are
   `model.bootstrap.ready.<modelId>` topic family.
 - `chart/values.yaml` carries the `daemonSplit.enabled` gate plus `coordinator`, `engine`,
   and `demoSplit` HA stanzas including the `engine.modelCache.sizeLimit` `emptyDir` knob
-  (default `32Gi`), the `infernix-models` always-on MinIO bucket, and the demo-gated
+  (default `64Gi`), the `infernix-models` always-on MinIO bucket, and the demo-gated
   `infernix-demo-objects` bucket. The prior `infernix-runtime` / `infernix-results` placeholder
   bucket entries are gone, and the remaining `service.*` stanza is shared backend wiring consumed
   by the role-specific templates.
@@ -1265,7 +1266,7 @@ Closure notes:
   proceed until the upstream `.ready` sentinel exists, streams every
   file to `/model-cache/<modelId>/` via atomic temp-file rename,
   writes the local `.ready` sentinel last, and runs an LRU eviction
-  pass (32 GiB default quota). Sprint 5.9 / 7.17 moved the cache root,
+  pass (64 GiB default quota). Sprint 5.9 / 7.17 moved the cache root,
   quota, models bucket, MinIO endpoint, credentials, and region into
   the typed `ModelCacheConfig` passed through `configure()` instead of
   Python environment reads. `python/pyproject.toml` declares the new

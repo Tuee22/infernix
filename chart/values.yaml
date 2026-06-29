@@ -50,6 +50,13 @@ demo:
     repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
 
 publication:
   name: infernix-publication-state
@@ -143,6 +150,13 @@ coordinator:
     repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 1Gi
   command:
     - infernix
   # The Deployment template passes the typed `--role coordinator` CLI flag.
@@ -163,6 +177,13 @@ engine:
     repository: infernix-linux-cpu
     tag: local
     pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
   perEngine:
     enabled: false
     replicaCount: 0
@@ -206,6 +227,12 @@ infernixMinio:
     repository: docker.io/minio/minio
     tag: "RELEASE.2025-09-07T16-13-09Z"
     pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      memory: 384Mi
   clientImage:
     repository: docker.io/minio/mc
     tag: "RELEASE.2025-08-13T08-35-41Z"
@@ -289,14 +316,33 @@ harbor:
         secretkey: minioadmin123
         secure: false
         v4auth: true
-        chunksize: "134217728"
-        multipartcopychunksize: "134217728"
-        multipartcopymaxconcurrency: 4
-        multipartcopythresholdsize: "134217728"
+        chunksize: "33554432"
+        multipartcopychunksize: "33554432"
+        multipartcopymaxconcurrency: 2
+        multipartcopythresholdsize: "33554432"
+  nginx:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
   portal:
     replicas: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 64Mi
+      limits:
+        memory: 128Mi
   core:
     replicas: 3
+    resources:
+      requests:
+        cpu: 200m
+        memory: 256Mi
+      limits:
+        memory: 768Mi
     secret: "fedcba9876543210"
     tokenKey: |
       -----BEGIN RSA PRIVATE KEY-----
@@ -350,15 +396,50 @@ harbor:
   jobservice:
     replicas: 3
     secret: "0011223344556677"
+    resources:
+      requests:
+        cpu: 100m
+        memory: 128Mi
+      limits:
+        memory: 384Mi
   registry:
     replicas: 3
     secret: "8899aabbccddeeff"
+    registry:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 256Mi
+        limits:
+          memory: 640Mi
+    controller:
+      resources:
+        requests:
+          cpu: 50m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
     credentials:
       username: "harbor_registry_user"
       password: "harbor_registry_password"
       htpasswdString: "harbor_registry_user:$2a$10$4sf.czgjL/xrrR0TipkLzOcrg82zXOFIPmku9jvCosb3t6vH4.Ml2"
   trivy:
     replicas: 3
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 384Mi
+  redis:
+    internal:
+      resources:
+        requests:
+          cpu: 25m
+          memory: 64Mi
+        limits:
+          memory: 128Mi
 
 postgresOperator:
   fullnameOverride: infernix-postgres-operator
@@ -377,9 +458,19 @@ harborpg:
       password:
         type: ASCII
       secretName: infernix-harbor-db-user
+  databaseInitSQL:
+    key: init.sql
+    name: harbor-postgresql-init-sql
   instances:
     - name: instance1
       replicas: 3
+      resources:
+        requests:
+          cpu: 75m
+          memory: 160Mi
+        limits:
+          cpu: 500m
+          memory: 384Mi
       dataVolumeClaimSpec:
         storageClassName: infernix-manual
         accessModes:
@@ -391,10 +482,50 @@ harborpg:
     pgBouncer:
       replicas: 3
       image: docker.io/percona/percona-pgbouncer:1.25.1-1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 48Mi
+        limits:
+          cpu: 100m
+          memory: 96Mi
   backups:
     enabled: true
     pgbackrest:
       image: docker.io/percona/percona-pgbackrest:2.58.0-1
+      containers:
+        pgbackrest:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 100m
+              memory: 192Mi
+        pgbackrestConfig:
+          resources:
+            requests:
+              cpu: 15m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+      jobs:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 96Mi
+          limits:
+            cpu: 100m
+            memory: 192Mi
+      repoHost:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 96Mi
+          limits:
+            cpu: 100m
+            memory: 192Mi
       repos:
         - name: repo1
           volume:
@@ -423,9 +554,19 @@ keycloakpg:
       password:
         type: ASCII
       secretName: infernix-keycloak-db-user
+  databaseInitSQL:
+    key: init.sql
+    name: keycloak-postgresql-init-sql
   instances:
     - name: instance1
       replicas: 3
+      resources:
+        requests:
+          cpu: 75m
+          memory: 160Mi
+        limits:
+          cpu: 500m
+          memory: 384Mi
       dataVolumeClaimSpec:
         storageClassName: infernix-manual
         accessModes:
@@ -437,10 +578,50 @@ keycloakpg:
     pgBouncer:
       replicas: 3
       image: docker.io/percona/percona-pgbouncer:1.25.1-1
+      resources:
+        requests:
+          cpu: 25m
+          memory: 48Mi
+        limits:
+          cpu: 100m
+          memory: 96Mi
   backups:
     enabled: true
     pgbackrest:
       image: docker.io/percona/percona-pgbackrest:2.58.0-1
+      containers:
+        pgbackrest:
+          resources:
+            requests:
+              cpu: 25m
+              memory: 96Mi
+            limits:
+              cpu: 100m
+              memory: 192Mi
+        pgbackrestConfig:
+          resources:
+            requests:
+              cpu: 15m
+              memory: 32Mi
+            limits:
+              cpu: 50m
+              memory: 64Mi
+      jobs:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 96Mi
+          limits:
+            cpu: 100m
+            memory: 192Mi
+      repoHost:
+        resources:
+          requests:
+            cpu: 25m
+            memory: 96Mi
+          limits:
+            cpu: 100m
+            memory: 192Mi
       repos:
         - name: repo1
           volume:
@@ -463,18 +644,25 @@ keycloak:
     repository: quay.io/keycloak/keycloak
     tag: "26.0.7"
     pullPolicy: IfNotPresent
+  javaOptsHeap: "-XX:InitialRAMPercentage=10 -XX:MaxRAMPercentage=50"
+  resources:
+    requests:
+      cpu: 100m
+      memory: 384Mi
+    limits:
+      memory: 768Mi
   # The local demo runs one Keycloak application pod until Sprint 7.14
   # validates cookie-aware `/auth` proxy affinity or clustered embedded
   # cache behavior through Envoy Gateway. The backing Patroni Postgres
   # cluster remains HA.
   replicaCount: 1
   # Phase 7 Sprint 7.14: operator-facing base URL the demo backend
-  # expects the issuer claim to match. The default value reflects the
-  # default Envoy Gateway routing topology (Envoy strips the @:port@
-  # suffix from X-Forwarded-Host when proxying to Keycloak, so the
-  # emitted @iss@ omits the operator-facing edge port). Operators with
-  # a different routing topology should override this to match the
-  # routing topology, e.g. @https://infernix.example.com/auth@.
+  # expects the issuer claim to match. Cluster materialization overrides
+  # this with the active edge URL and Keycloak uses that full URL
+  # strictly, so browser form actions and OIDC redirects preserve the
+  # local edge host and port instead of re-deriving them from forwarded
+  # headers. Operators with a different routing topology should override
+  # this to match the routed issuer, e.g. @https://infernix.example.com/auth@.
   externalBaseUrl: http://127.0.0.1/auth
   theme:
     name: infernix
@@ -518,16 +706,35 @@ pulsar:
       enabled: false
     affinity:
       anti_affinity: false
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 0.05
+      limits:
+        memory: 256Mi
     volumes:
       data:
         storageClassName: infernix-manual
         size: 5Gi
   bookkeeper:
+    metadata:
+      resources:
+        requests:
+          memory: 128Mi
+          cpu: 0.05
+        limits:
+          memory: 256Mi
     replicaCount: 3
     podMonitor:
       enabled: false
     affinity:
       anti_affinity: false
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 0.1
+      limits:
+        memory: 512Mi
     configData:
       # Local host-path PVs share the developer's backing filesystem. Favor
       # absolute remaining space over the upstream default 95% utilization cap
@@ -543,12 +750,25 @@ pulsar:
       ledgers:
         storageClassName: infernix-manual
         size: 5Gi
+  pulsar_metadata:
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 0.05
+      limits:
+        memory: 256Mi
   broker:
     replicaCount: 3
     podMonitor:
       enabled: false
     affinity:
       anti_affinity: false
+    resources:
+      requests:
+        memory: 256Mi
+        cpu: 0.1
+      limits:
+        memory: 512Mi
     configData:
       # Required before namespace/topic-level producer dedup policies take effect.
       brokerDeduplicationEnabled: "true"
@@ -560,6 +780,12 @@ pulsar:
       enabled: false
     affinity:
       anti_affinity: false
+    resources:
+      requests:
+        memory: 192Mi
+        cpu: 0.1
+      limits:
+        memory: 512Mi
     service:
       type: NodePort
       nodePorts:
@@ -569,3 +795,16 @@ pulsar:
     replicaCount: 3
     podMonitor:
       enabled: false
+    resources:
+      requests:
+        memory: 96Mi
+        cpu: 0.025
+      limits:
+        memory: 192Mi
+  toolset:
+    resources:
+      requests:
+        memory: 128Mi
+        cpu: 0.05
+      limits:
+        memory: 256Mi

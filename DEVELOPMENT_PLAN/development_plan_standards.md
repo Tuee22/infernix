@@ -277,7 +277,7 @@ Rules:
   the stateless frontend Deployment (`infernix-demo`, demo-gated), the stateless coordinator
   Deployment (`infernix-coordinator`, always production infrastructure), and stateful engine pools.
   **No daemon has a PVC**: the coordinator and demo Deployments are PVC-free; Linux engine pods use
-  a single `emptyDir` volume at `/model-cache` with a hard `sizeLimit` (default `32Gi`, chart values
+  a single `emptyDir` volume at `/model-cache` with a hard `sizeLimit` (default `64Gi`, chart values
   knob `engine.modelCache.sizeLimit`) for staging weights pulled from MinIO, and the adapter runs
   LRU eviction inside that quota. Engine routing is substrate-neutral and pool-based: the coordinator
   publishes to topics derived from `(runtimeMode, pool id, model id, optional member id)`, normal

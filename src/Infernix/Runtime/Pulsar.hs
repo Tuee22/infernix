@@ -28,6 +28,7 @@ module Infernix.Runtime.Pulsar
     modelBootstrapReadyWaitMaxSeconds,
     reconcileStartupTopicsWithRetry,
     reconcileSupportedNamespacesWithRetry,
+    isPackageBackedNativeModel,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
     parseMessageIdToSequenceId,
@@ -40,9 +41,12 @@ module Infernix.Runtime.Pulsar
     rawTopicInferenceRequestPromptIds,
     rawTopicInferenceResultCausalRefs,
     readPublishedInferenceResultMaybe,
+    isRetryablePulsarWebSocketClientFailure,
     drainTopic,
     drainTopicWithKVCache,
     buildServiceConsumerSocketPath,
+    serviceConsumerAckTimeoutMillis,
+    requireTopicRef,
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
@@ -87,7 +91,7 @@ import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe, isJust, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Set (Set)
@@ -95,6 +99,7 @@ import Data.Set qualified as Set
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseTimeM)
+import Data.Word (Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.ClusterConfig
@@ -136,7 +141,8 @@ import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
 import Network.HTTP.Client
   ( Manager,
-    RequestBody (RequestBodyLBS),
+    RequestBody (RequestBodyLBS, RequestBodyStream),
+    brRead,
     defaultManagerSettings,
     httpLbs,
     method,
@@ -146,6 +152,7 @@ import Network.HTTP.Client
     requestHeaders,
     responseBody,
     responseStatus,
+    withResponse,
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
@@ -156,12 +163,13 @@ import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
+    getTemporaryDirectory,
     listDirectory,
     removeFile,
   )
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (takeDirectory, (<.>), (</>))
-import System.IO (hPutStrLn, stderr)
+import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hPutStrLn, openBinaryTempFile, stderr, withBinaryFile)
 import System.Posix.Process (getProcessID)
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
@@ -2305,6 +2313,9 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
             (encodeMessage (domainResultToProto publishedResult))
       sendAck connection (envelopeMessageId envelope)
 
+serviceConsumerAckTimeoutMillis :: Int
+serviceConsumerAckTimeoutMillis = 900000
+
 serviceConsumerName :: String -> ConsumerSubscriptionType -> Text.Text -> String
 serviceConsumerName subscriptionName subscriptionType processLabel =
   case subscriptionType of
@@ -3274,14 +3285,15 @@ processBootstrapRequest transport systemNamespace request = do
       if sentinelPresent
         then publishBootstrapReadyEvent transport systemNamespace request
         else do
-          if isHuggingFaceModelRepoUrl (BootstrapModels.bootstrapRequestDownloadUrl request)
-            || isMultiFileModelRepoUrl (BootstrapModels.bootstrapRequestDownloadUrl request)
-            then runModelBootstrapSnapshotHelper presigned request
-            else do
-              downloadedBytes <-
-                downloadUpstreamModel manager (BootstrapModels.bootstrapRequestDownloadUrl request)
-              putMinioObject presigned manager now payloadObject downloadedBytes
-              putMinioObject presigned manager now sentinelObject "ready\n"
+          let downloadUrl = BootstrapModels.bootstrapRequestDownloadUrl request
+          if isPackageBackedNativeModel modelId
+            then putMinioObject presigned manager now sentinelObject "ready\n"
+            else
+              if isHuggingFaceModelRepoUrl downloadUrl || isMultiFileModelRepoUrl downloadUrl
+                then runModelBootstrapSnapshotHelper presigned request
+                else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath -> do
+                  putMinioObjectFile presigned manager now payloadObject downloadedPath
+                  putMinioObject presigned manager now sentinelObject "ready\n"
           publishBootstrapReadyEvent transport systemNamespace request
 
 -- | Multi-file model sources (e.g. Open-Unmix `umxhq`, which is four per-target
@@ -3291,6 +3303,10 @@ processBootstrapRequest transport systemNamespace request = do
 isMultiFileModelRepoUrl :: Text.Text -> Bool
 isMultiFileModelRepoUrl rawUrl =
   "zenodo.org/records/3370489" `Text.isInfixOf` rawUrl
+
+isPackageBackedNativeModel :: Text.Text -> Bool
+isPackageBackedNativeModel modelId =
+  modelId `elem` ["audio-basic-pitch-coreml", "tool-audiveris"]
 
 isHuggingFaceModelRepoUrl :: Text.Text -> Bool
 isHuggingFaceModelRepoUrl rawUrl =
@@ -3380,22 +3396,46 @@ qualifiedReadyTopicPrefix ns =
       ConversationTopic.topicNamespaceName ns
     ]
 
-downloadUpstreamModel :: Manager -> Text.Text -> IO ByteString.ByteString
-downloadUpstreamModel manager urlText = do
+withDownloadedUpstreamModel :: Manager -> Text.Text -> (FilePath -> IO a) -> IO a
+withDownloadedUpstreamModel manager urlText action = do
+  temporaryDirectory <- getTemporaryDirectory
+  (temporaryPath, temporaryHandle) <- openBinaryTempFile temporaryDirectory "infernix-model-payload.tmp"
+  let cleanup = do
+        ignoreCleanupError (hClose temporaryHandle)
+        ignoreCleanupError (removeFile temporaryPath)
+  ( do
+      downloadUpstreamModelToFile manager urlText temporaryHandle
+      hClose temporaryHandle
+      action temporaryPath
+    )
+    `finally` cleanup
+
+downloadUpstreamModelToFile :: Manager -> Text.Text -> Handle -> IO ()
+downloadUpstreamModelToFile manager urlText outputHandle = do
   request <- parseRequest (Text.unpack urlText)
-  response <- httpLbs request manager
-  let code = statusCode (responseStatus response)
-  unless (code == 200) $
-    ioError
-      ( userError
-          ( "upstream model download "
-              <> Text.unpack urlText
-              <> " returned HTTP "
-              <> show code
-          )
-      )
-  let body = Lazy.toStrict (responseBody response)
-  when (bodyLooksLikeHtml body) $
+  firstNonSpaceByteRef <- newIORef Nothing
+  withResponse request manager $ \response -> do
+    let code = statusCode (responseStatus response)
+    unless (code == 200) $
+      ioError
+        ( userError
+            ( "upstream model download "
+                <> Text.unpack urlText
+                <> " returned HTTP "
+                <> show code
+            )
+        )
+    let loop = do
+          chunk <- brRead (responseBody response)
+          if ByteString.null chunk
+            then pure ()
+            else do
+              recordFirstNonSpaceByte firstNonSpaceByteRef chunk
+              ByteString.hPut outputHandle chunk
+              loop
+    loop
+  firstNonSpaceByte <- readIORef firstNonSpaceByteRef
+  when (firstNonSpaceByteLooksLikeHtml firstNonSpaceByte) $
     ioError
       ( userError
           ( "upstream model download "
@@ -3405,20 +3445,31 @@ downloadUpstreamModel manager urlText = do
               <> "points at a repository landing page rather than a direct weight artifact"
           )
       )
-  pure body
 
--- | Reopened Phase 4 Sprint 4.21 — realness weight-staging guard. A real
--- single-file model weight (ONNX, GGUF, safetensors, …) is binary and never
--- begins with @<@; a repository landing page (the broken Demucs/Open-Unmix
--- github-root URLs) returns an HTML document. Staging that HTML as the weight
--- silently corrupted the row; this guard fails closed instead.
-bodyLooksLikeHtml :: ByteString.ByteString -> Bool
-bodyLooksLikeHtml body =
-  case ByteString.uncons (ByteString.dropWhile isAsciiSpace body) of
-    Just (firstByte, _) -> firstByte == 60
-    Nothing -> True
-  where
-    isAsciiSpace w = w == 32 || w == 9 || w == 10 || w == 13
+recordFirstNonSpaceByte :: IORef (Maybe Word8) -> ByteString.ByteString -> IO ()
+recordFirstNonSpaceByte firstNonSpaceByteRef chunk = do
+  current <- readIORef firstNonSpaceByteRef
+  case current <|> bodyFirstNonSpaceByte chunk of
+    Just firstByte -> writeIORef firstNonSpaceByteRef (Just firstByte)
+    Nothing -> pure ()
+
+bodyFirstNonSpaceByte :: ByteString.ByteString -> Maybe Word8
+bodyFirstNonSpaceByte body =
+  fst <$> ByteString.uncons (ByteString.dropWhile isAsciiSpace body)
+
+isAsciiSpace :: Word8 -> Bool
+isAsciiSpace w = w == 32 || w == 9 || w == 10 || w == 13
+
+-- | Reopened Phase 4 Sprint 4.21 realness weight-staging guard, retained for
+-- the streaming bootstrap path: a real single-file model weight (ONNX, GGUF,
+-- safetensors, ...) is binary and never begins with @<@.
+firstNonSpaceByteLooksLikeHtml :: Maybe Word8 -> Bool
+firstNonSpaceByteLooksLikeHtml firstNonSpaceByte =
+  firstNonSpaceByte == Just 60 || isNothing firstNonSpaceByte
+
+ignoreCleanupError :: IO () -> IO ()
+ignoreCleanupError action =
+  void (try @SomeException action)
 
 minioObjectExists ::
   Presigned.PresignedUrlConfig ->
@@ -3465,6 +3516,43 @@ putMinioObject presigned manager now objectRef payload = do
               <> show code
           )
       )
+
+putMinioObjectFile ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  FilePath ->
+  IO ()
+putMinioObjectFile presigned manager now objectRef payloadPath =
+  withBinaryFile payloadPath ReadMode $ \payloadHandle -> do
+    payloadSize <- hFileSize payloadHandle
+    let signedUrl =
+          Presigned.unPresignedUrl
+            (Presigned.presignedPutUrl presigned now objectRef)
+    request <- parseRequest (Text.unpack signedUrl)
+    let popper = ByteString.hGetSome payloadHandle 65536
+        putRequest =
+          request
+            { method = "PUT",
+              requestBody =
+                RequestBodyStream
+                  (fromIntegral payloadSize)
+                  (\needsPopper -> needsPopper popper)
+            }
+    response <- httpLbs putRequest manager
+    let code = statusCode (responseStatus response)
+    unless (code `elem` [200, 204]) $
+      ioError
+        ( userError
+            ( "MinIO PUT for "
+                <> Text.unpack (Contracts.objectBucket objectRef)
+                <> "/"
+                <> Text.unpack (Contracts.objectKey objectRef)
+                <> " returned HTTP "
+                <> show code
+            )
+        )
 
 -- | Phase 7 Sprint 7.17: @INFERNIX_MINIO_*@ env reads retired. The
 -- supported flow reads non-credential wiring (endpoint, region,
@@ -3770,6 +3858,9 @@ waitForModelBootstrapReady transport modelIdValue = do
 modelCacheBootstrapRetryableError :: ErrorResponse -> Bool
 modelCacheBootstrapRetryableError errorValue =
   errorCode errorValue == "model_cache_not_populated"
+    || ( errorCode errorValue == "worker_failed"
+           && "model_cache_not_populated" `Text.isInfixOf` messageText
+       )
     || ( errorCode errorValue == "adapter_failed"
            && any (`Text.isInfixOf` messageText) retryableMessageFragments
        )
@@ -3864,8 +3955,66 @@ decodeJsonText label rawValue =
 
 runPulsarWebSocketClient :: PulsarWebSocketBase -> String -> (WebSockets.Connection -> IO a) -> IO a
 runPulsarWebSocketClient websocketBase socketPath action =
-  WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase) socketPath $ \connection ->
-    WebSockets.withPingThread connection 15 (pure ()) (action connection)
+  go (1 :: Int)
+  where
+    go attempt = do
+      result <-
+        try @SomeException $
+          WebSockets.runClient (pulsarWsHost websocketBase) (pulsarWsPort websocketBase) socketPath $ \connection ->
+            WebSockets.withPingThread connection 15 (pure ()) (action connection)
+      case result of
+        Right value -> pure value
+        Left err
+          | attempt < pulsarWebSocketConnectRetryAttempts,
+            isRetryablePulsarWebSocketClientFailure err -> do
+              threadDelay pulsarWebSocketConnectRetryDelayMicros
+              go (attempt + 1)
+          | otherwise -> throwIO err
+
+pulsarWebSocketConnectRetryAttempts :: Int
+pulsarWebSocketConnectRetryAttempts = 300
+
+pulsarWebSocketConnectRetryDelayMicros :: Int
+pulsarWebSocketConnectRetryDelayMicros = 1_000_000
+
+isRetryablePulsarWebSocketClientFailure :: SomeException -> Bool
+isRetryablePulsarWebSocketClientFailure err =
+  not (isAsyncException err)
+    && ( isConnectionRefused
+           || isEarlyConnectionClosed
+           || isMissingHandshakeResponse
+           || isHandshakeConnectionTimeout
+           || isTransientHandshakeServerError
+       )
+  where
+    errorText = Text.toLower (Text.pack (displayException err))
+    isConnectionRefused =
+      "connection refused" `Text.isInfixOf` errorText
+        && ( "network.socket.connect" `Text.isInfixOf` errorText
+               || "failed to connect" `Text.isInfixOf` errorText
+           )
+    isEarlyConnectionClosed =
+      case fromException err of
+        Just WebSockets.ConnectionClosed -> True
+        _ -> False
+    isMissingHandshakeResponse =
+      case fromException err of
+        Just (WebSockets.OtherHandshakeException reason) ->
+          "no handshake response from server" `Text.isInfixOf` Text.toLower (Text.pack reason)
+        _ -> False
+    isHandshakeConnectionTimeout =
+      case fromException err of
+        Just WebSockets.ConnectionTimeout -> True
+        _ -> False
+    isTransientHandshakeServerError =
+      "malformedresponse" `Text.isInfixOf` errorText
+        && any
+          (`Text.isInfixOf` errorText)
+          [ "responsecode = 500",
+            "responsecode = 502",
+            "responsecode = 503",
+            "responsecode = 504"
+          ]
 
 -- | Build the Pulsar WebSocket producer URL with stable @producerName@
 -- plus optional @initialSequenceId@ query parameters so the broker-side
@@ -3894,6 +4043,7 @@ buildServiceConsumerSocketPath websocketBase topicRef subscriptionName consumerN
     [ ("subscriptionType", pulsarConsumerSubscriptionTypeQueryValue subscriptionType),
       ("subscriptionInitialPosition", "Earliest"),
       ("receiverQueueSize", "1"),
+      ("ackTimeoutMillis", show serviceConsumerAckTimeoutMillis),
       ("consumerName", consumerName)
     ]
 

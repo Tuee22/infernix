@@ -99,7 +99,7 @@ return a typed object reference into `infernix-demo-objects`.
 
 | Matrix row (reference model / format) | Workload family | `ResultFamily` | Result surface |
 |---|---|---|---|
-| Qwen2.5-1.5B-Instruct (HF safetensors) | LLM | `LLM` | `inline_output` |
+| SmolLM2-135M-Instruct (HF safetensors) | LLM | `LLM` | `inline_output` |
 | Qwen2.5-1.5B-Instruct-AWQ (AWQ) | LLM | `LLM` | `inline_output` |
 | TinyLlama-1.1B-Chat-v1.0-GPTQ (GPTQ) | LLM | `LLM` | `inline_output` |
 | TinyLlama-1.1B-Chat-v1.0-GGUF (GGUF) | LLM | `LLM` | `inline_output` |

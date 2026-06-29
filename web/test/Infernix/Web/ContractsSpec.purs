@@ -182,7 +182,7 @@ spec = do
       roundtripJson "ClientCreateContext"
         (ClientCreateContext
             { clientCreateContextId: ContextId { unContextId: "c-1" }
-            , clientCreateContextModelId: "llm-qwen25-safetensors"
+            , clientCreateContextModelId: "llm-smollm2-safetensors"
             , clientCreateContextTitle: "New Chat"
             })
       roundtripJson "ServerConversationSnapshot"
@@ -254,7 +254,7 @@ sampleContextSummary :: ContextSummary
 sampleContextSummary =
   ContextSummary
     { contextSummaryId: ContextId { unContextId: "c-1" }
-    , contextSummaryModelId: "llm-qwen25-safetensors"
+    , contextSummaryModelId: "llm-smollm2-safetensors"
     , contextSummaryTitle: "Sample Context"
     , contextSummarySoftDeleted: false
     }
@@ -263,6 +263,6 @@ sampleContextCreated :: ContextMetadataEvent
 sampleContextCreated =
   ContextCreated
     { contextCreatedContextId: ContextId { unContextId: "c-1" }
-    , contextCreatedModelId: "llm-qwen25-safetensors"
+    , contextCreatedModelId: "llm-smollm2-safetensors"
     , contextCreatedTitle: "Sample Context"
     }

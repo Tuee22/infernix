@@ -31,11 +31,11 @@ The validator rejects impossible routing states such as unknown models, duplicat
 empty assignments, one-sided pool/member links, raw topic-like ids, `Failover` service consumers,
 and routable models with no eligible member.
 
-The checked-in substrate schema emits only the supported `enginePools` and `engineMembers` graph.
-Runtime daemon metadata is derived internally from that graph during decode; operators no longer
-author or receive `engine`, `engineDaemons`, `host_batch_topic`, or raw batch-topic fields in the
-supported Dhall surface. Current Apple integration proves pinned `Exclusive` duplicate-consumer
-rejection, same-machine
+The checked-in substrate schema emits the supported `enginePools` / `engineMembers` graph plus
+explicit `engineDaemons` metadata derived from that graph for daemon startup and targeted
+validation configs. Operators no longer author or receive legacy `engine`, `host_batch_topic`, or
+raw batch-topic fields in the supported Dhall surface. Current Apple integration proves pinned
+`Exclusive` duplicate-consumer rejection, same-machine
 Apple host-member coexistence on one real `Shared` pool subscription, and production
 `demo_ui = false` route/publication assertions. Current Apple integration also executes the
 single-host logical `Shared` backlog harness by holding one Pulsar WebSocket consumer unacked and
@@ -75,14 +75,14 @@ fields:
 enginePools =
   [ { id = "apple-llm"
     , runtimeMode = "apple-silicon"
-    , models = [ "llm-qwen25-safetensors" ]
+    , models = [ "llm-smollm2-safetensors" ]
     , members = [ "mac-studio-1", "mac-mini-2" ]
     , subscription = "shared"
     , maxInflightPerMember = 1
     }
   , { id = "linux-gpu-vllm"
     , runtimeMode = "linux-gpu"
-    , models = [ "llm-qwen25-safetensors" ]
+    , models = [ "llm-smollm2-safetensors" ]
     , members = [ "vllm" ]
     , subscription = "shared"
     , maxInflightPerMember = 1

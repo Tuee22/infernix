@@ -185,7 +185,7 @@ one effective publication.
 
 **No daemon has a PVC.** The engine pod uses a single ephemeral
 `emptyDir` volume mounted at `/model-cache` with hard `sizeLimit`
-(default `32Gi`, chart values knob `engine.modelCache.sizeLimit`).
+(default `64Gi`, chart values knob `engine.modelCache.sizeLimit`).
 Kubelet enforces the limit so the pod cannot exhaust node disk; the
 adapter helper enforces LRU eviction inside the quota. On the Apple
 on-host engine daemon, an equivalent host-local cache lives under

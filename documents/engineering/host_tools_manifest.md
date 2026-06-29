@@ -113,7 +113,7 @@ host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selec
 | python3 | `toolPaths.python3` | `/opt/homebrew/bin/python3.12` | `/usr/bin/python3` |
 | poetry | `toolPaths.poetry` | `${HOME}/.local/bin/poetry` | baked: `/opt/poetry/bin/poetry`; manifestless fallback checks fixed `/opt/poetry/bin/poetry`, `/usr/local/bin/poetry`, `/usr/bin/poetry` only |
 | protoc | `toolPaths.protoc` | `/opt/homebrew/bin/protoc` | `/usr/bin/protoc` |
-| git | `toolPaths.git` | `/opt/homebrew/bin/git` | `/usr/bin/git` |
+| git | `toolPaths.git` | `/usr/bin/git` | `/usr/bin/git` |
 | tar | `toolPaths.tar` | `/usr/bin/tar` | `/usr/bin/tar` |
 | curl | `toolPaths.curl` | `/usr/bin/curl` | `/usr/bin/curl` |
 | apt-get | `toolPaths.aptGet` | n/a (macOS) | `/usr/bin/apt-get` |

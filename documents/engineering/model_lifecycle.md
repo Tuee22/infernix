@@ -79,12 +79,11 @@
   idempotent setup-ready marker
 - per-engine software manifests record adapter id, engine name, substrate, architecture,
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
-  entrypoint, and smoke command. Current Apple materialization validates the manifest contract and
-  smoke-loads materialized Apple payloads before atomic rename on Darwin; the full Apple
-  integration rerun now reaches the host engine through derived Apple pool topics and blocks on
-  the first missing real framework payload (`transformers`/`torch` for
-  `llm-qwen25-safetensors`); the full Apple e2e/all real-output gate is owned by the reopened Phase 1
-  (Wave L). Linux native payload strict smoke exists today, and the reopened Phases 4/6 own the routed
+  entrypoint, and smoke command. Current Apple materialization validates the manifest contract,
+  smoke-loads materialized Apple payloads before atomic rename on Darwin, and routes real Apple
+  engine output through the host daemon for the active Apple catalog; Wave L's Apple integration
+  and focused routed Playwright gates are green, with only the paired `linux-cpu` gate still open.
+  Linux native payload strict smoke exists today, and the reopened Phases 4/6 own the routed
   full-suite real-output delivery (Wave K) that consumes those payloads through the service path;
   realness is enforced in the engine code by the realness lint.
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable

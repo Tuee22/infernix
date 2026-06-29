@@ -206,6 +206,7 @@ requiredPhrases =
     ( "chart/templates/keycloak/deployment.yaml",
       [ "name: infernix-keycloak",
         "--import-realm",
+        "--hostname-strict=true",
         "--http-relative-path=/auth",
         "name: login-theme",
         "mountPath: /opt/keycloak/themes/{{ .Values.keycloak.theme.name }}",

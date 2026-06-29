@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
 from adapters.common import AdapterContext, run_context_adapter, run_setup_from_argv
 from adapters.model_cache import get_model_path
+
+MAX_NEW_TOKENS = 32
 
 
 def transform(context: AdapterContext) -> str:
@@ -24,16 +26,19 @@ def transform(context: AdapterContext) -> str:
     device = _preferred_torch_device(torch)
     tokenizer = AutoTokenizer.from_pretrained(str(weights_dir), local_files_only=True)
     model = AutoModelForCausalLM.from_pretrained(
-        str(weights_dir), torch_dtype="auto", local_files_only=True
+        str(weights_dir),
+        torch_dtype="auto",
+        local_files_only=True,
+        low_cpu_mem_usage=True,
     )
     model = model.to(device)
     model.eval()
-    inputs = tokenizer(context.input_text, return_tensors="pt")
+    inputs = _tokenize_prompt(tokenizer, context.input_text)
     inputs = {key: value.to(device) for key, value in inputs.items()}
     with torch.no_grad():
         generated = model.generate(
             **inputs,
-            max_new_tokens=256,
+            max_new_tokens=MAX_NEW_TOKENS,
             do_sample=False,
             pad_token_id=tokenizer.eos_token_id,
         )
@@ -42,6 +47,24 @@ def transform(context: AdapterContext) -> str:
         generated[0][prompt_length:], skip_special_tokens=True
     )
     return continuation
+
+
+def _tokenize_prompt(tokenizer: Any, prompt: str) -> dict[str, Any]:
+    if getattr(tokenizer, "chat_template", None):
+        messages = [{"role": "user", "content": prompt}]
+        try:
+            templated = tokenizer.apply_chat_template(
+                messages,
+                add_generation_prompt=True,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+            )
+        except TypeError:
+            templated = None
+        if isinstance(templated, dict):
+            return templated
+    return cast(dict[str, Any], tokenizer(prompt, return_tensors="pt"))
 
 
 def _preferred_torch_device(torch_module: Any) -> str:

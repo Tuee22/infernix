@@ -5,10 +5,13 @@ module Infernix.Cluster
     clusterDown,
     clusterStatus,
     clusterUp,
+    HelmDeployPhase (..),
     kindControlPlaneNodeName,
     linuxGpuNvkindConfigMapBug,
     linuxGpuSupportedOnHost,
     loadClusterState,
+    pulsarBootstrapLogIndicatesDirtyState,
+    renderHelmValues,
     runKubectlCompat,
     writeGeneratedKindConfig,
   )
@@ -193,13 +196,21 @@ kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
 
 harborBootstrapHelmTimeout :: String
-harborBootstrapHelmTimeout = "5m"
+harborBootstrapHelmTimeout = "90s"
 
 data HelmDeployPhase
   = WarmupPhase
   | BootstrapPhase
   | HarborFinalPhase
+  | KeycloakStoragePhase
+  | PulsarReadyPhase
   | FinalPhase
+
+isAppleHostedLinuxCpuLocalTopology :: Paths -> ControlPlaneContext -> RuntimeMode -> Bool
+isAppleHostedLinuxCpuLocalTopology paths controlPlane runtimeMode =
+  controlPlane == OuterContainer
+    && runtimeMode == LinuxCpu
+    && HostConfig.normalizeHostArchitecture (hostArchitectureForPaths paths) == "arm64"
 
 data HarborBootstrapOutcome
   = HarborRegistryReady
@@ -291,19 +302,24 @@ instance FromJSON KeycloakAdminToken where
   parseJSON = withObject "KeycloakAdminToken" $ \value ->
     KeycloakAdminToken <$> value .: "access_token"
 
-pulsarZookeeperPodNames :: [String]
-pulsarZookeeperPodNames =
+pulsarBootstrapRepairLogTargets :: [String]
+pulsarBootstrapRepairLogTargets =
   [ "infernix-infernix-pulsar-zookeeper-0",
     "infernix-infernix-pulsar-zookeeper-1",
-    "infernix-infernix-pulsar-zookeeper-2"
+    "infernix-infernix-pulsar-zookeeper-2",
+    "infernix-infernix-pulsar-broker-0",
+    "infernix-infernix-pulsar-bookie-0",
+    "infernix-infernix-pulsar-recovery-0"
   ]
 
-pulsarBootstrapDirtyLogMarkers :: [String]
-pulsarBootstrapDirtyLogMarkers =
-  [ "The current epoch",
-    "Got zxid",
-    "older than the last zxid",
-    "Unable to load database on disk"
+pulsarBootstrapDirtySingleLogMarkers :: [String]
+pulsarBootstrapDirtySingleLogMarkers =
+  [ "Unable to load database on disk",
+    "Cannot resolve bookieId infernix-infernix-pulsar-bookie-1",
+    "Cannot resolve bookieId infernix-infernix-pulsar-bookie-2",
+    "QuorumCoverage(e:2,w:2,a:2)",
+    "InvalidCookieException",
+    "NoNode for /ledgers/cookies"
   ]
 
 clusterStateHasDemoUi :: ClusterState -> Bool
@@ -526,6 +542,8 @@ clusterUpWithPlatform paths runtimeMode = do
   warmupValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) WarmupPhase
   bootstrapValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) BootstrapPhase
   harborFinalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) HarborFinalPhase
+  keycloakStorageValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) KeycloakStoragePhase
+  pulsarReadyValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) PulsarReadyPhase
   finalValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) seedState (clusterUpPayload inputs) FinalPhase
   renderedChartPath <- renderHelmChart paths runtimeMode [finalValuesPath]
   when clusterCreated $
@@ -582,41 +600,58 @@ clusterUpWithPlatform paths runtimeMode = do
   deployChart paths harborFinalState [harborFinalValuesPath, imageOverridesPath] True
   waitForHarborFinalPhaseRollouts harborFinalState
   waitForGatewayApiCrds harborFinalState
+  finalStorageStateWithOperatorClaims <-
+    if clusterStateHasDemoUi harborFinalState
+      then do
+        finalStorageState <-
+          startLifecyclePhase
+            paths
+            harborFinalState
+            "cluster-up"
+            "prepare-keycloak-storage"
+            "applying the Keycloak PostgreSQL CR and binding operator-managed storage"
+        deployChartSkippingHooks paths finalStorageState [keycloakStorageValuesPath, imageOverridesPath] False
+        reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalStorageState
+      else pure harborFinalState
+  finalRuntimePrereqState <-
+    if isAppleHostedLinuxCpuLocalTopology paths (clusterUpControlPlane inputs) runtimeMode
+      then do
+        pulsarReadyState <-
+          startLifecyclePhase
+            paths
+            finalStorageStateWithOperatorClaims
+            "cluster-up"
+            "prepare-pulsar-runtime"
+            "starting Pulsar before the final app workloads on the Apple-hosted linux-cpu lane"
+        deployChartSkippingHooks paths pulsarReadyState [pulsarReadyValuesPath, imageOverridesPath] False
+        waitForPulsarReadyPhaseRollouts paths pulsarReadyState
+        pure pulsarReadyState
+      else pure finalStorageStateWithOperatorClaims
   finalDeployState <-
     startLifecyclePhase
       paths
-      harborFinalState
+      finalRuntimePrereqState
       "cluster-up"
       "deploy-final-phase"
       "deploying the final chart and waiting for routed workloads to become ready"
-  -- Phase 7 Sprint 7.1: when the demo surface is enabled, the
-  -- FinalPhase chart deploy applies the @keycloak-postgresql@
-  -- PerconaPGCluster CR; the Percona operator then creates 4 PVCs
-  -- (3 data + 1 pgbackrest repo) on the supported @infernix-manual@
-  -- storage class, which has no provisioner. The explicit final-phase
-  -- PV reconcile creates matching PVs and waits for them to bind before
-  -- rollout checks observe Keycloak. For @demo_ui = false@, Keycloak
-  -- and its Patroni cluster are absent, so this extra reconcile is
-  -- skipped.
-  deployChart paths finalDeployState [finalValuesPath, imageOverridesPath] False
-  finalDeployStateWithOperatorClaims <-
-    if clusterStateHasDemoUi finalDeployState
-      then reconcileFinalPhaseOperatorManagedPersistentVolumes paths finalDeployState
-      else pure finalDeployState
-  waitForFinalPhaseRollouts finalDeployStateWithOperatorClaims
+  -- Warmup already provisions MinIO buckets. Final deploys skip hooks so
+  -- routed workloads are validated by the explicit rollout probes below
+  -- instead of being coupled to dependency chart hooks.
+  deployChartSkippingHooks paths finalDeployState [finalValuesPath, imageOverridesPath] False
+  waitForFinalPhaseRollouts paths finalDeployState
   postKeycloakRealmState <-
-    if clusterStateHasDemoUi finalDeployStateWithOperatorClaims
+    if clusterStateHasDemoUi finalDeployState
       then do
         keycloakRealmState <-
           startLifecyclePhase
             paths
-            finalDeployStateWithOperatorClaims
+            finalDeployState
             "cluster-up"
             "reconcile-keycloak-realm"
             "reconciling the demo Keycloak realm and browser redirect URIs"
         reconcileKeycloakRealmConfiguration paths keycloakRealmState
         pure keycloakRealmState
-      else pure finalDeployStateWithOperatorClaims
+      else pure finalDeployState
   routedPublicationState <-
     startLifecyclePhase
       paths
@@ -1001,7 +1036,10 @@ chooseHarborPort paths = chooseDynamicPort 30002 =<< readHarborPortMaybe paths
 -- selected port back from 'pulsarHttpPortPath' to reach the in-cluster
 -- Pulsar proxy directly, bypassing the JWT-gated edge route.
 choosePulsarHttpPort :: Paths -> IO Int
-choosePulsarHttpPort paths = chooseDynamicPort 30080 =<< readPulsarHttpPortMaybe paths
+choosePulsarHttpPort paths = chooseDynamicPort pulsarProxyHttpNodePort =<< readPulsarHttpPortMaybe paths
+
+pulsarProxyHttpNodePort :: Int
+pulsarProxyHttpNodePort = 30080
 
 chooseDynamicPort :: Int -> Maybe Int -> IO Int
 chooseDynamicPort baseline maybeStoredPort =
@@ -1059,7 +1097,7 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
   createDirectoryIfMissing True directoryPath
   -- Repo-local claim mirrors stay broadly writable so Apple can sync them into Linux Kind nodes
   -- even though the macOS host filesystem cannot model those node-local container owners.
-  runHostToolCmd paths Nothing [] HostChmod ["-R", "a+rwX", directoryPath]
+  chmodClaimDirectory paths directoryPath
   case claimOwner persistentClaim of
     Nothing -> pure ()
     Just owner
@@ -1085,8 +1123,44 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
                     <> ")"
                 )
       | otherwise -> pure ()
+
+chmodClaimDirectory :: Paths -> FilePath -> IO ()
+chmodClaimDirectory paths directoryPath = go (5 :: Int) ""
   where
-    stripChownFailureNoise = takeWhile (/= '\n')
+    go remainingAttempts lastError = do
+      createDirectoryIfMissing True directoryPath
+      result <- tryHostToolCmd paths Nothing [] HostChmod ["-R", "a+rwX", directoryPath]
+      case result of
+        Right _ -> pure ()
+        Left err
+          | chmodMissingPathRace err && remainingAttempts > 1 -> do
+              threadDelay 250000
+              go (remainingAttempts - 1) err
+          | chmodMissingPathRace err -> do
+              createDirectoryIfMissing True directoryPath
+              directoryPresent <- doesDirectoryExist directoryPath
+              unless directoryPresent $
+                ioError
+                  ( userError
+                      ( "command failed: chmod -R a+rwX "
+                          <> directoryPath
+                          <> "\n"
+                          <> chooseError err lastError
+                      )
+                  )
+          | otherwise ->
+              ioError (userError ("command failed: chmod -R a+rwX " <> directoryPath <> "\n" <> err))
+
+    chooseError current previous
+      | null current = previous
+      | otherwise = current
+
+    chmodMissingPathRace err =
+      "No such file or directory" `List.isInfixOf` err
+        || "fts_read failed" `List.isInfixOf` err
+
+stripChownFailureNoise :: String -> String
+stripChownFailureNoise = takeWhile (/= '\n')
 
 hostClaimOwnershipAlignmentSupported :: Paths -> Bool
 hostClaimOwnershipAlignmentSupported paths =
@@ -2017,19 +2091,9 @@ preloadHostCachedWarmupImage paths state workerContainer imageRef = do
         "cluster-up"
         "preload-bootstrap-images"
         ("preloading host-cached warmup image " <> imageRef <> " on " <> workerContainer)
-    let dockerCommand = resolveClusterCommandWithPaths paths "docker"
-        streamImportScript =
-          "set -euo pipefail; \"$1\" image save \"$2\" | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
     result <-
       ( try
-          ( runCommandMonitored
-              paths
-              preloadState
-              Nothing
-              []
-              "bash"
-              ["-lc", streamImportScript, "infernix-image-stream", dockerCommand, imageRef, workerContainer]
-          ) ::
+          (streamImportImageOnNode paths preloadState workerContainer imageRef) ::
           IO (Either IOException ())
       )
     case result of
@@ -2145,19 +2209,54 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
           | remainingAttempts > 1 -> do
               threadDelay 5000000
               go (remainingAttempts - 1) (chooseError err lastFailure)
-          | otherwise ->
-              ioError
-                ( userError
-                    ( "Kind worker could not preload Harbor-backed image "
-                        <> imageRef
-                        <> ":\n"
-                        <> chooseError err lastFailure
-                    )
+          | otherwise -> do
+              let pullFailure = chooseError err lastFailure
+              putStrLn
+                ( "Harbor-backed crictl preload failed for "
+                    <> imageRef
+                    <> " on "
+                    <> nodeContainer
+                    <> "; falling back to docker-save stream import"
                 )
+              fallbackState <-
+                startLifecyclePhase
+                  paths
+                  state
+                  "cluster-up"
+                  "preload-harbor-images"
+                  ("stream-importing Harbor-backed image " <> imageRef <> " on " <> nodeContainer)
+              fallbackResult <-
+                (try (streamImportImageOnNode paths fallbackState nodeContainer imageRef) :: IO (Either IOException ()))
+              case fallbackResult of
+                Right _ -> pure ()
+                Left fallbackErr ->
+                  ioError
+                    ( userError
+                        ( "Kind worker could not preload Harbor-backed image "
+                            <> imageRef
+                            <> ":\ncrictl pull failure:\n"
+                            <> pullFailure
+                            <> "\nstream-import fallback failure:\n"
+                            <> displayException fallbackErr
+                        )
+                    )
 
     chooseError current previous
       | null current = previous
       | otherwise = current
+
+streamImportImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
+streamImportImageOnNode paths state nodeContainer imageRef = do
+  let dockerCommand = resolveClusterCommandWithPaths paths "docker"
+      streamImportScript =
+        "set -euo pipefail; \"$1\" image save \"$2\" | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
+  runCommandMonitored
+    paths
+    state
+    Nothing
+    []
+    "bash"
+    ["-lc", streamImportScript, "infernix-image-stream", dockerCommand, imageRef, nodeContainer]
 
 maybeRun :: String -> [String] -> IO Bool
 maybeRun command arguments = do
@@ -2515,6 +2614,7 @@ reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued st
         ( "repairing Harbor PostgreSQL replicas from leader: "
             <> List.intercalate ", " (replicaPodNames primaryPodName)
         )
+      ensureHarborPostgresReplicationRole state primaryPodName
       result <-
         ( try
             ( runCommand
@@ -2563,6 +2663,57 @@ reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued st
         && attemptsElapsed >= harborPostgresReplicaReinitGraceAttempts
         && not (null primaryPodName)
         && not (null (replicaPodNames primaryPodName))
+
+ensureHarborPostgresReplicationRole :: ClusterState -> String -> IO ()
+ensureHarborPostgresReplicationRole state primaryPodName = do
+  result <-
+    tryCommand
+      Nothing
+      []
+      "kubectl"
+      ( kubeconfigArgs state
+          <> [ "-n",
+               "platform",
+               "exec",
+               primaryPodName,
+               "-c",
+               "database",
+               "--",
+               "sh",
+               "-lc",
+               harborPostgresReplicationRoleRepairScript
+             ]
+      )
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      putStrLn
+        ( "Harbor PostgreSQL replication-role repair failed; continuing rollout wait: "
+            <> err
+        )
+
+harborPostgresReplicationRoleRepairScript :: String
+harborPostgresReplicationRoleRepairScript =
+  unlines
+    [ "set -eu",
+      "psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'",
+      harborPostgresReplicationRoleSql,
+      "SQL"
+    ]
+
+harborPostgresReplicationRoleSql :: String
+harborPostgresReplicationRoleSql =
+  unlines
+    [ "DO $$",
+      "BEGIN",
+      "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '_crunchyrepl') THEN",
+      "    CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;",
+      "  ELSE",
+      "    ALTER ROLE _crunchyrepl WITH LOGIN REPLICATION;",
+      "  END IF;",
+      "END",
+      "$$;"
+    ]
 
 waitForHarborPostgresPrimaryPod :: ClusterState -> IO String
 waitForHarborPostgresPrimaryPod state = go (72 :: Int)
@@ -2661,12 +2812,29 @@ deployChart paths state valuesPaths waitForRollout = do
       ioError
         (userError ("command failed: helm upgrade --install infernix chart\n" <> err))
 
+deployChartSkippingHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> IO ()
+deployChartSkippingHooks paths state valuesPaths waitForRollout = do
+  result <- tryDeployChartWithHooks paths state valuesPaths waitForRollout False
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        (userError ("command failed: helm upgrade --install infernix chart --no-hooks\n" <> err))
+
 tryDeployChart :: Paths -> ClusterState -> [FilePath] -> Bool -> IO (Either String String)
 tryDeployChart paths state valuesPaths waitForRollout =
-  tryDeployChartWithTimeout paths state valuesPaths waitForRollout "30m"
+  tryDeployChartWithHooks paths state valuesPaths waitForRollout True
+
+tryDeployChartWithHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> Bool -> IO (Either String String)
+tryDeployChartWithHooks paths state valuesPaths waitForRollout =
+  tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout "30m"
 
 tryDeployChartWithTimeout :: Paths -> ClusterState -> [FilePath] -> Bool -> String -> IO (Either String String)
-tryDeployChartWithTimeout paths state valuesPaths waitForRollout timeoutValue = do
+tryDeployChartWithTimeout paths state valuesPaths waitForRollout timeoutValue =
+  tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout timeoutValue True
+
+tryDeployChartWithTimeoutAndHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> String -> Bool -> IO (Either String String)
+tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout timeoutValue runHooks = do
   ensureHelmDependencies paths
   tryCommand
     (Just (repoRoot paths))
@@ -2683,11 +2851,15 @@ tryDeployChartWithTimeout paths state valuesPaths waitForRollout timeoutValue = 
         kubeconfigPath state
       ]
         <> timeoutArgs
+        <> hookArgs
         <> waitArgs
         <> concatMap (\valuesPath -> ["-f", valuesPath]) valuesPaths
     )
   where
     timeoutArgs = ["--timeout", timeoutValue]
+    hookArgs
+      | runHooks = []
+      | otherwise = ["--no-hooks"]
     waitArgs
       | waitForRollout = ["--wait"]
       | otherwise = []
@@ -2728,12 +2900,35 @@ waitForGatewayApiCrd state crdName = do
       ioError
         (userError ("Gateway API CRD never became ready: " <> crdName <> "\n" <> err))
 
-waitForFinalPhaseRollouts :: ClusterState -> IO ()
-waitForFinalPhaseRollouts state = do
+waitForFinalPhaseRollouts :: Paths -> ClusterState -> IO ()
+waitForFinalPhaseRollouts paths state = do
   putStrLn "waiting for final platform rollouts"
-  mapM_ (waitForWorkloadRollout state 1200) finalPhaseStatefulSets
+  mapM_ (waitForFinalPhaseStatefulSetRollout paths state 1200) finalPhaseStatefulSets
   mapM_ (waitForWorkloadRollout state 900) (finalPhaseDeployments state)
   waitForHarborDatabaseReadyWithRepair state
+
+waitForPulsarReadyPhaseRollouts :: Paths -> ClusterState -> IO ()
+waitForPulsarReadyPhaseRollouts paths state = do
+  putStrLn "waiting for staged Pulsar rollouts"
+  mapM_ (waitForFinalPhaseStatefulSetRollout paths state 1200) pulsarReadyPhaseStatefulSets
+  when (clusterStateHasDemoUi state) $
+    waitForWorkloadRollout state 900 "deployment/infernix-keycloak"
+
+pulsarReadyPhaseStatefulSets :: [String]
+pulsarReadyPhaseStatefulSets =
+  [ "statefulset/infernix-infernix-pulsar-bookie",
+    "statefulset/infernix-infernix-pulsar-broker",
+    "statefulset/infernix-infernix-pulsar-proxy",
+    "statefulset/infernix-infernix-pulsar-recovery",
+    "statefulset/infernix-infernix-pulsar-toolset",
+    "statefulset/infernix-infernix-pulsar-zookeeper"
+  ]
+
+waitForFinalPhaseStatefulSetRollout :: Paths -> ClusterState -> Int -> String -> IO ()
+waitForFinalPhaseStatefulSetRollout paths state timeoutSeconds workload
+  | "statefulset/infernix-infernix-pulsar-" `List.isPrefixOf` workload =
+      waitForPulsarStatefulSetRollout paths state timeoutSeconds workload
+  | otherwise = waitForWorkloadRollout state timeoutSeconds workload
 
 reconcileKeycloakRealmConfiguration :: Paths -> ClusterState -> IO ()
 reconcileKeycloakRealmConfiguration paths state =
@@ -3076,7 +3271,7 @@ detectDirtyPulsarBootstrapState paths runtimeMode = do
   case matchingClusterState runtimeMode maybeState of
     Just state
       | clusterPresent state && clusterExists ->
-          inspectPods state pulsarZookeeperPodNames
+          inspectPods state pulsarBootstrapRepairLogTargets
     _ -> pure Nothing
   where
     inspectPods _ [] = pure Nothing
@@ -3087,7 +3282,7 @@ detectDirtyPulsarBootstrapState paths runtimeMode = do
           pure
             ( Just
                 ( podName
-                    <> " reported stale epoch/zxid metadata on its retained volume"
+                    <> " reported incompatible retained Pulsar metadata"
                 )
             )
         else inspectPods state remainingPods
@@ -3107,7 +3302,8 @@ podLogsContainDirtyMarker state podName usePreviousLogs = do
       []
       "kubectl"
       ( kubeconfigArgs state
-          <> [ "-n",
+          <> [ "--request-timeout=10s",
+               "-n",
                "platform",
                "logs",
                podName,
@@ -3123,7 +3319,21 @@ podLogsContainDirtyMarker state podName usePreviousLogs = do
 
 pulsarBootstrapLogIndicatesDirtyState :: String -> Bool
 pulsarBootstrapLogIndicatesDirtyState output =
-  any (`List.isInfixOf` output) pulsarBootstrapDirtyLogMarkers
+  any contains pulsarBootstrapDirtySingleLogMarkers
+    || zookeeperEpochRegression
+    || zookeeperZxidRegression
+    || cookieMetadataMismatch
+  where
+    contains marker = marker `List.isInfixOf` output
+    zookeeperEpochRegression =
+      contains "The current epoch"
+        && contains "older than the last zxid"
+    zookeeperZxidRegression =
+      contains "Got zxid"
+        && contains "older than the last zxid"
+    cookieMetadataMismatch =
+      contains "is not matching with"
+        && (contains "Cookie" || contains "instanceId" || contains "bookieId")
 
 resetPulsarClaimDirectories :: Paths -> RuntimeMode -> IO ()
 resetPulsarClaimDirectories paths runtimeMode = do
@@ -3165,6 +3375,106 @@ waitForRoutedPublicationSurface paths state = do
                   <> err
               )
           )
+  waitForDirectPulsarProxySurface paths state
+
+waitForDirectPulsarProxySurface :: Paths -> ClusterState -> IO ()
+waitForDirectPulsarProxySurface paths state = do
+  result <-
+    retryCommandOutput
+      300
+      1000000
+      "wait for direct Pulsar proxy surface"
+      (probeDirectPulsarProxySurface paths state)
+  case result of
+    Right _ -> pure ()
+    Left err ->
+      ioError
+        ( userError
+            ( "direct Pulsar proxy surface never became ready for "
+                <> Text.unpack (runtimeModeId (clusterRuntimeMode state))
+                <> ":\n"
+                <> err
+            )
+        )
+
+probeDirectPulsarProxySurface :: Paths -> ClusterState -> IO (Either String String)
+probeDirectPulsarProxySurface paths state = do
+  endpointResult <- directPulsarProxyEndpoint paths state
+  case endpointResult of
+    Left err -> pure (Left err)
+    Right (hostName, portNumber) -> do
+      let clustersUrl = "http://" <> hostName <> ":" <> show portNumber <> "/admin/v2/clusters"
+      requireConsecutiveDirectPulsarProxySuccesses paths clustersUrl 3
+
+requireConsecutiveDirectPulsarProxySuccesses :: Paths -> String -> Int -> IO (Either String String)
+requireConsecutiveDirectPulsarProxySuccesses paths clustersUrl requiredSuccesses = go 1
+  where
+    go sampleNumber = do
+      result <- probeDirectPulsarProxyClustersUrl paths clustersUrl
+      case result of
+        Left err ->
+          pure $
+            Left
+              ( "direct Pulsar proxy stability check failed on sample "
+                  <> show sampleNumber
+                  <> "/"
+                  <> show requiredSuccesses
+                  <> ": "
+                  <> err
+              )
+        Right _
+          | sampleNumber >= requiredSuccesses -> pure (Right "ready")
+          | otherwise -> do
+              threadDelay 1000000
+              go (sampleNumber + 1)
+
+probeDirectPulsarProxyClustersUrl :: Paths -> String -> IO (Either String String)
+probeDirectPulsarProxyClustersUrl paths clustersUrl = do
+  response <-
+    tryHostToolCmd
+      paths
+      Nothing
+      []
+      HostCurl
+      ["-fsS", "--connect-timeout", "2", "--max-time", "5", clustersUrl]
+  pure $
+    response >>= \payload ->
+      case eitherDecode (LazyChar8.pack payload) of
+        Right (Array _) -> Right "ready"
+        Right _ -> Left ("unexpected Pulsar clusters payload from " <> clustersUrl)
+        Left err -> Left ("invalid Pulsar clusters payload from " <> clustersUrl <> ": " <> err)
+
+directPulsarProxyEndpoint :: Paths -> ClusterState -> IO (Either String (String, Int))
+directPulsarProxyEndpoint paths state
+  | Config.controlPlaneContext paths == OuterContainer = do
+      ipv4Result <- kindControlPlaneIpv4 paths (clusterRuntimeMode state)
+      pure $
+        case ipv4Result of
+          Right ipv4 -> Right (ipv4, pulsarProxyHttpNodePort)
+          Left err -> Left err
+  | otherwise = do
+      pulsarHttpPort <- fromMaybe pulsarProxyHttpNodePort <$> readPulsarHttpPortMaybe paths
+      pure (Right ("127.0.0.1", pulsarHttpPort))
+
+kindControlPlaneIpv4 :: Paths -> RuntimeMode -> IO (Either String String)
+kindControlPlaneIpv4 paths runtimeMode = do
+  result <-
+    tryHostToolCmd
+      paths
+      Nothing
+      []
+      HostDocker
+      [ "inspect",
+        kindControlPlaneNodeName paths runtimeMode,
+        "--format",
+        "{{.NetworkSettings.Networks.kind.IPAddress}}"
+      ]
+  pure $
+    result >>= \rawOutput ->
+      let ipv4 = Text.unpack (Text.strip (Text.pack rawOutput))
+       in if null ipv4
+            then Left ("Kind control-plane IPv4 was empty for " <> kindControlPlaneNodeName paths runtimeMode)
+            else Right ipv4
 
 waitForWorkloadRollout :: ClusterState -> Int -> String -> IO ()
 waitForWorkloadRollout state timeoutSeconds workload =
@@ -3182,6 +3492,58 @@ waitForWorkloadRollout state timeoutSeconds workload =
              show timeoutSeconds <> "s"
            ]
     )
+
+waitForPulsarStatefulSetRollout :: Paths -> ClusterState -> Int -> String -> IO ()
+waitForPulsarStatefulSetRollout paths state timeoutSeconds workload =
+  go timeoutSeconds ""
+  where
+    probeSeconds = 30
+    go remainingSeconds previousError
+      | remainingSeconds <= 0 =
+          ioError
+            ( userError
+                ( "Pulsar rollout did not become ready for "
+                    <> workload
+                    <> ":\n"
+                    <> previousError
+                )
+            )
+      | otherwise = do
+          touchLifecycleProgress paths state
+          result <-
+            tryCommand
+              Nothing
+              []
+              "kubectl"
+              ( kubeconfigArgs state
+                  <> [ "-n",
+                       "platform",
+                       "rollout",
+                       "status",
+                       workload,
+                       "--timeout",
+                       show (min probeSeconds remainingSeconds) <> "s"
+                     ]
+              )
+          case result of
+            Right _ -> pure ()
+            Left err -> do
+              maybeRepairReason <- detectDirtyPulsarBootstrapState paths (clusterRuntimeMode state)
+              case maybeRepairReason of
+                Just repairReason ->
+                  ioError
+                    ( userError
+                        ( "Pulsar retained state is inconsistent while waiting for "
+                            <> workload
+                            <> ": "
+                            <> repairReason
+                        )
+                    )
+                Nothing ->
+                  go (remainingSeconds - probeSeconds) (chooseError err previousError)
+    chooseError current previous
+      | null current = previous
+      | otherwise = current
 
 ensureHelmDependencies :: Paths -> IO ()
 ensureHelmDependencies paths = do
@@ -3795,7 +4157,7 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortV
         "        hostPort: 30011",
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
-        "      - containerPort: 30080",
+        "      - containerPort: " <> show pulsarProxyHttpNodePort,
         "        hostPort: " <> show pulsarHttpPortValue,
         "        listenAddress: \"127.0.0.1\"",
         "        protocol: TCP",
@@ -4076,6 +4438,7 @@ syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
     Just nodeName -> do
       let containerDirectory = nodeMountedClaimPath persistentClaim
           localDirectory = claimDirectory paths (clusterRuntimeMode state) persistentClaim
+      scrubNonRetainedClaimStateInContainer paths nodeName persistentClaim containerDirectory
       containerExists <- containerDirectoryExists paths nodeName containerDirectory
       if containerExists
         then do
@@ -4092,6 +4455,36 @@ syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
           copyDirectoryContentsFromContainer paths (Just copyState) nodeName containerDirectory localDirectory
           pure True
         else pure False
+
+scrubNonRetainedClaimStateInContainer :: Paths -> String -> PersistentClaim -> FilePath -> IO ()
+scrubNonRetainedClaimStateInContainer paths nodeName persistentClaim containerDirectory =
+  when (isHarborRegistryStorageClaim persistentClaim) $
+    runHostToolCmd
+      paths
+      Nothing
+      []
+      HostDocker
+      [ "exec",
+        nodeName,
+        "sh",
+        "-lc",
+        "rm -rf " <> unwords (map (containerDirectory </>) harborRegistryStorageRelativePaths)
+      ]
+
+isHarborRegistryStorageClaim :: PersistentClaim -> Bool
+isHarborRegistryStorageClaim persistentClaim =
+  namespace persistentClaim == "platform"
+    && release persistentClaim == "infernix"
+    && workload persistentClaim == "minio"
+    && claim persistentClaim == "data"
+
+harborRegistryStorageRelativePaths :: [FilePath]
+harborRegistryStorageRelativePaths =
+  [ "harbor-registry",
+    ".minio.sys" </> "buckets" </> "harbor-registry",
+    ".minio.sys" </> "multipart",
+    ".minio.sys" </> "tmp"
+  ]
 
 parseClaimNodeBindingLine :: String -> Maybe (String, String)
 parseClaimNodeBindingLine lineValue =
@@ -4247,6 +4640,8 @@ writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
       WarmupPhase -> "warmup"
       BootstrapPhase -> "bootstrap"
       HarborFinalPhase -> "harbor-final"
+      KeycloakStoragePhase -> "keycloak-storage"
+      PulsarReadyPhase -> "pulsar-ready"
       FinalPhase -> "final"
 
 renderHelmChart :: Paths -> RuntimeMode -> [FilePath] -> IO FilePath
@@ -4295,46 +4690,58 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         "  image:",
         "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
         "    tag: local",
-        "    pullPolicy: IfNotPresent",
-        "publication:",
-        "  payloadJson: |",
-        indentBlock 4 (renderPublicationState controlPlane state),
-        -- Phase 7 Sprint 7.7: the supported three-role daemon split
-        -- replaces the legacy `service.*` Deployment. The split workloads
-        -- depend on Pulsar (`coordinator` consumes inference-request
-        -- topics, runs the bootstrap subscription, and registers schemas)
-        -- so we hold their replica counts at zero until `FinalPhase`
-        -- brings the upstream Pulsar chart up. `demo.replicaCount` was
-        -- already phase-gated for the same reason.
-        "coordinator:",
-        "  enabled: true",
-        "  replicaCount: " <> show (repoCoordinatorReplicaCount deployPhase),
-        "  image:",
-        "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
-        "    tag: local",
-        "    pullPolicy: IfNotPresent",
-        "engine:",
-        "  replicaCount: " <> show (repoEngineReplicaCount deployPhase),
-        "  image:",
-        "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
-        "    tag: local",
-        "    pullPolicy: IfNotPresent",
-        "  perEngine:",
-        "    enabled: " <> yamlBool (not (null perEngineNames)),
-        "    replicaCount: " <> show (repoPerEngineReplicaCount deployPhase),
-        "    names:",
-        renderYamlStringList 6 (map Text.unpack perEngineNames),
-        "    images:"
+        "    pullPolicy: IfNotPresent"
       ]
+        <> demoResourceValueLines
+        <> [ "publication:",
+             "  payloadJson: |",
+             indentBlock 4 (renderPublicationState controlPlane state),
+             -- Phase 7 Sprint 7.7: the supported three-role daemon split
+             -- replaces the legacy `service.*` Deployment. The split workloads
+             -- depend on Pulsar (`coordinator` consumes inference-request
+             -- topics, runs the bootstrap subscription, and registers schemas)
+             -- so we hold their replica counts at zero until `FinalPhase`
+             -- brings the upstream Pulsar chart up. `demo.replicaCount` was
+             -- already phase-gated for the same reason.
+             "coordinator:",
+             "  enabled: true",
+             "  replicaCount: " <> show (repoCoordinatorReplicaCount deployPhase),
+             "  image:",
+             "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
+             "    tag: local",
+             "    pullPolicy: IfNotPresent"
+           ]
+        <> coordinatorResourceValueLines
+        <> [ "engine:",
+             "  replicaCount: " <> show (repoEngineReplicaCount deployPhase),
+             "  image:",
+             "    repository: " <> clusterWorkloadImageRepository (clusterRuntimeMode state),
+             "    tag: local",
+             "    pullPolicy: IfNotPresent"
+           ]
+        <> engineResourceValueLines
+        <> [ "  perEngine:",
+             "    enabled: " <> yamlBool (not (null perEngineNames)),
+             "    replicaCount: " <> show (repoPerEngineReplicaCount deployPhase),
+             "    names:",
+             renderYamlStringList 6 (map Text.unpack perEngineNames),
+             "    images:"
+           ]
         <> perEngineImageValueLines
         <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
         <> serviceEngineAdapterOverrides
         <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
+        <> appleHostNativeLocalOverrides deployPhase
+        <> appleHostedLinuxCpuLocalOverrides deployPhase
     )
   where
     demoUiEnabledValue = clusterStateHasDemoUi state
+    appleHostNativeLocalTopology =
+      controlPlane == HostNative && clusterRuntimeMode state == AppleSilicon
+    appleHostedLinuxCpuLocalTopology =
+      isAppleHostedLinuxCpuLocalTopology paths controlPlane (clusterRuntimeMode state)
     perEngineNames = perEngineDeploymentNames (clusterRuntimeMode state)
     perEngineImageValueLines =
       if null perEngineNames
@@ -4346,13 +4753,53 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         "        tag: local",
         "        pullPolicy: IfNotPresent"
       ]
+    localPulsarJvmGc :: String
+    localPulsarJvmGc =
+      "-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem"
+    demoResourceValueLines
+      | appleHostedLinuxCpuLocalTopology =
+          [ "  resources:",
+            "    requests:",
+            "      cpu: 50m",
+            "      memory: 96Mi",
+            "    limits:",
+            "      cpu: 500m",
+            "      memory: 384Mi"
+          ]
+      | otherwise = []
+    coordinatorResourceValueLines
+      | appleHostedLinuxCpuLocalTopology =
+          [ "  resources:",
+            "    requests:",
+            "      cpu: 50m",
+            "      memory: 192Mi",
+            "    limits:",
+            "      cpu: 500m",
+            "      memory: 768Mi"
+          ]
+      | otherwise = []
+    engineResourceValueLines
+      | appleHostedLinuxCpuLocalTopology =
+          [ "  resources:",
+            "    requests:",
+            "      cpu: 250m",
+            "      memory: 768Mi",
+            "    limits:",
+            "      cpu: \"2\"",
+            "      memory: 3584Mi"
+          ]
+      | otherwise = []
 
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int
     repoWorkloadReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
-      FinalPhase -> 2
+      KeycloakStoragePhase -> 0
+      PulsarReadyPhase -> 0
+      FinalPhase
+        | appleHostNativeLocalTopology -> 1
+        | otherwise -> 2
     -- Phase 7 Sprint 7.7: zero out the coordinator + engine roles in
     -- every pre-Pulsar phase, then come up with the supported supported
     -- HA replicaCount (coordinator >= 2 for stateless coordination;
@@ -4363,7 +4810,11 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       WarmupPhase -> 0
       BootstrapPhase -> 0
       HarborFinalPhase -> 0
-      FinalPhase -> 2
+      KeycloakStoragePhase -> 0
+      PulsarReadyPhase -> 0
+      FinalPhase
+        | appleHostNativeLocalTopology -> 1
+        | otherwise -> 2
     -- On Apple Silicon the engine role runs host-native (the same-binary
     -- host daemon launched from `./.build/infernix`); the cluster substrate
     -- must not deploy an in-cluster engine pod because it would compete with
@@ -4374,6 +4825,8 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       (WarmupPhase, _) -> 0
       (BootstrapPhase, _) -> 0
       (HarborFinalPhase, _) -> 0
+      (KeycloakStoragePhase, _) -> 0
+      (PulsarReadyPhase, _) -> 0
       (FinalPhase, AppleSilicon) -> 0
       (FinalPhase, LinuxCpu) -> 2
       (FinalPhase, _) -> 1
@@ -4391,6 +4844,8 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       (WarmupPhase, _) -> 0
       (BootstrapPhase, _) -> 0
       (HarborFinalPhase, _) -> 0
+      (KeycloakStoragePhase, _) -> 0
+      (PulsarReadyPhase, _) -> 0
       (FinalPhase, LinuxGpu) -> 0
       (FinalPhase, _) -> 1
     renderYamlStringList indent values =
@@ -4418,6 +4873,8 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
       WarmupPhase -> preFinalChartOverrides False
       BootstrapPhase -> preFinalChartOverrides False
       HarborFinalPhase -> preFinalChartOverrides True
+      KeycloakStoragePhase -> preFinalChartOverridesWithKeycloakPg True demoUiEnabledValue
+      PulsarReadyPhase -> pulsarReadyChartOverrides
       FinalPhase -> finalChartOverrides
     finalChartOverrides =
       [ "upstreamCharts:",
@@ -4441,6 +4898,33 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
             ]
           else []
     preFinalChartOverrides envoyGatewayEnabled =
+      preFinalChartOverridesWithKeycloakPg envoyGatewayEnabled False
+    pulsarReadyChartOverrides =
+      [ "upstreamCharts:",
+        "  harbor:",
+        "    enabled: true",
+        "  postgresOperator:",
+        "    enabled: true",
+        "  harborpg:",
+        "    enabled: true",
+        "  keycloakpg:",
+        "    enabled: " <> yamlBool demoUiEnabledValue,
+        "  minio:",
+        "    enabled: true",
+        "  pulsar:",
+        "    enabled: true",
+        "  envoyGateway:",
+        "    enabled: true",
+        "repoGateway:",
+        "  enabled: false",
+        "keycloak:",
+        "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
+        "  enabled: " <> yamlBool demoUiEnabledValue,
+        "minio:",
+        "  console:",
+        "    enabled: false"
+      ]
+    preFinalChartOverridesWithKeycloakPg envoyGatewayEnabled keycloakPgEnabled =
       [ "upstreamCharts:",
         "  harbor:",
         "    enabled: true",
@@ -4456,7 +4940,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         -- post-install readiness probe while waiting for its Patroni
         -- replicas to come up alongside Harbor's.
         "  keycloakpg:",
-        "    enabled: false",
+        "    enabled: " <> yamlBool keycloakPgEnabled,
         "  minio:",
         "    enabled: true",
         "  pulsar:",
@@ -4499,11 +4983,19 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
           "  jobservice:",
           "    replicas: 1",
           "  registry:",
-          "    replicas: 1",
+          "    replicas: 3",
           "  trivy:",
-          "    replicas: 1"
+          "    replicas: " <> show (if appleHostedLinuxCpuLocalTopology then (0 :: Int) else 1)
         ]
       HarborFinalPhase ->
+        [ "harbor:",
+          "  enableMigrateHelmHook: true"
+        ]
+      KeycloakStoragePhase ->
+        [ "harbor:",
+          "  enableMigrateHelmHook: true"
+        ]
+      PulsarReadyPhase ->
         [ "harbor:",
           "  enableMigrateHelmHook: true"
         ]
@@ -4511,6 +5003,334 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         [ "harbor:",
           "  enableMigrateHelmHook: true"
         ]
+    -- Apple host-native validation runs the Linux control-plane workloads
+    -- on the operator's already-selected Colima daemon. On the default
+    -- 8 GiB daemon, the HA-shaped chart has no real node-spread value
+    -- and can starve the Apple real-engine gate before routed inference
+    -- starts. Keep Linux lanes HA-shaped; use a single-replica local
+    -- platform topology only for Apple host-native generated values.
+    appleHostNativeLocalOverrides phaseValue
+      | not appleHostNativeLocalTopology = []
+      | not (appleHostNativeLocalPhase phaseValue) = []
+      | otherwise =
+          [ "harbor:",
+            "  database:",
+            "    external:",
+            "      host: harbor-postgresql-primary.platform.svc.cluster.local",
+            "  portal:",
+            "    replicas: 1",
+            "  core:",
+            "    replicas: 1",
+            "  jobservice:",
+            "    replicas: 1",
+            "  registry:",
+            "    replicas: 1",
+            "  trivy:",
+            "    replicas: 1",
+            "pulsar:",
+            "  victoria-metrics-k8s-stack:",
+            "    enabled: false",
+            "  zookeeper:",
+            "    replicaCount: 1",
+            "  bookkeeper:",
+            "    replicaCount: 1",
+            "  broker:",
+            "    replicaCount: 1",
+            "    configData:",
+            "      managedLedgerDefaultEnsembleSize: \"1\"",
+            "      managedLedgerDefaultWriteQuorum: \"1\"",
+            "      managedLedgerDefaultAckQuorum: \"1\"",
+            "  proxy:",
+            "    replicaCount: 1",
+            "  autorecovery:",
+            "    replicaCount: 1"
+          ]
+    appleHostNativeLocalPhase phaseValue =
+      case phaseValue of
+        BootstrapPhase -> True
+        HarborFinalPhase -> True
+        KeycloakStoragePhase -> True
+        PulsarReadyPhase -> True
+        FinalPhase -> True
+        _ -> False
+    -- The Apple-hosted linux-cpu launcher runs on the operator's existing
+    -- native arm64 Docker daemon. Kind advertises one allocatable memory pool
+    -- per node, but all node containers share the same Colima VM memory, so the
+    -- generated validation topology must keep aggregate requests/limits below
+    -- that local envelope while preserving the two-replica repo daemons that
+    -- integration failover and node-drain cases exercise.
+    appleHostedLinuxCpuLocalOverrides phaseValue
+      | not appleHostedLinuxCpuLocalTopology = []
+      | not (appleHostedLinuxCpuLocalPhase phaseValue) = []
+      | otherwise =
+          [ "infernixMinio:",
+            "  resources:",
+            "    requests:",
+            "      cpu: 50m",
+            "      memory: 128Mi",
+            "    limits:",
+            "      memory: 384Mi",
+            "harbor:",
+            "  redis:",
+            "    internal:",
+            "      resources:",
+            "        requests:",
+            "          cpu: 25m",
+            "          memory: 64Mi",
+            "        limits:",
+            "          memory: 128Mi",
+            "  portal:",
+            "    replicas: 1",
+            "    resources:",
+            "      requests:",
+            "        cpu: 25m",
+            "        memory: 48Mi",
+            "      limits:",
+            "        memory: 96Mi",
+            "  core:",
+            "    replicas: 1",
+            "    resources:",
+            "      requests:",
+            "        cpu: 100m",
+            "        memory: 192Mi",
+            "      limits:",
+            "        memory: 512Mi",
+            "  jobservice:",
+            "    replicas: 1",
+            "    resources:",
+            "      requests:",
+            "        cpu: 50m",
+            "        memory: 96Mi",
+            "      limits:",
+            "        memory: 256Mi",
+            "  registry:",
+            "    replicas: 1",
+            "    registry:",
+            "      resources:",
+            "        requests:",
+            "          cpu: 75m",
+            "          memory: 256Mi",
+            "        limits:",
+            "          memory: 640Mi",
+            "    controller:",
+            "      resources:",
+            "        requests:",
+            "          cpu: 25m",
+            "          memory: 64Mi",
+            "        limits:",
+            "          memory: 128Mi",
+            "  trivy:",
+            "    replicas: 0",
+            "    resources:",
+            "      requests:",
+            "        cpu: 50m",
+            "        memory: 128Mi",
+            "      limits:",
+            "        cpu: 200m",
+            "        memory: 384Mi",
+            "keycloak:",
+            "  enabled: " <> yamlBool (keycloakEnabledForPhase phaseValue),
+            "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
+            "  javaOptsHeap: \"-XX:InitialRAMPercentage=10 -XX:MaxRAMPercentage=50\"",
+            "  resources:",
+            "    requests:",
+            "      cpu: 100m",
+            "      memory: 384Mi",
+            "    limits:",
+            "      memory: 768Mi",
+            "harborpg:",
+            "  proxy:",
+            "    pgBouncer:",
+            "      replicas: 3",
+            "      resources:",
+            "        requests:",
+            "          cpu: 25m",
+            "          memory: 48Mi",
+            "        limits:",
+            "          cpu: 100m",
+            "          memory: 96Mi",
+            "  backups:",
+            "    pgbackrest:",
+            "      containers:",
+            "        pgbackrest:",
+            "          resources:",
+            "            requests:",
+            "              cpu: 25m",
+            "              memory: 96Mi",
+            "            limits:",
+            "              cpu: 100m",
+            "              memory: 192Mi",
+            "        pgbackrestConfig:",
+            "          resources:",
+            "            requests:",
+            "              cpu: 15m",
+            "              memory: 32Mi",
+            "            limits:",
+            "              cpu: 50m",
+            "              memory: 64Mi",
+            "      jobs:",
+            "        resources:",
+            "          requests:",
+            "            cpu: 25m",
+            "            memory: 96Mi",
+            "          limits:",
+            "            cpu: 100m",
+            "            memory: 192Mi",
+            "      repoHost:",
+            "        resources:",
+            "          requests:",
+            "            cpu: 25m",
+            "            memory: 96Mi",
+            "          limits:",
+            "            cpu: 100m",
+            "            memory: 192Mi",
+            "keycloakpg:",
+            "  proxy:",
+            "    pgBouncer:",
+            "      replicas: 3",
+            "      resources:",
+            "        requests:",
+            "          cpu: 25m",
+            "          memory: 48Mi",
+            "        limits:",
+            "          cpu: 100m",
+            "          memory: 96Mi",
+            "  backups:",
+            "    pgbackrest:",
+            "      containers:",
+            "        pgbackrest:",
+            "          resources:",
+            "            requests:",
+            "              cpu: 25m",
+            "              memory: 96Mi",
+            "            limits:",
+            "              cpu: 100m",
+            "              memory: 192Mi",
+            "        pgbackrestConfig:",
+            "          resources:",
+            "            requests:",
+            "              cpu: 15m",
+            "              memory: 32Mi",
+            "            limits:",
+            "              cpu: 50m",
+            "              memory: 64Mi",
+            "      jobs:",
+            "        resources:",
+            "          requests:",
+            "            cpu: 25m",
+            "            memory: 96Mi",
+            "          limits:",
+            "            cpu: 100m",
+            "            memory: 192Mi",
+            "      repoHost:",
+            "        resources:",
+            "          requests:",
+            "            cpu: 25m",
+            "            memory: 96Mi",
+            "          limits:",
+            "            cpu: 100m",
+            "            memory: 192Mi",
+            "pulsar:",
+            "  victoria-metrics-k8s-stack:",
+            "    enabled: false",
+            "  zookeeper:",
+            "    replicaCount: 1",
+            "    configData:",
+            "      PULSAR_MEM: \"-Xms32m -Xmx96m\"",
+            "      PULSAR_GC: " <> show localPulsarJvmGc,
+            "    resources:",
+            "      requests:",
+            "        memory: 128Mi",
+            "        cpu: 0.05",
+            "      limits:",
+            "        memory: 192Mi",
+            "  bookkeeper:",
+            "    replicaCount: 1",
+            "    metadata:",
+            "      resources:",
+            "        requests:",
+            "          memory: 128Mi",
+            "          cpu: 0.05",
+            "        limits:",
+            "          memory: 256Mi",
+            "    configData:",
+            "      PULSAR_MEM: \"-Xms64m -Xmx192m -XX:MaxDirectMemorySize=128m\"",
+            "      PULSAR_GC: " <> show localPulsarJvmGc,
+            "      dbStorage_writeCacheMaxSizeMb: \"16\"",
+            "      dbStorage_readAheadCacheMaxSizeMb: \"16\"",
+            "      dbStorage_rocksDB_writeBufferSizeMB: \"8\"",
+            "      dbStorage_rocksDB_blockCacheSize: \"8388608\"",
+            "    resources:",
+            "      requests:",
+            "        memory: 256Mi",
+            "        cpu: 0.1",
+            "      limits:",
+            "        memory: 512Mi",
+            "  pulsar_metadata:",
+            "    resources:",
+            "      requests:",
+            "        memory: 128Mi",
+            "        cpu: 0.05",
+            "      limits:",
+            "        memory: 256Mi",
+            "  broker:",
+            "    replicaCount: 1",
+            "    resources:",
+            "      requests:",
+            "        memory: 256Mi",
+            "        cpu: 0.1",
+            "      limits:",
+            "        memory: 768Mi",
+            "    configData:",
+            "      PULSAR_MEM: \"-Xms128m -Xmx256m -XX:MaxDirectMemorySize=128m\"",
+            "      PULSAR_GC: " <> show localPulsarJvmGc,
+            "      managedLedgerDefaultEnsembleSize: \"1\"",
+            "      managedLedgerDefaultWriteQuorum: \"1\"",
+            "      managedLedgerDefaultAckQuorum: \"1\"",
+            "  proxy:",
+            "    replicaCount: 1",
+            "    configData:",
+            "      PULSAR_MEM: \"-Xms64m -Xmx128m -XX:MaxDirectMemorySize=64m\"",
+            "      PULSAR_GC: " <> show localPulsarJvmGc,
+            "      httpNumThreads: \"8\"",
+            "      webSocketServiceEnabled: \"true\"",
+            "    resources:",
+            "      requests:",
+            "        memory: 160Mi",
+            "        cpu: 0.1",
+            "      limits:",
+            "        memory: 512Mi",
+            "  autorecovery:",
+            "    replicaCount: 1",
+            "    configData:",
+            "      BOOKIE_MEM: \"-Xms64m -Xmx160m -XX:MaxDirectMemorySize=64m\"",
+            "      PULSAR_GC: " <> show localPulsarJvmGc,
+            "    resources:",
+            "      requests:",
+            "        memory: 192Mi",
+            "        cpu: 0.025",
+            "      limits:",
+            "        memory: 384Mi",
+            "  toolset:",
+            "    resources:",
+            "      requests:",
+            "        memory: 128Mi",
+            "        cpu: 0.05",
+            "      limits:",
+            "        memory: 256Mi"
+          ]
+    appleHostedLinuxCpuLocalPhase phaseValue =
+      case phaseValue of
+        HarborFinalPhase -> True
+        KeycloakStoragePhase -> True
+        PulsarReadyPhase -> True
+        FinalPhase -> True
+        _ -> False
+    keycloakEnabledForPhase phaseValue =
+      case phaseValue of
+        PulsarReadyPhase -> demoUiEnabledValue
+        FinalPhase -> demoUiEnabledValue
+        _ -> False
 
 -- | Phase 3 follow-on (2026-05-29): the host-side variant honors the
 -- dynamic Harbor port chosen by 'chooseHarborPort' (passed in from

@@ -26,6 +26,10 @@ spec:
             - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
             - --port
             - {{ .Values.demo.port | quote }}
+{{- with .Values.demo.resources }}
+          resources:
+{{ toYaml . | nindent 12 }}
+{{- end }}
           # Phase 7 Sprint 7.17: credentials live in
           # `Secret/infernix-cluster-secrets` mounted at
           # `/etc/infernix/secrets/`. Phase 6 Sprint 6.28 follow-on

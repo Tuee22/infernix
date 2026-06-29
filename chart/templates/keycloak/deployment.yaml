@@ -35,7 +35,7 @@ spec:
             - --import-realm
             - --http-enabled=true
             - --hostname={{ .Values.keycloak.externalBaseUrl }}
-            - --hostname-strict=false
+            - --hostname-strict=true
             - --proxy-headers=xforwarded
             - --http-relative-path=/auth
             - --spi-theme-static-max-age=-1
@@ -64,6 +64,8 @@ spec:
               value: "true"
             - name: KC_METRICS_ENABLED
               value: "false"
+            - name: JAVA_OPTS_KC_HEAP
+              value: {{ .Values.keycloak.javaOptsHeap | quote }}
             - name: KC_BOOTSTRAP_ADMIN_USERNAME
               valueFrom:
                 secretKeyRef:
@@ -85,6 +87,8 @@ spec:
             - name: management
               containerPort: 9000
               protocol: TCP
+          resources:
+{{ toYaml .Values.keycloak.resources | nindent 12 }}
           # Phase 7 Sprint 7.1: TCP socket probes against the user-facing
           # HTTP listener. Keycloak 26's HTTP management endpoint paths
           # vary by Quarkus version, so the supported probes assert that

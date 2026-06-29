@@ -60,10 +60,11 @@ suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 m
 (Node 22) / cohort batch. The real-engine integration and routed E2E assertions closed on
 2026-06-20 through the Stage 2 single-accelerator gate for `linux-gpu` plus `linux-cpu`,
 re-validated in [Wave I](cohort-validation-waves.md), never a per-sprint machine switch (see
-[development_plan_standards.md](development_plan_standards.md) Section Q). Current Apple focused
-e2e and aggregate `test all` reruns pass the active catalog after the object-input prompt upload
-fix and the 900-second cold-bootstrap ready wait fix, and the current CUDA Linux image strict-smokes
-the runtime-backed Linux native payload layer. The final CUDA Linux closure passed full
+[development_plan_standards.md](development_plan_standards.md) Section Q). Current Apple Wave L
+real-engine reruns have passed the full integration layer and the focused routed Playwright gate
+(`9 passed (21.1m)`); the paired `linux-cpu` Wave L gate remains open as recorded in
+[Wave L](cohort-validation-waves.md). The current CUDA Linux image strict-smokes the
+runtime-backed Linux native payload layer. The final CUDA Linux closure passed full
 `./bootstrap/linux-gpu.sh test` and full rebuilt-image `./bootstrap/linux-cpu.sh test`, including
 integration HA checks and routed Playwright per-model matrices.
 The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
@@ -1592,7 +1593,7 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 **Status**: Done
 **Code-side closure**: Complete on the recorded Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
-**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — the selected `linux-gpu` plus `linux-cpu` per-family full-suite reruns passed on 2026-06-20. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, Apple native validation-wrapper materialization, latest Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have also passed on the Apple host. Linux native payload strict smoke passes in the CUDA image and the full routed service-path evidence is recorded in Wave I.
+**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — the selected `linux-gpu` plus `linux-cpu` per-family full-suite reruns passed on 2026-06-20. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, recorded Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have also passed on the Apple host for the host-routing and headless-materialization surfaces; Sprint 1.15 / Wave L now records green Apple real-payload integration and focused routed Playwright evidence, with the paired `linux-cpu` gate still open. Linux native payload strict smoke passes in the CUDA image and the full routed service-path evidence is recorded in Wave I.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1611,8 +1612,8 @@ instead of the legacy Tart helper.
 - add integration assertions that materialization failures leave no partial final engine root and
   are redelivered or negatively acknowledged when asynchronous
 - update per-family integration and routed E2E fixtures for promoted/residual cells: Apple
-  CTranslate2 viability, MT3/JAX residual, Omnizart residual, Wan Apple MPS residual, and Basic
-  Pitch TensorFlow residual
+  CTranslate2 viability, MT3/JAX residual, Omnizart's maintained PyTorch piano row, Wan Apple MPS
+  residual, and Basic Pitch TensorFlow residual
 
 ### Validation
 

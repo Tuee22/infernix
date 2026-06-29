@@ -363,7 +363,7 @@ Ordinary full-suite defaults:
 - K = 2 independent contexts per user
 - P = 2 prompts per context, fired in rapid succession without waiting for prior responses
 - model: substrate-appropriate primary LLM lane
-  (`linux-cpu` → Qwen2.5-1.5B-Instruct on Transformers + PyTorch CPU; `linux-gpu` →
+  (`linux-cpu` → SmolLM2-135M-Instruct on Transformers + PyTorch CPU; `linux-gpu` →
   Qwen2.5-1.5B-Instruct on vLLM; `apple-silicon` → Qwen1.5-1.8B-Chat-4bit on MLX-LM)
 
 The helper is parameterized by `ThroughputMatrix`; stress runs can raise N/K/P, while the ordinary

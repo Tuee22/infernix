@@ -694,9 +694,10 @@ around upstream `kubectl`, not a parallel lifecycle surface.
 - `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
   under `/opt/infernix/engines/<adapterId>/`; the Linux GPU/CPU images now carry runtime-backed
   wrappers over image-baked native payloads for llama.cpp, whisper.cpp, ONNX Runtime/Basic Pitch,
-  CTranslate2/faster-whisper, and Audiveris. Strict image smoke checks validate payload presence,
-  imports, and command wiring, while full routed MinIO-backed real-output evidence remains tracked
-  by Wave I
+  CTranslate2/faster-whisper, and Audiveris app jars plus an image-architecture Temurin 25 JRE.
+  Strict image smoke checks validate payload presence, imports, and command wiring, including the
+  native Java Audiveris classpath launch, while full routed MinIO-backed real-output evidence
+  remains tracked by Wave I
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -757,9 +758,10 @@ rebuildable.
 - a `.dhall` configuration defines the runtime contract for supported service flows; the
   active `.dhall` names the coordinator, validated engine pools and members, request topics, result
   topic, engine bindings, and the optional `demo_ui : Bool` flag that gates the `infernix-demo`
-  workload. Engine daemon metadata is derived internally from the validated pool/member graph during
-  decode; the supported configuration surface does not expose `engine`, `engineDaemons`,
-  `host_batch_topic`, or raw batch-topic fields
+  workload. Generated files also carry explicit engine daemon metadata derived from the validated
+  pool/member graph so daemon startup and targeted validation configs round-trip through Dhall; the
+  supported configuration surface does not expose legacy `engine`, `host_batch_topic`, or raw
+  batch-topic fields
 - Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection
@@ -872,7 +874,7 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 
 | Model / workload type | Artifact / format type | Reference model | Download URL | Best Linux CPU engine | Best Linux CUDA engine | Best Apple Silicon engine | Notes |
 |---|---|---|---|---|---|---|---|
-| LLM (general text) | HF safetensors | Qwen2.5-1.5B-Instruct | https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct | Transformers + PyTorch CPU | vLLM | Transformers + PyTorch MPS | Canonical source format for many open-weight LLMs |
+| LLM (general text) | HF safetensors | SmolLM2-135M-Instruct | https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct | Transformers + PyTorch CPU | vLLM | Transformers + PyTorch MPS | Small real safetensors checkpoint for constrained CPU and Apple lanes |
 | LLM (quantized, CUDA-focused) | AWQ | Qwen2.5-1.5B-Instruct-AWQ | https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-AWQ | Not recommended | vLLM | Not recommended | GPU-oriented quantized checkpoint |
 | LLM (quantized, CUDA-focused) | GPTQ | TinyLlama-1.1B-Chat-v1.0-GPTQ | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ | Not recommended | vLLM | Not recommended | Older but useful quantized checkpoint family |
 | LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path |
@@ -883,10 +885,10 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | Source separation | PyTorch checkpoint | Open-Unmix | https://zenodo.org/records/3370489 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
-| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | Not recommended | Not recommended | PyTorch MPS | Modern PyTorch reimplementation (YourMT3+ / mt3-infer); deferred (too-heavy MoE, no maintained pip package), Not-recommended on the Linux substrates and retained only as an apple-silicon declarative target |
+| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | Not recommended | Not recommended | Named residual: YourMT3+ PyTorch viability spike | Modern PyTorch reimplementation (YourMT3+ / mt3-infer); deferred (too-heavy MoE, no maintained pip package), retained as a named residual until a feasible engine lands |
 | Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed code-side, real-output pending the cohort gate |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
-| Image generation | Core ML | Apple Stable Diffusion conversion toolchain | https://github.com/apple/ml-stable-diffusion | Not recommended | Not recommended | Core ML | Best Apple-native exported path when available |
+| Image generation | Core ML | Apple Stable Diffusion Core ML v1.5 palettized | https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized | Not recommended | Not recommended | Core ML | Apple-native exported Core ML path using preconverted Hugging Face packages |
 | Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; Apple MPS video diffusion is not promoted until validated |
 | Audio generation / TTS-style | PyTorch / HF | bark-small | https://huggingface.co/suno/bark-small | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Representative audio-generation family |
 | OMR / notation extraction tool | JVM application | Audiveris | https://github.com/Audiveris/audiveris | JVM | JVM | JVM | Treat as tool runtime, not a separately managed ANN kernel family |

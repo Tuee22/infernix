@@ -229,15 +229,15 @@ substrate-agnostic Playwright suite asserts the rendered side of the same contra
 
 The integration suite dispatches each row to its `ResultFamily` assertion:
 
-- **LLM** (qwen2.5 safetensors/AWQ, tinyllama GPTQ/GGUF, qwen1.5 MLX): text prompt -> non-empty
+- **LLM** (SmolLM2 safetensors, qwen2.5 AWQ, tinyllama GPTQ/GGUF, qwen1.5 MLX): text prompt -> non-empty
   continuation; `inline_output`.
 - **Speech transcription** (whisper.cpp, faster-whisper CT2): audio input -> transcript text;
   `inline_output`.
 - **Source separation** (Demucs, Open-Unmix): audio -> `>= 2` stem object refs; `object_ref`.
 - **Audio-to-MIDI** (basic-pitch Core ML/ONNX; TensorFlow remains a named residual): audio -> valid
   MIDI bytes; `object_ref`.
-- **Music transcription** (MT3 JAX and Omnizart are named residuals until compatibility spikes
-  pass): audio -> MIDI or MusicXML; `object_ref`.
+- **Music transcription** (Omnizart's maintained ByteDance PyTorch piano row is runnable; MT3 JAX
+  remains a named residual until a maintained lane lands): audio -> MIDI or MusicXML; `object_ref`.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML): text -> valid image (magic + dims);
   `object_ref`.
 - **Video generation** (Wan2.1 on CUDA; Apple MPS remains a named residual): text -> valid video

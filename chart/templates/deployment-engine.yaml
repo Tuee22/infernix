@@ -78,11 +78,19 @@ spec:
           # `Secret/infernix-cluster-secrets` mounted at
           # `/etc/infernix/secrets/`; no `env:` block remains on the
           # engine template.
-{{- if eq .Values.runtimeMode "linux-gpu" }}
           resources:
             limits:
+{{- with .Values.engine.resources.limits }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+{{- if eq .Values.runtimeMode "linux-gpu" }}
               nvidia.com/gpu: "1"
+{{- end }}
             requests:
+{{- with .Values.engine.resources.requests }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+{{- if eq .Values.runtimeMode "linux-gpu" }}
               nvidia.com/gpu: "1"
 {{- end }}
           volumeMounts:
@@ -183,11 +191,19 @@ spec:
             - engine
             - --engine-name
             - {{ $engineName | quote }}
-{{- if eq $root.Values.runtimeMode "linux-gpu" }}
           resources:
             limits:
+{{- with $root.Values.engine.resources.limits }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+{{- if eq $root.Values.runtimeMode "linux-gpu" }}
               nvidia.com/gpu: "1"
+{{- end }}
             requests:
+{{- with $root.Values.engine.resources.requests }}
+{{ toYaml . | nindent 14 }}
+{{- end }}
+{{- if eq $root.Values.runtimeMode "linux-gpu" }}
               nvidia.com/gpu: "1"
 {{- end }}
           volumeMounts:

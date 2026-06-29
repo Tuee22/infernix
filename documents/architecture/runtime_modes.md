@@ -71,8 +71,8 @@ generic placeholder branch. The runtime worker invokes the selected Python adapt
 fetches model weights lazily from the `infernix-models` MinIO bucket via
 `adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
 guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
-realness lint). The reopened Phase 1 delivers real Apple native engines, replacing the former
-validation wrappers; Apple rows whose real engine is not yet landed are explicit residuals. Apple native engine artifacts resolve from
+realness lint). Phase 1 Sprint 1.15 materializes real Apple native engine roots, replacing the former
+validation wrappers; routed real-output proof for the Apple catalog remains the Wave L cohort gate. Apple native engine artifacts resolve from
 `./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
 Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
 and native runner payloads. The former Tart helper path has been removed; the retained command name
@@ -83,13 +83,15 @@ now writes typed manifests without a VM dependency. The canonical homes are
 
 On Linux substrates, `infernix internal materialize-linux-native-engines` bakes image-owned
 `/opt/infernix/engines/<adapterId>/` roots with typed manifests and smoke-validated runner
-entrypoints. The image build now installs the native payload layer for llama.cpp, whisper.cpp,
-Basic Pitch's ONNX model, ONNX Runtime/CTranslate2 Python dependencies, faster-whisper, and
-Audiveris; generated wrappers fail with exit 75 until the requested model cache contains a `.ready`
-sentinel, can emit a local artifact-file marker for Haskell-owned MinIO upload, and delegate strict
-smoke checks to those baked payloads. The reopened Phases 4/6 own the full routed `linux-gpu` plus
-`linux-cpu` real-output delivery (Wave K), with realness enforced in the engine code by the realness
-lint.
+entrypoints. The image build now installs the native payload layer for llama.cpp and whisper.cpp
+using the image architecture (`linux/amd64` or `linux/arm64`), plus Basic Pitch's ONNX model, ONNX
+Runtime/CTranslate2 Python dependencies, faster-whisper, and Audiveris app jars with an
+image-architecture Temurin 25 JRE. Generated wrappers fail with exit 75 until the requested model
+cache contains a `.ready` sentinel, can emit a local artifact-file marker for Haskell-owned MinIO
+upload, and delegate strict smoke checks to those baked payloads, including launching Audiveris
+through Java on the native image architecture. The reopened Phases 4/6 own the full routed
+`linux-gpu` plus `linux-cpu` real-output delivery (Wave K), with realness enforced in the engine
+code by the realness lint.
 
 ## Generated Demo Config Contract
 
@@ -123,7 +125,10 @@ target shape is the three-role daemon model codified in
   pool-specific or per-engine Deployments selected by derived pool/model topics. Repo-owned
   `linux-gpu` lifecycle values may keep heavyweight per-engine deployments at zero replicas on the
   single-GPU lane and validation scales one at a time. Apple silicon runs eligible engine-pool
-  members as on-host `infernix service` daemons. The chart ships
+  members as on-host `infernix service` daemons. Host-native Apple generated Helm values use one
+  local Harbor/Pulsar/coordinator/demo replica on the already selected native arm64 Docker daemon
+  so the real Apple engine gate fits constrained Colima memory; Linux generated values retain the
+  HA-shaped platform defaults and own the HA evidence. The chart ships
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
   `clusterServiceEnabled` returns `False` on every substrate, and
   `finalPhaseDeployments` waits on
@@ -135,8 +140,9 @@ target shape is the three-role daemon model codified in
   `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and
   consumes the generated engine-role metadata, pool/member assignments, result topic, and engine
-  bindings from the active `.dhall`. Engine-role metadata is derived from the validated
-  pool/member graph; raw batch-topic metadata is not part of the supported surface
+  bindings from the active `.dhall`. Generated engine-role metadata is derived from the validated
+  pool/member graph and serialized in the substrate file; raw batch-topic metadata is not part of
+  the supported surface
 - `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
   reports `daemonLocation: cluster-pod` for the in-cluster coordinator daemon on every substrate,
   reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the

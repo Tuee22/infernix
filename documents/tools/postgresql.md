@@ -18,6 +18,10 @@
   `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix test integration` validates PostgreSQL readiness, replacement-primary failover, and
   repeat lifecycle reuse of the same deterministic manually managed PV inventory and host paths
+- Harbor and Keycloak Percona clusters reference repo-owned `databaseInitSQL` ConfigMaps that
+  idempotently create `_crunchyrepl` as `LOGIN REPLICATION`, matching the Patroni replica
+  bootstrap role expected by the Percona image. The Harbor startup repair path reasserts the same
+  role on the current primary before forcing replica reinitialization.
 - Harbor PostgreSQL bootstrap may recycle unready startup pods when they remain `Running` but fail
   Patroni readiness beyond the supported grace window. The recycle uses Kubernetes `--wait=false`
   deletes so StatefulSet immediate name reuse does not block lifecycle progress; readiness remains

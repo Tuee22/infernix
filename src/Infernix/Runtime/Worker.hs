@@ -9,13 +9,15 @@ module Infernix.Runtime.Worker
     lookupEngineCommandOverride,
     loadWorkerModelCacheConfig,
     nativeEngineInstallRootCandidates,
+    nativeModelCacheObjectKeys,
     nativeRunnerArgs,
     runInferenceWorker,
     workerRequestModelCacheConfig,
   )
 where
 
-import Control.Exception (SomeException, displayException, try)
+import Control.Concurrent (threadDelay)
+import Control.Exception (SomeException, displayException, throwIO, try)
 import Control.Monad (unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as ByteString
@@ -183,19 +185,24 @@ ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding =
   case perEngineFrameworkGroups runtimeMode engineBinding of
     [] -> pure ()
     groups -> do
-      let markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
+      let projectDirectory = perEngineProjectDirectory paths engineBinding
+          markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
+      expectedMarker <- perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups
       markerPresent <- doesFileExist markerPath
+      markerMatches <-
+        if markerPresent
+          then (== expectedMarker) <$> readFile markerPath
+          else pure False
       maybeVenvPython <- perEngineVenvPython paths engineBinding
       case maybeVenvPython of
         Just _
-          | markerPresent -> pure ()
+          | markerMatches -> pure ()
         _ -> do
-          let projectDirectory = perEngineProjectDirectory paths engineBinding
           ensurePoetryProjectInstalledWithGroups paths projectDirectory groups
           refreshedVenvPython <- perEngineVenvPython paths engineBinding
           case refreshedVenvPython of
             Just _ ->
-              writeFile markerPath (perEngineFrameworkMarkerContents runtimeMode engineBinding groups)
+              writeFile markerPath expectedMarker
             Nothing ->
               ioError
                 ( userError
@@ -238,13 +245,34 @@ perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups =
             <> intercalate "-" groups
         )
 
-perEngineFrameworkMarkerContents :: RuntimeMode -> EngineBinding -> [String] -> String
-perEngineFrameworkMarkerContents runtimeMode engineBinding groups =
-  unlines
-    [ "runtimeMode=" <> Text.unpack (runtimeModeId runtimeMode),
-      "adapterId=" <> Text.unpack (engineBindingAdapterId engineBinding),
-      "groups=" <> intercalate "," groups
-    ]
+perEngineFrameworkMarkerContents :: FilePath -> RuntimeMode -> EngineBinding -> [String] -> IO String
+perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups = do
+  projectDigest <- perEngineFrameworkProjectDigest projectDirectory
+  pure
+    ( unlines
+        [ "runtimeMode=" <> Text.unpack (runtimeModeId runtimeMode),
+          "adapterId=" <> Text.unpack (engineBindingAdapterId engineBinding),
+          "groups=" <> intercalate "," groups,
+          "projectDigest=" <> projectDigest
+        ]
+    )
+
+perEngineFrameworkProjectDigest :: FilePath -> IO String
+perEngineFrameworkProjectDigest projectDirectory = do
+  let pyprojectPath = projectDirectory </> "pyproject.toml"
+      lockPath = projectDirectory </> "poetry.lock"
+  pyprojectBytes <- ByteString.readFile pyprojectPath
+  lockPresent <- doesFileExist lockPath
+  lockBytes <-
+    if lockPresent
+      then ByteString.readFile lockPath
+      else pure ""
+  pure
+    ( Text.unpack
+        ( TextEncoding.decodeUtf8
+            (Base16.encode (SHA256.hash (ByteString.concat [pyprojectBytes, ByteString8.pack "\n", lockBytes])))
+        )
+    )
 
 runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
 runSetupInvocation paths poetryExecutable projectDirectory installRoot _runtimeMode engineBinding = do
@@ -460,10 +488,14 @@ ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
 
 hydrateNativeModelCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
 hydrateNativeModelCache model modelCacheConfig =
-  mapM_ (downloadNativeModelCacheObject modelCacheConfig (modelId model)) (nativeModelCacheObjectKeys model)
+  if modelId model `elem` nativeSnapshotModelIds
+    then hydrateNativeModelSnapshotCache model modelCacheConfig
+    else mapM_ (downloadNativeModelCacheObject modelCacheConfig (modelId model)) (nativeModelCacheObjectKeys model)
 
 nativeModelCacheObjectKeys :: ModelDescriptor -> [Text]
 nativeModelCacheObjectKeys model
+  | modelId model `elem` ["audio-basic-pitch-coreml", "tool-audiveris"] =
+      []
   | modelId model == "speech-faster-whisper-ct2" =
       [ "config.json",
         "model.bin",
@@ -471,6 +503,31 @@ nativeModelCacheObjectKeys model
         "vocabulary.txt"
       ]
   | otherwise = ["payload"]
+
+nativeSnapshotModelIds :: [Text]
+nativeSnapshotModelIds =
+  [ "image-apple-stable-diffusion-coreml",
+    "llm-qwen15-mlx"
+  ]
+
+nativeSnapshotIndexName :: Text
+nativeSnapshotIndexName = ".infernix-native-snapshot-files"
+
+hydrateNativeModelSnapshotCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
+hydrateNativeModelSnapshotCache model modelCacheConfig = do
+  let modelIdValue = modelId model
+      indexPath =
+        Text.unpack (workerModelCacheRoot modelCacheConfig)
+          </> Text.unpack modelIdValue
+          </> Text.unpack nativeSnapshotIndexName
+  downloadNativeModelCacheObject modelCacheConfig modelIdValue nativeSnapshotIndexName
+  indexPayload <- readFile indexPath
+  let relativeKeys =
+        [ Text.pack relativeKey
+        | relativeKey <- lines indexPayload,
+          not (null relativeKey)
+        ]
+  mapM_ (downloadNativeModelCacheObject modelCacheConfig modelIdValue) relativeKeys
 
 downloadNativeModelCacheObject :: WorkerModelCacheConfig -> Text -> Text -> IO ()
 downloadNativeModelCacheObject modelCacheConfig modelIdValue relativeKey = do
@@ -635,9 +692,7 @@ nativeRunnerInputFile _model request maybeModelCacheConfig =
 
 downloadNativeInputObject :: WorkerModelCacheConfig -> Contracts.ObjectRef -> IO FilePath
 downloadNativeInputObject modelCacheConfig objectRef = do
-  manager <- newManager defaultManagerSettings
-  now <- getCurrentTime
-  payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
+  payload <- downloadNativeInputPayload modelCacheConfig objectRef
   tempRoot <- getTemporaryDirectory
   pid <- getProcessID
   nowForPath <- getCurrentTime
@@ -658,6 +713,25 @@ downloadNativeInputObject modelCacheConfig objectRef = do
   createDirectoryIfMissing True (takeDirectory inputPath)
   ByteString.writeFile inputPath payload
   pure inputPath
+
+downloadNativeInputPayload :: WorkerModelCacheConfig -> Contracts.ObjectRef -> IO ByteString.ByteString
+downloadNativeInputPayload modelCacheConfig objectRef = go (1 :: Int)
+  where
+    maxAttempts = 3 :: Int
+    retryDelayMicros = 5000000
+    go attemptNumber = do
+      manager <- newManager defaultManagerSettings
+      now <- getCurrentTime
+      result <-
+        try @SomeException
+          (ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef)
+      case result of
+        Right payload -> pure payload
+        Left err
+          | attemptNumber < maxAttempts -> do
+              threadDelay retryDelayMicros
+              go (attemptNumber + 1)
+          | otherwise -> throwIO err
 
 objectRefFromText :: Text -> Maybe Contracts.ObjectRef
 objectRefFromText raw =

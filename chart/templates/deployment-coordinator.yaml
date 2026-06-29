@@ -63,6 +63,10 @@ spec:
             - service
             - --role
             - coordinator
+{{- with .Values.coordinator.resources }}
+          resources:
+{{ toYaml . | nindent 12 }}
+{{- end }}
           # Phase 7 Sprint 7.17: credentials live in
           # `Secret/infernix-cluster-secrets` mounted at
           # `/etc/infernix/secrets/`; the daemon decodes

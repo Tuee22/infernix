@@ -200,6 +200,7 @@ test-suite infernix-unit
         QuickCheck >=2.14 && <2.20,
         text >=2.0 && <2.2,
         time >=1.12 && <1.16,
+        websockets >=0.13 && <0.14,
         infernix
 
 test-suite infernix-integration

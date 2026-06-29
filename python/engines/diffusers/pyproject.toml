@@ -29,7 +29,7 @@ imageio = { version = ">=2.34", extras = ["ffmpeg"] }
 optional = true
 
 [tool.poetry.group.apple-silicon.dependencies]
-torch = { version = ">=2.7", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
+torch = { version = ">=2.7", source = "pypi", markers = "platform_system == 'Darwin' and platform_machine == 'arm64'" }
 diffusers = ">=0.31"
 transformers = ">=4.46"
 accelerate = ">=1.0"

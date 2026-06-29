@@ -144,20 +144,30 @@ COPY . /workspace
 
 RUN set -eu; \
     native_tmp="$(mktemp -d)"; \
+    native_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "${native_arch}" in \
+      amd64) native_asset_arch="x64"; temurin_arch="x64" ;; \
+      arm64) native_asset_arch="arm64"; temurin_arch="aarch64" ;; \
+      *) echo "unsupported native payload architecture: ${native_arch}" >&2; exit 1 ;; \
+    esac; \
     mkdir -p \
       /opt/infernix/native-payloads/llama.cpp \
       /opt/infernix/native-payloads/whisper.cpp \
-      /opt/infernix/native-payloads/basic-pitch; \
+      /opt/infernix/native-payloads/basic-pitch \
+      /opt/infernix/audiveris-jre; \
     curl -fsSL -o "${native_tmp}/llama.tar.gz" \
-      https://github.com/ggml-org/llama.cpp/releases/download/b9704/llama-b9704-bin-ubuntu-x64.tar.gz; \
+      "https://github.com/ggml-org/llama.cpp/releases/download/b9704/llama-b9704-bin-ubuntu-${native_asset_arch}.tar.gz"; \
     tar -xzf "${native_tmp}/llama.tar.gz" -C /opt/infernix/native-payloads/llama.cpp; \
     curl -fsSL -o "${native_tmp}/whisper.tar.gz" \
-      https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.0/whisper-bin-ubuntu-x64.tar.gz; \
+      "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.0/whisper-bin-ubuntu-${native_asset_arch}.tar.gz"; \
     tar -xzf "${native_tmp}/whisper.tar.gz" -C /opt/infernix/native-payloads/whisper.cpp; \
     curl -fsSL -o /opt/infernix/native-payloads/basic-pitch/nmp.onnx \
       https://raw.githubusercontent.com/spotify/basic-pitch/main/basic_pitch/saved_models/icassp_2022/nmp.onnx; \
     curl -fsSL -o "${native_tmp}/audiveris.deb" \
       https://github.com/Audiveris/audiveris/releases/download/5.10.2/Audiveris-5.10.2-ubuntu24.04-x86_64.deb; \
+    curl -fsSL -o "${native_tmp}/temurin-jre.tar.gz" \
+      "https://api.adoptium.net/v3/binary/latest/25/ga/linux/${temurin_arch}/jre/hotspot/normal/eclipse"; \
+    tar -xzf "${native_tmp}/temurin-jre.tar.gz" -C /opt/infernix/audiveris-jre --strip-components=1; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
       libasound2t64 \
@@ -168,6 +178,7 @@ RUN set -eu; \
       libxrender1 \
       libxtst6; \
     dpkg-deb -x "${native_tmp}/audiveris.deb" /; \
+    rm -rf /opt/audiveris/lib/runtime; \
     python3 -m venv /opt/infernix/native-python; \
     /opt/infernix/native-python/bin/python -m pip install --upgrade pip; \
     /opt/infernix/native-python/bin/pip install --no-cache-dir -r /workspace/python/native-runners/requirements-linux.txt; \

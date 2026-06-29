@@ -18,12 +18,15 @@ import Infernix.Web.Contracts qualified as Contracts
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS),
+    ResponseTimeout,
     httpLbs,
     method,
     parseRequest,
     requestBody,
     responseBody,
     responseStatus,
+    responseTimeout,
+    responseTimeoutMicro,
   )
 import Network.HTTP.Types.Status (statusCode)
 
@@ -50,9 +53,10 @@ putObjectWithPresignedUrl uploadConfig manager now objectRef payload = do
   let request =
         initialRequest
           { method = "PUT",
-            requestBody = RequestBodyLBS (LazyByteString.fromStrict payload)
+            requestBody = RequestBodyLBS (LazyByteString.fromStrict payload),
+            responseTimeout = objectRequestTimeout
           }
-  response <- httpLbs request manager
+  response <- httpLbs (request {responseTimeout = objectRequestTimeout}) manager
   let responseCode = statusCode (responseStatus response)
   if responseCode >= 200 && responseCode < 300
     then pure ()
@@ -67,7 +71,7 @@ getObjectWithPresignedUrl uploadConfig manager now objectRef = do
               (Presigned.presignedGetUrl (presignedUrlConfig uploadConfig) now objectRef)
           )
       )
-  response <- httpLbs request manager
+  response <- httpLbs (request {responseTimeout = objectRequestTimeout}) manager
   let responseCode = statusCode (responseStatus response)
   if responseCode >= 200 && responseCode < 300
     then pure (LazyByteString.toStrict (responseBody response))
@@ -100,3 +104,7 @@ presignedUrlConfig uploadConfig =
       Presigned.presignedSecretAccessKey = objectUploadSecretAccessKey uploadConfig,
       Presigned.presignedExpirySeconds = objectUploadExpirySeconds uploadConfig
     }
+
+objectRequestTimeout :: ResponseTimeout
+objectRequestTimeout =
+  responseTimeoutMicro 120000000

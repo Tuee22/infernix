@@ -64,6 +64,7 @@ data DhallDemoConfig = DhallDemoConfig
     dhallDemoUi :: Bool,
     dhallDaemonRole :: Text,
     dhallCoordinator :: DhallDaemonConfig,
+    dhallEngineDaemons :: [DhallDaemonConfig],
     dhallEnginePools :: [DhallEnginePool],
     dhallEngineMembers :: [DhallEngineMember],
     dhallConfigRequestTopics :: [Text],
@@ -214,10 +215,15 @@ demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
   coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
+  parsedEngineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
   enginePoolValues <- traverse enginePoolFromDhall (dhallEnginePools rawConfig)
   engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
+  let engineDaemonValues =
+        if null parsedEngineDaemonValues
+          then deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues (dhallConfigResultTopic rawConfig)
+          else parsedEngineDaemonValues
   pure
     DemoConfig
       { configRuntimeMode = runtimeModeValue,
@@ -228,12 +234,7 @@ demoConfigFromDhall rawConfig = do
         demoUiEnabled = dhallDemoUi rawConfig,
         activeDaemonRole = activeDaemonRoleValue,
         coordinatorDaemon = coordinatorDaemonValue,
-        engineDaemons =
-          deriveEngineDaemonConfigs
-            runtimeModeValue
-            enginePoolValues
-            engineMemberValues
-            (dhallConfigResultTopic rawConfig),
+        engineDaemons = engineDaemonValues,
         enginePools = enginePoolValues,
         engineMembers = engineMemberValues,
         requestTopics = dhallConfigRequestTopics rawConfig,
@@ -409,6 +410,7 @@ renderSubstrateConfig demoConfig =
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", daemonRole = " <> dhallText (daemonRoleId (activeDaemonRole demoConfig)),
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
+      ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
       ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
       ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),
       ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
@@ -558,6 +560,10 @@ dhallText value =
 enginePoolType :: String
 enginePoolType =
   "{ id : Text, runtimeMode : Text, models : List Text, members : List Text, subscription : Text, maxInflightPerMember : Integer }"
+
+daemonConfigType :: String
+daemonConfigType =
+  "{ role : Text, location : Text, memberId : Optional Text, request_topics : List Text, result_topic : Text, pulsarConnectionMode : Text }"
 
 engineMemberType :: String
 engineMemberType =

@@ -19,7 +19,7 @@ module Infernix.Engines.AppleSilicon
   )
 where
 
-import Control.Exception (IOException, throwIO, try)
+import Control.Exception (IOException, bracket_, throwIO, try)
 import Control.Monad (unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson (encode, object, (.=))
@@ -31,6 +31,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Config (Paths (..))
+import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (engineBindingsForMode)
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectReady, pythonProjectDirectory)
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
@@ -163,7 +164,7 @@ metalEngineBuildPlan =
     MetalEngineArtifact "ctranslate2-native" "CTranslate2 native runner" "native-binary" "github:OpenNMT/CTranslate2" "pinned-by-manifest" "macos-arm64-cpu" "bin/ct2-runner" "bin/ct2-runner --help",
     MetalEngineArtifact "mlx-native" "MLX native runner" "venv" "python:mlx/mlx-lm" "pinned-by-manifest" "Metal.framework/runtime" "bin/mlx-runner" "bin/mlx-runner --smoke",
     MetalEngineArtifact "onnx-runtime-native" "ONNX Runtime native runner" "native-binary" "github:microsoft/onnxruntime" "pinned-by-manifest" "macos-arm64-cpu" "bin/onnx-runner" "bin/onnx-runner --help",
-    MetalEngineArtifact "jvm-native" "Audiveris JVM runner" "jvm-tool" "github:Audiveris/audiveris" "pinned-by-manifest" "JVM" "bin/audiveris" "bin/audiveris --help"
+    MetalEngineArtifact "jvm-native" "Audiveris JVM runner" "jvm-tool" (Text.pack audiverisMacosArm64DmgUrl) audiverisMacosArm64Version "JVM" "bin/audiveris" "bin/audiveris --help"
   ]
 
 metalEngineArtifactAdapterIds :: [Text]
@@ -252,7 +253,12 @@ materializeMetalEngines :: Paths -> IO ()
 materializeMetalEngines paths = do
   unless (os == "darwin") $
     ioError (userError metalEngineLaneNotAppleMessage)
-  mapM_ (materializeMetalEngineArtifact paths) metalEngineBuildPlan
+  mapM_ materializeAndHydrate metalEngineBuildPlan
+  where
+    materializeAndHydrate artifact = do
+      installRoot <- materializeMetalEngineArtifact paths artifact
+      hydrateAppleNativeEngineArtifact paths installRoot artifact
+      validateInstalledAppleNativePayloadSmoke installRoot artifact
 
 materializeMetalEngineArtifact :: Paths -> MetalEngineArtifact -> IO FilePath
 materializeMetalEngineArtifact paths artifact = do
@@ -262,7 +268,7 @@ materializeMetalEngineArtifact paths artifact = do
   removePathForcibly tempRoot
   createDirectoryIfMissing True tempRoot
   LazyByteString.writeFile (engineArtifactManifestPath tempRoot) (renderEngineArtifactManifest manifest)
-  writeMetalEngineArtifactPayload tempRoot artifact
+  writeMetalEngineArtifactPayload paths tempRoot artifact
   writeFile
     (tempRoot </> "README.txt")
     ( "Infernix Apple engine artifact root for "
@@ -274,18 +280,18 @@ materializeMetalEngineArtifact paths artifact = do
   installEngineArtifactRoot installRoot tempRoot
   pure installRoot
 
-writeMetalEngineArtifactPayload :: FilePath -> MetalEngineArtifact -> IO ()
-writeMetalEngineArtifactPayload tempRoot artifact =
+writeMetalEngineArtifactPayload :: Paths -> FilePath -> MetalEngineArtifact -> IO ()
+writeMetalEngineArtifactPayload paths tempRoot artifact =
   case metalEngineAdapterId artifact of
     "apple-metal-runtime-bridge" -> writeAppleMetalBridgePayload tempRoot
-    "coreml-native" -> writeCoreMlNativeRunnerPayload tempRoot
+    "coreml-native" -> writeCoreMlNativeRunnerPayload paths tempRoot
     adapterId
-      | adapterId `elem` appleNativeValidationRunnerAdapterIds ->
-          writeAppleNativeValidationRunnerPayload tempRoot artifact
+      | adapterId `elem` appleNativeRunnerAdapterIds ->
+          writeAppleNativeRunnerPayload paths tempRoot artifact
     _ -> pure ()
 
-appleNativeValidationRunnerAdapterIds :: [Text]
-appleNativeValidationRunnerAdapterIds =
+appleNativeRunnerAdapterIds :: [Text]
+appleNativeRunnerAdapterIds =
   [ "llama-cpp-cli",
     "whisper-cpp-cli",
     "ctranslate2-native",
@@ -294,11 +300,12 @@ appleNativeValidationRunnerAdapterIds =
     "jvm-native"
   ]
 
-writeAppleNativeValidationRunnerPayload :: FilePath -> MetalEngineArtifact -> IO ()
-writeAppleNativeValidationRunnerPayload tempRoot artifact = do
+writeAppleNativeRunnerPayload :: Paths -> FilePath -> MetalEngineArtifact -> IO ()
+writeAppleNativeRunnerPayload paths tempRoot artifact = do
+  writeAppleNativeRunnerLibrary paths tempRoot
   let runnerPath = tempRoot </> Text.unpack (metalEngineEntrypoint artifact)
   createDirectoryIfMissing True (takeDirectory runnerPath)
-  writeFile runnerPath (appleNativeValidationRunnerScript artifact)
+  writeFile runnerPath (appleNativeRunnerScript artifact)
   makeExecutable runnerPath
 
 writeAppleMetalBridgePayload :: FilePath -> IO ()
@@ -317,17 +324,216 @@ writeAppleMetalBridgePayload tempRoot = do
   writeFile smokeScriptPath appleMetalBridgeSmokeScript
   makeExecutable smokeScriptPath
 
-writeCoreMlNativeRunnerPayload :: FilePath -> IO ()
-writeCoreMlNativeRunnerPayload tempRoot = do
+writeCoreMlNativeRunnerPayload :: Paths -> FilePath -> IO ()
+writeCoreMlNativeRunnerPayload paths tempRoot = do
   let sourceRoot = tempRoot </> "src"
       binRoot = tempRoot </> "bin"
       smokeSourcePath = sourceRoot </> "infernix_coreml_runner_smoke.m"
       runnerScriptPath = binRoot </> "coreml-runner"
   createDirectoryIfMissing True sourceRoot
   createDirectoryIfMissing True binRoot
+  writeAppleNativeRunnerLibrary paths tempRoot
   writeFile smokeSourcePath coreMlRunnerSmokeSource
   writeFile runnerScriptPath coreMlRunnerScript
   makeExecutable runnerScriptPath
+
+writeAppleNativeRunnerLibrary :: Paths -> FilePath -> IO ()
+writeAppleNativeRunnerLibrary paths tempRoot = do
+  let sourcePath = repoRoot paths </> "python" </> "native-runners" </> "apple_native_runner.py"
+      destinationPath = tempRoot </> "lib" </> "apple_native_runner.py"
+  createDirectoryIfMissing True (takeDirectory destinationPath)
+  source <- readFile sourcePath
+  writeFile destinationPath source
+
+hydrateAppleNativeEngineArtifact :: Paths -> FilePath -> MetalEngineArtifact -> IO ()
+hydrateAppleNativeEngineArtifact paths installRoot artifact =
+  case metalEngineAdapterId artifact of
+    "jvm-native" -> hydrateAudiverisJvmTool paths installRoot
+    adapterId ->
+      case appleNativePythonRequirements adapterId of
+        [] -> pure ()
+        requirements -> do
+          pythonExecutable <- resolveAppleNativePython paths adapterId
+          let venvRoot = installRoot </> "venv"
+              venvPython = venvRoot </> "bin" </> "python"
+          removePathForcibly venvRoot
+          runAppleNativeProcess
+            "failed to create Apple native engine venv"
+            installRoot
+            pythonExecutable
+            ["-m", "venv", "--clear", "--symlinks", venvRoot]
+          runAppleNativeProcess
+            "failed to upgrade Apple native engine pip"
+            installRoot
+            venvPython
+            ["-m", "pip", "install", "--upgrade", "pip"]
+          runAppleNativeProcess
+            ("failed to hydrate Apple native engine packages for " <> Text.unpack adapterId)
+            installRoot
+            venvPython
+            (["-m", "pip", "install"] <> requirements)
+
+audiverisMacosArm64Version :: Text
+audiverisMacosArm64Version = "5.10.2"
+
+audiverisMacosArm64DmgName :: String
+audiverisMacosArm64DmgName = "Audiveris-5.10.2-macosx-arm64.dmg"
+
+audiverisMacosArm64DmgUrl :: String
+audiverisMacosArm64DmgUrl =
+  "https://github.com/Audiveris/audiveris/releases/download/5.10.2/" <> audiverisMacosArm64DmgName
+
+hydrateAudiverisJvmTool :: Paths -> FilePath -> IO ()
+hydrateAudiverisJvmTool paths installRoot = do
+  let cacheRoot = dataRoot paths </> "downloads" </> "engines"
+      dmgPath = cacheRoot </> audiverisMacosArm64DmgName
+      mountRoot = installRoot </> "audiveris-dmg"
+      mountedApp = mountRoot </> "Audiveris.app"
+      installedApp = installRoot </> "Audiveris.app"
+  createDirectoryIfMissing True cacheRoot
+  dmgExists <- doesFileExist dmgPath
+  unless dmgExists $
+    runAppleNativeProcess
+      "failed to download Audiveris macOS arm64 DMG"
+      installRoot
+      "/usr/bin/curl"
+      ["-fL", "--retry", "3", "--output", dmgPath, audiverisMacosArm64DmgUrl]
+  removePathForcibly mountRoot
+  createDirectoryIfMissing True mountRoot
+  bracket_
+    ( runAppleNativeProcessWithInput
+        "failed to mount Audiveris macOS arm64 DMG"
+        installRoot
+        "/usr/bin/hdiutil"
+        ["attach", "-nobrowse", "-readonly", "-mountpoint", mountRoot, dmgPath]
+        "Y\n"
+    )
+    ( runAppleNativeProcess
+        "failed to detach Audiveris macOS arm64 DMG"
+        installRoot
+        "/usr/bin/hdiutil"
+        ["detach", mountRoot]
+    )
+    ( do
+        appPresent <- doesDirectoryExist mountedApp
+        unless appPresent $
+          ioError (userError ("Audiveris DMG did not contain " <> mountedApp))
+        removePathForcibly installedApp
+        runAppleNativeProcess
+          "failed to copy Audiveris.app into the Apple native engine root"
+          installRoot
+          "/usr/bin/ditto"
+          [mountedApp, installedApp]
+    )
+  removePathForcibly mountRoot
+
+appleNativePythonRequirements :: Text -> [String]
+appleNativePythonRequirements adapterId =
+  case adapterId of
+    "ctranslate2-native" ->
+      [ "ctranslate2>=4.8.0",
+        "faster-whisper>=1.2.0",
+        "soundfile>=0.12"
+      ]
+    "mlx-native" ->
+      [ "mlx-lm>=0.31.0"
+      ]
+    "onnx-runtime-native" ->
+      [ "mido>=1.3",
+        "numpy>=1.26",
+        "onnxruntime>=1.27.0",
+        "scipy>=1.13",
+        "soundfile>=0.12"
+      ]
+    "coreml-native" ->
+      [ "basic-pitch>=0.4.0",
+        "git+https://github.com/apple/ml-stable-diffusion.git"
+      ]
+    _ -> []
+
+resolveAppleNativePython :: Paths -> Text -> IO FilePath
+resolveAppleNativePython paths adapterId = do
+  let configured =
+        case pathsHostConfig paths of
+          Just hostConfig -> [Text.unpack (HostConfig.hostPython3 (HostConfig.hostToolPaths hostConfig))]
+          Nothing -> []
+      candidates
+        | adapterId == "coreml-native" =
+            [ "/opt/homebrew/bin/python3.11",
+              "/opt/homebrew/bin/python3.10"
+            ]
+              <> configured
+        | otherwise =
+            configured
+              <> [ "/opt/homebrew/bin/python3.12",
+                   "/opt/homebrew/bin/python3",
+                   "/usr/bin/python3"
+                 ]
+  firstUsablePython (appleNativePythonVersionCheck adapterId) (appleNativePythonRequirementMessage adapterId) candidates
+
+appleNativePythonVersionCheck :: Text -> String
+appleNativePythonVersionCheck adapterId
+  | adapterId == "coreml-native" =
+      "import sys; v=sys.version_info[:2]; raise SystemExit(0 if (3, 10) <= v < (3, 12) else 1)"
+  | otherwise =
+      "import sys; raise SystemExit(0 if (3, 12) <= sys.version_info[:2] < (4, 0) else 1)"
+
+appleNativePythonRequirementMessage :: Text -> String
+appleNativePythonRequirementMessage adapterId
+  | adapterId == "coreml-native" =
+      "Apple Core ML Basic Pitch hydration requires a Python 3.10 or 3.11 executable from the fixed Homebrew fallback paths"
+  | otherwise =
+      "Apple native engine hydration requires a Python 3.12+ executable from HostConfig.toolPaths.python3 or the fixed Homebrew fallback paths"
+
+firstUsablePython :: String -> String -> [FilePath] -> IO FilePath
+firstUsablePython _ message [] =
+  ioError
+    (userError message)
+firstUsablePython versionCheck message (candidate : rest) = do
+  exists <- doesFileExist candidate
+  if not exists
+    then firstUsablePython versionCheck message rest
+    else do
+      (exitCode, _, _) <-
+        readCreateProcessWithExitCode
+          (proc candidate ["-c", versionCheck])
+          ""
+      case exitCode of
+        ExitSuccess -> pure candidate
+        _ -> firstUsablePython versionCheck message rest
+
+runAppleNativeProcess :: String -> FilePath -> FilePath -> [String] -> IO ()
+runAppleNativeProcess label workingDirectory executable args =
+  runAppleNativeProcessWithInput label workingDirectory executable args ""
+
+runAppleNativeProcessWithInput :: String -> FilePath -> FilePath -> [String] -> String -> IO ()
+runAppleNativeProcessWithInput label workingDirectory executable args inputPayload = do
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode
+      ((proc executable args) {cwd = Just workingDirectory})
+      inputPayload
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( label
+                <> ": "
+                <> executable
+                <> " "
+                <> unwords args
+                <> "\nstdout:\n"
+                <> stdoutOutput
+                <> "\nstderr:\n"
+                <> stderrOutput
+            )
+        )
+
+validateInstalledAppleNativePayloadSmoke :: FilePath -> MetalEngineArtifact -> IO ()
+validateInstalledAppleNativePayloadSmoke installRoot artifact =
+  case metalEngineAdapterId artifact of
+    "jvm-native" -> runPayloadSmokeCommand installRoot artifact ("bin/audiveris", ["--help"])
+    _ -> validateMaterializedPayloadSmoke installRoot artifact
 
 makeExecutable :: FilePath -> IO ()
 makeExecutable filePath = do
@@ -343,46 +549,48 @@ validateMaterializedManifest tempRoot = do
 validateMaterializedPayloadSmoke :: FilePath -> MetalEngineArtifact -> IO ()
 validateMaterializedPayloadSmoke tempRoot artifact =
   when (os == "darwin") $
-    case payloadSmokeCommand artifact of
-      Nothing -> pure ()
-      Just (smokeExecutable, smokeArgs) -> do
-        let smokePath = tempRoot </> smokeExecutable
-        smokeExists <- doesFileExist smokePath
-        unless smokeExists $
-          ioError (userError ("engine artifact smoke command was not written: " <> smokePath))
-        (exitCode, stdoutOutput, stderrOutput) <-
-          readCreateProcessWithExitCode
-            ( (proc smokePath smokeArgs)
-                { cwd = Just tempRoot,
-                  env = Just []
-                }
+    maybe (pure ()) (runPayloadSmokeCommand tempRoot artifact) (payloadSmokeCommand artifact)
+
+runPayloadSmokeCommand :: FilePath -> MetalEngineArtifact -> (FilePath, [String]) -> IO ()
+runPayloadSmokeCommand root artifact (smokeExecutable, smokeArgs) = do
+  let smokePath = root </> smokeExecutable
+  smokeExists <- doesFileExist smokePath
+  unless smokeExists $
+    ioError (userError ("engine artifact smoke command was not written: " <> smokePath))
+  (exitCode, stdoutOutput, stderrOutput) <-
+    readCreateProcessWithExitCode
+      ( (proc smokePath smokeArgs)
+          { cwd = Just root,
+            env = Just []
+          }
+      )
+      ""
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "engine artifact smoke command failed for "
+                <> Text.unpack (metalEngineAdapterId artifact)
+                <> ": "
+                <> smokePath
+                <> " "
+                <> unwords smokeArgs
+                <> "\nstdout:\n"
+                <> stdoutOutput
+                <> "\nstderr:\n"
+                <> stderrOutput
             )
-            ""
-        case exitCode of
-          ExitSuccess -> pure ()
-          _ ->
-            ioError
-              ( userError
-                  ( "engine artifact smoke command failed for "
-                      <> Text.unpack (metalEngineAdapterId artifact)
-                      <> ": "
-                      <> smokePath
-                      <> " "
-                      <> unwords smokeArgs
-                      <> "\nstdout:\n"
-                      <> stdoutOutput
-                      <> "\nstderr:\n"
-                      <> stderrOutput
-                  )
-              )
+        )
 
 payloadSmokeCommand :: MetalEngineArtifact -> Maybe (FilePath, [String])
 payloadSmokeCommand artifact =
   case metalEngineAdapterId artifact of
     "apple-metal-runtime-bridge" -> Just ("bin/infernix-apple-metal-bridge-smoke", [])
     "coreml-native" -> Just ("bin/coreml-runner", ["--smoke"])
+    "jvm-native" -> Nothing
     adapterId
-      | adapterId `elem` appleNativeValidationRunnerAdapterIds ->
+      | adapterId `elem` appleNativeRunnerAdapterIds ->
           Just (Text.unpack (metalEngineEntrypoint artifact), ["--help"])
     _ -> Nothing
 
@@ -640,10 +848,9 @@ coreMlRunnerSmokeSource =
       "}"
     ]
 
--- | Phase 1 Sprint 1.15 realness de-stub — the Core ML runner keeps its
--- real Darwin clang smoke on @--smoke@/@--help@ but no longer fabricates a
--- per-family result on the normal invocation path: it parses the full
--- inference arg contract and honest-fails with @exit 70@.
+-- | Phase 1 Sprint 1.15 — the Core ML runner keeps its real Darwin clang
+-- smoke on @--smoke@/@--help@, then delegates normal invocations to the
+-- shared Apple native runner module copied into the artifact root.
 coreMlRunnerScript :: String
 coreMlRunnerScript =
   unlines
@@ -673,137 +880,50 @@ coreMlRunnerScript =
       "esac",
       ""
     ]
-    <> coreMlHonestInferenceBody
+    <> appleNativeRunnerExecBody "coreml-native" "Core ML native runner"
 
--- | The Core ML normal-invocation path: parse the inference arg contract,
--- enforce the model-cache @.ready@/exit-75 gate, then honest-fail with
--- @exit 70@ (no fabricated Core ML result).
-coreMlHonestInferenceBody :: String
-coreMlHonestInferenceBody =
-  unlines appleNativeHonestRunnerBody
-
--- | Phase 1 Sprint 1.15 realness de-stub — the generated Apple native
--- runner preserves the full inference arg contract (mirroring the
--- de-stubbed LinuxNative reference) and an install-time @--smoke@/@--help@
--- presence probe that exits 0, but a real (non-smoke) invocation emits
--- no fabricated result: it honest-fails with @exit 70@. Real Apple native
--- payloads are materialized on Apple hardware through the headless
--- Metal/Core ML lane.
-appleNativeValidationRunnerScript :: MetalEngineArtifact -> String
-appleNativeValidationRunnerScript artifact =
-  appleNativeHonestRunnerScript
+-- | Phase 1 Sprint 1.15 — generated Apple native runners preserve the
+-- native worker argument contract and delegate to a copied Python module
+-- that invokes real host-native engines or exits non-zero.
+appleNativeRunnerScript :: MetalEngineArtifact -> String
+appleNativeRunnerScript artifact =
+  appleNativeRunnerShellScript
     "#!/bin/sh"
     "set -eu"
     (Text.unpack (metalEngineAdapterId artifact))
     (Text.unpack (metalEngineName artifact))
 
--- | Shared honest-fail Apple native runner body. The @shebang@/@setFlags@
--- header is parameterised so the POSIX validation runners and the Core ML
--- runner (which keeps its real Darwin clang smoke) reuse one contract:
--- full arg parsing, an install-time @--smoke@/@--help@ presence probe that
--- exits 0, a model-cache @.ready@/exit-75 gate, and a non-zero honest-fail
--- on every real inference invocation.
-appleNativeHonestRunnerBody :: [String]
-appleNativeHonestRunnerBody =
-  [ "smoke_only=0",
-    "model_id=\"\"",
-    "selected_engine=\"\"",
-    "family=\"\"",
-    "install_root=\"\"",
-    "input_text=\"\"",
-    "input_object_ref=\"\"",
-    "input_file=\"\"",
-    "model_cache_root=\"\"",
-    "output_dir=\"\"",
-    "",
-    "while [ \"$#\" -gt 0 ]; do",
-    "  case \"$1\" in",
-    "    --smoke|--help)",
-    "      smoke_only=1",
-    "      shift",
-    "      ;;",
-    "    --model)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model\" >&2; exit 64; }",
-    "      model_id=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --engine)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --engine\" >&2; exit 64; }",
-    "      selected_engine=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --family)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --family\" >&2; exit 64; }",
-    "      family=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --install-root)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --install-root\" >&2; exit 64; }",
-    "      install_root=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --input-text)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-text\" >&2; exit 64; }",
-    "      input_text=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --input-object-ref)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-object-ref\" >&2; exit 64; }",
-    "      input_object_ref=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --input-file)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --input-file\" >&2; exit 64; }",
-    "      input_file=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --model-cache-root)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --model-cache-root\" >&2; exit 64; }",
-    "      model_cache_root=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    --output-dir)",
-    "      [ \"$#\" -ge 2 ] || { printf '%s\\n' \"missing value for --output-dir\" >&2; exit 64; }",
-    "      output_dir=\"$2\"",
-    "      shift 2",
-    "      ;;",
-    "    *)",
-    "      shift",
-    "      ;;",
-    "  esac",
-    "done",
-    "",
-    "[ -n \"$model_id\" ] || model_id=\"$adapter_id\"",
-    "[ -n \"$family\" ] || family=\"native\"",
-    "",
-    "if [ \"$smoke_only\" -eq 1 ]; then",
-    "  printf '%s\\n' \"infernix apple native runner ok: ${adapter_id}\"",
-    "  exit 0",
-    "fi",
-    "",
-    "if [ -n \"$model_cache_root\" ]; then",
-    "  model_ready_path=\"${model_cache_root}/${model_id}/.ready\"",
-    "  if [ ! -f \"$model_ready_path\" ]; then",
-    "    printf '%s\\n' \"model_cache_not_populated: missing ${model_ready_path}\" >&2",
-    "    exit 75",
-    "  fi",
-    "fi",
-    "",
-    "printf '%s\\n' \"real Apple ${engine_name:-native} runner is materialized on Apple hardware via the headless Metal/Core ML lane (reopened Phase 1 Sprint 1.15); not available on this execution context\" >&2",
-    "exit 70"
-  ]
-
-appleNativeHonestRunnerScript :: String -> String -> String -> String -> String
-appleNativeHonestRunnerScript shebang setFlags adapterId engineName =
+appleNativeRunnerShellScript :: String -> String -> String -> String -> String
+appleNativeRunnerShellScript shebang setFlags adapterId engineName =
   unlines
     ( [ shebang,
         setFlags,
-        "adapter_id=" <> shellLiteral adapterId,
-        "engine_name=" <> shellLiteral engineName,
         ""
       ]
-        <> appleNativeHonestRunnerBody
+        <> lines (appleNativeRunnerExecBody adapterId engineName)
     )
+
+appleNativeRunnerExecBody :: String -> String -> String
+appleNativeRunnerExecBody adapterId engineName =
+  unlines
+    [ "adapter_id=" <> shellLiteral adapterId,
+      "engine_name=" <> shellLiteral engineName,
+      "script_path=\"$0\"",
+      "script_dir=\"${script_path%/*}\"",
+      "root=\"$(CDPATH= cd -- \"$script_dir/..\" && pwd)\"",
+      "python=\"$root/venv/bin/python\"",
+      "if [ ! -x \"$python\" ]; then",
+      "  if [ -x /opt/homebrew/bin/python3.12 ]; then",
+      "    python=/opt/homebrew/bin/python3.12",
+      "  elif [ -x /opt/homebrew/bin/python3 ]; then",
+      "    python=/opt/homebrew/bin/python3",
+      "  else",
+      "    printf '%s\\n' \"native_payload_missing: Apple native Python 3.12 runtime\" >&2",
+      "    exit 70",
+      "  fi",
+      "fi",
+      "exec \"$python\" \"$root/lib/apple_native_runner.py\" --adapter-id \"$adapter_id\" --engine-name \"$engine_name\" --install-root \"$root\" \"$@\""
+    ]
 
 shellLiteral :: String -> String
 shellLiteral rawValue = "'" <> concatMap escapeCharacter rawValue <> "'"

@@ -1,0 +1,34 @@
+{{- define "infernix.postgresqlReplicationInitSql" -}}
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '_crunchyrepl') THEN
+    CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;
+  ELSE
+    ALTER ROLE _crunchyrepl WITH LOGIN REPLICATION;
+  END IF;
+END
+$$;
+{{- end }}
+{{- if .Values.upstreamCharts.harborpg.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.harborpg.databaseInitSQL.name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{ .Values.harborpg.databaseInitSQL.key }}: |
+{{ include "infernix.postgresqlReplicationInitSql" . | indent 4 }}
+{{- end }}
+{{- if and .Values.upstreamCharts.harborpg.enabled .Values.upstreamCharts.keycloakpg.enabled }}
+---
+{{- end }}
+{{- if .Values.upstreamCharts.keycloakpg.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.keycloakpg.databaseInitSQL.name }}
+  namespace: {{ .Release.Namespace }}
+data:
+  {{ .Values.keycloakpg.databaseInitSQL.key }}: |
+{{ include "infernix.postgresqlReplicationInitSql" . | indent 4 }}
+{{- end }}

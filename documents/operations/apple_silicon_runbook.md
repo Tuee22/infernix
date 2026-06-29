@@ -218,10 +218,23 @@ target avoids Tart, user keychain state, Xcode UI flows, and request-time toolch
 The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed from the current
 host-tool schema and prerequisite path. The retained
 `infernix internal materialize-metal-engines` helper is the Tart-free manifest materialization
-surface; the Apple hardware cohort still has to prove the fixed Metal runtime bridge and a native
-artifact load before the sprint can be marked `Done`.
+surface; the current Apple host materializes the real runner roots, proves the fixed Metal runtime
+bridge, and smoke-loads the installed native artifacts. The remaining Sprint 1.15 cohort gate is
+full routed real output for the Apple catalog plus `linux-cpu`.
 The authoritative replacement design is
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
+
+For host-native Apple validation, generated Helm values use a local fit-for-host topology on the
+operator's already selected native arm64 Docker daemon: one Harbor application replica, one Pulsar
+replica per role, one coordinator replica, and one demo replica. The static chart and Linux
+generated values remain HA-shaped; the Linux lanes carry the HA proof. On a constrained Colima VM,
+capacity failures before routed inference are real environment failures, not acceptable skips:
+`XMinioStorageFull` from Harbor's MinIO backend means the Docker VM disk needs reclaimable cache
+space freed. Check for stale local Harbor-tagged runtime image ids such as
+`localhost:30002/library/infernix-linux-cpu:sha256-*` in the already selected Docker daemon before
+assuming retained MinIO state is still the cause. `Insufficient memory` scheduling events or
+Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope must be
+reconciled before the Wave L gate can be claimed.
 
 ## Harbor Host-Port Conflicts
 

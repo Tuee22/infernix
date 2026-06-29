@@ -17,9 +17,173 @@
 > (`Active`, Sprint 1.15) to materialize **real** Apple native engines (Core ML, MLX, llama.cpp/whisper.cpp
 > Metal, CTranslate2, ONNX, Audiveris) through that same lane. The scaffold, two-binary topology, and
 > host-manifest contracts from Sprints 1.1–1.14 stand and are not undone; only the wrapper payloads are
-> replaced. The Apple real-output cohort gate is [Wave L](cohort-validation-waves.md) (`apple-silicon` +
-> `linux-cpu`); it is a validation-only residual that does not block the reopened Phase 4/6 `linux-gpu`
-> gates. The removed validation wrappers are tracked in
+> replaced. Sprint 1.15 is now code-side closed and Apple-host smoke validated as of 2026-06-26; the
+> Apple real-output cohort gate is [Wave L](cohort-validation-waves.md) (`apple-silicon` +
+> `linux-cpu`). The first Stage 2 retries exposed the native arm64 payload-selection bug and then
+> the current host's 8 GiB Apple Docker-daemon memory ceiling; the current code selects native
+> llama.cpp/whisper.cpp tarballs and generates a single-replica Apple host-native local topology for
+> the routed Apple gate while Linux lanes keep the HA-shaped defaults. Later reruns advanced
+> through rebuilt image build, Harbor publication, final scheduling, and Pulsar startup, exposing
+> first the matching single-bookie quorum gap and then a real llama.cpp execution-time regression:
+> the TinyLlama GGUF cache now hydrates and the worker reaches the real model binary, but the
+> previous Apple llama invocation did not terminate within the routed integration gate. The next
+> rerun cleared TinyLlama and exposed that `llm-qwen15-mlx` also needs indexed native snapshot
+> hydration instead of the single-payload cache path. The next Apple rerun cleared the LLM and
+> speech rows through MLX, whisper.cpp, and CTranslate2, then exposed the Apple PyTorch engine
+> venv resolving `torchaudio` from the CUDA source and the deferred YourMT3+ row still being
+> incorrectly routed as Apple-runnable. The Apple-only generated broker quorum is now one while
+> Linux lanes retain the HA-shaped quorum, the current runner invokes llama.cpp as a bounded
+> single-turn real inference with explicit context/thread/GPU-layer settings, the worker treats
+> the MLX Qwen snapshot as an indexed native model cache, Apple framework venvs explicitly resolve
+> Darwin arm64 torch wheels from PyPI, and `music-mt3-jax` is a named Apple residual rather than a
+> runnable catalog row. The follow-on Apple rerun passed the front-loaded lint/unit gates and reached
+> Harbor publication again. The Harbor PostgreSQL primary endpoint fix held, and the retained
+> repo-local MinIO tree no longer preserved failed `harbor-registry` upload blobs after clean
+> teardown, but the active Docker VM still exhausted MinIO's free-drive threshold during the fresh
+> runtime image push because stale local runtime image tags had filled the daemon disk. The lifecycle
+> now treats the Harbor registry bucket, registry bucket metadata, and MinIO multipart/tmp working
+> sets as non-retained on both retained-state replay directions: they are scrubbed before the next
+> cluster-up copy-in and before MinIO claim copy-out during `cluster down`. The current-daemon
+> cleanup removed the old local `localhost:30002/library/infernix-linux-cpu:sha256-*` image tags and
+> restored Docker VM headroom for the next Apple routed rerun. That rerun completed Harbor
+> publication, Harbor-backed preload, final rollout, and the first seven routed per-model rows, then
+> exposed that the Haskell coordinator bootstrap path did not mirror the package-backed Basic Pitch
+> Core ML special case already present in the Python helper/native worker contract. The current
+> bootstrap loop writes only the `.ready` sentinel for `audio-basic-pitch-coreml` instead of trying
+> to stage the Basic Pitch repository landing page as a single payload. The next Apple rerun built
+> and published runtime image
+> `sha256-16c5933770efe6b3700ab084f6402f8c11074a88be255d8a318f80092895284c`, completed Harbor
+> publication, Harbor-backed preload, final rollout, route probes, and per-model inference through
+> `audio-basic-pitch-coreml` and `audio-basic-pitch-onnx`, then failed on `music-omnizart` because
+> the Apple PyTorch engine venv lacked `librosa` and `piano_transcription_inference`. Current source
+> adds those dependencies to the Apple PyTorch engine group, regenerates the PyTorch lockfile, and
+> invalidates stale framework-venv readiness markers when `pyproject.toml` or `poetry.lock` changes.
+> The next Apple rerun built and published runtime image
+> `sha256-0c9d518848f85bbb5f8384b36c1d03e405ed863fe276db1acc559f5c039758cd`, passed routed
+> inference through `image-sdxl-turbo`, then failed on `image-apple-stable-diffusion-coreml`
+> because the Core ML pipeline defaulted to `CompVis/stable-diffusion-v1-4` while the hydrated
+> Apple snapshot contains `runwayml/stable-diffusion-v1-5` packages. Current source passes the
+> matching `--model-version runwayml/stable-diffusion-v1-5` and uses `CPU_AND_GPU` to avoid the
+> unneeded ANE compile path while retaining real Core ML execution. A focused rerun produced a PNG
+> artifact and passed after current source accepted the pipeline's artifact-only stdout behavior
+> and bounded the command with a 900s timeout. The next full Apple rerun built and published
+> runtime image `sha256-8a2ea20aebd2c112122da8062885dc618ff5f3fa8fd591f063c814ce14da18e0`,
+> completed cluster-up and route probes, completed all 14 routed Apple model rows in the host
+> daemon log, and advanced through cache lifecycle, service runtime loop, and durable Pulsar topic
+> checks before the pinned Apple host-engine `Exclusive` guard stalled because the temporary Dhall
+> config omitted explicit `engineDaemons` and decoded back to default full-catalog daemon topics.
+> Current source serializes explicit Dhall `engineDaemons` and adds a pinned-topic roundtrip unit
+> regression. The next Apple rerun with that fix built and published
+> `sha256-e48b4476fb68228c40bb0dde68c25cd3b4209c7e37c45af5ab973fa4aae52e8a`, passed lint/unit,
+> reached final rollout, and exposed retained Pulsar BookKeeper/ZooKeeper cookie split-brain
+> (`InvalidCookieException` plus missing `/ledgers/cookies`); current source extends the dirty
+> Pulsar bootstrap detector so the existing claim-root reset/retry path handles that retained-state
+> failure. A 2026-06-27 rerun reproduced the same retained-state failure during the first Pulsar
+> bookie rollout; current source now probes Pulsar stateful-set rollouts in 30-second windows and
+> raises the same dirty-state repair signal before the 20-minute rollout timeout elapses. The
+> follow-on Apple aggregate built and published runtime image
+> `sha256-4cd135d393b11e395ef482b2707677520f56604cb03ce4f09aeb2d2d064ea570`, proved the targeted
+> Pulsar claim-root reset/retry loop, and passed integration through all 14 routed Apple model rows,
+> pinned/shared Apple host subscription guards, and lifecycle recovery tails. It failed only at
+> routed Playwright startup because the local Chromium headless shell was not installed. After
+> installing the Chromium payload, a focused `./.build/infernix test e2e` rerun
+> rebuilt and published runtime image
+> `sha256-a4fd54b1ef2d7e9d65fb3f8028e01f1973e19669d2afef73b0065ca6bda0f44e`, ran the real browser
+> suite, and passed seven of nine specs. The remaining failures are the artifact-upload queued
+> prompt submit path and the `image-sdxl-turbo` browser-matrix result timeout; current source adds
+> the missing draft echo wait before the artifact queued submit. The next focused
+> `./.build/infernix test e2e` rerun rebuilt and published runtime image
+> `sha256-560ef859c7463f2d32d2362b845f1d7437fb46597ffddea863f2ac8ae015526d`, passed the repaired
+> artifact-upload spec, recovered from an initially low Apple Docker VM disk-headroom condition
+> (`XMinioStorageFull` during SDXL snapshot upload, cleared by pruning unused Docker build cache and
+> images), and completed routed Playwright with `9 passed (21.1m)`, including the full Apple
+  > per-model browser matrix. The paired `linux-cpu` Wave L gate previously passed its full integration
+  > suite on a real cluster and then exposed a routed Playwright auth residual: Keycloak generated
+  > registration actions from `http://127.0.0.1/auth` because the Apple-hosted `linux-cpu` local Helm
+  > overlay dropped the generated `keycloak.externalBaseUrl`; current source restores that routed
+  > `externalBaseUrl` and adds a generated-values unit regression. The rebuilt-image full gate with
+  > that Keycloak fix reached real per-model inference, then failed when the Pulsar WebSocket proxy
+  > returned a transient Jetty `MalformedResponse` HTTP 500 handshake before result publish/read.
+  > Current source retries only WebSocket handshake 5xx `MalformedResponse` statuses while keeping
+  > 4xx/path/auth responses fail-closed. The next rebuilt-image full gate passed the front gates and
+  > staged Pulsar rollout, then failed in final rollout when `deployment/infernix-keycloak` exceeded
+  > its progress deadline under Apple-hosted `linux-cpu` local topology load (`0 of 1 updated
+  > replicas are available`, watch connection loss, and TLS handshake timeout symptoms). Wave L
+  > then proved that staged Keycloak startup remediation, reached routed per-model inference, and
+  > exposed a service-consumer redelivery gap: the `audio-open-unmix` batch request remained unacked
+  > after an engine restart, with no result-topic match. Current source adds a bounded
+  > `ackTimeoutMillis=900000` to service WebSocket consumers so killed engine/coordinator consumers
+  > redeliver unacked work before the shared routed-result deadline. Rebuilt `linux-cpu` launcher
+  > image `sha256:451c214fd55aacbe6a67e5e5bf11907ffc9ad7d23a993df90268d3d7d470f6cd`
+  > contains that remediation after an in-image Haskell install, substrate/native-engine
+  > materialization, Python engine environment install, web bundle, Python quality gate, Playwright
+  > browser install, and CLI help smoke. The full gate on that image passed the front gates and
+  > the full integration suite, including real `audio-open-unmix` output and the HA/chaos tail,
+  > then reached routed E2E and passed eight Playwright specs before the browser per-model matrix
+  > stalled under node-level `SystemOOM`; both coordinator replicas were OOMKilled/crash-looping
+  > before attaching Pulsar service consumers. Current source renders coordinator/demo resource
+  > blocks and scales the generic engine Deployment to one replica for non-GPU browser inference
+  > rows while leaving integration's two-engine HA validation intact. Fast validation is green
+  > (`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `helm template infernix
+  > chart`, and `node --check web/playwright/inference.spec.js`). Rebuilt local-pressure image
+  > `sha256:fbbb0af5bb59366c6144c28e5bd70dd90185e52519e21a5cb136bbf94b1d02a9`
+  > contained that remediation after the cold build/materialization/web/Python/Playwright/CLI-help
+  > smoke path, then exposed a `512Mi` coordinator memory limit during final rollout. Current
+  > source raises the coordinator request/limit to `256Mi`/`1Gi`; rebuilt image
+  > `sha256:0f3555612d15b8278e145d6711512642baf6ff08d4b11457e514c7b0ff274ff8`
+  > contains that coordinator-memory remediation after the in-image build/materialization/web/Python
+  > and Playwright/CLI-help smoke path. That rerun reached real per-model inference and completed
+  > `llm-smollm2-safetensors` plus `llm-tinyllama-gguf`, then exposed coordinator-side direct
+  > single-file bootstrap memory pressure: all Kind nodes recorded `SystemOOM`, and both
+  > coordinators were OOMKilled at the `1Gi` limit. Current source streams those direct downloads
+  > through a temporary file into MinIO. Rebuilt image
+  > `sha256:20b1146c267046b4c5fbe3f4dbb1168bba161a99040ccce734a5fccb7ad7dceb`
+  > contains that streaming remediation after the cold in-image build/materialization/web/Python/
+  > Playwright/CLI-help smoke path; Docker cleanup reclaimed `23.95GB` of BuildKit cache. The
+  > full rerun on that image cleared the prior direct-bootstrap OOM by completing real per-model
+  > inference and advancing through the HA tail, then failed in the engine-node-drain case because
+  > the chosen engine node also hosted the single local Pulsar broker/proxy path. Current source
+  > prepares the drain target by selecting a ready engine node without drain-sensitive Pulsar pods
+  > or relocating the Pulsar zookeeper/bookie/broker/proxy pods before draining; local `cabal build
+  > all`, `cabal test infernix-haskell-style`, and `cabal test infernix-unit` are green. Rebuilt
+  > image `sha256:68afca38e206d8b4c99561909bb878b3c17c7592f43829efe7e28a5b5cc8c349`
+  > contains both remediations after the cold in-image build/materialization/web/Python/
+  > Playwright/CLI-help smoke path; image inspection reported size `5132193167` bytes. The full
+  > gate on that image passed the front gates, cleared Docker overlay pressure with disposable
+  > cache/image cleanup, completed cluster-up and route probes, then failed at
+  > `speech-faster-whisper-ct2` because the native engine's internal MinIO input-object GET hit
+  > `ResponseTimeout`. Current source sets an explicit 120-second timeout on shared MinIO object
+  > operations and retries native input downloads with fresh presigned URLs; local `cabal build all`,
+  > `cabal test infernix-haskell-style`, and `cabal test infernix-unit` are green. Rebuilt image
+  > `sha256:7f3bea81330bf0cafb5f0bb0024276e23ec7b53a41cae958aa83a4781a694a74` contains the
+  > streaming, drain-target, and input-fetch remediations after the cold in-image
+  > build/materialization/web/Python/Playwright/CLI-help smoke path; image inspection reported size
+  > `5132214799` bytes, and the launcher CLI-help smoke passed. The full gate on that image passed
+  > the front gates and full integration, including the repaired drain and
+  > `speech-faster-whisper-ct2` rows, then failed only in routed E2E: eight Playwright specs passed,
+  > and the browser per-model matrix timed out on `speech-faster-whisper-ct2` after repeated
+  > single-engine restarts. Current source extends the browser-matrix result wait through one full
+  > Pulsar service-consumer redelivery window plus a second execution window. Focused validation is
+  > green (`node --check web/playwright/inference.spec.js`, `./.build/infernix lint docs`).
+  > Rebuilt image `sha256:0feec8141c67aa4879d9ecc6fb0c955afe907121488ac48b5561bf4d70d23ed3`
+  > contains that remediation after the cold in-image build/materialization/web/Python/
+  > Playwright/CLI-help smoke path; image inspection reported size `5132239400` bytes, the
+  > launcher CLI-help smoke passed, and disposable BuildKit cache cleanup reclaimed `34.7GB`.
+  > The full `linux-cpu` rerun on that image passed the front gates, rebuilt cluster-up, and reached
+  > real `per-model inference: linux-cpu`, then was interrupted after live diagnostics showed the
+  > request could not complete: both engine replicas were in `CrashLoopBackOff` from OOM at the
+  > generated Apple-hosted `linux-cpu` `3Gi` engine limit, and the single local Pulsar broker had
+  > OOMKilled at its `512Mi` limit while the published-result poll loop kept creating short-lived
+  > readers. `./bootstrap/linux-cpu.sh down` completed cleanly. Rebuilt image
+  > `sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb`
+  > now contains that local resource and broker-churn remediation after the cold in-image
+  > build/materialization/web/Python/Playwright/CLI-help smoke path; image inspection reported size
+  > `5132256620` bytes, created `2026-06-28T21:28:43.772069153-04:00`, and the launcher CLI-help
+  > smoke passed. Post-build disposable builder cleanup reclaimed `23.92GB`, leaving images
+  > `99.19GB`, build cache `17.2GB`, no containers, and no volumes before the full rerun. Wave L
+  > remains open pending the full gate on that rebuilt image.
+  > That residual does not block the reopened Phase 4/6 `linux-gpu` gates. The removed validation
+> wrappers are tracked in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 Phase 1 closes Sprints 1.1-1.12 around the current repository scaffold, the two-binary topology,
@@ -52,16 +216,14 @@ engine-artifact manifest materialization. The supported Apple Metal/Core ML mate
 uses a fixed host Metal runtime bridge, typed engine-artifact manifests, and no Tart VM, user
 keychain dependency, Xcode UI flow, or request-time toolchain install. The code-side cleanup is
 closed for the machine-independent bridge source, manifest, and install-root contract. The
-2026-06-16 Apple host refresh builds `./.build/infernix`, stages `apple-silicon`, materializes the
-typed Metal/Core ML engine manifests, proves the generated Metal bridge smoke
-(`Metal runtime probe passed on Apple M1 Max`), proves the installed `coreml-native` runtime-load
-smoke (`Core ML runtime probe passed`), and reruns the local unit, lint, docs, focused
-`lint files/docs/proto/chart`, routed e2e, and aggregate `test all` gates against the
-validation-wrapper state. Under the Section Q single-accelerator rule, the Phase 1 accelerator
-sign-off is the Apple materialization lane plus the current native `linux-cpu` support evidence;
-Sprint 1.14 has no `linux-gpu` Metal/Core ML surface. Apple real-native-payload follow-on evidence
-and routed Linux real-output proof remain owned by Phases 4 and 6 and do not keep this foundation
-phase open.
+2026-06-16 Apple host refresh built `./.build/infernix`, staged `apple-silicon`, materialized the
+typed Metal/Core ML engine manifests, proved the generated Metal bridge smoke
+(`Metal runtime probe passed on Apple M1 Max`), proved the installed `coreml-native` runtime-load
+smoke (`Core ML runtime probe passed`), and reran the local unit, lint, docs, focused
+`lint files/docs/proto/chart`, routed e2e, and aggregate `test all` gates against the former
+validation-wrapper state. Sprint 1.15 now replaces those wrapper payloads with real Apple native
+runner roots and keeps Phase 1 `Active` only for the Wave L full routed real-output gate; Sprint
+1.14 remains `Done` as the Tart-free manifest-materialization reset.
 
 ## Current Repo Assessment
 
@@ -901,8 +1063,8 @@ None. The Tart-specific implementation is removed by Sprint 1.14 and recorded in
 ## Sprint 1.14: Apple Headless Metal/Core ML Materialization Reset [Done]
 
 **Status**: Done
-**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, Darwin payload-smoke validation for materialized Apple payloads, and atomic rename; the `apple-metal-runtime-bridge` artifact materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic; `coreml-native` materializes `bin/coreml-runner` plus Objective-C smoke source that links Foundation/CoreML and instantiates `MLModelConfiguration`; and the allowlisted Apple native adapter ids materialize smoke-capable deterministic validation-runner payloads under their manifest entrypoints. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; the 2026-06-16 Apple host refresh also proves `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`, `./.build/infernix internal materialize-substrate apple-silicon`, `./.build/infernix internal materialize-metal-engines`, installed Metal and Core ML smoke commands, direct Apple native validation-runner output for `llama-cpp-cli` and `jvm-native`, `./.build/infernix test unit` (Haskell unit plus PureScript 71/71), `./.build/infernix test lint`, `./.build/infernix docs check`, and focused `./.build/infernix lint files/docs/proto/chart`.
-**Cohort gate**: Closed under the Section Q single-accelerator rule — the chosen accelerator is `apple-silicon`, and the current Apple host evidence proves Tart-absent manifest materialization, generated Metal bridge smoke, installed `coreml-native` runtime-load smoke, Apple native validation-wrapper materialization, focused e2e, and aggregate `./.build/infernix test all` against the validation-wrapper state. The native `linux-cpu` lane supplies the non-accelerator support evidence for the foundation surface; Sprint 1.14 has no `linux-gpu` Metal/Core ML validation surface. Apple real-native-payload follow-on evidence and routed Linux real-output proof are tracked by Phases 4 and 6.
+**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, Darwin payload-smoke validation for materialized Apple payloads, and atomic rename; the `apple-metal-runtime-bridge` artifact materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic; and `coreml-native` materializes `bin/coreml-runner` plus Objective-C smoke source that links Foundation/CoreML and instantiates `MLModelConfiguration`. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; the 2026-06-16 Apple host refresh also proves `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`, `./.build/infernix internal materialize-substrate apple-silicon`, `./.build/infernix internal materialize-metal-engines`, installed Metal and Core ML smoke commands, direct Apple native validation-runner output for `llama-cpp-cli` and `jvm-native`, `./.build/infernix test unit` (Haskell unit plus PureScript 71/71), `./.build/infernix test lint`, `./.build/infernix docs check`, and focused `./.build/infernix lint files/docs/proto/chart`. The former deterministic Apple native runner payloads are superseded by Sprint 1.15.
+**Cohort gate**: Closed under the Section Q single-accelerator rule — the chosen accelerator is `apple-silicon`, and the 2026-06-16 Apple host evidence proves Tart-absent manifest materialization, generated Metal bridge smoke, installed `coreml-native` runtime-load smoke, focused e2e, and aggregate `./.build/infernix test all` for the Sprint 1.14 reset scope. The native `linux-cpu` lane supplies the non-accelerator support evidence for the foundation surface; Sprint 1.14 has no `linux-gpu` Metal/Core ML validation surface. Real Apple native payloads and routed real-output proof are owned by Sprint 1.15 / Wave L.
 **Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/build_artifacts.md`, `documents/operations/apple_silicon_runbook.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -946,28 +1108,87 @@ None.
 ## Sprint 1.15: Real Apple Native Engine Materialization [Active]
 
 **Status**: Active
-**Code-side closure**: In progress. **Done + validated 2026-06-23** (machine-independent: rebuilt
-`linux-cpu` image build, `infernix lint docs`, `infernix test unit`, `infernix test lint`): the realness
-de-stub — the `infernix_emit_validation_result` validation-wrapper fabrication
-(`appleNativeValidationResultShell`) is deleted so the generated Apple runners **honest-fail** (exit
-non-zero) instead of emitting constant per-family output, preserving the full
-`--model/--engine/--family/--input-*/--model-cache-root/--output-dir` runner contract, the
-`--smoke|--help` install-time path, and a model-cache `exit 75` gate; `Engines/AppleSilicon.hs` is added
-to the Phase 0 `realnessScopedFiles` so the machine-independent realness lint (Sprint 0.12) forbids any
-reintroduced Apple validation wrapper; and the Apple runner unit tests assert the honest-fail behavior.
-**Remaining — the `apple-silicon` cohort gate (Mac):** replace the honest-fail runners with real native
-engines materialized through the headless Metal/Core ML lane, reusing the same runner contract (worker
-dispatch is substrate-agnostic): real llama.cpp (`-DGGML_METAL=ON`), whisper.cpp (`WHISPER_METAL=1`),
-CTranslate2 + ONNX via an Apple arm64 host-wheel venv, Audiveris via the macOS distribution, a real
-`mlx-runner` (`mlx_lm.generate`), and Core ML runners (basic-pitch official Core ML; Apple Stable
-Diffusion via `torch2coreml`). Add the multi-artifact `MatrixRow`
-schema for the Core ML conversion rows (content-addressed engine-artifact lane, not the model-bootstrap
-URL path). Per the declarative-target principle the Apple rows stay **declared-runnable** on their
-intended engines (Core ML / MLX / Metal); each fails closed under realness until its real runner lands
-(no reclassification-to-residual). Machine-independent gates gate the next step.
-**Cohort gate**: [Wave L](cohort-validation-waves.md) — `apple-silicon` + `linux-cpu` real per-family
-output for the Apple catalog; this Apple residual does not block the reopened Phase 4/6 `linux-gpu` gates.
-**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/HostConfig.hs`, `docker/Dockerfile`
+**Code-side closure**: Complete and validated 2026-06-26 on the Apple host. The
+`infernix_emit_validation_result` validation-wrapper fabrication is deleted; generated Apple runners
+preserve the full native worker contract, enforce model-cache readiness, and return only real native
+engine output or non-zero failure. `llama-cpp-cli` and `whisper-cpp-cli` delegate to the Homebrew
+Metal-capable CLIs; `ctranslate2-native`, `onnx-runtime-native`, and `mlx-native` hydrate per-engine
+Apple arm64 venvs; `coreml-native` hydrates Basic Pitch plus Apple's Core ML Stable Diffusion
+pipeline; `jvm-native` downloads the pinned Audiveris macOS arm64 DMG and installs `Audiveris.app`;
+`audio-basic-pitch-coreml` is package-backed; and the Core ML Stable Diffusion row uses a Hugging Face
+Core ML snapshot plus an indexed native snapshot hydration path. Proven by
+`./bootstrap/apple-silicon.sh build`, `./.build/infernix internal materialize-substrate apple-silicon`,
+`./.build/infernix internal materialize-metal-engines`, installed runner smokes (Metal bridge, Core ML,
+CTranslate2, MLX, ONNX Runtime, Audiveris), direct Core ML package imports, `./.build/infernix test unit`,
+and `./.build/infernix test lint`.
+**Cohort gate**: [Wave L](cohort-validation-waves.md) — Apple integration and focused routed
+Playwright real-output gates are green; the paired `linux-cpu` full routed real-output gate remains
+open after rebuilt image `sha256:451c214fd55aacbe6a67e5e5bf11907ffc9ad7d23a993df90268d3d7d470f6cd`
+proved the staged Keycloak remediation, service-consumer redelivery, and full integration suite,
+then hit routed E2E node-level `SystemOOM` during the browser per-model matrix. Rebuilt image
+`sha256:fbbb0af5bb59366c6144c28e5bd70dd90185e52519e21a5cb136bbf94b1d02a9` contained the
+coordinator/demo resource blocks and one-generic-engine browser remediation, then exposed a
+`512Mi` coordinator memory limit during final rollout. Current source raises that coordinator
+limit to `1Gi`; rebuilt image
+`sha256:0f3555612d15b8278e145d6711512642baf6ff08d4b11457e514c7b0ff274ff8` contains that
+remediation and reached real per-model inference, then exposed coordinator-side direct single-file
+bootstrap memory pressure. Current source streams those downloads through a temporary file into
+MinIO. Rebuilt image
+`sha256:20b1146c267046b4c5fbe3f4dbb1168bba161a99040ccce734a5fccb7ad7dceb` contains that
+streaming remediation, cleared the previous direct-bootstrap OOM, and advanced through real
+per-model inference into the HA tail; it then failed in engine-node-drain because the selected
+engine node also hosted the single local Pulsar broker/proxy path. Current source prepares the
+drain target by avoiding or relocating drain-sensitive Pulsar pods first. Rebuilt image
+`sha256:68afca38e206d8b4c99561909bb878b3c17c7592f43829efe7e28a5b5cc8c349` contains both
+remediations and reached `speech-faster-whisper-ct2` before exposing a native MinIO input-object
+download timeout. Current source extends the object GET timeout and retries native input
+downloads. Rebuilt image
+`sha256:7f3bea81330bf0cafb5f0bb0024276e23ec7b53a41cae958aa83a4781a694a74` contains that
+input-fetch remediation and passed full integration, then routed E2E passed eight Playwright specs
+before the browser per-model matrix timed out on `speech-faster-whisper-ct2` after repeated
+single-engine restarts. Current source extends the browser-matrix result wait through one full
+Pulsar service-consumer redelivery window plus a second execution window. Focused validation is
+green (`node --check web/playwright/inference.spec.js`, `./.build/infernix lint docs`). Rebuilt
+image `sha256:0feec8141c67aa4879d9ecc6fb0c955afe907121488ac48b5561bf4d70d23ed3` contains that
+remediation after the cold in-image build/materialization/web/Python/Playwright/CLI-help smoke
+path; image inspection reported size `5132239400` bytes, the launcher CLI-help smoke passed, and
+disposable BuildKit cache cleanup reclaimed `34.7GB`. The paired full `linux-cpu` rerun reached
+`per-model inference: linux-cpu`, then was interrupted after live diagnostics showed both engine
+replicas in `CrashLoopBackOff` from OOM at the generated Apple-hosted `linux-cpu` `3Gi` engine
+limit and the single local Pulsar broker OOMKilled at its `512Mi` limit during repeated
+published-result polling. Rebuilt image
+`sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb` now contains that local
+resource and broker-churn remediation after the cold in-image build/materialization/web/Python/
+Playwright/CLI-help smoke path; image inspection reported size `5132256620` bytes, created
+`2026-06-28T21:28:43.772069153-04:00`, and the launcher CLI-help smoke passed. Post-build
+disposable builder cleanup reclaimed `23.92GB`, leaving images `99.19GB`, build cache `17.2GB`,
+no containers, and no volumes before the full rerun. The full rerun on that image passed Haskell
+style, Python `check-code`, Haskell unit, web contracts (`71/71`), cluster-up, final rollout,
+Keycloak realm reconciliation, and routed publication probing, then reached `per-model inference:
+linux-cpu`. It was interrupted after live diagnostics showed aggregate Apple-hosted `linux-cpu`
+pressure across the shared Colima VM: all three Kind nodes reported `SystemOOM` events with `java`
+and `infernix` victims, and the single local Pulsar proxy had been `OOMKilled` at its `512Mi`
+limit. Current source keeps the two-replica failover/node-drain validation shape but tightens the
+generated local values to demo `96Mi` request / `384Mi` limit, coordinator `192Mi` / `768Mi`,
+engine `768Mi` / `3584Mi`, broker `256Mi` / `768Mi`, and explicit Pulsar heap/direct-memory caps
+with SerialGC. Rebuilt image
+`sha256:f5e3ba564b4f431815fce4ed3452f39f944003075fedc965e3a31705b4bbbfb7` now
+contains that tightened local profile after the cold in-image
+build/materialization/web/Python/Playwright/CLI-help smoke path; image inspection reported size
+`5132264989` bytes, created `2026-06-28T22:43:14.163322221-04:00`, and the launcher CLI-help
+smoke passed. Post-build disposable builder cleanup reclaimed `23.95GB`, leaving images
+`128.6GB` with `8.489GB` reclaimable, build cache `0B`, no containers, and no volumes before the
+full rerun. The full rerun on that image passed Haskell style, Python `check-code`, Haskell unit,
+generated web contracts (`71/71`), Harbor publication, Harbor-backed preload, and reached final
+rollout before live diagnostics showed `infernix-infernix-pulsar-proxy-0` in `CrashLoopBackOff`.
+Proxy logs showed startup failure, not OOM: Jetty rejected the local `httpNumThreads: "4"` cap
+with `Insufficient configured threads: required=4 < max=4`. `./bootstrap/linux-cpu.sh down`
+completed cleanly. Current source keeps the tightened memory profile and raises the local Pulsar
+proxy `httpNumThreads` to `8`; local `cabal build all`, serial
+`cabal test infernix-haskell-style`, and serial `cabal test infernix-unit` are green. This
+residual does not block the reopened Phase 4/6 `linux-gpu` gates.
+
+**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/HostConfig.hs`, `python/native-runners/apple_native_runner.py`, `python/adapters/model_bootstrap.py`, `README.md`
 **Docs to update**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/host_tools_manifest.md`, `documents/operations/apple_silicon_runbook.md`, `README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
 ### Objective
@@ -979,26 +1200,48 @@ materialized by Sprint 1.14.
 
 - real Apple runners (llama/whisper Metal, CTranslate2/ONNX host-wheel, Audiveris macOS, MLX, Core ML)
   on the existing runner contract; delete the validation wrappers
-- multi-artifact `MatrixRow` schema for the Core ML conversion rows
-- Apple rows stay declared-runnable on their intended engines (declarative-target); each fails closed until its real runner lands
+- indexed native snapshot hydration for multi-file Core ML model snapshots
+- Apple rows stay declared-runnable on their intended engines (declarative-target); each returns real
+  output or fails closed
 
 ### Validation
 
-- `./bootstrap/apple-silicon.sh test` (Apple host) plus `linux-cpu` pass only on real Apple inference;
-  the realness lint forbids any reintroduced validation wrapper
+- Apple host integration and routed e2e pass only on real Apple inference, paired with the
+  `linux-cpu` full-suite gate; the realness lint forbids any reintroduced validation wrapper
 
 ### Remaining Work
 
-All implementation plus the [Wave L](cohort-validation-waves.md) `apple-silicon` + `linux-cpu` gate.
+The [Wave L](cohort-validation-waves.md) paired `linux-cpu` full routed real-output gate on a
+rebuilt image from current source, with the direct-bootstrap streaming remediation, the
+engine-node-drain target-preparation remediation, the native MinIO input-fetch timeout/retry
+remediation, the browser-matrix redelivery-envelope remediation, the result-poll remediation, and
+the tighter Apple-hosted `linux-cpu` local memory profile introduced after image
+`sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb` exposed aggregate
+Kind-node `SystemOOM`, plus the proxy `httpNumThreads: "8"` remediation introduced after image
+`sha256:f5e3ba564b4f431815fce4ed3452f39f944003075fedc965e3a31705b4bbbfb7` exposed the
+Jetty-invalid four-thread cap.
 
 ---
 
 ## Remaining Work
 
-Phase 1 is reopened (`Active`) for real Apple native engine materialization (Sprint 1.15), replacing the
-Sprint 1.14 validation-wrapper runners. Sprints 1.1–1.14 remain closed and are not undone. The Apple
-real-output gate is [Wave L](cohort-validation-waves.md) (`apple-silicon` + `linux-cpu`); it does not
-block the reopened Phase 4/6 `linux-gpu` closure. The removed validation wrappers are tracked in
+Phase 1 remains `Active` only for the [Wave L](cohort-validation-waves.md) paired `linux-cpu`
+full routed real-output gate on a rebuilt image from current source, which contains the
+direct-bootstrap streaming remediation, the engine-node-drain target-preparation remediation, the
+native MinIO input-fetch timeout/retry remediation, the browser-matrix redelivery-envelope
+remediation, the result-poll remediation, and the tighter Apple-hosted `linux-cpu` local memory
+profile introduced after image
+`sha256:06d4057472ac977bc1538ec4c6e0e49beb2fd25abc4e40b940d4b934cc63f8bb` exposed aggregate
+Kind-node `SystemOOM`, plus the proxy `httpNumThreads: "8"` remediation introduced after image
+`sha256:f5e3ba564b4f431815fce4ed3452f39f944003075fedc965e3a31705b4bbbfb7` exposed the
+Jetty-invalid four-thread cap.
+Sprint 1.15's code-side real Apple native engine
+materialization is closed and locally validated; Sprints 1.1–1.14 remain closed and are not undone.
+The current Stage 2 remediation also includes the Apple host-native generated-values topology that
+runs one local Harbor/Pulsar/coordinator/demo replica on the already selected native arm64 Docker
+daemon so the real Apple engine gate can run on the current 8 GiB Colima VM without changing Docker
+contexts or provisioning a new VM. The Apple cohort residual does not block the reopened Phase 4/6
+`linux-gpu` closure. The removed validation wrappers are tracked in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Documentation Requirements

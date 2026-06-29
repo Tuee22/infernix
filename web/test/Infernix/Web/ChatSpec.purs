@@ -281,7 +281,7 @@ sampleContextSummary :: String -> String -> ContextSummary
 sampleContextSummary contextIdRaw title =
   ContextSummary
     { contextSummaryId: ContextId { unContextId: contextIdRaw }
-    , contextSummaryModelId: "llm-qwen25-safetensors"
+    , contextSummaryModelId: "llm-smollm2-safetensors"
     , contextSummaryTitle: title
     , contextSummarySoftDeleted: false
     }
