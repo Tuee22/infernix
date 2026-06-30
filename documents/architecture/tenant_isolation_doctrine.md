@@ -30,7 +30,7 @@ user id, full object key, or topic name.
 
 | Resource | Key / topic | Derivation | Authorization |
 |---|---|---|---|
-| MinIO objects | `users/<sub>/contexts/<ctx>/{uploads,generated}/<name>` | `Infernix.Objects.Layout.uploadObjectKey` | `pathBelongsToUser` (trailing-slash prefix `users/<sub>/`) |
+| MinIO objects | `users/<sub>/contexts/<ctx>/{uploads,generated}/<name>` | `Infernix.Objects.Layout.uploadObjectKey` for uploads; generated-object targets derived by the coordinator/worker from the same verified `sub` + context | `pathBelongsToUser` (trailing-slash prefix `users/<sub>/`) |
 | Conversation | `demo.conversation.<sub>.<ctx>` | `Infernix.Conversation.Topic.conversationTopicName` | `topicBelongsToUser` |
 | Context / draft metadata | `demo.user.<sub>.{contexts,drafts}` | `Infernix.Conversation.Topic.{contextsMetadataTopicName,draftsMetadataTopicName}` | `topicBelongsToUser` |
 
@@ -43,7 +43,9 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
   HTTP 403 before any MinIO operation (upload, download, and the Sprint 7.26 `DELETE`). The Sprint
   7.26 `GET /api/objects/list` enumerates only the caller's `users/<sub>/` prefix, derived
   server-side — the caller never names a prefix. The browser reaches MinIO only through the webapp
-  (see [object_access_doctrine.md](object_access_doctrine.md)).
+  (see [object_access_doctrine.md](object_access_doctrine.md)). Engine-generated artifacts must use a
+  Haskell-supplied generated-object target under the same user/context prefix; adapter-local or native
+  generated keys are not a supported isolation boundary.
 - **Chat**: the browser reaches Pulsar only through the webapp's own WebSocket (`/ws`); topic names embed
   the authenticated `sub`, so a request for another user's `contextId` resolves to the caller's own
   (empty) topic — never the other user's data.
@@ -52,18 +54,24 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
 
 ## Current Status
 
-Chat isolation is already sound (the webapp mediates Pulsar; topics embed the verified `sub`). Object
-isolation now has the same single-door shape: **Phase 7 Sprint 7.25** made the webapp object-proxy the
-only path to MinIO (the browser-direct presigned-URL path and the `/minio/s3` gateway route are removed),
-and `Infernix.Objects.Layout.sanitizeFilename` neutralizes the client-supplied display name before it
-becomes part of a server-derived key. Every object operation re-authorizes through `pathBelongsToUser` on
-the verified `sub`, so cross-user access is impossible by construction. This is code-side closed; the
-`linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
-[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+Chat isolation is already sound (the webapp mediates Pulsar; topics embed the verified `sub`). Browser
+object isolation now has the same single-door shape: **Phase 7 Sprint 7.25** made the webapp
+object-proxy the only browser path to MinIO (the browser-direct presigned-URL path and the `/minio/s3`
+gateway route are removed), and `Infernix.Objects.Layout.sanitizeFilename` neutralizes the
+client-supplied display name before it becomes part of a server-derived key. Every browser object
+operation re-authorizes through `pathBelongsToUser` on the verified `sub`, so browser-originated
+cross-user access is rejected by construction.
+
+The June 2026 audit reopened generated artifact isolation as **Phase 7 Sprint 7.28**. Closure now
+threads a generated-object target derived from the verified `sub` and `contextId` before
+dispatch, makes Python adapters and native process runners consume only that target, and makes the
+result bridge reject raw or cross-user generated object refs. Wave N closed the full selected
+`linux-gpu` plus `linux-cpu` cohort validation on 2026-06-30.
 
 ## Validation
 
-- The reopened Phase 7 Sprint 7.25 integration and e2e prove a user's JWT receives HTTP 403 on another
-  user's object prefix (list / get / put / delete) and cannot read another user's chat context. Real
-  per-user attestation is recorded under
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+- Phase 7 Sprint 7.25 integration and e2e prove a user's JWT receives HTTP 403 on another user's object
+  prefix (list / get / put / delete) and cannot read another user's chat context.
+- Phase 7 Sprint 7.28 unit and integration-build validation proves generated artifact output-prefix
+  derivation and cross-user result-bridge rejection; Wave N closes the full selected `linux-gpu` plus
+  `linux-cpu` routed real-output gate.

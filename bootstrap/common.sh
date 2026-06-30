@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BOOTSTRAP_DIRNAME="${BOOTSTRAP_DIRNAME:-/usr/bin/dirname}"
-BOOTSTRAP_DSCL="${BOOTSTRAP_DSCL:-/usr/bin/dscl}"
-BOOTSTRAP_GETENT="${BOOTSTRAP_GETENT:-/usr/bin/getent}"
-BOOTSTRAP_ID="${BOOTSTRAP_ID:-/usr/bin/id}"
-BOOTSTRAP_SUDO="${BOOTSTRAP_SUDO:-/usr/bin/sudo}"
-BOOTSTRAP_UNAME="${BOOTSTRAP_UNAME:-/usr/bin/uname}"
+BOOTSTRAP_DIRNAME=/usr/bin/dirname
+BOOTSTRAP_DSCL=/usr/bin/dscl
+BOOTSTRAP_GETENT=/usr/bin/getent
+BOOTSTRAP_ID=/usr/bin/id
+BOOTSTRAP_SUDO=/usr/bin/sudo
+BOOTSTRAP_UNAME=/usr/bin/uname
 
 # Phase 1 Sprint 1.11 — destructive-confirmation gate is set explicitly
 # from the bootstrap entrypoint's CLI parsing (typically the @--yes@

@@ -12,7 +12,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (bracket_, throwIO)
-import Control.Monad (unless)
+import Control.Monad (unless, when)
 import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext (HostNative), Paths (..), controlPlaneContext)
 import Infernix.Error (InfernixError (..))
@@ -25,6 +25,7 @@ import System.Directory
     createDirectoryIfMissing,
     doesDirectoryExist,
     doesFileExist,
+    getModificationTime,
     listDirectory,
     removeDirectory,
   )
@@ -138,12 +139,20 @@ optionalGroupArgs optionalGroups =
 ensureGeneratedPythonProto :: Paths -> FilePath -> IO ()
 ensureGeneratedPythonProto paths projectDirectory = do
   let outputRoot = repoRoot paths </> "tools" </> "generated_proto"
+      protoFiles =
+        [ repoRoot paths </> "proto" </> "infernix/manifest/runtime_manifest.proto",
+          repoRoot paths </> "proto" </> "infernix/runtime/inference.proto"
+        ]
       generatedFiles =
         [ outputRoot </> "infernix" </> "manifest" </> "runtime_manifest_pb2.py",
           outputRoot </> "infernix" </> "runtime" </> "inference_pb2.py"
         ]
   allPresent <- allM doesFileExist generatedFiles
-  unless allPresent $ do
+  staleGeneratedFiles <-
+    if allPresent
+      then generatedPythonProtoStale protoFiles generatedFiles
+      else pure True
+  when staleGeneratedFiles $ do
     createDirectoryIfMissing True outputRoot
     runPoetryCommand
       paths
@@ -159,11 +168,7 @@ ensureGeneratedPythonProto paths projectDirectory = do
           "--python_out",
           outputRoot
         ]
-          <> map
-            (\relativePath -> repoRoot paths </> "proto" </> relativePath)
-            [ "infernix/manifest/runtime_manifest.proto",
-              "infernix/runtime/inference.proto"
-            ]
+          <> protoFiles
       )
       "failed to generate Python protobuf stubs"
     mapM_
@@ -173,6 +178,12 @@ ensureGeneratedPythonProto paths projectDirectory = do
         outputRoot </> "infernix" </> "manifest",
         outputRoot </> "infernix" </> "runtime"
       ]
+
+generatedPythonProtoStale :: [FilePath] -> [FilePath] -> IO Bool
+generatedPythonProtoStale protoFiles generatedFiles = do
+  protoTimes <- mapM getModificationTime protoFiles
+  generatedTimes <- mapM getModificationTime generatedFiles
+  pure (minimum generatedTimes < maximum protoTimes)
 
 ensureNamespaceInit :: FilePath -> IO ()
 ensureNamespaceInit directoryPath = do

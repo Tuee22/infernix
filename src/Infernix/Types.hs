@@ -628,7 +628,12 @@ data InferenceRequest = InferenceRequest
     -- | Phase 4 Sprint 4.15 — non-text input for the audio and image
     -- input families, carried as an @infernix-demo-objects@ object
     -- reference. 'Nothing' for the text families, which use 'inputText'.
-    inputObjectRef :: Maybe Text
+    inputObjectRef :: Maybe Text,
+    -- | Phase 7 Sprint 7.28 — durable-context ownership fields retained
+    -- from the dispatcher envelope so worker dispatch can derive the
+    -- generated artifact prefix. Direct/manual inference leaves these empty.
+    requestUserId :: Maybe Text,
+    requestContextId :: Maybe Text
   }
   deriving (Eq, Read, Show)
 
@@ -638,13 +643,17 @@ instance FromJSON InferenceRequest where
       <$> value .: "requestModelId"
       <*> value .: "inputText"
       <*> value .:? "inputObjectRef"
+      <*> value .:? "requestUserId"
+      <*> value .:? "requestContextId"
 
 instance ToJSON InferenceRequest where
   toJSON requestValue =
     object
       [ "requestModelId" .= requestModelId requestValue,
         "inputText" .= inputText requestValue,
-        "inputObjectRef" .= inputObjectRef requestValue
+        "inputObjectRef" .= inputObjectRef requestValue,
+        "requestUserId" .= requestUserId requestValue,
+        "requestContextId" .= requestContextId requestValue
       ]
 
 data ResultPayload = ResultPayload

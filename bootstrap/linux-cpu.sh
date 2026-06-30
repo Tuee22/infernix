@@ -42,8 +42,6 @@ COMPOSE_FILES=(--file compose.yaml)
 BOOTSTRAP_HOST_OS="$("${BOOTSTRAP_UNAME}" -s)"
 if [[ "${BOOTSTRAP_HOST_OS}" == "Darwin" ]]; then
   BOOTSTRAP_DOCKER=/opt/homebrew/bin/docker
-  PATH="/opt/homebrew/bin:${PATH}"
-  export PATH
 fi
 
 show_help() {

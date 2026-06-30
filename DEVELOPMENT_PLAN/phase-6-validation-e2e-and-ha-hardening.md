@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — reopened and re-closed (Wave K fully closed: `linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26)
+**Status**: Done — reopened and re-closed (Sprint 6.34 documentation-lint coverage and no-env/no-PATH enforcement closure)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -36,6 +36,19 @@
 > `cohort-validation-waves.md` are repurposed into per-accelerator attestation
 > ledgers, recorded in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+> **Audit follow-on reopen (lint coverage and no-env closure).** Phase 6 reopened Sprint 6.34 after
+> the June 2026 audit found that docs lint did not include several authoritative docs or Phase 7 plan
+> docs, and that pre-manifest / lint-owning code carried env/PATH exceptions:
+> `Setup.hs` reads `PATH` / `INFERNIX_BUILD_ROOT` and calls `setEnv`, `bootstrap/common.sh` accepts
+> inherited `BOOTSTRAP_*` command overrides, `src/Infernix/Lint/HaskellStyle.hs` invokes bare `cabal`,
+> and `web/scripts/install-purescript.mjs` invokes bare `mktemp` / `tar`. The target doctrine remains
+> no env vars and no ambient `PATH`; Sprint 6.34 is now closed. `Setup.hs` no longer reads
+> `INFERNIX_BUILD_ROOT` or inherited `PATH`, and its sole environment mutation is the mechanically
+> allowed deterministic `Env.setEnv "PATH"` shim required by Cabal/proto-lens setup. Bootstrap command
+> constants no longer inherit `BOOTSTRAP_*` or `PATH`, Haskell-style Cabal invocations resolve through
+> `HostConfig` or fixed candidates, the PureScript compiler installer uses Node tar/gzip handling, and
+> docs lint now covers the authoritative configuration/tool/realness docs plus Phase 7.
 
 Phase 6 closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
@@ -1739,6 +1752,68 @@ not duplicating — the realness enforcement (Phase 0) and the real-engine fixtu
 
 - `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` HA / chaos suites fail
   closed when a result is non-real or incomplete
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 6.34: Docs-Lint Coverage and No-Env/No-PATH Enforcement Closure [Done]
+
+**Status**: Done
+**Code-side closure**: Complete 2026-06-29. `src/Infernix/Lint/Docs.hs` now includes the authoritative
+configuration, no-env, host-tool, cluster-config, realness, Apple materialization, Keycloak, and Phase 7
+plan docs in the governed lint set. `src/Infernix/Lint/HaskellStyle.hs` resolves formatter bootstrap and
+`cabal format` through `HostConfig.toolPaths.cabal` or fixed `HostTools` candidates instead of bare
+`cabal`; `HostTools.hostToolFallbackCandidates` includes the Linux launcher `/root/.ghcup/bin/{cabal,ghc}`
+defaults. `Setup.hs` no longer reads `INFERNIX_BUILD_ROOT` or inherited `PATH`, resolves Cabal from fixed
+absolute candidates, and keeps only the mechanically allowed deterministic `Env.setEnv "PATH"` shim for
+the proto-lens custom setup. `bootstrap/common.sh`, `bootstrap/linux-cpu.sh`, and
+`bootstrap/apple-silicon.sh` no longer accept inherited command overrides or inherited `PATH`, and
+`web/scripts/install-purescript.mjs` extracts the PureScript archive with Node `zlib`/tar parsing instead
+of bare `mktemp` / `tar`.
+**Cohort gate**: Machine-independent unless bootstrap behavior changes require a clean-env lifecycle
+rerun. The code-side closure changed bootstrap shell behavior but did not run a full clean-env launcher
+lifecycle on this host; the shell entrypoints were syntax-checked and the machine-independent lint/unit
+gates passed.
+**Implementation**: `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/HostTools.hs`, `Setup.hs`, `bootstrap/common.sh`, `web/scripts/install-purescript.mjs`, `documents/architecture/configuration_doctrine.md`, `documents/development/no_env_vars.md`, `documents/engineering/host_tools_manifest.md`
+**Docs to update**: `documents/documentation_standards.md`, `documents/architecture/configuration_doctrine.md`, `documents/development/no_env_vars.md`, `documents/engineering/host_tools_manifest.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make the validation layer enforce the documented no-env/no-PATH and governed-doc coverage contracts.
+
+### Deliverables
+
+- expand `requiredDocs` and `phaseDocs` so every authoritative configuration, realness, tool, and
+  Phase 7 document participates in `infernix lint docs`
+- replace `HaskellStyle.hs` bare `cabal` invocations with manifest/fixed-candidate resolution that
+  matches the host-tools doctrine
+- retire `Setup.hs` process-environment mutation or document and mechanically confine any unavoidable
+  Cabal setup exception outside supported runtime/configuration behavior
+- remove inherited `BOOTSTRAP_*` shell command overrides or confine them to an explicit non-operator
+  test harness
+- replace Node bare `mktemp` / `tar` invocations with Node APIs or documented absolute tool paths
+- align the host-tools manifest with the Dockerfile's `/root/.ghcup/bin/{cabal,ghc}` Linux defaults
+  and the real pre-binary bootstrap tool inventory
+
+### Validation
+
+- `node --check web/scripts/install-purescript.mjs`
+- `bash -n bootstrap/common.sh bootstrap/linux-cpu.sh bootstrap/linux-gpu.sh bootstrap/apple-silicon.sh`
+- targeted static search across `Setup.hs`, `src/`, `test/`, `web/`, `python/`, `bootstrap/`, and chart
+  templates for forbidden env/PATH and bare-tool patterns; remaining hits are comments/token lists plus
+  the allowed `Setup.hs` deterministic `Env.setEnv "PATH"` shim
+- `cabal build all`
+- `cabal build test:infernix-integration`
+- `cabal test infernix-unit --test-options='--hide-successes'`
+- `cabal run exe:infernix -- internal materialize-substrate apple-silicon --demo-ui true`
+- `cabal run exe:infernix -- test lint`
+- `cabal run exe:infernix -- lint files`
+- `cabal run exe:infernix -- lint docs`
+- `cabal run exe:infernix -- lint chart`
+- `cabal run exe:infernix -- lint proto`
 
 ### Remaining Work
 

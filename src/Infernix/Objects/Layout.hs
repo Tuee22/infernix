@@ -12,6 +12,7 @@ module Infernix.Objects.Layout
     ContextPrefix (..),
     contextPrefix,
     uploadObjectKey,
+    generatedObjectPrefix,
     generatedObjectKey,
     modelObjectKey,
     modelReadySentinelKey,
@@ -92,12 +93,17 @@ uploadObjectKey uid cid filename =
 -- video, MIDI, or notation file).
 generatedObjectKey :: UserId -> ContextId -> Text -> ObjectRef
 generatedObjectKey uid cid filename =
-  let ContextPrefix base = contextPrefix uid cid
-      DemoObjectsBucket bucket = defaultDemoObjectsBucket
+  let DemoObjectsBucket bucket = defaultDemoObjectsBucket
    in ObjectRef
         { objectBucket = bucket,
-          objectKey = base <> "generated/" <> filename
+          objectKey = generatedObjectPrefix uid cid <> filename
         }
+
+-- | The Haskell-owned object-key prefix for engine-generated artifacts.
+generatedObjectPrefix :: UserId -> ContextId -> Text
+generatedObjectPrefix uid cid =
+  let ContextPrefix base = contextPrefix uid cid
+   in base <> "generated/"
 
 -- | Build an @ObjectRef@ for a model-weights file in the always-on
 -- @infernix-models@ bucket. The supported layout is

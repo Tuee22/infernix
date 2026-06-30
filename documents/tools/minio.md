@@ -70,8 +70,8 @@ The `infernix-demo-objects` bucket lives alongside the always-on `infernix-model
   cluster-internal endpoint, so the browser never receives a presigned MinIO URL. See
   [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) for the
   single-mediator contract. **Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3
-  Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`). The `linux-cpu` plus
-  chosen-accelerator real per-user attestation is the remaining Wave M residual.
+  Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`). Wave M closed the browser
+  object-proxy evidence; Wave N closed Phase 7 Sprint 7.28 generated artifact object ownership.
 - artifact bytes always traverse the demo backend: the browser POSTs upload bytes to
   `/api/objects/upload` and GETs download bytes from `/api/objects/download`, and the webapp signs
   internal presigned URLs and performs the PUT/GET against MinIO server-side

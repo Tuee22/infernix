@@ -24,7 +24,8 @@ custom-setup
         directory,
         filepath,
         process,
-        proto-lens-setup
+        proto-lens-setup,
+        unix
 
 library
     exposed-modules:

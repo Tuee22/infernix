@@ -47,6 +47,7 @@ import Infernix.Models
     resultFamilyForDescriptor,
     resultTopicForMode,
   )
+import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Runtime.Pulsar
   ( PulsarTransport (..),
@@ -333,6 +334,8 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       Nothing ->
         fail ("model " <> modelIdValue <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
   maybeInputObjectRef <- ensureCatalogInputObject paths state runtimeMode model
+  let requestUserIdValue = "integration-user"
+      requestContextIdValue = Text.pack ("catalog-" <> sanitizeFileToken modelIdValue)
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -341,7 +344,9 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack ("integration coverage for " <> modelIdValue),
-          inputObjectRef = maybeInputObjectRef
+          inputObjectRef = maybeInputObjectRef,
+          requestUserId = Just requestUserIdValue,
+          requestContextId = Just requestContextIdValue
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -371,21 +376,28 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       -- light existence/non-empty fetch of the returned object reference via
       -- the live MinIO port-forward (plus a magic-bytes container probe), but
       -- never assert dimensions / stem count / sample rate.
-      assertResultObjectRefFetchable paths state (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+      assertResultObjectRefFetchable
+        paths
+        state
+        (resultFamilyForDescriptor model)
+        modelIdValue
+        (Just (requestUserIdValue, requestContextIdValue))
+        (payload resultValue)
 
 -- | Phase 4 Sprint 4.23 — for artifact result families, fetch the returned
 -- object reference through the live MinIO port-forward and assert it exists
 -- and is non-empty, with a best-effort container magic-bytes probe. The text
 -- families carry no object reference and are skipped. We never inspect the
 -- artifact's internal shape (that is the engine's realness contract).
-assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> ResultPayload -> IO ()
-assertResultObjectRefFetchable paths state resultFamily modelIdValue payloadValue
+assertResultObjectRefFetchable :: Paths -> ClusterState -> ResultFamily -> String -> Maybe (Text.Text, Text.Text) -> ResultPayload -> IO ()
+assertResultObjectRefFetchable paths state resultFamily modelIdValue expectedOwnership payloadValue
   | not (resultFamilyIsArtifact resultFamily) = pure ()
   | otherwise =
       case objectRef payloadValue of
         Nothing ->
           fail ("artifact family result for " <> modelIdValue <> " carried no object reference to fetch")
         Just ref -> do
+          assertGeneratedObjectRefOwnership expectedOwnership ref
           fetched <- fetchObjectRefBytes paths state ref
           assert
             (not (ByteString.null fetched))
@@ -393,6 +405,22 @@ assertResultObjectRefFetchable paths state resultFamily modelIdValue payloadValu
           assert
             (objectMagicBytesPlausible ref fetched)
             ("returned object ref " <> Text.unpack ref <> " for " <> modelIdValue <> " starts with a plausible container signature")
+
+assertGeneratedObjectRefOwnership :: Maybe (Text.Text, Text.Text) -> Text.Text -> IO ()
+assertGeneratedObjectRefOwnership Nothing _ = pure ()
+assertGeneratedObjectRefOwnership (Just (userIdText, contextIdText)) ref =
+  case Text.breakOn "/" ref of
+    (bucket, keyWithSlash)
+      | not (Text.null keyWithSlash) -> do
+          let objectKeyValue = Text.drop 1 keyWithSlash
+              expectedPrefix =
+                ObjLayout.generatedObjectPrefix
+                  (Contracts.UserId userIdText)
+                  (Contracts.ContextId contextIdText)
+          assert
+            (bucket == "infernix-demo-objects" && expectedPrefix `Text.isPrefixOf` objectKeyValue)
+            ("generated artifact object ref is scoped to " <> Text.unpack expectedPrefix <> ": " <> Text.unpack ref)
+    _ -> fail ("generated artifact object reference is not bucket/key: " <> Text.unpack ref)
 
 -- | Fetch the bytes of an @infernix-demo-objects@ object reference
 -- (@bucket\/key@) through a presigned GET minted against the live MinIO
@@ -1064,6 +1092,8 @@ validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
       Nothing ->
         fail ("model " <> representativeModelId <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
   maybeInputObjectRef <- ensureCatalogInputObject paths state runtimeMode model
+  let requestUserIdValue = "service-loop-user"
+      requestContextIdValue = Text.pack ("service-" <> sanitizeFileToken representativeModelId)
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -1072,7 +1102,9 @@ validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
       InferenceRequest
         { requestModelId = Text.pack representativeModelId,
           inputText = "service daemon request path",
-          inputObjectRef = maybeInputObjectRef
+          inputObjectRef = maybeInputObjectRef,
+          requestUserId = Just requestUserIdValue,
+          requestContextId = Just requestContextIdValue
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -2420,6 +2452,8 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
       topic : _ -> pure topic
       [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
   let resultTopic = resultTopicForMode runtimeMode
+      requestUserIdValue = "integration-direct-user"
+      requestContextIdValue = Text.pack ("direct-" <> sanitizeFileToken modelIdValue)
   requestIdValue <-
     publishInferenceRequest
       paths
@@ -2428,7 +2462,9 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack inputValue,
-          inputObjectRef = Nothing
+          inputObjectRef = Nothing,
+          requestUserId = Just requestUserIdValue,
+          requestContextId = Just requestContextIdValue
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
@@ -2655,7 +2691,9 @@ validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig = do
               InferenceRequest
                 { requestModelId = modelIdValue,
                   inputText = "pinned apple host engine exclusive subscription",
-                  inputObjectRef = Nothing
+                  inputObjectRef = Nothing,
+                  requestUserId = Nothing,
+                  requestContextId = Nothing
                 }
           maybePinnedResult <- waitForPublishedResult paths AppleSilicon (resultTopic pinnedConfig) requestIdValue
           case maybePinnedResult of
@@ -2743,7 +2781,9 @@ validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
                     InferenceRequest
                       { requestModelId = modelIdValue,
                         inputText = "shared apple host engine subscription",
-                        inputObjectRef = Nothing
+                        inputObjectRef = Nothing,
+                        requestUserId = Nothing,
+                        requestContextId = Nothing
                       }
                 maybeSharedResult <- waitForPublishedResult paths AppleSilicon (resultTopic sharedConfig) requestIdValue
                 case maybeSharedResult of
@@ -2793,7 +2833,9 @@ validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdVal
         InferenceRequest
           { requestModelId = modelIdValue,
             inputText = Text.pack ("shared " <> cohortLabel <> " engine busy logical member"),
-            inputObjectRef = Nothing
+            inputObjectRef = Nothing,
+            requestUserId = Nothing,
+            requestContextId = Nothing
           }
     (busyMessageId, observedBusyRequestId) <-
       receiveSharedInferenceRequest busyConnection "busy shared-subscription consumer"
@@ -2810,7 +2852,9 @@ validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdVal
           InferenceRequest
             { requestModelId = modelIdValue,
               inputText = Text.pack ("shared " <> cohortLabel <> " engine free logical member"),
-              inputObjectRef = Nothing
+              inputObjectRef = Nothing,
+              requestUserId = Nothing,
+              requestContextId = Nothing
             }
       (freeMessageId, observedFreeRequestId) <-
         receiveSharedInferenceRequest freeConnection "free shared-subscription consumer"

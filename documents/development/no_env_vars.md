@@ -9,7 +9,9 @@
 
 ## TL;DR
 
-- **Never call** `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv` in Haskell.
+- **Never call** `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv` in Haskell runtime,
+  test, or lint code. The only current exception is `Setup.hs`'s deterministic `Env.setEnv "PATH"`
+  shim for Cabal/proto-lens custom setup.
 - **Never call** `proc "<bare-name>"` for any external command. Use
   `runHostTool hostConfig <toolName> args` instead.
 - **Never call** `findExecutable` or `findExecutables` to discover a manifest-owned tool. Use
@@ -20,6 +22,14 @@
   Mount the cluster ConfigMap + Secret instead.
 - **Always thread** typed `HostConfig` / `ClusterConfig` / `SecretsConfig` records as
   parameters down your call tree.
+
+## Current Audit Note
+
+The June 2026 audit reopened Phase 6 Sprint 6.34 for remaining enforcement gaps, and the sprint is now
+closed. `Setup.hs` no longer reads operator environment and keeps only a deterministic setup-local
+`PATH` mutation for proto-lens; bootstrap shell no longer accepts inherited command overrides or
+inherited `PATH` joins; Haskell-style Cabal invocations resolve through `HostConfig` or fixed
+candidates; and the PureScript compiler installer no longer shells out to bare `mktemp` / `tar`.
 
 ## Haskell
 
@@ -132,6 +142,10 @@ HOME_DIR="$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)"
 The first line resets `PATH=/usr/bin:/bin` so the operator's ambient PATH cannot influence
 resolution. Every pre-binary command uses an absolute-path constant.
 
+Phase 6 Sprint 6.34 retired the inherited `BOOTSTRAP_*` command override defaults from the
+pre-doctrine bootstrap era. Shell entrypoints use literal absolute constants or derived absolute paths
+and cannot be configured by inherited environment variables.
+
 The only shell-level exception is the bootstrap-owned `LAUNCHER_IMAGE=... docker compose ...`
 prefix used to select the already-built Linux launcher image for one Docker Compose process. It is
 set by the bootstrap script or written explicitly in direct-reference commands; Infernix code
@@ -193,15 +207,17 @@ list in `src/Infernix/Lint/Chart.hs`.
 
 The repo-local lint gates are:
 
-- `src/Infernix/Lint/HaskellStyle.hs.disallowedFunctions` — rejects any of
+- `src/Infernix/Lint/HaskellStyle.hs.forbiddenEnvFunctions` — rejects any of
   `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, `unsetEnv` in
-  `src/`, `app/`, `test/`.
-- `src/Infernix/Lint/HaskellStyle.hs.disallowedProcCommands` — rejects
+  `src/`, `app/`, `test/`, and `Setup.hs` except for the deterministic `Env.setEnv "PATH"` setup shim.
+- `src/Infernix/Lint/HaskellStyle.hs.forbiddenBareProcCommands` — rejects
   `proc "<bare-name>"` whose name matches a tool in
   `dhall/InfernixHost.dhall`.
 - `src/Infernix/Lint/Docs.hs` — rejects governed-doc language that presents project-prefixed env
   names or shell path overrides as supported operator configuration outside the legacy-tracking
-  ledger and documented exception docs.
+  ledger and documented exception docs. Phase 6 Sprint 6.34 expanded its required-doc and phase-doc
+  coverage so newly authoritative configuration and Phase 7 documents cannot drift outside the lint
+  set.
 - `src/Infernix/Lint/Chart.hs` — rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.
 

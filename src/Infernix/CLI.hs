@@ -328,7 +328,9 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
         InferenceRequest
           { requestModelId = Text.pack modelIdValue,
             inputText = Text.pack inputTextValue,
-            inputObjectRef = Nothing
+            inputObjectRef = Nothing,
+            requestUserId = Nothing,
+            requestContextId = Nothing
           }
   requestIdValue <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
   maybeResult <- waitForInternalPulsarResult paths runtimeMode (resultTopic demoConfig) requestIdValue

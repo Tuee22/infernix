@@ -37,21 +37,35 @@ requiredDocs :: [FilePath]
 requiredDocs =
   [ "documents/README.md",
     "documents/documentation_standards.md",
+    "documents/architecture/configuration_doctrine.md",
+    "documents/architecture/daemon_topology.md",
+    "documents/architecture/demo_app_design.md",
+    "documents/architecture/durable_context_design.md",
+    "documents/architecture/engine_pool_routing.md",
+    "documents/architecture/object_access_doctrine.md",
     "documents/architecture/overview.md",
     "documents/architecture/model_catalog.md",
+    "documents/architecture/pulsar_ml_workflow.md",
+    "documents/architecture/realness_contract.md",
     "documents/architecture/runtime_modes.md",
+    "documents/architecture/tenant_isolation_doctrine.md",
     "documents/architecture/web_ui_architecture.md",
     "documents/development/chaos_testing.md",
     "documents/development/frontend_contracts.md",
     "documents/development/haskell_style.md",
     "documents/development/assistant_workflow.md",
     "documents/development/local_dev.md",
+    "documents/development/no_env_vars.md",
     "documents/development/python_policy.md",
     "documents/development/purescript_policy.md",
     "documents/development/testing_strategy.md",
+    "documents/engineering/apple_silicon_metal_headless_builds.md",
     "documents/engineering/build_artifacts.md",
+    "documents/engineering/cluster_config_manifest.md",
+    "documents/engineering/dependency_management.md",
     "documents/engineering/docker_policy.md",
     "documents/engineering/edge_routing.md",
+    "documents/engineering/host_tools_manifest.md",
     "documents/engineering/implementation_boundaries.md",
     "documents/engineering/k8s_native_dev_policy.md",
     "documents/engineering/k8s_storage.md",
@@ -67,6 +81,7 @@ requiredDocs =
     "documents/reference/cli_surface.md",
     "documents/reference/web_portal_surface.md",
     "documents/tools/harbor.md",
+    "documents/tools/keycloak.md",
     "documents/tools/minio.md",
     "documents/tools/postgresql.md",
     "documents/tools/pulsar.md",
@@ -112,7 +127,8 @@ phaseDocs =
     "DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md",
     "DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md",
     "DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md",
-    "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md"
+    "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md",
+    "DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md"
   ]
 
 data RootDocRule = RootDocRule
@@ -474,24 +490,34 @@ validateForbiddenPhrases relativePath contents =
     (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
 
 validateForbiddenConfigurationOverrideReferences :: FilePath -> String -> IO ()
-validateForbiddenConfigurationOverrideReferences relativePath contents =
-  case violations of
-    [] -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ( "forbidden env/PATH override reference found in "
-                <> relativePath
-                <> ":\n"
-                <> intercalate "\n" violations
+validateForbiddenConfigurationOverrideReferences relativePath contents
+  | relativePath `elem` configurationOverrideReferenceAllowedPaths = pure ()
+  | otherwise =
+      case violations of
+        [] -> pure ()
+        _ ->
+          ioError
+            ( userError
+                ( "forbidden env/PATH override reference found in "
+                    <> relativePath
+                    <> ":\n"
+                    <> intercalate "\n" violations
+                )
             )
-        )
   where
     violations =
       [ show lineNumber <> ": " <> lineValue
       | (lineNumber, lineValue) <- zip [1 :: Int ..] (lines contents),
         any (`isInfixOf` lineValue) forbiddenConfigurationOverrideTokens
       ]
+
+configurationOverrideReferenceAllowedPaths :: [FilePath]
+configurationOverrideReferenceAllowedPaths =
+  [ "documents/architecture/configuration_doctrine.md",
+    "documents/development/no_env_vars.md",
+    "documents/engineering/host_tools_manifest.md",
+    "documents/tools/keycloak.md"
+  ]
 
 forbiddenConfigurationOverrideTokens :: [String]
 forbiddenConfigurationOverrideTokens =

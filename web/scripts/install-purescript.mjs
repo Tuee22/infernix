@@ -4,13 +4,12 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { gunzipSync } from "node:zlib";
 
 // Phase 5 Sprint 5.9: `PURESCRIPT_VERSION` env override retired. The
 // supported version is hardcoded here per the no-env-var doctrine
@@ -57,21 +56,13 @@ if (existingCompilerIsCurrent(target)) {
 mkdirSync(binDir, { recursive: true });
 
 const archiveUrl = `https://github.com/purescript/purescript/releases/download/v${version}/${artifact.name}`;
-const tempRoot = makeTempRoot();
-const archivePath = join(tempRoot, artifact.name);
 
-try {
-  console.log(`downloading PureScript ${version} from ${archiveUrl}`);
-  const archive = await download(archiveUrl);
-  verifySha256(archive, artifact.sha256, artifact.name);
-  writeFileSync(archivePath, archive);
-  extractArchive(archivePath, tempRoot);
-  installCompiler(join(tempRoot, "purescript", "purs"), target);
-  assertCompilerVersion(target, version);
-  console.log(`installed purs ${version} at ${target}`);
-} finally {
-  rmSync(tempRoot, { recursive: true, force: true });
-}
+console.log(`downloading PureScript ${version} from ${archiveUrl}`);
+const archive = await download(archiveUrl);
+verifySha256(archive, artifact.sha256, artifact.name);
+installCompilerBytes(extractCompilerFromArchive(archive), target);
+assertCompilerVersion(target, version);
+console.log(`installed purs ${version} at ${target}`);
 
 function existingCompilerIsCurrent(path) {
   if (!existsSync(path)) {
@@ -96,30 +87,37 @@ function verifySha256(bytes, expected, label) {
   }
 }
 
-function makeTempRoot() {
-  const result = spawnSync("mktemp", ["-d", join(tmpdir(), "infernix-purs-XXXXXX")], {
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(`mktemp failed: ${result.stderr}`);
+function extractCompilerFromArchive(archiveBytes) {
+  const tarBytes = gunzipSync(archiveBytes);
+  const wantedPath = "purescript/purs";
+  let offset = 0;
+  while (offset + 512 <= tarBytes.length) {
+    const header = tarBytes.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      break;
+    }
+    const name = readTarString(header, 0, 100);
+    const prefix = readTarString(header, 345, 155);
+    const entryPath = prefix ? `${prefix}/${name}` : name;
+    const sizeText = readTarString(header, 124, 12).trim();
+    const size = parseInt(sizeText || "0", 8);
+    const typeFlag = String.fromCharCode(header[156] || 0);
+    const dataOffset = offset + 512;
+    if ((typeFlag === "0" || typeFlag === "\0") && entryPath === wantedPath) {
+      return Buffer.from(tarBytes.subarray(dataOffset, dataOffset + size));
+    }
+    offset = dataOffset + Math.ceil(size / 512) * 512;
   }
-  return result.stdout.trim();
+  throw new Error(`PureScript archive did not contain ${wantedPath}`);
 }
 
-function extractArchive(archivePath, destination) {
-  const result = spawnSync("tar", ["-xzf", archivePath, "-C", destination], {
-    encoding: "utf8",
-  });
-  if (result.status !== 0) {
-    throw new Error(`tar extraction failed: ${result.stderr}`);
-  }
+function readTarString(buffer, offset, length) {
+  const bytes = buffer.subarray(offset, offset + length);
+  const terminator = bytes.indexOf(0);
+  return bytes.subarray(0, terminator === -1 ? bytes.length : terminator).toString("utf8");
 }
 
-function installCompiler(source, destination) {
-  if (!existsSync(source)) {
-    throw new Error(`PureScript archive did not contain ${source}`);
-  }
-  const bytes = readFileSync(source);
+function installCompilerBytes(bytes, destination) {
   writeFileSync(destination, bytes);
   chmodSync(destination, 0o755);
 }

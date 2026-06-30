@@ -12,7 +12,8 @@
 
 - All browser artifact I/O (upload, download, generated-artifact fetch, in-browser preview) flows through
   the webapp (`infernix-demo`) `/api/objects` endpoints. The webapp reads and writes MinIO **server-side**
-  over the cluster-internal endpoint.
+  over the cluster-internal endpoint. Engine-generated artifacts must land under the same
+  `users/<sub>/contexts/<ctx>/generated/` layout before the browser fetches them.
 - The browser is **never** handed a presigned MinIO URL and **never** talks to MinIO directly. The
   `/minio/s3` gateway route is removed; the webapp is the only externally routed gateway service for file
   storage.
@@ -36,20 +37,27 @@
   browser-issued media `src` fetches); a companion `POST /api/objects/download` returns the typed render
   disposition. The browser holds only the webapp origin.
 - The engine and coordinator continue to read inputs and write artifacts server-side over the same
-  cluster-internal endpoint; they are inside the trust boundary and are unaffected.
+  cluster-internal endpoint; they are inside the trust boundary. Generated-artifact writers must use a
+  coordinator/worker-supplied target derived from the verified `UserId` and `ContextId`; adapters and
+  native runners must not invent family/model/digest or `native-generated/` keys.
 
 ## Current Status
 
-This doctrine is **implemented** (code-side closed; the machine-independent gates are green). The webapp
-proxies every artifact byte server-side over the cluster-internal MinIO endpoint and never hands the
-browser a presigned MinIO URL. **Phase 3 Sprint 3.13** removed the external `/minio/s3` gateway route, the
+The browser-facing object-proxy doctrine is **implemented**. The webapp proxies every browser artifact
+byte server-side over the cluster-internal MinIO endpoint and never hands the browser a presigned MinIO
+URL. **Phase 3 Sprint 3.13** removed the external `/minio/s3` gateway route, the
 `infernix-minio-s3` SecurityPolicy, and the `presignPublicEndpoint` cluster-config field, so the
 `infernix-demo` webapp is the only externally routed file-storage service. **Phase 7 Sprint 7.25** made
 `Demo/Api.hs` the byte proxy and dropped the browser-direct presigned-URL grant fields. The retired
 presigned-browser path is recorded in
-[legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md). The `linux-cpu`
-plus chosen-accelerator real per-user attestation is the remaining
-[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+[legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
+
+The June 2026 audit reopened a narrower generated-artifact ownership residual as **Phase 7 Sprint
+7.28**. Closure now makes the Haskell request path own a typed output object target under
+`users/<sub>/contexts/<ctx>/generated/`; Python adapters reject missing or invalid generated-output
+targets, native process runners upload only under the supplied target, and the result bridge rejects
+raw or cross-user generated object refs. Wave N closed the full selected `linux-gpu` plus
+`linux-cpu` cohort validation on 2026-06-30.
 
 ## Boundary
 
@@ -62,7 +70,9 @@ plus chosen-accelerator real per-user attestation is the remaining
 ## Validation
 
 - `infernix lint docs` keeps this doctrine's metadata and cross-references consistent.
-- The reopened Phase 7 Sprint 7.25 integration and e2e prove the browser uploads/downloads only through
-  the webapp and that a cross-user object key is rejected (HTTP 403); Phase 3 Sprint 3.13 proves the
-  rendered chart exposes no `/minio/s3` route. Real per-user output is attested under
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+- Phase 7 Sprint 7.25 integration and e2e prove the browser uploads/downloads only through the webapp
+  and that a cross-user object key is rejected (HTTP 403); Phase 3 Sprint 3.13 proves the rendered chart
+  exposes no `/minio/s3` route.
+- Phase 7 Sprint 7.28 unit and integration-build validation covers generated-artifact output-prefix
+  derivation plus result-bridge rejection of raw and cross-user generated refs; Wave N closes the full
+  `linux-gpu` plus `linux-cpu` routed real-output gate.

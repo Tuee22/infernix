@@ -161,18 +161,12 @@ ensure_build_prerequisites() {
 }
 
 # The hermetic PATH=/usr/bin:/bin set at the top of this script keeps the
-# bootstrap itself from depending on the operator's inherited PATH, but two
-# downstream consumers still resolve tools by bare name on the process
-# PATH: (1) the direct cabal build, where the proto-lens Custom Setup spawns
-# `protoc` and bootstraps `proto-lens-protoc` via a nested `cabal`, and
-# needs the ghcup-managed `ghc`/`cabal`; and (2) the `infernix` binary
-# itself, which resolves most host tools from its typed host manifest but
-# still probes a few via `findExecutable` against the process PATH (for
-# example the Poetry probe in `ensurePoetryExecutable`). Prepend the ghcup
-# toolchain bin and the Homebrew prefix so both resolve the operator's
-# already-installed tools without re-deriving each absolute path here.
+# bootstrap itself from depending on the operator's inherited PATH. The direct
+# Cabal build still needs a process PATH for Cabal/proto-lens setup tools, so
+# provide a deterministic setup-local path rather than appending the inherited
+# environment.
 apple_launcher_path() {
-  printf '%s\n' "$(bootstrap::effective_home)/.ghcup/bin:${APPLE_HOMEBREW_BIN}:${PATH}"
+  printf '%s\n' "$(bootstrap::effective_home)/.ghcup/bin:${APPLE_HOMEBREW_BIN}:/usr/bin:/bin"
 }
 
 run_launcher() {

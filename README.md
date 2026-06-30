@@ -18,6 +18,13 @@ This README is the operator-oriented orientation and quick-start layer, while
 [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md) is the authoritative source for implementation
 status, validation history, and phase-closure evidence.
 
+Current plan note: a June 2026 audit reopened bounded follow-ons for generated artifact object
+ownership, Pulsar result timestamp conversion, no-env/no-PATH enforcement, and documentation-lint
+coverage. Those items are closed and tracked in
+[DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md) and
+[DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md);
+this README continues to describe the supported product shape.
+
 This repository serves two aligned purposes:
 
 - provide consistent binary or container build outputs for three supported runtime modes: Apple

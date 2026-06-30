@@ -12,8 +12,10 @@ module Infernix.Runtime.Pulsar
     clearServiceReadinessMarker,
     consumeTopicForever,
     DemoUserTopicDeletion (..),
+    authorizedGeneratedResultObjectRefs,
     deleteDemoUserTopics,
     deleteDemoUserTopicsWithAttemptBudget,
+    domainResultToProto,
     discoverPulsarTransport,
     planDemoClientMessagePublications,
     publishDemoClientMessage,
@@ -31,6 +33,7 @@ module Infernix.Runtime.Pulsar
     isPackageBackedNativeModel,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
+    protoResultToDomain,
     parseMessageIdToSequenceId,
     inferenceRequestProducerNameForFields,
     inferenceRequestSequenceId,
@@ -128,6 +131,7 @@ import Infernix.Models
     findModel,
     modelRequiresInputObject,
   )
+import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeInferenceWithKVCache)
@@ -135,7 +139,7 @@ import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.SecretsConfig qualified as Secrets
-import Infernix.Storage (readPulsarHttpPortMaybe)
+import Infernix.Storage (formatTimestamp, parseTimestamp, readPulsarHttpPortMaybe)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
@@ -263,7 +267,9 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
           set (field @"requestModelId") (requestModelId requestValue) $
             set (field @"inputText") (inputText requestValue) $
               set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef requestValue)) $
-                set (field @"runtimeMode") (runtimeModeId runtimeMode) defMessage
+                set (field @"userId") (fromMaybe "" (requestUserId requestValue)) $
+                  set (field @"contextId") (fromMaybe "" (requestContextId requestValue)) $
+                    set (field @"runtimeMode") (runtimeModeId runtimeMode) defMessage
   case maybeTransport of
     Nothing -> do
       createDirectoryIfMissing True (topicDirectoryPath paths topic)
@@ -2139,14 +2145,15 @@ consumeTopicForever ::
   DaemonConfig ->
   DemoConfig ->
   Maybe KVCache.EngineKVCache ->
+  MVar () ->
   Text.Text ->
   IO ()
-consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
+consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue =
   case serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue of
     Left err -> ioError (userError err)
     Right subscriptionType ->
       forever $ do
-        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue subscriptionType)
+        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType)
         case sessionResult of
           Right _ -> threadDelay 1000000
           Left err
@@ -2213,10 +2220,11 @@ consumeTopicSession ::
   DaemonConfig ->
   DemoConfig ->
   Maybe KVCache.EngineKVCache ->
+  MVar () ->
   Text.Text ->
   ConsumerSubscriptionType ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue subscriptionType = do
+consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType = do
   processLabel <- currentProcessLabel
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
@@ -2279,38 +2287,40 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
             batchOptions
             (view ProtoInferenceFields.requestId decodedRequest)
             (encodeMessage decodedRequest)
-        Engine -> do
-          let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
-              requestIdValue = view ProtoInferenceFields.requestId decodedRequest
-          publishedResult <-
-            if Text.null modelIdValue
-              then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
-              else publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest
-          -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
-          -- engine-side inference so the host daemon log surfaces the
-          -- request id, resolved model id, and final status. Diagnoses
-          -- empty-model-id rejection vs adapter failure vs success without
-          -- attaching a debugger.
-          putStrLn
-            ( "engineProcessed: request="
-                <> Text.unpack requestIdValue
-                <> " model="
-                <> Text.unpack modelIdValue
-                <> " status="
-                <> Text.unpack (status publishedResult)
-            )
-          let publishedResultContextId = resultContextId publishedResult
-              resultProducerScope =
-                if Text.null publishedResultContextId
-                  then "infernix-engine-result-" <> runtimeModeId runtimeMode
-                  else "infernix-engine-result-" <> runtimeModeId runtimeMode <> "-" <> publishedResultContextId
-              resultOptions = inferenceRequestPublishOptions resultProducerScope decodedRequest
-          publishTopicPayload
-            transport
-            (daemonConfigResultTopic daemonConfig)
-            resultOptions
-            (requestId publishedResult)
-            (encodeMessage (domainResultToProto publishedResult))
+        Engine ->
+          modifyMVar_ engineExecutionLock $ \() -> do
+            let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
+                requestIdValue = view ProtoInferenceFields.requestId decodedRequest
+            publishedResult <-
+              if Text.null modelIdValue
+                then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
+                else publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest
+            -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
+            -- engine-side inference so the host daemon log surfaces the
+            -- request id, resolved model id, and final status. Diagnoses
+            -- empty-model-id rejection vs adapter failure vs success without
+            -- attaching a debugger.
+            putStrLn
+              ( "engineProcessed: request="
+                  <> Text.unpack requestIdValue
+                  <> " model="
+                  <> Text.unpack modelIdValue
+                  <> " status="
+                  <> Text.unpack (status publishedResult)
+              )
+            let publishedResultContextId = resultContextId publishedResult
+                resultProducerScope =
+                  if Text.null publishedResultContextId
+                    then "infernix-engine-result-" <> runtimeModeId runtimeMode
+                    else "infernix-engine-result-" <> runtimeModeId runtimeMode <> "-" <> publishedResultContextId
+                resultOptions = inferenceRequestPublishOptions resultProducerScope decodedRequest
+            publishTopicPayload
+              transport
+              (daemonConfigResultTopic daemonConfig)
+              resultOptions
+              (requestId publishedResult)
+              (encodeMessage (domainResultToProto publishedResult))
+            pure ()
       sendAck connection (envelopeMessageId envelope)
 
 serviceConsumerAckTimeoutMillis :: Int
@@ -2476,19 +2486,64 @@ publishTopicPayload transport topicValue options contextValue payload = do
           Just messageKey -> ("key" .= messageKey) : baseFields
           Nothing -> baseFields
       producerPayload = object keyedFields
-  runPulsarWebSocketClient (pulsarWebSocketBase transport) producerPath $ \connection -> do
-    sendJsonFrame connection producerPayload
-    rawResponse <- receiveJsonFrame "Pulsar producer response" connection
-    producerResponse <- decodeJsonText "Pulsar producer response" rawResponse
-    when (producerResult producerResponse /= "ok") $
-      ioError
-        ( userError
-            ( "failed to publish Pulsar message for "
-                <> Text.unpack topicValue
-                <> ":\n"
-                <> Text.unpack (fromMaybe "unknown producer error" (producerErrorMessage producerResponse))
+      maxAttempts =
+        if isJust (publishSequenceId options)
+          then pulsarDeduplicatedProducerPublishAttempts
+          else 1
+  publishWithAttempt producerPath producerPayload maxAttempts (1 :: Int)
+  where
+    publishWithAttempt producerPath producerPayload maxAttempts attempt = do
+      result <- try @SomeException (publishOnce producerPath producerPayload)
+      case result of
+        Right () -> pure ()
+        Left err
+          | isAsyncException err -> throwIO err
+          | attempt < maxAttempts -> do
+              hPutStrLn
+                stderr
+                ( "Pulsar publish attempt "
+                    <> show attempt
+                    <> " for "
+                    <> Text.unpack topicValue
+                    <> " failed; retrying deduplicated publish:\n"
+                    <> displayException err
+                )
+              threadDelay pulsarProducerPublishRetryDelayMicros
+              publishWithAttempt producerPath producerPayload maxAttempts (attempt + 1)
+          | otherwise -> throwIO err
+    publishOnce producerPath producerPayload =
+      runPulsarWebSocketClient (pulsarWebSocketBase transport) producerPath $ \connection -> do
+        sendJsonFrame connection producerPayload
+        maybeRawResponse <- timeout pulsarProducerResponseTimeoutMicros (receiveJsonFrame "Pulsar producer response" connection)
+        rawResponse <-
+          case maybeRawResponse of
+            Just response -> pure response
+            Nothing ->
+              ioError
+                ( userError
+                    ( "timed out waiting for Pulsar producer response for "
+                        <> Text.unpack topicValue
+                    )
+                )
+        producerResponse <- decodeJsonText "Pulsar producer response" rawResponse
+        when (producerResult producerResponse /= "ok") $
+          ioError
+            ( userError
+                ( "failed to publish Pulsar message for "
+                    <> Text.unpack topicValue
+                    <> ":\n"
+                    <> Text.unpack (fromMaybe "unknown producer error" (producerErrorMessage producerResponse))
+                )
             )
-        )
+
+pulsarProducerResponseTimeoutMicros :: Int
+pulsarProducerResponseTimeoutMicros = 30_000_000
+
+pulsarDeduplicatedProducerPublishAttempts :: Int
+pulsarDeduplicatedProducerPublishAttempts = 5
+
+pulsarProducerPublishRetryDelayMicros :: Int
+pulsarProducerPublishRetryDelayMicros = 1_000_000
 
 -- | Phase 7 Sprint 7.8 result-bridge runtime loop. The coordinator
 -- subscribes to the substrate's @inference.result.<mode>@ topic with a
@@ -2601,26 +2656,13 @@ bridgeResultToConversation transport topicNamespace resultValue = do
           topicNamespace
           (Contracts.UserId userIdText)
           (Contracts.ContextId contextIdText)
-      inlineOutputValue = case payload resultValue of
-        ResultPayload {inlineOutput = Just text} -> Just text
-        _ -> Nothing
-      objectRefValue = case payload resultValue of
-        ResultPayload {objectRef = Just rawKey} ->
-          -- The result envelope's @ObjectRef@ field stores a single
-          -- string ("bucket/key" or just a key); the conversation
-          -- event surface carries the structured ObjectRef the
-          -- browser uses to mint presigned URLs. Default to the demo
-          -- bucket when only a key is supplied.
-          [ Contracts.ObjectRef
-              { Contracts.objectBucket = "infernix-demo-objects",
-                Contracts.objectKey = rawKey
-              }
-          ]
-        _ -> []
+      authorizedObjectRefs = authorizedGeneratedResultObjectRefs resultValue
+      (inlineOutputValue, statusValue, objectRefValue) =
+        conversationResultEventFields resultValue authorizedObjectRefs
       conversationEvent =
         ResultBridge.inferenceResultEventFor
           (Contracts.MessageId causalRef)
-          (status resultValue)
+          statusValue
           inlineOutputValue
           objectRefValue
       options =
@@ -2633,6 +2675,65 @@ bridgeResultToConversation transport topicNamespace resultValue = do
     options
     causalRef
     (Lazy.toStrict (encode conversationEvent))
+
+conversationResultEventFields ::
+  InferenceResult ->
+  Either Text.Text [Contracts.ObjectRef] ->
+  (Maybe Text.Text, Text.Text, [Contracts.ObjectRef])
+conversationResultEventFields resultValue authorizedObjectRefs =
+  case authorizedObjectRefs of
+    Left rejectionMessage -> (Just rejectionMessage, "failed", [])
+    Right refs -> (resultInlineOutput resultValue, status resultValue, refs)
+
+resultInlineOutput :: InferenceResult -> Maybe Text.Text
+resultInlineOutput resultValue =
+  case payload resultValue of
+    ResultPayload {inlineOutput = Just text} -> Just text
+    _ -> Nothing
+
+authorizedGeneratedResultObjectRefs :: InferenceResult -> Either Text.Text [Contracts.ObjectRef]
+authorizedGeneratedResultObjectRefs resultValue =
+  case payload resultValue of
+    ResultPayload {objectRef = Just rawObjectRef} ->
+      (: []) <$> authorizedGeneratedObjectRef (resultUserId resultValue) (resultContextId resultValue) rawObjectRef
+    _ -> Right []
+
+authorizedGeneratedObjectRef :: Text.Text -> Text.Text -> Text.Text -> Either Text.Text Contracts.ObjectRef
+authorizedGeneratedObjectRef userIdText contextIdText rawObjectRef
+  | Text.null userIdText || Text.null contextIdText =
+      Left "generated artifact object reference rejected: result is missing durable user/context ownership"
+  | otherwise =
+      case parseStructuredObjectRef rawObjectRef of
+        Nothing ->
+          Left ("generated artifact object reference rejected: expected bucket/key, got " <> rawObjectRef)
+        Just objectReference ->
+          if objectRefTargetsGeneratedPrefix userIdText contextIdText objectReference
+            then Right objectReference
+            else Left ("generated artifact object reference rejected outside authorized generated prefix: " <> rawObjectRef)
+
+objectRefTargetsGeneratedPrefix :: Text.Text -> Text.Text -> Contracts.ObjectRef -> Bool
+objectRefTargetsGeneratedPrefix userIdText contextIdText objectReference =
+  Contracts.objectBucket objectReference == demoObjectsBucketText
+    && ObjLayout.generatedObjectPrefix (Contracts.UserId userIdText) (Contracts.ContextId contextIdText)
+      `Text.isPrefixOf` Contracts.objectKey objectReference
+
+demoObjectsBucketText :: Text.Text
+demoObjectsBucketText =
+  let ObjLayout.DemoObjectsBucket bucket = ObjLayout.defaultDemoObjectsBucket
+   in bucket
+
+parseStructuredObjectRef :: Text.Text -> Maybe Contracts.ObjectRef
+parseStructuredObjectRef raw =
+  let (bucket, rawKey) = Text.breakOn "/" raw
+      key = Text.drop 1 rawKey
+   in if Text.null bucket || Text.null key || Text.null rawKey
+        then Nothing
+        else
+          Just
+            Contracts.ObjectRef
+              { Contracts.objectBucket = bucket,
+                Contracts.objectKey = key
+              }
 
 -- | Phase 7 Sprint 7.6 per-context single-flight dispatcher loop. The
 -- coordinator polls the supported demo namespace for
@@ -4214,7 +4315,9 @@ protoRequestToDomain protoRequest =
       inputText = view ProtoInferenceFields.inputText protoRequest,
       -- Phase 4 Sprint 4.15: an empty wire field means the text families'
       -- "no input object reference"; non-text input families carry the ref.
-      inputObjectRef = nonEmptyText (view ProtoInferenceFields.inputObjectRef protoRequest)
+      inputObjectRef = nonEmptyText (view ProtoInferenceFields.inputObjectRef protoRequest),
+      requestUserId = nonEmptyText (view ProtoInferenceFields.userId protoRequest),
+      requestContextId = nonEmptyText (view ProtoInferenceFields.contextId protoRequest)
     }
 
 nonEmptyText :: Text.Text -> Maybe Text.Text
@@ -4252,7 +4355,7 @@ domainResultToProto resultValue =
           set (field @"selectedEngine") (resultSelectedEngine resultValue) $
             set (field @"status") (status resultValue) $
               set (field @"payload") (resultPayloadToProto (payload resultValue)) $
-                set (field @"createdAt") (Text.pack (show (createdAt resultValue))) $
+                set (field @"createdAt") (formatTimestamp (createdAt resultValue)) $
                   set (field @"userId") (resultUserId resultValue) $
                     set (field @"contextId") (resultContextId resultValue) $
                       set (field @"causalRef") (resultCausalRef resultValue) defMessage
@@ -4261,6 +4364,7 @@ protoResultToDomain :: ProtoInference.InferenceResult -> Maybe InferenceResult
 protoResultToDomain protoResult = do
   parsedRuntimeMode <- parseRuntimeMode (view ProtoInferenceFields.runtimeMode protoResult)
   parsedPayload <- protoPayloadToDomain (view ProtoInferenceFields.payload protoResult)
+  parsedCreatedAt <- parseTimestamp (view ProtoInferenceFields.createdAt protoResult)
   pure
     InferenceResult
       { requestId = view ProtoInferenceFields.requestId protoResult,
@@ -4270,7 +4374,7 @@ protoResultToDomain protoResult = do
         resultSelectedEngine = view ProtoInferenceFields.selectedEngine protoResult,
         status = view ProtoInferenceFields.status protoResult,
         payload = parsedPayload,
-        createdAt = read (Text.unpack (view ProtoInferenceFields.createdAt protoResult)),
+        createdAt = parsedCreatedAt,
         resultUserId = view ProtoInferenceFields.userId protoResult,
         resultContextId = view ProtoInferenceFields.contextId protoResult,
         resultCausalRef = view ProtoInferenceFields.causalRef protoResult

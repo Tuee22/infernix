@@ -4,7 +4,9 @@
 
 module Infernix.Storage
   ( edgePortPath,
+    formatTimestamp,
     harborPortPath,
+    parseTimestamp,
     pulsarHttpPortPath,
     readCacheManifestProtoMaybe,
     readEdgePortMaybe,

@@ -1,9 +1,10 @@
-import Data.List (isPrefixOf)
+import Data.List (intercalate)
 import Data.ProtoLens.Setup (generatingProtos)
 import Distribution.Simple (defaultMainWithHooks, simpleUserHooks)
 import System.Directory (createDirectoryIfMissing, doesFileExist, doesPathExist, getCurrentDirectory)
-import System.Environment (lookupEnv, setEnv)
-import System.FilePath (isAbsolute, takeDirectory, (</>))
+import qualified System.Environment as Env
+import System.FilePath (takeDirectory, (</>))
+import System.Posix.User (getRealUserID, getUserEntryForID, homeDirectory)
 import System.Process (callProcess)
 
 protoLensAllowNewer :: [String]
@@ -19,19 +20,23 @@ protoLensAllowNewer =
 
 main :: IO ()
 main = do
-  repoRoot <- getCurrentDirectory
-  buildRoot <- resolveBuildRoot repoRoot
+  cwd <- getCurrentDirectory
+  repoRoot <- findRepoRoot cwd
+  setupHome <- currentUserHome
+  let buildRoot = repoRoot </> ".build"
+  cabalPath <- resolveRequiredTool "cabal" (cabalCandidates setupHome)
   let toolRoot = buildRoot </> "proto-tools"
       toolBinDir = toolRoot </> "bin"
       toolBuildDir = toolRoot </> "cabal"
       toolBinary = toolBinDir </> "proto-lens-protoc"
   createDirectoryIfMissing True toolBinDir
+  setProtoLensSetupPath toolBinDir setupHome
   toolExists <- doesFileExist toolBinary
   if toolExists
     then pure ()
     else
       callProcess
-        "cabal"
+        cabalPath
         ( [ "--ignore-project",
             "--builddir=" <> toolBuildDir,
             "install",
@@ -43,22 +48,28 @@ main = do
           ]
             <> concatMap (\constraintValue -> ["--allow-newer=" <> constraintValue]) protoLensAllowNewer
         )
-  prependPath toolBinDir
-  ensureToolVisible toolBinary
+  ensureToolExists toolBinary
   defaultMainWithHooks (generatingProtos "proto" simpleUserHooks)
 
-prependPath :: FilePath -> IO ()
-prependPath entry = do
-  maybePath <- lookupEnv "PATH"
-  let updatedPath = case maybePath of
-        Nothing -> entry
-        Just currentPath
-          | entry `isPrefixOf` currentPath -> currentPath
-          | otherwise -> entry <> ":" <> currentPath
-  setEnv "PATH" updatedPath
+setProtoLensSetupPath :: FilePath -> FilePath -> IO ()
+setProtoLensSetupPath toolBinDir setupHome =
+  -- proto-lens-setup discovers proto-lens-protoc through PATH. Keep that
+  -- upstream shim deterministic and setup-local: no inherited PATH is read.
+  Env.setEnv "PATH" (intercalate ":" (setupPathEntries toolBinDir setupHome))
 
-ensureToolVisible :: FilePath -> IO ()
-ensureToolVisible expectedPath = do
+setupPathEntries :: FilePath -> FilePath -> [FilePath]
+setupPathEntries toolBinDir setupHome =
+  [ toolBinDir,
+    setupHome </> ".ghcup" </> "bin",
+    "/root/.ghcup/bin",
+    "/opt/homebrew/bin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin"
+  ]
+
+ensureToolExists :: FilePath -> IO ()
+ensureToolExists expectedPath = do
   toolExists <- doesFileExist expectedPath
   if toolExists
     then pure ()
@@ -69,16 +80,30 @@ ensureToolVisible expectedPath = do
             <> " to exist after bootstrap"
         )
 
-resolveBuildRoot :: FilePath -> IO FilePath
-resolveBuildRoot cwd = do
-  repoRoot <- findRepoRoot cwd
-  maybeBuildRoot <- lookupEnv "INFERNIX_BUILD_ROOT"
-  pure $
-    case maybeBuildRoot of
-      Nothing -> repoRoot </> ".build"
-      Just value
-        | isAbsolute value -> value
-        | otherwise -> cwd </> value
+currentUserHome :: IO FilePath
+currentUserHome = do
+  userId <- getRealUserID
+  userEntry <- getUserEntryForID userId
+  pure (homeDirectory userEntry)
+
+cabalCandidates :: FilePath -> [FilePath]
+cabalCandidates setupHome =
+  [ setupHome </> ".ghcup" </> "bin" </> "cabal",
+    "/root/.ghcup/bin/cabal",
+    "/usr/local/bin/cabal",
+    "/usr/bin/cabal"
+  ]
+
+resolveRequiredTool :: String -> [FilePath] -> IO FilePath
+resolveRequiredTool toolName candidates =
+  case candidates of
+    [] ->
+      error ("Unable to resolve required setup tool " <> toolName <> " from fixed candidates")
+    candidate : rest -> do
+      exists <- doesFileExist candidate
+      if exists
+        then pure candidate
+        else resolveRequiredTool toolName rest
 
 findRepoRoot :: FilePath -> IO FilePath
 findRepoRoot start = go start

@@ -74,9 +74,9 @@ when the active substrate's generated `.dhall` carries `demo_ui = false`:
 
   **Current Status.** Implemented (Phase 7 Sprint 7.25; code-side closed). The webapp object-proxy
   is the live path, the browser-direct presigned-URL path is gone, and Phase 3 Sprint 3.13 removed
-  the `/minio/s3` route, its SecurityPolicy target, and the `presignPublicEndpoint` field. The
-  `linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+  the `/minio/s3` route, its SecurityPolicy target, and the `presignPublicEndpoint` field. Wave M
+  closed the browser object-proxy evidence; Phase 7 Sprint 7.28 extends generated artifact object
+  ownership to the same user/context prefix, and Wave N closes the full cohort validation.
 
 The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
 cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
@@ -201,9 +201,9 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 **Current Status.** The webapp-mediated `/api/objects` byte proxy is implemented (Phase 7
 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3` route): the SPA uploads and downloads
 through the webapp, never a presigned MinIO URL. The per-user `Files` navigational view backed by
-`GET /api/objects/list` + `DELETE /api/objects` is implemented by Phase 7 Sprint 7.26. The
-`linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
-[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+`GET /api/objects/list` + `DELETE /api/objects` is implemented by Phase 7 Sprint 7.26. Wave M closed
+that browser evidence; Phase 7 Sprint 7.28 covers generated artifact object
+ownership, and Wave N closes the full selected `linux-gpu` plus `linux-cpu` cohort validation.
 
 ## Cross-References
 

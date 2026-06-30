@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done — reopened and re-closed (Sprints 7.1-7.22 remain closed on their recorded gates; Sprint 7.23 is a superseded Apple singleton stopgap; Sprint 7.24 is closed for substrate-neutral engine pools, broker-native backpressure, Apple host-member pool membership, and startup-time member assignment. Sprints 7.25–7.27 — the webapp object-proxy and per-user isolation hardening, a per-user Files navigational view, and in-browser MIDI/MusicXML/ZIP rendering — are code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with the selected `linux-gpu` accelerator plus `linux-cpu`. Desired-state hot reload is a future extension, not part of the current closure.)
+**Status**: Done — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -21,7 +21,16 @@
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), not as open Phase 7
 > validation work.
 
-Phase 7 reopened and re-closed for Sprints 7.25–7.27. Sprints 7.1–7.18 remain closed, and Sprints
+> **Audit follow-on reopen (generated artifact ownership).** Phase 7 reopened Sprint 7.28 after the
+> June 2026 audit found that browser object operations are correctly proxied and per-user authorized,
+> but generated artifact writers could still bypass the intended
+> `users/<sub>/contexts/<ctx>/generated/` layout. Sprint 7.28 closure makes the Haskell
+> coordinator/worker path own the generated output target, requires adapters/native runners to upload
+> only to that target, makes the result bridge reject raw or cross-user object refs, and is validated
+> by the full `linux-gpu` plus `linux-cpu` routed real-output gates.
+
+Phase 7 reopened and re-closed for Sprints 7.25-7.27, then re-closed Sprint 7.28 on 2026-06-30
+through the full selected `linux-gpu` plus `linux-cpu` cohort gate. Sprints 7.1-7.18 remain closed, and Sprints
 7.19–7.22 closed the auth-UX quad described in the Status block on the Wave G routed E2E validation.
 Sprint 7.23's Apple `Exclusive` / `Failover` singleton design is retained only as historical plan
 context and is superseded by the engine-pool routing target: normal Apple fanout uses `Shared`
@@ -109,6 +118,26 @@ the service/cache/durable-topic and HA lifecycle tail, and routed Playwright `9/
 28.5-minute browser per-model smoke matrix. The routed browser evidence covers the Wave M-owned
 object-proxy, cross-user isolation, Files view, proxied media previews, and in-browser
 MIDI/MusicXML/ZIP rendering.
+
+Sprint 7.28 closed on 2026-06-30: `WorkerRequest` carries a Haskell-derived
+`users/<sub>/contexts/<ctx>/generated/` output prefix, Python adapters and native runner uploads use
+only that supplied target, and the result bridge parses structured object refs and fail-closes raw or
+cross-user generated refs. The cohort run also closed the runtime fixes found by the GPU gate:
+per-engine execution is serialized inside each engine daemon, and deduplicated Pulsar producer
+publishes have bounded timeout/retry handling. Local validation passed with `cabal test infernix-unit
+--test-options='--hide-successes'`, `cabal build test:infernix-integration`,
+`python3 -m py_compile python/adapters/common.py`, `cabal run exe:infernix -- test lint`, and
+`cabal run exe:infernix -- lint proto`. The selected `linux-gpu` full gate passed
+`./bootstrap/linux-gpu.sh test` on 2026-06-30, including Haskell style, Python `check-code`,
+Haskell unit, web contracts `71/71`, full integration with every `linux-gpu` catalog row producing
+real output, routed Playwright `9/9`, and the browser per-model matrix. The paired `linux-cpu` lane
+rebuilt `infernix-linux-cpu:local` as
+`sha256:c867ccd38e3390cbc65041efecea16a5fb001b1b4c17519a808118b82a194f48`, and
+`./bootstrap/linux-cpu.sh test` passed on 2026-06-30: Haskell style, Python `check-code`, Haskell
+unit, web contracts `71/71`, full integration with HA/chaos, throughput
+(`users=3`, `contextsPerUser=2`, `promptsPerContext=2`, `totalPrompts=12`,
+`p95Seconds=65.46793055534363`), routed Playwright `9/9`, and the 23.2-minute browser per-model
+matrix.
 
 ## Current Repo Assessment
 
@@ -399,8 +428,9 @@ boundary without re-reading the design docs.
   only. Browser obtains a JWT and presents it on both HTTP and WS handshakes. Backend validates
   against Keycloak JWKS. `userId = sub`.
 - **Transport.** WebSocket for chat, drafts, context list, progress, and artifact-ready
-  notifications. HTTP (same JWT) for artifact upload/download, with presigned MinIO PUT/GET
-  URLs so binary bytes never traverse the demo backend.
+  notifications. HTTP (same JWT) for artifact upload/download through the webapp `/api/objects`
+  proxy; binary bytes traverse the demo backend, and the browser never receives a presigned MinIO
+  URL.
 - **Statelessness.** Backend pods hold zero per-user state across requests. No demo-backend
   Postgres is added; existing per-service Patroni clusters (Harbor and Keycloak's own) are
   unchanged. The browser holds no durable state — full reconstitution from server-
@@ -2746,11 +2776,16 @@ None.
 
 ## Remaining Work
 
-None. Sprint 7.24 closed on 2026-06-20 through [Wave J](cohort-validation-waves.md): the selected
-`linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-Sprints 7.25-7.27 closed on 2026-06-29 through [Wave M](cohort-validation-waves.md): the selected
-`linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
+None.
+
+## Closure Notes
+
+- Sprint 7.28 closed on 2026-06-30 through the full `linux-gpu` plus `linux-cpu` cohort gates.
+- Sprint 7.24 closed on 2026-06-20 through [Wave J](cohort-validation-waves.md): the selected
+  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
+- Sprints 7.25-7.27 closed on 2026-06-29 through [Wave M](cohort-validation-waves.md): the selected
+  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
+- Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
 
 ---
 
@@ -3443,6 +3478,60 @@ None. Closed by [Wave M](cohort-validation-waves.md).
   for the new render dispositions and in-browser MIDI/MusicXML/ZIP behavior
 - record the retired `DownloadOnly` disposition for `audio/midi`, MusicXML, and `application/zip` in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+
+---
+
+## Sprint 7.28: Generated Artifact Object Ownership and Result-Bridge Authorization [Done]
+
+**Status**: Done
+**Code-side closure**: Closed 2026-06-29. The worker protobuf carries a Haskell-derived
+generated-output prefix, Python adapters reject missing/invalid generated-output ownership and upload
+only below that prefix, native artifact uploads use the same target instead of `native-generated/...`,
+and the result bridge rejects raw or cross-user generated object refs.
+**Cohort gate**: Closed 2026-06-30 by full selected `linux-gpu` plus `linux-cpu` routed real-output
+validation with generated artifact families exercised end to end.
+**Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Objects/Layout.hs`, `python/adapters/common.py`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
+**Docs to update**: `documents/architecture/object_access_doctrine.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/engineering/object_storage.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make generated artifact object ownership derive from the authenticated user and context before work is
+dispatched, so every artifact-family result is authorized through the same `users/<sub>/` prefix rule as
+browser uploads and downloads.
+
+### Deliverables
+
+- add a typed generated output target or prefix to the worker request, derived from `userId` and
+  `contextId` by Haskell code
+- make Python adapters upload only to the supplied target and reject missing/invalid generated-output
+  ownership data
+- make native-process-runner uploads use the same supplied target instead of `native-generated/...`
+- make the result bridge parse structured object refs and reject or fail closed on raw keys outside
+  `users/<sub>/contexts/<ctx>/generated/`
+- add tests proving generated artifacts use `users/<sub>/contexts/<ctx>/generated/` and cannot be read
+  by another authenticated `sub`
+
+### Validation
+
+- `cabal test infernix-unit --test-options='--hide-successes'` — passed 2026-06-29
+- `cabal build test:infernix-integration` — passed 2026-06-29
+- `python3 -m py_compile python/adapters/common.py` — passed 2026-06-29
+- `cabal run exe:infernix -- test lint` — passed 2026-06-29
+- `cabal run exe:infernix -- lint proto` — passed 2026-06-29
+- `./bootstrap/linux-gpu.sh test` — passed 2026-06-30; included Haskell style, Python `check-code`,
+  Haskell unit, web contracts `71/71`, full integration with every `linux-gpu` catalog row
+  producing real output, routed Playwright `9/9`, and the browser per-model matrix
+- `./bootstrap/linux-cpu.sh build` — passed 2026-06-30; rebuilt `infernix-linux-cpu:local` as
+  `sha256:c867ccd38e3390cbc65041efecea16a5fb001b1b4c17519a808118b82a194f48`
+- `./bootstrap/linux-cpu.sh test` — passed 2026-06-30; included Haskell style, Python `check-code`,
+  Haskell unit, web contracts `71/71`, full integration with HA/chaos and throughput
+  (`totalPrompts=12`, `p95Seconds=65.46793055534363`), routed Playwright `9/9`, and the 23.2-minute
+  browser per-model matrix
+
+### Remaining Work
+
+None. The generated-artifact legacy row has moved to Completed in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 

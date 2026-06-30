@@ -36,6 +36,7 @@ import Data.Word (Word64)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
 import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
+import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
@@ -470,7 +471,7 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
                       }
                   )
                   ""
-              nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
+              nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
 
 -- | Native runners participate in the model-bootstrap protocol: the first
 -- invocation reports a cache miss, the coordinator populates MinIO, and the
@@ -769,12 +770,12 @@ nativeRunnerOutputDir model maybeModelCacheConfig =
           pure (Just outputDir)
     _ -> pure Nothing
 
-nativeRunnerResult :: ModelDescriptor -> EngineBinding -> FilePath -> Maybe WorkerModelCacheConfig -> ExitCode -> String -> String -> IO (Either ErrorResponse Text)
-nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput =
+nativeRunnerResult :: ModelDescriptor -> EngineBinding -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> ExitCode -> String -> String -> IO (Either ErrorResponse Text)
+nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput =
   case exitCode of
     ExitSuccess ->
       case trimWhitespace stdoutOutput of
-        Just trimmed -> nativeRunnerSuccessOutput model maybeModelCacheConfig (Text.pack trimmed)
+        Just trimmed -> nativeRunnerSuccessOutput model request maybeModelCacheConfig (Text.pack trimmed)
         Nothing ->
           pure
             ( Left
@@ -810,8 +811,8 @@ nativeRunnerResult model engineBinding binaryPath maybeModelCacheConfig exitCode
 nativeArtifactOutputPrefix :: Text
 nativeArtifactOutputPrefix = "infernix-native-artifact-file:"
 
-nativeRunnerSuccessOutput :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> Text -> IO (Either ErrorResponse Text)
-nativeRunnerSuccessOutput model maybeModelCacheConfig outputText =
+nativeRunnerSuccessOutput :: ModelDescriptor -> InferenceRequest -> Maybe WorkerModelCacheConfig -> Text -> IO (Either ErrorResponse Text)
+nativeRunnerSuccessOutput model request maybeModelCacheConfig outputText =
   case Text.stripPrefix nativeArtifactOutputPrefix outputText of
     Nothing -> pure (Right outputText)
     Just artifactPathText ->
@@ -824,53 +825,64 @@ nativeRunnerSuccessOutput model maybeModelCacheConfig outputText =
                     message = "native engine returned a local artifact file, but model-cache MinIO wiring is unavailable."
                   }
             )
-        Just modelCacheConfig -> do
-          let artifactPath = Text.unpack artifactPathText
-          artifactExists <- doesFileExist artifactPath
-          if not artifactExists
-            then
+        Just modelCacheConfig ->
+          case generatedOutputObjectPrefixForRequest request of
+            Nothing ->
               pure
                 ( Left
                     ErrorResponse
-                      { errorCode = "native_artifact_missing",
-                        message = "native engine returned an artifact path that does not exist: " <> artifactPathText
+                      { errorCode = "native_artifact_output_target_missing",
+                        message = "native engine returned a local artifact file, but the request did not carry durable user/context ownership."
                       }
                 )
-            else do
-              uploadResult <- try @SomeException (nativeArtifactObjectRefFromFile model modelCacheConfig artifactPath)
-              case uploadResult of
-                Right objectRef -> pure (Right (renderObjectRef objectRef))
-                Left err ->
+            Just generatedPrefix -> do
+              let artifactPath = Text.unpack artifactPathText
+              artifactExists <- doesFileExist artifactPath
+              if not artifactExists
+                then
                   pure
                     ( Left
                         ErrorResponse
-                          { errorCode = "native_artifact_upload_failed",
-                            message = Text.pack ("native artifact upload failed: " <> displayException err)
+                          { errorCode = "native_artifact_missing",
+                            message = "native engine returned an artifact path that does not exist: " <> artifactPathText
                           }
                     )
+                else do
+                  uploadResult <- try @SomeException (nativeArtifactObjectRefFromFile model modelCacheConfig generatedPrefix artifactPath)
+                  case uploadResult of
+                    Right objectRef -> pure (Right (renderObjectRef objectRef))
+                    Left err ->
+                      pure
+                        ( Left
+                            ErrorResponse
+                              { errorCode = "native_artifact_upload_failed",
+                                message = Text.pack ("native artifact upload failed: " <> displayException err)
+                              }
+                        )
 
-nativeArtifactObjectRefFromFile :: ModelDescriptor -> WorkerModelCacheConfig -> FilePath -> IO Contracts.ObjectRef
-nativeArtifactObjectRefFromFile model modelCacheConfig artifactPath = do
+nativeArtifactObjectRefFromFile :: ModelDescriptor -> WorkerModelCacheConfig -> Text -> FilePath -> IO Contracts.ObjectRef
+nativeArtifactObjectRefFromFile model modelCacheConfig generatedPrefix artifactPath = do
   payload <- ByteString.readFile artifactPath
-  let objectRef = nativeArtifactObjectRef modelCacheConfig model artifactPath payload
+  let objectRef = nativeArtifactObjectRef modelCacheConfig model generatedPrefix artifactPath payload
       uploadConfig = workerObjectUploadConfig modelCacheConfig
   manager <- newManager defaultManagerSettings
   now <- getCurrentTime
   ObjectUpload.putObjectWithPresignedUrl uploadConfig manager now objectRef payload
   pure objectRef
 
-nativeArtifactObjectRef :: WorkerModelCacheConfig -> ModelDescriptor -> FilePath -> ByteString.ByteString -> Contracts.ObjectRef
-nativeArtifactObjectRef modelCacheConfig model artifactPath payload =
+nativeArtifactObjectRef :: WorkerModelCacheConfig -> ModelDescriptor -> Text -> FilePath -> ByteString.ByteString -> Contracts.ObjectRef
+nativeArtifactObjectRef modelCacheConfig model generatedPrefix artifactPath payload =
   Contracts.ObjectRef
     { Contracts.objectBucket = workerMinioDemoArtifactsBucket modelCacheConfig,
       Contracts.objectKey =
-        Text.intercalate
-          "/"
-          [ "native-generated",
-            resultFamilyId (resultFamilyForDescriptor model),
-            safeObjectKeySegment (modelId model),
-            "sha256-" <> sha256Hex payload <> artifactExtension artifactPath
-          ]
+        generatedPrefix
+          <> Text.intercalate
+            "-"
+            [ resultFamilyId (resultFamilyForDescriptor model),
+              safeObjectKeySegment (modelId model),
+              "sha256-" <> sha256Hex payload
+            ]
+          <> artifactExtension artifactPath
     }
 
 workerObjectUploadConfig :: WorkerModelCacheConfig -> ObjectUpload.ObjectUploadConfig
@@ -1015,8 +1027,22 @@ buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding r
                 set (field @"artifactType") (artifactType model) $
                   set (field @"runtimeLane") (runtimeLaneId (runtimeLane model)) $
                     set (field @"inputObjectRef") (fromMaybe "" (inputObjectRef request)) $
-                      set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
-                        setWorkerModelCacheFields maybeModelCacheConfig defMessage
+                      set (field @"generatedOutputObjectPrefix") (fromMaybe "" (generatedOutputObjectPrefixForRequest request)) $
+                        set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
+                          setWorkerModelCacheFields maybeModelCacheConfig defMessage
+
+generatedOutputObjectPrefixForRequest :: InferenceRequest -> Maybe Text
+generatedOutputObjectPrefixForRequest request = do
+  userIdValue <- requestUserId request
+  contextIdValue <- requestContextId request
+  if Text.null userIdValue || Text.null contextIdValue
+    then Nothing
+    else
+      Just
+        ( ObjLayout.generatedObjectPrefix
+            (Contracts.UserId userIdValue)
+            (Contracts.ContextId contextIdValue)
+        )
 
 setWorkerModelCacheFields :: Maybe WorkerModelCacheConfig -> ProtoInference.WorkerRequest -> ProtoInference.WorkerRequest
 setWorkerModelCacheFields maybeModelCacheConfig workerRequest =

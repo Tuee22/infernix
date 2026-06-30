@@ -6,6 +6,7 @@ module Infernix.Runtime.Daemon
 where
 
 import Control.Concurrent (forkIO, threadDelay)
+import Control.Concurrent.MVar (newMVar)
 import Control.Monad (forM_, forever, when)
 import Data.List (find, intercalate)
 import Data.Maybe (fromMaybe)
@@ -147,16 +148,17 @@ runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConf
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: websocket-pulsar"
   putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
+  engineExecutionLock <- newMVar ()
   case (runtimeMode, daemonRole, daemonConfigRequestTopics daemonConfig) of
     (AppleSilicon, Engine, primaryTopic : extraTopics) -> do
       forM_
         extraTopics
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
-      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) primaryTopic
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock)
+      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock primaryTopic
     _ -> do
       forM_
         (daemonConfigRequestTopics daemonConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock)
       when (daemonRole == Coordinator) $
         startCoordinatorLoops transport runtimeMode daemonConfig demoConfig
       forever (threadDelay 60000000)

@@ -173,11 +173,10 @@ bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
   writes MinIO itself over the cluster-internal endpoint, and the browser holds only the webapp
   origin — never a MinIO credential or presigned MinIO URL; demo-gated. See
   [object_access_doctrine.md](object_access_doctrine.md) and
-  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md). **Current Status:** the current
-  build instead mints presigned MinIO PUT/GET URLs at `/api/objects` and the browser transfers
-  bytes directly to MinIO through `/minio/s3`; the migration to webapp mediation is tracked by
-  reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25 under
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md). **Current Status:** implemented by
+  Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25, then cohort-closed under
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Generated artifact key ownership is
+  closed by Phase 7 Sprint 7.28 and [Wave N](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 - HTTP endpoint `/api/account` reaps the caller's demo-owned MinIO prefix and Pulsar topics before
   the browser starts Keycloak account deletion; demo-gated
 - the demo `Service` sets `sessionAffinity: None` so any replica can host any WS connection;

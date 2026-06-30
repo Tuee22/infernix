@@ -1,4 +1,6 @@
+{-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeApplications #-}
 
 module Main (main) where
 
@@ -14,6 +16,7 @@ import Data.List (find, isInfixOf, isPrefixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
 import Data.Maybe (isJust, isNothing, listToMaybe)
+import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (getCurrentTime)
@@ -119,7 +122,9 @@ import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
     PulsarWebSocketBase (..),
+    authorizedGeneratedResultObjectRefs,
     buildServiceConsumerSocketPath,
+    domainResultToProto,
     drainTopic,
     inferenceRequestProducerNameForFields,
     inferenceRequestSequenceIdForFields,
@@ -129,6 +134,7 @@ import Infernix.Runtime.Pulsar
     modelCacheBootstrapRetryableError,
     parseMessageIdToSequenceId,
     planDemoClientMessagePublications,
+    protoResultToDomain,
     publishInferenceRequest,
     requireTopicRef,
     serviceConsumerAckTimeoutMillis,
@@ -154,6 +160,7 @@ import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
+import Lens.Family2 qualified as Lens
 import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Exit (ExitCode (..))
@@ -988,7 +995,9 @@ main = do
             InferenceRequest
               { requestModelId = "llm-smollm2-safetensors",
                 inputText = Text.replicate 96 "x",
-                inputObjectRef = Nothing
+                inputObjectRef = Nothing,
+                requestUserId = Nothing,
+                requestContextId = Nothing
               }
       inferenceResult <- executeInference paths AppleSilicon [] request
       -- Phase 4 Sprint 4.7/4.15: the transformers-python adapter lazy-imports
@@ -1159,6 +1168,18 @@ main = do
       assert
         (fmap (inlineOutput . payload) reloadedResult == Just (Just "hello world"))
         "inference result reload preserves the inline payload"
+      let resultTopicProto = domainResultToProto textPayloadResult
+          resultTopicCreatedAt = Lens.view (field @"createdAt") resultTopicProto
+      assert
+        ("T" `Text.isInfixOf` resultTopicCreatedAt && "Z" `Text.isSuffixOf` resultTopicCreatedAt)
+        "Sprint 4.24: result-topic protobuf timestamps use the canonical ISO-8601 storage format"
+      assert
+        (fmap createdAt (protoResultToDomain resultTopicProto) == Just resultNow)
+        "Sprint 4.24: result-topic protobuf timestamps round-trip through the shared parser"
+      let malformedTimestampProto = Lens.set (field @"createdAt") "not-a-timestamp" resultTopicProto
+      assert
+        (isNothing (protoResultToDomain malformedTimestampProto))
+        "Sprint 4.24: malformed result-topic protobuf timestamps fail closed without throwing"
 
       nativeInferenceResult <-
         executeInference
@@ -1168,7 +1189,9 @@ main = do
           InferenceRequest
             { requestModelId = "llm-qwen15-mlx",
               inputText = "native runner coverage",
-              inputObjectRef = Nothing
+              inputObjectRef = Nothing,
+              requestUserId = Nothing,
+              requestContextId = Nothing
             }
       -- Phase 4 Sprint 4.2/4.12: native dispatch resolves the engine binary by
       -- absolute path under ./.data/engines/<adapterId>/ and fails fast when it
@@ -1216,7 +1239,9 @@ main = do
               InferenceRequest
                 { requestModelId = "llm-tinyllama-gguf",
                   inputText = "native runner cache wiring",
-                  inputObjectRef = Nothing
+                  inputObjectRef = Nothing,
+                  requestUserId = Nothing,
+                  requestContextId = Nothing
                 }
               "/opt/infernix/engines/llama-cpp-cli"
               (Just sampleModelCacheConfig)
@@ -1253,7 +1278,9 @@ main = do
               InferenceRequest
                 { requestModelId = "audio-basic-pitch-onnx",
                   inputText = "",
-                  inputObjectRef = Just "infernix-demo-objects/unit/input.wav"
+                  inputObjectRef = Just "infernix-demo-objects/unit/input.wav",
+                  requestUserId = Just "unit-user",
+                  requestContextId = Just "unit-context"
                 }
               "/opt/infernix/engines/onnx-runtime-native"
               (Just sampleModelCacheConfig)
@@ -1288,13 +1315,18 @@ main = do
               InferenceRequest
                 { requestModelId = "llm-smollm2-safetensors",
                   inputText = "worker request cache wiring",
-                  inputObjectRef = Nothing
+                  inputObjectRef = Nothing,
+                  requestUserId = Just "unit-user",
+                  requestContextId = Just "unit-context"
                 }
       assert
         ( workerRequestModelCacheConfig workerRequest
             == Just sampleModelCacheConfig
         )
         "worker protobuf requests carry typed model-cache and MinIO wiring to Python adapters"
+      assert
+        (Lens.view (field @"generatedOutputObjectPrefix") workerRequest == "users/unit-user/contexts/unit-context/generated/")
+        "worker protobuf requests carry Haskell-derived generated artifact output prefixes"
       assert
         ( modelCacheBootstrapRetryableError
             ErrorResponse
@@ -1407,7 +1439,9 @@ main = do
           InferenceRequest
             { requestModelId = "llm-smollm2-safetensors",
               inputText = "  override payload  ",
-              inputObjectRef = Nothing
+              inputObjectRef = Nothing,
+              requestUserId = Nothing,
+              requestContextId = Nothing
             }
       -- Phase 4 Sprint 4.7: the override wrapper writes its marker before
       -- exec-ing the selected worker, so the marker proves the configured
@@ -2639,6 +2673,41 @@ assertObjectsLayoutAndPresigning = do
   assert
     (Contracts.objectKey generated == "users/alice/contexts/ctx-200/generated/result.wav")
     "generated object key includes the generated subprefix"
+  assert
+    (ObjLayout.generatedObjectPrefix alice anotherCtx == "users/alice/contexts/ctx-200/generated/")
+    "generated object prefixes are derived from user and context ids"
+
+  resultNow <- getCurrentTime
+  let generatedRefText = Contracts.objectBucket generated <> "/" <> Contracts.objectKey generated
+      bobGenerated = ObjLayout.generatedObjectKey bob anotherCtx "result.wav"
+      bobGeneratedRefText = Contracts.objectBucket bobGenerated <> "/" <> Contracts.objectKey bobGenerated
+      resultWith ref user context =
+        InferenceResult
+          { requestId = "request-generated-ownership",
+            resultModelId = "artifact-model",
+            resultMatrixRowId = "artifact-model",
+            resultRuntimeMode = LinuxCpu,
+            resultSelectedEngine = "unit-engine",
+            status = "completed",
+            payload =
+              ResultPayload
+                { inlineOutput = Nothing,
+                  objectRef = Just ref
+                },
+            createdAt = resultNow,
+            resultUserId = user,
+            resultContextId = context,
+            resultCausalRef = "prompt-1"
+          }
+  assert
+    (authorizedGeneratedResultObjectRefs (resultWith generatedRefText "alice" "ctx-200") == Right [generated])
+    "result bridge accepts structured generated artifact refs under the request user's context prefix"
+  case authorizedGeneratedResultObjectRefs (resultWith bobGeneratedRefText "alice" "ctx-200") of
+    Left _ -> pure ()
+    Right _ -> fail "result bridge accepted a generated artifact ref owned by another user"
+  case authorizedGeneratedResultObjectRefs (resultWith (Contracts.objectKey generated) "alice" "ctx-200") of
+    Left _ -> pure ()
+    Right _ -> fail "result bridge accepted a raw generated artifact key without a bucket"
 
   -- Model bucket + ready sentinel
   let modelBytes = ObjLayout.modelObjectKey "qwen2.5-7b" "tokenizer.json"
@@ -2989,7 +3058,9 @@ assertLinuxHostBatchForwarding paths = do
       InferenceRequest
         { requestModelId = "llm-tinyllama-gguf",
           inputText = "forward me",
-          inputObjectRef = Nothing
+          inputObjectRef = Nothing,
+          requestUserId = Nothing,
+          requestContextId = Nothing
         }
   let requestPath = requestDirectory </> Text.unpack requestIdValue <.> "pb"
       batchPath = batchDirectory </> Text.unpack requestIdValue <.> "pb"
@@ -3758,6 +3829,11 @@ assertHostConfig testRoot = do
   assert
     (HostTools.hostToolPath appleConfig HostTools.HostAptGet == "")
     "HostTools returns empty path for tools unavailable in the active context"
+  assert
+    ( "/root/.ghcup/bin/cabal" `elem` HostTools.hostToolFallbackCandidates HostTools.HostCabal
+        && "/root/.ghcup/bin/ghc" `elem` HostTools.hostToolFallbackCandidates HostTools.HostGhc
+    )
+    "Sprint 6.34: HostTools fallback candidates include the Linux launcher ghcup toolchain paths"
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert

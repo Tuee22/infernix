@@ -41,8 +41,9 @@ and
 [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
 **Current Status**: implemented (Phase 7 Sprint 7.25 webapp object-proxy; Phase 3 Sprint 3.13
 removed the `/minio/s3` route + `presignPublicEndpoint`). The webapp reads and writes MinIO
-server-side; the browser never holds a presigned MinIO URL. The `linux-cpu` plus
-chosen-accelerator real per-user attestation is the remaining Wave M residual.
+server-side; the browser never holds a presigned MinIO URL. Wave M closed the browser object-proxy
+evidence; Phase 7 Sprint 7.28 extends the same user/context prefix ownership to generated artifacts,
+and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validation.
 
 ## Owner And Durability Table
 

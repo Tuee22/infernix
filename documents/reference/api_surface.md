@@ -62,10 +62,13 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors
 - large outputs from generative engines (image, audio, video, large structured-text) are
-  PUT by the engine adapter directly to the `infernix-demo-objects` MinIO bucket at the
-  appropriate per-user prefix; the inference result message carries an `ObjectRef`, and the
-  browser fetches the bytes through the webapp `GET /api/objects/download` proxy (never directly
-  from MinIO). Text outputs ride inline in the result message
+  written server-side to the `infernix-demo-objects` MinIO bucket under the caller's generated
+  prefix; the inference result message carries an `ObjectRef`, and the browser fetches the bytes
+  through the webapp `GET /api/objects/download` proxy (never directly from MinIO). Text outputs
+  ride inline in the result message. Phase 7 Sprint 7.28 makes every
+  adapter/native generated-output writer consume a Haskell-supplied
+  `users/<sub>/contexts/<ctx>/generated/` target instead of deriving an adapter-local key; Wave N
+  closes the full selected `linux-gpu` plus `linux-cpu` cohort validation
 - cache-eviction and cache-rebuild flows only affect derived cache state; they do not rewrite the
   generated catalog or publication contract
 - cache status exposes the supported `minio://infernix-models/<modelId>/` durable
@@ -90,8 +93,8 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - the supported manual-inference path closes through the durable-context Chat surface introduced
   by Phase 7: the browser opens a WebSocket against `/ws` (see
   [web_portal_surface.md](web_portal_surface.md)) and receives typed `ConversationState`
-  snapshots plus `ConversationStatePatch` deltas, and artifact transfer uses presigned MinIO
-  URLs minted by `POST /api/objects`
+  snapshots plus `ConversationStatePatch` deltas, and artifact transfer uses the webapp
+  `/api/objects` byte proxy
 
 ## Cross-References
 

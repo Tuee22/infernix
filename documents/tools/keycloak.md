@@ -97,8 +97,8 @@ request with a typed error.
 The routed Playwright run validates the public Keycloak path end to end for the object-grant
 API: a fresh user self-registers through `/auth`, the authorization code is exchanged for a
 real access token, `/api/objects/upload` rejects a malformed bearer token with `401`, the
-backend accepts the real token for scoped upload/download grant minting, and the same user
-completes a routed presigned MinIO PUT/GET byte roundtrip. A second fresh user with the same
+backend accepts the real token for scoped webapp-mediated upload/download, and the same user
+completes a routed `/api/objects` byte roundtrip. A second fresh user with the same
 context/display name receives a different `users/<sub>/...` object prefix and cannot read the
 first user's object by default. The routed suite opens `/ws` with the real token, verifies a
 malformed token does not open a browser WebSocket, and asserts a typed `ServerError` for a

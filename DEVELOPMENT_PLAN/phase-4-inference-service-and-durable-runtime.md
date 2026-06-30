@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done — reopened and re-closed (Wave K fully closed: `linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26)
+**Status**: Done — reopened and re-closed (Sprint 4.24 timestamp canonicalization closed 2026-06-29)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -41,6 +41,14 @@
 > The checked-in `dhall/Infernix{Host,Cluster,Secrets,Substrate}.dhall` schema files now
 > contain the reflected output, and `infernix lint docs` drift-checks them against the
 > in-binary renderer.
+
+> **Audit follow-on reopen (result timestamp safety).** Phase 4 reopened Sprint 4.24 after the June
+> 2026 audit found a duplicate result-protobuf timestamp codec in `src/Infernix/Runtime/Pulsar.hs`:
+> `resultToProto` serializes `UTCTime` with `show`, and `protoResultToDomain` parses it with partial
+> `read`, while `src/Infernix/Storage.hs` already owns a safe ISO-8601
+> `formatTimestamp` / `parseTimestamp` pair. Sprint 4.24 is closed: the Pulsar result-topic codec now
+> uses the shared storage timestamp helpers, malformed `createdAt` values return `Nothing` instead of
+> throwing, and the unit regression covers canonical roundtrip plus malformed input.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
@@ -1503,6 +1511,42 @@ that exercise the real Linux engines, so no Phase-4 validation is blocked by a l
 
 - `./bootstrap/linux-gpu.sh test` plus rebuilt `./bootstrap/linux-cpu.sh test` per-row suites fail when a
   Linux engine is withheld or returns a non-real result
+
+### Remaining Work
+
+None.
+
+---
+
+## Sprint 4.24: Pulsar Result Timestamp Canonicalization [Done]
+
+**Status**: Done
+**Code-side closure**: Complete on 2026-06-29. `src/Infernix.Storage` exports the shared
+`formatTimestamp` / `parseTimestamp` ISO-8601 helpers, `src/Infernix.Runtime.Pulsar` uses them for
+result-topic protobuf serialization and parsing, and malformed result-proto `createdAt` values now fail
+as `Nothing` instead of process exceptions. Unit coverage proves canonical wire timestamps,
+roundtrips through the shared parser, and malformed-input failure.
+**Cohort gate**: Not required; the change is a machine-independent serialization/parsing closure with
+no transport or live engine behavior change.
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Storage.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Docs to update**: `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+
+### Objective
+
+Make durable and Pulsar result timestamps share one total, ISO-8601 conversion contract.
+
+### Deliverables
+
+- export or otherwise share the existing safe timestamp codec instead of duplicating `show` / `read`
+- make malformed result-proto `createdAt` values return `Nothing` / a typed failure path without
+  crashing the result bridge
+- add a roundtrip regression for canonical timestamps and a malformed-timestamp regression
+
+### Validation
+
+- `cabal test infernix-unit --test-options='--hide-successes'` — passed 2026-06-29
+- `cabal build test:infernix-integration` — passed 2026-06-29
+- `cabal run exe:infernix -- lint docs` — passed 2026-06-29
 
 ### Remaining Work
 

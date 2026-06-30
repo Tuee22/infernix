@@ -110,6 +110,9 @@ class AdapterContext:
     # Phase 4 Sprint 4.15: object reference for the non-text input families
     # (audio/image/score). Empty string for the text families.
     input_object_ref: str
+    # Phase 7 Sprint 7.28: Haskell-derived object-key prefix for generated
+    # artifact uploads, e.g. users/<sub>/contexts/<ctx>/generated/.
+    generated_output_object_prefix: str
     bootstrap_ready: bool
     bootstrap_manifest_path: str
 
@@ -354,9 +357,11 @@ def _upload_demo_object(context: AdapterContext, artifact: ArtifactResult) -> st
             f"{context.family} artifact to {DEMO_OBJECTS_BUCKET}. Run "
             "`poetry install` to reconcile the supported adapter dependencies."
         ) from exc
+    output_prefix = _validated_generated_output_prefix(context)
     object_key = (
-        f"{context.family}/{context.model_id}/"
-        f"{short_digest(context.input_text + context.model_id)}{artifact.suffix}"
+        f"{output_prefix}{_safe_object_key_segment(context.family)}-"
+        f"{_safe_object_key_segment(context.model_id)}-"
+        f"sha256-{hashlib.sha256(artifact.data).hexdigest()}{_safe_artifact_suffix(artifact.suffix)}"
     )
     artifact_bucket = config.demo_artifacts_bucket or DEMO_OBJECTS_BUCKET
     client = boto3.client(
@@ -374,6 +379,44 @@ def _upload_demo_object(context: AdapterContext, artifact: ArtifactResult) -> st
         ContentType=artifact.content_type,
     )
     return f"{artifact_bucket}/{object_key}"
+
+
+def _validated_generated_output_prefix(context: AdapterContext) -> str:
+    prefix = context.generated_output_object_prefix
+    if not prefix:
+        raise RuntimeError(
+            "artifact adapter request is missing generated_output_object_prefix; "
+            "refusing to invent a generated object key"
+        )
+    if (
+        not prefix.startswith("users/")
+        or "/contexts/" not in prefix
+        or not prefix.endswith("/generated/")
+        or ".." in prefix
+        or "//" in prefix
+    ):
+        raise RuntimeError(
+            f"invalid generated_output_object_prefix {prefix!r}; expected "
+            "users/<sub>/contexts/<ctx>/generated/"
+        )
+    return prefix
+
+
+def _safe_object_key_segment(value: str) -> str:
+    safe = "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in value
+    ).strip("-")
+    return safe or "artifact"
+
+
+def _safe_artifact_suffix(value: str) -> str:
+    suffix = value if value.startswith(".") else f".{value}"
+    safe = "".join(
+        character if character.isalnum() or character in "._-" else "-"
+        for character in suffix
+    )
+    return safe if safe.startswith(".") and len(safe) > 1 else ".bin"
 
 
 def _configure_model_cache_from_request(request: inference_pb2.WorkerRequest) -> None:
@@ -554,6 +597,9 @@ def load_adapter_context(request: inference_pb2.WorkerRequest) -> AdapterContext
         runtime_lane=cast(str, request.runtime_lane),
         input_text=normalized_input_text(cast(str, request.input_text)),
         input_object_ref=cast(str, request.input_object_ref),
+        generated_output_object_prefix=cast(
+            str, request.generated_output_object_prefix
+        ),
         bootstrap_ready=bootstrap_ready,
         bootstrap_manifest_path=str(bootstrap_path),
     )

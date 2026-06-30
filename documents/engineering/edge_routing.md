@@ -46,7 +46,8 @@ target, and the `presignPublicEndpoint` cluster-config field. MinIO is no longer
 the `infernix-demo` webapp `/api/objects` proxy is the only external file-storage surface, per
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md). The
 generated route-inventory table below reflects the de-exposed surface (no `/minio/s3` row). The
-`linux-cpu` plus chosen-accelerator real per-user attestation is the remaining Wave M residual.
+browser object-proxy evidence closed in Wave M; generated artifact object ownership remains active
+under Phase 7 Sprint 7.28.
 
 ## Route Inventory
 

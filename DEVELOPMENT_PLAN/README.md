@@ -37,6 +37,23 @@ Any still-present compatibility or consolidation surfaces are listed in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than hidden in phase
 status prose.
 
+## June 2026 Audit Follow-On Reopen
+
+A full documentation/code audit reopened three bounded follow-ons without disturbing the prior
+validation record for the already-closed work:
+
+- **Phase 4 Sprint 4.24** — replace the duplicated Pulsar result timestamp `show` / partial `read`
+  conversion with the same safe ISO-8601 codec used by `Storage.hs`.
+- **Phase 6 Sprint 6.34** — close documentation-lint coverage gaps and no-env/no-PATH enforcement
+  drift in pre-manifest or lint-owning code.
+- **Phase 7 Sprint 7.28** — make generated artifact object ownership Haskell-derived from
+  `userId` + `contextId` so adapter/native outputs cannot bypass the per-user
+  `users/<sub>/contexts/<ctx>/generated/` layout. Closed 2026-06-30 by the full selected
+  `linux-gpu` plus `linux-cpu` cohort gate.
+
+The legacy or duplicate surfaces targeted by those sprints are recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
 ## Document Index
 
 | Document | Purpose |
@@ -89,7 +106,13 @@ contract.
 
 ## Current Repo Assessment
 
-All phase implementation work closes around the implemented worktree. Phase 3 Sprint 3.12 and
+The June 2026 audit reopened Phase 4, Phase 6, and Phase 7 for the bounded follow-ons listed above.
+Earlier sprint closure evidence remains valid for its original scope. Phase 4 Sprint 4.24 is now
+re-closed, Phase 6 Sprint 6.34 is now re-closed for no-env/docs-lint coverage, and Phase 7 Sprint
+7.28 is now re-closed for generated-artifact ownership after the full selected `linux-gpu` plus
+`linux-cpu` cohort gate and matching deletion-ledger move.
+
+Prior closure evidence closes around the implemented worktree. Phase 3 Sprint 3.12 and
 [Wave F](cohort-validation-waves.md) closed on the recorded validation after native `linux/arm64` validation
 through the already selected arm64 Docker daemon on this Apple Silicon machine. The repository implements the
 staged-substrate architecture, the baked Linux outer-container launcher,
@@ -471,10 +494,10 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 1 | Repository and Control-Plane Foundation | Done — reopened and re-closed (Sprints 1.1-1.14 remain closed for the scaffold/topology/materialization-lane foundation; Sprint 1.15 is closed for real Apple native runner materialization and native snapshot hydration. Apple Stage 2 integration plus focused routed Playwright are green, and the paired `linux-cpu` full gate closed on 2026-06-29 with rebuilt image `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`: `./bootstrap/linux-cpu.sh test` passed style, Python `check-code`, unit, web `71/71`, full integration with all real `linux-cpu` model outputs plus the HA/chaos tail, and routed Playwright `9/9`.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done — reopened and re-closed (Sprints 3.1-3.12 remain closed — Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F, Sprints 3.10-3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C; Sprint 3.13 de-exposes the `/minio/s3` external gateway route + `infernix-minio-s3` SecurityPolicy + `presignPublicEndpoint` so the webapp object-proxy is the sole external file-storage service. Sprint 3.13 is code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates.) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done — reopened and re-closed (Sprints 4.1-4.20 closed for the typed dispatch/catalog/pool-routing architecture; the audit established that the prior real-output closure was satisfied by fabrication for several rows, so Sprints 4.21-4.23 reopen to deliver realness-by-construction. **Code-side closed + validated 2026-06-24**: every fabrication path removed + JAX/TF adapter retirement; the real Linux engines (real Audiveris OMR, the weight-staging fail-closed guard, real no-TensorFlow basic-pitch→MIDI, real piano/Omnizart ByteDance CRNN); the modern PyTorch music rebind (Omnizart real, MT3 honest-fail deferred); plus Phase 4's own real input fixtures + fail-closed per-row tests (Sprint 4.23). Demucs (real first-party PyTorch `.th` weight) and Open-Unmix (real `openunmix` umxhq) are now real, and MT3/YourMT3+ is `Not recommended` on every substrate (no real engine on any substrate). **Wave K is fully closed: `linux-cpu` Stage-2 GREEN 2026-06-25 and `linux-gpu` Stage-2 GREEN 2026-06-26** — `infernix test integration` + `infernix test e2e` (9/9, incl. the per-model browser matrix) pass on real clusters for both Linux accelerators, every catalog model producing real output (LLM/whisper/Demucs/Open-Unmix/basic-pitch/omnizart/bark/Audiveris on CPU; plus AWQ/GPTQ/SDXL-Turbo/Wan2.1 video on GPU). Real Apple engines are owned by the reopened Phase 1 under Wave L.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Done — reopened and re-closed (Sprints 4.1-4.23 remain closed for typed dispatch, runtime, realness-by-construction, Linux real-output, and Wave K evidence. Sprint 4.24 closed 2026-06-29: the duplicated Pulsar result-proto timestamp `show` / partial-`read` path now uses the shared ISO-8601 `Storage.hs` codec, malformed `createdAt` values fail as data, and unit/integration-build/docs-lint gates passed.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done — reopened and re-closed (Sprints 6.1-6.32 closed for the validation/HA architecture; so Sprint 6.33 adds the fail-closed HA / chaos / service-loop assertions on top of the Phase 0 realness lint (Sprint 0.12) and the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23). **Code-side closed + validated 2026-06-24**: `validateServiceRuntimeLoop` now uploads the per-family fixture and asserts completion + the `ResultFamily` contract (was neither), and `assertCompletedResultPayload` is `ResultFamily`-aware + fail-closed across all five chaos/throughput/HA call sites. **Wave K fully closed (`linux-cpu` 2026-06-25, `linux-gpu` 2026-06-26):** all HA/chaos hardening steps pass on real clusters for both Linux accelerators (engine pool placement, backpressure, frontend/coordinator/engine failover, node drain, bootstrap failover + dedup — fixed to use `/healthz` after the Sprint 4.21 realness guard failed closed on the prior HTML URL — throughput, harbor/minio/pulsar recovery, postgres failover + lifecycle rebinding, anti-affinity), plus 9/9 routed Playwright specs.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
-| 7 | Demo App Multi-User Durable Context | Done — reopened and re-closed (Sprints 7.1-7.24 remain closed — Sprint 7.23 superseded as an Apple singleton stopgap, Sprint 7.24 closes startup-time substrate-neutral engine pools, pinned Apple `Exclusive` duplicate rejection, same-machine Apple `Shared` coexistence, production demo-off assertions, and live broker-native backpressure; Wave J closed on 2026-06-20 with full `linux-gpu` plus rebuilt-image `linux-cpu` validation. Sprints 7.25-7.27 move browser file storage behind the webapp object-proxy with per-user isolation hardening, add a per-user Files navigational view, and add in-browser MIDI/MusicXML/ZIP rendering. They are code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates. Desired-state hot reload remains future work.) | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
+| 6 | Validation, E2E, and HA Hardening | Done — reopened and re-closed (Sprints 6.1-6.33 remain closed for validation, HA, realness-lint, fail-closed service-loop, and Wave K evidence. Sprint 6.34 closed 2026-06-29: docs lint covers the authoritative configuration/tool/realness docs plus Phase 7; no-env/no-PATH drift in `Setup.hs`, bootstrap shell, Haskell-style Cabal calls, and the PureScript installer is removed or mechanically confined; unit/build/lint gates passed.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 7 | Demo App Multi-User Durable Context | Done — Sprint 7.28 closed generated artifact object ownership and result-bridge authorization on 2026-06-30 with full selected `linux-gpu` plus `linux-cpu` cohort validation. Prior durable-context, engine-pool, object-proxy, Files view, in-browser rendering, and Wave M closure evidence remains recorded for Sprints 7.1-7.27. Desired-state hot reload remains future work. | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
 > `Active` or `Blocked` for named follow-ons while later phases can be `Done` when their owned work
@@ -598,7 +621,7 @@ The supported platform now closes around these rules:
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J, and Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed in Wave M. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J, Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed in Wave M, and Sprint 7.28 generated artifact ownership closed in Wave N. |
 
 ## Cross-References
 

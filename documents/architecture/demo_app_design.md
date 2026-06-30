@@ -328,8 +328,9 @@ bytes, never a presigned MinIO URL):
 
 **Current Status.** Every family is sourced through the webapp `/api/objects/download` proxy
 (Phase 7 Sprint 7.25). MIDI, MusicXML/MXL, and ZIP inline rendering is delivered by Phase 7
-Sprint 7.27. The `linux-cpu` plus chosen-accelerator real per-user attestation is the remaining
-[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+Sprint 7.27 and closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Generated
+artifact object ownership is closed by Phase 7 Sprint 7.28: adapter/native outputs are
+forced under `users/<sub>/contexts/<ctx>/generated/`, and Wave N closes the full cohort validation.
 
 Upload flow:
 

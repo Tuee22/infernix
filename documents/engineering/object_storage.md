@@ -31,7 +31,7 @@ The supported shape uses three MinIO buckets and nothing else:
 |---|---|---|---|
 | `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by Linux engine pods and by Apple host engine members. |
 | `infernix-engine-artifacts` | Always-on (not demo-gated) | `sha256/<digest>` plus optional adapter pointers such as `<substrate>/<adapterId>/<version>/manifest.pb` | Immutable engine software payloads: wheelhouses, native binaries, Core ML compiled models, JVM tools, and reusable Apple or Linux materialization payloads. Model weights never live here. |
-| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → presigned PUT) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written by the engine adapter through the presigned PUT helper on the `generated/` prefix. Read by the browser via presigned GET URLs minted at `/api/objects`. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
+| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → webapp object proxy) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written server-side to the `generated/` prefix. Read by the browser only through `/api/objects`; the browser never receives a presigned MinIO URL. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
 
 ## Bucket Scope Policies
 
@@ -53,9 +53,11 @@ The supported shape uses three MinIO buckets and nothing else:
   single-mediator contract and
   [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md) for
   the per-user `sub`-prefix isolation rule, and [../tools/minio.md](../tools/minio.md) for the
-  bucket layout. **Current Status**: implemented (Phase 7 Sprint 7.25 webapp object-proxy; Phase 3
-  Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`). The `linux-cpu` plus
-  chosen-accelerator real per-user attestation is the remaining Wave M residual.
+  bucket layout. **Current Status**: browser upload/download proxying is implemented (Phase 7 Sprint
+  7.25 webapp object-proxy; Phase 3 Sprint 3.13 removed the `/minio/s3` route +
+  `presignPublicEndpoint`). Sprint 7.28 makes the engine/coordinator path derive every generated
+  output target under `users/<sub>/contexts/<ctx>/generated/`; Wave N closes the full selected
+  `linux-gpu` plus `linux-cpu` cohort validation.
 - Cross-bucket access is not part of the supported contract.
 
 ## Engine Software Artifacts
@@ -115,16 +117,24 @@ price of true daemon statelessness.
 
 For real per-family artifact inference outputs (source-separation
 stems, audio-to-MIDI and music-transcription MIDI / MusicXML,
-generated images, video, and audio), the engine adapter writes the
-bytes into the always-on `infernix-demo-objects` bucket at the
-appropriate per-user prefix through the existing presigned PUT helper,
-and the result payload carries an `ObjectRef` (bucket + key) resolved
-on read through the existing presigned GET helper. These artifacts are
-always written to `infernix-demo-objects` — never to the retired
+generated images, video, and audio), the supported target is a
+server-derived object under
+`infernix-demo-objects/users/<sub>/contexts/<ctx>/generated/`. The result
+payload carries an `ObjectRef` (bucket + key) resolved on browser read
+through the webapp `/api/objects` proxy. These artifacts are always
+written to `infernix-demo-objects` — never to the retired
 `infernix-runtime` or `infernix-results` buckets, which are not part of
 the supported contract. Text outputs from the LLM and speech families
 ride inline in the protobuf result message and never touch object
 storage.
+
+Sprint 7.28 makes this target Haskell-owned:
+`WorkerRequest` carries the generated-output prefix derived from
+`userId` + `contextId`, Python adapters reject missing or invalid
+generated-output targets, native-process-runner artifact uploads use the
+same prefix, and the result bridge rejects raw or cross-user generated
+object refs. Wave N closes the full selected `linux-gpu` plus
+`linux-cpu` cohort validation.
 
 Non-text INPUTS are carried the same way: an audio or image input is
 staged into `infernix-demo-objects` under the per-user `uploads/`
@@ -136,9 +146,9 @@ families to object references. The newer proto fields are a non-text
 INPUT object reference on `InferenceRequest` / `WorkerRequest` and an
 object-reference OUTPUT on `WorkerResponse` for the artifact adapters.
 For native-process-runner artifact families, the child process may return a local artifact-file
-marker instead of doing its own MinIO write; the Haskell worker uploads that file to
-`infernix-demo-objects` using secret-backed presigned PUT credentials and publishes the same
-object-reference output shape.
+marker instead of doing its own MinIO write; the Haskell worker uploads that file to the same
+Haskell-derived generated-object target using secret-backed presigned PUT credentials and publishes
+the same object-reference output shape.
 
 ## Coordinator Model-Bootstrap Workflow
 
@@ -197,9 +207,10 @@ Browsers fetch generated artifacts exclusively through the webapp's
 bucket. Those endpoints stream the bytes
 server-side and the browser never receives a presigned MinIO URL (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
-**Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the
-`/minio/s3` route). The `linux-cpu` plus chosen-accelerator real per-user attestation is the
-remaining Wave M residual.
+**Current Status**: implemented for browser reads (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed
+the `/minio/s3` route). Sprint 7.28 now also derives generated-artifact write targets under the same
+user/context prefix, and Wave N closes the full selected `linux-gpu` plus `linux-cpu` cohort
+validation.
 
 ## Routed Surface
 
@@ -211,12 +222,12 @@ over the cluster-internal endpoint and streams artifact bytes through
 its own `/api/objects/{upload,download}` surface; the browser holds only
 the webapp origin and never a presigned MinIO URL (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
-**Current Status**: implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the
-`/minio/s3` route + `presignPublicEndpoint`); the `linux-cpu` plus chosen-accelerator real
-per-user attestation is the remaining Wave M residual. The supported
+**Current Status**: implemented for browser-originated object operations (Phase 7 Sprint 7.25; Phase 3
+Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`); generated engine artifact
+prefix ownership is closed by Phase 7 Sprint 7.28 and Wave N. The supported
 MIME contract for browser-rendered artifacts (image, audio, video,
-text/JSON preview, browser-native PDF, MIDI / MusicXML download-only,
-and generic-binary download) lives in
+text/JSON preview, browser-native PDF, MIDI / MusicXML / ZIP-stem
+rendering, and generic-binary download) lives in
 [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 and [../tools/minio.md](../tools/minio.md); model-weight or runtime
 formats are not upload MIME families.
@@ -235,10 +246,13 @@ The routed Linux GPU E2E flow validates the server-side
 - `infernix test integration` covers the `emptyDir` LRU eviction
   policy in the adapter helper: sustained load does not exhaust
   ephemeral storage and does not restart the engine pod.
-- `infernix test e2e` covers `/api/objects` grant minting from a real
-  Keycloak JWT, same-user routed presigned MinIO PUT/GET byte equality,
-  and cross-user object-prefix isolation for two Keycloak users with
-  the same context id and display name.
+- `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a real
+  Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
+  Keycloak users with the same context id and display name.
+- Phase 7 Sprint 7.28 unit and integration-build validation covers Haskell-derived generated-output
+  prefixes for Python adapters, native process runners, and the result bridge so artifact outputs
+  cannot bypass the `users/<sub>/contexts/<ctx>/generated/` layout; Wave N closes the full selected
+  `linux-gpu` plus `linux-cpu` routed real-output validation.
 - Production-shape test (`demo_ui = false`) confirms `infernix-models`
   and `infernix-engine-artifacts` are present, `infernix-demo-objects`
   is absent, and no daemon has a PVC.

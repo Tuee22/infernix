@@ -68,9 +68,8 @@ and the discipline that PureScript is a thin renderer is a governed contract:
 
 **Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
 route + `presignPublicEndpoint`). The browser receives only object refs and the webapp performs
-every MinIO read/write server-side; the grant carries no presigned URL. The `linux-cpu` plus
-chosen-accelerator real per-user attestation is the remaining
-[Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+every MinIO read/write server-side; the grant carries no presigned URL. Wave M closed the browser
+object-proxy evidence; Wave N closed Phase 7 Sprint 7.28 generated artifact object ownership.
 
 ## Validation
 

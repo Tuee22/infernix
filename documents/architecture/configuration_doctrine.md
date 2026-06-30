@@ -140,6 +140,13 @@ process it launches. That value selects the already-built launcher image; it is 
 Infernix code, is not an operator configuration substrate, and does not replace the typed Dhall
 files.
 
+**Current audit note**: Phase 6 Sprint 6.34 closed the remaining no-env/no-PATH gaps found in
+pre-manifest and lint-self-hosting code. `Setup.hs` no longer reads `INFERNIX_BUILD_ROOT` or inherited
+`PATH`; its only environment mutation is the deterministic `Env.setEnv "PATH"` required by the
+proto-lens custom setup. Bootstrap shell no longer accepts inherited `BOOTSTRAP_*` command overrides or
+inherited `PATH` joins, Haskell-style Cabal invocations resolve through `HostConfig` or fixed
+candidates, and the PureScript compiler installer uses Node APIs instead of bare `mktemp` / `tar`.
+
 The shell never reads a `.dhall` file directly. The Haskell binary is the only Dhall reader.
 
 ## Cluster pod contract
@@ -168,6 +175,9 @@ contract.
 
 ## Validation
 
+- Phase 6 Sprint 6.34 expanded `src/Infernix/Lint/Docs.hs` coverage so authoritative docs such as
+  this doctrine, `no_env_vars.md`, `host_tools_manifest.md`, `cluster_config_manifest.md`,
+  `realness_contract.md`, tool docs, and Phase 7 plan docs are included in the machine lint set.
 - `infernix lint files` rejects any new `lookupEnv` / `getEnv` / `proc "<bare-name>"` outside the
   documented exception list, and `infernix test lint` rejects direct `findExecutable` /
   `findExecutables` discovery outside the lint module's own token list.

@@ -106,6 +106,10 @@ message WorkerRequest {
   string minio_region = 17;
   string minio_access_key = 18;
   string minio_secret_key = 19;
+  // Phase 7 Sprint 7.28: Haskell-derived object-key prefix for generated
+  // artifact uploads. Artifact adapters and native-runner upload paths must
+  // write under this prefix and fail closed when it is absent or invalid.
+  string generated_output_object_prefix = 20;
 }
 
 message WorkerResponse {

@@ -103,8 +103,8 @@ host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selec
 | kubectl | `toolPaths.kubectl` | `/opt/homebrew/bin/kubectl` | `/usr/local/bin/kubectl` (baked into image) |
 | helm | `toolPaths.helm` | `/opt/homebrew/bin/helm` | `/usr/local/bin/helm` |
 | kind | `toolPaths.kind` | `/opt/homebrew/bin/kind` | `/usr/local/bin/kind` |
-| cabal | `toolPaths.cabal` | `${HOME}/.ghcup/bin/cabal` | baked: `/usr/local/bin/cabal` |
-| ghc | `toolPaths.ghc` | `${HOME}/.ghcup/bin/ghc` | baked: `/usr/local/bin/ghc` |
+| cabal | `toolPaths.cabal` | `${HOME}/.ghcup/bin/cabal` | baked: `/root/.ghcup/bin/cabal` |
+| ghc | `toolPaths.ghc` | `${HOME}/.ghcup/bin/ghc` | baked: `/root/.ghcup/bin/ghc` |
 | ghcup | `toolPaths.ghcup` | `${HOME}/.ghcup/bin/ghcup` | (unused; image already has ghc/cabal) |
 | ormolu | `toolPaths.ormolu` | `./.build/haskell-style-tools/bin/ormolu` | same |
 | hlint | `toolPaths.hlint` | `./.build/haskell-style-tools/bin/hlint` | same |
@@ -142,6 +142,11 @@ defaults are baked into the launcher image at build time and updated only by reb
 Apple operators can override individual paths by editing `./.build/infernix-host.dhall`; the
 resulting file is consumed on next `infernix <command>` invocation.
 
+**Current audit note**: Phase 6 Sprint 6.34 reconciled the remaining manifest drift. Linux
+`cabal`/`ghc` defaults and manifestless fallback candidates include `/root/.ghcup/bin/{cabal,ghc}`,
+matching the launcher image, and the bootstrap pre-binary command inventory below reflects the current
+entrypoints.
+
 ## Bootstrap shell convention
 
 Bootstrap scripts handle the small set of commands that run *before* the launcher binary exists.
@@ -172,9 +177,13 @@ readonly CABAL="${HOME_DIR}/.ghcup/bin/cabal"
 "${REPO_ROOT}/.build/infernix" cluster up
 ```
 
-The pre-binary command set is intentionally tiny: `apt-get`, `sudo`, `docker`, `ghcup`, `cabal`,
-`brew`, `bash`, `dirname`, `getent`, `id`, `cut`. Everything else flows through the launcher
-binary, which reads its tool paths and native host architecture from `HostConfig`.
+The supported pre-binary command set is limited to the hardcoded constants or derived absolute paths in
+`bootstrap/*.sh`: `apt-get`, `bash`, `brew`, `cabal`, `chmod`, `cmp`, `cp`, `curl`, `dirname`,
+`docker`, `dpkg`, `dscl`, `env`, `getent`, `ghc`, `ghcup`, `gpg`, `grep`, `id`, `install`, `mktemp`,
+`nvidia-ctk`, `nvidia-smi`, `protoc`, `rm`, `sed`, `skopeo`, `sudo`, `systemctl`, `tr`,
+`ubuntu-drivers`, `uname`, and `usermod`. Everything else should flow through the launcher binary,
+which reads its tool paths and native host architecture from `HostConfig`. None of these names may
+become inherited environment overrides or ambient `PATH` lookups.
 
 ## Adding a new external command
 

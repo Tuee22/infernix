@@ -6,9 +6,12 @@ where
 import Control.Exception (IOException, try)
 import Control.Monad (when)
 import Data.Char (isAlphaNum)
-import Data.List (intercalate, isInfixOf, sort)
+import Data.List (find, intercalate, isInfixOf, sort)
 import Data.Maybe (fromMaybe)
+import Data.Text qualified as Text
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostTools qualified as HostTools
 import System.Directory
   ( createDirectoryIfMissing,
     doesDirectoryExist,
@@ -50,7 +53,8 @@ installFormatterTools paths = do
   ormoluPresent <- doesFileExist ormoluPath
   hlintPresent <- doesFileExist hlintPath
   when (not ormoluPresent || not hlintPresent) $ do
-    installResult <- try (installFormatterToolsWithCommand paths "cabal" (formatterInstallArgs paths)) :: IO (Either IOException ())
+    cabalPath <- requireStyleCabal paths
+    installResult <- try (installFormatterToolsWithCommand paths cabalPath (formatterInstallArgs paths)) :: IO (Either IOException ())
     case installResult of
       Right () -> pure ()
       Left installErr ->
@@ -93,7 +97,8 @@ checkCabalManifest paths = do
   hClose tempHandle
   sourceContents <- readFile sourcePath
   writeFile tempPath sourceContents
-  runCommand (repoRoot paths) "cabal" ["format", tempPath]
+  cabalPath <- requireStyleCabal paths
+  runCommand (repoRoot paths) cabalPath ["format", tempPath]
   formattedContents <- readFile tempPath
   removeFile tempPath
   if formattedContents == sourceContents
@@ -166,6 +171,7 @@ checkSourceReadability repoRoot sourceFile = do
 -- this list and the gate tightens automatically.
 envFunctionViolations :: FilePath -> [(Int, String)] -> [String]
 envFunctionViolations sourceFile numberedLines
+  | sourceFile == "Setup.hs" = setupHsEnvFunctionViolations sourceFile numberedLines
   | sourceFile `elem` envFunctionExemptedFiles = []
   | otherwise =
       [ sourceFile <> ":" <> show lineNumber <> ": forbidden env-IO call `" <> needle <> "`; route through HostConfig or a typed Dhall manifest"
@@ -226,14 +232,26 @@ forbiddenNativeFabricationTokens =
 
 envFunctionExemptedFiles :: [FilePath]
 envFunctionExemptedFiles =
-  [ -- The build setup is genuinely outside the runtime-config
-    -- substrate and runs before the binary exists.
-    "Setup.hs",
-    -- This lint module defines the forbidden tokens as string
+  [ -- This lint module defines the forbidden tokens as string
     -- literals; it must exempt itself or the check trips on its own
     -- token list.
     "src/Infernix/Lint/HaskellStyle.hs"
   ]
+
+setupHsEnvFunctionViolations :: FilePath -> [(Int, String)] -> [String]
+setupHsEnvFunctionViolations sourceFile numberedLines =
+  [ sourceFile <> ":" <> show lineNumber <> ": Setup.hs may only mutate PATH for the proto-lens custom-setup shim"
+  | (lineNumber, lineValue) <- numberedLines,
+    not (isCommentLine lineValue),
+    needle <- forbiddenEnvFunctions,
+    containsToken needle lineValue,
+    not (allowedSetupEnvLine lineValue)
+  ]
+
+allowedSetupEnvLine :: String -> Bool
+allowedSetupEnvLine lineValue =
+  "qualified System.Environment as Env" `isInfixOf` lineValue
+    || "Env.setEnv \"PATH\"" `isInfixOf` lineValue
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
 -- bare-name @proc "<command>"@ invocations whose name matches a
@@ -535,6 +553,39 @@ runCommand workingDirectory command args = do
   case exitCode of
     ExitSuccess -> pure ()
     _ -> ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput))
+
+requireStyleCabal :: Paths -> IO FilePath
+requireStyleCabal paths =
+  case configuredCabalPath paths of
+    Just cabalPath -> pure cabalPath
+    Nothing -> do
+      fallback <- findFirstExisting (HostTools.hostToolFallbackCandidates HostTools.HostCabal)
+      case fallback of
+        Just cabalPath -> pure cabalPath
+        Nothing ->
+          ioError
+            ( userError
+                "haskell-style-check: cabal is unavailable through HostConfig.toolPaths.cabal and fixed fallback candidates"
+            )
+
+configuredCabalPath :: Paths -> Maybe FilePath
+configuredCabalPath paths = do
+  hostConfig <- pathsHostConfig paths
+  let configured = HostConfig.hostCabal (HostConfig.hostToolPaths hostConfig)
+  if Text.null configured
+    then Nothing
+    else Just (Text.unpack configured)
+
+findFirstExisting :: [FilePath] -> IO (Maybe FilePath)
+findFirstExisting candidates = do
+  existing <-
+    mapM
+      ( \candidate -> do
+          exists <- doesFileExist candidate
+          pure (candidate, exists)
+      )
+      candidates
+  pure (fst <$> find snd existing)
 
 stripPrefix :: String -> String -> Maybe String
 stripPrefix [] value = Just value
