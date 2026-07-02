@@ -64,6 +64,7 @@ data DhallDemoConfig = DhallDemoConfig
     dhallDemoUi :: Bool,
     dhallDaemonRole :: Text,
     dhallCoordinator :: DhallDaemonConfig,
+    dhallWebapp :: DhallDaemonConfig,
     dhallEngineDaemons :: [DhallDaemonConfig],
     dhallEnginePools :: [DhallEnginePool],
     dhallEngineMembers :: [DhallEngineMember],
@@ -215,6 +216,7 @@ demoConfigFromDhall rawConfig = do
   runtimeModeValue <- parseEnum "runtimeMode" parseRuntimeMode (dhallConfigRuntimeMode rawConfig)
   activeDaemonRoleValue <- parseEnum "daemonRole" parseDaemonRole (dhallDaemonRole rawConfig)
   coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
+  webappDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallWebapp rawConfig)
   parsedEngineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
   enginePoolValues <- traverse enginePoolFromDhall (dhallEnginePools rawConfig)
   engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
@@ -234,6 +236,7 @@ demoConfigFromDhall rawConfig = do
         demoUiEnabled = dhallDemoUi rawConfig,
         activeDaemonRole = activeDaemonRoleValue,
         coordinatorDaemon = coordinatorDaemonValue,
+        webappDaemon = webappDaemonValue,
         engineDaemons = engineDaemonValues,
         enginePools = enginePoolValues,
         engineMembers = engineMemberValues,
@@ -410,6 +413,7 @@ renderSubstrateConfig demoConfig =
       ", demo_ui = " <> dhallBool (demoUiEnabled demoConfig),
       ", daemonRole = " <> dhallText (daemonRoleId (activeDaemonRole demoConfig)),
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
+      ", webapp = " <> renderDaemonConfig (webappDaemon demoConfig),
       ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
       ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
       ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),

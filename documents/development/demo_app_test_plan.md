@@ -408,7 +408,7 @@ e2e/browser layer asserts the family-appropriate rendered surface:
 - **Speech transcription** (whisper.cpp, faster-whisper CT2) — rendered inline transcript text.
 - **Source separation** (Demucs, Open-Unmix) — playable audio players for the stem object refs.
 - **Audio-to-MIDI** (basic-pitch TensorFlow/Core ML/ONNX) — a MIDI download-only artifact.
-- **Music transcription** (MT3 JAX, Omnizart) — a MIDI or MusicXML download-only artifact.
+- **Music transcription** (MT3-PyTorch, MR-MT3, Omnizart) — a MIDI or MusicXML download-only artifact.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML) — an inline `<img>` render.
 - **Video generation** (Wan2.1) — an inline `<video>` render.
 - **Audio generation / TTS** (bark) — an inline `<audio>` player.
@@ -419,9 +419,10 @@ MIDI/MusicXML download) and never by golden strings. Inline-text rows render dir
 `inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
 infernix-demo-objects bucket. Realness is guaranteed by construction — the engine code cannot
 fabricate a result (enforced by the realness lint) — so the browser trusts the result and fails closed
-on `status=failed`; the reopened Phases 1/4/6 deliver real output per accelerator (Waves K/L). The
-union across the three substrate catalogs covers every README matrix row even though no single
-substrate carries all 18 rows.
+on `status=failed`; the reopened Phases 1/4/6 deliver real output per accelerator. A wave proves the
+catalog that existed when it ran; rows added later require the current active wave before the browser
+workflow is claimed proven. The union across the three substrate catalogs covers every README matrix
+row even though no single substrate carries all 19 rows.
 
 ## Validation
 

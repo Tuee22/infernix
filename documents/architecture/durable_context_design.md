@@ -69,13 +69,13 @@ A concrete application binds these parameters:
 | `<objectsBucket>` | `infernix-demo-objects` | per-user prefix layout |
 | `<wsPath>` | `/ws` | WS endpoint |
 | `<authPath>` | `/auth` | IdP login surface |
-| `<objectsApiPath>` | `/api/objects` | presigned URL minting endpoint |
+| `<objectsApiPath>` | `/api/objects` | webapp-mediated object upload/download endpoint |
 | `<jwtIssuer>` / `<jwtAudience>` | demo Keycloak realm issuer / public SPA client | JWT validation |
 | `<appNamespace>` (Haskell) | `Infernix.Demo.*` | application-specific glue modules |
-| `<appWorkload>` | `infernix-demo` | the binary deployed to host the surface |
+| `<appWorkload>` | `infernix-demo` | the Webapp workload deployed to host the surface |
 
 All shared-library code is parametric in these values. Concrete bindings
-live next to the application binary, not inside the shared modules.
+live next to the application workload, not inside the shared modules.
 
 ## Module Layout
 

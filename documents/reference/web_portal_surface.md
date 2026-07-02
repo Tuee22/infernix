@@ -150,7 +150,7 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 ## SPA Behavior
 
 - the SPA is implemented in PureScript, built into `web/dist/` by
-  `npm --prefix web run build`, and served by the `infernix-demo` Haskell binary
+  `npm --prefix web run build`, and served by the `infernix` Webapp role
 - frontend contract modules are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode

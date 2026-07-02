@@ -29,9 +29,8 @@ tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md):
 - **Phase 6** — phase validation moves to **single-accelerator-per-phase** (standards
   §Q): one of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both;
   `cohort-validation-waves.md` is repurposed as per-accelerator attestation ledgers.
-- **Phase 7** — the demo frontend's eventual one-binary **Webapp** role is tracked as a
-  cleanup-ledger consolidation item while the current two-binary demo surface remains the validated
-  runtime.
+- **Phase 7** — the demo frontend now runs as the one-binary **Webapp** role through
+  `infernix service --role webapp`; the former two-binary split is closed in the cleanup ledger.
 
 Any still-present compatibility or consolidation surfaces are listed in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than hidden in phase
@@ -53,6 +52,59 @@ validation record for the already-closed work:
 
 The legacy or duplicate surfaces targeted by those sprints are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+## MT3 Catalog Replacement Reopen
+
+The 2026-06-30 replacement of the obsolete MT3 residual with `music-mt3-infer` and
+`music-mr-mt3` reopened **Phase 4 Sprint 4.22** and **Phase 6 Sprint 6.35**. Code-side work is
+landed: both rows bind through `mt3-infer` on the PyTorch adapter, use model-cache staged weights,
+disable upstream auto-downloads, and are generated for `linux-cpu`, `linux-gpu`, and
+`apple-silicon` (Apple uses PyTorch CPU; no MPS claim is made). The old `music-mt3-jax` residual is
+removed and recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+Earlier Wave K/Wave L/Wave N evidence remains valid for the catalogs that existed when those waves
+ran. It does not prove rows added on 2026-06-30. The post-replacement full-suite proof is
+[Wave O](cohort-validation-waves.md): rebuilt `linux-cpu` plus the selected `linux-gpu`
+accelerator must run full integration and routed E2E over the expanded catalogs before Phases 4 and
+6 return to `Done`.
+
+Current Wave O status: the first 2026-07-01 rebuilt `linux-cpu` full-suite attempt reached real
+catalog inference and failed closed on `music-mt3-infer` because `mt3-infer 0.1.3` imports a
+`transformers` T5 internal removed by the unbounded `transformers 4.57.6` solve. Since
+`mt3-infer 0.1.3` requires `transformers >=4.35.0`, the adapter now installs a narrow shim that
+exposes the real `torch.utils.checkpoint.checkpoint` function at the expected T5 module attribute.
+The follow-up rebuilt CPU attempt advanced past that error and failed closed on `mt3-infer`'s
+undeclared `absl` import; the PyTorch engine now declares `absl-py >=2.0`, and rebuilt CPU/GPU
+proof remains pending. A third rebuilt CPU attempt (`infernix-linux-cpu:local` manifest
+`sha256:bc7c8735e72f7fd03b1f76808020b796779e91f52d4bc6d0971bd5d07406c89d`) passed Haskell
+style, Python `check-code`, Haskell unit, and web contracts (`71/71`), reached
+catalog-driven `music-mt3-infer`, and failed closed on the next `transformers >=4.50`
+compatibility break: MT3's custom T5 wrapper no longer inherited `GenerationMixin`, so `.generate`
+was absent. The PyTorch engine dependency now caps `transformers` to `>=4.46,<4.50` across CPU,
+CUDA, and Apple PyTorch groups while retaining the checkpoint shim and `absl-py` dependency. The
+fourth rebuilt CPU image (`sha256:ecc7e1b68ee8194cdac7633a607a481ab40e3a645038c4b0f5c60b213f4c89bf`)
+selected `transformers 4.49.0`, passed Haskell style and Python `check-code`, then failed in
+`infernix-unit` because the Sprint 4.16 framework-venv assertion still expected the old unbounded
+PyTorch `transformers >=4.46` line. Unit coverage now asserts the bounded PyTorch dependency block;
+a mounted capped-image `infernix-unit` rerun passes with that fix. Rebuilt CPU/GPU proof remains
+pending. The next rebuilt CPU image
+(`sha256:d478db2f41420427c7d1f93adf22eac35f4dc384bf4fc432986aaa4017abee8b`, created
+`2026-07-01T15:35:30.229849055-04:00`) selected `transformers 4.49.0`, `absl-py 2.4.0`,
+`mt3-infer 0.1.3`, and `piano-transcription-inference 0.0.6`; its full-suite run passed Haskell
+style, Python `check-code`, Haskell unit, and web contracts (`71/71`), published to Harbor, reached
+real catalog-driven `music-mt3-infer`, and failed closed inside MT3 generation because the upstream
+custom T5 attention path dereferenced `cache_position[-1]` while `cache_position` was `None`. The
+adapter now disables generation caching for `music-mt3-infer`, matching the upstream MR-MT3
+adapter's no-cache generation strategy; mounted Linux-image `poetry --directory python run
+check-code` is green. The rebuilt CPU image
+(`sha256:b5fb4e6c82b7dc9f46c04f7e7910dd460bcb516518ecdf8d5c313e4303947ad8`, created
+`2026-07-01T16:37:11.897901769-04:00`) passed Haskell style, Python `check-code`, Haskell unit,
+and web contracts (`71/71`), reached `per-model inference: linux-cpu`, and failed closed on the
+same upstream T5 `cache_position` path with the no-cache wrapper visible in the traceback. A deeper
+MT3 compatibility fix now wraps Hugging Face `T5Block.forward` for MT3 imports and supplies
+`cache_position` when the upstream `mt3-infer` custom stack omits it; mounted Linux-image
+`poetry --directory python run check-code` and a PyTorch-engine T5Block probe are green. Rebuilt
+full-suite CPU proof is pending.
 
 ## Document Index
 
@@ -110,7 +162,8 @@ The June 2026 audit reopened Phase 4, Phase 6, and Phase 7 for the bounded follo
 Earlier sprint closure evidence remains valid for its original scope. Phase 4 Sprint 4.24 is now
 re-closed, Phase 6 Sprint 6.34 is now re-closed for no-env/docs-lint coverage, and Phase 7 Sprint
 7.28 is now re-closed for generated-artifact ownership after the full selected `linux-gpu` plus
-`linux-cpu` cohort gate and matching deletion-ledger move.
+`linux-cpu` cohort gate and matching deletion-ledger move. Phase 4 Sprint 4.22 and Phase 6 Sprint
+6.35 are active again for the MT3 catalog replacement proof named in Wave O.
 
 Prior closure evidence closes around the implemented worktree. Phase 3 Sprint 3.12 and
 [Wave F](cohort-validation-waves.md) closed on the recorded validation after native `linux/arm64` validation
@@ -165,7 +218,7 @@ fetches model weights lazily from `infernix-models`, and publishes the typed per
 surface; the selected `linux-gpu` plus `linux-cpu` real-output proof closed on 2026-06-20, while
 unsupported adapter ids fail fast instead of falling through to a generic success path. The
 A prior Apple Wave L rerun passed the machine-independent front-loaded gates and reached
-Harbor publication after the PyPI torch-source and YourMT3+ residual fixes; the later
+Harbor publication after the PyPI torch-source and music-transcription catalog fixes; the later
 Apple lifecycle remediation treated Harbor's MinIO-backed `harbor-registry` bucket and registry
 scratch metadata as rebuildable cache on both retained-state replay directions so failed large
 image pushes do not exhaust MinIO free-drive thresholds on the next run. The follow-on validation
@@ -405,16 +458,17 @@ cleared TinyLlama and then exposed the `llm-qwen15-mlx` cache path as an indexed
 rather than a single `payload`; the worker now treats that MLX model id as a native snapshot
 cache. The next Apple rerun completed the LLM and speech rows through MLX, whisper.cpp, and
 CTranslate2, then exposed two catalog/dependency corrections: Apple PyTorch/Diffusers/Transformers
-framework venvs now pin Darwin arm64 torch-family wheels to PyPI instead of the CUDA source, and
-YourMT3+ is now `Not recommended` on Apple as a named residual instead of being routed through the
-honest-fail PyTorch adapter. Linux values keep the HA-shaped quorum. The
+framework venvs now pin Darwin arm64 torch-family wheels to PyPI instead of the CUDA source, and the
+multi-instrument music-transcription rows now use MT3-PyTorch and MR-MT3 through `mt3-infer`.
+Linux values keep the HA-shaped quorum. The
 earlier Apple integration/e2e/all evidence still proves the host-daemon routing, Pulsar transport,
 engine-pool behavior, production `demo_ui = false` route posture, and image rebuild/reuse path, but
 it was recorded before Sprint 1.15 replaced the validation-wrapper payloads and therefore does not
-close the Wave L real-output gate. The current CUDA Linux Wave K cycle closed the selected
-Phase 4/6 real-output proof: `./bootstrap/linux-gpu.sh test` passed style, unit, web unit,
-integration, and routed Playwright with the full 16-row `linux-gpu` browser matrix, and
-rebuilt-image `./bootstrap/linux-cpu.sh test` passed the matching CPU full-suite lane.
+close the Wave L real-output gate. The CUDA Linux Wave K cycle closed the selected Phase 4/6
+real-output proof for the then-active catalogs: `./bootstrap/linux-gpu.sh test` passed style, unit,
+web unit, integration, and routed Playwright with the then-current `linux-gpu` browser matrix, and
+rebuilt-image `./bootstrap/linux-cpu.sh test` passed the matching CPU full-suite lane. Wave O owns
+the post-replacement proof for the MT3 rows added on 2026-06-30.
 The legacy dated proof points (the recorded validation) are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence"; the underlying contracts they exercised still describe supported behavior,
@@ -494,9 +548,9 @@ construction, `nvkind`, or NVIDIA scheduling.
 | 1 | Repository and Control-Plane Foundation | Done — reopened and re-closed (Sprints 1.1-1.14 remain closed for the scaffold/topology/materialization-lane foundation; Sprint 1.15 is closed for real Apple native runner materialization and native snapshot hydration. Apple Stage 2 integration plus focused routed Playwright are green, and the paired `linux-cpu` full gate closed on 2026-06-29 with rebuilt image `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`: `./bootstrap/linux-cpu.sh test` passed style, Python `check-code`, unit, web `71/71`, full integration with all real `linux-cpu` model outputs plus the HA/chaos tail, and routed Playwright `9/9`.) | [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md) |
 | 2 | Kind Cluster Storage and Lifecycle | Done (Sprints 2.10-2.13 lifecycle, retained-state, bootstrap-boundary, and host-manifest closure validated by Apple Wave A and CUDA Linux Wave C) | [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md) |
 | 3 | HA Platform Services and Edge Routing | Done — reopened and re-closed (Sprints 3.1-3.12 remain closed — Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F, Sprints 3.10-3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C; Sprint 3.13 de-exposes the `/minio/s3` external gateway route + `infernix-minio-s3` SecurityPolicy + `presignPublicEndpoint` so the webapp object-proxy is the sole external file-storage service. Sprint 3.13 is code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates.) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
-| 4 | Inference Service and Durable Runtime | Done — reopened and re-closed (Sprints 4.1-4.23 remain closed for typed dispatch, runtime, realness-by-construction, Linux real-output, and Wave K evidence. Sprint 4.24 closed 2026-06-29: the duplicated Pulsar result-proto timestamp `show` / partial-`read` path now uses the shared ISO-8601 `Storage.hs` codec, malformed `createdAt` values fail as data, and unit/integration-build/docs-lint gates passed.) | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
+| 4 | Inference Service and Durable Runtime | Active — Sprint 4.22 reopened for the 2026-06-30 MT3 catalog replacement. Code-side bindings for `music-mt3-infer` and `music-mr-mt3` are landed across `linux-cpu`, `linux-gpu`, and `apple-silicon`; Wave O still owns full rebuilt-image `linux-cpu` plus selected `linux-gpu` integration/e2e proof. Sprints 4.1-4.21/4.23/4.24 remain closed for their original scopes. | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done (Sprints 5.1-5.10 closed with demo backend, Python adapter, and web/Node no-env-var path validated by Apple Wave A/A.2 and CUDA Linux Wave C) | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Done — reopened and re-closed (Sprints 6.1-6.33 remain closed for validation, HA, realness-lint, fail-closed service-loop, and Wave K evidence. Sprint 6.34 closed 2026-06-29: docs lint covers the authoritative configuration/tool/realness docs plus Phase 7; no-env/no-PATH drift in `Setup.hs`, bootstrap shell, Haskell-style Cabal calls, and the PureScript installer is removed or mechanically confined; unit/build/lint gates passed.) | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Active — Sprint 6.35 reopened for the expanded MT3 catalog integration/e2e gate. The catalog-driven coverage code is in place, but Wave O must rerun full rebuilt-image `linux-cpu` plus selected `linux-gpu` integration and routed Playwright over the new MT3 rows. Sprints 6.1-6.34 remain closed for their original scopes. | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 | 7 | Demo App Multi-User Durable Context | Done — Sprint 7.28 closed generated artifact object ownership and result-bridge authorization on 2026-06-30 with full selected `linux-gpu` plus `linux-cpu` cohort validation. Prior durable-context, engine-pool, object-proxy, Files view, in-browser rendering, and Wave M closure evidence remains recorded for Sprints 7.1-7.27. Desired-state hot reload remains future work. | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 
 > **Note**: Phase statuses describe current repository state. Earlier governed phases may remain
@@ -615,13 +669,13 @@ The supported platform now closes around these rules:
 | Phase | Depends on | Why |
 |-------|------------|-----|
 | 0 | none | establishes the governed docs suite and plan-maintenance rules the remaining phases rely on |
-| 1 | 0 | closes the repository scaffold, the two-binary topology, the staged-substrate contract, and the governed root-document posture |
+| 1 | 0 | closes the repository scaffold, the staged-substrate contract, the one-binary role model, and the governed root-document posture |
 | 2 | 0-1 | builds Kind lifecycle, manual storage, Harbor-first image flow, and Linux launcher behavior on top of the repository foundations |
 | 3 | 0-2 | adds the HA platform services, routed edge, and publication contract on top of the cluster lifecycle and storage baseline |
 | 4 | 0-3 | closes the runtime, adapter boundary, object-store contract, and Apple host-daemon bridge on top of the HA platform surfaces |
 | 5 | 0-4 | adds the clustered demo UI, generated frontend contracts, and routed browser validation on top of the runtime and publication contract |
 | 6 | 0-5 | validates the whole supported surface end to end and hardens the governed docs, routes, and lifecycle behavior around that implementation |
-| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless `infernix-demo`, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J, Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed in Wave M, and Sprint 7.28 generated artifact ownership closed in Wave N. |
+| 7 | 0-6 | adds the multi-user durable-context demo application on top of the platform: Keycloak self-signup, WebSocket post-login transport, Pulsar-backed conversation log per context, MinIO-backed artifact upload/download/render-or-download, a Haskell-first logic boundary surfaced to PureScript via `purescript-bridge`, and the supported three-role daemon split (stateless Webapp role in the `infernix-demo` workload, stateless `infernix-coordinator`, substrate-specific engine pools). The platform contract Phase 7 builds on is implemented in code; Apple plus native Linux/CUDA real-cluster validation evidence is recorded in Waves A-C, Sprint 7.8 runtime KV-cache plus `Infernix.Runtime.Daemon` closure is recorded in Wave E, Sprint 7.24 pool assignment and broker-native backpressure closed in Wave J, Sprints 7.25-7.27 object-proxy / Files / in-browser rendering closed in Wave M, and Sprint 7.28 generated artifact ownership closed in Wave N. |
 
 ## Cross-References
 

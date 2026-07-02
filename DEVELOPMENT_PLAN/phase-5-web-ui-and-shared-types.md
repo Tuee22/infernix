@@ -46,7 +46,7 @@ always-present cluster daemon from the Apple host inference executor.
 - the generated browser contracts and routed publication payloads currently serialize the active
   substrate under `runtimeMode` field names
 - the browser SPA and Playwright harness do not choose engines or branch on substrate ids;
-  `infernix-demo` reads the active `.dhall` and owns substrate-appropriate dispatch
+  the `infernix` Webapp role reads the active `.dhall` and owns substrate-appropriate dispatch
 
 ## Sprint 5.1: Demo Web Application Host (PureScript) [Done]
 
@@ -62,7 +62,7 @@ clustered routed surface on every supported substrate.
 ### Deliverables
 
 - repo-owned browser application code lives under `web/src/*.purs`
-- the demo HTTP host is the `infernix-demo` Haskell binary, which serves the PureScript bundle and
+- the demo HTTP host is the `infernix` Webapp role, which serves the PureScript bundle and
   exposes the demo API surface
 - the `infernix-demo` workload is gated by the active generated `.dhall` `demo_ui` flag
 - the shared Gateway or HTTPRoute surface routes `/` to `infernix-demo` only when the demo surface is enabled
@@ -327,7 +327,7 @@ None.
 ## Sprint 5.9: Web and Python Manifest Retirement [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/DemoCLI.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
+**Implementation**: `src/Infernix/Webapp.hs`, `python/adapters/common.py`, `python/adapters/model_cache.py`, every engine adapter under `python/adapters/*.py`, `web/scripts/install-purescript.mjs`, `web/test/run_playwright_matrix.mjs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -342,7 +342,7 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
 
 ### Deliverables
 
-- `src/Infernix/DemoCLI.hs` reads `bindHost`, `bridgeMode`, `publicationStatePath` from
+- `src/Infernix/Webapp.hs` reads `bindHost`, `bridgeMode`, `publicationStatePath` from
   `ClusterConfig.demoBackend.*`; the `lookupEnv` calls are deleted.
 - Haskell daemon setup invocation passes `--install-root` as a typed CLI arg and the runtime
   worker sends model metadata through the protobuf `WorkerRequest` envelope.

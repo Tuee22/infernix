@@ -3,9 +3,9 @@
 **Status**: Done
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
-> **Purpose**: Establish the canonical repository scaffold, the two-binary topology
-> (`infernix` plus `infernix-demo` sharing the default Cabal library exposed by the `infernix`
-> package), the supported control-plane execution contexts, the substrate-selection baseline,
+> **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
+> (`infernix` sharing the default Cabal library exposed by the `infernix` package), the supported
+> control-plane execution contexts, the substrate-selection baseline,
 > generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
@@ -15,7 +15,7 @@
 > (`AppleSilicon.hs` `infernix_emit_validation_result`) that load no model — the audit behind the Phase 4
 > realness reopen confirmed the entire Apple native engine layer is fake. Phase 1 therefore **reopened**
 > Sprint 1.15 to materialize **real** Apple native engines (Core ML, MLX, llama.cpp/whisper.cpp
-> Metal, CTranslate2, ONNX, Audiveris) through that same lane. The scaffold, two-binary topology, and
+> Metal, CTranslate2, ONNX, Audiveris) through that same lane. The scaffold, one-binary role topology, and
 > host-manifest contracts from Sprints 1.1–1.14 stand and are not undone; only the wrapper payloads are
 > replaced. Sprint 1.15 and the Apple real-output cohort gate
 > [Wave L](cohort-validation-waves.md) are fully closed: Apple host smoke and Apple Stage 2
@@ -32,13 +32,13 @@
 > rerun cleared TinyLlama and exposed that `llm-qwen15-mlx` also needs indexed native snapshot
 > hydration instead of the single-payload cache path. The next Apple rerun cleared the LLM and
 > speech rows through MLX, whisper.cpp, and CTranslate2, then exposed the Apple PyTorch engine
-> venv resolving `torchaudio` from the CUDA source and the deferred YourMT3+ row still being
-> incorrectly routed as Apple-runnable. The Apple-only generated broker quorum is now one while
+> venv resolving `torchaudio` from the CUDA source and the multi-instrument music transcription
+> row needing a maintained PyTorch binding. The Apple-only generated broker quorum is now one while
 > Linux lanes retain the HA-shaped quorum, the current runner invokes llama.cpp as a bounded
 > single-turn real inference with explicit context/thread/GPU-layer settings, the worker treats
 > the MLX Qwen snapshot as an indexed native model cache, Apple framework venvs explicitly resolve
-> Darwin arm64 torch wheels from PyPI, and `music-mt3-jax` is a named Apple residual rather than a
-> runnable catalog row. The follow-on Apple rerun passed the front-loaded lint/unit gates and reached
+> Darwin arm64 torch wheels from PyPI, and MT3-PyTorch/MR-MT3 route through `mt3-infer` on the
+> Apple CPU PyTorch path. The follow-on Apple rerun passed the front-loaded lint/unit gates and reached
 > Harbor publication again. The Harbor PostgreSQL primary endpoint fix held, and the retained
 > repo-local MinIO tree no longer preserved failed `harbor-registry` upload blobs after clean
 > teardown, but the active Docker VM still exhausted MinIO's free-drive threshold during the fresh
@@ -107,7 +107,7 @@
 > including the 22.7-minute per-model browser matrix. The removed validation wrappers are tracked in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
-Phase 1 closes Sprints 1.1-1.12 around the current repository scaffold, the two-binary topology,
+Phase 1 closes Sprints 1.1-1.12 around the current repository scaffold, the one-binary role topology,
 the staged substrate-file contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary
 implemented in this worktree. Sprint 1.12 removes the Colima-oriented Apple prerequisite path and
@@ -178,7 +178,7 @@ This phase owns the baseline distinction between execution context and substrate
 ## Sprint 1.1: Canonical Repository Scaffold [Done]
 
 **Status**: Done
-**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `web/`, `chart/`, `kind/`, `proto/`
+**Implementation**: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `src/Infernix/`, `compose.yaml`, `docker/`, `python/`, `web/`, `chart/`, `kind/`, `proto/`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/overview.md`
 
 ### Objective
@@ -187,8 +187,8 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 
 ### Deliverables
 
-- root Haskell project files: `infernix.cabal`, `cabal.project`, `app/Main.hs`, `app/Demo.hs`,
-  and a shared `src/Infernix/` library tree
+- root Haskell project files: `infernix.cabal`, `cabal.project`, `app/Main.hs`, and a shared
+  `src/Infernix/` library tree
 - repo-owned implementation roots for `chart/`, `kind/`, `proto/`, `docker/`, `python/`, `web/`,
   `test/`, and `documents/`
 - a repo-owned build doctrine that keeps host-native artifacts under `./.build/`
@@ -198,7 +198,7 @@ Create the repository skeleton described in [00-overview.md](00-overview.md).
 ### Validation
 
 - `find . -maxdepth 2 -type d | sort` shows the planned top-level directories
-- host builds materialize `./.build/infernix` and `./.build/infernix-demo`
+- host builds materialize `./.build/infernix`
 - the repo carries no competing `docs/` tree or alternate root layout contract
 
 ### Remaining Work
@@ -207,21 +207,21 @@ None.
 
 ---
 
-## Sprint 1.2: Two Haskell Binaries and CLI Contract Foundation [Done]
+## Sprint 1.2: Haskell Binary and CLI Contract Foundation [Done]
 
 **Status**: Done
-**Implementation**: `app/Main.hs`, `app/Demo.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/Service.hs`
+**Implementation**: `app/Main.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Service.hs`, `src/Infernix/Webapp.hs`
 **Docs to update**: `README.md`, `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`
 
 ### Objective
 
-Make `infernix` the production daemon and operator executable and `infernix-demo` the demo HTTP
-host while keeping both on one shared library.
+Make `infernix` the operator executable and the shared long-running role entrypoint, including the
+demo HTTP Webapp role.
 
 ### Deliverables
 
-- `infernix` is the only supported repo-owned long-running production daemon entrypoint
-- `infernix-demo` is the only supported repo-owned demo HTTP host entrypoint
+- `infernix` is the only supported repo-owned long-running daemon entrypoint
+- the demo HTTP host is selected through `infernix service --role webapp`
 - the supported operator command families close through:
   - `service`
   - `cluster up|down|status`
@@ -230,14 +230,13 @@ host while keeping both on one shared library.
   - `lint files|docs|proto|chart`
   - `test lint|unit|integration|e2e|all`
   - `docs check`
-- both executables link the default Cabal library exposed by the `infernix` package
+- the executable links the default Cabal library exposed by the `infernix` package
   (declared in `infernix.cabal` without an explicit library name and depended on as `infernix`)
 - cluster helpers and test helpers do not become extra supported executables
 
 ### Validation
 
 - `./.build/infernix --help` prints the supported command families
-- `./.build/infernix-demo --help` prints the demo entrypoint
 - the CLI reference docs align with the supported surface above
 
 ### Remaining Work
@@ -304,7 +303,7 @@ static quality enforceable through canonical entrypoints.
 
 ### Deliverables
 
-- host-native Haskell builds materialize `./.build/infernix` and `./.build/infernix-demo`
+- host-native Haskell builds materialize `./.build/infernix`
 - outer-container staged substrate output stays under `/workspace/.build/outer-container/` inside
   the launcher image, while cabal package state and cabal's build directory stay in the image
   overlay
@@ -318,7 +317,7 @@ static quality enforceable through canonical entrypoints.
 
 ### Validation
 
-- direct Apple host builds install `./.build/infernix` and `./.build/infernix-demo`; any
+- direct Apple host builds install `./.build/infernix`; any
   `dist-newstyle/` tree is Cabal's disposable untracked build cache rather than a repo-owned
   generated source path
 - `npm --prefix web run build` regenerates frontend contracts and emits `web/dist/app.js`
@@ -580,7 +579,7 @@ None.
 ## Sprint 1.11: Host Manifest Materialization [Done]
 
 **Status**: Done
-**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/DemoCLI.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
+**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Webapp.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -604,7 +603,7 @@ shrinks to `./.data` plus the Docker socket only.
   `infernix <command>`).
 - `runHostTool :: HostConfig -> HostTool -> [String] -> IO a` helper module
   `src/Infernix/HostTools.hs`. Every Haskell external-command invocation in this phase's scope
-  (`src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/DemoCLI.hs`) routes through
+  (`src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Webapp.hs`) routes through
   this helper.
 - the materialization helper (`src/Infernix/DemoConfig.hs` `materializeHostManifestFile`, wired
   into `infernix internal materialize-substrate` in `src/Infernix/CLI.hs`) also stages a host

@@ -7,18 +7,18 @@
 
 ## Current Status
 
-The README matrix reflects the realness rebinds: the music-transcription rows are rebound to modern
-PyTorch models (YourMT3+ for the MT3 row, `piano_transcription_inference` for the Omnizart row),
-residual until their `pytorch-python` adapter binding lands; the redundant Basic Pitch TensorFlow row
-is dropped (covered by the basic-pitch ONNX and Core ML rows); Apple CTranslate2 is a viable CPU path;
-and Wan on Apple MPS is a residual rather than promoted support. The generated Haskell catalog keeps
-runtime catalogs executable-only and records named residual rows separately through
-`residualMatrixRowIdsForMode`: the PyTorch-rebound music-transcription rows are residual on every
-substrate until their adapter binding lands, and Wan Apple MPS is residual until validated. `infernix lint docs` now mechanically
-checks the README matrix cells against the generated runnable catalogs, named residual rows, and
-`Not recommended` states so documentation cannot silently re-promote a residual or hide a runnable
-binding. Realness for the runnable rows is enforced in the engine code by the realness lint; the
-reopened Phases 1/4/6 own the per-accelerator real-output delivery (Waves K/L).
+The README matrix reflects the realness rebinds: the multi-instrument music-transcription rows use
+`mt3-infer` for MT3-PyTorch and MR-MT3, the piano transcription row uses
+`piano_transcription_inference`, and the redundant Basic Pitch TensorFlow row is dropped (covered by
+the basic-pitch ONNX and Core ML rows). Apple CTranslate2 is a viable CPU path, and Wan on Apple MPS
+is a residual rather than promoted support. The generated Haskell catalog keeps runtime catalogs
+executable-only and records named residual rows separately through `residualMatrixRowIdsForMode`.
+`infernix lint docs` now mechanically checks the README matrix cells against the generated runnable
+catalogs, named residual rows, and `Not recommended` states so documentation cannot silently
+re-promote a residual or hide a runnable binding. Realness for the runnable rows is enforced in the
+engine code by the realness lint. Earlier Waves K/L prove the catalogs that existed when those waves
+ran; post-replacement proof for the two 2026-06-30 MT3 rows is tracked by Wave O in the development
+plan.
 
 ## Contract
 
@@ -62,7 +62,7 @@ Each generated entry includes:
 
 Every README matrix row resolves to a closed `ResultFamily` sum type and a single result-surface
 shape — either an inline text payload or a typed object reference into the always-on
-`infernix-demo-objects` MinIO bucket. This mapping is the canonical home for the 18-row to
+`infernix-demo-objects` MinIO bucket. This mapping is the canonical home for the 19-row to
 `ResultFamily` and inline-vs-object-ref correspondence; it is consistent with the per-family
 result contract in
 [../development/testing_strategy.md](../development/testing_strategy.md) and the demo validation
@@ -74,8 +74,9 @@ typed `HostConfig` absolute path for native-process-runner bindings — fetches 
 from the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
 typed per-family result surface. Realness is guaranteed by construction: the engine code cannot
 return a fabricated result (any missing-weights/load/engine failure raises → `failed`), enforced by
-the realness lint. Per-accelerator real-output delivery is owned by the reopened Phases 1/4/6, and any
-row whose real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`.
+the realness lint. Per-accelerator real-output delivery is owned by the reopened Phases 1/4/6; adding
+a catalog row requires fresh cohort evidence before that row is claimed proven, and any row whose
+real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`.
 
 `ResultFamily` is resolved from `family` + `artifactType` + `matrixRowId`. The coarse `family`
 field collapses source-separation, audio-to-MIDI, and audio-generation under a single `audio`
@@ -110,7 +111,8 @@ return a typed object reference into `infernix-demo-objects`.
 | Open-Unmix | Source separation | `SourceSeparation` | `object_ref` |
 | basic-pitch (Core ML) | Audio-to-MIDI | `AudioToMidi` | `object_ref` |
 | basic-pitch (ONNX) | Audio-to-MIDI | `AudioToMidi` | `object_ref` |
-| YourMT3+ (PyTorch) | Music transcription | `MusicTranscription` | `object_ref` |
+| MT3-PyTorch (PyTorch checkpoint) | Music transcription | `MusicTranscription` | `object_ref` |
+| MR-MT3 (PyTorch checkpoint) | Music transcription | `MusicTranscription` | `object_ref` |
 | piano_transcription_inference (PyTorch) | Music transcription | `MusicTranscription` | `object_ref` |
 | SDXL Turbo (Diffusers / safetensors) | Image generation | `ImageGeneration` | `object_ref` |
 | Apple Stable Diffusion (Core ML) | Image generation | `ImageGeneration` | `object_ref` |
@@ -120,7 +122,7 @@ return a typed object reference into `infernix-demo-objects`.
 
 The nine `ResultFamily` constructors — `LLM`, `SpeechTranscription`, `SourceSeparation`,
 `AudioToMidi`, `MusicTranscription`, `ImageGeneration`, `VideoGeneration`, `AudioGeneration`, and
-`OmrTool` — partition all 18 rows. The two inline-text families (`LLM`, `SpeechTranscription`)
+`OmrTool` — partition all 19 rows. The two inline-text families (`LLM`, `SpeechTranscription`)
 return `inline_output`; the seven artifact families return an `object_ref` into
 `infernix-demo-objects`.
 

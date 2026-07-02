@@ -171,6 +171,7 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
             demoUiEnabled = demoUiEnabledValue,
             activeDaemonRole = daemonRole,
             coordinatorDaemon = coordinatorDaemonConfig runtimeMode,
+            webappDaemon = webappDaemonConfig runtimeMode,
             engineDaemons = engineDaemonConfigs runtimeMode,
             enginePools = enginePoolsForMode runtimeMode,
             engineMembers = engineMembersForMode runtimeMode,
@@ -193,6 +194,18 @@ coordinatorDaemonConfig :: RuntimeMode -> DaemonConfig
 coordinatorDaemonConfig runtimeMode =
   DaemonConfig
     { daemonConfigRole = Coordinator,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigMemberId = Nothing,
+      daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
+      daemonConfigResultTopic = resultTopicForMode runtimeMode,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
+    }
+
+webappDaemonConfig :: RuntimeMode -> DaemonConfig
+webappDaemonConfig runtimeMode =
+  DaemonConfig
+    { daemonConfigRole = Webapp,
       daemonConfigLocation = "cluster-pod",
       daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicsForMode runtimeMode,
@@ -269,9 +282,15 @@ validateDemoConfig demoConfig
   | any invalidRequestShape (models demoConfig) =
       Left "every model must declare at least one request field"
   | invalidActiveDaemonRole =
-      Left "active daemon role must match either the coordinator or engine metadata"
+      Left "active daemon role must match coordinator, webapp, or engine metadata"
+  | daemonConfigRole (coordinatorDaemon demoConfig) /= Coordinator =
+      Left "coordinator metadata must declare the coordinator role"
+  | daemonConfigRole (webappDaemon demoConfig) /= Webapp =
+      Left "webapp metadata must declare the webapp role"
   | invalidDaemonConfig (coordinatorDaemon demoConfig) =
       Left "coordinator metadata must declare role, location, request topics, and result topic"
+  | invalidDaemonConfig (webappDaemon demoConfig) =
+      Left "webapp metadata must declare role, location, request topics, and result topic"
   | null (enginePools demoConfig) =
       Left "enginePools must not be empty"
   | null (engineMembers demoConfig) =
@@ -353,6 +372,8 @@ validateDemoConfig demoConfig
     invalidActiveDaemonRole =
       activeDaemonRole demoConfig
         /= daemonConfigRole (coordinatorDaemon demoConfig)
+        && activeDaemonRole demoConfig
+          /= daemonConfigRole (webappDaemon demoConfig)
         && all ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemons demoConfig)
     invalidDaemonConfig daemonConfig =
       Text.null (Text.strip (daemonConfigLocation daemonConfig))

@@ -22,7 +22,7 @@
 ## Current Status
 
 The worktree follows the supported artifact layout directly: the host path stages
-`./.build/infernix` and `./.build/infernix-demo`, the Linux substrate images own
+`./.build/infernix`, the Linux substrate images own
 `/usr/local/bin/infernix*` and image-local outer-container build state, generated frontend
 contracts stay under `web/src/Generated/`, and runtime result or cache-manifest state uses
 protobuf-backed `*.pb` files.
@@ -32,7 +32,7 @@ of the supported artifact contract.
 
 ## Build Roots
 
-- the repo-local operator binaries live at `./.build/infernix` and `./.build/infernix-demo`
+- the repo-local operator binary lives at `./.build/infernix`
 - the supported Apple host bootstrap ultimately calls
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
   which lets cabal use its natural `dist-newstyle` builddir at the project root while installing
@@ -110,8 +110,9 @@ key, local install root, entrypoint, and smoke command. Current Apple materializ
 manifest contract, smoke-loads materialized Apple payloads before atomic rename when possible, then
 hydrates and re-smokes package-backed installed roots. Linux native roots exercise runtime-backed
 payload smoke over the image-baked native layer, Apple native roots exercise real runner smoke, and
-Wave L owns the routed full-suite Apple real-output gate. Wave K closed the Linux routed full-suite
-real-output delivery that consumes the Linux payloads through the service path.
+Wave L closed the routed full-suite Apple real-output gate for its then-active catalog. Wave K closed
+the Linux routed full-suite real-output delivery that consumes the Linux payloads through the service
+path for its then-active catalog; Wave O owns proof for post-replacement MT3 rows added on 2026-06-30.
 
 ## Linux Native Engine Artifacts
 
@@ -138,8 +139,9 @@ Normal invocations parse native worker arguments, support `--output-dir` for art
 families, fail with exit 75 until the requested model-cache entry has a `.ready` sentinel, and can
 emit the local
 `infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
-upload bridge. The reopened Phases 4/6 own full routed real-output delivery (Wave K), with realness
-enforced in the engine code by the realness lint.
+upload bridge. The reopened Phases 4/6 own full routed real-output delivery, with realness enforced
+in the engine code by the realness lint. Wave K covers its then-active catalog; Wave O owns proof for
+post-replacement MT3 rows added on 2026-06-30.
 
 ## Generated Demo Config Publication
 

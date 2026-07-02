@@ -128,6 +128,7 @@ import Infernix.Runtime.Pulsar
     drainTopic,
     inferenceRequestProducerNameForFields,
     inferenceRequestSequenceIdForFields,
+    isMultiFileModelRepoUrl,
     isPackageBackedNativeModel,
     isRetryablePulsarWebSocketClientFailure,
     modelBootstrapReadyWaitMaxSeconds,
@@ -186,9 +187,9 @@ import Test.QuickCheck
 main :: IO ()
 main = do
   unitTestRoot <- testRootPath "unit"
-  assert (length (catalogForMode AppleSilicon) == 14) "apple-silicon runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxCpu) == 10) "linux-cpu runnable catalog count matches the revised matrix"
-  assert (length (catalogForMode LinuxGpu) == 14) "linux-gpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
+  assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
   assert
     (expectedDaemonLocationForRuntime AppleSilicon == "cluster-pod")
     "apple-silicon publication reports the cluster service daemon location"
@@ -661,6 +662,11 @@ main = do
                           daemonConfigPulsarConnectionMode = ConfiguredTransport,
                           daemonConfigConsumerSubscriptionType = Just ConsumerShared
                         },
+                    webappDaemon =
+                      unitWebappDaemonConfig
+                        LinuxCpu
+                        (requestTopicsForMode LinuxCpu)
+                        (resultTopicForMode LinuxCpu),
                     engineDaemons =
                       [ DaemonConfig
                           { daemonConfigRole = Engine,
@@ -704,6 +710,7 @@ main = do
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
       assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
+      assert (daemonConfigRole (webappDaemon decodedConfig) == Webapp) "demo-config decode preserves webapp daemon metadata"
       assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
       assert
         (daemonConfigConsumerSubscriptionType (coordinatorDaemon decodedConfig) == Just ConsumerShared)
@@ -865,6 +872,11 @@ main = do
                           daemonConfigPulsarConnectionMode = ConfiguredTransport,
                           daemonConfigConsumerSubscriptionType = Just ConsumerShared
                         },
+                    webappDaemon =
+                      unitWebappDaemonConfig
+                        AppleSilicon
+                        (requestTopicsForMode AppleSilicon)
+                        (resultTopicForMode AppleSilicon),
                     engineDaemons =
                       [ DaemonConfig
                           { daemonConfigRole = Engine,
@@ -1109,8 +1121,8 @@ main = do
         ( (selectedEngine <$> findModel AppleSilicon "speech-faster-whisper-ct2") == Just "CTranslate2 (CPU)"
             && isNothing (findModel LinuxGpu "audio-basic-pitch-tensorflow")
             && isNothing (findModel AppleSilicon "video-wan21-t2v")
-            && isNothing (findModel AppleSilicon "music-mt3-jax")
-            && "music-mt3-jax" `elem` residualMatrixRowIdsForMode AppleSilicon
+            && (selectedEngine <$> findModel AppleSilicon "music-mt3-infer") == Just "PyTorch CPU"
+            && (selectedEngine <$> findModel LinuxGpu "music-mr-mt3") == Just "PyTorch CUDA"
         )
         "Sprint 4.18: researched matrix corrections are reflected in runnable catalog bindings"
       -- Phase 4 Sprint 4.17: per-engine image naming plus the Phase 4.19
@@ -1137,12 +1149,14 @@ main = do
               [ "[tool.poetry.group.apple-silicon.dependencies]",
                 "torch = { version = \">=2.7\", source = \"pypi\", markers = \"platform_system == 'Darwin' and platform_machine == 'arm64'\" }",
                 "torchaudio = { version = \">=2.7\", source = \"pypi\", markers = \"platform_system == 'Darwin' and platform_machine == 'arm64'\" }",
-                "transformers = \">=4.46\"",
+                "torchvision = { version = \">=0.22\", source = \"pypi\", markers = \"platform_system == 'Darwin' and platform_machine == 'arm64'\" }",
+                "transformers = \">=4.46,<4.50\"",
                 "demucs = \">=4.0\"",
                 "openunmix = \">=1.2\"",
                 "scipy = \">=1.13\"",
                 "soundfile = \">=0.12\"",
                 "librosa = \">=0.10\"",
+                "mt3-infer = \">=0.1.3\"",
                 "piano-transcription-inference = \">=0.0.6\""
               ]
       assert
@@ -1351,6 +1365,12 @@ main = do
             && not (isPackageBackedNativeModel "audio-basic-pitch-onnx")
         )
         "model-bootstrap treats package-backed native tools as installed state, not landing-page payloads"
+      assert
+        ( isMultiFileModelRepoUrl "https://zenodo.org/records/3370489"
+            && isMultiFileModelRepoUrl "https://github.com/kunato/mt3-pytorch/tree/master/pretrained"
+            && not (isMultiFileModelRepoUrl "https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth")
+        )
+        "model-bootstrap routes multi-file model sources through the snapshot helper"
       let audiverisDescriptor = maybe (fail "expected linux-cpu Audiveris row") pure (findModel LinuxCpu "tool-audiveris")
       audiverisModel <- audiverisDescriptor
       assert
@@ -3029,6 +3049,7 @@ assertLinuxHostBatchForwarding paths = do
             demoUiEnabled = True,
             activeDaemonRole = Coordinator,
             coordinatorDaemon = daemonConfig,
+            webappDaemon = unitWebappDaemonConfig LinuxCpu [requestTopic] resultTopic,
             engineDaemons = [],
             enginePools = enginePoolsForMode LinuxCpu,
             engineMembers = engineMembersForMode LinuxCpu,
@@ -3081,6 +3102,18 @@ assertLinuxHostBatchForwarding paths = do
         if isDoesNotExistError err
           then pure ()
           else ioError err
+
+unitWebappDaemonConfig :: RuntimeMode -> [Text.Text] -> Text.Text -> DaemonConfig
+unitWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
+  DaemonConfig
+    { daemonConfigRole = Webapp,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigMemberId = Nothing,
+      daemonConfigRequestTopics = requestTopicValues,
+      daemonConfigResultTopic = resultTopicValue,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
+    }
 
 mangleLastChar :: Text.Text -> Text.Text
 mangleLastChar token =

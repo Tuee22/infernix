@@ -8,9 +8,9 @@
 
 ## Scope
 
-**This is the demo HTTP surface only, served by the `infernix-demo` Haskell binary and gated by
-the active `.dhall` `demo_ui` flag.** Production deployments leave the flag off, the cluster has
-no `infernix-demo` workload, and none of the endpoints below are bound. The production inference
+**This is the demo HTTP surface only, served by the `infernix` Webapp role and gated by the active
+`.dhall` `demo_ui` flag.** Production deployments leave the flag off, the cluster has no
+`infernix-demo` workload, and none of the endpoints below are bound. The production inference
 surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tools/pulsar.md).
 
 ## Endpoints
@@ -55,9 +55,9 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 
 ## Rules
 
-- the demo API surface is implemented in Haskell as `src/Infernix/Demo/Api.hs` and exposed by the
-  `infernix-demo` binary; production `infernix service` does not bind any HTTP port and never
-  serves these endpoints
+- the demo API surface is implemented in Haskell as `src/Infernix/Demo/Api.hs` and exposed by
+  `infernix service --role webapp`; coordinator and engine service roles do not bind any HTTP port
+  and never serve these endpoints
 - request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
   shared with the non-HTTP production daemon
 - invalid requests return typed user-facing errors

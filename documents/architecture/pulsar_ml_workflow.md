@@ -25,7 +25,7 @@ family, or phasing rules.
 ## The three roles
 
 One binary; the role is selected by the typed Dhall config it is given (no
-separate per-role executables — `infernix` retires the two-binary
+separate per-role executables — `infernix` has retired the two-binary
 `infernix` + `infernix-demo` split in favour of a Webapp role). Every role runs
 the same lifecycle skeleton — `Load → Prereq → Acquire → Ready → Serve → Drain →
 Exit` — with role-specific `acquire`/`serve`/`drain` callbacks.

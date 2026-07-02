@@ -72,7 +72,7 @@ fetches model weights lazily from the `infernix-models` MinIO bucket via
 `adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
 guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
 realness lint). Phase 1 Sprint 1.15 materializes real Apple native engine roots, replacing the former
-validation wrappers; routed real-output proof for the Apple catalog remains the Wave L cohort gate. Apple native engine artifacts resolve from
+validation wrappers; Wave L records routed real-output proof for the then-active Apple catalog. Apple native engine artifacts resolve from
 `./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
 Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
 and native runner payloads. The former Tart helper path has been removed; the retained command name
@@ -89,9 +89,10 @@ Runtime/CTranslate2 Python dependencies, faster-whisper, and Audiveris app jars 
 image-architecture Temurin 25 JRE. Generated wrappers fail with exit 75 until the requested model
 cache contains a `.ready` sentinel, can emit a local artifact-file marker for Haskell-owned MinIO
 upload, and delegate strict smoke checks to those baked payloads, including launching Audiveris
-through Java on the native image architecture. The reopened Phases 4/6 own the full routed
-`linux-gpu` plus `linux-cpu` real-output delivery (Wave K), with realness enforced in the engine
-code by the realness lint.
+through Java on the native image architecture. The reopened Phases 4/6 own full routed
+`linux-gpu` plus `linux-cpu` real-output delivery, with realness enforced in the engine code by the
+realness lint. Wave K proves the then-active Linux catalogs; Wave O owns proof for the MT3 rows added
+on 2026-06-30.
 
 ## Generated Demo Config Contract
 

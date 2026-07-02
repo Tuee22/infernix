@@ -102,7 +102,8 @@ instance FromJSON RuntimeMode where
 
 -- | Daemon role identity. Phase 7 Sprint 7.7 renames the legacy
 -- @cluster@ / @host@ vocabulary to the supported @coordinator@ /
--- @engine@ pair from the three-role daemon-topology contract:
+-- @engine@ vocabulary and adds @webapp@ from the three-role
+-- daemon-topology contract:
 --
 --  * 'Coordinator' = stateless Pulsar coordination role. On Linux
 --    substrates it runs as the in-cluster @infernix-coordinator@
@@ -111,24 +112,31 @@ instance FromJSON RuntimeMode where
 --    in-cluster @infernix-engine@ Deployment or a pool-specific
 --    workload; on Apple silicon it runs as an on-host
 --    @infernix service@ daemon selected by stable engine member id.
+--  * 'Webapp' = stateless demo HTTP/WebSocket role. It runs as the
+--    demo-gated @infernix-demo@ Deployment using @infernix service
+--    --role webapp@.
 data DaemonRole
   = Coordinator
   | Engine
+  | Webapp
   deriving (Eq, Ord, Read, Show)
 
 daemonRoleId :: DaemonRole -> Text
 daemonRoleId daemonRole = case daemonRole of
   Coordinator -> "coordinator"
   Engine -> "engine"
+  Webapp -> "webapp"
 
 -- | Parse the supported daemon-role identifier. Accepts the new
 -- @coordinator@ / @engine@ ids plus the legacy @cluster@ / @host@
--- aliases so a stale staged @.dhall@ from a pre-Sprint-7.7 build still
--- decodes; the renderer always emits the new vocabulary.
+-- aliases and the @frontend@ alias so stale staged @.dhall@ files
+-- still decode; the renderer always emits the supported vocabulary.
 parseDaemonRole :: Text -> Maybe DaemonRole
 parseDaemonRole rawValue = case Text.toLower rawValue of
   "coordinator" -> Just Coordinator
   "engine" -> Just Engine
+  "webapp" -> Just Webapp
+  "frontend" -> Just Webapp
   "cluster" -> Just Coordinator
   "host" -> Just Engine
   _ -> Nothing
@@ -278,6 +286,10 @@ data DemoConfig = DemoConfig
     -- Sprint 7.7 renamed this field from @clusterDaemon@ to track the
     -- new daemon-role vocabulary.
     coordinatorDaemon :: DaemonConfig,
+    -- | Webapp role metadata. The in-cluster @infernix-demo@
+    -- Deployment now starts through @infernix service --role webapp@
+    -- instead of the retired @infernix-demo@ executable.
+    webappDaemon :: DaemonConfig,
     -- | Engine role metadata. The first entry is the generic engine
     -- daemon (Apple host engine, or the Linux native-runner fallback
     -- topic). Linux GPU framework engines add one entry per isolated
@@ -755,6 +767,8 @@ instance ToJSON DemoConfig where
         "demo_ui" .= demoUiEnabled demoConfig,
         "daemonRole" .= activeDaemonRole demoConfig,
         "coordinator" .= coordinatorDaemon demoConfig,
+        "webapp" .= webappDaemon demoConfig,
+        "engineDaemons" .= engineDaemons demoConfig,
         "enginePools" .= enginePools demoConfig,
         "engineMembers" .= engineMembers demoConfig,
         "request_topics" .= requestTopics demoConfig,
@@ -790,6 +804,10 @@ instance FromJSON DemoConfig where
                       requestTopicValues
                       resultTopicValue
                   )
+    webappDaemonValue <-
+      value
+        .:? "webapp"
+        .!= defaultWebappDaemonConfig runtimeModeValue requestTopicValues resultTopicValue
     enginePoolValues <- value .:? "enginePools" .!= []
     engineMemberValues <- value .:? "engineMembers" .!= []
     parsedEngineDaemonValues <-
@@ -808,6 +826,7 @@ instance FromJSON DemoConfig where
       <*> value .: "demo_ui"
       <*> pure daemonRoleValue
       <*> pure coordinatorDaemonValue
+      <*> pure webappDaemonValue
       <*> pure engineDaemonValues
       <*> pure enginePoolValues
       <*> pure engineMemberValues
@@ -842,6 +861,18 @@ defaultCoordinatorDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
 defaultCoordinatorDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
   DaemonConfig
     { daemonConfigRole = Coordinator,
+      daemonConfigLocation = "cluster-pod",
+      daemonConfigMemberId = Nothing,
+      daemonConfigRequestTopics = requestTopicValues,
+      daemonConfigResultTopic = resultTopicValue,
+      daemonConfigPulsarConnectionMode = ConfiguredTransport,
+      daemonConfigConsumerSubscriptionType = Just ConsumerShared
+    }
+
+defaultWebappDaemonConfig :: RuntimeMode -> [Text] -> Text -> DaemonConfig
+defaultWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
+  DaemonConfig
+    { daemonConfigRole = Webapp,
       daemonConfigLocation = "cluster-pod",
       daemonConfigMemberId = Nothing,
       daemonConfigRequestTopics = requestTopicValues,

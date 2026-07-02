@@ -15,8 +15,8 @@ packages. The remaining `.js` or `.mjs` files under `web/playwright/`,
 `web/test/run_playwright_matrix.mjs`, and `web/scripts/install-purescript.mjs` are test or
 toolchain assets.
 
-The demo UI is served by the `infernix-demo` Haskell binary and gated by the active `.dhall`
-`demo_ui` flag. Production deployments leave the flag off and the cluster has no demo UI workload.
+The demo UI is served by the `infernix` Webapp role and gated by the active `.dhall` `demo_ui`
+flag. Production deployments leave the flag off and the cluster has no demo UI workload.
 
 ## Toolchain
 

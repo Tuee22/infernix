@@ -126,7 +126,7 @@ is gated on routed proxy-affinity or clustered-cache validation.
   localStorage persistence is required for correctness) and presented as
   a `Bearer` token on HTTP and as a `token` query parameter on the
   WebSocket handshake.
-- The `infernix-demo` binary validates the JWT against the Keycloak JWKS
+- The Webapp role validates the JWT against the Keycloak JWKS
   endpoint via `Infernix.Auth.Jwt` and caches the JWKS with a short TTL
   so transient Keycloak unavailability does not break existing sessions.
 - The Keycloak `sub` claim is the canonical `userId` across Pulsar topic

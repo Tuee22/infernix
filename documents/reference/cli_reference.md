@@ -10,7 +10,7 @@
 
 ### `service`
 
-- `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]` - starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.
+- `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the active `.dhall` request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.
 
 ### `cluster`
 
@@ -63,10 +63,6 @@
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
 <!-- infernix:command-registry:end -->
 
-## `infernix-demo` (demo UI HTTP host)
-
-- `infernix-demo serve [--dhall PATH] [--port PORT]`
-
 ## Rules
 
 - the `infernix` command inventory above is rendered from the command metadata exposed by the
@@ -78,8 +74,8 @@
   Metal runtime bridge smoke and native artifact load evidence named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
-  `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` and
-  `infernix-demo serve` are the only long-running daemon entrypoints
+  `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` is the
+  long-running daemon entrypoint for the Coordinator, Engine, and Webapp roles
 - `cluster status` does not mutate Kubernetes resources, publication state, or authoritative
   repo-local state; on the Linux outer-container path it may idempotently run
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
@@ -90,14 +86,13 @@
   `infernix test ...` commands own substrate-file preflight for their execution context, materialize
   or validate the file before relying on it, and fail with a substrate-specific diagnostic if that
   preflight cannot complete
-- `infernix service` is the production daemon. It binds no HTTP port, consumes the active
-  `.dhall` request/result topics, engine bindings, and engine-pool assignment metadata, and uses
-  the Pulsar transport configured for the active substrate. `--engine-name NAME` selects a stable
-  engine member id from the derived pool/member graph; `--config PATH` is the supported explicit
-  substrate-file override for targeted daemon validation and diagnostics
-- `infernix-demo serve` is the only repo-owned demo HTTP host in this repository; the routed
-  cluster-resident demo workload and direct `serve` both expose the same Haskell `/api` contract
-  through `src/Infernix/Demo/Api.hs`
+- `infernix service` starts the selected role. Coordinator and engine roles bind no HTTP port,
+  consume the active `.dhall` request/result topics, engine bindings, and engine-pool assignment
+  metadata, and use the Pulsar transport configured for the active substrate. `--engine-name NAME`
+  selects a stable engine member id from the derived pool/member graph; `--config PATH` is the
+  supported explicit substrate-file override for targeted daemon validation and diagnostics. The
+  Webapp role serves the demo HTTP/WebSocket surface through `src/Infernix/Demo/Api.hs` and is
+  normally deployed as the demo-gated `infernix-demo` workload
 - `infernix cache status` reports the manifest-backed cache inventory for the active runtime
   mode; `cache evict` and `cache rebuild` only affect derived cache state
 - `infernix kubectl ...` wraps upstream `kubectl` and injects the repo-local kubeconfig

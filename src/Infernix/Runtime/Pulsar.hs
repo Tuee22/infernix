@@ -30,6 +30,7 @@ module Infernix.Runtime.Pulsar
     modelBootstrapReadyWaitMaxSeconds,
     reconcileStartupTopicsWithRetry,
     reconcileSupportedNamespacesWithRetry,
+    isMultiFileModelRepoUrl,
     isPackageBackedNativeModel,
     renderPulsarWebSocketBase,
     publishInferenceRequest,
@@ -1293,6 +1294,8 @@ drainTopicWithKVCache paths runtimeMode overrides daemonConfig demoConfig maybeE
       forwardTopicToDerivedPool paths runtimeMode demoConfig requestTopicValue
     Engine ->
       drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
+    Webapp ->
+      ioError (userError "webapp role does not drain inference topics")
 
 forwardTopicToDerivedPool :: Paths -> RuntimeMode -> DemoConfig -> Text.Text -> IO ()
 forwardTopicToDerivedPool paths runtimeMode demoConfig sourceTopicValue = do
@@ -2321,6 +2324,8 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
               (requestId publishedResult)
               (encodeMessage (domainResultToProto publishedResult))
             pure ()
+        Webapp ->
+          ioError (userError "webapp role does not consume inference topics")
       sendAck connection (envelopeMessageId envelope)
 
 serviceConsumerAckTimeoutMillis :: Int
@@ -3404,6 +3409,7 @@ processBootstrapRequest transport systemNamespace request = do
 isMultiFileModelRepoUrl :: Text.Text -> Bool
 isMultiFileModelRepoUrl rawUrl =
   "zenodo.org/records/3370489" `Text.isInfixOf` rawUrl
+    || "github.com/kunato/mt3-pytorch" `Text.isInfixOf` rawUrl
 
 isPackageBackedNativeModel :: Text.Text -> Bool
 isPackageBackedNativeModel modelId =

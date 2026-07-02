@@ -130,13 +130,15 @@ own isolated in-project venv:
   fail-fast path (a named cohort residual) rather than a broken venv. The linux-cpu image bakes
   `transformers` and `pytorch` with their `linux-cpu` groups and writes marker files for the baked
   venvs. Under realness-by-construction (reopened Phase 4) every adapter runs the real model or
-  raises → `failed`: deterministic validation-smoke or validation-artifact paths are not permitted
+  raises → `failed`: deterministic fabricated-success paths are not permitted
   (the `check-code` realness pass forbids them), so a substrate that cannot run a row leaves it an
   explicit residual rather than a fabricated success. The music-transcription rows rebind to
-  maintained PyTorch/ONNX models (basic-pitch ONNX/Core ML, MT3 → YourMT3+/`mt3-infer`, Omnizart → a
-  modern PyTorch transcription model), eliminating the finicky TensorFlow `<2.15.1` / TF1-era /
-  unmaintained-JAX pins; any row not yet rebound or not yet real on a substrate is a named residual
-  (see [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)).
+  maintained PyTorch/ONNX models (basic-pitch ONNX/Core ML, MT3-PyTorch and MR-MT3 through
+  `mt3-infer`, Omnizart through a modern PyTorch transcription model), eliminating the finicky
+  TensorFlow `<2.15.1` / TF1-era / unmaintained-JAX pins; any row not yet rebound or not yet real
+  on a substrate is a named residual. The 2026-06-30 MT3 replacement rows are code-side bound for
+  all three substrates; post-replacement full-suite proof is tracked by
+  [Wave O](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 `find python -name '*.py' -type f` still returns only files under `python/adapters/`; the
 `python/engines/<engine>/` projects carry only `pyproject.toml` + `poetry.toml`, and their `.venv/`
@@ -199,8 +201,9 @@ Current state:
   appropriate. Native artifact-producing processes receive non-secret cache and bucket hints plus
   an optional `--output-dir`; if they print `infernix-native-artifact-file:<path>`, the Haskell
   worker performs the credentialed MinIO upload and returns the object reference. The reopened
-  Phases 4/6 own the routed full-suite real-output delivery (Wave K) against live MinIO; realness is
-  enforced in the engine code by the realness lint.
+  Phases 4/6 own routed full-suite real-output delivery against live MinIO; Wave K covers its
+  then-active catalog, and Wave O owns post-replacement proof for the MT3 rows added on 2026-06-30.
+  Realness is enforced in the engine code by the realness lint.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

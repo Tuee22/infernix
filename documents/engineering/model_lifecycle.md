@@ -21,8 +21,9 @@
   `/opt/infernix/engines/<adapterId>/`, with typed manifests and smoke validation. The current
   Linux image-build helper writes runtime-backed wrapper roots over image-baked llama.cpp,
   whisper.cpp, ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris payloads; the
-  reopened Phases 4/6 own the routed full-suite real-output delivery (Wave K), with realness enforced
-  in the engine code by the realness lint.
+  reopened Phases 4/6 own the routed full-suite real-output delivery, with realness enforced in the
+  engine code by the realness lint. Wave K covers its then-active catalog; Wave O owns proof for
+  post-replacement MT3 rows added on 2026-06-30.
 - the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`)
   stores cache manifests beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
@@ -81,11 +82,12 @@
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
   entrypoint, and smoke command. Current Apple materialization validates the manifest contract,
   smoke-loads materialized Apple payloads before atomic rename on Darwin, and routes real Apple
-  engine output through the host daemon for the active Apple catalog; Wave L's Apple integration
-  and focused routed Playwright gates are green, with only the paired `linux-cpu` gate still open.
+  engine output through the host daemon for the then-active Apple catalog; Wave L's Apple integration,
+  focused routed Playwright, and paired `linux-cpu` gates are closed.
   Linux native payload strict smoke exists today, and the reopened Phases 4/6 own the routed
-  full-suite real-output delivery (Wave K) that consumes those payloads through the service path;
-  realness is enforced in the engine code by the realness lint.
+  full-suite real-output delivery that consumes those payloads through the service path. Wave K
+  covers its then-active catalog; Wave O owns proof for post-replacement MT3 rows added on
+  2026-06-30. Realness is enforced in the engine code by the realness lint.
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source

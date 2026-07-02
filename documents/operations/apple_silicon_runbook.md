@@ -110,8 +110,8 @@ Direct reference path:
   exercised explicitly
 - supported Apple host shell is limited to `./bootstrap/apple-silicon.sh`; the direct `cabal`
   command lets cabal use its natural `dist-newstyle` builddir at the project root and only
-  overrides `--installdir=./.build` so the materialized `./.build/infernix` and
-  `./.build/infernix-demo` binaries land where the supported CLI surface expects them
+  overrides `--installdir=./.build` so the materialized `./.build/infernix`
+  binary lands where the supported CLI surface expects it
 - after the host binary exists, the bootstrap shell does not call `kind`, `kubectl`, `helm`, apply
   manifests, pull images, build the cluster runtime image, or publish to Harbor directly; it calls
   `./.build/infernix <command>` and lets the binary own those lifecycle responsibilities

@@ -311,7 +311,7 @@ missingGeneratedSubstrateFileError substratePath =
         [ "Missing generated substrate file: " <> substratePath,
           "Build or restage the active substrate before running supported infernix commands.",
           "Examples:",
-          "  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix exe:infernix-demo",
+          "  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix",
           "  infernix internal materialize-substrate apple-silicon",
           "  docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui true"
         ]

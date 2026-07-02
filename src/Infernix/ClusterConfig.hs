@@ -126,7 +126,7 @@ keycloakFieldOptions =
         other -> other
     }
 
--- | Demo-backend wiring values consumed by @infernix-demo@.
+-- | Demo-backend wiring values consumed by the Webapp role.
 data DemoBackendWiring = DemoBackendWiring
   { demoBindHost :: Text,
     demoPort :: Natural,

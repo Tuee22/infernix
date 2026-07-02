@@ -194,19 +194,21 @@ None.
 
 ### Objective
 
-Bring the governed docs into alignment with the two-binary topology, Pulsar production surface,
-demo-only HTTP surface, and generated-catalog architecture baseline.
+Bring the governed docs into alignment with the single `infernix` binary role topology, Pulsar
+production surface, demo-only HTTP surface, and generated-catalog architecture baseline.
 
 ### Deliverables
 
-- the docs suite describes `infernix` and `infernix-demo` as the supported binary topology
+- the docs suite describes `infernix` as the supported binary topology with Coordinator, Engine,
+  and Webapp roles
 - production inference is documented as Pulsar-only
 - demo HTTP, browser SPA, and generated frontend contracts are documented as demo-only surfaces
 - later implementation phases inherit a coherent docs baseline instead of mixed prior language
 
 ### Validation
 
-- the listed docs no longer describe the prior single-binary or Python-HTTP product shape
+- the listed docs no longer describe the prior Python-HTTP product shape or the retired
+  two-binary Webapp split as current
 - documentation validation catches the prior-doctrine vocabulary tracked in the cleanup ledger
 
 ### Remaining Work

@@ -19,13 +19,13 @@ spec:
           image: "{{ .Values.demo.image.repository }}:{{ .Values.demo.image.tag }}"
           imagePullPolicy: {{ .Values.demo.image.pullPolicy }}
           command:
-            - infernix-demo
+            - infernix
           args:
-            - serve
-            - --dhall
+            - service
+            - --role
+            - webapp
+            - --config
             - "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
-            - --port
-            - {{ .Values.demo.port | quote }}
 {{- with .Values.demo.resources }}
           resources:
 {{ toYaml . | nindent 12 }}

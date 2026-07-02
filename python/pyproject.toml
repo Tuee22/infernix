@@ -84,6 +84,8 @@ module = [
   "omnizart",
   "omnizart.*",
   "mt3_inference",
+  "mt3_infer",
+  "mt3_infer.*",
   "librosa",
   "librosa.*",
   "piano_transcription_inference",

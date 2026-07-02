@@ -92,8 +92,7 @@ residualMatrixRowIdsForMode :: RuntimeMode -> [Text]
 residualMatrixRowIdsForMode runtimeMode =
   case runtimeMode of
     AppleSilicon ->
-      [ "music-mt3-jax",
-        "video-wan21-diffusers"
+      [ "video-wan21-diffusers"
       ]
     LinuxCpu ->
       []
@@ -798,19 +797,33 @@ matrixRows =
       (Just (ModeBinding "ONNX Runtime CPU" False))
       (Just (ModeBinding "ONNX Runtime CUDA" True)),
     mkRow
-      "music-mt3-jax"
-      "music-mt3-jax"
-      "YourMT3+"
+      "music-mt3-infer"
+      "music-mt3-infer"
+      "MT3-PyTorch"
       "music"
-      "Multi-instrument music transcription via the modern PyTorch YourMT3+ family."
-      "PyTorch"
-      "YourMT3+"
-      "https://github.com/mimbres/YourMT3"
-      "Modern PyTorch reimplementation (YourMT3+ / mt3-infer) replacing the unmaintained JAX MT3 stack. Deferred: too-heavy MoE with no maintained pip package, so it is Not-recommended on every substrate until a feasible engine lands."
+      "Multi-instrument music transcription via the mt3-infer PyTorch MT3 port."
+      "PyTorch checkpoint"
+      "MT3-PyTorch"
+      "https://github.com/kunato/mt3-pytorch/tree/master/pretrained"
+      "mt3-infer-backed MT3-PyTorch row. Apple uses the PyTorch CPU path until upstream MPS support is validated."
       "Audio Input"
-      Nothing
-      Nothing
-      Nothing,
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CUDA" True)),
+    mkRow
+      "music-mr-mt3"
+      "music-mr-mt3"
+      "MR-MT3"
+      "music"
+      "Fast multi-instrument music transcription via MR-MT3 through mt3-infer."
+      "PyTorch checkpoint"
+      "MR-MT3"
+      "https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth"
+      "mt3-infer-backed MR-MT3 row. Apple uses the PyTorch CPU path until upstream MPS support is validated."
+      "Audio Input"
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CPU" False))
+      (Just (ModeBinding "PyTorch CUDA" True)),
     mkRow
       "music-omnizart-tensorflow"
       "music-omnizart"

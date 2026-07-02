@@ -59,7 +59,6 @@ RUN apt-get update \
 # per-engine venv), the generated proto stubs, the staged substrate/host
 # manifest, and the chart cache — all from the slim control-plane image.
 COPY --from=source /usr/local/bin/infernix /usr/local/bin/infernix
-COPY --from=source /usr/local/bin/infernix-demo /usr/local/bin/infernix-demo
 COPY --from=source /workspace /workspace
 COPY --from=source /opt/infernix /opt/infernix
 

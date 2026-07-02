@@ -145,7 +145,7 @@ operations have a buildx-capable CLI when needed.
   and regenerates `web/package-lock.json` through `npm install` rather than tracking it under
   version control
 - Apple Silicon has no substrate Dockerfile; the host-native workflow builds the
-  `./.build/infernix` and `./.build/infernix-demo` binaries locally, uses `./.build/infernix` for
+  `./.build/infernix` binary locally, uses `./.build/infernix` for
   ordinary operator commands and the host inference daemon, keeps the routed demo workload
   cluster-resident when `demo_ui` is enabled, and runs host-native routed E2E through host
   `npm exec` with the same typed fixture during Apple cohort validation batches

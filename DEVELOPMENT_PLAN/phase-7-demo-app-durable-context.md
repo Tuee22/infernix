@@ -11,15 +11,12 @@
 
 ## Phase Status
 
-> **Common-shape reopen (Webapp role).** Phase 7 reopens to fold the demo frontend
-> from the separate `infernix-demo` binary into a **one-binary `Webapp` role**
-> selected by typed Dhall `activeRole` and run through the shared role-lifecycle
-> skeleton, per the shared contract (see [README.md](README.md) → Common-Shape Reopen
-> and [development_plan_standards.md](development_plan_standards.md) §Q). The Webapp
-> stays a thin websocket server talking only to Pulsar + MinIO (no ML compute), which
-> it already is. The current two-binary split is recorded as cleanup debt in
-> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md), not as open Phase 7
-> validation work.
+> **Common-shape reopen (Webapp role).** Closed 2026-06-30: the demo frontend now runs as the
+> one-binary `Webapp` role selected by typed Dhall and `infernix service --role webapp`, per the
+> shared contract (see [README.md](README.md) → Common-Shape Reopen and
+> [development_plan_standards.md](development_plan_standards.md) §Q). The Webapp stays a thin
+> websocket server talking only to Pulsar + MinIO (no ML compute). The former two-binary split is
+> recorded as closed cleanup in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 > **Audit follow-on reopen (generated artifact ownership).** Phase 7 reopened Sprint 7.28 after the
 > June 2026 audit found that browser object operations are correctly proxied and per-user authorized,
@@ -3104,7 +3101,7 @@ caller's MinIO prefix and user-owned Pulsar durable-context topics.
 - `cabal test infernix-haskell-style` exits zero.
 - `npm --prefix web run test:unit` exits zero (71/71 cases pass).
 - `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-  refreshes the Apple host-native `./.build/infernix` and `./.build/infernix-demo` binaries.
+  refreshes the Apple host-native `./.build/infernix` binary.
 - `./.build/infernix test e2e` exits zero on the supported Apple host-native lane with 9/9 routed
   Playwright tests passing, including account deletion in 2.9 seconds on the final run.
 - Wave G routed E2E verifies the complete browser account-deletion flow against real Keycloak,

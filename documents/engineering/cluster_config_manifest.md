@@ -123,7 +123,7 @@ This table records the typed input families read by each consumer.
 | MinIO endpoint, public presign endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
 | MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
 | Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
-| Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/DemoCLI.hs`, `src/Infernix/Service.hs` |
+| Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/Webapp.hs`, `src/Infernix/Service.hs` |
 | Model-cache root and quota inputs | `engine.modelCacheRoot`, `engine.modelCacheQuotaBytes` | `python/adapters/model_cache.py` |
 | Engine command override inputs | `engine.commandOverrides` | `src/Infernix/Runtime/Worker.hs` |
 | Coordinator catalog-source, control-plane-context, daemon-location, and daemon-role inputs | `coordinator.*` plus the substrate `.dhall` role field | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |

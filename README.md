@@ -33,16 +33,15 @@ This repository serves two aligned purposes:
 - provide a local Kind cluster, running the mandatory HA service topology, as the testing and demo
   ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
   per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
-  (served by the `infernix-demo` binary) is a demo surface on that substrate, gated by the active
-  `.dhall` config
+  is served by the `infernix` Webapp role in the `infernix-demo` workload when the active `.dhall`
+  config enables it
 
 ## Highlights
 
-- two Haskell executables sharing the default Cabal library exposed by the `infernix` package:
-  `infernix` (production daemon, cluster lifecycle, Pulsar inference dispatcher, static-quality
-  gate, internal helpers) and `infernix-demo` (demo UI HTTP host). Routing is owned by the
-  Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests; `infernix` itself
-  is no longer a routing process
+- one Haskell executable, `infernix`, sharing one typed command surface for cluster lifecycle,
+  static-quality gates, internal helpers, and the long-running Coordinator, Engine, and Webapp
+  roles. Routing is owned by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute
+  manifests; the Webapp role is reached through the routed `infernix-demo` workload when enabled
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener, the coordinator remains the production request router,
   and the cluster has no `infernix-demo` workload when the demo UI is off
@@ -60,8 +59,8 @@ This repository serves two aligned purposes:
 - one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend contracts
   emitted by `infernix internal generate-purs-contracts` through `purescript-bridge` from
   dedicated Haskell browser-contract ADTs plus active-mode catalog metadata
-- one browser-based PureScript demo SPA covering manual inference for any registered model,
-  served by `infernix-demo`
+- one browser-based PureScript demo SPA covering manual inference for any registered model, served
+  by the Webapp role in the `infernix-demo` workload
 - three runtime targets: Apple Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux,
   and Ubuntu 24.04 NVIDIA CUDA containers
 - one validation surface spanning repo-owned Haskell `ormolu`/`cabal format`/`hlint`,
@@ -88,8 +87,9 @@ in-process by the `dhall` Haskell library; the schema is defined at `dhall/Infer
 
 - consumes inference requests from Pulsar request topics named in the active `.dhall` and publishes
   results to the configured result topics; this is the production inference surface
-- optionally exposes a manual browser submission surface via the `infernix-demo` binary, gated by
-  the active `.dhall` `demo_ui` flag, sharing the same typed service domain as the production path
+- optionally exposes a manual browser submission surface via `infernix service --role webapp`,
+  gated by the active `.dhall` `demo_ui` flag, sharing the same typed service domain as the
+  production path
 - resolves logical models against durable manifest and artifact metadata
 - acquires missing artifacts into MinIO idempotently when upstream acquisition policy allows it
 - materializes runtime-local cache state from durable sources
@@ -106,7 +106,7 @@ in-process by the `dhall` Haskell library; the schema is defined at `dhall/Infer
 - routes requests into validated engine-pool lanes while leaving engine-local batching and runtime
   memory policy to the selected engine member
 - stores large outputs in MinIO and returns references when appropriate
-- exposes a demo web UI (PureScript, served by `infernix-demo`) for manually running inference
+- exposes a demo web UI (PureScript, served by the Webapp role) for manually running inference
   against any registered model when the demo flag is on
 
 ## Supported Modes
@@ -165,13 +165,12 @@ classes.
 > reflected-Dhall-schema, one-binary role model. The convergence deltas are
 > tracked as reopened plan work (Phases `4`/`6`/`7`) with the current surfaces recorded in
 > [DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md):
-> (1) the two-binary `infernix` + `infernix-demo` split still folds into a
+> (1) the former two-binary `infernix` + `infernix-demo` split is now folded into the
 > one-binary **Webapp** role; (2) the coordinator now owns **explicit**
 > topic-lifecycle reconciliation from the typed runtime graph instead of relying on
 > implicit broker auto-create; (3) the binary emits the reflected Dhall schema it
 > decodes through `infernix internal dhall-schema host|cluster|secrets|substrate`.
-> Until the Webapp role lands, the three roles below remain the two production
-> daemons plus the demo frontend.
+> The three roles below are selected through the shared `infernix service` surface.
 
 The supported local platform is built around:
 
@@ -195,10 +194,10 @@ The supported local platform is built around:
 - Grafana may use its own durable PostgreSQL backend, but that backend follows the same
   per-service Patroni and Percona-operator rules as every other PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
-- one OCI image per Linux substrate carrying both `infernix` and `infernix-demo` plus the engine
-  toolchain and the demo UI build toolchain; the chart workload entrypoint selects which exe runs
-  (`infernix service` or `infernix-demo serve`). Apple Silicon has no Dockerfile: the host daemon
-  uses the same Haskell worker and shared Poetry adapter setup path as the rest of the runtime
+- one OCI image per Linux substrate carrying `infernix` plus the engine toolchain and the demo UI
+  build toolchain; chart workload args select the role through `infernix service --role
+  coordinator|engine|webapp`. Apple Silicon has no Dockerfile: the host daemon uses the same
+  Haskell worker and shared Poetry adapter setup path as the rest of the runtime
 - substrate bootstrap entrypoints under `bootstrap/` that reconcile only the host prerequisites
   needed to build or enter the active `infernix` launcher, then invoke the matching binary command
   for cluster lifecycle, validation, and teardown
@@ -677,13 +676,13 @@ The canonical supported CLI surfaces are split between the two binaries.
 - `infernix internal demo-config {load,validate}`
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT`
 
-`infernix-demo` (demo UI HTTP host, gated by `.dhall` `demo_ui` flag):
+The demo UI HTTP host is the Webapp role:
 
-- `infernix-demo serve [--dhall PATH] [--port PORT]`
+- `infernix service --role webapp [--config PATH]`
 
-Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` and
-`infernix-demo serve` is declarative and idempotent. `infernix kubectl ...` is a scoped wrapper
-around upstream `kubectl`, not a parallel lifecycle surface.
+Every repo-owned lifecycle, cache, validation, and docs command other than `infernix service` is
+declarative and idempotent. `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`,
+not a parallel lifecycle surface.
 
 ## Runtime and Image Flow
 
@@ -818,9 +817,9 @@ contracts.
 - Haskell-owned DTO and catalog records remain the source of truth for the frontend contract;
   PureScript modules in `web/src/Generated/` are emitted by
   `infernix internal generate-purs-contracts` through `purescript-bridge`
-- the demo UI host is the `infernix-demo` Haskell binary (separate executable from `infernix`,
-  shares the default Cabal library exposed by the `infernix` package, ships in the same
-  per-substrate OCI image on Linux); it serves `web/dist/` produced by `spago bundle`
+- the demo UI host is the `infernix` Webapp role, selected by `infernix service --role webapp`
+  and deployed as the demo-gated `infernix-demo` workload; it serves `web/dist/` produced by
+  `spago bundle`
 - on Linux substrates, the substrate container carries the spago plus purs toolchain, Playwright
   system packages, and the three browser engines; `infernix test e2e` runs
   `npm --prefix web exec -- playwright test` inside that same image
@@ -843,9 +842,11 @@ contracts.
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
   audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`. Realness
-  is guaranteed by construction — the engine code is being made structurally incapable of returning a
-  fabricated result (the realness lint forbids it), delivered by the reopened Phases 1/4/6; rows whose
-  real engine is not yet landed are explicit residuals. One DRY
+  is guaranteed by construction — the engine code is structurally incapable of returning a
+  fabricated result (the realness lint forbids it). Cohort waves prove the catalog that existed when
+  they ran; rows added later, including the 2026-06-30 MT3 replacements, require the active Wave O
+  rerun before their full integration/e2e proof is claimed. Rows whose real engine is not yet landed
+  are explicit residuals. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
   `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
@@ -892,7 +893,8 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | Source separation | PyTorch checkpoint | Open-Unmix | https://zenodo.org/records/3370489 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
-| Multi-instrument music transcription | PyTorch | YourMT3+ | https://github.com/mimbres/YourMT3 | Not recommended | Not recommended | Named residual: YourMT3+ PyTorch viability spike | Modern PyTorch reimplementation (YourMT3+ / mt3-infer); deferred (too-heavy MoE, no maintained pip package), retained as a named residual until a feasible engine lands |
+| Multi-instrument music transcription | PyTorch checkpoint | MT3-PyTorch | https://github.com/kunato/mt3-pytorch/tree/master/pretrained | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MT3-PyTorch row; Apple uses the CPU path until upstream MPS support is validated |
+| Multi-instrument music transcription | PyTorch checkpoint | MR-MT3 | https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MR-MT3 row; Apple uses the CPU path until upstream MPS support is validated |
 | Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed code-side, real-output pending the cohort gate |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion Core ML v1.5 palettized | https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized | Not recommended | Not recommended | Core ML | Apple-native exported Core ML path using preconverted Hugging Face packages |

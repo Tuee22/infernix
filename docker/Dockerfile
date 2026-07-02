@@ -295,7 +295,6 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --install-method=copy \
          --overwrite-policy=always \
          exe:infernix \
-         exe:infernix-demo \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && infernix internal materialize-linux-native-engines \
     && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \

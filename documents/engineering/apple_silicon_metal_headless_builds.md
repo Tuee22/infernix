@@ -37,8 +37,9 @@ The current Apple host evidence builds the host binaries, materializes `apple-si
 `infernix internal materialize-metal-engines`, proves the installed Metal bridge smoke
 (`Metal runtime probe passed on Apple M1`) and the installed runner smokes for Core ML, CTranslate2,
 MLX, ONNX Runtime, and Audiveris, and verifies the Core ML venv imports both Basic Pitch and Apple's
-Stable Diffusion pipeline. Full routed real-output proof for every Apple catalog row remains the
-Wave L cohort gate in
+Stable Diffusion pipeline. Wave L closed routed real-output proof for its then-active Apple catalog;
+post-replacement Apple proof for the 2026-06-30 MT3 rows is not claimed until a separate Apple rerun
+records it in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 ## Target Architecture
@@ -96,8 +97,9 @@ Every materialized engine artifact should have a typed manifest with at least th
 The current materializer writes the manifest through a temporary directory, verifies the manifest
 contract, smoke-loads materialized payloads before install where possible, hydrates package-backed
 runner roots after the atomic install, and then re-smokes the installed roots. Apple integration and
-e2e real-output proof for every Apple catalog row is still owned by reopened Phase 1 (Wave L); the
-materialization lane itself is now real-runner code-side closed.
+e2e real-output proof for the then-active Apple catalog closed in Wave L; the materialization lane
+itself is now real-runner code-side closed. A post-replacement Apple rerun is required before
+claiming Apple full-suite proof for the 2026-06-30 MT3 rows.
 
 ## Storage Boundary
 

@@ -10,8 +10,8 @@
 
 - [documentation_standards.md](documentation_standards.md) defines metadata, taxonomy, and SSoT rules
 - [architecture/overview.md](architecture/overview.md) captures the supported platform topology
-  (two-binary `infernix` + `infernix-demo` doctrine, Pulsar-only production surface, demo HTTP
-  via `infernix-demo`)
+  (single `infernix` binary with Coordinator, Engine, and Webapp roles; Pulsar-only production
+  surface; demo HTTP via the Webapp role)
 - [architecture/runtime_modes.md](architecture/runtime_modes.md) defines the supported
   control-plane execution contexts, runtime-mode ids, and generated substrate-file contract
 - [architecture/model_catalog.md](architecture/model_catalog.md) defines the generated model-catalog
@@ -20,7 +20,7 @@
   realness-by-construction invariant (real model output or a visible failure, never a fabricated
   value) and the lint that enforces it
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
-  PureScript demo UI topology and the two-binary cluster image layout
+  PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the
   product-agnostic durable-context primitives — event-sourced state, deterministic reducer
   plus prefix-hash chain, single-flight dispatcher, compacted metadata projections, presigned
@@ -103,7 +103,7 @@
 - [operations/cluster_bootstrap_runbook.md](operations/cluster_bootstrap_runbook.md) describes the
   supported cluster bring-up and teardown path
 - [reference/api_surface.md](reference/api_surface.md) records the demo-only routed HTTP API
-  surface served by `infernix-demo`
+  surface served by the Webapp role
 - [reference/cli_surface.md](reference/cli_surface.md) provides the short-form binary and command
   family overview
 - [tools/postgresql.md](tools/postgresql.md) records the supported operator-managed PostgreSQL
@@ -115,7 +115,7 @@
   contract (`request_topics`, `result_topic`, `enginePools`, `engineMembers`, and `engines` in the
   active `.dhall`) together with the repo-local topic-spool harness used by unit-level validation
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface for
-  both `infernix` and `infernix-demo`
+  `infernix`
 - [reference/web_portal_surface.md](reference/web_portal_surface.md) records the browser-visible
   routed demo and operator surface
 - [tools/harbor.md](tools/harbor.md) records the Harbor-first bootstrap and routed Harbor contract

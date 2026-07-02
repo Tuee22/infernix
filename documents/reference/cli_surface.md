@@ -7,20 +7,18 @@
 
 ## Binaries
 
-The repository ships two Haskell executables sharing the default Cabal library exposed by the
-`infernix` package:
+The repository ships one Haskell executable:
 
-- `infernix` - production daemon and operator workflow
-- `infernix-demo` - demo UI HTTP host (gated by `.dhall` `demo_ui`; absent from production
-  deployments)
+- `infernix` - operator workflow plus the long-running Coordinator, Engine, and Webapp roles
 
-Both ship in the same runtime image on the real cluster path; the entrypoint selects which
-executable runs.
+The runtime image carries that executable. Chart workload args select the role with
+`infernix service --role coordinator|engine|webapp`; the demo-gated `infernix-demo` Kubernetes
+workload runs the Webapp role.
 
 <!-- infernix:family-overview:start -->
 ## `infernix` Families
 
-- `service` - starts the long-running production daemon that consumes Pulsar work and binds no HTTP port
+- `service` - starts one long-running role from the single infernix binary: coordinator, engine, or webapp
 - `cluster` - reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces
 - `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
 - `kubectl` - proxies upstream Kubernetes access through the repo-local kubeconfig
@@ -29,10 +27,6 @@ executable runs.
 - `docs` - validates the governed documentation suite and the development-plan shape
 - `internal` - runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation
 <!-- infernix:family-overview:end -->
-
-## `infernix-demo` Families
-
-- `serve [--dhall PATH] [--port PORT]` starts the demo HTTP API host
 
 ## Lifecycle Status
 

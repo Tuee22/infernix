@@ -1,10 +1,10 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — reopened and re-closed (Sprint 6.34 documentation-lint coverage and no-env/no-PATH enforcement closure)
+**Status**: Active — reopened for Sprint 6.35 / Wave O expanded MT3 catalog validation
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
-> two-binary topology, the README-matrix-driven integration suite, the Pulsar-driven production
+> one-binary role topology, the README-matrix-driven integration suite, the Pulsar-driven production
 > inference surface, the demo UI host, the substrate-generated catalog, the mandatory HA behavior
 > of Harbor, MinIO, operator-managed PostgreSQL, and Pulsar, and the repository-hardening plus
 > false-negative-doctrine closure that keeps governed root docs,
@@ -50,13 +50,21 @@
 > `HostConfig` or fixed candidates, the PureScript compiler installer uses Node tar/gzip handling, and
 > docs lint now covers the authoritative configuration/tool/realness docs plus Phase 7.
 
-Phase 6 closes around the validation entrypoints, routed coverage, governed-root-document
+> **MT3 catalog-validation reopen.** Phase 6 reopened Sprint 6.35 after the 2026-06-30 catalog
+> replacement added `music-mt3-infer` and `music-mr-mt3` to the generated substrate catalogs. The
+> integration and routed Playwright suites enumerate the active catalog, so the code-side coverage
+> surface is already in place, but older Wave K/Wave L evidence cannot be used for rows that did not
+> exist when those waves ran. The post-replacement full-suite evidence is tracked by
+> [Wave O](cohort-validation-waves.md).
+
+Phase 6 is active only for the Sprint 6.35 expanded MT3 catalog validation rerun. It otherwise closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
 and real Dhall substrate codec implemented in the current worktree. The validation entrypoints,
 routed coverage, HA hardening, governed-doc closure, and CLI-registry closure are `Done` after
 Apple cohort validation in Waves A/A.1/A.2/A.3, CUDA Linux cohort validation in Wave C, and the
-2026-06-20 selected `linux-gpu` plus `linux-cpu` closure in Waves I and J. The
+2026-06-20 selected `linux-gpu` plus `linux-cpu` closure in Waves I and J for the then-active
+catalogs. The
 inference-coverage sprints were upgraded from the metadata-echo
 assertion to the per-family result contract plus cohort hardware proof: the reopened Sprints 6.2,
 6.3, and 6.6 assert the typed per-family result surface for every active-substrate row, and the
@@ -1625,8 +1633,8 @@ instead of the legacy Tart helper.
 - add integration assertions that materialization failures leave no partial final engine root and
   are redelivered or negatively acknowledged when asynchronous
 - update per-family integration and routed E2E fixtures for promoted/residual cells: Apple
-  CTranslate2 viability, MT3/JAX residual, Omnizart's maintained PyTorch piano row, Wan Apple MPS
-  residual, and Basic Pitch TensorFlow residual
+  CTranslate2 viability, MT3-PyTorch and MR-MT3 through `mt3-infer`, Omnizart's maintained
+  PyTorch piano row, Wan Apple MPS residual, and Basic Pitch TensorFlow residual
 
 ### Validation
 
@@ -1821,9 +1829,111 @@ None.
 
 ---
 
+## Sprint 6.35: Expanded MT3 Catalog Integration and E2E Gate [Active]
+
+**Status**: Active
+**Code-side closure**: Complete for coverage shape. The integration suite and routed Playwright
+suite already traverse the generated active catalog, and unit/docs lint now see the expanded
+README/catalog matrix with `music-mt3-infer` and `music-mr-mt3`. Current-source
+machine-independent validation is green: Linux-image `infernix lint docs`, Linux-image
+`cabal test infernix-unit`, and `poetry --directory python run check-code` pass after the MT3
+bindings landed.
+The first 2026-07-01 rebuilt `linux-cpu` full-suite attempt reached the generated-catalog
+per-model workflow and failed closed on `music-mt3-infer` because `mt3-infer 0.1.3`
+imports a Hugging Face T5 `checkpoint` symbol that the unbounded PyTorch engine solve
+selected away with `transformers 4.57.6`. `mt3-infer 0.1.3` requires
+`transformers >=4.35.0`, so the PyTorch adapter now installs a narrow compatibility
+shim that exposes the real `torch.utils.checkpoint.checkpoint` function at the
+Hugging Face T5 module attribute that `mt3-infer` imports. The next rebuilt CPU
+attempt advanced past that failure and failed closed on `mt3-infer`'s undeclared
+`absl` import; the PyTorch engine now declares `absl-py >=2.0`, and a targeted
+shimmed-image probe imports the MT3-PyTorch `t5`, `vocabularies`, `note_sequences`,
+and `metrics_utils` modules after installing that dependency. A third rebuilt CPU
+attempt (`infernix-linux-cpu:local` manifest
+`sha256:bc7c8735e72f7fd03b1f76808020b796779e91f52d4bc6d0971bd5d07406c89d`) passed Haskell style,
+Python `check-code`, Haskell unit, and web contracts (`71/71`), reached catalog-driven
+`music-mt3-infer`, and failed closed because `transformers >=4.50` removed `GenerationMixin`
+inheritance from `PreTrainedModel`, leaving MT3's custom T5 wrapper without `.generate`. The
+PyTorch engine now constrains `transformers` to `>=4.46,<4.50` across CPU, CUDA, and Apple PyTorch
+groups while retaining the real checkpoint shim. The fourth rebuilt CPU image
+(`sha256:ecc7e1b68ee8194cdac7633a607a481ab40e3a645038c4b0f5c60b213f4c89bf`) selected
+`transformers 4.49.0`, passed Haskell style and Python `check-code`, then failed in `infernix-unit`
+because the Sprint 4.16 framework-venv assertion still expected the old PyTorch
+`transformers >=4.46` line. Unit coverage now asserts the bounded PyTorch dependency block, and a
+mounted capped-image `infernix-unit` rerun passes with that fix. Rebuilt CPU/GPU validation over the
+expanded catalog is still pending. The next rebuilt CPU image
+(`sha256:d478db2f41420427c7d1f93adf22eac35f4dc384bf4fc432986aaa4017abee8b`, created
+`2026-07-01T15:35:30.229849055-04:00`) selected `transformers 4.49.0`, `absl-py 2.4.0`,
+`mt3-infer 0.1.3`, and `piano-transcription-inference 0.0.6`; its full-suite run passed Haskell
+style, Python `check-code`, Haskell unit, and web contracts (`71/71`), published to Harbor, reached
+real catalog-driven `music-mt3-infer`, and failed closed inside MT3 generation because the upstream
+custom T5 attention path dereferenced `cache_position[-1]` while `cache_position` was `None`. The
+adapter now disables generation caching for `music-mt3-infer`, matching the upstream MR-MT3
+adapter's no-cache generation strategy; mounted Linux-image `poetry --directory python run
+check-code` is green. The rebuilt CPU image
+(`sha256:b5fb4e6c82b7dc9f46c04f7e7910dd460bcb516518ecdf8d5c313e4303947ad8`, created
+`2026-07-01T16:37:11.897901769-04:00`) passed Haskell style, Python `check-code`, Haskell unit,
+and web contracts (`71/71`), reached `per-model inference: linux-cpu`, and failed closed on the
+same upstream T5 `cache_position` path with the no-cache wrapper visible in the traceback. A deeper
+MT3 compatibility fix now wraps Hugging Face `T5Block.forward` for MT3 imports and supplies
+`cache_position` when the upstream `mt3-infer` custom stack omits it; mounted Linux-image
+`poetry --directory python run check-code` and a PyTorch-engine T5Block probe are green. Rebuilt
+full-suite CPU proof is pending.
+**Cohort gate**: Open [Wave O](cohort-validation-waves.md) — full rebuilt-image `linux-cpu` plus
+selected `linux-gpu` integration and routed Playwright must exercise the expanded catalogs and prove
+real MIDI output for both new MT3 rows. Apple uses the catalog-supported PyTorch CPU binding, but no
+post-replacement Apple full-suite evidence is claimed until a separate Apple rerun records it.
+**Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `python/adapters/pytorch_python.py`, `python/engines/pytorch/pyproject.toml`
+**Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
+
+### Objective
+
+Make the post-replacement catalog proof explicit: every generated catalog row, including
+`music-mt3-infer` and `music-mr-mt3`, must be exercised by integration and routed browser workflows
+before the validation phase returns to `Done`.
+
+### Deliverables
+
+- keep README matrix, generated catalog, and docs-lint row coverage in lockstep for the two MT3 rows
+- run the catalog-driven integration workflow against both new rows and fail closed on
+  `status=failed`
+- run the routed browser per-model workflow against both new rows through the same generated catalog
+  the demo webapp exposes
+- record the selected accelerator plus `linux-cpu` evidence in Wave O
+
+### Validation
+
+- Current code-side gates: Linux-image `infernix lint docs`, Linux-image
+  `cabal test infernix-unit`, and `poetry --directory python run check-code`.
+- Pending cohort gates: rebuilt `./bootstrap/linux-cpu.sh test` and selected
+  `./bootstrap/linux-gpu.sh test` over the expanded catalogs.
+- Current failed evidence: the 2026-07-01 rebuilt `./bootstrap/linux-cpu.sh test` run reached
+  `music-mt3-infer` through the real catalog workflow and failed on the `mt3-infer`/`transformers`
+  compatibility error; the follow-up shimmed rebuilt run advanced to missing `absl`; the next
+  rebuilt image passed the front gates and failed closed on `transformers >=4.50` missing
+  `.generate` for MT3's custom T5 wrapper; the capped rebuild selected `transformers 4.49.0` and
+  exposed the stale unit assertion for the PyTorch dependency block. A mounted capped-image
+  `infernix-unit` rerun passes after the assertion fix; rebuilt full-suite rerun reached real MT3
+  generation and failed closed on the upstream custom T5 `cache_position` path under
+  `transformers 4.49.0`. The adapter then disabled generation caching for `music-mt3-infer`;
+  mounted Linux-image `poetry --directory python run check-code` passed, but the rebuilt image
+  `sha256:b5fb4e6c82b7dc9f46c04f7e7910dd460bcb516518ecdf8d5c313e4303947ad8` still failed closed on
+  the same upstream T5 `cache_position` path with the wrapper in the traceback. The adapter now wraps
+  Hugging Face `T5Block.forward` for MT3 imports and supplies `cache_position` when the upstream
+  `mt3-infer` custom stack omits it; mounted Linux-image `poetry --directory python run check-code`
+  and a PyTorch-engine T5Block probe pass. A rebuilt full-suite rerun remains pending.
+
+### Remaining Work
+
+Wave O remains open until the full integration and routed E2E matrices prove both MT3 rows on the
+expanded `linux-cpu` and selected `linux-gpu` catalogs.
+
+---
+
 ## Remaining Work
 
-None.
+Sprint 6.35 remains open on [Wave O](cohort-validation-waves.md): full rebuilt-image `linux-cpu`
+plus selected `linux-gpu` integration and routed E2E proof for the expanded MT3 catalog.
 
 ## Documentation Requirements
 

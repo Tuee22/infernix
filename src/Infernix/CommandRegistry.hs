@@ -147,18 +147,19 @@ serviceCommandFamily :: CommandFamily
 serviceCommandFamily =
   CommandFamily
     { familyTopic = "service",
-      familyOverview = "starts the long-running production daemon that consumes Pulsar work and binds no HTTP port",
+      familyOverview = "starts one long-running role from the single infernix binary: coordinator, engine, or webapp",
       familyCommands =
         [ serviceCommandSpec
         ]
     }
 
--- | `infernix service [--role coordinator|engine] [--engine-name NAME] [--config PATH]`.
+-- | `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]`.
 -- The optional `--role` arg replaces the retired `INFERNIX_DAEMON_ROLE`
 -- env var (Phase 4 Sprint 4.13): coordinator + engine pods each pass
--- the matching role via chart-supplied `args`, while host-native flows
--- omit the flag and fall back to the active substrate dhall's
--- `daemonRole` field. Engine pods or host daemons may pass
+-- the matching role via chart-supplied `args`, the webapp Deployment
+-- passes `--role webapp`, while host-native flows omit the flag and
+-- fall back to the active substrate dhall's `daemonRole` field.
+-- Engine pods or host daemons may pass
 -- `--engine-name` to select a stable engine member id from the derived
 -- pool/member graph. `--config` is a typed path override used by
 -- targeted validation harnesses and operator diagnostics that need an
@@ -166,9 +167,9 @@ serviceCommandFamily =
 serviceCommandSpec :: CommandSpec
 serviceCommandSpec =
   CommandSpec
-    { commandUsageSuffix = "service [--role coordinator|engine] [--engine-name NAME] [--config PATH]",
+    { commandUsageSuffix = "service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]",
       commandDescription =
-        "starts the long-running production daemon; it binds no HTTP port and consumes the active `.dhall` request and result topics. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split coordinator/engine Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.",
+        "starts one long-running role from the single infernix binary. Coordinator and engine roles consume the active `.dhall` request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.",
       commandParse = parseServiceCommand
     }
 

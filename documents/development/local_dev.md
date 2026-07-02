@@ -157,7 +157,7 @@ the shared adapter project:
   `down` noticeably slower than Linux
 - the Apple direct reference build calls `cabal` with `--installdir=./.build` and lets cabal use
   its natural `dist-newstyle` builddir at the project root, which materializes
-  `./.build/infernix` and `./.build/infernix-demo`
+  `./.build/infernix`
 - bootstrap `down` commands delegate to `infernix cluster down` and preserve `./.build/`,
   `./.data/`, the Apple host binary, Linux substrate images, and installed Docker or CUDA
   prerequisites

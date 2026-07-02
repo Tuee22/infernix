@@ -53,8 +53,10 @@ The invariant is the governing contract now; its delivery is in flight under the
 real fixtures + fail-closed per-row tests), **Phase 6** (the fail-closed HA / service-loop assertions on
 top), and **Phase 1** (real Apple native engines replacing the validation wrappers). Real output is attested per accelerator in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) —
-Wave K (`linux-gpu` + `linux-cpu`) and Wave L (`apple-silicon` + `linux-cpu`). A row whose real engine
-is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`, never a fabricated pass.
+Wave K (`linux-gpu` + `linux-cpu`) and Wave L (`apple-silicon` + `linux-cpu`) for their then-active
+catalogs, with Wave O owning post-replacement proof for the MT3 rows added on 2026-06-30. A row whose
+real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`, never a
+fabricated pass.
 
 ## Validation
 

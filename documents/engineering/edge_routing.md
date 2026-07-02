@@ -71,11 +71,10 @@ under Phase 7 Sprint 7.28.
 
 - when the demo surface is enabled, `/`, the demo `/api*` routes, `/auth`, `/ws`, and
   `/api/objects` target the `infernix-demo` workload (or the routed Keycloak release in the
-  `/auth` case); direct `infernix-demo serve [--dhall PATH] [--port PORT]` still
-  exposes the same Haskell demo API surface outside the routed cluster path when used
-  intentionally, but the supported routed Apple story keeps that HTTP host cluster-resident and
-  bridges manual inference through Pulsar into the host daemon instead of treating direct `serve`
-  as the browser baseline
+  `/auth` case); that workload runs `infernix service --role webapp --config ...` and exposes the
+  same Haskell demo API surface through the routed cluster path. The supported routed Apple story
+  keeps that HTTP host cluster-resident and bridges manual inference through Pulsar into the host
+  daemon
 - `/api/publication` reports daemon location, `inferenceDispatchMode`, and routed-upstream health
   plus backing-state details
 - when the demo surface is enabled, the operator route family keeps its existing HTTPRoute

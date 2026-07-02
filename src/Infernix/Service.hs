@@ -18,7 +18,8 @@ import Infernix.Config
 import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Runtime.Daemon (runProductionDaemon)
-import Infernix.Types (DaemonRole (Coordinator, Engine), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
+import Infernix.Types (DaemonRole (Coordinator, Engine, Webapp), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
+import Infernix.Webapp (runWebappRole)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
 import System.IO (SeekMode (AbsoluteSeek), hPutStrLn, stderr)
@@ -40,9 +41,10 @@ import System.Posix.Process (getProcessID)
 -- are now typed: 'maybeRuntimeMode' is the legacy host-side override
 -- (unchanged), 'maybeDaemonRole' replaces the retired
 -- @INFERNIX_DAEMON_ROLE@ env var. The chart-driven coordinator and
--- engine Deployments pass @--role coordinator@ and @--role engine@
--- through @args@; host-native flows omit the flag and fall back to
--- the active substrate dhall's @daemonRole@ field. The optional
+-- engine and webapp Deployments pass @--role coordinator@,
+-- @--role engine@, and @--role webapp@ through @args@; host-native
+-- flows omit the flag and fall back to the active substrate dhall's
+-- @daemonRole@ field. The optional
 -- explicit config path supports targeted host-side validation without
 -- rewriting the active generated substrate file.
 runService :: Maybe RuntimeMode -> Maybe DaemonRole -> Maybe Text.Text -> Maybe FilePath -> IO ()
@@ -50,7 +52,8 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath 
   paths <- discoverPaths
   ensureRepoLayout paths
   maybeClusterConfig <- tryLoadClusterConfig
-  demoConfig <- decodeDemoConfigFile (serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath)
+  let selectedDemoConfigPath = serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath
+  demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
   runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode demoConfig
   let daemonRole = resolveServiceDaemonRole maybeDaemonRole demoConfig
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
@@ -60,7 +63,9 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath 
   -- only as a non-Apple engine-role safety check while Kubernetes
   -- anti-affinity owns the Linux distributed placement rule.
   acquireEngineLockIfEngineRole paths runtimeMode daemonRole
-  runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName
+  case daemonRole of
+    Webapp -> runWebappRole paths runtimeMode maybeClusterConfig selectedDemoConfigPath
+    _ -> runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName
 
 -- | Phase 4 Sprint 4.13: best-effort load of the cluster manifest
 -- mounted at the supported path. Cluster-resident pods have this
@@ -117,6 +122,7 @@ ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()
 ensureServiceRuntimeSupported paths runtimeMode daemonRole =
   case (controlPlaneContext paths, runtimeMode, daemonRole) of
     (OuterContainer, AppleSilicon, Coordinator) -> pure ()
+    (OuterContainer, AppleSilicon, Webapp) -> pure ()
     _ -> ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
 
 whenAppleRuntimeReady :: Paths -> RuntimeMode -> DaemonRole -> IO ()
@@ -140,6 +146,7 @@ acquireEngineLockIfEngineRole paths runtimeMode daemonRole =
     (AppleSilicon, Engine) -> pure ()
     (_, Engine) -> acquireEngineLock (engineLockPath paths)
     (_, Coordinator) -> pure ()
+    (_, Webapp) -> pure ()
 
 -- | Acquire an exclusive write lock on the supplied lock-file path. On
 -- contention the helper reads the existing holder's PID (written into the

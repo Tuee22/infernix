@@ -160,10 +160,10 @@ demo Pulsar topics (`demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, 
 
 ## Durable Context Surface
 
-When the durable-context demo lands (Phase 7), the same `infernix-demo` workload also serves
-the multi-user durable-context application. The product-agnostic primitives this binding is
-built on live at [durable_context_design.md](durable_context_design.md); the demo's concrete
-bindings live at [demo_app_design.md](demo_app_design.md). Topology delta:
+The `infernix-demo` workload runs the `infernix` Webapp role and serves the multi-user
+durable-context application. The product-agnostic primitives this binding is built on live at
+[durable_context_design.md](durable_context_design.md); the demo's concrete bindings live at
+[demo_app_design.md](demo_app_design.md). Topology:
 
 - new authenticated WebSocket endpoint at `/ws` carries chat, drafts, context list/create/delete,
   progress, and artifact-ready notifications; demo-gated

@@ -7,21 +7,21 @@
 
 ## Platform Shape
 
-`infernix` is a Kind-first local inference platform built around two repo-owned Haskell
-executables that share the default Cabal library exposed by the `infernix` package, an optional
-PureScript demo UI, and one governed documentation suite.
+`infernix` is a Kind-first local inference platform built around one repo-owned Haskell executable,
+role-selected Coordinator, Engine, and Webapp daemons, an optional PureScript demo UI, and one
+governed documentation suite.
 
-- two Haskell executables share the default Cabal library exposed by the `infernix` package:
-  `infernix` owns the production daemon, cluster lifecycle, validation, docs checks, and the
-  no-HTTP production daemon; `infernix-demo` owns the demo HTTP API host
+- one Haskell executable, `infernix`, owns cluster lifecycle, validation, docs checks, and the
+  long-running Coordinator, Engine, and Webapp roles selected by typed config and
+  `infernix service --role ...`
 - production deployments accept inference work by topic subscription only; `infernix service`
-  binds no HTTP listener and the cluster has no `infernix-demo` workload when the active `.dhall`
-  `demo_ui` flag is off
+  coordinator and engine roles bind no HTTP listener, and the cluster has no `infernix-demo`
+  workload when the active `.dhall` `demo_ui` flag is off
 - when the demo UI is enabled, the browser entrypoint is the shared routed surface on one
-  localhost port and the demo UI is served by `infernix-demo`
+  localhost port and the demo UI is served by the Webapp role in the `infernix-demo` workload
 - the reusable durable-context primitives that shape the demo UI and any future SPA-style app
   on the platform — event-sourced state, deterministic reducer, single-flight dispatcher,
-  prefix-hash chain, presigned object storage, JWKS-backed JWT, and stateless WebSocket
+  prefix-hash chain, webapp-mediated object storage, JWKS-backed JWT, and stateless WebSocket
   coordination — are defined in [durable_context_design.md](durable_context_design.md). The
   demo's concrete bindings (Keycloak as the IdP, `infernix/demo` topic namespace,
   `infernix-demo-objects` bucket, `/auth` / `/ws` / `/api/objects` routes, SPA views) are
@@ -34,7 +34,7 @@ PureScript demo UI, and one governed documentation suite.
   Python adapter or native runner, fetches model weights lazily from the `infernix-models` MinIO
   bucket, and publishes the typed per-family result surface. Hardware proof for real output remains
   tracked in `DEVELOPMENT_PLAN/` cohort waves until the Apple Metal/Core ML and CUDA gates close.
-  Inference work still flows only over Pulsar topics across the two repo-owned Haskell binaries; see
+  Inference work still flows only over Pulsar topics across the role-selected Haskell daemons; see
   [daemon_topology.md](daemon_topology.md) and [engine_pool_routing.md](engine_pool_routing.md) for
   the role split and topic flow.
 - Python is restricted to the shared adapter project under `python/`; the canonical quality gate

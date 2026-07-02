@@ -8,7 +8,7 @@
 
 ## Architecture Baseline
 
-The repository target closes around the staged-substrate architecture: the two-binary topology,
+The repository target closes around the staged-substrate architecture: the one-binary role model,
 mandatory local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific
 validation, and a daemon-role model where the coordinator owns Pulsar routing while
@@ -39,23 +39,23 @@ coordinator and engine knobs instead of the legacy `service.replicaCount` surfac
 publishes batch work to topics derived from `(runtimeMode, pool id, model id, optional member id)`:
 normal pools use Pulsar `Shared` subscriptions and broker-native backpressure, while pinned routes
 use derived per-member topics with `Exclusive`. The staged `.dhall` tells each daemon the substrate
-and whether its role is `Coordinator` or `Engine`; host-role Apple metadata also includes the Pulsar
-connection mode plus pool membership. Publication reports the cluster coordinator location
+and whether its role is `Coordinator`, `Engine`, or `Webapp`; host-role Apple metadata also
+includes the Pulsar connection mode plus pool membership. Publication reports the cluster coordinator location
 separately from the inference executor location. The runtime worker uses explicit Python or native
 adapter harnesses selected from the staged substrate file. Each harness dispatches to the selected
 engine entrypoint, fetches model weights lazily from the `infernix-models` MinIO bucket, and
 publishes the typed per-family result surface. Realness is guaranteed by construction — the engine
-code cannot fabricate a result (enforced by the realness lint); the reopened Phases 1/4/6 deliver real
-per-family output per accelerator (Waves K/L). On Apple Silicon
+code cannot fabricate a result (enforced by the realness lint). Waves K/L delivered real per-family
+output for their then-active catalogs, and Wave O owns proof for the MT3 rows added on 2026-06-30. On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
 manifests. Sprint 1.15 now materializes real Apple native runner roots for Core ML, MLX,
 llama.cpp/whisper.cpp Metal, CTranslate2, ONNX Runtime, and Audiveris, and validates installed
-smokes on the Apple host. The Phase 1 headless materialization foundation stands; the prior Phase 4/6 `linux-gpu`
-plus `linux-cpu` "real-output" closure (2026-06-20) was satisfied by stub/wrapper engines for several
-rows and is **reopened** — real output is now delivered and re-attested by Phases 4/6 (Wave K),
-enforced by the realness lint. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+smokes on the Apple host. The Phase 1 headless materialization foundation stands; the earlier
+Phase 4/6 `linux-gpu` plus `linux-cpu` real-output reopen is closed for the then-active catalogs by
+Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion is the current
+Phase 4/6 proof gap and is tracked by Wave O. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -107,10 +107,9 @@ on the Apple host builds the host binaries, materializes the `apple-silicon` sub
 Apple native engine roots, proves the generated Metal runtime bridge smoke, smoke-loads the
 installed Core ML/CTranslate2/MLX/ONNX/Audiveris runner roots, verifies the Core ML venv imports
 Basic Pitch plus Apple's Stable Diffusion pipeline, and passes Apple integration plus focused
-routed Playwright. The 2026-06-20 CUDA Linux closure validated the architecture
-and HA, but its inference real-output evidence was satisfied by stub/wrapper engines for several rows
-and is **reopened** — Phases 4/6 re-attest real Linux output under Wave K, enforced by the realness
-lint. The Apple integration rerun passed after rebuilding the changed repo-owned
+routed Playwright. The earlier CUDA Linux real-output reopen is closed under Wave K for the
+then-active Linux catalogs, and Wave O tracks the post-replacement MT3 rows added on 2026-06-30.
+The Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
 families, pinned Apple host-engine `Exclusive` duplicate-consumer rejection through an isolated
@@ -129,15 +128,14 @@ image-layer baked `/opt/infernix/engines/<adapterId>/` roots without the earlier
 rename failure. The 2026-06-16 Linux CPU rebuilt-image integration pass on the native arm64 Docker
 lane proves two-worker engine-pool placement, unique-topic `Shared` backlog/backpressure, pod
 replacement, node drain, anti-affinity, lifecycle rebinding, demo-off publication, Linux CPU
-framework-venv smoke paths, and clean teardown against image digest
+framework-venv readiness paths, and clean teardown against image digest
 `sha256:ae06ba36fe1f3ffecf48aa86c34abeb0dd1c98cabb030a7da783681ac87a81df`. The CUDA Linux
 Wave K cycle also rebuilt `infernix-linux-gpu:local`, strict-smoked the baked Linux native payload layer
 for all five native adapters with `--require-native-payload`, and then passed full
 `./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test` on 2026-06-20.
 That closure proved the routed `linux-gpu` plus `linux-cpu` architecture, HA, and Linux payload
-service path against current source; its per-row inference real-output was satisfied by stub/wrapper
-engines for several rows (Demucs/Open-Unmix/basic-pitch/Audiveris; whisper/CT2 masks) and is
-**reopened** — Phases 4/6 re-attest real output under Wave K, enforced by the realness lint. The legacy
+service path against the then-current source. Later realness work closed under Wave K for the
+then-active Linux catalogs, and Wave O tracks the post-replacement MT3 rows added on 2026-06-30. The legacy
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
@@ -175,8 +173,8 @@ Playwright `9/9`.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The **inference-success-fallback** half regressed and is **reopened**: the realness audit found per-row fabrication (Apple validation wrappers; Linux Demucs/Open-Unmix/basic-pitch/Audiveris stubs + whisper/CT2 masks) the prior closure missed. The reopened Phases 1/4/6 restore the no-fabrication invariant by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed` — re-attested under Waves K/L |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are **reopened** (they accepted fabricated results) and made fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top; architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, real-output re-attested under Waves K/L |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed`. Waves K/L re-attested their then-active catalogs, and Wave O owns the post-replacement MT3 proof. |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top; architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and Wave O owns the post-replacement MT3 proof. |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
@@ -216,10 +214,11 @@ production coordinator plus engine pools remain present.
 
 `infernix` targets these rules:
 
-- two repo-owned Haskell executables share the default Cabal library exposed by the `infernix`
-  package (declared in `infernix.cabal` without an explicit library name and depended on as
-  `infernix`): `infernix` for the production daemon, cluster lifecycle, validation, and internal
-  helpers; `infernix-demo` for the routed demo HTTP host
+- one repo-owned Haskell executable, `infernix`, sits on top of the default Cabal library exposed
+  by the `infernix` package (declared in `infernix.cabal` without an explicit library name and
+  depended on as `infernix`): it owns the production daemon, cluster lifecycle, validation, internal
+  helpers, and the routed demo HTTP host (served by the long-running `Webapp` daemon role selected
+  through typed Dhall and `infernix service --role webapp`)
 - one Haskell command registry owns parsing, help text, and the
   canonical CLI reference, and the final command surface carries no `--runtime-mode` override
 - the product standardizes three substrates:
@@ -397,8 +396,7 @@ infernix/
 ├── infernix.cabal
 ├── cabal.project
 ├── app/
-│   ├── Main.hs
-│   └── Demo.hs
+│   └── Main.hs
 ├── src/
 │   └── Infernix/
 │       ├── Auth/
@@ -412,7 +410,6 @@ infernix/
 │       ├── Config.hs
 │       ├── Conversation/
 │       ├── Demo/
-│       ├── DemoCLI.hs
 │       ├── DemoConfig.hs
 │       ├── Dispatch/
 │       ├── Engines/
@@ -493,7 +490,6 @@ infernix/
 ├── test/
 ├── .build/
 │   ├── infernix
-│   ├── infernix-demo
 │   ├── infernix-substrate.dhall
 │   └── outer-container/
 │       └── build/
@@ -535,11 +531,13 @@ The plan keeps control-plane execution context separate from substrate.
   `documents/architecture/runtime_modes.md` remains the current runtime or substrate architecture
   home despite the legacy filename and `runtimeMode` field names
 
-### 1. Two Haskell Executables Sharing One Library
+### 1. One Haskell Executable With Shared Role Dispatch
 
-- `infernix` and `infernix-demo` are the only supported repo-owned Haskell executables
-- both link the default Cabal library exposed by the `infernix` package (declared in
+- `infernix` is the only supported repo-owned Haskell executable
+- it links the default Cabal library exposed by the `infernix` package (declared in
   `infernix.cabal` without an explicit library name and depended on as `infernix`)
+- long-running Coordinator, Engine, and Webapp roles are selected through typed Dhall metadata and
+  `infernix service --role ...`
 - tests and helpers do not become extra supported executables
 
 ### 2. Dual Control-Plane Execution Contexts

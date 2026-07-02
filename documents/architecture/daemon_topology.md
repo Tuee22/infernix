@@ -35,10 +35,10 @@ The three-role contract is the supported shape. The implementation uses
 `chart/templates/deployment-{coordinator,engine,demo}.yaml`, keeps `clusterServiceEnabled` false on
 every substrate, and has code-side support for the engine-pool model defined in
 [engine_pool_routing.md](engine_pool_routing.md). Coordinator handoff derives pool/model topics
-from validated `enginePools` / `engineMembers` metadata; old single-topic and per-engine-topic
-helpers remain compatibility surfaces until deletion-ledger cleanup. Apple silicon runs the
-`Coordinator` role in cluster and engine members as on-host daemons; Linux substrates run
-coordinator and engine members as separate in-cluster workloads. The coordinator's runtime Pulsar
+from validated `enginePools` / `engineMembers` metadata; the demo frontend runs as the `Webapp`
+role through `infernix service --role webapp`. Apple silicon runs the `Coordinator` role in
+cluster and engine members as on-host daemons; Linux substrates run coordinator and engine members
+as separate in-cluster workloads. The coordinator's runtime Pulsar
 wiring (per-context
 dispatcher Failover subscription, result-bridge Failover subscription,
 model-bootstrap Failover subscription against `infernix-models`, and
@@ -60,7 +60,7 @@ hardware-deferred proof while no second Apple host is available.
 
 ## Roles and Responsibilities
 
-### Frontend (`<appWorkload>`, e.g. `infernix-demo`)
+### Webapp (`<appWorkload>`, e.g. `infernix-demo`)
 
 The per-app pod. Owns the user-facing surface:
 
@@ -75,18 +75,16 @@ The per-app pod. Owns the user-facing surface:
   never holds a MinIO credential or presigned MinIO URL (see
   [object_access_doctrine.md](object_access_doctrine.md) and
   [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)). **Current
-  Status:** the present build mints presigned MinIO URLs at
-  `<objectsApiPath>` and the browser transfers bytes directly through the
-  `/minio/s3` gateway route; the migration to webapp mediation is tracked
-  by reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25 under
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
+  Status:** the present build proxies browser object bytes through the
+  Webapp role; the `/minio/s3` gateway route and browser-direct presigned
+  URL grants are removed
 - SPA asset serving
 - Per-WS Pulsar `Reader` subscriptions on the user's conversation,
   contexts, and drafts topics; forwards events as typed
   `WsServerMessage`s
 - App-specific bootstrap (IdP realm wiring, first-run seeds)
 
-The frontend is stateless and free of business rules. It applies
+The Webapp role is stateless and free of business rules. It applies
 patches mechanically and translates between WS envelopes and Pulsar
 topics. A future SPA-style application reuses the entire shared
 library and writes only its renderer plus the WS envelope variants it

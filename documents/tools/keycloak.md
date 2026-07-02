@@ -84,7 +84,7 @@ if Keycloak falls back to the upstream default theme.
 
 ## JWT Validation Surface
 
-The `infernix-demo` binary uses `Infernix.Auth.Jwt` (shared library) parameterized in:
+The Webapp role uses `Infernix.Auth.Jwt` (shared library) parameterized in:
 
 - the Keycloak issuer URL
 - the audience claim expected for the SPA client

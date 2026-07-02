@@ -486,7 +486,7 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
 
 - `bootstrap/*.sh` scripts install only substrate host prerequisites and build or enter the active
   `infernix` launcher before delegating to a binary command
-- Apple bootstrap builds `./.build/infernix` and `./.build/infernix-demo`, then invokes
+- Apple bootstrap builds `./.build/infernix`, then invokes
   `./.build/infernix <command>` for `up`, `status`, `test`, and `down`
 - Linux bootstraps install the Docker baseline, plus the supported NVIDIA driver and container
   toolkit on `linux-gpu`, then invoke `docker compose run --rm infernix infernix <command>` so

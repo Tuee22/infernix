@@ -231,16 +231,16 @@ None.
 
 ---
 
-## Sprint 3.6: Demo HTTP Host (`infernix-demo`) and Host-Demo Bridge Retirement [Done]
+## Sprint 3.6: Demo HTTP Webapp Host and Host-Demo Bridge Retirement [Done]
 
 **Status**: Done
-**Implementation**: `infernix.cabal`, `app/Demo.hs`, `src/Infernix/DemoCLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
+**Implementation**: `infernix.cabal`, `src/Infernix/Webapp.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Service.hs`, `src/Infernix/Cluster.hs`, `chart/templates/deployment-demo.yaml`, `chart/templates/service-demo.yaml`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/architecture/web_ui_architecture.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
 
-Provide the current demo HTTP API surface through the `infernix-demo` Haskell binary while keeping
-one stable clustered browser entrypoint across substrates.
+Provide the current demo HTTP API surface through the `infernix` Webapp role while keeping one
+stable clustered browser entrypoint across substrates.
 
 ### Deliverables
 

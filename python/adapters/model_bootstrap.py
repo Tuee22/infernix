@@ -21,6 +21,11 @@ _OPEN_UNMIX_UMXHQ_TARGETS = {
     "bass": "https://zenodo.org/records/3370489/files/bass-8d85a5bd.pth",
     "other": "https://zenodo.org/records/3370489/files/other-b52fbbf7.pth",
 }
+_MT3_PYTORCH_PRETRAINED_REPO = "github.com/kunato/mt3-pytorch"
+_MT3_PYTORCH_PRETRAINED_FILES = {
+    "config.json": "https://raw.githubusercontent.com/kunato/mt3-pytorch/master/pretrained/config.json",
+    "mt3.pth": "https://media.githubusercontent.com/media/kunato/mt3-pytorch/master/pretrained/mt3.pth",
+}
 
 
 def run_model_bootstrap_from_argv() -> int:
@@ -54,7 +59,11 @@ def run_model_bootstrap_from_argv() -> int:
 
     repo_id = _hugging_face_repo_id(args.download_url)
     with tempfile.TemporaryDirectory(prefix="infernix-model-bootstrap-") as temp_root:
-        if _is_open_unmix_umxhq(args.download_url):
+        if _is_mt3_pytorch_pretrained(args.download_url):
+            snapshot_root = Path(temp_root) / "snapshot"
+            _download_mt3_pytorch_pretrained(snapshot_root)
+            _upload_directory(client, args.models_bucket, args.model_id, snapshot_root)
+        elif _is_open_unmix_umxhq(args.download_url):
             snapshot_root = Path(temp_root) / "snapshot"
             _download_open_unmix_umxhq(snapshot_root)
             _upload_directory(client, args.models_bucket, args.model_id, snapshot_root)
@@ -231,8 +240,18 @@ def _is_open_unmix_umxhq(download_url: str) -> bool:
     return _OPEN_UNMIX_UMXHQ_RECORD in download_url
 
 
+def _is_mt3_pytorch_pretrained(download_url: str) -> bool:
+    return _MT3_PYTORCH_PRETRAINED_REPO in download_url
+
+
 def _is_package_backed_native_model(model_id: str) -> bool:
     return model_id in {"audio-basic-pitch-coreml"}
+
+
+def _download_mt3_pytorch_pretrained(destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for relative_path, target_url in _MT3_PYTORCH_PRETRAINED_FILES.items():
+        _download_single_payload(target_url, destination / relative_path)
 
 
 def _download_open_unmix_umxhq(destination: Path) -> None:

@@ -212,8 +212,10 @@ The runtime worker dispatches through the selected engine binding, fetches model
 the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
 typed per-family result surface. Realness is guaranteed by construction — the engine code cannot
 return a fabricated result (enforced by the realness lint), so the suites trust the result and fail
-closed on `status=failed`. The reopened Phases 1/4/6 deliver and re-attest real output per accelerator,
-and not-yet-real rows are explicit residuals.
+closed on `status=failed`. The reopened Phases 1/4/6 deliver and re-attest real output per
+accelerator, and not-yet-real rows are explicit residuals. When a catalog row is added after a
+cohort wave, that older wave remains valid only for its then-active catalog; the new row is not
+considered proven until the active wave reruns the catalog-driven integration and browser matrices.
 
 ### One DRY substrate-aware suite
 
@@ -236,8 +238,8 @@ The integration suite dispatches each row to its `ResultFamily` assertion:
 - **Source separation** (Demucs, Open-Unmix): audio -> `>= 2` stem object refs; `object_ref`.
 - **Audio-to-MIDI** (basic-pitch Core ML/ONNX; TensorFlow remains a named residual): audio -> valid
   MIDI bytes; `object_ref`.
-- **Music transcription** (Omnizart's maintained ByteDance PyTorch piano row is runnable; MT3 JAX
-  remains a named residual until a maintained lane lands): audio -> MIDI or MusicXML; `object_ref`.
+- **Music transcription** (MT3-PyTorch and MR-MT3 through `mt3-infer`, plus the maintained
+  ByteDance PyTorch piano row): audio -> MIDI or MusicXML; `object_ref`.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML): text -> valid image (magic + dims);
   `object_ref`.
 - **Video generation** (Wan2.1 on CUDA; Apple MPS remains a named residual): text -> valid video
@@ -264,10 +266,12 @@ MIDI/MusicXML download for the transcription and OMR families.
 ### Union-coverage invariant
 
 The active substrate's runnable catalog is traversed with `Not recommended` and named-residual rows
-omitted, so the runnable per-substrate counts are apple 15, cpu 11, and gpu 15. Coverage is enforced
+omitted, so the runnable per-substrate counts are apple 16, cpu 12, and gpu 16. Coverage is enforced
 as a mechanical invariant: `allMatrixRowIds` is exported from `Models.hs`, the union of
 `catalogForMode` over the three substrates plus `residualMatrixRowIdsForMode` equals the full
-18-row README matrix, and a README-to-matrix cross-check runs under `infernix lint docs`.
+19-row README matrix, and a README-to-matrix cross-check runs under `infernix lint docs`. The
+invariant proves no row is omitted from catalogs or residual accounting; it does not replace the
+current cohort run required to prove newly added runnable rows.
 
 ## Durable-Context Demo Validation
 
