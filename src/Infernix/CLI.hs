@@ -10,7 +10,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
-import Control.Monad (when)
+import Control.Monad (unless, when)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -26,6 +26,7 @@ import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
   ( decodeDemoConfigFile,
+    materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     renderModelListing,
@@ -80,6 +81,7 @@ import System.Directory
     createDirectoryIfMissing,
     doesFileExist,
     getPermissions,
+    removeFile,
     removePathForcibly,
     setPermissions,
   )
@@ -129,17 +131,18 @@ dispatch command =
       runCabalCommand Nothing ["test", "infernix-unit"]
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
     TestIntegrationCommand ->
-      runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
+      withTestHarnessConfig (runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"]))
     TestE2ECommand ->
-      runClusterOwnedValidation Nothing (runEndToEnd Nothing)
-    TestAllCommand -> do
-      ensureWebDependencies
-      runLint Nothing
-      ensurePythonAdapterDependencies Nothing
-      runCabalCommand Nothing ["test", "infernix-unit"]
-      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-      runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
-      runClusterOwnedValidation Nothing (runEndToEnd Nothing)
+      withTestHarnessConfig (runClusterOwnedValidation Nothing (runEndToEnd Nothing))
+    TestAllCommand ->
+      withTestHarnessConfig $ do
+        ensureWebDependencies
+        runLint Nothing
+        ensurePythonAdapterDependencies Nothing
+        runCabalCommand Nothing ["test", "infernix-unit"]
+        runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+        runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
+        runClusterOwnedValidation Nothing (runEndToEnd Nothing)
     InternalDiscoverImagesCommand renderedChartPath ->
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
     InternalDiscoverClaimsCommand renderedChartPath ->
@@ -149,13 +152,17 @@ dispatch command =
     InternalPublishChartImagesCommand renderedChartPath outputPath -> do
       paths <- discoverPaths
       PublishImages.publishChartImagesFile (harborPublishOptionsForPaths paths) (\_ -> pure Nothing) renderedChartPath outputPath
-    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue -> do
+    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue emptyModels -> do
       paths <- discoverPaths
       ensureRepoLayout paths
-      materializedPath <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
+      materializedPath <-
+        if emptyModels
+          then materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue
+          else materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
       hostManifestPath <- materializeHostManifestFile paths
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
       putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
+      putStrLn ("emptyModels: " <> show emptyModels)
       putStrLn ("generatedDemoConfigPath: " <> materializedPath)
       putStrLn ("hostManifestPath: " <> hostManifestPath)
     InternalMaterializeMetalEnginesCommand -> do
@@ -185,7 +192,7 @@ dispatch command =
 commandRuntimeMode :: Command -> Maybe RuntimeMode
 commandRuntimeMode command =
   case command of
-    InternalMaterializeSubstrateCommand runtimeMode _ -> Just runtimeMode
+    InternalMaterializeSubstrateCommand runtimeMode _ _ -> Just runtimeMode
     _ -> Nothing
 
 validateCommandExecutionContext :: Command -> IO ()
@@ -209,7 +216,7 @@ validateCommandExecutionContext command = do
         TestIntegrationCommand -> activeRuntimeMode
         TestE2ECommand -> activeRuntimeMode
         TestAllCommand -> activeRuntimeMode
-        InternalMaterializeSubstrateCommand runtimeMode _ -> pure (Just runtimeMode)
+        InternalMaterializeSubstrateCommand runtimeMode _ _ -> pure (Just runtimeMode)
         InternalGeneratePursContractsCommand _ -> activeRuntimeMode
         _ -> pure Nothing
     activeRuntimeMode = Just <$> ensureActiveSubstrateFile
@@ -273,6 +280,55 @@ runClusterOwnedValidation maybeRuntimeMode action = do
   clusterDown maybeRuntimeMode
   action
     `finally` clusterDown maybeRuntimeMode
+
+-- | Phase 8 Sprint 8.6: the test harness owns the runtime config for the
+-- duration of a run. It reads @./infernix.test.dhall@ (failing fast with an
+-- @infernix test init@ reminder when it is absent), refuses to run if an
+-- operator @./infernix.dhall@ is already present, generates @./infernix.dhall@
+-- from the test config's substrate + demo-ui selection, runs the suites, and
+-- deletes the generated file via a self-created-only guard. The integration
+-- suite's per-variant @internal materialize-substrate@ keeps rewriting this
+-- same harness-owned path during the run.
+withTestHarnessConfig :: IO a -> IO a
+withTestHarnessConfig action = do
+  paths <- discoverPaths
+  ensureRepoLayout paths
+  let testConfig = testConfigPath paths
+      runtimeConfig = runtimeConfigPath paths
+  testConfigExists <- doesFileExist testConfig
+  unless testConfigExists $
+    ioError
+      ( userError
+          ( "test config missing at "
+              <> testConfig
+              <> "; run `infernix test init` to create it"
+          )
+      )
+  runtimeConfigExists <- doesFileExist runtimeConfig
+  when runtimeConfigExists $
+    ioError
+      ( userError
+          ( "runtime config already present at "
+              <> runtimeConfig
+              <> "; the test harness generates and owns this file for the run. "
+              <> "Remove the operator `infernix init` config before running tests."
+          )
+      )
+  testDemoConfig <- decodeDemoConfigFile testConfig
+  _ <-
+    materializeGeneratedDemoConfigFile
+      paths
+      (configRuntimeMode testDemoConfig)
+      (demoUiEnabled testDemoConfig)
+  action `finally` removeGeneratedRuntimeConfig runtimeConfig
+
+-- | Delete the harness-generated @./infernix.dhall@. Self-created-only: the
+-- harness refuses to start when the file already exists, so any file present
+-- at cleanup was generated (and possibly rewritten per variant) by this run.
+removeGeneratedRuntimeConfig :: FilePath -> IO ()
+removeGeneratedRuntimeConfig runtimeConfig = do
+  present <- doesFileExist runtimeConfig
+  when present (removeFile runtimeConfig)
 
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
@@ -640,9 +696,14 @@ discoverCliCommandPaths :: IO Paths
 discoverCliCommandPaths = do
   paths <- discoverPaths
   case (pathsHostConfig paths, controlPlaneContext paths) of
-    (Nothing, HostNative) -> do
-      _ <- materializeHostManifestFile paths
-      discoverPaths
+    (Nothing, HostNative) ->
+      ioError
+        ( userError
+            ( "host manifest missing at "
+                <> hostConfigPath paths
+                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
+            )
+        )
     _ -> pure paths
 
 resolveCliCommandWithPaths :: Paths -> FilePath -> IO FilePath

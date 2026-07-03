@@ -45,7 +45,7 @@ data Command
   | InternalDiscoverClaimsCommand FilePath
   | InternalDiscoverHarborOverlayCommand FilePath
   | InternalPublishChartImagesCommand FilePath FilePath
-  | InternalMaterializeSubstrateCommand RuntimeMode Bool
+  | InternalMaterializeSubstrateCommand RuntimeMode Bool Bool
   | InternalMaterializeMetalEnginesCommand
   | InternalMaterializeLinuxNativeEnginesCommand
   | InternalDemoConfigLoadCommand FilePath
@@ -390,14 +390,21 @@ internalCommandFamily =
 materializeSubstrateCommand :: CommandSpec
 materializeSubstrateCommand =
   CommandSpec
-    { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false]",
+    { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]",
       commandDescription = "writes the generated substrate file for one explicit substrate id into the active build root",
       commandParse = \case
         ["internal", "materialize-substrate", rawRuntimeMode] ->
-          flip InternalMaterializeSubstrateCommand True
+          (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True False)
+            <$> parseRuntimeModeArg rawRuntimeMode
+        ["internal", "materialize-substrate", rawRuntimeMode, "--empty-models"] ->
+          (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True True)
             <$> parseRuntimeModeArg rawRuntimeMode
         ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled] ->
-          InternalMaterializeSubstrateCommand
+          (\runtimeMode demoUiEnabledValue -> InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue False)
+            <$> parseRuntimeModeArg rawRuntimeMode
+            <*> parseDemoUiArg rawDemoUiEnabled
+        ["internal", "materialize-substrate", rawRuntimeMode, "--demo-ui", rawDemoUiEnabled, "--empty-models"] ->
+          (\runtimeMode demoUiEnabledValue -> InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue True)
             <$> parseRuntimeModeArg rawRuntimeMode
             <*> parseDemoUiArg rawDemoUiEnabled
         _ -> Nothing

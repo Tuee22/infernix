@@ -27,6 +27,7 @@ import Infernix.Config
 import Infernix.DemoConfig
   ( materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
+    materializeHostSecrets,
     renderGeneratedDemoConfig,
     writeProjectConfigFile,
   )
@@ -58,8 +59,10 @@ runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
       let demoUiEnabled = fromMaybe True maybeDemoUi
       writtenRuntime <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabled
       writtenHost <- materializeHostManifestFile paths
+      writtenSecrets <- materializeHostSecrets paths
       putStrLn ("init: wrote " <> writtenRuntime)
       putStrLn ("init: wrote " <> writtenHost)
+      putStrLn ("init: wrote " <> writtenSecrets)
 
 -- | @infernix test init@. Writes @./infernix.test.dhall@ — the thin config
 -- the test harness reads to generate the run's @./infernix.dhall@. Needs no

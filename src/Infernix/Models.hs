@@ -1,5 +1,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
+-- | Phase 8 Sprint 8.5: @matrixRows@ / @catalogForMode@ is a **demo-only
+-- generator** of the model set, not a core runtime dependency. The source of
+-- truth for which models a daemon stages and serves is the mounted
+-- @infernix.dhall@ (the ConfigMap-published substrate config at deploy, or the
+-- @infernix init@ / test-harness-generated file on host). The coordinator's
+-- eager model-cache sweep iterates the mounted config's @models@ list, and the
+-- image-baked config carries an empty model set so @docker run --rm@ never
+-- stages weights; the ConfigMap-mounted config overrides it at deploy. This
+-- module regenerates the demo catalog for @infernix init@, the test harness,
+-- and @cluster up@ publication.
 module Infernix.Models
   ( allMatrixRowIds,
     catalogForMode,

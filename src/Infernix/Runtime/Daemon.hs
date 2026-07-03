@@ -46,6 +46,7 @@ import Infernix.Runtime.Pulsar
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
+    sweepEagerModelCache,
     writeServiceReadinessMarker,
   )
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
@@ -185,6 +186,19 @@ startCoordinatorLoops transport runtimeMode daemonConfig demoConfig = do
       ( runModelBootstrapLoop
           transport
           ConversationTopic.systemTopicNamespace
+      )
+  -- Phase 8 Sprint 8.5: eager model-cache staging. Begin staging every model
+  -- in the mounted substrate config the moment the coordinator comes up, so no
+  -- inference races a cold cache. Runs in the background; the lazy
+  -- `runModelBootstrapLoop` above remains the on-demand fallback, and the
+  -- `cluster up` warm-model-cache barrier waits on the `.ready` sentinels.
+  putStrLn "serviceEagerModelCacheMode: startup-sweep"
+  _ <-
+    forkIO
+      ( sweepEagerModelCache
+          transport
+          ConversationTopic.systemTopicNamespace
+          demoConfig
       )
   putStrLn "serviceDispatcherMode: per-context-failover"
   contextModelMap <- ContextModelMap.newContextModelMap

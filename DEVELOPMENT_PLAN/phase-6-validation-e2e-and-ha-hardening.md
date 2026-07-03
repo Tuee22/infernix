@@ -1879,10 +1879,14 @@ MT3 compatibility fix now wraps Hugging Face `T5Block.forward` for MT3 imports a
 `cache_position` when the upstream `mt3-infer` custom stack omits it; mounted Linux-image
 `poetry --directory python run check-code` and a PyTorch-engine T5Block probe are green. Rebuilt
 full-suite CPU proof is pending.
-**Cohort gate**: Open [Wave O](cohort-validation-waves.md) — full rebuilt-image `linux-cpu` plus
-selected `linux-gpu` integration and routed Playwright must exercise the expanded catalogs and prove
-real MIDI output for both new MT3 rows. Apple uses the catalog-supported PyTorch CPU binding, but no
-post-replacement Apple full-suite evidence is claimed until a separate Apple rerun records it.
+**Cohort gate**: [Wave O](cohort-validation-waves.md) — **both MT3 rows proven 2026-07-02.**
+Rebuilt-image `./bootstrap/linux-cpu.sh test` is **GREEN** (full integration + routed Playwright
+`9/9` over the expanded catalog, real MIDI for both rows), and `./bootstrap/linux-gpu.sh test` proved
+both rows real on CUDA (integration PASS; routed Playwright `8/9`). The clean `linux-gpu` `9/9` is
+blocked only by the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap timeout, now
+owned by **Phase 8 Sprint 8.5** (eager model-cache staging). Apple uses the catalog-supported PyTorch
+CPU binding, but no post-replacement Apple full-suite evidence is claimed until a separate Apple rerun
+records it.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `python/adapters/pytorch_python.py`, `python/engines/pytorch/pyproject.toml`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
@@ -1925,8 +1929,11 @@ before the validation phase returns to `Done`.
 
 ### Remaining Work
 
-Wave O remains open until the full integration and routed E2E matrices prove both MT3 rows on the
-expanded `linux-cpu` and selected `linux-gpu` catalogs.
+Both MT3 rows are proven (2026-07-02): `linux-cpu` full-suite GREEN (`9/9`) and `linux-gpu`
+integration + their routed matrix rows real on CUDA. The remaining item is the clean `linux-gpu`
+`9/9`, gated only on **Phase 8 Sprint 8.5** eager model-cache staging (to pre-stage the CUDA-only
+`video-wan21-t2v` weights so its matrix row no longer times out on the cold cache) — not on any MT3
+code.
 
 ---
 

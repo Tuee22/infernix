@@ -38,6 +38,13 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Validation Layers
 
+- **Test-harness config lifecycle (Phase 8).** `infernix test integration|e2e|all` own the runtime
+  config for the duration of a run: each reads `./infernix.test.dhall` (fail fast → `infernix test
+  init`), refuses to run if an operator `./infernix.dhall` is already present, generates
+  `./infernix.dhall` from the test config's substrate + demo-ui selection, runs the suites, and
+  deletes the generated file via a self-created-only guard. The integration suite's per-variant
+  `internal materialize-substrate` keeps rewriting that same harness-owned path across substrate
+  variants. `infernix test lint` and `infernix test unit` remain config-independent (fixtures only).
 - `infernix docs check` validates governed docs, README or plan cross-references, required CLI
   registry coverage in `documents/reference/cli_reference.md`, phase-document documentation
   sections, and forbidden legacy-doctrine phrases

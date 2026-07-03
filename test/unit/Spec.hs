@@ -50,6 +50,8 @@ import Infernix.ClusterConfig
     MinioWiring (..),
     PulsarWiring (..),
     decodeClusterConfigFile,
+    defaultClusterConfig,
+    defaultKeycloakWiring,
     renderClusterConfig,
   )
 import Infernix.CommandRegistry
@@ -68,7 +70,7 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DemoConfig (decodeDemoConfigFile, materializeHostSecrets)
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
@@ -269,9 +271,16 @@ main = do
     "the structured command registry parses internal discovery commands from the same definition used by the docs"
   assert
     ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--demo-ui", "false"]
-        == Right (InternalMaterializeSubstrateCommand LinuxCpu False)
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu False False)
     )
     "the structured command registry parses explicit substrate materialization commands"
+  assert
+    ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--empty-models"]
+        == Right (InternalMaterializeSubstrateCommand LinuxCpu True True)
+        && parseCommand ["internal", "materialize-substrate", "linux-gpu", "--demo-ui", "false", "--empty-models"]
+          == Right (InternalMaterializeSubstrateCommand LinuxGpu False True)
+    )
+    "Sprint 8.5: the registry parses the image-baked --empty-models substrate materialization"
   assert
     (parseCommand ["internal", "materialize-linux-native-engines"] == Right InternalMaterializeLinuxNativeEnginesCommand)
     "the structured command registry parses Linux native engine materialization"
@@ -471,7 +480,12 @@ main = do
         (either (isInfixOf "Unsupported host-native runtime mode: linux-cpu" . show) (const False) hostNativeLinuxCpuResult)
         "host-native execution rejects the linux-cpu substrate"
       do
-        let outerFixture = linuxOuterContainerUnitTestFixture realRepoRoot unitTestRoot "/opt/build/infernix"
+        -- Phase 8 Sprint 8.6: use an isolated sandbox repo root here so the
+        -- "missing staged substrate file" assertion below does not collide with
+        -- an operator's real repo-root `./infernix.dhall` (created by
+        -- `infernix init`). This block only exercises control-plane context and
+        -- runtime-mode resolution, which do not need the real repo root.
+        let outerFixture = linuxOuterContainerUnitTestFixture (unitTestRoot </> "outer-preflight") unitTestRoot "/opt/build/infernix"
         outerPaths <- discoverPathsWithHostManifest (Just outerFixture)
         assert
           (controlPlaneContext outerPaths == OuterContainer)
@@ -1394,6 +1408,9 @@ main = do
           hostClusterStatePath = runtimeRoot paths </> "cluster-state.state"
           hostSecretsManifestPath = runtimeRoot paths </> "secrets" </> "InfernixSecrets.dhall"
       writeFile hostClusterStatePath (show hostWorkerState)
+      -- Phase 8 Sprint 8.3: host secrets are created explicitly by
+      -- `infernix init` (`materializeHostSecrets`), not lazily by the worker.
+      _ <- materializeHostSecrets paths
       maybeHostWorkerConfig <- loadWorkerModelCacheConfig paths AppleSilicon
       hostSecretsManifestExists <- doesFileExist hostSecretsManifestPath
       assert
@@ -1535,6 +1552,35 @@ main = do
     assert
       ("      httpNumThreads: \"8\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values keep enough local Pulsar proxy HTTP threads for Jetty startup"
+    -- Phase 8 Sprint 8.4: the binary renders the cluster-config ConfigMap
+    -- body and the cluster-secrets manifest as strings; the Helm values
+    -- carry them under `clusterConfig.body` / `clusterSecrets.manifest`, and
+    -- the chart template only `nindent`s the string.
+    assert
+      ("clusterConfig:" `isInfixOf` linuxCpuFinalValues && "  body: |" `isInfixOf` linuxCpuFinalValues)
+      "Sprint 8.4: final Helm values carry the binary-rendered clusterConfig.body"
+    assert
+      ("    { pulsar = { httpBaseUrl = \"http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local\"" `isInfixOf` linuxCpuFinalValues)
+      "Sprint 8.4: the rendered clusterConfig.body embeds the default Pulsar wiring"
+    assert
+      ("clusterSecrets:" `isInfixOf` linuxCpuFinalValues && "  manifest: |" `isInfixOf` linuxCpuFinalValues)
+      "Sprint 8.4: final Helm values carry the binary-rendered clusterSecrets.manifest"
+    assert
+      ("    in  { minio = { credentialsPath = \"/etc/infernix/secrets/minio.json\" }" `isInfixOf` linuxCpuFinalValues)
+      "Sprint 8.4: the rendered clusterSecrets.manifest names the mounted credential paths"
+    -- The binary-rendered default cluster config decodes back to a valid
+    -- typed ClusterConfig (guards the `defaultClusterConfig` field values).
+    let defaultClusterConfigManifestPath = unitTestRoot </> "default-cluster-config.dhall"
+    writeFile
+      defaultClusterConfigManifestPath
+      (renderClusterConfig (defaultClusterConfig "outer-container" defaultKeycloakWiring []))
+    decodedDefaultClusterConfig <- decodeClusterConfigFile defaultClusterConfigManifestPath
+    assert
+      ( pulsarTenant (clusterPulsar decodedDefaultClusterConfig) == "infernix"
+          && minioModelsBucket (clusterMinio decodedDefaultClusterConfig) == "infernix-models"
+          && coordinatorDaemonLocation (clusterCoordinator decodedDefaultClusterConfig) == "cluster-pod"
+      )
+      "Sprint 8.4: defaultClusterConfig renders a decodable cluster manifest with the expected wiring"
 
     let linuxGpuOuterFixture =
           linuxOuterContainerUnitTestFixtureForArchitecture

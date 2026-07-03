@@ -54,6 +54,8 @@ module Infernix.Runtime.Pulsar
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
+    sweepEagerModelCache,
+    waitForEagerModelCacheReady,
     schemaMarkerPath,
     serviceConsumerSubscriptionType,
     serviceConsumerSubscriptionTypeForTopic,
@@ -69,7 +71,7 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
-import Control.Monad (forM_, forever, unless, void, when)
+import Control.Monad (filterM, forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.Random (getRandomBytes)
 import Data.Aeson
@@ -3401,6 +3403,95 @@ processBootstrapRequest transport systemNamespace request = do
                   putMinioObjectFile presigned manager now payloadObject downloadedPath
                   putMinioObject presigned manager now sentinelObject "ready\n"
           publishBootstrapReadyEvent transport systemNamespace request
+
+-- | Phase 8 Sprint 8.5: eager model-cache staging. On coordinator startup,
+-- stage every model listed in the mounted substrate config so no inference
+-- ever races a cold cache. Reuses the idempotent
+-- download/upload/@.ready@-sentinel logic ('processBootstrapRequest'), which
+-- short-circuits when the sentinel is already present. The lazy
+-- 'runModelBootstrapLoop' remains the on-demand fallback. Each model is
+-- staged independently: a failure is logged and does not abort the sweep, so
+-- the remaining models still stage (the coordinator surfaces per-model
+-- progress and the @cluster up@ warm-model-cache barrier waits on the
+-- sentinels).
+sweepEagerModelCache ::
+  PulsarTransport ->
+  ConversationTopic.TopicNamespace ->
+  DemoConfig ->
+  IO ()
+sweepEagerModelCache transport systemNamespace demoConfig = do
+  let modelDescriptors = models demoConfig
+  putStrLn ("serviceEagerModelCacheCount: " <> show (length modelDescriptors))
+  forM_ modelDescriptors $ \model -> do
+    request <- modelBootstrapRequestFor model
+    outcome <- try @SomeException (processBootstrapRequest transport systemNamespace request)
+    case outcome of
+      Right _ -> putStrLn ("serviceEagerModelCacheStaged: " <> Text.unpack (modelId model))
+      Left err ->
+        hPutStrLn
+          stderr
+          ( "eager model-cache staging failed for "
+              <> Text.unpack (modelId model)
+              <> " (the lazy per-inference fallback still covers this model):\n"
+              <> displayException err
+          )
+  putStrLn "serviceEagerModelCacheSweep: complete"
+
+-- | Phase 8 Sprint 8.5: the @cluster up@ warm-model-cache barrier. Polls
+-- MinIO at a host-reachable endpoint for each configured model's @.ready@
+-- sentinel, using a progress-based deadline: the wait continues as long as
+-- new sentinels keep appearing, and only gives up after a stall window with
+-- no new readiness (or an absolute safety ceiling). Returns the model ids
+-- still not staged (empty = every configured model is warm). The caller
+-- treats a non-empty result as a warning rather than a hard failure: the
+-- coordinator's forked eager sweep plus the lazy per-inference fallback still
+-- complete staging.
+waitForEagerModelCacheReady :: String -> [Text.Text] -> (String -> IO ()) -> IO [Text.Text]
+waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
+  let (scheme, hostPort) = splitMinioEndpoint (Text.pack minioBaseEndpoint)
+      presigned =
+        Presigned.PresignedUrlConfig
+          { Presigned.presignedScheme = scheme,
+            Presigned.presignedEndpoint = hostPort,
+            Presigned.presignedPathPrefix = "",
+            Presigned.presignedRegion = "us-east-1",
+            Presigned.presignedAccessKeyId = "minioadmin",
+            Presigned.presignedSecretAccessKey = "minioadmin123",
+            Presigned.presignedExpirySeconds = 900
+          }
+  manager <- newManager tlsManagerSettings
+  let pollIntervalSeconds = 5
+      stallLimitSeconds = 600
+      absoluteMaxSeconds = modelBootstrapReadyWaitMaxSeconds
+      sentinelReady modelIdValue = do
+        let sentinelObject =
+              Contracts.ObjectRef
+                { Contracts.objectBucket = "infernix-models",
+                  Contracts.objectKey = modelIdValue <> "/" <> BootstrapModels.readySentinelFilename
+                }
+        try @SomeException (minioObjectExists presigned manager sentinelObject)
+          >>= either (const (pure False)) pure
+      go elapsedSeconds stallSeconds lastReadyCount = do
+        pending <- filterM (fmap not . sentinelReady) modelIds
+        let readyCount = length modelIds - length pending
+        if null pending
+          then pure []
+          else
+            if elapsedSeconds >= absoluteMaxSeconds
+              then pure pending
+              else
+                if readyCount > lastReadyCount
+                  then do
+                    logProgress (show readyCount <> "/" <> show (length modelIds) <> " models staged")
+                    threadDelay (pollIntervalSeconds * 1000000)
+                    go (elapsedSeconds + pollIntervalSeconds) 0 readyCount
+                  else
+                    if stallSeconds >= stallLimitSeconds
+                      then pure pending
+                      else do
+                        threadDelay (pollIntervalSeconds * 1000000)
+                        go (elapsedSeconds + pollIntervalSeconds) (stallSeconds + pollIntervalSeconds) readyCount
+  go 0 0 (-1)
 
 -- | Multi-file model sources (e.g. Open-Unmix `umxhq`, which is four per-target
 -- Zenodo state dicts, not one file or a HuggingFace repo) are staged through the

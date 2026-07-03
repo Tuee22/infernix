@@ -37,9 +37,16 @@ import Data.Vector qualified as Vector
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint
 import Infernix.Cluster.PublishImages qualified as PublishImages
+import Infernix.ClusterConfig
+  ( EngineCommandOverride (EngineCommandOverride),
+    KeycloakWiring (keycloakBaseUrl, keycloakClientId, keycloakJwksUrl),
+    defaultClusterConfig,
+    defaultKeycloakWiring,
+    renderClusterConfig,
+  )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile, ensureGeneratedDemoConfigFile, materializeHostManifestFile, renderGeneratedDemoConfigPayload)
+import Infernix.DemoConfig (decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
@@ -47,6 +54,7 @@ import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Infernix.Routes (routeHelmValues)
+import Infernix.Runtime.Pulsar (waitForEagerModelCacheReady)
 import Infernix.Storage
 import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
@@ -660,7 +668,15 @@ clusterUpWithPlatform paths runtimeMode = do
       "wait-for-routed-publication"
       "probing the routed publication surface on the chosen edge before declaring success"
   waitForRoutedPublicationSurface paths routedPublicationState
-  _ <- refreshPersistentClaims routedPublicationState >>= clearLifecycleProgress paths
+  warmModelCacheState <-
+    startLifecyclePhase
+      paths
+      routedPublicationState
+      "cluster-up"
+      "warm-model-cache"
+      "eagerly staging the configured model set into infernix-models before declaring success"
+  warmModelCache paths runtimeMode inputs
+  _ <- refreshPersistentClaims warmModelCacheState >>= clearLifecycleProgress paths
   putStrLn "cluster up complete"
   putStrLn ("controlPlaneContext: " <> controlPlaneContextId (clusterUpControlPlane inputs))
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -669,6 +685,44 @@ clusterUpWithPlatform paths runtimeMode = do
   putStrLn ("generatedDemoConfigPath: " <> clusterUpDemoConfigPath inputs)
   putStrLn ("publishedDemoConfigPath: " <> clusterUpPublishedCatalogPath inputs)
   putStrLn ("mountedDemoConfigPath: " <> clusterUpMountedCatalogPath inputs)
+
+-- | Phase 8 Sprint 8.5: warm-model-cache barrier. Blocks @cluster up@
+-- completion until the coordinator's eager sweep has staged every configured
+-- model's @.ready@ sentinel into @infernix-models@, using a progress-based
+-- deadline. Best-effort: a stall past the deadline is a warning, not a hard
+-- failure, because the coordinator continues staging in the background and the
+-- lazy per-inference fallback still covers first inference. Polls MinIO at the
+-- host-reachable node-port endpoint for the active control-plane context.
+warmModelCache :: Paths -> RuntimeMode -> ClusterUpInputs -> IO ()
+warmModelCache paths runtimeMode inputs = do
+  demoConfig <- decodeDemoConfigFile (clusterUpDemoConfigPath inputs)
+  let configuredModelIds = map modelId (models demoConfig)
+      minioBaseEndpoint = case clusterUpControlPlane inputs of
+        HostNative -> "http://127.0.0.1:30011"
+        OuterContainer -> "http://" <> kindControlPlaneNodeName paths runtimeMode <> ":30011"
+  if null configuredModelIds
+    then putStrLn "warm-model-cache: no models configured (empty-models config); skipping"
+    else do
+      putStrLn
+        ( "warm-model-cache: waiting for "
+            <> show (length configuredModelIds)
+            <> " configured model(s) to stage into infernix-models"
+        )
+      pending <-
+        waitForEagerModelCacheReady
+          minioBaseEndpoint
+          configuredModelIds
+          (\message -> putStrLn ("warm-model-cache: " <> message))
+      if null pending
+        then putStrLn ("warm-model-cache: all " <> show (length configuredModelIds) <> " configured models staged")
+        else
+          putStrLn
+            ( "warm-model-cache: WARNING "
+                <> show (length pending)
+                <> " model(s) not yet staged after the progress-based deadline: "
+                <> List.intercalate ", " (map Text.unpack pending)
+                <> "; the coordinator continues staging in the background and the lazy per-inference fallback covers first inference"
+            )
 
 prepareClusterUpInputs :: Paths -> RuntimeMode -> IO ClusterUpInputs
 prepareClusterUpInputs paths runtimeMode = do
@@ -726,7 +780,15 @@ clusterUpState inputs runtimeMode clusterPresentValue edgePortValue harborPortVa
 requireGeneratedDemoConfigFile :: Paths -> RuntimeMode -> IO FilePath
 requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
   let filePath = Config.generatedDemoConfigPath paths
-  _ <- ensureGeneratedDemoConfigFile paths expectedRuntimeMode True
+  fileExists <- doesFileExist filePath
+  unless fileExists $
+    ioError
+      ( userError
+          ( "runtime config missing at "
+              <> filePath
+              <> "; run `infernix init` (or `infernix test init` for a test run) to create it"
+          )
+      )
   demoConfig <- decodeDemoConfigFile filePath
   unless (configRuntimeMode demoConfig == expectedRuntimeMode) $
     ioError
@@ -758,11 +820,16 @@ discoverClusterCommandPaths :: IO Paths
 discoverClusterCommandPaths = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
-  case Config.controlPlaneContext paths of
-    HostNative -> do
-      _ <- materializeHostManifestFile paths
-      Config.discoverPaths
-    OuterContainer -> pure paths
+  case (Config.controlPlaneContext paths, Config.pathsHostConfig paths) of
+    (HostNative, Nothing) ->
+      ioError
+        ( userError
+            ( "host manifest missing at "
+                <> Config.hostConfigPath paths
+                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
+            )
+        )
+    _ -> pure paths
 
 matchingClusterState :: RuntimeMode -> Maybe ClusterState -> Maybe ClusterState
 matchingClusterState runtimeMode maybeState =
@@ -4731,6 +4798,8 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
         <> serviceEngineAdapterOverrides
+        <> clusterConfigValueLines
+        <> clusterSecretsValueLines
         <> phaseChartOverrides deployPhase
         <> bootstrapHarborOverrides deployPhase
         <> appleHostNativeLocalOverrides deployPhase
@@ -4738,6 +4807,53 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
     )
   where
     demoUiEnabledValue = clusterStateHasDemoUi state
+    -- Phase 8 Sprint 8.4: the binary renders the `cluster.dhall`
+    -- ConfigMap body and the `InfernixSecrets.dhall` manifest as strings;
+    -- the chart templates only `nindent` these values. No `let`/schema
+    -- Dhall lives inside a chart template. The keycloak wiring resolves to
+    -- the routed edge base URL when the demo UI is enabled (matching the
+    -- former `finalChartOverrides` clusterConfig.keycloak override).
+    resolvedKeycloakWiring :: KeycloakWiring
+    resolvedKeycloakWiring
+      | demoUiEnabledValue =
+          defaultKeycloakWiring
+            { keycloakBaseUrl = Text.pack (clusterEdgeBaseUrl paths state <> "/auth"),
+              keycloakClientId = Text.pack keycloakSpaClientId,
+              keycloakJwksUrl =
+                Text.pack
+                  ( "http://infernix-keycloak.platform.svc.cluster.local:8080/auth/realms/"
+                      <> keycloakRealmName
+                      <> "/protocol/openid-connect/certs"
+                  )
+            }
+      | otherwise = defaultKeycloakWiring
+    clusterConfigBody =
+      renderClusterConfig
+        ( defaultClusterConfig
+            (Text.pack (controlPlaneContextId controlPlane))
+            resolvedKeycloakWiring
+            (map (\(name, value) -> EngineCommandOverride (Text.pack name) (Text.pack value)) engineCommandOverrides)
+        )
+    clusterConfigValueLines =
+      [ "clusterConfig:",
+        "  body: |",
+        indentBlock 4 clusterConfigBody
+      ]
+    clusterSecretsValueLines =
+      [ "clusterSecrets:",
+        "  manifest: |",
+        indentBlock 4 clusterSecretsManifestBody
+      ]
+    clusterSecretsManifestBody =
+      unlines
+        [ "let MinioCredentials = { credentialsPath : Text }",
+          "let KeycloakAdminCredentials = { credentialsPath : Text }",
+          "let KeycloakDbCredentials = { credentialsPath : Text }",
+          "in  { minio = { credentialsPath = \"/etc/infernix/secrets/minio.json\" }",
+          "    , keycloakAdmin = { credentialsPath = \"/etc/infernix/secrets/keycloak-admin.json\" }",
+          "    , keycloakDb = { credentialsPath = \"/etc/infernix/secrets/keycloak-db.json\" }",
+          "    }"
+        ]
     appleHostNativeLocalTopology =
       controlPlane == HostNative && clusterRuntimeMode state == AppleSilicon
     appleHostedLinuxCpuLocalTopology =
@@ -4895,17 +5011,9 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         <> [ "  externalBaseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth"
            | demoUiEnabledValue
            ]
-        <> if demoUiEnabledValue
-          then
-            [ "clusterConfig:",
-              "  keycloak:",
-              "    baseUrl: " <> clusterEdgeBaseUrl paths state <> "/auth",
-              "    clientId: " <> keycloakSpaClientId,
-              "    jwksUrl: http://infernix-keycloak.platform.svc.cluster.local:8080/auth/realms/"
-                <> keycloakRealmName
-                <> "/protocol/openid-connect/certs"
-            ]
-          else []
+    -- Phase 8 Sprint 8.4: the `clusterConfig.keycloak` override is now
+    -- baked into the binary-rendered `clusterConfig.body` (see
+    -- `resolvedKeycloakWiring`), so it is no longer emitted here.
     preFinalChartOverrides envoyGatewayEnabled =
       preFinalChartOverridesWithKeycloakPg envoyGatewayEnabled False
     pulsarReadyChartOverrides =

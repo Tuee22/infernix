@@ -160,9 +160,13 @@ requiredPhrases =
       ]
     ),
     ( "chart/templates/secret-cluster-secrets.yaml",
+      -- Phase 8 Sprint 8.4: the `InfernixSecrets.dhall` manifest body is
+      -- rendered by the binary and passed through
+      -- `.Values.clusterSecrets.manifest`; the template only `nindent`s it.
       [ "kind: Secret",
         "name: infernix-cluster-secrets",
         "InfernixSecrets.dhall:",
+        ".Values.clusterSecrets.manifest",
         "minio.json:",
         "keycloak-admin.json:",
         "keycloak-db.json:",
@@ -170,14 +174,12 @@ requiredPhrases =
       ]
     ),
     ( "chart/templates/configmap-cluster-config.yaml",
+      -- Phase 8 Sprint 8.4: the `cluster.dhall` body is rendered by the
+      -- binary and passed through `.Values.clusterConfig.body`; the template
+      -- only `nindent`s it (no `let`/schema Dhall inside the template).
       [ ".Values.clusterConfig.name",
         "cluster.dhall:",
-        "{ pulsar =",
-        ", minio =",
-        ", keycloak =",
-        ", demoBackend =",
-        ", engine =",
-        ", coordinator ="
+        ".Values.clusterConfig.body"
       ]
     ),
     ( "chart/templates/httproutes.yaml",
@@ -277,6 +279,23 @@ runChartLint = do
                 )
             )
         )
+  forM_ dhallBodyRejectionPaths $ \relativePath -> do
+    contents <- readFile (repoRoot paths </> relativePath)
+    forM_ (lines contents) $ \lineValue ->
+      when
+        (isDhallBodyLine lineValue)
+        ( ioError
+            ( userError
+                ( relativePath
+                    <> ": Phase 8 Sprint 8.4 chart lint gate rejects `let`/schema Dhall "
+                    <> "bodies inside chart templates. The `infernix` binary is the sole "
+                    <> "generator of every `.dhall`; templates only `nindent` a "
+                    <> "binary-produced string (e.g. `.Values.clusterConfig.body`, "
+                    <> "`.Values.clusterSecrets.manifest`). Found a Dhall body line at: "
+                    <> lineValue
+                )
+            )
+        )
 
 -- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): the chart lint
 -- gate rejects new @env:@ blocks in the three infernix-owned
@@ -291,6 +310,37 @@ envBlockRejectionPaths =
     "chart/templates/deployment-engine.yaml",
     "chart/templates/deployment-demo.yaml"
   ]
+
+-- | Phase 8 Sprint 8.4: the chart templates that previously carried an
+-- inline `let …/in …` Dhall body (the cluster-config ConfigMap and the
+-- cluster-secrets Secret manifest). Both now `nindent` a binary-produced
+-- string; this gate keeps any `let`/schema Dhall from re-entering a chart
+-- template.
+dhallBodyRejectionPaths :: [FilePath]
+dhallBodyRejectionPaths =
+  [ "chart/templates/configmap-cluster-config.yaml",
+    "chart/templates/secret-cluster-secrets.yaml"
+  ]
+
+-- | Whether a chart-template line is an inline Dhall `let` binding or a
+-- schema-record type line. Comment lines (`#`, `{{/*`, and the leading `*`
+-- of a Helm block comment) are skipped; the check targets real template
+-- content lines. A `let ` binding starts a Dhall body; a bare
+-- `{ field : Type` record type line is the other schema shape.
+isDhallBodyLine :: String -> Bool
+isDhallBodyLine lineValue =
+  let trimmed = dropWhile (`elem` (" \t" :: String)) lineValue
+   in not (isCommentLine trimmed)
+        && ( "let " `prefixOf` trimmed
+               || "in  {" `prefixOf` trimmed
+               || "in {" `prefixOf` trimmed
+           )
+
+isCommentLine :: String -> Bool
+isCommentLine ('#' : _) = True
+isCommentLine ('*' : _) = True
+isCommentLine ('{' : '{' : '/' : '*' : _) = True
+isCommentLine _ = False
 
 -- | Whether a single chart-template line starts an @env:@ block.
 -- Matches the canonical pod-spec position (leading whitespace, then

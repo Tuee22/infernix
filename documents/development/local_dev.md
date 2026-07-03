@@ -48,6 +48,7 @@ Direct reference path:
 
 ```bash
 cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+./.build/infernix init
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix test all
@@ -56,6 +57,23 @@ cabal install --installdir=./.build --install-method=copy --overwrite-policy=alw
 
 The first supported Apple host-native command that needs Docker, Kubernetes tooling, Node.js,
 Python, or Poetry reconciles those prerequisites automatically.
+
+### Config is created by explicit `init` (Phase 8)
+
+The `infernix` binary is the sole generator of every `.dhall`, and none is version-controlled.
+Create config explicitly:
+
+- `infernix init` writes the operator runtime config `./infernix.dhall`, the host manifest
+  `./infernix-host.dhall`, and the host worker secrets under `./.data/runtime/secrets/`. It fails
+  fast if `./infernix.dhall` already exists unless `--force`.
+- `infernix test init` writes the thin `./infernix.test.dhall` that the test harness reads.
+
+There is no auto-generate-if-absent backstop: every runtime, cluster, cache, and aggregate
+`infernix test …` command fails fast naming the exact init to run when its config is missing
+(focused `infernix lint …` and `infernix docs check` remain config-independent). The test harness
+owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2e|all` reads
+`./infernix.test.dhall`, refuses if an operator `./infernix.dhall` is already present, generates
+`./infernix.dhall` from the test config, runs the suites, and deletes the generated file.
 
 ## Containerized Linux Flow
 

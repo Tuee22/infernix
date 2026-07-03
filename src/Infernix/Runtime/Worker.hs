@@ -1129,7 +1129,7 @@ loadHostWorkerModelCacheConfig paths runtimeMode = do
   case maybeState of
     Nothing -> pure Nothing
     Just _state -> do
-      secretsConfig <- ensureHostWorkerSecrets paths
+      secretsConfig <- loadHostWorkerSecrets paths
       minioCreds <- Secrets.readMinioCredentials (Secrets.secretsMinio secretsConfig)
       pure
         ( Just
@@ -1159,36 +1159,24 @@ loadWorkerClusterState paths runtimeMode = do
               pure (Just state)
         _ -> pure Nothing
 
-ensureHostWorkerSecrets :: Paths -> IO Secrets.SecretsConfig
-ensureHostWorkerSecrets paths = do
+-- | Phase 8 Sprint 8.3: load the host worker secrets, failing fast when the
+-- manifest is absent. Creation is owned by `infernix init`
+-- (`materializeHostSecrets`); there is no lazy auto-generate-if-absent
+-- backstop here.
+loadHostWorkerSecrets :: Paths -> IO Secrets.SecretsConfig
+loadHostWorkerSecrets paths = do
   let secretsRoot = runtimeRoot paths </> "secrets"
       manifestPath = secretsRoot </> "InfernixSecrets.dhall"
-      minioPath = secretsRoot </> "minio.json"
-      keycloakAdminPath = secretsRoot </> "keycloak-admin.json"
-      keycloakDbPath = secretsRoot </> "keycloak-db.json"
-  createDirectoryIfMissing True secretsRoot
-  writeFileIfMissing manifestPath (hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath)
-  writeFileIfMissing minioPath "{ \"accessKey\": \"minioadmin\", \"secretKey\": \"minioadmin123\" }\n"
-  writeFileIfMissing keycloakAdminPath "{ \"username\": \"admin\", \"password\": \"operator-managed\" }\n"
-  writeFileIfMissing keycloakDbPath "{ \"username\": \"keycloak\", \"password\": \"operator-managed\" }\n"
+  manifestExists <- doesFileExist manifestPath
+  unless manifestExists $
+    ioError
+      ( userError
+          ( "host worker secrets manifest missing at "
+              <> manifestPath
+              <> "; run `infernix init` to create the runtime config and host secrets"
+          )
+      )
   Secrets.decodeSecretsConfigFile manifestPath
-
-writeFileIfMissing :: FilePath -> String -> IO ()
-writeFileIfMissing filePath contents = do
-  exists <- doesFileExist filePath
-  unless exists (writeFile filePath contents)
-
-hostSecretsManifest :: FilePath -> FilePath -> FilePath -> String
-hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath =
-  unlines
-    [ "let MinioCredentials = { credentialsPath : Text }",
-      "let KeycloakAdminCredentials = { credentialsPath : Text }",
-      "let KeycloakDbCredentials = { credentialsPath : Text }",
-      "in  { minio = { credentialsPath = " <> show minioPath <> " }",
-      "    , keycloakAdmin = { credentialsPath = " <> show keycloakAdminPath <> " }",
-      "    , keycloakDb = { credentialsPath = " <> show keycloakDbPath <> " }",
-      "    }"
-    ]
 
 -- | Decode the worker output from a 'WorkerResponse'. Phase 4 Sprint 4.15:
 -- artifact adapters return an @infernix-demo-objects@ object reference in

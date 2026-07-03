@@ -3,9 +3,10 @@
 
 module Infernix.DemoConfig
   ( decodeDemoConfigFile,
-    ensureGeneratedDemoConfigFile,
+    materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
+    materializeHostSecrets,
     renderGeneratedDemoConfig,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
@@ -15,7 +16,7 @@ module Infernix.DemoConfig
   )
 where
 
-import Control.Exception (IOException, SomeException, bracketOnError, catch, try)
+import Control.Exception (IOException, bracketOnError, catch)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
@@ -37,8 +38,8 @@ import Infernix.Models
   )
 import Infernix.Substrate (decodeSubstrateConfigFile, demoConfigGeneratedBannerLine)
 import Infernix.Types
-import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
-import System.FilePath (takeDirectory)
+import System.Directory (createDirectoryIfMissing, removeFile, renameFile)
+import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openBinaryTempFile)
 import System.Posix.User (getEffectiveUserID, getUserEntryForID, homeDirectory)
 
@@ -94,57 +95,62 @@ writeProjectConfigFile filePath payload = do
         renameFile temporaryPath filePath
     )
 
--- | Phase 1 Sprint 1.11 — materialize the host manifest beside the
--- substrate file. The supported defaults come from
--- 'HostConfig.defaultAppleHostNativeHostConfig' (Apple) and
--- 'HostConfig.defaultLinuxOuterContainerHostConfig' (Linux launcher)
--- per the active execution context. Operators override individual
--- fields by hand-editing the materialized file; subsequent
--- @infernix internal materialize-substrate@ runs do not overwrite the
--- operator edits because we only materialize when the file is absent
--- (the @ensureGeneratedDemoConfigFile@ idempotency model is mirrored
--- here for the host manifest).
+-- | Phase 8: unconditional writer for the host manifest, invoked only by
+-- `infernix init` and `internal materialize-substrate`. No auto-generate-
+-- if-absent backstop remains anywhere; commands that need the manifest fail
+-- fast naming `infernix init` when it is missing.
 materializeHostManifestFile :: Paths -> IO FilePath
 materializeHostManifestFile paths = do
   let filePath = Config.hostConfigPath paths
-  alreadyMaterialized <- doesFileExist filePath
-  if alreadyMaterialized
-    then pure filePath
-    else do
-      operatorHome <- resolveOperatorHomeDirectory
-      let hostConfig = case Config.controlPlaneContext paths of
-            Config.OuterContainer ->
-              HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
-            _ ->
-              HostConfig.defaultAppleHostNativeHostConfig
-                (Text.pack (Config.repoRoot paths))
-                (Text.pack operatorHome)
-          payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
-      writeProjectConfigFile filePath payload
-      pure filePath
+  operatorHome <- resolveOperatorHomeDirectory
+  let hostConfig = case Config.controlPlaneContext paths of
+        Config.OuterContainer ->
+          HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
+        _ ->
+          HostConfig.defaultAppleHostNativeHostConfig
+            (Text.pack (Config.repoRoot paths))
+            (Text.pack operatorHome)
+      payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
+  writeProjectConfigFile filePath payload
+  pure filePath
 
-ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
-ensureGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled = do
-  let filePath = Config.generatedDemoConfigPath paths
-  fileExists <- doesFileExist filePath
-  if fileExists
-    then do
-      -- Phase 7 Sprint 7.7: re-materialise if the staged file fails to
-      -- decode under the current schema. The supported flow
-      -- materialises this file as part of cluster up; a stale
-      -- pre-rename file (with @clusterDaemon@ / @hostDaemon@ keys)
-      -- can't satisfy the renamed @coordinator@ / @engine@ schema, so
-      -- the decoder rejects it and we regenerate from
-      -- @renderGeneratedDemoConfigPayload@.
-      decodeResult <- try (decodeDemoConfigFile filePath)
-      case decodeResult of
-        Left (_ :: SomeException) ->
-          materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
-        Right demoConfig ->
-          if configRuntimeMode demoConfig == runtimeMode
-            then pure filePath
-            else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
-    else materializeGeneratedDemoConfigFile paths runtimeMode defaultDemoUiEnabled
+-- | Phase 8 Sprint 8.3: `infernix init` owns creation of the host worker
+-- secret material under @./.data/runtime/secrets/@. This replaces the old
+-- lazy `writeFileIfMissing` backstop in @Infernix.Runtime.Worker@; the host
+-- worker now fails fast naming `infernix init` when the manifest is absent.
+-- The manifest names credential *paths* (never values), and the placeholder
+-- dev credential JSON files carry the default local MinIO/Keycloak logins.
+-- Written unconditionally: a re-init is already gated by the runtime-config
+-- `--force` check upstream, so we never clobber operator edits silently.
+materializeHostSecrets :: Paths -> IO FilePath
+materializeHostSecrets paths = do
+  let secretsRoot = Config.runtimeRoot paths </> "secrets"
+      manifestPath = secretsRoot </> "InfernixSecrets.dhall"
+      minioPath = secretsRoot </> "minio.json"
+      keycloakAdminPath = secretsRoot </> "keycloak-admin.json"
+      keycloakDbPath = secretsRoot </> "keycloak-db.json"
+  createDirectoryIfMissing True secretsRoot
+  writeProjectConfigFile
+    manifestPath
+    (ByteStringChar8.pack (hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath))
+  writeProjectConfigFile minioPath "{ \"accessKey\": \"minioadmin\", \"secretKey\": \"minioadmin123\" }\n"
+  writeProjectConfigFile keycloakAdminPath "{ \"username\": \"admin\", \"password\": \"operator-managed\" }\n"
+  writeProjectConfigFile keycloakDbPath "{ \"username\": \"keycloak\", \"password\": \"operator-managed\" }\n"
+  pure manifestPath
+
+-- | Render the host secrets manifest. The manifest names the *paths* at
+-- which credential JSON lives; the daemon reads each named file at startup.
+hostSecretsManifest :: FilePath -> FilePath -> FilePath -> String
+hostSecretsManifest minioPath keycloakAdminPath keycloakDbPath =
+  unlines
+    [ "let MinioCredentials = { credentialsPath : Text }",
+      "let KeycloakAdminCredentials = { credentialsPath : Text }",
+      "let KeycloakDbCredentials = { credentialsPath : Text }",
+      "in  { minio = { credentialsPath = " <> show minioPath <> " }",
+      "    , keycloakAdmin = { credentialsPath = " <> show keycloakAdminPath <> " }",
+      "    , keycloakDb = { credentialsPath = " <> show keycloakDbPath <> " }",
+      "    }"
+    ]
 
 ignoreIo :: IO () -> IO ()
 ignoreIo action = action `catch` ignoreIOException
@@ -158,6 +164,15 @@ renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue =
 
 renderGeneratedDemoConfigPayload :: Paths -> RuntimeMode -> Bool -> DaemonRole -> ByteString.ByteString
 renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole =
+  renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole (catalogForMode runtimeMode)
+
+-- | Phase 8 Sprint 8.5: render a substrate payload with an explicit model set.
+-- @cluster up@ publication and @infernix init@ / the test harness use the full
+-- demo catalog ('catalogForMode'); the image-baked config passes @[]@ so
+-- @docker run --rm@ never stages weights and the ConfigMap-mounted config is the
+-- source of truth at deploy.
+renderGeneratedDemoConfigPayloadWithModels :: Paths -> RuntimeMode -> Bool -> DaemonRole -> [ModelDescriptor] -> ByteString.ByteString
+renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole modelSet =
   LazyByteString.toStrict
     ( encodeDemoConfig
         DemoConfig
@@ -178,9 +193,26 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
             modelsBucket = defaultModelsBucket,
             modelBootstrapTopic = defaultModelBootstrapTopic,
             engines = engineBindingsForMode runtimeMode,
-            models = catalogForMode runtimeMode
+            models = modelSet
           }
     )
+
+-- | Phase 8 Sprint 8.5: materialize the image-baked substrate config with an
+-- empty model set. Used by the Dockerfile so a bare @docker run --rm@ image
+-- carries no model catalog; the ConfigMap-mounted config supplies the real set
+-- at deploy.
+materializeEmptyModelsDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
+materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue = do
+  let filePath = Config.generatedDemoConfigPath paths
+      payload =
+        renderGeneratedDemoConfigPayloadWithModels
+          paths
+          runtimeMode
+          demoUiEnabledValue
+          (defaultDaemonRoleForMaterializedFile paths runtimeMode)
+          []
+  writeProjectConfigFile filePath payload
+  pure filePath
 
 defaultDaemonRoleForMaterializedFile :: Paths -> RuntimeMode -> DaemonRole
 defaultDaemonRoleForMaterializedFile paths runtimeMode =

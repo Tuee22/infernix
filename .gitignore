@@ -9,6 +9,13 @@ build/
 build/*.dhall
 build/infernix-demo-*.dhall
 
+# Phase 8: operator-created runtime config, host manifest, and test config.
+# The `infernix` binary is the sole generator of every `.dhall`; none is
+# version-controlled (`infernix init` / `infernix test init` create these).
+/infernix.dhall
+/infernix-host.dhall
+/infernix.test.dhall
+
 # Haskell build artifacts
 dist-newstyle/
 .stack-work/

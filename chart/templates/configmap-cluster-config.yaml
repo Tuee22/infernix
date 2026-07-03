@@ -1,16 +1,17 @@
 {{/*
-Phase 4 Sprint 4.13: cluster manifest ConfigMap.
+Phase 4 Sprint 4.13 / Phase 8 Sprint 8.4: cluster manifest ConfigMap.
 
-Renders `dhall/InfernixCluster.dhall` from chart values into a
-ConfigMap that coordinator + engine + demo pods mount read-only at
-`/opt/infernix/cluster.dhall`. The Haskell daemon decodes this file at
-startup via `Infernix.ClusterConfig.decodeClusterConfigFile`, replacing
-every `INFERNIX_*` wiring env var those pods previously consumed.
+The `cluster.dhall` body is rendered by the `infernix` binary
+(`Infernix.ClusterConfig.renderClusterConfig` from `defaultClusterConfig`)
+and passed through `.Values.clusterConfig.body`. Helm only embeds that
+string verbatim — there is no `let`/schema Dhall inside this template
+(`infernix lint chart` rejects any). Coordinator + engine + demo pods mount
+this ConfigMap read-only at `/opt/infernix/cluster.dhall`; the Haskell
+daemon decodes it at startup via
+`Infernix.ClusterConfig.decodeClusterConfigFile`.
 
 Credentials are NOT in this ConfigMap. They live in
-`Secret/infernix-cluster-secrets`, mounted at `/etc/infernix/secrets/`
-(Phase 7 Sprint 7.17 materializes the matching `InfernixSecrets.dhall`
-file-path schema and updates this template's companion secret).
+`Secret/infernix-cluster-secrets`, mounted at `/etc/infernix/secrets/`.
 */}}
 apiVersion: v1
 kind: ConfigMap
@@ -22,90 +23,4 @@ metadata:
     app.kubernetes.io/component: cluster-config
 data:
   cluster.dhall: |
-    let PulsarConfig =
-          { httpBaseUrl : Text
-          , wsBaseUrl : Text
-          , adminUrl : Text
-          , serviceUrl : Text
-          , tenant : Text
-          , namespace : Text
-          , systemNamespace : Text
-          }
-    let MinioConfig =
-          { endpoint : Text
-          , region : Text
-          , presignExpirySeconds : Natural
-          , modelsBucket : Text
-          , demoArtifactsBucket : Text
-          }
-    let KeycloakConfig =
-          { baseUrl : Text
-          , realmName : Text
-          , clientId : Text
-          , jwksUrl : Text
-          }
-    let DemoBackendConfig =
-          { bindHost : Text
-          , port : Natural
-          , bridgeMode : Text
-          , publicationStatePath : Text
-          , demoConfigPath : Text
-          }
-    let EngineCommandOverride = { mapKey : Text, mapValue : Text }
-    let EngineConfig =
-          { modelCacheRoot : Text
-          , modelCacheQuotaBytes : Natural
-          , commandOverrides : List EngineCommandOverride
-          }
-    let CoordinatorConfig =
-          { catalogSource : Text
-          , controlPlaneContext : Text
-          , daemonLocation : Text
-          }
-    in  { pulsar =
-            { httpBaseUrl = {{ .Values.service.pulsar.httpBaseUrl | quote }}
-            , wsBaseUrl = {{ .Values.service.pulsar.webSocketBaseUrl | quote }}
-            , adminUrl = {{ .Values.service.pulsar.adminUrl | quote }}
-            , serviceUrl = {{ .Values.service.pulsar.serviceUrl | quote }}
-            , tenant = {{ .Values.service.pulsar.tenant | quote }}
-            , namespace = {{ .Values.service.pulsar.namespace | quote }}
-            , systemNamespace = {{ .Values.clusterConfig.pulsar.systemNamespace | quote }}
-            }
-        , minio =
-            { endpoint = {{ .Values.service.minio.endpoint | quote }}
-            , region = {{ .Values.clusterConfig.minio.region | quote }}
-            , presignExpirySeconds = {{ .Values.clusterConfig.minio.presignExpirySeconds }}
-            , modelsBucket = {{ .Values.clusterConfig.minio.modelsBucket | quote }}
-            , demoArtifactsBucket = {{ .Values.clusterConfig.minio.demoArtifactsBucket | quote }}
-            }
-        , keycloak =
-            { baseUrl = {{ .Values.clusterConfig.keycloak.baseUrl | quote }}
-            , realmName = {{ .Values.clusterConfig.keycloak.realmName | quote }}
-            , clientId = {{ .Values.clusterConfig.keycloak.clientId | quote }}
-            , jwksUrl = {{ .Values.clusterConfig.keycloak.jwksUrl | quote }}
-            }
-        , demoBackend =
-            { bindHost = {{ .Values.clusterConfig.demoBackend.bindHost | quote }}
-            , port = {{ .Values.clusterConfig.demoBackend.port }}
-            , bridgeMode = {{ .Values.clusterConfig.demoBackend.bridgeMode | quote }}
-            , publicationStatePath = "{{ .Values.demoConfig.mountPath }}/{{ .Values.publication.fileName }}"
-            , demoConfigPath = "{{ .Values.demoConfig.mountPath }}/{{ .Values.demoConfig.fileName }}"
-            }
-        , engine =
-            { modelCacheRoot = {{ .Values.clusterConfig.engine.modelCacheRoot | quote }}
-            , modelCacheQuotaBytes = {{ printf "%d" (int64 .Values.clusterConfig.engine.modelCacheQuotaBytes) }}
-            , commandOverrides =
-                [
-{{- $first := true -}}
-{{- range $name, $value := .Values.service.engineAdapters.commandEnv }}
-{{- if $first }}{{- $first = false }}{{ else }},{{ end }}
-                  { mapKey = {{ $name | quote }}, mapValue = {{ $value | quote }} }
-{{- end }}
-                ] : List EngineCommandOverride
-            }
-        , coordinator =
-            { catalogSource = {{ .Values.clusterConfig.coordinator.catalogSource | quote }}
-            , controlPlaneContext = {{ .Values.controlPlaneContext | quote }}
-            , daemonLocation = {{ .Values.clusterConfig.coordinator.daemonLocation | quote }}
-            }
-        }
+{{ .Values.clusterConfig.body | nindent 4 }}

@@ -294,7 +294,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --install-method=copy \
          --overwrite-policy=always \
          exe:infernix \
-    && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
+    && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
     && infernix internal materialize-linux-native-engines \
     && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
          poetry install --directory python/engines/transformers --with linux-cpu --no-interaction; \

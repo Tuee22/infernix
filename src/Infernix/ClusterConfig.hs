@@ -32,6 +32,12 @@ module Infernix.ClusterConfig
     encodeClusterConfig,
     clusterConfigGeneratedBanner,
     defaultClusterConfigMountPath,
+    defaultClusterConfig,
+    defaultPulsarWiring,
+    defaultMinioWiring,
+    defaultKeycloakWiring,
+    defaultDemoBackendWiring,
+    defaultEngineWiring,
   )
 where
 
@@ -251,6 +257,79 @@ clusterFieldOptions =
 -- engine, unit tests) pass a different path explicitly.
 defaultClusterConfigMountPath :: FilePath
 defaultClusterConfigMountPath = "/opt/infernix/cluster.dhall"
+
+-- | Phase 8 Sprint 8.4: the default in-cluster wiring values, formerly
+-- carried by the @clusterConfig@ / @service@ blocks in @chart/values.yaml@
+-- and interpolated by the (now retired) Dhall body inside
+-- @configmap-cluster-config.yaml@. The binary now owns these values; the
+-- chart template is a `nindent` passthrough of the rendered
+-- 'renderClusterConfig' string. @cluster up@ overrides the keycloak wiring
+-- and control-plane context per deploy phase before rendering.
+defaultClusterConfig :: Text -> KeycloakWiring -> [EngineCommandOverride] -> ClusterConfig
+defaultClusterConfig controlPlaneContextValue keycloakWiring engineOverrides =
+  ClusterConfig
+    { clusterPulsar = defaultPulsarWiring,
+      clusterMinio = defaultMinioWiring,
+      clusterKeycloak = keycloakWiring,
+      clusterDemoBackend = defaultDemoBackendWiring,
+      clusterEngine = defaultEngineWiring {engineCommandOverrides = engineOverrides},
+      clusterCoordinator =
+        CoordinatorWiring
+          { coordinatorCatalogSource = "mounted-configmap",
+            coordinatorControlPlaneContext = controlPlaneContextValue,
+            coordinatorDaemonLocation = "cluster-pod"
+          }
+    }
+
+defaultPulsarWiring :: PulsarWiring
+defaultPulsarWiring =
+  PulsarWiring
+    { pulsarHttpBaseUrl = "http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local",
+      pulsarWsBaseUrl = "ws://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/ws/v2",
+      pulsarAdminUrl = "http://infernix-infernix-pulsar-proxy.platform.svc.cluster.local/admin/v2",
+      pulsarServiceUrl = "pulsar://infernix-infernix-pulsar-proxy.platform.svc.cluster.local:6650",
+      pulsarTenant = "infernix",
+      pulsarNamespace = "demo",
+      pulsarSystemNamespace = "system"
+    }
+
+defaultMinioWiring :: MinioWiring
+defaultMinioWiring =
+  MinioWiring
+    { minioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
+      minioRegion = "us-east-1",
+      minioPresignExpirySeconds = 900,
+      minioModelsBucket = "infernix-models",
+      minioDemoArtifactsBucket = "infernix-demo-objects"
+    }
+
+defaultKeycloakWiring :: KeycloakWiring
+defaultKeycloakWiring =
+  KeycloakWiring
+    { keycloakBaseUrl = "http://127.0.0.1/auth",
+      keycloakRealmName = "infernix",
+      keycloakClientId = "infernix-spa",
+      keycloakJwksUrl =
+        "http://infernix-keycloak.platform.svc.cluster.local:8080/auth/realms/infernix/protocol/openid-connect/certs"
+    }
+
+defaultDemoBackendWiring :: DemoBackendWiring
+defaultDemoBackendWiring =
+  DemoBackendWiring
+    { demoBindHost = "0.0.0.0",
+      demoPort = 8080,
+      demoBridgeMode = "pulsar",
+      demoPublicationStatePath = "/opt/build/publication.json",
+      demoConfigFilePath = "/opt/build/infernix-substrate.dhall"
+    }
+
+defaultEngineWiring :: EngineWiring
+defaultEngineWiring =
+  EngineWiring
+    { engineModelCacheRoot = "/model-cache",
+      engineModelCacheQuotaBytes = 68719476736,
+      engineCommandOverrides = []
+    }
 
 clusterConfigGeneratedBanner :: String
 clusterConfigGeneratedBanner =

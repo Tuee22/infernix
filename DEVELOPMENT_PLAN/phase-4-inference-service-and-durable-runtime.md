@@ -1504,11 +1504,15 @@ MT3 compatibility fix now wraps Hugging Face `T5Block.forward` for MT3 imports a
 `cache_position` when the upstream `mt3-infer` custom stack omits it; mounted Linux-image
 `poetry --directory python run check-code` and a PyTorch-engine T5Block probe are green. Rebuilt
 full-suite CPU proof is pending.
-**Cohort gate**: Open [Wave O](cohort-validation-waves.md) — rebuilt full-suite `linux-cpu` plus the
-selected `linux-gpu` accelerator must prove real MIDI output for `music-mt3-infer` and
-`music-mr-mt3` through integration and routed Playwright. The Apple catalog binding is supported as a
-PyTorch CPU route, but no post-replacement Apple full-suite proof is claimed until an Apple cohort
-rerun records it.
+**Cohort gate**: [Wave O](cohort-validation-waves.md) — **both MT3 rows proven 2026-07-02.** The
+MR-MT3 `T5Block.forward` `past_key_values`→`past_key_value` compat fix landed; rebuilt-image
+`./bootstrap/linux-cpu.sh test` is **GREEN** (integration real MIDI for both rows + routed Playwright
+`9/9` incl. the per-model matrix), and `./bootstrap/linux-gpu.sh test` proved both rows real on CUDA
+(integration PASS; routed Playwright `8/9`). The one remaining red is the clean `linux-gpu` full
+`9/9`, blocked solely by the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap
+timeout — now owned by **Phase 8 Sprint 8.5** (eager model-cache staging). The Apple catalog binding
+is supported as a PyTorch CPU route, but no post-replacement Apple full-suite proof is claimed until
+an Apple cohort rerun records it.
 **Implementation**: `src/Infernix/Models.hs`, `python/adapters/pytorch_python.py`, `python/adapters/model_bootstrap.py`, `python/engines/pytorch/pyproject.toml`, `docker/Dockerfile`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
