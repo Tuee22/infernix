@@ -128,7 +128,6 @@ RUN set -eu; \
 WORKDIR /workspace
 
 COPY cabal.project infernix.cabal LICENSE README.md Setup.hs /workspace/
-COPY dhall /workspace/dhall
 COPY proto /workspace/proto
 COPY web/package.json /workspace/web/package.json
 COPY web/scripts /workspace/web/scripts

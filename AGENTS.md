@@ -64,9 +64,19 @@ Read first:
   reference path against the existing Colima daemon
 - no Haskell `lookupEnv` / `getEnv` / `setEnv` calls in new code; no `proc "<bare-name>"`
   external invocations; no `env:` blocks in infernix-owned chart templates; no `process.env` or
-  `os.environ` reads in web / Python code. The supported configuration substrate is the typed
-  `.dhall` files documented in [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md);
-  the lint enforcement (Phase 6 Sprint 6.28) rejects violations
+  `os.environ` reads in web / Python code. The supported configuration substrate is typed `.dhall`
+  documented in [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md);
+  the lint enforcement rejects violations
+- **zero version-controlled `.dhall`**: never commit a `.dhall` file. The `infernix` binary is the
+  sole generator of every `.dhall` — including the ConfigMap/Secret bodies (Helm only `nindent`s a
+  binary-produced string, never renders/parses Dhall). Schemas are reflected from the Haskell
+  decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
+  manifest) and `infernix test init` (`./infernix.test.dhall`); there is no auto-generate-if-absent
+  backstop — every command fails fast if its config is missing. The test harness generates
+  `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
+  the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
+  generator); the coordinator eager-stages that set at startup. Canonical doctrine:
+  [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 
 ## Scope
 

@@ -38,7 +38,7 @@ These rules close in this phase and remain mandatory afterward:
 ## Current Generated Demo-Config Baseline
 
 - cluster-side reconciliation reads the active substrate from the generated file beside the binary
-- `cluster up` republishes a cluster-role `infernix-substrate.dhall` payload into
+- `cluster up` republishes a cluster-role `infernix.dhall` payload into
   `ConfigMap/infernix-demo-config`; on Apple this is rendered from the active staged substrate
   metadata and `demo_ui` setting rather than copying the host-role file verbatim
 - generated deployment inputs are not committed as static blobs in `chart/values.yaml`
@@ -56,7 +56,7 @@ launcher only and then delegate lifecycle, validation, image preparation, and te
 lifecycle skips broad pre-Harbor support-image preloads, may hydrate and stream only the narrow
 Harbor warmup dependency set into Kind workers before Helm warmup, and loads every remaining
 image, including the active runtime image, into Harbor after Harbor is responsive. Staged
-`infernix-substrate.dhall` writes are atomic so concurrent status readers do not observe truncated
+`infernix.dhall` writes are atomic so concurrent status readers do not observe truncated
 payloads, and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
 promotion. Legacy lifecycle proof points are inventoried in
@@ -244,7 +244,7 @@ cluster-role substrate file into the cluster and mirrored for local inspection.
 
 ### Deliverables
 
-- `cluster up` republishes a cluster-role `infernix-substrate.dhall` payload for the active
+- `cluster up` republishes a cluster-role `infernix.dhall` payload for the active
   substrate, preserving catalog content and `demo_ui` from the staged file while using cluster
   daemon metadata for cluster consumers
 - the generated file contains every README-matrix row supported by that substrate and no
@@ -255,7 +255,7 @@ cluster-role substrate file into the cluster and mirrored for local inspection.
 ### Validation
 
 - rebuilding for a different substrate changes catalog entries and engine bindings deterministically
-  while preserving the fixed `infernix-substrate.dhall` filename
+  while preserving the fixed `infernix.dhall` filename
 - generated files live only under the active build root and never land in tracked source paths
 - `infernix kubectl get configmap infernix-demo-config -n <namespace> -o yaml` shows the active published catalog
 
@@ -339,11 +339,11 @@ around one Compose-driven outer container for both Linux substrates.
 
 - `cluster up` publishes the cluster-role substrate payload into `ConfigMap/infernix-demo-config`
 - cluster-resident consumers mount that ConfigMap at
-  `/opt/build/infernix-substrate.dhall`
+  `/opt/build/infernix.dhall`
 - the outer-container control plane stages the Linux cluster-role payload at the image-local
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` path when it needs to know
+  `/workspace/.build/outer-container/build/infernix.dhall` path when it needs to know
   its own substrate
-- the cluster publication contract uses the same stable `infernix-substrate.dhall` filename in the
+- the cluster publication contract uses the same stable `infernix.dhall` filename in the
   repo-local mirror and in-cluster mount
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
 - `compose.yaml` defines the single launcher service and defaults to the CPU snapshot; the GPU lane
@@ -360,7 +360,7 @@ around one Compose-driven outer container for both Linux substrates.
   cluster up` materializes or verifies the Linux CPU cluster-role substrate payload and publishes
   it into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
-  `infernix-substrate.dhall` key and the cluster-role payload
+  `infernix.dhall` key and the cluster-role payload
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
   --file compose.yaml run --rm infernix infernix cluster up` exercises the same supported launcher
   surface for `linux-gpu` without shell-owned substrate staging
@@ -442,7 +442,7 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
 
 ### Deliverables
 
-- generated `infernix-substrate.dhall` staging writes are atomic, preventing concurrent
+- generated `infernix.dhall` staging writes are atomic, preventing concurrent
   `cluster status` readers from seeing truncated Dhall while lifecycle work is in flight
 - retained-state `cluster up` detects a ready Harbor PostgreSQL leader with stopped unready
   replicas and reinitializes those replicas from the leader through Patroni

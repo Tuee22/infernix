@@ -44,6 +44,7 @@ import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
 import Infernix.Lint.Proto (runProtoLint)
 import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime, expectedInferenceExecutorLocationForRuntime)
+import Infernix.ProjectInit (runProjectInit, runTestInit)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
@@ -106,6 +107,8 @@ dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
+    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing -> runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing
+    TestInitCommand maybeRuntimeMode maybeDemoUi -> runTestInit maybeRuntimeMode maybeDemoUi
     ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
     ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing

@@ -122,7 +122,7 @@ Sprint 1.11 removes
 `bootstrap::prepend_path` helper, and the host-side `.build` / `chart/charts` bind mounts. The
 Linux launcher now selects the GPU image through the same single `compose.yaml` service using a
 one-shot `LAUNCHER_IMAGE=infernix-linux-gpu:local` Compose selector, and no longer forwards the
-host-repo override. It introduces `dhall/InfernixHost.dhall` + the matching `HostConfig` Haskell
+host-repo override. It introduces the `HostConfig` decoder type (reflected schema; no tracked `.dhall`) as the Haskell
 record. The Linux bootstrap entrypoints now use the `PATH=/usr/bin:/bin` + `BASH_SOURCE` +
 `/etc/passwd` + hardcoded absolute-path discovery convention, and the Linux launcher image bakes
 the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
@@ -152,13 +152,13 @@ The repo matches the supported Phase 1 ownership contract: the control plane has
 Haskell command registry, the governed root docs point at canonical
 `documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot.
 Lifecycle and validation commands
-stage or verify `infernix-substrate.dhall` under the active build root through binary-owned
+stage or verify `infernix.dhall` under the active build root through binary-owned
 preflight, while explicit helper invocations remain available for direct inspection or restaging.
 The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
 overlay during image build, supported Compose runs keep the Linux build root in the image
 overlay rather than bind-mounting the host `./.build/` tree, and the Helm chart archive cache
 lives in the image overlay at `/opt/infernix/chart/charts/`. Sprint 1.12 removes the Colima tool
-field from `dhall/InfernixHost.dhall` and the matching Haskell records, removes `AppleColima`
+field from the `HostConfig` decoder type and the matching Haskell records, removes `AppleColima`
 planning and profile start/stop/restart behavior from `src/Infernix/HostPrereqs.hs`, and adds
 unit-level Docker-boundary coverage for native arm64 versus non-native daemon architectures.
 The recorded Apple Silicon validation closed the full positive lifecycle and negative
@@ -307,7 +307,7 @@ static quality enforceable through canonical entrypoints.
 - outer-container staged substrate output stays under `/workspace/.build/outer-container/` inside
   the launcher image, while cabal package state and cabal's build directory stay in the image
   overlay
-- explicit substrate materialization stages `infernix-substrate.dhall` under the active build
+- explicit substrate materialization stages `infernix.dhall` under the active build
   root; `cluster up` consumes that staged file, republishes it for cluster consumers, and fails
   fast if it is absent
 - the supported web build regenerates frontend contracts, runs `spago build`, and emits
@@ -542,10 +542,10 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 - the build or explicit staging flow emits one substrate file under the active build root and the
   CLI reads that file as the primary source of truth for active substrate; the Linux Dockerfile's
   image-local copy is the supported outer-container copy
-- Apple host-native workflows stage `./.build/infernix-substrate.dhall` with
+- Apple host-native workflows stage `./.build/infernix.dhall` with
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
 - Linux outer-container workflows stage
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image with
+  `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image with
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
   aggregate `infernix test ...` entrypoints fail fast when the staged file is absent; focused
@@ -579,7 +579,7 @@ None.
 ## Sprint 1.11: Host Manifest Materialization [Done]
 
 **Status**: Done
-**Implementation**: `dhall/InfernixHost.dhall` (new), `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Webapp.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
+**Implementation**: `src/Infernix/Substrate.hs` (extended), `src/Infernix/HostConfig.hs` (new; the `HostConfig` decoder type is the reflected schema — no tracked `.dhall`), `src/Infernix/HostTools.hs` (new helper module), `src/Infernix/CLI.hs`, `src/Infernix/Config.hs`, `src/Infernix/Webapp.hs`, every `bootstrap/*.sh`, `compose.yaml`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`, `documents/engineering/portability.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -596,7 +596,7 @@ shrinks to `./.data` plus the Docker socket only.
 
 ### Deliverables
 
-- `dhall/InfernixHost.dhall` schema with the `ToolPaths`, `FilesystemConventions`, and
+- the `HostConfig` decoder type (reflected schema) with the `ToolPaths`, `FilesystemConventions`, and
   `HostExecutionContext` records named in `documents/engineering/host_tools_manifest.md`.
 - `HostConfig` typed Haskell record in `src/Infernix/HostConfig.hs`, decoded via the `dhall`
   library at every entry point (`runProductionDaemon`, `clusterUp`, `runDemoApiServer`, every
@@ -661,7 +661,7 @@ shrinks to `./.data` plus the Docker socket only.
 
 Foundational pieces landed:
 
-- `dhall/InfernixHost.dhall` schema with the typed `ToolPaths`,
+- the `HostConfig` decoder type (reflected schema) with the typed `ToolPaths`,
   `FilesystemConventions`, and `HostExecutionContext` records.
 - `src/Infernix/HostConfig.hs` — typed `HostConfig` Haskell record,
   Dhall decoder, renderer, and supported defaults for both Apple
@@ -705,7 +705,7 @@ Haskell-side env-var retirement landed (the recorded validation):
 - `src/Infernix/Config.hs.targetRuntimeModeForExecutionContext`
   no longer reads `INFERNIX_COMPOSE_SUBSTRATE`. The outer-container
   branch decodes the active substrate from the staged
-  `infernix-substrate.dhall` file (the Dockerfile bakes that file at
+  `infernix.dhall` file (the Dockerfile bakes that file at
   image build time) or fails with the supported `missingGeneratedSubstrateFileError`
   diagnostic.
 - `src/Infernix/CLI.hs.configuredRuntimeMode` collapses to a direct
@@ -821,7 +821,7 @@ Wave C.
 ## Sprint 1.12: Native-Only Workflow and Apple Docker Boundary [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `dhall/InfernixHost.dhall`, `docker/Dockerfile`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+**Implementation**: `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`, `docker/Dockerfile`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `AGENTS.md`, `CLAUDE.md`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
@@ -838,7 +838,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
 - replace Apple Docker bootstrap behavior with a Docker-daemon validation step that reports the
   current Docker context and daemon architecture, then fails before cluster work if the daemon is
   absent, non-native, or unavailable in the current process
-- update `dhall/InfernixHost.dhall`, host-tool manifests, and unit fixtures so Colima is not a
+- update the `HostConfig` decoder type, host-tool manifests, and unit fixtures so Colima is not a
   required supported Apple tool
 - keep Linux bootstrap and validation native-only: `linux-cpu` covers native `linux/amd64` and
   native `linux/arm64`; `linux-gpu` remains native amd64 CUDA
@@ -906,7 +906,7 @@ native arm64 daemon. `linux-cpu` validation belongs on native Linux amd64 or nat
   `kubectl` wrapper now materialize or rediscover the Apple host manifest before launching Kind,
   and host-native command runtime selection falls back to `AppleSilicon` when the generated
   substrate file is intentionally absent on a first run. Unit coverage now asserts that
-  host-native Apple default runtime resolution works without `.build/infernix-substrate.dhall`
+  host-native Apple default runtime resolution works without `.build/infernix.dhall`
   while Linux outer-container defaults still require the generated substrate file. The same
   validation found and fixed a routed E2E helper issue: `web/playwright/inference.spec.js`
   force-deletes the stateless demo pods, waits for the original pod names to disappear, and
@@ -940,7 +940,7 @@ None.
 **Historical implementation**: Superseded and removed by Sprint 1.14.
 **Code-side closure**: Historical record only — the prior `tart` host-manifest field (Haskell selector `hostTart`), `AppleTart` prerequisite, Tart argument builders, and Tart-backed materialization flow are removed from the current implementation by Sprint 1.14. The retained command name now belongs to the Tart-free manifest materialization lane.
 **Cohort gate**: Replaced by Sprint 1.14's headless Apple materialization gate in [Wave I](cohort-validation-waves.md).
-**Implementation**: `dhall/InfernixHost.dhall`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `bootstrap/apple-silicon.sh`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/HostConfig.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `bootstrap/apple-silicon.sh`, `test/unit/Spec.hs`
 **Docs to update**: `documents/engineering/host_tools_manifest.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/build_artifacts.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/docker_policy.md`
 
 ### Legacy Note
@@ -985,7 +985,7 @@ None. The Tart-specific implementation is removed by Sprint 1.14 and recorded in
 **Status**: Done
 **Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, Darwin payload-smoke validation for materialized Apple payloads, and atomic rename; the `apple-metal-runtime-bridge` artifact materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic; and `coreml-native` materializes `bin/coreml-runner` plus Objective-C smoke source that links Foundation/CoreML and instantiates `MLModelConfiguration`. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; the 2026-06-16 Apple host refresh also proves `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`, `./.build/infernix internal materialize-substrate apple-silicon`, `./.build/infernix internal materialize-metal-engines`, installed Metal and Core ML smoke commands, direct Apple native validation-runner output for `llama-cpp-cli` and `jvm-native`, `./.build/infernix test unit` (Haskell unit plus PureScript 71/71), `./.build/infernix test lint`, `./.build/infernix docs check`, and focused `./.build/infernix lint files/docs/proto/chart`. The former deterministic Apple native runner payloads are superseded by Sprint 1.15.
 **Cohort gate**: Closed under the Section Q single-accelerator rule — the chosen accelerator is `apple-silicon`, and the 2026-06-16 Apple host evidence proves Tart-absent manifest materialization, generated Metal bridge smoke, installed `coreml-native` runtime-load smoke, focused e2e, and aggregate `./.build/infernix test all` for the Sprint 1.14 reset scope. The native `linux-cpu` lane supplies the non-accelerator support evidence for the foundation surface; Sprint 1.14 has no `linux-gpu` Metal/Core ML validation surface. Real Apple native payloads and routed real-output proof are owned by Sprint 1.15 / Wave L.
-**Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `dhall/InfernixHost.dhall`, `test/unit/Spec.hs`
+**Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/build_artifacts.md`, `documents/operations/apple_silicon_runbook.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective

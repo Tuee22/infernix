@@ -3,18 +3,24 @@
 **Status**: Authoritative source
 **Referenced by**: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../tools/pulsar.md](../tools/pulsar.md), [../tools/minio.md](../tools/minio.md), [../tools/keycloak.md](../tools/keycloak.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
-> **Purpose**: Define the `dhall/InfernixCluster.dhall` schema, the ConfigMap+Secret mount
+> **Purpose**: Define the cluster-config record (reflected from the `Infernix.ClusterConfig`
+> decoder type; printed by `infernix internal dhall-schema cluster`), the ConfigMap+Secret mount
 > contract that replaces every infernix-owned pod's `env:` block, and the per-field source
 > mapping for runtime cluster wiring.
 
 ## TL;DR
 
-- `dhall/InfernixCluster.dhall` is the typed source of truth for every in-cluster wiring value
-  that previously lived in `chart/templates/deployment-*.yaml` `env:` blocks.
-- The chart renders this into a Kubernetes `ConfigMap` named `infernix-cluster-config` and
-  mounts it read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / demo pods.
+- The `ClusterConfig` Haskell type (rendered by the binary at `cluster up` from
+  `defaultClusterConfig`) is the typed source of truth for every in-cluster wiring value that
+  previously lived in `chart/templates/deployment-*.yaml` `env:` blocks. No `.dhall` is
+  version-controlled; the schema is reflected from the decoder type.
+- The binary renders this record to a `cluster.dhall` string at `cluster up` and injects it into
+  Helm, which embeds it verbatim (`nindent`) into `ConfigMap/infernix-cluster-config`, mounted
+  read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / webapp pods. **Helm never
+  parses or templates the Dhall.**
 - Credentials are NOT in this file. They live in a separate Kubernetes `Secret` mounted at
-  `/etc/infernix/secrets/`, with the paths named by `dhall/InfernixSecrets.dhall`.
+  `/etc/infernix/secrets/`, with the paths named by the secrets record (reflected from
+  `Infernix.SecretsConfig`; `infernix internal dhall-schema secrets`).
 - The Haskell daemon decodes both at startup; no infernix-owned pod consumes env vars.
 
 ## Schema
@@ -76,8 +82,9 @@ in    { pulsar : PulsarConfig
       }
 ```
 
-The schema lives in `dhall/InfernixCluster.dhall`; the materialized cluster copy lives in
-the `ConfigMap/infernix-cluster-config` resource that the chart renders.
+The schema is reflected from the `ClusterConfig` decoder type; the materialized value is the
+binary-rendered `cluster.dhall` string that the chart embeds verbatim into
+`ConfigMap/infernix-cluster-config` (Helm embeds it, does not generate it).
 
 ## ConfigMap + Secret mount contract
 

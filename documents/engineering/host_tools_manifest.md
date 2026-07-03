@@ -3,14 +3,16 @@
 **Status**: Authoritative source
 **Referenced by**: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md), [../development/no_env_vars.md](../development/no_env_vars.md), [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
-> **Purpose**: Define the `dhall/InfernixHost.dhall` schema, the absolute-path discipline for every
+> **Purpose**: Define the host-manifest record (reflected from the `Infernix.HostConfig` decoder
+> type; printed by `infernix internal dhall-schema host`), the absolute-path discipline for every
 > external command the project invokes, and the per-tool field mapping the Haskell + bootstrap-shell
 > codepaths consult.
 
 ## TL;DR
 
-- `dhall/InfernixHost.dhall` is the single authoritative inventory of every external command the
-  project ever invokes — by absolute path.
+- The generated host manifest `./infernix-host.dhall` (written by `infernix init`) is the single
+  authoritative inventory of every external command the project ever invokes — by absolute path. Its
+  schema is reflected from the `HostConfig` Haskell type; no `.dhall` is version-controlled.
 - The Haskell binary loads this file at startup via the `dhall` library and threads a
   `HostConfig` record through every entry point. Every `proc`/`callProcess`/`readProcess`
   invocation reads its command path from `HostConfig.toolPaths.*`.
@@ -90,10 +92,11 @@ in    { hostExecutionContext : HostExecutionContext
       }
 ```
 
-The schema itself lives in `dhall/InfernixHost.dhall`; the materialized operator copy lives in
-`./.build/infernix-host.dhall` (Apple) or in the launcher image at
-`/opt/infernix/dhall/InfernixHost.dhall` (Linux). `hostArchitecture` stores the normalized native
-host architecture (`amd64` or `arm64`) used by the `linux-cpu` publication selector.
+The schema is reflected from the `HostConfig` decoder type (`infernix internal dhall-schema host`);
+the operator's generated manifest is written by `infernix init` to `./infernix-host.dhall`
+(gitignored). There is no packaged `.dhall` schema in the repo or launcher image. `hostArchitecture`
+stores the normalized native host architecture (`amd64` or `arm64`) used by the `linux-cpu`
+publication selector.
 
 ## Per-tool field mapping
 
@@ -189,8 +192,9 @@ become inherited environment overrides or ambient `PATH` lookups.
 
 When a sprint introduces a new external CLI:
 
-1. Add a field to the `ToolPaths` record in `dhall/InfernixHost.dhall` (and to the matching
-   Haskell decoder in `src/Infernix/Substrate.hs`'s `HostConfig` record).
+1. Add a field to the `ToolPaths` record in the `HostConfig` Haskell decoder type
+   (`src/Infernix/HostConfig.hs`); the reflected schema and `infernix init` defaults pick it up
+   automatically — there is no `.dhall` schema file to edit.
 2. Update the materialization helper in `src/Infernix/CLI.hs` to seed the field with the
    supported default for each execution context.
 3. Use `runHostTool hostConfig <toolName> args` (helper in `src/Infernix/HostTools.hs`) at the

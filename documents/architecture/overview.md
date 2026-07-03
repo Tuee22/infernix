@@ -31,7 +31,7 @@ governed documentation suite.
   All three are built out through
   [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 - the runtime executor dispatches to real engine entrypoints: the engine worker invokes the selected
-  Python adapter or native runner, fetches model weights lazily from the `infernix-models` MinIO
+  Python adapter or native runner, streams model weights from the eagerly pre-staged `infernix-models` MinIO
   bucket, and publishes the typed per-family result surface. Hardware proof for real output remains
   tracked in `DEVELOPMENT_PLAN/` cohort waves until the Apple Metal/Core ML and CUDA gates close.
   Inference work still flows only over Pulsar topics across the role-selected Haskell daemons; see

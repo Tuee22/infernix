@@ -87,8 +87,8 @@ Pulsar+MinIO wiring under the chaos validation suite.
   `infernix-coordinator` Deployment loads the shared library minus the
   engine-specific paths. It runs `Infernix.Dispatch.SingleFlight` (the
   single-flight dispatcher), `Infernix.Bridge.Result` (the
-  result-bridge), `Infernix.Bootstrap.Models` (the lazy model-weight
-  bootstrap worker for `infernix-models`), and the optional batcher.
+  result-bridge), `Infernix.Bootstrap.Models` (the eager model-weight
+  staging worker for `infernix-models`), and the optional batcher.
   It must not import `Infernix.Demo.*` (or any other
   `<appNamespace>.*`), `Infernix.Objects.Presigned`,
   `Infernix.Auth.Jwt`, any WebSocket module, or `Infernix.Runtime.*`.
@@ -108,7 +108,7 @@ Pulsar+MinIO wiring under the chaos validation suite.
   `Infernix.Dispatch.SingleFlight`, `Infernix.Bridge.Result`,
   `Infernix.Bootstrap.Models`, or any WebSocket module. The engine
   has no PVC; its only on-disk state is a derived model-weight cache
-  populated lazily from the `infernix-models` MinIO bucket through the
+  streamed from the eagerly pre-staged `infernix-models` MinIO bucket through the
   shared adapter helper `python/adapters/model_cache.py`, which the
   worker configures from request-carried model-cache and MinIO settings
   before adapter execution.

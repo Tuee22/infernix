@@ -38,9 +38,8 @@
 > reconciliation from the typed runtime graph, replacing implicit broker
 > auto-create reliance, and the binary emits its own decoder-reflected Dhall
 > schema through `infernix internal dhall-schema host|cluster|secrets|substrate`.
-> The checked-in `dhall/Infernix{Host,Cluster,Secrets,Substrate}.dhall` schema files now
-> contain the reflected output, and `infernix lint docs` drift-checks them against the
-> in-binary renderer.
+> Per Phase 8, there are no version-controlled schema files; the schema exists only as the reflected
+> output of the Haskell decoder types, emitted on demand.
 
 > **Audit follow-on reopen (result timestamp safety).** Phase 4 reopened Sprint 4.24 after the June
 > 2026 audit found a duplicate result-protobuf timestamp codec in `src/Infernix/Runtime/Pulsar.hs`:
@@ -128,7 +127,7 @@ cache status or eviction or rebuild flows, a shared Python adapter project whose
 write idempotent bootstrap manifests, explicit substrate-materialization helpers, and daemon
 behavior driven by the staged substrate file. Durable model artifact storage lives in the
 `infernix-models` MinIO bucket. The staged substrate file is a typed Dhall record at
-`infernix-substrate.dhall`, decoded in-process by the `dhall` Haskell library. The runtime
+`infernix.dhall`, decoded in-process by the `dhall` Haskell library. The runtime
 contract distinguishes daemon role from inference executor location:
 cluster daemons exist on every substrate and own Pulsar request-topic consumption; Linux cluster
 daemons run inference directly and publish results; Apple cluster daemons publish work to derived
@@ -539,7 +538,7 @@ produces the two real Linux runtime images and supports the image-snapshot launc
   the image overlay
 - the baked image materializes a build-arg-selected substrate file inside the image overlay during
   image build, and supported Compose-launched operator commands restage the image-local
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` before substrate-aware work
+  `/workspace/.build/outer-container/build/infernix.dhall` before substrate-aware work
 - inside the Linux runtime image, the daemon does not run `apt`, `pip`, `cabal build`, or compiler
   toolchains at runtime
 
@@ -623,7 +622,7 @@ generation.
 
 - each matrix row records explicit engine selection per substrate
 - the active built substrate picks the appropriate engine binding when generating
-  `infernix-substrate.dhall`
+  `infernix.dhall`
 - the generated demo config and demo-visible surfaces expose each row through the selected engine
   for that substrate while still serializing the active substrate under `runtimeMode` fields
 - daemon startup fails when the active substrate references an engine binding whose adapter
@@ -695,7 +694,7 @@ extends this startup contract with explicit cluster and host daemon roles.
   the host daemon role, and routed manual inference continues to succeed through the clustered
   `infernix-demo` surface by entering the cluster daemon path before reaching host inference
 - Linux substrate daemons read the mounted ConfigMap-backed substrate file at
-  `/opt/build/infernix-substrate.dhall` and do not rely on runtime-mode flags
+  `/opt/build/infernix.dhall` and do not rely on runtime-mode flags
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
   selected in `.dhall` for the active README row
 - runtime validation fails if the service or demo app falls back to simulated route, transport, or
@@ -715,12 +714,13 @@ extends this startup contract with explicit cluster and host daemon roles.
 ## Sprint 4.13: Cluster Manifest Materialization [Done]
 
 **Status**: Done
-**Implementation**: `dhall/InfernixCluster.dhall` (new), `src/Infernix/ClusterConfig.hs` (new), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new)
+**Implementation**: `src/Infernix/ClusterConfig.hs` (new; the `ClusterConfig` decoder type is the schema — Phase 8 removed the version-controlled `dhall/InfernixCluster.dhall`), `src/Infernix/Service.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/templates/configmap-cluster-config.yaml` (new; Phase 8 reduces it to an `nindent` passthrough of the binary-rendered string)
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/tools/pulsar.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
 
-Materialize the `InfernixCluster.dhall` typed cluster-wiring record + matching Haskell decoder.
+Materialize the typed cluster-wiring record as the `ClusterConfig` Haskell decoder type (its
+reflected schema replaces any hand-written `.dhall`; Phase 8 confirms zero version-controlled schema files).
 Delete every `env:` block from `chart/templates/deployment-{coordinator,engine}.yaml`; the pods
 mount the cluster `ConfigMap` at `/opt/infernix/cluster.dhall` and the Haskell daemon decodes it
 at startup. Retire every Pulsar / catalog / daemon-location / engine-command env-var fallback in
@@ -728,8 +728,8 @@ favor of typed `ClusterConfig` fields.
 
 ### Deliverables
 
-- `dhall/InfernixCluster.dhall` schema with the `PulsarConfig`, `MinioConfig` (non-credential
-  fields), `DemoBackendConfig`, `EngineConfig`, `CoordinatorConfig` records named in
+- the `ClusterConfig` decoder type (reflected schema) with the `PulsarConfig`, `MinioConfig`
+  (non-credential fields), `DemoBackendConfig`, `EngineConfig`, `CoordinatorConfig` records named in
   `documents/engineering/cluster_config_manifest.md`.
 - `ClusterConfig` typed record + decoder; threaded through every coordinator + engine entry
   point.
@@ -742,8 +742,9 @@ favor of typed `ClusterConfig` fields.
   `chart/templates/deployment-engine.yaml` lose every `env:` entry except any third-party
   upstream exception explicitly enumerated; they gain `cluster-config` volume mount at
   `/opt/infernix/cluster.dhall`.
-- `chart/templates/configmap-cluster-config.yaml` renders the staged cluster Dhall into a
-  ConfigMap.
+- the `infernix` binary generates the entire `cluster.dhall` body;
+  `chart/templates/configmap-cluster-config.yaml` only `nindent`s that binary-produced string into
+  the ConfigMap `data` and never renders or parses Dhall (see Phase 8).
 
 ### Validation
 
@@ -1224,7 +1225,7 @@ logical `Shared` backlog/backpressure, Apple production `demo_ui = false` assert
 CPU pool placement/backpressure in the Kind topology. Wave J closed the Linux GPU/CUDA cohort
 gate on 2026-06-20, so the sprint is `Done`; physical Apple multi-host member routing remains
 hardware-deferred proof while no second Apple host is available.
-**Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/architecture/runtime_modes.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective

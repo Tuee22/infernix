@@ -105,6 +105,7 @@ DEVELOPMENT_PLAN/
 ├── phase-5-web-ui-and-shared-types.md
 ├── phase-6-validation-e2e-and-ha-hardening.md
 ├── phase-7-demo-app-durable-context.md
+├── phase-8-zero-tracked-dhall-config-and-eager-model-cache.md
 └── legacy-tracking-for-deletion.md
 ```
 
@@ -290,17 +291,18 @@ Rules:
   into role-specific Deployments, removed the previous service-data PVC, introduced
   `coordinator.replicaCount` and `engine.replicaCount` knobs (defaults ≥ 2 for the stateless
   demo-on roles; engine replicas operator-set up to the number of engine-capable nodes), and added
-  the lazy model-weight bootstrap workflow described in
-  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md).
+  the coordinator model-cache staging workflow described in
+  [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md) (Phase 8
+  makes this eager: the coordinator stages the mounted `infernix.dhall` model set at startup).
   Production deployments (`demo_ui = false`) keep the coordinator and engine pools and omit only the
   demo frontend, browser API, identity surface, and demo-only routes. The substrate decides where
   engine execution and result publication happen, not whether the coordinator exists.
 - **Durable state lives only in MinIO and Pulsar.** Pulsar carries every typed event
   stream (conversation log, contexts metadata, drafts, inference request/batch/result, the
   `infernix/system/model.bootstrap.request` topic family). MinIO holds binary blobs in two
-  buckets: `infernix-models` (always-on; platform model weights populated lazily by the
-  coordinator's bootstrap subscription using producer-dedup + Failover for exactly-once
-  semantics) and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
+  buckets: `infernix-models` (always-on; platform model weights eagerly staged at coordinator
+  startup from the mounted `infernix.dhall` model set, with producer-dedup + Failover for
+  exactly-once semantics) and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
   artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
   placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
 - On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment owns cluster-side
@@ -308,8 +310,8 @@ Rules:
   engine daemons consume their assigned pool/member topics, run the Apple-native inference engine,
   and publish the completed result so
   the Apple lane can use Metal-capable or unified-memory-aware backends directly. The host
-  daemon pulls model weights from `infernix-models` via the same lazy bootstrap workflow
-  that the in-cluster engine pods use on Linux substrates; cache lifecycle is host-local
+  daemon streams model weights from the eagerly pre-staged `infernix-models` the same way
+  the in-cluster engine pods do on Linux substrates; cache lifecycle is host-local
   ephemeral state under `./.data/runtime/model-cache/`, not a cluster PVC.
 - Phase docs must not describe Kind, Docker, or other containerized Apple workloads as equivalent
   Apple GPU execution environments. They may describe cluster-resident Apple daemons only as
@@ -365,9 +367,9 @@ Substrates are the product-facing inference lanes:
 
 | Substrate | Canonical substrate id | Current staging rule |
 |-----------|------------------------|----------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native lifecycle and validation commands materialize or verify `./.build/infernix-substrate.dhall`; `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` remains the explicit restaging helper |
-| Linux / CPU | `linux-cpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` remains the explicit restaging helper |
-| Linux / NVIDIA GPU | `linux-gpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` remains the explicit restaging helper |
+| Apple Silicon / Metal | `apple-silicon` | host-native lifecycle and validation commands materialize or verify `./.build/infernix.dhall`; `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` remains the explicit restaging helper |
+| Linux / CPU | `linux-cpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` remains the explicit restaging helper |
+| Linux / NVIDIA GPU | `linux-gpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` remains the explicit restaging helper |
 
 Rules:
 
@@ -455,7 +457,7 @@ Rules:
   validated. Focused `infernix lint ...` and `infernix docs check` entrypoints remain
   substrate-file independent unless their implementation is changed together with this plan.
 - The generated filename stays stable for a given build artifact, for example
-  `infernix-substrate.dhall`, rather than encoding a user-selected runtime flag.
+  `infernix.dhall`, rather than encoding a user-selected runtime flag.
 - The generated file records the active substrate explicitly and enumerates every demo-visible model
   or workload supported by that substrate together with the matrix row identity, artifact or format
   family, selected engine, request or result contract identifiers, and any substrate-specific
@@ -474,7 +476,7 @@ Rules:
   same role as the staged outer-container payload; on Apple it intentionally differs from the
   host-role payload under `./.build/`.
 - Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
-  at `/opt/build/infernix-substrate.dhall`.
+  at `/opt/build/infernix.dhall`.
 - Apple host daemon consumers read host-role config from `./.build/`, even when the Apple topology
   also republishes cluster-role payloads into the cluster for service daemons, routed demo, or
   other support surfaces.
@@ -756,7 +758,7 @@ worktree and the governed docs that describe it.
 - One Haskell-owned command registry remains the supported
   source of truth for parsing, help text, generated CLI-reference sections, and the operator
   command families documented in the plan.
-- The substrate file `infernix-substrate.dhall` is real Dhall, decoded in-process by the `dhall`
+- The substrate file `infernix.dhall` is real Dhall, decoded in-process by the `dhall`
   Haskell library. The repo's `cabal.project` carries `allow-newer: *:base, *:template-haskell` so
   Dhall's transitive CBOR dependencies resolve against the project's GHC; that posture is part of
   the supported contract and is documented in
@@ -797,13 +799,15 @@ fully-qualified absolute paths. Process-inherited environment variables (`INFERN
 `HOME`, `KUBECONFIG`, `DOCKER_HOST`, anything operator-set) are not part of the supported
 contract.
 
-The configuration substrate is three typed Dhall records:
+The configuration substrate is three typed decoder types, reflected to Dhall by the binary. **No
+`.dhall` schema file is version-controlled**; the schema is emitted on demand by
+`infernix internal dhall-schema host|cluster|secrets` from the Haskell decoder type:
 
-| File | Scope | Reader |
+| Record (Haskell type) | Scope | Reader |
 |------|-------|--------|
-| `dhall/InfernixHost.dhall` | every external tool the project ever invokes (absolute path), filesystem conventions (`repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), host execution context | every Haskell entry point at startup |
-| `dhall/InfernixCluster.dhall` | every in-cluster wiring value (Pulsar HTTP/WS/service URLs + tenant + namespace, MinIO endpoint + region + presign expiry, Keycloak base URL + realm + client id + JWKS URL, demo bind host, bridge mode, publication state path, model cache root, engine command overrides) | every Haskell entry point at startup; materialized into a Kubernetes `ConfigMap` and mounted read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / demo pods |
-| `dhall/InfernixSecrets.dhall` | the file *paths* at which secret material lives, never the values themselves | every Haskell entry point at startup; the application then reads the named JSON files via `readFile`. On-cluster the files come from a Kubernetes `Secret` mounted at `/etc/infernix/secrets/`; on host they live under `./.data/runtime/secrets/` (gitignored, operator-edited) |
+| `HostConfig` | every external tool the project ever invokes (absolute path), filesystem conventions (`repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), host execution context | every Haskell entry point at startup; written by `infernix init` to `./infernix-host.dhall` |
+| `ClusterConfig` | every in-cluster wiring value (Pulsar HTTP/WS/service URLs + tenant + namespace, MinIO endpoint + region + presign expiry, Keycloak base URL + realm + client id + JWKS URL, demo bind host, bridge mode, publication state path, model cache root, engine command overrides) | every Haskell entry point at startup; the binary renders it at `cluster up` and Helm embeds the string verbatim (`nindent`) into a `ConfigMap` mounted read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / webapp pods — Helm never parses or templates the Dhall |
+| `SecretsConfig` | the file *paths* at which secret material lives, never the values themselves | every Haskell entry point at startup; the application then reads the named JSON files via `readFile`. On-cluster the binary-rendered files come from a Kubernetes `Secret` mounted at `/etc/infernix/secrets/`; on host they live under `./.data/runtime/secrets/` (gitignored) |
 
 Rules:
 
@@ -861,13 +865,14 @@ this plan rule cross-references it as the authoritative source.
 
 ### V. Host Tools Manifest
 
-`dhall/InfernixHost.dhall` is the authoritative inventory of every external command the project
-ever invokes. The schema is a typed record whose fields enumerate each tool by absolute path.
+The `HostConfig` decoder type is the authoritative inventory of every external command the project
+ever invokes; its reflected schema (a typed record whose fields enumerate each tool by absolute path)
+is emitted by `infernix internal dhall-schema host`. No `.dhall` schema file is version-controlled.
 
 Rules:
 
 - When a sprint adds a new external command (e.g. a new third-party CLI used by a lifecycle
-  helper), the sprint adds the field to `dhall/InfernixHost.dhall` first and only then writes the
+  helper), the sprint adds the field to the `HostConfig` decoder type first and only then writes the
   invocation in Haskell or shell.
 - Every Haskell invocation reads the absolute path from the loaded `HostConfig` record (the
   canonical helper is `runHostTool :: HostConfig -> HostTool -> [String] -> IO a`). Bare
@@ -881,9 +886,8 @@ Rules:
 - The schema field names match the command names exactly; no abbreviation or rewriting. The
   schema is the single source of truth for "every tool this project ever runs."
 - Operator-specific overrides (e.g. operator A's ghcup lives at one path, operator B's at
-  another) happen by editing the staged `./.build/infernix-host.dhall` (Apple host-native) or
-  the in-image `/opt/infernix/dhall/InfernixHost.dhall` (Linux container) — never by setting an
-  env var.
+  another) happen by editing the `infernix init`-written `./infernix-host.dhall` (host-native) or
+  the in-image host manifest (Linux container) — never by setting an env var.
 
 The schema is documented in
 [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md).

@@ -27,15 +27,15 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
-The active runtime mode is encoded in `infernix-substrate.dhall` beside the built binary. The file
-is a typed Dhall record; the schema is defined at `dhall/InfernixSubstrate.dhall` and decoded
+The active runtime mode is encoded in `infernix.dhall` beside the built binary. The file
+is a typed Dhall record; the schema is reflected from the substrate decoder type (`infernix internal dhall-schema substrate`) and decoded
 in-process by the `dhall` Haskell library. Apple host lifecycle and validation commands
 materialize or verify that file under `./.build/`, and
 Linux outer-container lifecycle and validation commands materialize or verify
-`/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image.
+`/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image.
 `infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains
 the direct helper for explicit restaging or inspection. `cluster up` publishes a cluster-role
-`infernix-substrate.dhall` payload into the repo-local publication mirror and
+`infernix.dhall` payload into the repo-local publication mirror and
 `ConfigMap/infernix-demo-config`; on Apple this cluster-role payload is rendered from the active
 staged substrate metadata and `demo_ui` setting instead of copying the host-role file under
 `./.build/` verbatim.
@@ -68,7 +68,7 @@ inventory.
 
 On the `apple-silicon` substrate the worker dispatches to Apple-native engine entrypoints, not to a
 generic placeholder branch. The runtime worker invokes the selected Python adapter or native runner,
-fetches model weights lazily from the `infernix-models` MinIO bucket via
+streams model weights from the eagerly pre-staged `infernix-models` MinIO bucket via
 `adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
 guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
 realness lint). Phase 1 Sprint 1.15 materializes real Apple native engine roots, replacing the former
@@ -98,14 +98,14 @@ on 2026-06-30.
 
 The generated demo catalog is the source of truth for the active runtime mode.
 
-- `infernix-substrate.dhall` records every README matrix row supported by that mode and omits
+- `infernix.dhall` records every README matrix row supported by that mode and omits
   rows whose selected engine is `Not recommended`
 - each generated entry records the selected engine, request shape, runtime lane, and workload
   metadata
 - `infernix internal materialize-substrate <runtime-mode>` is the explicit staging helper, and
   `--demo-ui false` emits a demo-off config without hand-editing the file
 - in cluster-resident execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
-  beside the binary at `/opt/build/infernix-substrate.dhall`; cluster daemons read the cluster-role
+  beside the binary at `/opt/build/infernix.dhall`; cluster daemons read the cluster-role
   payload there at startup rather than watching it for reloads
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset

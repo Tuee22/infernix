@@ -23,9 +23,9 @@ tracked in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md):
 - **Phase 4** — the **Coordinator** now owns explicit topic-lifecycle
   reconciliation from the typed runtime graph, and the binary emits its own
   reflected Dhall schema through `infernix internal dhall-schema
-  host|cluster|secrets|substrate`. The operator-facing `dhall/Infernix*.dhall`
-  files are the checked-in reflected output, and `infernix lint docs` drift-checks
-  them against the in-binary renderer.
+  host|cluster|secrets|substrate`. Per Phase 8, there are **no version-controlled
+  `.dhall` files**: the schema exists only as the reflected output of the Haskell
+  decoder types, emitted on demand.
 - **Phase 6** — phase validation moves to **single-accelerator-per-phase** (standards
   §Q): one of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both;
   `cohort-validation-waves.md` is repurposed as per-accelerator attestation ledgers.
@@ -122,6 +122,7 @@ full-suite CPU proof is pending.
 | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) | PureScript demo UI, generated frontend contracts, clustered demo hosting, Apple host-backed browser dispatch, and Playwright ownership |
 | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) | Static quality, README-matrix-driven single-substrate validation, Apple cluster-to-host daemon split coverage, root-doc closure, HA validation, and false-negative doctrine hardening |
 | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) | Multi-user durable-context demo: Keycloak auth, WebSocket transport, Pulsar-backed conversation history, MinIO artifact upload/download/render-or-download, Haskell-first logic via purescript-bridge, and the three-role daemon split (stateless frontend, stateless coordinator, substrate-specific engine pools) with an HA-first chart |
+| [phase-8-zero-tracked-dhall-config-and-eager-model-cache.md](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) | Adopt the hostbootstrap Dhall doctrine: zero version-controlled `.dhall`, the binary as sole generator of every `.dhall` (incl. ConfigMap/Secret bodies; Helm only embeds a string), explicit `init` / `test init` creation with fail-fast-if-missing, a test harness that generates/runs/deletes the runtime config, and eager coordinator model-cache staging from the mounted `infernix.dhall` (replacing the lazy per-inference bootstrap) |
 | [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) | Explicit cleanup and removal ledger |
 
 ## Status Vocabulary
@@ -180,7 +181,7 @@ surfaces and the demo-off coordinator gate have been removed; the remaining trac
 one-binary Webapp role consolidation.
 
 The repository implements the substrate-file doctrine described by this plan. Supported flows
-stage one `infernix-substrate.dhall` beside the active build root through the `infernix` command
+stage one `infernix.dhall` beside the active build root through the `infernix` command
 that needs it; the explicit
 `infernix internal materialize-substrate ...` helpers remain the direct restaging or inspection
 surface. The Linux substrate Dockerfile materializes a build-arg-selected substrate file inside
@@ -192,10 +193,10 @@ roles: cluster-role configs name the substrate, request and result topics, and t
 while host-role Apple configs include the routed Pulsar connection details and the host member's pool
 membership. Cluster publication mirrors the
 cluster-role payload locally under
-`./.data/runtime/configmaps/infernix-demo-config/infernix-substrate.dhall` and mounts the same
-filename inside cluster workloads at `/opt/build/infernix-substrate.dhall`, while the Apple host
+`./.data/runtime/configmaps/infernix-demo-config/infernix.dhall` and mounts the same
+filename inside cluster workloads at `/opt/build/infernix.dhall`, while the Apple host
 file under `./.build/` remains host-role metadata for the same substrate. The file is a typed
-Dhall record at `infernix-substrate.dhall`, decoded in-process by the `dhall` Haskell library.
+Dhall record at `infernix.dhall`, decoded in-process by the `dhall` Haskell library.
 `infernix test all`
 runs the full supported validation suite for the active built substrate; full repository substrate
 closure comes from separate governed reruns for `apple-silicon`, `linux-cpu`, and `linux-gpu`,
@@ -413,7 +414,7 @@ Playwright runtime no longer bakes a conflicting `NO_COLOR` default. The shared 
 now surfaces explicit in-progress phase, child-operation detail, and heartbeat data through
 `cluster status` during monitored Docker build, Harbor publication, Harbor-backed final-image
 preload, and Apple retained-state replay steps; explicit substrate materialization writes the
-staged `infernix-substrate.dhall` atomically so concurrent status readers do not observe truncated
+staged `infernix.dhall` atomically so concurrent status readers do not observe truncated
 payloads; retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
 replicas from the current Patroni leader when timeline drift leaves replicas unready after
 promotion; and all lanes scrub operator-managed Patroni claim roots before recreating claim
@@ -429,9 +430,9 @@ replacement proof points are recorded by the Wave A Apple cohort closure and the
 Linux/CUDA cohort closure below. Sprint 6.26 closes the buildx, npm, GHCup shell-profile,
 Python packaging, and
 Playwright script warning cleanup with the governed `linux-gpu` lifecycle rerun complete.
-Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is now a real
-typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema documented at
-`dhall/InfernixSubstrate.dhall`.
+Sprint 6.27 closes the staged-substrate format cleanup: `infernix.dhall` is now a real
+typed Dhall record decoded in-process by the `dhall` Haskell library, with the schema reflected from
+the substrate decoder type (`infernix internal dhall-schema substrate`; Phase 8 removed the tracked schema file).
 
 **Cohort validation status (present development host = CUDA Linux).** The current workspace is a
 real Linux CUDA host. Consistent with the Section Q single-accelerator doctrine, the remaining
@@ -504,7 +505,7 @@ The plan keeps these concepts separate:
 | Concept | Values | Meaning |
 |---------|--------|---------|
 | Control-plane execution context | Apple host-native, Linux outer-container | where `infernix` runs |
-| Supported substrate | `apple-silicon`, `linux-cpu`, `linux-gpu` | which staged `infernix-substrate.dhall` payload the active build root carries |
+| Supported substrate | `apple-silicon`, `linux-cpu`, `linux-gpu` | which staged `infernix.dhall` payload the active build root carries |
 
 ### Naming Note
 
@@ -576,15 +577,15 @@ The supported platform now closes around these rules:
   override
 - the product contract standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
-- the active substrate is read from the staged `infernix-substrate.dhall` file beside the active
+- the active substrate is read from the staged `infernix.dhall` file beside the active
   build root, and that staged payload is the primary source of truth for substrate identity,
   generated catalog content, daemon role, inference placement, Pulsar topics, and test scope
 - Apple host-native lifecycle and validation commands materialize or verify
-  `./.build/infernix-substrate.dhall`; the explicit helper
+  `./.build/infernix.dhall`; the explicit helper
   `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`
   remains available for direct restaging or inspection
 - Linux outer-container lifecycle and validation commands materialize or verify
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image;
+  `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image;
   the explicit helper
   `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`
   remains available for direct restaging or inspection
@@ -592,12 +593,12 @@ The supported platform now closes around these rules:
   and the supported outer-container command surface keeps that copy image-local before doing
   substrate-aware work
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints own substrate-file preflight for their execution
-  context and fail with a substrate-specific diagnostic if the file cannot be materialized or
-  validated; focused `infernix lint ...` and `infernix docs check` remain substrate-file independent
-- the staged substrate file is a typed Dhall record at `infernix-substrate.dhall`, materialized by
-  Haskell runtime helpers and decoded in-process by the `dhall` Haskell library; the schema lives
-  at `dhall/InfernixSubstrate.dhall`
+  aggregate `infernix test ...` entrypoints fail fast with a "run `infernix init`" reminder when
+  their `infernix.dhall` is missing (Phase 8; no auto-materialize backstop); focused
+  `infernix lint ...` and `infernix docs check` remain substrate-file independent
+- the runtime substrate file is a typed Dhall record at `infernix.dhall`, created by `infernix init`
+  (or the test harness) and decoded in-process by the `dhall` Haskell library; the schema is
+  reflected from the substrate decoder type — no `.dhall` is version-controlled
 - Apple host-native operation is the only supported host build path outside a container
 - on Apple Silicon, the host-built `./.build/infernix` binary manages Kind, deploys the mandatory
   cluster support services, the cluster coordinator Deployment, and optional routed demo workload,
@@ -624,11 +625,11 @@ The supported platform now closes around these rules:
 - for `linux-gpu`, the outer control-plane image is still built from the CUDA base image, and that
   same built image is the artifact pushed to Harbor and deployed as the cluster daemon
 - the staged substrate file lives under the active build root:
-  `./.build/infernix-substrate.dhall` on Apple and
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the Linux launcher
+  `./.build/infernix.dhall` on Apple and
+  `/workspace/.build/outer-container/build/infernix.dhall` inside the Linux launcher
   image; cluster deployment republishes that payload
   through `ConfigMap/infernix-demo-config` whenever the active topology has cluster-resident
-  consumers and mounts the same filename inside those workloads at `/opt/build/infernix-substrate.dhall`
+  consumers and mounts the same filename inside those workloads at `/opt/build/infernix.dhall`
 - each daemon reads its staged substrate `.dhall` at startup; automatic file-watching or reload is
   not part of the supported contract
 - the supported materialization path can emit `demo_ui = false` with

@@ -17,8 +17,8 @@
 ## Current Status
 
 The repository follows this split. Model weights live in MinIO
-`infernix-models` (always-on, populated lazily by the coordinator's
-bootstrap subscription), user artifacts live in MinIO
+`infernix-models` (always-on, eagerly staged at startup by the coordinator
+from the mounted `infernix.dhall` model set), user artifacts live in MinIO
 `infernix-demo-objects` (demo-gated) under each user's `sub`-derived
 prefix, and the runtime model cache is
 ephemeral state under `./.data/runtime/model-cache/` (on the Apple
@@ -51,7 +51,7 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
 |-------------|-------|--------------------|------------|--------------|
 | PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths within the active runtime lane |
 | Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/<runtime-mode>/...` | durable | loss is a platform failure, not a cache miss |
-| MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; populated lazily on first use and never disposed except by deliberate operator intent |
+| MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; eagerly staged at coordinator startup and never disposed except by deliberate operator intent |
 | MinIO `infernix-demo-objects` bucket contents | demo backend (webapp object-proxy, server-side PUT/GET) + engine adapters (PUT for generated artifacts) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; browsers reach it only through the webapp `/api/objects` proxy; bucket only exists when `demo_ui = true` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
 | Inference-result records | Haskell service runtime plus routed reload handlers | `./.data/runtime/results/*.pb` | durable and user-visible | reload only from protobuf-backed result files |

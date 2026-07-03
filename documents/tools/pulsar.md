@@ -176,8 +176,9 @@ Rules:
 
 ## Model-Bootstrap Topic
 
-A third Failover subscription type in the coordinator pod handles lazy model-weight population
-to MinIO with exactly-once semantics. The supported `infernix` tenant plus the
+A third Failover subscription type in the coordinator pod backs eager model-weight staging: the
+coordinator stages every model in the mounted `infernix.dhall` to MinIO on startup with exactly-once
+semantics, and the same subscription services fallback bootstrap requests for any unstaged model. The supported `infernix` tenant plus the
 `infernix/system` and `infernix/demo` namespaces (with deduplication enabled) are reconciled on
 daemon startup by `reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
 `persistent://infernix/system/model.bootstrap.request` topic is created during the same

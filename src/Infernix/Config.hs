@@ -13,7 +13,10 @@ module Infernix.Config
     generatedDemoConfigPath,
     generatedKubeconfigPath,
     helmEnvironment,
+    hostConfigPath,
     publicationStatePath,
+    runtimeConfigPath,
+    testConfigPath,
     publishedConfigMapCatalogPath,
     publishedConfigMapManifestPath,
     resolveRuntimeMode,
@@ -142,7 +145,8 @@ tryLoadHostManifest :: FilePath -> IO (Maybe HostConfig.HostConfig)
 tryLoadHostManifest repoRootPath = loop candidatePaths
   where
     candidatePaths =
-      [ repoRootPath </> ".build" </> "infernix-host.dhall",
+      [ repoRootPath </> "infernix-host.dhall",
+        repoRootPath </> ".build" </> "infernix-host.dhall",
         repoRootPath </> ".build" </> "outer-container" </> "build" </> "infernix-host.dhall",
         "/opt/infernix/dhall/InfernixHost.dhall"
       ]
@@ -237,8 +241,30 @@ generatedDemoConfigPath :: Paths -> FilePath
 generatedDemoConfigPath = generatedSubstratePath
 
 generatedSubstratePath :: Paths -> FilePath
-generatedSubstratePath paths =
-  buildRoot paths </> "infernix-substrate.dhall"
+generatedSubstratePath = runtimeConfigPath
+
+-- | Phase 8: the operator-owned runtime config file (`./infernix.dhall`,
+-- created by `infernix init`), relocated to the repo root from the former
+-- `.build/infernix-substrate.dhall` staging location. All existing readers
+-- reach it through 'generatedDemoConfigPath' / 'generatedSubstratePath', so
+-- relocating it here moves them together (host + in-image bake + CLI read).
+-- The in-pod ConfigMap mount ('watchedDemoConfigPath') is a separate deploy
+-- file and is unaffected.
+runtimeConfigPath :: Paths -> FilePath
+runtimeConfigPath paths = repoRoot paths </> "infernix.dhall"
+
+-- | Phase 8: the thin test config (`./infernix.test.dhall`, created by
+-- `infernix test init`) the test harness reads to generate the run's
+-- runtime config.
+testConfigPath :: Paths -> FilePath
+testConfigPath paths = repoRoot paths </> "infernix.test.dhall"
+
+-- | Phase 8: the operator-owned host manifest (`./infernix-host.dhall`,
+-- created by `infernix init`), relocated to the repo root. Read via
+-- 'tryLoadHostManifest', which also keeps the in-image
+-- `/opt/infernix/dhall/InfernixHost.dhall` fallback for image runtime.
+hostConfigPath :: Paths -> FilePath
+hostConfigPath paths = repoRoot paths </> "infernix-host.dhall"
 
 publishedConfigMapCatalogPath :: Paths -> FilePath
 publishedConfigMapCatalogPath paths =

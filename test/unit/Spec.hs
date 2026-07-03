@@ -72,7 +72,6 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
-    dhallSchemaFileName,
     dhallSchemaName,
     renderDhallSchema,
   )
@@ -3165,11 +3164,11 @@ assertDhallSchemaReflection :: IO ()
 assertDhallSchemaReflection =
   mapM_ assertReflectedSchema allDhallSchemas
   where
+    -- Zero-tracked-Dhall doctrine: no packaged `dhall/*.dhall` file to
+    -- assert on disk; the schema is reflected from the decoder type and
+    -- emitted by `infernix internal dhall-schema`. We assert the
+    -- reflection renders a well-formed, field-complete schema.
     assertReflectedSchema schema = do
-      schemaFileExists <- doesFileExist ("dhall" </> dhallSchemaFileName schema)
-      assert
-        schemaFileExists
-        ("packaged Dhall schema file exists for " <> Text.unpack (dhallSchemaName schema))
       rendered <-
         expectRight
           ("render reflected Dhall schema " <> Text.unpack (dhallSchemaName schema))

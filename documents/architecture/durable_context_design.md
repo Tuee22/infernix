@@ -132,8 +132,8 @@ needs. The reusable surface is roughly 80% of the new code by line count.
 The three module groups above map onto three daemon roles at deploy
 time: the frontend loads in the per-app pod (`<appWorkload>`); the
 shared library minus engine-specific paths loads in the stateless
-**coordinator** Deployment (which additionally runs the model-bootstrap
-worker that lazily populates the `infernix-models` MinIO bucket from
+**coordinator** Deployment (which additionally runs the model-cache staging
+worker that eagerly populates the `infernix-models` MinIO bucket at startup from
 upstream); the engine-side surface plus `Infernix.Runtime.*` loads in
 assigned **engine** pool members. Linux engine Deployments use
 Kubernetes placement rules; Apple engine members are host daemons with

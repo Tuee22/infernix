@@ -9,8 +9,8 @@
 ## Rules
 
 - the supported runtime persists model weights in MinIO `infernix-models`
-  (always-on, populated lazily by the coordinator's bootstrap Failover
-  subscription on first use), engine software artifacts in MinIO
+  (always-on, eagerly staged by the coordinator on startup from the mounted
+  `infernix.dhall` model set — the `warm-model-cache` cluster-up barrier), engine software artifacts in MinIO
   `infernix-engine-artifacts` (always-on immutable payloads), and user-visible artifacts in MinIO
   `infernix-demo-objects` (demo-gated). Protobuf-backed runtime-result
   records live under `./.data/runtime/results/*.pb` (see
@@ -50,7 +50,7 @@
   (`model_cache_root`, quota, endpoint, buckets, region, and secret-file-backed access keys)
   directly on the private `WorkerRequest` envelope; the shared adapter entrypoints call
   `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk
-  path to weights pulled lazily from MinIO `infernix-models`.
+  path to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket.
 - the runtime worker invokes the engine for the selected binding — the Python adapter
   transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
   resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`
@@ -68,13 +68,13 @@
   runner may write a local artifact there and print `infernix-native-artifact-file:<path>`. The
   worker then uploads that file to `infernix-demo-objects` with its secret-backed presigned PUT
   config and returns the resulting object reference.
-- real weight bootstrap is lazy and per-model: each catalog row's `downloadUrl` is fetched into the
-  always-on `infernix-models` MinIO bucket under `<modelId>/`, with the `<modelId>/.ready` sentinel
-  written last to mark the upload atomically visible, and the engine consumes the weights lazily
-  through `adapters.model_cache.get_model_path`. The `model_cache` consumption side is implemented;
-  the coordinator-side upstream download that populates the bucket from `downloadUrl` is the named
-  Phase 4 deliverable. See [object_storage.md](object_storage.md) for the bucket contract and the
-  coordinator bootstrap workflow.
+- real weight staging is eager and coordinator-driven: on startup the coordinator iterates every
+  model in the mounted `infernix.dhall` and fetches each row's `downloadUrl` into the always-on
+  `infernix-models` MinIO bucket under `<modelId>/`, with the `<modelId>/.ready` sentinel written
+  last to mark the upload atomically visible; the `warm-model-cache` cluster-up barrier blocks until
+  all are staged. The engine then streams already-staged weights through
+  `adapters.model_cache.get_model_path`. See [object_storage.md](object_storage.md) for the bucket
+  contract and the coordinator staging workflow.
 - per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
   Apple host path and the cluster or worker path both treat that bootstrap manifest as the
   idempotent setup-ready marker

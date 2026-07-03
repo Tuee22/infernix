@@ -21,6 +21,8 @@ import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMod
 data Command
   = ShowRootHelp
   | ShowTopicHelp String
+  | InitCommand (Maybe RuntimeMode) (Maybe Bool) Bool Bool
+  | TestInitCommand (Maybe RuntimeMode) (Maybe Bool)
   | ServiceCommand (Maybe DaemonRole) (Maybe String) (Maybe FilePath)
   | ClusterUpCommand
   | ClusterDownCommand
@@ -133,7 +135,8 @@ parseCommand args =
 
 commandFamilies :: [CommandFamily]
 commandFamilies =
-  [ serviceCommandFamily,
+  [ initCommandFamily,
+    serviceCommandFamily,
     clusterCommandFamily,
     cacheCommandFamily,
     kubectlCommandFamily,
@@ -142,6 +145,58 @@ commandFamilies =
     docsCommandFamily,
     internalCommandFamily
   ]
+
+initCommandFamily :: CommandFamily
+initCommandFamily =
+  CommandFamily
+    { familyTopic = "init",
+      familyOverview = "creates the operator runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`",
+      familyCommands =
+        [ initCommandSpec
+        ]
+    }
+
+initCommandSpec :: CommandSpec
+initCommandSpec =
+  CommandSpec
+    { commandUsageSuffix = "init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--force] [--if-missing]",
+      commandDescription = "writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. No other command auto-generates config.",
+      commandParse = \case
+        ("init" : rest) -> parseInitFlags Nothing Nothing False False rest
+        _ -> Nothing
+    }
+
+parseInitFlags :: Maybe RuntimeMode -> Maybe Bool -> Bool -> Bool -> [String] -> Maybe Command
+parseInitFlags mode demoUi force ifMissing args =
+  case args of
+    [] -> Just (InitCommand mode demoUi force ifMissing)
+    ("--runtime-mode" : rawMode : rest) ->
+      parseRuntimeModeArg rawMode >>= \parsedMode -> parseInitFlags (Just parsedMode) demoUi force ifMissing rest
+    ("--demo-ui" : rawDemoUi : rest) ->
+      parseDemoUiArg rawDemoUi >>= \parsedDemoUi -> parseInitFlags mode (Just parsedDemoUi) force ifMissing rest
+    ("--force" : rest) -> parseInitFlags mode demoUi True ifMissing rest
+    ("--if-missing" : rest) -> parseInitFlags mode demoUi force True rest
+    _ -> Nothing
+
+testInitCommandSpec :: CommandSpec
+testInitCommandSpec =
+  CommandSpec
+    { commandUsageSuffix = "test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false]",
+      commandDescription = "writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`",
+      commandParse = \case
+        ("test" : "init" : rest) -> parseTestInitFlags Nothing Nothing rest
+        _ -> Nothing
+    }
+
+parseTestInitFlags :: Maybe RuntimeMode -> Maybe Bool -> [String] -> Maybe Command
+parseTestInitFlags mode demoUi args =
+  case args of
+    [] -> Just (TestInitCommand mode demoUi)
+    ("--runtime-mode" : rawMode : rest) ->
+      parseRuntimeModeArg rawMode >>= \parsedMode -> parseTestInitFlags (Just parsedMode) demoUi rest
+    ("--demo-ui" : rawDemoUi : rest) ->
+      parseDemoUiArg rawDemoUi >>= \parsedDemoUi -> parseTestInitFlags mode (Just parsedDemoUi) rest
+    _ -> Nothing
 
 serviceCommandFamily :: CommandFamily
 serviceCommandFamily =
@@ -258,7 +313,8 @@ testCommandFamily =
     { familyTopic = "test",
       familyOverview = "runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite",
       familyCommands =
-        [ simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
+        [ testInitCommandSpec,
+          simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
           simpleCommand "test unit" "runs the Haskell unit suites and the PureScript frontend unit suites" TestUnitCommand,
           simpleCommand "test integration" "runs the cluster-backed integration suite against the active substrate" TestIntegrationCommand,
           simpleCommand "test e2e" "runs routed Playwright coverage for every demo-visible generated catalog entry" TestE2ECommand,

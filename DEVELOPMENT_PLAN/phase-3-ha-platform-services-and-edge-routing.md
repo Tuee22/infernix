@@ -723,8 +723,8 @@ is removed from `src/Infernix/Routes.hs` (so the rendered `chart/templates/httpr
 `infernix-minio-s3` SecurityPolicy target is dropped from
 `chart/templates/securitypolicy-operator-routes.yaml` (and from the `infernix lint chart`
 required-phrase set), and `clusterConfig.minio.presignPublicEndpoint` is retired from the typed
-cluster config (`dhall/InfernixCluster.dhall` regenerated from the decoder-reflected schema,
-`ClusterConfig.hs`, `chart/templates/configmap-cluster-config.yaml`, `chart/values.yaml`, and the
+cluster config (the `ClusterConfig` decoder type — Phase 8 keeps the schema reflected with no tracked
+file, `ClusterConfig.hs`, `chart/templates/configmap-cluster-config.yaml`, `chart/values.yaml`, and the
 `Cluster.hs` Helm-values renderer). The route registry, generated route summaries (README,
 `edge_routing.md`, `web_portal_surface.md`, `tools/minio.md`, `cluster_bootstrap_runbook.md`), and
 rendered chart expose no `/minio/s3` route and no `presignPublicEndpoint`. Gates green:
@@ -735,7 +735,7 @@ webapp object-proxy) because the `presignPublicEndpoint` field's only consumer w
 grant handler that 7.25 replaces.
 **Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
 chosen `linux-gpu` accelerator.
-**Implementation**: `chart/templates/httproutes.yaml`, `chart/templates/securitypolicy-operator-routes.yaml`, `dhall/InfernixCluster.dhall`
+**Implementation**: `chart/templates/httproutes.yaml`, `chart/templates/securitypolicy-operator-routes.yaml`, `src/Infernix/ClusterConfig.hs` (`ClusterConfig` decoder type; no tracked `.dhall`)
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/architecture/object_access_doctrine.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective

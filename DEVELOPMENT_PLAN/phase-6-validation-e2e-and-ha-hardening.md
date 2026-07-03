@@ -100,9 +100,9 @@ adjustment disabled; the upstream GHCup no-update message is treated as an idemp
 no-op, and the upstream PATH advice is accepted because the Dockerfile owns `PATH` and the
 pinned toolchain succeeds. Current CUDA Linux validation closed in Wave C on the native
 Linux/CUDA host.
-Sprint 6.27 closes the staged-substrate format cleanup: `infernix-substrate.dhall` is a typed
-Dhall record decoded in-process by the `dhall` Haskell library, the schema lives at
-`dhall/InfernixSubstrate.dhall`, generated files no longer carry banner-prefixed JSON, and
+Sprint 6.27 closes the staged-substrate format cleanup: `infernix.dhall` is a typed
+Dhall record decoded in-process by the `dhall` Haskell library, the schema is reflected from the
+substrate decoder type, generated files no longer carry banner-prefixed JSON, and
 `cabal.project` records the supported wildcard `allow-newer` posture against the project
 `ghc-9.12.4` toolchain.
 
@@ -1411,12 +1411,12 @@ None. CUDA Linux cohort validation closed in [Wave C](cohort-validation-waves.md
 ## Sprint 6.27: Real Dhall Substrate Codec Closure [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Types.hs`, `dhall/InfernixSubstrate.dhall`, `cabal.project`, `infernix.cabal`, `test/unit/Spec.hs`
+**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Config.hs`, `src/Infernix/Models.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Types.hs`, `cabal.project`, `infernix.cabal`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `documents/README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`, `documents/engineering/build_artifacts.md`, `documents/engineering/dependency_management.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
 ### Objective
 
-Replace the legacy banner-prefixed JSON payload at `infernix-substrate.dhall` with a real Dhall
+Replace the legacy banner-prefixed JSON payload at `infernix.dhall` with a real Dhall
 record while preserving the existing staged filename, generated catalog contents, daemon-role
 metadata, and browser/API JSON surfaces derived from the decoded Haskell ADTs.
 
@@ -1425,7 +1425,7 @@ metadata, and browser/API JSON surfaces derived from the decoded Haskell ADTs.
 - generated substrate materialization writes a syntactically valid Dhall record instead of JSON
 - substrate readers decode through the `dhall` Haskell library and then validate the existing
   `DemoConfig` domain invariants
-- `dhall/InfernixSubstrate.dhall` records the schema for the generated substrate payload
+- the substrate decoder type records the schema for the generated substrate payload (reflected, no tracked `.dhall`)
 - `cabal.project` carries the documented wildcard `allow-newer: *:base, *:template-haskell`
   dependency posture needed for the project `ghc-9.12.4` toolchain and Dhall's transitive closure
 - unit coverage proves the generated payload has Dhall record syntax and still round-trips through
@@ -1685,7 +1685,7 @@ coexistence, Apple single-host logical `Shared` backlog/backpressure, and Apple 
 backpressure. Linux GPU/CUDA pool placement and full cohort validation closed on 2026-06-20 via full
 `./bootstrap/linux-gpu.sh test` paired with rebuilt-image `./bootstrap/linux-cpu.sh test`; physical
 Apple multi-host routing is hardware-deferred proof while no second Apple host is available.
-**Implementation**: `dhall/InfernixSubstrate.dhall`, `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
 **Docs to update**: `README.md`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`, `documents/tools/pulsar.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 
 ### Objective

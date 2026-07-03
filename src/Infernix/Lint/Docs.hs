@@ -15,7 +15,6 @@ import Infernix.CommandRegistry
 import Infernix.Config (Paths (..), discoverPaths)
 import Infernix.DhallSchema
   ( allDhallSchemas,
-    dhallSchemaFileName,
     dhallSchemaName,
     renderDhallSchema,
   )
@@ -459,29 +458,21 @@ validateGeneratedSection rule contents =
             )
         )
 
+-- | Zero-tracked-Dhall doctrine: schemas are reflected from the Haskell
+-- decoder types and emitted by `infernix internal dhall-schema`, never
+-- stored on disk. There is no tracked `dhall/*.dhall` to drift against, so
+-- this check only asserts every schema still renders to a non-empty
+-- expression (a broken reflector fails here). Value-level encode->decode
+-- round-tripping is asserted by the unit suite.
 validateDhallSchemaDrift :: Paths -> IO ()
-validateDhallSchemaDrift paths =
-  forM_ allDhallSchemas $ \schema -> do
-    let relativePath = "dhall" </> dhallSchemaFileName schema
-        fullPath = repoRoot paths </> relativePath
-    actual <- readFile fullPath
-    expected <-
-      case renderDhallSchema schema of
-        Left err ->
-          ioError (userError ("could not render " <> Text.unpack (dhallSchemaName schema) <> " Dhall schema: " <> err))
-        Right schemaText ->
-          pure (Text.unpack schemaText)
-    unless (actual == expected) $
-      ioError
-        ( userError
-            ( relativePath
-                <> " has drifted from the decoder-reflected schema; regenerate with `infernix internal dhall-schema "
-                <> Text.unpack (dhallSchemaName schema)
-                <> " > "
-                <> relativePath
-                <> "`"
-            )
-        )
+validateDhallSchemaDrift _paths =
+  forM_ allDhallSchemas $ \schema ->
+    case renderDhallSchema schema of
+      Left err ->
+        ioError (userError ("could not render " <> Text.unpack (dhallSchemaName schema) <> " Dhall schema: " <> err))
+      Right schemaText ->
+        when (Text.null (Text.strip schemaText)) $
+          ioError (userError (Text.unpack (dhallSchemaName schema) <> " Dhall schema rendered empty"))
 
 validateForbiddenPhrases :: FilePath -> String -> IO ()
 validateForbiddenPhrases relativePath contents =

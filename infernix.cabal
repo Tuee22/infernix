@@ -10,10 +10,6 @@ category:           Development
 build-type:         Custom
 extra-source-files:
     README.md
-    dhall/InfernixSubstrate.dhall
-    dhall/InfernixHost.dhall
-    dhall/InfernixCluster.dhall
-    dhall/InfernixSecrets.dhall
     proto/infernix/runtime/inference.proto
     proto/infernix/manifest/runtime_manifest.proto
 
@@ -73,6 +69,7 @@ library
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
         Infernix.Objects.Upload
+        Infernix.ProjectInit
         Infernix.Python
         Infernix.Routes
         Infernix.Runtime

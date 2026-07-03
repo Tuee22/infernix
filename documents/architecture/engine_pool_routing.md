@@ -31,7 +31,7 @@ The validator rejects impossible routing states such as unknown models, duplicat
 empty assignments, one-sided pool/member links, raw topic-like ids, `Failover` service consumers,
 and routable models with no eligible member.
 
-The checked-in substrate schema emits the supported `enginePools` / `engineMembers` graph plus
+The reflected substrate schema (from the substrate decoder type) carries the supported `enginePools` / `engineMembers` graph plus
 explicit `engineDaemons` metadata derived from that graph for daemon startup and targeted
 validation configs. Operators no longer author or receive legacy `engine`, `host_batch_topic`, or
 raw batch-topic fields in the supported Dhall surface. Current Apple integration proves pinned
@@ -103,7 +103,7 @@ engineMembers =
   ]
 ```
 
-`dhall/InfernixSubstrate.dhall` is the exact schema. Kubernetes placement details stay in chart
+The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). Kubernetes placement details stay in chart
 values and Kubernetes scheduling primitives; the routing graph only names durable pool/member
 identity. The invariants are fixed:
 

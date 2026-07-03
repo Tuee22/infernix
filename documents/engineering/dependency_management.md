@@ -28,7 +28,7 @@ The repo carries `cabal.project` at the worktree root. It performs three roles:
 
 ## Why wildcard `allow-newer`
 
-The `dhall` Haskell library (used to decode `infernix-substrate.dhall` in-process) and its
+The `dhall` Haskell library (used to decode `infernix.dhall` in-process) and its
 transitive dependency closure (`serialise`, `cborg`, `cborg-json`, `half`) declare conservative
 upper bounds against `base` and `template-haskell` that lag a release or two behind the project
 toolchain. The wildcard `allow-newer: *:base, *:template-haskell` relaxes those declarations

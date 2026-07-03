@@ -26,9 +26,9 @@ The model catalog is Haskell-owned typed configuration derived from the README m
 
 - the service registry owns one entry for every README matrix row
 - the active generated substrate file selects the engine for each supported row and carries the
-  resulting catalog as `infernix-substrate.dhall`, a typed Dhall record whose schema lives at
-  `dhall/InfernixSubstrate.dhall` and is decoded in-process by the `dhall` Haskell library
-- `cluster up` publishes a cluster-role `infernix-substrate.dhall` payload into
+  resulting catalog as the runtime substrate `.dhall`, a typed Dhall record whose schema is reflected
+  from the substrate decoder type and is decoded in-process by the `dhall` Haskell library
+- `cluster up` publishes a cluster-role `infernix.dhall` payload into
   `ConfigMap/infernix-demo-config` for cluster-resident consumers; on Apple this preserves the
   active generated catalog and `demo_ui` setting while using cluster daemon metadata rather than
   the host daemon role staged under `./.build/`
@@ -70,8 +70,8 @@ surface in [../development/demo_app_test_plan.md](../development/demo_app_test_p
 
 The runtime worker dispatches through the selected engine binding — the Python adapter transform
 over a prebuilt host wheel for python-stdio bindings, or the native runner binary resolved from a
-typed `HostConfig` absolute path for native-process-runner bindings — fetches model weights lazily
-from the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
+typed `HostConfig` absolute path for native-process-runner bindings — streams model weights from the
+eagerly pre-staged `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
 typed per-family result surface. Realness is guaranteed by construction: the engine code cannot
 return a fabricated result (any missing-weights/load/engine failure raises → `failed`), enforced by
 the realness lint. Per-accelerator real-output delivery is owned by the reopened Phases 1/4/6; adding

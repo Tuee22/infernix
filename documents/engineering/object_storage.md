@@ -5,9 +5,9 @@
 
 > **Purpose**: Define the supported object-storage contract: which MinIO
 > buckets exist, what they hold, who reads and writes them, and how the
-> coordinator's lazy model-bootstrap workflow populates platform model
-> weights with exactly-once semantics while engine software artifacts stay
-> separate from model weights.
+> coordinator's eager model-cache staging workflow populates platform model
+> weights (on startup from the mounted `infernix.dhall`, with exactly-once semantics) while engine
+> software artifacts stay separate from model weights.
 
 ## Current Status
 
@@ -29,7 +29,7 @@ The supported shape uses three MinIO buckets and nothing else:
 
 | Bucket | Gating | Key layout | Purpose |
 |---|---|---|---|
-| `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Populated lazily by the coordinator's model-bootstrap Failover subscription on first use. Read by Linux engine pods and by Apple host engine members. |
+| `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Eagerly staged by the coordinator on startup from the mounted `infernix.dhall` model set (a `warm-model-cache` cluster-up barrier blocks until every model is `.ready`). Read by Linux engine pods and by Apple host engine members. |
 | `infernix-engine-artifacts` | Always-on (not demo-gated) | `sha256/<digest>` plus optional adapter pointers such as `<substrate>/<adapterId>/<version>/manifest.pb` | Immutable engine software payloads: wheelhouses, native binaries, Core ML compiled models, JVM tools, and reusable Apple or Linux materialization payloads. Model weights never live here. |
 | `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → webapp object proxy) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written server-side to the `generated/` prefix. Read by the browser only through `/api/objects`; the browser never receives a presigned MinIO URL. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
 
@@ -98,16 +98,14 @@ The helper:
 
 1. Checks `/model-cache/<modelId>/.ready` on the engine pod's
    `emptyDir` mount. If present, returns the path immediately.
-2. If absent, checks `infernix-models/<modelId>/.ready` in MinIO.
-   - If absent, publishes a request to
-     `infernix/system/model.bootstrap.request` with producer dedup
-     key = `modelId`, then subscribes to
-     `model.bootstrap.ready.<modelId>` with a 900-second bounded timeout. The
-     coordinator's bootstrap worker handles the upload (see below).
-   - When `.ready` appears in MinIO, downloads every file under
-     `infernix-models/<modelId>/` to `/model-cache/<modelId>/`,
-     enforcing the cache's LRU eviction policy if the `emptyDir`
-     `sizeLimit` is being approached.
+2. If absent, checks `infernix-models/<modelId>/.ready` in MinIO. Under eager staging the
+   coordinator has already populated the bucket at startup, so `.ready` is normally present; the
+   helper downloads every file under `infernix-models/<modelId>/` to `/model-cache/<modelId>/`,
+   enforcing the cache's LRU eviction policy if the `emptyDir` `sizeLimit` is being approached.
+   - Fallback only: if a model is somehow not yet staged, the helper publishes a request to
+     `infernix/system/model.bootstrap.request` (producer dedup key = `modelId`) and subscribes to
+     `model.bootstrap.ready.<modelId>` with a bounded timeout — the same coordinator worker services
+     it. This is a safety net, not the hot path.
 3. Returns the local filesystem path.
 
 The model cache is ephemeral: a pod restart wipes `/model-cache/` and
@@ -150,18 +148,20 @@ marker instead of doing its own MinIO write; the Haskell worker uploads that fil
 Haskell-derived generated-object target using secret-backed presigned PUT credentials and publishes
 the same object-reference output shape.
 
-## Coordinator Model-Bootstrap Workflow
+## Coordinator Model-Cache Staging Workflow
 
-The coordinator's third Failover subscription type (alongside the
-single-flight dispatcher and the result-bridge) consumes
-`persistent://infernix/system/model.bootstrap.request`:
+On startup the coordinator eagerly stages every model listed in the mounted `infernix.dhall`,
+iterating the model set and running the staging steps below for each; the `warm-model-cache`
+cluster-up barrier blocks until all are `.ready`. The same steps also service the fallback
+`persistent://infernix/system/model.bootstrap.request` Failover subscription (alongside the
+single-flight dispatcher and the result-bridge) when an engine hits an unstaged model. Per model:
 
-1. Receive bootstrap request carrying `modelId`.
+1. Take the `modelId` (from the mounted config's model set, or a fallback bootstrap request).
 2. Re-check `infernix-models/<modelId>/.ready` in MinIO (idempotent
-   guard against duplicate work after Failover handoff).
-   - If present, publish `model.bootstrap.ready.<modelId>` and ack.
+   guard against duplicate work after restart or Failover handoff).
+   - If present, publish `model.bootstrap.ready.<modelId>` and continue.
 3. Otherwise, look up the upstream `downloadUrl` for `modelId` in the
-   active substrate's staged `.dhall` catalog.
+   mounted `infernix.dhall` catalog.
 4. HTTP `GET` the upstream URL (this is the only point in the
    supported daemon topology that reaches the public internet — Hugging
    Face, GitHub releases, etc.).
@@ -239,10 +239,10 @@ The routed Linux GPU E2E flow validates the server-side
 
 - `infernix lint docs` enforces this doc's metadata block and
   cross-reference resolution.
-- `infernix test integration` covers the model-bootstrap workflow:
-  first-use download triggers the coordinator's bootstrap subscription,
-  `.ready` sentinel appears exactly once even under concurrent
-  bootstrap requests from N engine pods.
+- `infernix test integration` covers the model-cache staging workflow:
+  the coordinator eagerly stages the mounted config's models at startup so `infernix-models` is
+  populated before serving, and the `.ready` sentinel appears exactly once even under concurrent
+  staging (and under the fallback path's concurrent requests from N engine pods).
 - `infernix test integration` covers the `emptyDir` LRU eviction
   policy in the adapter helper: sustained load does not exhaust
   ephemeral storage and does not restart the engine pod.

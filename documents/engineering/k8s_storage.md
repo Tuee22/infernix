@@ -26,9 +26,9 @@
   `engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota.
   The engine's KV cache is in-memory and rebuilds from the Pulsar conversation log on
   restart via `prefixHash`. Model weights themselves live in the `infernix-models` MinIO
-  bucket on the four `64Gi` MinIO data claims and are pulled into the engine pod's `emptyDir` on
-  first use through the lazy
-  bootstrap workflow documented in
+  bucket on the four `64Gi` MinIO data claims and are streamed into the engine pod's `emptyDir` from
+  the eagerly pre-staged bucket (the coordinator stages every mounted-config model at startup via the
+  `warm-model-cache` cluster-up barrier) as documented in
   [object_storage.md](object_storage.md) and
   [../architecture/daemon_topology.md](../architecture/daemon_topology.md).
 

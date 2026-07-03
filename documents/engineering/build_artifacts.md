@@ -54,8 +54,8 @@ of the supported artifact contract.
 - `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the outer-container path after
   Kind or `nvkind` create or delete uses a transient launcher-local scratch kubeconfig under the
   container temp directory
-- the active generated substrate file lives at `./.build/infernix-substrate.dhall` on the Apple
-  host path and `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the
+- the active generated substrate file lives at `./.build/infernix.dhall` on the Apple
+  host path and `/workspace/.build/outer-container/build/infernix.dhall` inside the
   Linux launcher image
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
@@ -145,15 +145,16 @@ post-replacement MT3 rows added on 2026-06-30.
 
 ## Generated Demo Config Publication
 
-The substrate file is a typed Dhall record at `infernix-substrate.dhall`; the schema is defined at
-`dhall/InfernixSubstrate.dhall` and decoded in-process by the `dhall` Haskell library. Cluster pods
+The substrate file is a typed Dhall record at `infernix.dhall`; the schema is reflected from the
+substrate decoder type (`infernix internal dhall-schema substrate`) and decoded in-process by the
+`dhall` Haskell library. Cluster pods
 that consume the file link the same library through the in-cluster `infernix` binary.
 
-- Apple host lifecycle and validation flows materialize or verify `infernix-substrate.dhall`
+- Apple host lifecycle and validation flows materialize or verify `infernix.dhall`
   under `./.build/`; `./.build/infernix internal materialize-substrate apple-silicon` remains the
   direct helper for explicit restaging or inspection
 - Linux outer-container lifecycle and validation flows materialize or verify
-  `/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image;
+  `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image;
   `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
   remains the direct helper for explicit restaging or inspection
 - `cluster up` mirrors the cluster-role substrate payload under
@@ -162,7 +163,7 @@ that consume the file link the same library through the in-cluster `infernix` bi
   rendered from the active staged substrate metadata and `demo_ui` setting rather than copied
   verbatim from the host-role file under `./.build/`
 - in cluster-resident execution contexts, the ConfigMap-backed file is mounted beside the binary
-- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix-substrate.dhall`
+- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix.dhall`
 
 ## Rules
 

@@ -121,7 +121,7 @@ Direct reference path:
   command; same-process tool installation continues only after the bootstrap verifies the required
   executable explicitly
 - supported Apple lifecycle and validation commands materialize or verify
-  `./.build/infernix-substrate.dhall` through the binary-owned substrate path;
+  `./.build/infernix.dhall` through the binary-owned substrate path;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper when
   an operator intentionally needs to restage or inspect that file
 - Kind create or delete uses a host-local scratch kubeconfig under the system temp directory, and
@@ -152,8 +152,9 @@ Direct reference path:
   evidence includes two same-machine host-member daemons on one `Shared` subscription; physical
   multi-host distribution is hardware-deferred, and the current Wave J backlog/backpressure gate is
   a single-host logical multi-member Pulsar harness.
-- model weights for the host engine come from the `infernix-models` MinIO bucket via the
-  same lazy bootstrap workflow the in-cluster Linux engine pods use. The host daemon caches
+- model weights for the host engine come from the `infernix-models` MinIO bucket, which the
+  coordinator eagerly stages at startup from the mounted `infernix.dhall` (the same `warm-model-cache`
+  staging the in-cluster Linux engine pods rely on). The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
   state on the operator's machine (not a Kubernetes PVC, not durable cluster state) and is
   purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap

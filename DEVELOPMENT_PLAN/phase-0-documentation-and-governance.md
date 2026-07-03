@@ -29,9 +29,9 @@ that the repository actually uses today. The governed docs, root docs, and devel
 describe the same staged-substrate mechanics and the Phase 6 Apple split-executor product shape.
 The repository and README matrix still point at `apple-silicon` as the Apple-native
 inference lane, and the plan now records the clarified contract explicitly: Apple host workflows stage
-`./.build/infernix-substrate.dhall` through `./.build/infernix internal materialize-substrate
+`./.build/infernix.dhall` through `./.build/infernix internal materialize-substrate
 apple-silicon`, Linux outer-container workflows stage
-`/workspace/.build/outer-container/build/infernix-substrate.dhall` inside the launcher image through
+`/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image through
 `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`,
 and the routed Apple path is clustered service orchestration plus host-native inference execution:
 cluster daemons remain present, and Apple inference batches move
@@ -315,9 +315,9 @@ None.
 Declare the no-env-var, absolute-path, three-Dhall-file configuration doctrine as the supported
 contract, and enumerate the per-phase cleanup work (Sprints 1.11, 2.13, 3.10, 4.13, 5.9, 6.28,
 7.17) that operationalizes it. Phase 0 owns the doctrine; the matching code changes land in the
-later-phase cleanup sprints. The three configuration Dhall files (`InfernixHost.dhall`,
-`InfernixCluster.dhall`, `InfernixSecrets.dhall`) are distinct from the pre-existing
-`dhall/InfernixSubstrate.dhall` substrate schema implemented in Phase 6 Sprint 6.27.
+later-phase cleanup sprints. The three configuration decoder types (`HostConfig`,
+`ClusterConfig`, `SecretsConfig`; reflected to Dhall, none version-controlled per Phase 8) are
+distinct from the pre-existing substrate schema implemented in Phase 6 Sprint 6.27.
 
 ### Deliverables
 

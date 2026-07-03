@@ -6,10 +6,12 @@ module Infernix.DemoConfig
     ensureGeneratedDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
+    renderGeneratedDemoConfig,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
     stripDemoConfigBanner,
     validateDemoConfigFile,
+    writeProjectConfigFile,
   )
 where
 
@@ -36,7 +38,7 @@ import Infernix.Models
 import Infernix.Substrate (decodeSubstrateConfigFile, demoConfigGeneratedBannerLine)
 import Infernix.Types
 import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory)
 import System.IO (hClose, openBinaryTempFile)
 import System.Posix.User (getEffectiveUserID, getUserEntryForID, homeDirectory)
 
@@ -68,11 +70,20 @@ validateDemoConfigFile filePath = do
 materializeGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
 materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
   let filePath = Config.generatedDemoConfigPath paths
-  let outputDirectory = takeDirectory filePath
       payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue
+  writeProjectConfigFile filePath payload
+  pure filePath
+
+-- | Phase 8: the single atomic writer shared by `infernix init`,
+-- `infernix test init`, and the substrate/host materializers. Writes the
+-- payload to a temp file in the target directory and atomically renames it
+-- into place, creating the parent directory as needed.
+writeProjectConfigFile :: FilePath -> ByteString.ByteString -> IO ()
+writeProjectConfigFile filePath payload = do
+  let outputDirectory = takeDirectory filePath
   createDirectoryIfMissing True outputDirectory
   bracketOnError
-    (openBinaryTempFile outputDirectory "infernix-substrate.dhall.tmp")
+    (openBinaryTempFile outputDirectory "infernix-config.dhall.tmp")
     ( \(temporaryPath, handle) -> do
         ignoreIo (hClose handle)
         ignoreIo (removeFile temporaryPath)
@@ -82,7 +93,6 @@ materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
         hClose handle
         renameFile temporaryPath filePath
     )
-  pure filePath
 
 -- | Phase 1 Sprint 1.11 — materialize the host manifest beside the
 -- substrate file. The supported defaults come from
@@ -96,9 +106,7 @@ materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
 -- here for the host manifest).
 materializeHostManifestFile :: Paths -> IO FilePath
 materializeHostManifestFile paths = do
-  let buildRootPath = Config.buildRoot paths
-      filePath = buildRootPath </> "infernix-host.dhall"
-  createDirectoryIfMissing True buildRootPath
+  let filePath = Config.hostConfigPath paths
   alreadyMaterialized <- doesFileExist filePath
   if alreadyMaterialized
     then pure filePath
@@ -112,17 +120,7 @@ materializeHostManifestFile paths = do
                 (Text.pack (Config.repoRoot paths))
                 (Text.pack operatorHome)
           payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
-      bracketOnError
-        (openBinaryTempFile buildRootPath "infernix-host.dhall.tmp")
-        ( \(temporaryPath, handle) -> do
-            ignoreIo (hClose handle)
-            ignoreIo (removeFile temporaryPath)
-        )
-        ( \(temporaryPath, handle) -> do
-            ByteString.hPut handle payload
-            hClose handle
-            renameFile temporaryPath filePath
-        )
+      writeProjectConfigFile filePath payload
       pure filePath
 
 ensureGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath

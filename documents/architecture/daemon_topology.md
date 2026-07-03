@@ -109,15 +109,17 @@ subscription types:
   `InferenceResult` events back to the originating per-context
   conversation topic with producer dedup keyed by
   `(userPromptMessageId, kind = InferenceResult)`
-- **Model-bootstrap worker** via `Infernix.Bootstrap.Models` with a
-  Pulsar named `Failover` subscription on
-  `infernix/system/model.bootstrap.request`; consumes bootstrap
-  requests, fetches the upstream URL from the active substrate
-  `.dhall`, PUTs weights to `infernix-models/<modelId>/`, writes the
-  `.ready` sentinel last, and publishes
+- **Model-cache staging worker** via `Infernix.Bootstrap.Models`. On
+  startup the coordinator eagerly stages every model listed in the
+  mounted `infernix.dhall`, and a `warm-model-cache` cluster-up barrier
+  blocks until all are `.ready`; a fallback Pulsar named `Failover`
+  subscription on `infernix/system/model.bootstrap.request` services any
+  unstaged model. Per model it fetches the upstream URL from the mounted
+  `infernix.dhall`, PUTs weights to `infernix-models/<modelId>/`, writes
+  the `.ready` sentinel last, and publishes
   `model.bootstrap.ready.<modelId>`. **The coordinator is the only
   daemon role with outbound-internet egress** — used solely for
-  upstream model downloads on first use.
+  upstream model downloads at startup staging.
 
 The coordinator never imports any application namespace; it never
 runs an inference engine; it owns no GPU or Metal resources; **it
@@ -228,7 +230,7 @@ capacity. Exact-host routes use derived per-host topics with `Exclusive`.
 **No daemon has a PVC on any substrate.** The engine pod's
 `emptyDir` model cache is ephemeral per-pod storage capped by
 `sizeLimit`; it disappears on pod restart and rebuilds from the
-`infernix-models` MinIO bucket via the lazy bootstrap workflow. The
+eagerly pre-staged `infernix-models` MinIO bucket. The
 Apple on-host engine daemon's equivalent host-local cache lives
 under `./.data/runtime/model-cache/` and is purgeable; it is host
 state on the operator's machine, not durable cluster state.

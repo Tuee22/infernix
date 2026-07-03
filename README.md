@@ -82,8 +82,11 @@ This repository serves two aligned purposes:
 
 Infernix does not reimplement model kernels. It coordinates them.
 
-The active substrate configuration lives in `infernix-substrate.dhall`, a typed Dhall record decoded
-in-process by the `dhall` Haskell library; the schema is defined at `dhall/InfernixSubstrate.dhall`.
+The active substrate configuration lives in the operator-created `infernix.dhall`, a typed Dhall
+record decoded in-process by the `dhall` Haskell library. No `.dhall` is version-controlled: the
+`infernix` binary generates every `.dhall`, and the schema is reflected from the Haskell decoder type
+(emitted on demand by `infernix internal dhall-schema substrate`). Create the file with `infernix
+init`; commands fail fast with a "run init" reminder when it is absent.
 
 - consumes inference requests from Pulsar request topics named in the active `.dhall` and publishes
   results to the configured result topics; this is the production inference surface
@@ -217,7 +220,8 @@ The optional demo UI runs in the cluster as the `infernix-demo` workload when th
 [documents/architecture/engine_pool_routing.md](documents/architecture/engine_pool_routing.md)): the
 stateless frontend Deployment (`infernix-demo`), the stateless coordinator Deployment
 (`infernix-coordinator`, owning Pulsar dispatch, batching, result writeback, model-to-pool routing,
-and the lazy model-weight bootstrap workflow), and substrate-specific engine pools. Linux pools are
+and eager model-cache staging on startup from the mounted `infernix.dhall`), and substrate-specific
+engine pools. Linux pools are
 Kubernetes workloads; Apple pools are host-native `./.build/infernix service` daemons with stable
 host ids. Normal pools use Pulsar `Shared` subscriptions so broker backpressure distributes work;
 exact pinned routes use derived per-member topics with `Exclusive`.
@@ -238,9 +242,11 @@ anti-affinity, while Apple pools use durable host ids. On `linux-gpu`, framework
 still render as `infernix-engine-<engine>` Deployments, but routing is derived from the typed pool
 graph rather than from handwritten topic strings.
 **No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
-weights are pulled from the `infernix-models` MinIO bucket on first use (lazy bootstrap via a
-Pulsar Failover subscription owned by the coordinator with exactly-once semantics) and staged
-into the engine pod's ephemeral `emptyDir` model cache with a hard `sizeLimit`; pod restart
+weights land in the `infernix-models` MinIO bucket via **eager coordinator staging**: on startup the
+coordinator downloads every model listed in the mounted `infernix.dhall` (fail-fast if no config),
+and the `warm-model-cache` cluster-up phase blocks until all are staged, so no inference races a cold
+cache. Engine pods then stream weights from MinIO into an ephemeral `emptyDir` model cache with a
+hard `sizeLimit`; pod restart
 wipes the cache and the next request repopulates from MinIO. User uploads and engine-generated
 artifacts (images, audio, video) live in the demo-gated `infernix-demo-objects` bucket. Object access
 is webapp-mediated and per-user: the `infernix-demo` webapp is the single mediator
@@ -647,10 +653,14 @@ and `RuntimeClass/nvidia` before scheduling the GPU-requesting service workload.
 
 ## CLI Surface
 
-The canonical supported CLI surfaces are split between the two binaries.
+The canonical supported CLI surface is the single `infernix` binary.
 
 `infernix` (production daemon and operator workflow):
 
+- `infernix init [--runtime-mode M] [--demo-ui true|false]` — generate the operator's runtime
+  `./infernix.dhall` (the substrate) and host manifest `./infernix-host.dhall`. All other commands
+  fail fast with a "run init" reminder until this exists; there is no auto-generation backstop
+- `infernix test init` — generate the thin `./infernix.test.dhall` the test harness reads
 - `infernix service` — production Pulsar consumer; binds no HTTP listener. Routing is owned
   by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests
 - `infernix cluster up`
@@ -694,9 +704,11 @@ not a parallel lifecycle surface.
 - `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
   the substrate-specific binary or container launcher are ready; they do not directly manage Kind,
   Kubernetes resources, manifests, or cluster workload image pulls
-- `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` stages the
-  active demo `.dhall` file that defines the demo catalog and the engine binding for each
-  demo-visible model on that substrate
+- `infernix init` is the operator surface for creating the runtime `infernix.dhall`;
+  `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` is the internal
+  generator (used by `init`, the test harness, and `cluster up`) that renders the demo substrate
+  `.dhall` defining the demo catalog and the engine binding for each demo-visible model on that
+  substrate
 - `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
   under `/opt/infernix/engines/<adapterId>/`; the Linux GPU/CPU images now carry runtime-backed
   wrappers over image-baked native payloads for llama.cpp, whisper.cpp, ONNX Runtime/Basic Pitch,
@@ -761,13 +773,15 @@ rebuildable.
 
 ## Configuration and Runtime Contract
 
-- a `.dhall` configuration defines the runtime contract for supported service flows; the
-  active `.dhall` names the coordinator, validated engine pools and members, request topics, result
-  topic, engine bindings, and the optional `demo_ui : Bool` flag that gates the `infernix-demo`
-  workload. Generated files also carry explicit engine daemon metadata derived from the validated
-  pool/member graph so daemon startup and targeted validation configs round-trip through Dhall; the
-  supported configuration surface does not expose legacy `engine`, `host_batch_topic`, or raw
-  batch-topic fields
+- the runtime `.dhall` (`infernix.dhall`) defines the runtime contract for supported service flows;
+  it is **generated by the binary, never version-controlled** — `infernix init` creates it for
+  operators, the test harness generates it per run, and `cluster up` renders the deploy copy into the
+  coordinator's ConfigMap. It names the coordinator, validated engine pools and members, request
+  topics, result topic, engine bindings, the **model set** (the source of truth for which models are
+  in scope — the `src/Infernix/Models.hs` matrix is a demo-only generator of this list, not a core
+  dependency), and the optional `demo_ui : Bool` flag. Generated files also carry explicit engine
+  daemon metadata derived from the validated pool/member graph; the supported configuration surface
+  does not expose legacy `engine`, `host_batch_topic`, or raw batch-topic fields
 - Apple host lifecycle and validation commands materialize or verify that file under `./.build/`;
   `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper for
   explicit restaging or inspection
@@ -781,8 +795,9 @@ rebuildable.
   appear in the demo UI for that mode (when the demo UI is enabled)
 - the set of generated mode-specific demo `.dhall` files must cover every model or workload row in
   the comprehensive model, format, and engine matrix
-- each daemon reads the staged substrate file at startup; changing model or member assignment is
-  currently a materialize-and-restart or rollout boundary. Future hot reload, if implemented, flows
+- each daemon reads the mounted substrate file at startup; the coordinator eagerly stages every model
+  it lists into the model cache before serving. Changing model or member assignment is currently a
+  regenerate-and-restart or rollout boundary. Future hot reload, if implemented, flows
   through compacted assignment records rather than ad hoc admin HTTP or raw topic remapping
 - the production inference surface is Pulsar subscription only and includes both the stateless
   coordinator role (`infernix-coordinator` Deployment) and engine pools (`infernix-engine` plus
@@ -790,7 +805,7 @@ rebuildable.
   member daemons on Apple silicon). Repo-owned `linux-gpu` lifecycle values may keep heavyweight
   framework-specific deployments at zero replicas on the single-GPU lane and validation scales one
   at a time. The coordinator owns dispatch, batching, model-to-pool routing, result writeback, and
-  model bootstrap. On every substrate the coordinator consumes protobuf requests from configured
+  eager model-cache staging. On every substrate the coordinator consumes protobuf requests from configured
   request topics and forwards batches to derived engine-pool topics. Engine members consume assigned
   batches, execute inference, and publish results to `inference.result.<mode>`; no HTTP listener is
   bound on either role

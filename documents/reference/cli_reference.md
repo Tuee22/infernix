@@ -8,6 +8,10 @@
 <!-- infernix:command-registry:start -->
 ## `infernix` (production daemon and operator workflow)
 
+### `init`
+
+- `infernix init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false] [--force] [--if-missing]` - writes the runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`. Fails fast if `./infernix.dhall` already exists unless `--force`; `--if-missing` makes an existing config a no-op. No other command auto-generates config.
+
 ### `service`
 
 - `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the active `.dhall` request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.
@@ -37,6 +41,7 @@
 
 ### `test`
 
+- `infernix test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false]` - writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`
 - `infernix test lint` - runs the focused lint entrypoints together with the strict Haskell style and Python quality gates
 - `infernix test unit` - runs the Haskell unit suites and the PureScript frontend unit suites
 - `infernix test integration` - runs the cluster-backed integration suite against the active substrate
@@ -81,7 +86,7 @@
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
   control plane over Docker's private `kind` network
 - `infernix internal materialize-substrate ...` remains the explicit restaging and inspection
-  helper for `infernix-substrate.dhall`; substrate-aware entrypoints such as `cluster up`,
+  helper for `infernix.dhall`; substrate-aware entrypoints such as `cluster up`,
   `service`, `cache ...`, `kubectl ...`, frontend-contract generation, and aggregate
   `infernix test ...` commands own substrate-file preflight for their execution context, materialize
   or validate the file before relying on it, and fail with a substrate-specific diagnostic if that

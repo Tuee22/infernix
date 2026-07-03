@@ -1451,7 +1451,7 @@ Static and build gates (host-native, run directly against the freshly built
 - `infernix test lint` — `infernix-haskell-style` PASS (the `ormolu` + `hlint` style tools were rebuilt into `./.build/haskell-style-tools/bin/` on first run).
 - `infernix test unit` — `infernix-unit` PASS plus the web unit suite at 71/71.
 - `infernix internal materialize-substrate apple-silicon` staged the demo-enabled
-  `./.build/infernix-substrate.dhall` (16-model catalog, `daemonRole = engine`,
+  `./.build/infernix.dhall` (16-model catalog, `daemonRole = engine`,
   `demo_ui = True`); aggregate `infernix test ...` entrypoints require this staged file,
   while `infernix lint ...` and `infernix docs check` remained substrate-file independent.
 

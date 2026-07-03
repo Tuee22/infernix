@@ -154,7 +154,7 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 - frontend contract modules are emitted into `web/src/Generated/` by
   `infernix internal generate-purs-contracts`
 - the visible catalog comes from the generated demo catalog for the active runtime mode
-- the generated catalog is staged under the active build root as `infernix-substrate.dhall`;
+- the generated catalog is staged under the active build root as `infernix.dhall`;
   `cluster up` publishes a cluster-role payload through `ConfigMap/infernix-demo-config`, mounts
   it into the `infernix-demo` workload, and mirrors the publication under
   `./.data/runtime/configmaps/infernix-demo-config/` for inspection; on Apple that cluster-role

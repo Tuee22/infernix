@@ -18,6 +18,7 @@ workload runs the Webapp role.
 <!-- infernix:family-overview:start -->
 ## `infernix` Families
 
+- `init` - creates the operator runtime config `./infernix.dhall` and host manifest `./infernix-host.dhall`
 - `service` - starts one long-running role from the single infernix binary: coordinator, engine, or webapp
 - `cluster` - reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces
 - `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
