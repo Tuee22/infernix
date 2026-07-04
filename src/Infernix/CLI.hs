@@ -83,6 +83,7 @@ import System.Directory
     getPermissions,
     removeFile,
     removePathForcibly,
+    renameFile,
     setPermissions,
   )
 import System.Environment (getArgs, getExecutablePath)
@@ -281,20 +282,26 @@ runClusterOwnedValidation maybeRuntimeMode action = do
   action
     `finally` clusterDown maybeRuntimeMode
 
--- | Phase 8 Sprint 8.6: the test harness owns the runtime config for the
+-- | Phase 8 Sprint 8.6: the test harness owns @./infernix.dhall@ for the
 -- duration of a run. It reads @./infernix.test.dhall@ (failing fast with an
--- @infernix test init@ reminder when it is absent), refuses to run if an
--- operator @./infernix.dhall@ is already present, generates @./infernix.dhall@
--- from the test config's substrate + demo-ui selection, runs the suites, and
--- deletes the generated file via a self-created-only guard. The integration
--- suite's per-variant @internal materialize-substrate@ keeps rewriting this
--- same harness-owned path during the run.
+-- @infernix test init@ reminder when it is absent), takes ownership of
+-- @./infernix.dhall@ by moving any existing config (an operator @infernix
+-- init@ config, or the image-baked empty-models config) to a backup, generates
+-- the harness config from the test config's substrate + demo-ui selection, runs
+-- the suites, and then restores the backup (or removes the generated file when
+-- there was none). The integration suite's per-variant @internal
+-- materialize-substrate@ keeps rewriting this same harness-owned path during
+-- the run. Back-up/restore (rather than a hard refuse) is what lets the
+-- supported container @infernix test all@ run against an image that bakes
+-- @./infernix.dhall@ for the @cluster up@ path, while still protecting an
+-- operator's host config.
 withTestHarnessConfig :: IO a -> IO a
 withTestHarnessConfig action = do
   paths <- discoverPaths
   ensureRepoLayout paths
   let testConfig = testConfigPath paths
       runtimeConfig = runtimeConfigPath paths
+      backupConfig = runtimeConfig <> ".harness-backup"
   testConfigExists <- doesFileExist testConfig
   unless testConfigExists $
     ioError
@@ -304,31 +311,26 @@ withTestHarnessConfig action = do
               <> "; run `infernix test init` to create it"
           )
       )
-  runtimeConfigExists <- doesFileExist runtimeConfig
-  when runtimeConfigExists $
-    ioError
-      ( userError
-          ( "runtime config already present at "
-              <> runtimeConfig
-              <> "; the test harness generates and owns this file for the run. "
-              <> "Remove the operator `infernix init` config before running tests."
-          )
-      )
+  hadExistingRuntimeConfig <- doesFileExist runtimeConfig
+  when hadExistingRuntimeConfig (renameFile runtimeConfig backupConfig)
   testDemoConfig <- decodeDemoConfigFile testConfig
   _ <-
     materializeGeneratedDemoConfigFile
       paths
       (configRuntimeMode testDemoConfig)
       (demoUiEnabled testDemoConfig)
-  action `finally` removeGeneratedRuntimeConfig runtimeConfig
+  action `finally` restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig
 
--- | Delete the harness-generated @./infernix.dhall@. Self-created-only: the
--- harness refuses to start when the file already exists, so any file present
--- at cleanup was generated (and possibly rewritten per variant) by this run.
-removeGeneratedRuntimeConfig :: FilePath -> IO ()
-removeGeneratedRuntimeConfig runtimeConfig = do
+-- | Restore the pre-run @./infernix.dhall@ after a harness run: remove the
+-- harness-generated file (and any per-variant rewrite), then move the backup
+-- back into place when one was taken.
+restoreRuntimeConfig :: FilePath -> FilePath -> Bool -> IO ()
+restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig = do
   present <- doesFileExist runtimeConfig
   when present (removeFile runtimeConfig)
+  when hadExistingRuntimeConfig $ do
+    backupPresent <- doesFileExist backupConfig
+    when backupPresent (renameFile backupConfig runtimeConfig)
 
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do

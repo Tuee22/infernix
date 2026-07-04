@@ -72,8 +72,10 @@ There is no auto-generate-if-absent backstop: every runtime, cluster, cache, and
 `infernix test …` command fails fast naming the exact init to run when its config is missing
 (focused `infernix lint …` and `infernix docs check` remain config-independent). The test harness
 owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2e|all` reads
-`./infernix.test.dhall`, refuses if an operator `./infernix.dhall` is already present, generates
-`./infernix.dhall` from the test config, runs the suites, and deletes the generated file.
+`./infernix.test.dhall` (fail fast → `infernix test init`), backs up any existing `./infernix.dhall`,
+generates the harness config from the test config, runs the suites, and restores the backup (or
+removes the generated file when there was none). The Linux launcher image bakes both files at build
+time so the containerized `infernix test all` runs without a manual init step.
 
 ## Containerized Linux Flow
 

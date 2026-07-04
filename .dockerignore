@@ -10,6 +10,14 @@ build
 build/*.dhall
 build/infernix-demo-*.dhall
 
+# Phase 8: operator-created runtime config, host manifest, and test config must
+# never enter the image build context — otherwise a HostNative operator manifest
+# leaks in and breaks build-time context detection (materialize-substrate then
+# rejects linux-cpu/linux-gpu as "host-native"). The image bakes its own.
+infernix.dhall
+infernix-host.dhall
+infernix.test.dhall
+
 # Haskell build artifacts
 dist-newstyle
 .stack-work

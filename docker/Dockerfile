@@ -16,7 +16,11 @@ ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
 ARG HELM_VERSION=v3.18.6
-ARG UBUNTU_APT_MIRROR=http://mirrors.edge.kernel.org/ubuntu/
+# Phase 8 follow-on (2026-07-04): default to the canonical Ubuntu archive.
+# The mirrors.edge.kernel.org mirror served an inconsistent index (libssl-dev
+# 3.0.13-0ubuntu3.9 vs libssl3t64 3.0.13-0ubuntu3.11), breaking the apt solve on
+# the linux-cpu ubuntu:24.04 base. archive.ubuntu.com is index-consistent.
+ARG UBUNTU_APT_MIRROR=http://archive.ubuntu.com/ubuntu/
 ARG TARGETARCH
 
 # Phase 1 Sprint 1.11 — the build-root env override was removed. The Haskell binary
@@ -295,6 +299,7 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --overwrite-policy=always \
          exe:infernix \
     && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
+    && infernix test init --runtime-mode ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && infernix internal materialize-linux-native-engines \
     && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
          poetry install --directory python/engines/transformers --with linux-cpu --no-interaction; \

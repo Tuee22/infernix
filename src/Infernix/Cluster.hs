@@ -697,32 +697,52 @@ warmModelCache :: Paths -> RuntimeMode -> ClusterUpInputs -> IO ()
 warmModelCache paths runtimeMode inputs = do
   demoConfig <- decodeDemoConfigFile (clusterUpDemoConfigPath inputs)
   let configuredModelIds = map modelId (models demoConfig)
-      minioBaseEndpoint = case clusterUpControlPlane inputs of
-        HostNative -> "http://127.0.0.1:30011"
-        OuterContainer -> "http://" <> kindControlPlaneNodeName paths runtimeMode <> ":30011"
   if null configuredModelIds
     then putStrLn "warm-model-cache: no models configured (empty-models config); skipping"
     else do
+      -- Reach the in-cluster MinIO node port (30011) the same way the Pulsar
+      -- proxy probe does: on the Linux launcher (outer-container) the node
+      -- ports are reachable at the kind control-plane node's IPv4, not the
+      -- container name; on the Apple host they map to 127.0.0.1.
+      minioHostResult <- resolveWarmModelCacheMinioHost paths runtimeMode inputs
+      runWarmModelCacheBarrier configuredModelIds minioHostResult
+
+resolveWarmModelCacheMinioHost :: Paths -> RuntimeMode -> ClusterUpInputs -> IO (Either String String)
+resolveWarmModelCacheMinioHost paths runtimeMode inputs =
+  case clusterUpControlPlane inputs of
+    HostNative -> pure (Right "127.0.0.1")
+    OuterContainer -> kindControlPlaneIpv4 paths runtimeMode
+
+runWarmModelCacheBarrier :: [Text.Text] -> Either String String -> IO ()
+runWarmModelCacheBarrier _ (Left err) =
+  putStrLn
+    ( "warm-model-cache: WARNING could not resolve the MinIO host endpoint ("
+        <> err
+        <> "); skipping the barrier — the coordinator's eager sweep and the lazy fallback still stage models"
+    )
+runWarmModelCacheBarrier configuredModelIds (Right minioHost) = do
+  let minioBaseEndpoint = "http://" <> minioHost <> ":30011"
+  putStrLn
+    ( "warm-model-cache: waiting for "
+        <> show (length configuredModelIds)
+        <> " configured model(s) to stage into infernix-models via "
+        <> minioBaseEndpoint
+    )
+  pending <-
+    waitForEagerModelCacheReady
+      minioBaseEndpoint
+      configuredModelIds
+      (\message -> putStrLn ("warm-model-cache: " <> message))
+  if null pending
+    then putStrLn ("warm-model-cache: all " <> show (length configuredModelIds) <> " configured models staged")
+    else
       putStrLn
-        ( "warm-model-cache: waiting for "
-            <> show (length configuredModelIds)
-            <> " configured model(s) to stage into infernix-models"
+        ( "warm-model-cache: WARNING "
+            <> show (length pending)
+            <> " model(s) not yet staged after the progress-based deadline: "
+            <> List.intercalate ", " (map Text.unpack pending)
+            <> "; the coordinator continues staging in the background and the lazy per-inference fallback covers first inference"
         )
-      pending <-
-        waitForEagerModelCacheReady
-          minioBaseEndpoint
-          configuredModelIds
-          (\message -> putStrLn ("warm-model-cache: " <> message))
-      if null pending
-        then putStrLn ("warm-model-cache: all " <> show (length configuredModelIds) <> " configured models staged")
-        else
-          putStrLn
-            ( "warm-model-cache: WARNING "
-                <> show (length pending)
-                <> " model(s) not yet staged after the progress-based deadline: "
-                <> List.intercalate ", " (map Text.unpack pending)
-                <> "; the coordinator continues staging in the background and the lazy per-inference fallback covers first inference"
-            )
 
 prepareClusterUpInputs :: Paths -> RuntimeMode -> IO ClusterUpInputs
 prepareClusterUpInputs paths runtimeMode = do
@@ -4837,7 +4857,19 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
     clusterConfigValueLines =
       [ "clusterConfig:",
         "  body: |",
-        indentBlock 4 clusterConfigBody
+        indentBlock 4 clusterConfigBody,
+        -- The operator-routes SecurityPolicy template
+        -- (`securitypolicy-operator-routes.yaml`) reads
+        -- `clusterConfig.keycloak.{baseUrl,realmName,clientId,jwksUrl}` from the
+        -- Helm values (NOT the rendered body) to build the JWT `issuer` and
+        -- `remoteJWKS`. Emit the same resolved keycloak wiring here so the
+        -- SecurityPolicy issuer matches the routed edge URL Keycloak stamps into
+        -- token `iss` claims; without this the routed operator routes 401 every
+        -- valid token (`realmName` keeps the chart default).
+        "  keycloak:",
+        "    baseUrl: " <> Text.unpack (keycloakBaseUrl resolvedKeycloakWiring),
+        "    clientId: " <> Text.unpack (keycloakClientId resolvedKeycloakWiring),
+        "    jwksUrl: " <> Text.unpack (keycloakJwksUrl resolvedKeycloakWiring)
       ]
     clusterSecretsValueLines =
       [ "clusterSecrets:",

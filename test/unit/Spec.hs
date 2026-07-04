@@ -1540,6 +1540,17 @@ main = do
     assert
       (expectedPulsarReadyKeycloakBlock `isInfixOf` linuxCpuPulsarReadyValues)
       "linux-cpu Pulsar-ready Helm values start Keycloak before final app workloads"
+    -- Phase 8 Sprint 8.4 regression guard: the operator-routes SecurityPolicy
+    -- builds its JWT `issuer` from `clusterConfig.keycloak.baseUrl`, which must
+    -- be the routed edge URL (matching the `iss` Keycloak stamps into tokens),
+    -- not the chart's `http://127.0.0.1/auth` default. Emitting it under the same
+    -- `clusterConfig:` block as `body` keeps the SecurityPolicy and the mounted
+    -- cluster config consistent; dropping it 401s every valid operator token.
+    assert
+      ( ("    baseUrl: http://" <> kindControlPlaneNodeName linuxCpuOuterPaths LinuxCpu <> ":30090/auth")
+          `elem` lines linuxCpuFinalValues
+      )
+      "Sprint 8.4: final Helm values set clusterConfig.keycloak.baseUrl to the routed edge URL so the operator-route SecurityPolicy issuer matches Keycloak token iss"
     assert
       ("      memory: 3584Mi" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values cap Apple-hosted local engine memory below the prior aggregate SystemOOM envelope"

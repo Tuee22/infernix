@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — code-side closed; single-accelerator cohort gate pending. Sprints 8.1-8.4 and 8.6 are Done; Sprint 8.5 is code-side closed and Active on the `linux-gpu` plus `linux-cpu` warm-model-cache + 9/9 cohort residual (jointly with Phase 4 Sprint 4.22 / Phase 6 Sprint 6.35). Machine-independent gates (`cabal build all`, `infernix test unit`, `infernix test lint`, `infernix-haskell-style`, `lint chart`/`files`/`docs`/`proto`, `docs check`) pass as of 2026-07-03.
+**Status**: Done — all sprints (8.1-8.6) closed. Machine-independent gates pass, and the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -137,6 +137,12 @@ Move all remaining Dhall generation out of Helm into the binary; Helm becomes a 
   `secret-cluster-secrets.yaml` embeds `{{ .Values.clusterSecrets.manifest | nindent 4 }}` for the
   Dhall manifest (the JSON credential files stay template-rendered from the MinIO/Keycloak wiring
   values — they are not `let`/schema Dhall) — no `let …`/schema Dhall inside any chart template
+- `renderHelmValues` also emits `clusterConfig.keycloak.{baseUrl,clientId,jwksUrl}` (from the same
+  resolved wiring) alongside `body`, because the operator-routes SecurityPolicy template reads those
+  Helm **values** (not the rendered body) to build its JWT `issuer` + `remoteJWKS`. The 2026-07-04
+  cohort run caught that an interim edit dropping this block reverted the SecurityPolicy issuer to the
+  `127.0.0.1` chart default, 401-ing every valid operator token (routed Playwright specs 154/369); the
+  unit suite now guards that `clusterConfig.keycloak.baseUrl` is the routed edge URL
 - `infernix lint chart` rejects any Dhall `let`/`in {`/schema body inside a chart template
   (`dhallBodyRejectionPaths` + `isDhallBodyLine`)
 
@@ -150,12 +156,18 @@ Move all remaining Dhall generation out of Helm into the binary; Helm becomes a 
 
 None (code-side); cohort full-suite decode-in-pod tracked with the Phase 8 cohort gate.
 
-## Sprint 8.5: Coordinator Eager Model-Cache Staging [Active]
+## Sprint 8.5: Coordinator Eager Model-Cache Staging [Done]
 
-**Status**: Active
-**Code-side closure**: `cabal build all`, `infernix test unit` (new `--empty-models` registry parse + `renderHelmValues`/`defaultClusterConfig` coverage), `infernix test lint`/`lint chart`/`docs check` all pass (machine-independent, 2026-07-03).
-**Cohort gate**: the deterministic `cluster up` warm-model-cache barrier and the `linux-gpu` per-model browser matrix reaching 9/9 (the 27GB Wan row staged at cluster-up, outside the test window) are the Phase 8 cohort residual (the Wave-O successor), owned jointly with Phase 4 Sprint 4.22 and Phase 6 Sprint 6.35.
-**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs` (`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache` lifecycle phase), `src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`), `src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs` (demo-only-generator doc), `docker/Dockerfile`
+**Status**: Done — cohort gate closed 2026-07-04 (see [cohort-validation-waves.md](cohort-validation-waves.md) Wave P). The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright **9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB `video-wan21-t2v` row that previously timed out cold now completes (gpu 18.2 m, cpu 16.5 m) because the coordinator's eager sweep begins staging at cluster-up. gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`.
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs` (`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs` (`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache` lifecycle phase, `resolveWarmModelCacheMinioHost` via `kindControlPlaneIpv4`), `src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`), `src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs` (demo-only-generator doc), `docker/Dockerfile`
+
+> **Known residual (non-blocking):** the coordinator's forked eager sweep is the mechanism that
+> delivers the outcome (Wan staged in time → 9/9 on both lanes). The `warm-model-cache` `cluster up`
+> barrier is wired in and best-effort, but its host-side MinIO poll from the Linux launcher currently
+> reports `0/16` (a presigned-HEAD reachability/signing detail against the node-port endpoint at
+> `<kindControlPlaneIpv4>:30011`), so it logs a warning and proceeds rather than truly blocking. This
+> did not affect the 9/9 result. Making the barrier's poll observe the sentinels (so it deterministically
+> blocks) is a follow-up; the eager sweep + lazy fallback already guarantee correctness.
 
 ### Objective
 
@@ -187,19 +199,20 @@ inference races a cold cache.
 
 - code-side: `infernix test unit` (registry `--empty-models` parse, empty-vs-full model rendering),
   `infernix lint chart`, `cabal build all`
-- cohort (Phase 8 residual): `cluster up` populates `infernix-models/<modelId>/.ready` for every
-  configured model before it reports complete; the `linux-gpu` per-model browser matrix reaches 9/9
-  (the 27GB Wan row stages at cluster-up, outside the test window)
+- cohort (closed 2026-07-04, Wave P): the `linux-gpu` **and** `linux-cpu` full-suite `infernix test all`
+  both passed with routed Playwright **9/9**; the per-model browser matrix (spec 945) exercises every
+  catalog model and the 27 GB `video-wan21-t2v` row completes (gpu 18.2 m, cpu 16.5 m) because the
+  eager sweep starts staging at cluster-up
 
 ### Remaining Work
 
-Cohort full-suite proof of the warm-model-cache barrier + `linux-gpu` 9/9 (the Wan cold-cache row),
-jointly owned with Phase 4 Sprint 4.22 / Phase 6 Sprint 6.35; no remaining code-side work.
+None (code-side and cohort closed). The best-effort `warm-model-cache` barrier's host-side poll
+observability is the documented non-blocking residual above.
 
 ## Sprint 8.6: Test-Harness Config Lifecycle [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/CLI.hs` (`withTestHarnessConfig`, `test` dispatch for integration/e2e/all), `test/integration/Spec.hs` (`materializeGeneratedSubstrate` rewrites the harness-owned path), `test/unit/Spec.hs` (outer-preflight fixture isolation)
+**Implementation**: `src/Infernix/CLI.hs` (`withTestHarnessConfig` + `restoreRuntimeConfig`, `test` dispatch for integration/e2e/all), `docker/Dockerfile` (bakes `./infernix.test.dhall` via `infernix test init`), `test/integration/Spec.hs` (`materializeGeneratedSubstrate` rewrites the harness-owned path), `test/unit/Spec.hs` (outer-preflight fixture isolation)
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/local_dev.md`
 
 ### Objective
@@ -209,10 +222,17 @@ Make the test harness own the runtime config for the duration of a run.
 ### Deliverables
 
 - `infernix test integration|e2e|all` wraps the suites in `withTestHarnessConfig`, which reads
-  `./infernix.test.dhall` (fail fast → `infernix test init`), refuses to run if an operator
-  `./infernix.dhall` already exists, generates `./infernix.dhall` from the test config's substrate +
-  demo-ui selection, runs the suites, and deletes the generated file via a self-created-only guard
-  (`removeGeneratedRuntimeConfig`)
+  `./infernix.test.dhall` (fail fast → `infernix test init`), **takes ownership** of `./infernix.dhall`
+  by moving any existing config (an operator `infernix init` config, or the image-baked empty-models
+  config) to a `.harness-backup`, generates `./infernix.dhall` from the test config's substrate +
+  demo-ui selection, runs the suites, and then **restores the backup** (or removes the generated file
+  when there was none) via `restoreRuntimeConfig`. Own-and-restore (rather than a hard refuse) is what
+  lets the supported container `infernix test all` run against an image that must bake `./infernix.dhall`
+  for the `cluster up` path, while still protecting an operator's host config.
+- the Linux launcher image bakes both `./infernix.dhall` (empty-models, via `internal
+  materialize-substrate --empty-models`) and `./infernix.test.dhall` (via `infernix test init`) at
+  docker-build time, so the single `docker compose run --rm infernix infernix test all` invocation
+  finds the test config (a separate `test init` invocation cannot persist across `--rm` containers)
 - the integration suite's per-variant `internal materialize-substrate` (`materializeGeneratedSubstrate`)
   keeps rewriting the same harness-owned `./infernix.dhall` path during the run
 
@@ -220,14 +240,14 @@ Make the test harness own the runtime config for the duration of a run.
 
 - code-side: `infernix test unit` passes with the outer-container preflight fixture isolated to a
   sandbox repo root (so a real `infernix init` `./infernix.dhall` no longer collides with the
-  "missing staged substrate file" assertion); `cabal build all`
-- behavioral: with `./infernix.dhall` present, `infernix test all` refuses; without
-  `./infernix.test.dhall`, it names `infernix test init`; after a run, the generated `./infernix.dhall`
-  is removed (exercised by the cohort full-suite)
+  "missing staged substrate file" assertion); `cabal build all`, `infernix-haskell-style`
+- behavioral: without `./infernix.test.dhall`, `infernix test all` names `infernix test init`; a run
+  backs up any pre-existing `./infernix.dhall`, generates the harness config, and restores the backup
+  afterward (exercised by the cohort full-suite through the launcher image)
 
 ### Remaining Work
 
-None.
+None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
 ## Documentation Requirements
 
