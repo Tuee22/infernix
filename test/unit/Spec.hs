@@ -70,7 +70,7 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
-import Infernix.DemoConfig (decodeDemoConfigFile, materializeHostSecrets)
+import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, materializeHostSecrets)
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
@@ -725,6 +725,17 @@ main = do
       assert (daemonConfigLocation (coordinatorDaemon decodedConfig) == "cluster-pod") "demo-config decode preserves cluster daemon metadata"
       assert (daemonConfigRole (webappDaemon decodedConfig) == Webapp) "demo-config decode preserves webapp daemon metadata"
       assert (not (null (engineDaemons decodedConfig))) "linux demo-config decode preserves engine daemon metadata"
+      let emptyModelsConfig = demoConfig {models = []}
+          emptyModelsConfigPath = buildRoot paths </> "demo-config-empty-models-test.dhall"
+      Lazy.writeFile emptyModelsConfigPath (encodeDemoConfig emptyModelsConfig)
+      strictEmptyModelsDecode <- try (decodeDemoConfigFile emptyModelsConfigPath) :: IO (Either IOError DemoConfig)
+      assert
+        (either (isInfixOf "models must not be empty" . show) (const False) strictEmptyModelsDecode)
+        "strict demo-config decode rejects image-baked empty-model configs"
+      bootstrapEmptyModelsConfig <- decodeBootstrapDemoConfigFile emptyModelsConfigPath
+      assert
+        (configRuntimeMode bootstrapEmptyModelsConfig == LinuxCpu && null (models bootstrapEmptyModelsConfig))
+        "bootstrap demo-config decode accepts image-baked empty-model configs"
       assert
         (daemonConfigConsumerSubscriptionType (coordinatorDaemon decodedConfig) == Just ConsumerShared)
         "linux coordinator metadata uses Shared service subscription ownership"
@@ -2902,6 +2913,7 @@ assertObjectsLayoutAndPresigning = do
 
   -- Different method -> different signature
   let getUrl = ObjPresigned.presignedGetUrl cfg fixedNow upload
+      headUrl = ObjPresigned.presignedHeadUrl cfg fixedNow upload
       deleteUrl =
         ObjPresigned.presignedUrlForRequest
           cfg
@@ -2913,6 +2925,9 @@ assertObjectsLayoutAndPresigning = do
   assert
     (ObjPresigned.unPresignedUrl url1 /= ObjPresigned.unPresignedUrl getUrl)
     "presigned URL for PUT differs from presigned URL for GET on the same object"
+  assert
+    (ObjPresigned.unPresignedUrl headUrl /= ObjPresigned.unPresignedUrl getUrl)
+    "presigned URL for HEAD differs from presigned URL for GET on the same object"
   assert
     (ObjPresigned.unPresignedUrl deleteUrl /= ObjPresigned.unPresignedUrl getUrl)
     "presigned URL for DELETE differs from presigned URL for GET on the same object"

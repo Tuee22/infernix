@@ -3678,7 +3678,7 @@ minioObjectExists presigned manager objectRef = do
   now <- getCurrentTime
   let signedUrl =
         Presigned.unPresignedUrl
-          (Presigned.presignedGetUrl presigned now objectRef)
+          (Presigned.presignedHeadUrl presigned now objectRef)
   request <- parseRequest (Text.unpack signedUrl)
   let headRequest = request {method = "HEAD"}
   response <- httpLbs headRequest manager

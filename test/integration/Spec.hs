@@ -89,7 +89,7 @@ import Network.Socket
 import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
 import System.IO.Error (catchIOError, isAlreadyInUseError, isDoesNotExistError)
 import System.Process
@@ -2183,12 +2183,51 @@ trim =
 
 cleanupRuntimeState :: Paths -> IO ()
 cleanupRuntimeState paths = do
+  secretsSnapshot <- snapshotDirectoryFiles (runtimeRoot paths </> "secrets")
   catchIOError (removePathForcibly (runtimeRoot paths)) ignoreMissing
   createDirectoryIfMissing True (runtimeRoot paths)
+  restoreDirectoryFiles (runtimeRoot paths </> "secrets") secretsSnapshot
   where
     ignoreMissing err
       | isDoesNotExistError err = pure ()
       | otherwise = ioError err
+
+snapshotDirectoryFiles :: FilePath -> IO [(FilePath, ByteString.ByteString)]
+snapshotDirectoryFiles root = do
+  rootExists <- doesDirectoryExist root
+  if rootExists
+    then go ""
+    else pure []
+  where
+    go relativeDirectory = do
+      let absoluteDirectory =
+            if null relativeDirectory
+              then root
+              else root </> relativeDirectory
+      entries <- listDirectory absoluteDirectory
+      concat <$> forM entries snapshotEntry
+      where
+        snapshotEntry entry = do
+          let relativePath =
+                if null relativeDirectory
+                  then entry
+                  else relativeDirectory </> entry
+              absolutePath = root </> relativePath
+          entryIsDirectory <- doesDirectoryExist absolutePath
+          entryIsFile <- doesFileExist absolutePath
+          case (entryIsDirectory, entryIsFile) of
+            (True, _) -> go relativePath
+            (_, True) -> do
+              payload <- ByteString.readFile absolutePath
+              pure [(relativePath, payload)]
+            _ -> pure []
+
+restoreDirectoryFiles :: FilePath -> [(FilePath, ByteString.ByteString)] -> IO ()
+restoreDirectoryFiles root files =
+  forM_ files $ \(relativePath, payload) -> do
+    let targetPath = root </> relativePath
+    createDirectoryIfMissing True (takeDirectory targetPath)
+    ByteString.writeFile targetPath payload
 
 captureInfernixOutput :: [String] -> IO String
 captureInfernixOutput args = do
@@ -2720,7 +2759,7 @@ applePinnedHostEngineConfig demoConfig =
           Just memberId -> pure memberId
           Nothing -> fail "apple engine daemon metadata does not contain a stable member id"
       modelIdValue <-
-        case find ((== "image-sdxl-turbo") . modelId) (models demoConfig) of
+        case find ((== "llm-smollm2-safetensors") . modelId) (models demoConfig) of
           Just model -> pure (modelId model)
           Nothing ->
             case models demoConfig of
@@ -2992,7 +3031,7 @@ appleSharedHostEngineConfig demoConfig =
     engineDaemon : _ -> do
       uniqueSuffix <- Text.pack <$> integrationRunToken
       selectedModel <-
-        case find ((== "image-sdxl-turbo") . modelId) (models demoConfig) of
+        case find ((== "llm-smollm2-safetensors") . modelId) (models demoConfig) of
           Just model -> pure model
           Nothing ->
             case models demoConfig of

@@ -46,7 +46,7 @@ import Infernix.ClusterConfig
   )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
+import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
@@ -694,18 +694,21 @@ clusterUpWithPlatform paths runtimeMode = do
 -- lazy per-inference fallback still covers first inference. Polls MinIO at the
 -- host-reachable node-port endpoint for the active control-plane context.
 warmModelCache :: Paths -> RuntimeMode -> ClusterUpInputs -> IO ()
-warmModelCache paths runtimeMode inputs = do
-  demoConfig <- decodeDemoConfigFile (clusterUpDemoConfigPath inputs)
-  let configuredModelIds = map modelId (models demoConfig)
-  if null configuredModelIds
-    then putStrLn "warm-model-cache: no models configured (empty-models config); skipping"
-    else do
-      -- Reach the in-cluster MinIO node port (30011) the same way the Pulsar
-      -- proxy probe does: on the Linux launcher (outer-container) the node
-      -- ports are reachable at the kind control-plane node's IPv4, not the
-      -- container name; on the Apple host they map to 127.0.0.1.
-      minioHostResult <- resolveWarmModelCacheMinioHost paths runtimeMode inputs
-      runWarmModelCacheBarrier configuredModelIds minioHostResult
+warmModelCache paths runtimeMode inputs
+  | not (clusterUpDemoUiEnabled inputs) =
+      putStrLn "warm-model-cache: demo_ui disabled; skipping"
+  | otherwise = do
+      demoConfig <- decodeDemoConfigFile (clusterUpPublishedCatalogPath inputs)
+      let configuredModelIds = map modelId (models demoConfig)
+      if null configuredModelIds
+        then putStrLn "warm-model-cache: no models configured (empty-models config); skipping"
+        else do
+          -- Reach the in-cluster MinIO node port (30011) the same way the Pulsar
+          -- proxy probe does: on the Linux launcher (outer-container) the node
+          -- ports are reachable at the kind control-plane node's IPv4, not the
+          -- container name; on the Apple host they map to 127.0.0.1.
+          minioHostResult <- resolveWarmModelCacheMinioHost paths runtimeMode inputs
+          runWarmModelCacheBarrier configuredModelIds minioHostResult
 
 resolveWarmModelCacheMinioHost :: Paths -> RuntimeMode -> ClusterUpInputs -> IO (Either String String)
 resolveWarmModelCacheMinioHost paths runtimeMode inputs =
@@ -750,7 +753,7 @@ prepareClusterUpInputs paths runtimeMode = do
   requestedHarborPort <- chooseHarborPort paths
   requestedPulsarHttpPort <- choosePulsarHttpPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
-  generatedConfig <- decodeDemoConfigFile generatedConfigPath
+  generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
   let demoUiEnabledValue = demoUiEnabled generatedConfig
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
@@ -809,7 +812,7 @@ requireGeneratedDemoConfigFile paths expectedRuntimeMode = do
               <> "; run `infernix init` (or `infernix test init` for a test run) to create it"
           )
       )
-  demoConfig <- decodeDemoConfigFile filePath
+  demoConfig <- decodeBootstrapDemoConfigFile filePath
   unless (configRuntimeMode demoConfig == expectedRuntimeMode) $
     ioError
       ( userError
@@ -829,7 +832,7 @@ resolveCommandRuntimeMode paths Nothing maybeState = do
   let substratePath = Config.generatedDemoConfigPath paths
   substrateExists <- doesFileExist substratePath
   if substrateExists
-    then configRuntimeMode <$> decodeDemoConfigFile substratePath
+    then configRuntimeMode <$> decodeBootstrapDemoConfigFile substratePath
     else maybe (Config.targetRuntimeModeForExecutionContext paths) (pure . clusterRuntimeMode) maybeState
 
 resolveClusterRuntimeMode :: Paths -> Maybe RuntimeMode -> IO RuntimeMode

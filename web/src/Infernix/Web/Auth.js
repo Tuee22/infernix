@@ -2,7 +2,7 @@ const verifierKey = "infernix.pkce.verifier";
 const stateKey = "infernix.pkce.state";
 const nonceKey = "infernix.pkce.nonce";
 const operatorTokenCookie = "infernix_operator_token";
-const refreshMarginSeconds = 30;
+const refreshMarginSeconds = 180;
 const minimumRefreshDelayMs = 5000;
 
 let refreshToken = null;
@@ -267,8 +267,11 @@ async function deleteAccountAndRedirect(config, token) {
   await beginAuthorizationCodeRedirect(config, "auth", "delete_account");
 }
 
+const accountCleanupDeadlineMs = 420000;
+const accountCleanupRetryDelayMs = 1000;
+
 async function deleteAccountState(token) {
-  const deadline = Date.now() + 120000;
+  const deadline = Date.now() + accountCleanupDeadlineMs;
   while (Date.now() < deadline) {
     const response = await fetch("/api/account", {
       method: "DELETE",
@@ -284,7 +287,7 @@ async function deleteAccountState(token) {
     if (payload.cleanupComplete !== false) {
       return;
     }
-    await delay(750);
+    await delay(accountCleanupRetryDelayMs);
   }
 
   throw new Error("account cleanup did not complete before the retry deadline");

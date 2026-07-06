@@ -13,6 +13,7 @@ module Infernix.Objects.Presigned
     presignedBucketUrlWithQuery,
     presignedPutUrl,
     presignedGetUrl,
+    presignedHeadUrl,
     isoExpiryFor,
   )
 where
@@ -52,11 +53,12 @@ data PresignedUrlConfig = PresignedUrlConfig
   }
   deriving (Eq, Show)
 
-data HttpMethod = HttpGet | HttpPut | HttpDelete deriving (Eq, Show)
+data HttpMethod = HttpGet | HttpPut | HttpHead | HttpDelete deriving (Eq, Show)
 
 httpMethodText :: HttpMethod -> Text
 httpMethodText HttpGet = "GET"
 httpMethodText HttpPut = "PUT"
+httpMethodText HttpHead = "HEAD"
 httpMethodText HttpDelete = "DELETE"
 
 -- | A presigned URL request scoped to a single @ObjectRef@.
@@ -130,6 +132,16 @@ presignedGetUrl config now object =
     config
     PresignedRequest
       { presignedRequestMethod = HttpGet,
+        presignedRequestObject = object,
+        presignedRequestNow = now
+      }
+
+presignedHeadUrl :: PresignedUrlConfig -> UTCTime -> ObjectRef -> PresignedUrl
+presignedHeadUrl config now object =
+  presignedUrlForRequest
+    config
+    PresignedRequest
+      { presignedRequestMethod = HttpHead,
         presignedRequestObject = object,
         presignedRequestNow = now
       }

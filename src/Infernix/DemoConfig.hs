@@ -2,7 +2,8 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.DemoConfig
-  ( decodeDemoConfigFile,
+  ( decodeBootstrapDemoConfigFile,
+    decodeDemoConfigFile,
     materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
@@ -59,7 +60,18 @@ stripDemoConfigBanner rawValue =
 decodeDemoConfigFile :: FilePath -> IO DemoConfig
 decodeDemoConfigFile filePath = do
   demoConfig <- decodeSubstrateConfigFile filePath
-  case validateDemoConfig demoConfig of
+  case validateDemoConfigStrictModels demoConfig of
+    Left message -> ioError (userError ("invalid demo config: " <> message))
+    Right validDemoConfig -> pure validDemoConfig
+
+-- | Decode the image-baked launcher config. It may intentionally carry an
+-- empty model set so one-shot container commands do not trigger downloads; the
+-- daemon-facing config path still uses 'decodeDemoConfigFile' and rejects that
+-- shape.
+decodeBootstrapDemoConfigFile :: FilePath -> IO DemoConfig
+decodeBootstrapDemoConfigFile filePath = do
+  demoConfig <- decodeSubstrateConfigFile filePath
+  case validateDemoConfigAllowingEmptyModels demoConfig of
     Left message -> ioError (userError ("invalid demo config: " <> message))
     Right validDemoConfig -> pure validDemoConfig
 
@@ -291,8 +303,14 @@ renderModelListing demoConfig =
           if requiresGpu model then "true" else "false"
         ]
 
-validateDemoConfig :: DemoConfig -> Either String DemoConfig
-validateDemoConfig demoConfig
+validateDemoConfigStrictModels :: DemoConfig -> Either String DemoConfig
+validateDemoConfigStrictModels = validateDemoConfig False
+
+validateDemoConfigAllowingEmptyModels :: DemoConfig -> Either String DemoConfig
+validateDemoConfigAllowingEmptyModels = validateDemoConfig True
+
+validateDemoConfig :: Bool -> DemoConfig -> Either String DemoConfig
+validateDemoConfig allowEmptyModels demoConfig
   | configEdgePort demoConfig < 0 || configEdgePort demoConfig > 65535 =
       Left "edgePort must be between 0 and 65535"
   | Text.null (Text.strip (configMapName demoConfig)) =
@@ -307,7 +325,7 @@ validateDemoConfig demoConfig
       Left "engines must not be empty"
   | any invalidEngineBinding (engines demoConfig) =
       Left "every engine binding must declare non-blank engine, adapterId, adapterType, adapterLocator, adapterEntrypoint, setupEntrypoint, and projectDirectory values"
-  | null (models demoConfig) =
+  | null (models demoConfig) && not allowEmptyModels =
       Left "models must not be empty"
   | any invalidRequestShape (models demoConfig) =
       Left "every model must declare at least one request field"
@@ -345,7 +363,7 @@ validateDemoConfig demoConfig
       Left ("engine members use the wrong runtimeMode: " <> intercalate ", " wrongRuntimeMemberIds)
   | ambiguousPoolModelIds /= [] =
       Left ("engine pool model ownership is ambiguous: " <> intercalate ", " ambiguousPoolModelIds)
-  | unknownPoolModelIds /= [] =
+  | unknownPoolModelIds /= [] && not bootstrapEmptyModels =
       Left ("engine pools reference unknown model ids: " <> intercalate ", " unknownPoolModelIds)
   | unknownPoolMemberIds /= [] =
       Left ("engine pools reference unknown member ids: " <> intercalate ", " unknownPoolMemberIds)
@@ -383,6 +401,7 @@ validateDemoConfig demoConfig
       Left ("duplicate engine bindings detected: " <> intercalate ", " duplicateEngineNames)
   | otherwise = Right demoConfig
   where
+    bootstrapEmptyModels = allowEmptyModels && null (models demoConfig)
     invalidEngineBinding engineBinding =
       any
         (Text.null . Text.strip)

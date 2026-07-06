@@ -47,10 +47,10 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, renameFile)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath (takeDirectory, takeExtension, (</>))
-import System.IO (hClose)
+import System.IO (hClose, openTempFile)
 import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
 import System.Process
@@ -192,7 +192,7 @@ ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding =
       markerPresent <- doesFileExist markerPath
       markerMatches <-
         if markerPresent
-          then (== expectedMarker) <$> readFile markerPath
+          then (== expectedMarker) <$> readStrictUtf8File markerPath
           else pure False
       maybeVenvPython <- perEngineVenvPython paths engineBinding
       case maybeVenvPython of
@@ -203,7 +203,7 @@ ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding =
           refreshedVenvPython <- perEngineVenvPython paths engineBinding
           case refreshedVenvPython of
             Just _ ->
-              writeFile markerPath expectedMarker
+              writeStrictUtf8File markerPath expectedMarker
             Nothing ->
               ioError
                 ( userError
@@ -259,6 +259,18 @@ perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding grou
           "projectDigest=" <> projectDigest
         ]
     )
+
+readStrictUtf8File :: FilePath -> IO String
+readStrictUtf8File path =
+  ByteString8.unpack <$> ByteString.readFile path
+
+writeStrictUtf8File :: FilePath -> String -> IO ()
+writeStrictUtf8File path contents = do
+  createDirectoryIfMissing True (takeDirectory path)
+  (temporaryPath, handle) <- openTempFile (takeDirectory path) ".infernix-framework-groups.tmp"
+  hClose handle
+  ByteString.writeFile temporaryPath (ByteString8.pack contents)
+  renameFile temporaryPath path
 
 perEngineFrameworkProjectDigest :: FilePath -> IO String
 perEngineFrameworkProjectDigest projectDirectory = do

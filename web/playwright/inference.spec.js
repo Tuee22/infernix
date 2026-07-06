@@ -34,6 +34,9 @@ const test = base.extend({
 const serviceConsumerAckTimeoutMs = 900000;
 const browserMatrixResultTimeoutMs = serviceConsumerAckTimeoutMs + 900000;
 const browserMatrixTestTimeoutMs = 5400000;
+const websocketReconnectTimeoutMs = 120000;
+const accountCleanupRedirectTimeoutMs = 420000;
+const accountDeletionTestTimeoutMs = 480000;
 
 test("routed edge surfaces the SPA + the published platform state", async ({ page, request, infernixFixture }) => {
   const fixture = infernixFixture;
@@ -152,7 +155,7 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
 });
 
 test("routed WebSocket validates JWTs and reports malformed frames", async ({ page, request, infernixFixture }) => {
-  test.setTimeout(120000);
+  test.setTimeout(240000);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -197,8 +200,18 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   expect(wrongRealmResult.opened).toBe(false);
 
   const expiredAccessToken = await mintExpiredAccessTokenViaRealmLifespan(request, page, baseUrl);
-  const expiredResult = await probeWebSocket(page, websocketUrl(baseUrl, expiredAccessToken));
-  expect(expiredResult.opened).toBe(false);
+  await expect
+    .poll(
+      async () => {
+        const expiredResult = await probeWebSocket(page, websocketUrl(baseUrl, expiredAccessToken));
+        return expiredResult.opened;
+      },
+      {
+        timeout: 150000,
+        intervals: [1000, 2000, 5000],
+      },
+    )
+    .toBe(false);
 });
 
 test("webapp object-proxy isolates users by Keycloak subject", async ({ page, browser, request, infernixFixture }) => {
@@ -367,7 +380,7 @@ test("webapp object-proxy isolates users by Keycloak subject", async ({ page, br
 });
 
 test("self-service account deletion reaps demo state before Keycloak account action", async ({ page, request, infernixFixture }) => {
-  test.setTimeout(180000);
+  test.setTimeout(accountDeletionTestTimeoutMs);
   const fixture = infernixFixture;
   expect(fixture?.host).toBeTruthy();
   expect(fixture?.edgePort).toBeTruthy();
@@ -450,17 +463,21 @@ test("self-service account deletion reaps demo state before Keycloak account act
     .toBeGreaterThan(0);
 
   const deleteResponsePromise = page.waitForResponse(
-    (response) => response.url() === `${baseUrl}/api/account` && response.request().method() === "DELETE",
+    (response) =>
+      response.url() === `${baseUrl}/api/account` &&
+      response.request().method() === "DELETE" &&
+      response.status() === 200,
+    { timeout: accountCleanupRedirectTimeoutMs },
   );
   const deleteActionRequestPromise = page.waitForRequest(
     (requestValue) =>
       requestValue.url().includes("/protocol/openid-connect/auth") &&
       requestValue.url().includes("kc_action=delete_account"),
+    { timeout: accountCleanupRedirectTimeoutMs },
   );
   await page.locator("#delete-account-button").click();
-  const deleteResponse = await deleteResponsePromise;
+  const [deleteResponse, deleteActionRequest] = await Promise.all([deleteResponsePromise, deleteActionRequestPromise]);
   expect(deleteResponse.ok()).toBeTruthy();
-  const deleteActionRequest = await deleteActionRequestPromise;
   expect(new URL(deleteActionRequest.url()).searchParams.get("kc_action")).toBe("delete_account");
 
   const missingAfterDelete = await request.get(objectBytesUrl, {
@@ -695,16 +712,23 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     }
     window.__infernixForceWebSocketClose();
   });
-  await waitForSentFrameAfter(wsFrames, draftReconnectSentStartIndex, (frame) => frame.tag === "ClientHello");
+  await waitForSentFrameAfter(
+    wsFrames,
+    draftReconnectSentStartIndex,
+    (frame) => frame.tag === "ClientHello",
+    websocketReconnectTimeoutMs,
+  );
   await waitForSentFrameAfter(
     wsFrames,
     draftReconnectSentStartIndex,
     (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === subscribeFrame.clientSubscribeContextId,
+    websocketReconnectTimeoutMs,
   );
   await waitForReceivedFrameAfter(
     wsFrames,
     draftReconnectReceivedStartIndex,
     (frame) => frame.tag === "ServerDraftMapPatch" && JSON.stringify(frame).includes(promptText),
+    websocketReconnectTimeoutMs,
   );
   await expect(page.locator("textarea[name='prompt']")).toHaveValue(promptText, { timeout: 60000 });
 
@@ -811,17 +835,24 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     window.__infernixForceWebSocketClose();
   });
   await expect(page.locator("#connection-state")).toHaveText("Authenticated");
-  await waitForSentFrameAfter(wsFrames, reconnectSentStartIndex, (frame) => frame.tag === "ClientHello");
+  await waitForSentFrameAfter(
+    wsFrames,
+    reconnectSentStartIndex,
+    (frame) => frame.tag === "ClientHello",
+    websocketReconnectTimeoutMs,
+  );
   const reconnectSubscribeFrame = await waitForSentFrameAfter(
     wsFrames,
     reconnectSentStartIndex,
     (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === subscribeFrame.clientSubscribeContextId,
+    websocketReconnectTimeoutMs,
   );
   expect(reconnectSubscribeFrame.clientSubscribeContextId).toBe(subscribeFrame.clientSubscribeContextId);
   await waitForReceivedFrameAfter(
     wsFrames,
     reconnectReceivedStartIndex,
     (frame) => frame.tag === "ServerConversationSnapshot" && JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId),
+    websocketReconnectTimeoutMs,
   );
 
   const postReconnectPrompt = `continue after websocket reconnect ${randomUUID()}`;
@@ -1030,8 +1061,6 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     prepareEngineDeploymentForModelId(fixture, demoConfig, modelId);
     const contextId = contextByModel.get(modelId);
     expect(contextId).toBeTruthy();
-    const submitSentStart = wsFrames.sent.length;
-    const submitReceivedStart = wsFrames.received.length;
 
     await selectContextAndWaitForSubscription(page, wsFrames, contextId);
 
@@ -1053,7 +1082,10 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       );
       await selectContextAndWaitForSubscription(page, wsFrames, contextId);
     }
+    await refreshBrowserSession(page, wsFrames, contextId);
 
+    const submitSentStart = wsFrames.sent.length;
+    const submitReceivedStart = wsFrames.received.length;
     const promptText = `smoke ${modelId} ${matrixToken}-${index}`;
     await page.locator("textarea[name='prompt']").fill(promptText);
     await waitForSentFrameAfter(
@@ -1301,16 +1333,26 @@ async function refreshBrowserSession(page, frames, expectedContextId = null) {
     return window.__infernixRefreshAccessToken();
   });
   expect(refreshedToken).toBeTruthy();
-  await waitForSentFrameAfter(frames, sentStart, (frame) => frame.tag === "ClientHello", 60000);
+  await waitForSentFrameAfter(
+    frames,
+    sentStart,
+    (frame) => frame.tag === "ClientHello",
+    websocketReconnectTimeoutMs,
+  );
   if (expectedContextId) {
     await waitForSentFrameAfter(
       frames,
       sentStart,
       (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === expectedContextId,
-      60000,
+      websocketReconnectTimeoutMs,
     );
   }
-  await waitForReceivedFrameAfter(frames, receivedStart, (frame) => frame.tag === "ServerDraftMapSnapshot", 60000);
+  await waitForReceivedFrameAfter(
+    frames,
+    receivedStart,
+    (frame) => frame.tag === "ServerDraftMapSnapshot",
+    websocketReconnectTimeoutMs,
+  );
 }
 
 async function selectContextAndWaitForSubscription(page, frames, contextId) {

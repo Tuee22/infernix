@@ -436,7 +436,8 @@ appleNativePythonRequirements adapterId =
         "soundfile>=0.12"
       ]
     "mlx-native" ->
-      [ "mlx-lm>=0.31.0"
+      [ "mlx-lm>=0.29.0,<0.30.0",
+        "transformers>=4.46,<5"
       ]
     "onnx-runtime-native" ->
       [ "mido>=1.3",

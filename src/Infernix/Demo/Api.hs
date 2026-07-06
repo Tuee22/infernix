@@ -855,7 +855,7 @@ handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request r
                 )
 
 accountPulsarCleanupAttemptBudget :: Int
-accountPulsarCleanupAttemptBudget = 32
+accountPulsarCleanupAttemptBudget = 240
 
 deleteMinioUserObjects :: PresignedUrlConfig -> UserId -> IO Int
 deleteMinioUserObjects config userId = do
