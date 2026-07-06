@@ -88,6 +88,10 @@ test("pre-auth landing exposes sign-in and create-account entry points", async (
   await expect(page.locator(".app-shell")).toBeHidden();
   await expect(page.locator(".operator-ribbon")).toBeHidden();
   await expect(page.locator(".app-landing h1")).toHaveText("Infernix");
+  await expectReadableContrast(page, ".app-landing h1");
+  await expectReadableContrast(page, ".app-landing-subtitle");
+  await expectReadableContrast(page, "#login-button");
+  await expectUnobscuredAtCenter(page, ".app-landing h1");
   await expect(page.locator(".app-landing-actions button")).toHaveCount(2);
   await expect(page.locator("#login-button")).toHaveText("Sign in");
   await expect(page.locator("#register-button")).toHaveText("Create account");
@@ -95,6 +99,9 @@ test("pre-auth landing exposes sign-in and create-account entry points", async (
   await page.locator("#login-button").click();
   await expect(page.locator("#username, input[name='username']").first()).toBeVisible({ timeout: 60000 });
   await expect(page.getByText("Sign in to Infernix")).toBeVisible();
+  await expectReadableContrast(page, "#kc-page-title");
+  await expectReadableContrast(page, "#kc-registration a");
+  await expectUnobscuredAtCenter(page, "#kc-header-wrapper");
   await expect(page.locator("#kc-registration a")).toBeVisible();
   await expect(page.locator("#kc-register-form, form[action*='registration']")).toHaveCount(0);
 
@@ -103,6 +110,8 @@ test("pre-auth landing exposes sign-in and create-account entry points", async (
   await page.locator("#register-button").click();
   await expect(page.locator("#kc-register-form, form[action*='registration'], form[action*='registrations']")).toBeVisible({ timeout: 60000 });
   await expect(page.getByText("Create your Infernix account")).toBeVisible();
+  await expectReadableContrast(page, "#kc-page-title");
+  await expectUnobscuredAtCenter(page, "#kc-header-wrapper");
   expect(page.url()).toContain("/auth/realms/infernix/");
 });
 
@@ -1247,6 +1256,65 @@ function safeArtifactNameSegment(value) {
 function renderDispositionTag(downloadGrant) {
   const disposition = downloadGrant.artifactDownloadGrantRenderDisposition;
   return typeof disposition === "string" ? disposition : disposition?.tag;
+}
+
+async function expectReadableContrast(page, selector, minimumRatio = 4.5) {
+  const ratio = await page.locator(selector).first().evaluate((element) => {
+    function parseColor(value) {
+      const match = value.match(/rgba?\(([^)]+)\)/);
+      if (!match) {
+        return { r: 255, g: 255, b: 255, a: 1 };
+      }
+      const parts = match[1].split(",").map((part) => part.trim());
+      return {
+        r: Number(parts[0]),
+        g: Number(parts[1]),
+        b: Number(parts[2]),
+        a: parts.length >= 4 ? Number(parts[3]) : 1,
+      };
+    }
+
+    function channel(value) {
+      const normalized = value / 255;
+      return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+    }
+
+    function luminance(color) {
+      return 0.2126 * channel(color.r) + 0.7152 * channel(color.g) + 0.0722 * channel(color.b);
+    }
+
+    function effectiveBackground(start) {
+      let current = start;
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        const color = parseColor(window.getComputedStyle(current).backgroundColor);
+        if (color.a > 0.01) {
+          return color;
+        }
+        current = current.parentElement;
+      }
+      return { r: 255, g: 255, b: 255, a: 1 };
+    }
+
+    const style = window.getComputedStyle(element);
+    const foreground = parseColor(style.color);
+    const background = effectiveBackground(element);
+    const light = Math.max(luminance(foreground), luminance(background));
+    const dark = Math.min(luminance(foreground), luminance(background));
+    return (light + 0.05) / (dark + 0.05);
+  });
+  expect(ratio, `${selector} contrast ratio`).toBeGreaterThanOrEqual(minimumRatio);
+}
+
+async function expectUnobscuredAtCenter(page, selector) {
+  const result = await page.locator(selector).first().evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+      return false;
+    }
+    const top = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return top === element || element.contains(top) || Boolean(top && top.contains(element));
+  });
+  expect(result, `${selector} is not covered at its center point`).toBe(true);
 }
 
 function conversationPatchMessageId(frame) {

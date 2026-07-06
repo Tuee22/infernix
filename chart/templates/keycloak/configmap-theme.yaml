@@ -17,18 +17,24 @@ data:
     backToLogin=Back to sign in
   infernix.css: |
     :root {
-      --infernix-ink: #17202a;
-      --infernix-muted: #5c6672;
-      --infernix-line: #d6dde6;
-      --infernix-accent: #1f7a68;
-      --infernix-accent-strong: #135f50;
-      --infernix-warm: #f2b84b;
+      color-scheme: light;
+      --infernix-bg: #eef3f6;
+      --infernix-surface: #ffffff;
+      --infernix-surface-alt: #f6f9fa;
+      --infernix-ink: #142027;
+      --infernix-muted: #536670;
+      --infernix-line: #cdd8dd;
+      --infernix-accent: #176b87;
+      --infernix-accent-strong: #0c4e63;
+      --infernix-danger: #a43b3b;
     }
 
+    html,
+    body,
+    .login-pf,
     .login-pf body {
-      background:
-        linear-gradient(135deg, rgba(31, 122, 104, 0.18), rgba(242, 184, 75, 0.12)),
-        #f6f8fb;
+      min-height: 100%;
+      background: var(--infernix-bg) !important;
       color: var(--infernix-ink);
       font-family:
         Inter,
@@ -42,8 +48,20 @@ data:
 
     .login-pf-page {
       min-height: 100vh;
-      display: grid;
+      display: flex;
       align-items: center;
+      justify-content: center;
+      padding: 32px 18px;
+      background: var(--infernix-bg) !important;
+    }
+
+    #kc-header {
+      position: relative;
+      z-index: 2;
+      width: min(100%, 440px);
+      margin: 0 auto 16px;
+      color: var(--infernix-ink);
+      text-align: center;
     }
 
     #kc-header-wrapper {
@@ -51,6 +69,7 @@ data:
       font-size: 0;
       letter-spacing: 0;
       text-transform: none;
+      line-height: 1.2;
     }
 
     #kc-header-wrapper::before {
@@ -72,15 +91,80 @@ data:
     }
 
     .card-pf {
+      position: relative;
+      z-index: 3;
+      width: min(100%, 440px);
+      margin: 0 auto;
+      background: var(--infernix-surface) !important;
       border: 1px solid var(--infernix-line);
       border-radius: 6px;
+      color: var(--infernix-ink);
       box-shadow: 0 18px 45px rgba(23, 32, 42, 0.12);
+      padding: 26px;
+    }
+
+    #kc-content,
+    #kc-content-wrapper {
+      position: relative;
+      z-index: 3;
+      width: auto;
+      margin: 0;
+      padding: 0;
+      border: 0;
+      color: var(--infernix-ink);
+      background: transparent !important;
+      box-shadow: none;
     }
 
     #kc-page-title {
       color: var(--infernix-ink);
       font-size: 1.35rem;
       letter-spacing: 0;
+      line-height: 1.25;
+      margin-bottom: 18px;
+    }
+
+    #kc-form,
+    #kc-form-wrapper,
+    #kc-register-form,
+    #kc-info,
+    #kc-info-wrapper {
+      color: var(--infernix-ink);
+      background: transparent !important;
+    }
+
+    #kc-info-wrapper {
+      margin-top: 18px;
+      border-top: 1px solid var(--infernix-line);
+      padding-top: 16px;
+    }
+
+    .pf-v5-c-form__label,
+    .pf-v5-c-form__label-text,
+    .pf-c-form__label,
+    .pf-c-form__label-text,
+    .pf-v5-c-check__label,
+    .pf-c-check__label,
+    label,
+    #kc-form-options,
+    #kc-form-options label,
+    #kc-registration,
+    #kc-username,
+    #kc-attempted-username,
+    .instruction {
+      color: var(--infernix-ink) !important;
+    }
+
+    .pf-v5-c-helper-text,
+    .pf-c-form__helper-text,
+    .helper-text,
+    .subtitle,
+    #kc-registration span,
+    #kc-info-wrapper,
+    #kc-locale,
+    #kc-locale a,
+    #kc-current-locale-link {
+      color: var(--infernix-muted) !important;
     }
 
     .pf-v5-c-button.pf-m-primary,
@@ -91,6 +175,7 @@ data:
       border-radius: 5px;
       color: #ffffff;
       font-weight: 700;
+      min-height: 40px;
     }
 
     .pf-v5-c-button.pf-m-primary:hover,
@@ -102,6 +187,7 @@ data:
 
     #kc-registration a,
     #kc-form-options a,
+    #kc-info-wrapper a,
     .login-pf a {
       color: var(--infernix-accent-strong);
       font-weight: 650;
@@ -114,5 +200,41 @@ data:
     input[type="email"] {
       border-color: var(--infernix-line);
       border-radius: 5px;
+      color: var(--infernix-ink) !important;
+      background: #ffffff !important;
+    }
+
+    input::placeholder {
+      color: var(--infernix-muted);
+      opacity: 1;
+    }
+
+    input:focus,
+    button:focus,
+    a:focus {
+      outline: 3px solid rgba(138, 91, 24, 0.35);
+      outline-offset: 2px;
+    }
+
+    .pf-v5-c-alert.pf-m-danger,
+    .pf-c-alert.pf-m-danger,
+    #input-error,
+    .kc-feedback-text,
+    .pf-v5-c-helper-text.pf-m-error,
+    .pf-c-form__helper-text.pf-m-error {
+      color: var(--infernix-danger) !important;
+      background: #fff7f7;
+    }
+
+    @media (max-width: 520px) {
+      .login-pf-page {
+        align-items: stretch;
+        padding: 22px 14px;
+      }
+
+      .card-pf {
+        width: 100%;
+        padding: 22px 18px;
+      }
     }
 {{- end }}

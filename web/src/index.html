@@ -7,14 +7,16 @@
     <style>
       :root {
         color-scheme: light;
-        --bg: #f5f7f8;
+        --bg: #eef3f6;
         --surface: #ffffff;
-        --surface-alt: #eef3f5;
-        --ink: #162126;
-        --muted: #5f6f76;
+        --surface-alt: #f6f9fa;
+        --ink: #142027;
+        --muted: #536670;
         --line: #cdd8dd;
         --accent: #176b87;
-        --accent-strong: #0d4f64;
+        --accent-strong: #0c4e63;
+        --accent-soft: #e7f3f7;
+        --focus: #8a5b18;
         --danger: #a43b3b;
         --ready: #1f7a4d;
       }
@@ -42,6 +44,26 @@
       button,
       select {
         min-height: 36px;
+      }
+
+      button:not(:disabled),
+      select,
+      a {
+        cursor: pointer;
+      }
+
+      button:disabled {
+        cursor: not-allowed;
+        opacity: 0.7;
+      }
+
+      button:focus-visible,
+      input:focus-visible,
+      select:focus-visible,
+      textarea:focus-visible,
+      a:focus-visible {
+        outline: 3px solid rgba(138, 91, 24, 0.35);
+        outline-offset: 2px;
       }
 
       a {
@@ -73,11 +95,14 @@
         align-items: center;
         justify-content: center;
         padding: 24px 20px;
+        background: var(--bg);
       }
 
       .app-landing-card {
+        position: relative;
+        z-index: 1;
         width: 100%;
-        max-width: 420px;
+        max-width: 440px;
         background: var(--surface);
         border: 1px solid var(--line);
         border-radius: 6px;
@@ -85,6 +110,7 @@
         display: grid;
         gap: 16px;
         text-align: center;
+        box-shadow: 0 18px 48px rgba(20, 32, 39, 0.13);
       }
 
       .app-landing-card h1 {
@@ -109,8 +135,11 @@
       }
 
       .app-header {
+        position: relative;
+        z-index: 10;
         border-bottom: 1px solid var(--line);
         background: var(--surface);
+        box-shadow: 0 1px 0 rgba(20, 32, 39, 0.04);
       }
 
       .app-header-inner {
@@ -126,12 +155,15 @@
         gap: 16px;
         align-items: center;
         justify-content: space-between;
+        flex-wrap: wrap;
       }
 
       .app-actions {
         display: inline-flex;
         gap: 8px;
         align-items: center;
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }
 
       h1 {
@@ -140,8 +172,61 @@
         line-height: 1.1;
       }
 
+      .app-brand {
+        position: relative;
+        z-index: 2;
+        min-width: 0;
+        display: inline-grid;
+        grid-template-columns: auto minmax(0, 1fr);
+        gap: 10px;
+        align-items: center;
+        color: var(--ink);
+        text-align: left;
+      }
+
+      .app-brand.landing-brand {
+        justify-self: center;
+        grid-template-columns: 1fr;
+        justify-items: center;
+        text-align: center;
+      }
+
+      .app-brand-mark {
+        display: inline-grid;
+        width: 42px;
+        height: 42px;
+        place-items: center;
+        border: 1px solid rgba(23, 107, 135, 0.45);
+        border-radius: 6px;
+        color: #ffffff;
+        background: #176b87;
+        font-size: 0.8rem;
+        font-weight: 800;
+        letter-spacing: 0;
+        box-shadow: inset 0 -10px 18px rgba(12, 78, 99, 0.28);
+      }
+
+      .landing-brand .app-brand-mark {
+        width: 54px;
+        height: 54px;
+        font-size: 0.95rem;
+      }
+
+      .app-brand-copy {
+        min-width: 0;
+        display: grid;
+        gap: 4px;
+      }
+
+      .app-brand-tagline {
+        color: var(--muted);
+        font-size: 0.82rem;
+        line-height: 1.25;
+      }
+
       .app-status {
         min-width: 96px;
+        max-width: 100%;
         border: 1px solid var(--line);
         border-radius: 6px;
         padding: 6px 10px;
@@ -238,6 +323,18 @@
         background: var(--accent);
       }
 
+      .app-tab:hover,
+      .operator-link:hover,
+      .app-action-button:hover,
+      .chat-context-rename-button:hover,
+      .chat-context-delete-button:hover,
+      .chat-cancel-button:hover,
+      .artifact-download-button:hover,
+      .artifact-delete-button:hover {
+        border-color: var(--accent);
+        color: var(--accent-strong);
+      }
+
       .app-action-button,
       .chat-new-context-button {
         border: 1px solid var(--line);
@@ -252,6 +349,14 @@
         color: #ffffff;
         border-color: var(--accent-strong);
         background: var(--accent);
+      }
+
+      .app-action-button.primary:hover,
+      .chat-new-context-button:hover,
+      .chat-send-button:hover,
+      .artifact-upload-button:hover {
+        color: #ffffff;
+        background: var(--accent-strong);
       }
 
       .app-action-button.danger {
@@ -345,6 +450,7 @@
         border-radius: 6px;
         padding: 10px;
         background: #ffffff;
+        box-shadow: 0 8px 24px rgba(20, 32, 39, 0.08);
       }
 
       .chat-new-context-title {
@@ -387,6 +493,7 @@
         border: 1px solid var(--line);
         border-radius: 6px;
         padding: 8px;
+        color: var(--ink);
         background: #ffffff;
       }
 
@@ -402,6 +509,7 @@
 
       .chat-context-item.active {
         border-color: var(--accent);
+        background: var(--accent-soft);
         box-shadow: inset 3px 0 0 var(--accent);
       }
 
@@ -528,6 +636,15 @@
         overflow-wrap: anywhere;
       }
 
+      .chat-result-artifact {
+        display: block;
+        margin-top: 8px;
+        max-width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: var(--surface-alt);
+      }
+
       .chat-draft-editor {
         display: grid;
         gap: 8px;
@@ -564,6 +681,11 @@
         padding: 12px;
       }
 
+      .files-view {
+        display: grid;
+        gap: 12px;
+      }
+
       .artifact-upload-panel,
       .artifact-list-section {
         border: 1px solid var(--line);
@@ -588,6 +710,12 @@
         font-size: 0.85rem;
       }
 
+      .files-status {
+        margin: 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
       .artifact-upload-status.ready {
         color: var(--ready);
       }
@@ -601,6 +729,8 @@
         border-radius: 6px;
         padding: 10px;
         background: #ffffff;
+        display: grid;
+        gap: 8px;
       }
 
       .artifact-title {
@@ -629,7 +759,59 @@
         border: 1px solid var(--line);
         border-radius: 6px;
         padding: 8px;
+        color: var(--ink);
         background: var(--surface-alt);
+      }
+
+      .artifact-preview-placeholder,
+      .artifact-preview-midi,
+      .artifact-preview-musicxml,
+      .artifact-preview-zip,
+      .artifact-preview-download-only {
+        margin: 0;
+        border: 1px dashed var(--line);
+        border-radius: 6px;
+        padding: 10px;
+        color: var(--muted);
+        background: var(--surface-alt);
+      }
+
+      .artifact-midi-pianoroll {
+        display: block;
+        width: 100%;
+        max-width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        background: #ffffff;
+      }
+
+      .artifact-midi-play {
+        margin-top: 8px;
+      }
+
+      .artifact-zip-stem-name {
+        margin: 10px 0 4px;
+        color: var(--ink);
+        font-weight: 700;
+      }
+
+      .artifact-zip-stem-audio {
+        width: 100%;
+      }
+
+      .artifact-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .artifact-delete-button {
+        border: 1px solid rgba(164, 59, 59, 0.45);
+        border-radius: 6px;
+        padding: 8px 12px;
+        color: var(--danger);
+        background: #fff7f7;
       }
 
       @media (min-width: 1180px) {
@@ -661,13 +843,47 @@
           border-bottom: 1px solid var(--line);
         }
       }
+
+      @media (max-width: 520px) {
+        .app-landing-card {
+          padding: 26px 20px;
+        }
+
+        .app-brand {
+          grid-template-columns: auto minmax(0, 1fr);
+          width: 100%;
+        }
+
+        .app-brand.landing-brand {
+          width: auto;
+        }
+
+        .app-actions,
+        .app-tabs,
+        .operator-ribbon {
+          width: 100%;
+        }
+
+        .app-action-button,
+        .app-tab,
+        .operator-link,
+        .app-status {
+          width: 100%;
+          justify-content: center;
+        }
+      }
     </style>
   </head>
   <body class="auth-unknown">
     <div class="app-landing">
       <div class="app-landing-card">
-        <h1>Infernix</h1>
-        <p class="app-landing-subtitle">Durable-context inference console</p>
+        <div class="app-brand landing-brand">
+          <span class="app-brand-mark" aria-hidden="true">Ix</span>
+          <div class="app-brand-copy">
+            <h1>Infernix</h1>
+            <p class="app-landing-subtitle">Durable-context inference console</p>
+          </div>
+        </div>
         <div class="app-landing-actions">
           <button id="login-button" class="app-action-button primary" type="button">Sign in</button>
           <button id="register-button" class="app-action-button" type="button">Create account</button>
@@ -678,7 +894,13 @@
       <header class="app-header">
         <div class="app-header-inner">
           <div class="app-title-row">
-            <h1>Infernix</h1>
+            <div class="app-brand header-brand">
+              <span class="app-brand-mark" aria-hidden="true">Ix</span>
+              <div class="app-brand-copy">
+                <h1>Infernix</h1>
+                <span class="app-brand-tagline">Durable-context inference console</span>
+              </div>
+            </div>
             <div class="app-actions">
               <button id="logout-button" class="app-action-button" type="button">Sign out</button>
               <button id="delete-account-button" class="app-action-button danger" type="button">Delete account</button>
