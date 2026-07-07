@@ -106,6 +106,7 @@ DEVELOPMENT_PLAN/
 ├── phase-6-validation-e2e-and-ha-hardening.md
 ├── phase-7-demo-app-durable-context.md
 ├── phase-8-zero-tracked-dhall-config-and-eager-model-cache.md
+├── phase-9-access-control-and-monitoring.md
 └── legacy-tracking-for-deletion.md
 ```
 

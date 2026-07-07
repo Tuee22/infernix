@@ -229,10 +229,16 @@ Anonymous visitors to the routed demo see only the auth-gated landing card with 
 and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and manual-inference
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
 registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
-Keycloak image remains unchanged. When the demo surface is enabled, the app shell also exposes an
-operator console ribbon for Harbor and Pulsar Admin; Envoy Gateway validates the same
-Keycloak JWT on `/harbor` and `/pulsar/admin` through a cookie written by the SPA or
-a direct bearer token header. MinIO has no external gateway route — the webapp `/api/objects` proxy
+Keycloak image remains unchanged. When the demo surface is enabled, the app shell exposes an
+operator console ribbon for Harbor and Pulsar Admin **only to admins** (Phase 9): the cluster-wide
+operator consoles and monitoring are gated to the `infernix-admin` Keycloak realm role, while ordinary
+and self-registered users see only their own data (chat, artifacts, files, and a personal dashboard).
+Envoy Gateway both validates the Keycloak JWT and admin-authorizes the `infernix-admin` realm role on
+`/harbor`, `/harbor/api`, `/pulsar/admin`, and `/pulsar/ws` — through a cookie written by the SPA or a
+direct bearer token header — and the SPA hides the ribbon from non-admins. The Apple host-worker
+loopback data plane (MinIO / Pulsar-proxy NodePorts on `127.0.0.1`) is trust-boundary-internal and
+never transits this admin-gated edge; see
+[documents/architecture/access_control_doctrine.md](documents/architecture/access_control_doctrine.md). MinIO has no external gateway route — the webapp `/api/objects` proxy
 is its only browser-facing surface. The signed-in shell also offers `Delete account`, which first calls
 `DELETE /api/account` to synchronously remove the caller's `infernix-demo-objects` prefix and
 demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
@@ -683,6 +689,7 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]`
 - `infernix internal materialize-metal-engines`
 - `infernix internal materialize-linux-native-engines`
+- `infernix internal dhall-schema host|cluster|secrets|substrate`
 - `infernix internal demo-config {load,validate}`
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT`
 
@@ -714,8 +721,8 @@ not a parallel lifecycle surface.
   wrappers over image-baked native payloads for llama.cpp, whisper.cpp, ONNX Runtime/Basic Pitch,
   CTranslate2/faster-whisper, and Audiveris app jars plus an image-architecture Temurin 25 JRE.
   Strict image smoke checks validate payload presence, imports, and command wiring, including the
-  native Java Audiveris classpath launch, while full routed MinIO-backed real-output evidence
-  remains tracked by Wave I
+  native Java Audiveris classpath launch; full routed MinIO-backed real-output evidence
+  was proven by Wave I (closed 2026-06-20) and re-validated by Waves K/L/P
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -900,17 +907,17 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | LLM (general text) | HF safetensors | SmolLM2-135M-Instruct | https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct | Transformers + PyTorch CPU | vLLM | Transformers + PyTorch MPS | Small real safetensors checkpoint for constrained CPU and Apple lanes |
 | LLM (quantized, CUDA-focused) | AWQ | Qwen2.5-1.5B-Instruct-AWQ | https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-AWQ | Not recommended | vLLM | Not recommended | GPU-oriented quantized checkpoint |
 | LLM (quantized, CUDA-focused) | GPTQ | TinyLlama-1.1B-Chat-v1.0-GPTQ | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ | Not recommended | vLLM | Not recommended | Older but useful quantized checkpoint family |
-| LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path |
+| LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path. The CUDA column currently runs the CPU llama.cpp Ubuntu binary; CUDA-enabled binaries are pending Phase 4 Sprint 4.25 |
 | LLM (Apple-native) | MLX | Qwen1.5-1.8B-Chat-4bit (MLX) | https://huggingface.co/mlx-community/Qwen1.5-1.8B-Chat-4bit | Not recommended | Not recommended | MLX / MLX-LM | Apple-native converted artifact family |
-| Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path |
+| Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path. The CUDA column currently runs the CPU whisper.cpp binary; a CUDA build is pending Phase 4 Sprint 4.25 |
 | Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | CTranslate2 (CPU) | Viable Apple CPU path; CUDA remains the throughput-oriented lane |
 | Source separation | PyTorch checkpoint | htdemucs | https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
 | Source separation | PyTorch checkpoint | Open-Unmix | https://zenodo.org/records/3370489 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
-| Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact |
+| Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime CUDA | ONNX Runtime | Useful portable fallback artifact. The CUDA lane currently runs the CPU ONNX provider; `CUDAExecutionProvider` + `onnxruntime-gpu` are pending Phase 4 Sprint 4.25 |
 | Multi-instrument music transcription | PyTorch checkpoint | MT3-PyTorch | https://github.com/kunato/mt3-pytorch/tree/master/pretrained | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MT3-PyTorch row; Apple uses the CPU path until upstream MPS support is validated |
 | Multi-instrument music transcription | PyTorch checkpoint | MR-MT3 | https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MR-MT3 row; Apple uses the CPU path until upstream MPS support is validated |
-| Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed code-side, real-output pending the cohort gate |
+| Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed and wired on the pytorch adapter, real-output evidence pending the cohort gate (Wave Q) |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion Core ML v1.5 palettized | https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized | Not recommended | Not recommended | Core ML | Apple-native exported Core ML path using preconverted Hugging Face packages |
 | Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; Apple MPS video diffusion is not promoted until validated |

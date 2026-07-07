@@ -162,10 +162,14 @@ realm import, and the post-rollout Keycloak admin reconcile preserves
 `loginTheme = infernix` alongside the realm flags and SPA client settings.
 
 The signed-in shell writes the current Keycloak access token to the
-`infernix_operator_token` same-origin cookie. Envoy Gateway validates that cookie (or a direct
-`Authorization: Bearer ...` header) before forwarding browser traffic to `/harbor` or
-`/pulsar/admin`, so the operator ribbon can link to those route prefixes without
-making them anonymous. There is no `/minio/s3` route (Phase 3 Sprint 3.13).
+`infernix_operator_token` same-origin cookie. The operator ribbon is **admin-only** (Phase 9): the SPA
+shows it only when the token carries the `infernix-admin` realm role, and Envoy Gateway both validates
+that cookie (or a direct `Authorization: Bearer ...` header) **and** requires the `infernix-admin` role
+before forwarding browser traffic to `/harbor`, `/harbor/api`, `/pulsar/admin`, or `/pulsar/ws` — a
+non-admin token is rejected with HTTP 403. Non-admin users get chat / artifacts / files and a personal
+dashboard scoped to their own `sub`; the admin cluster-wide panel is the Phase 9 monitoring surface.
+There is no `/minio/s3` route (Phase 3 Sprint 3.13). See
+[access_control_doctrine.md](access_control_doctrine.md).
 
 The signed-in shell also exposes `Delete account`. That command confirms in the browser, calls
 `DELETE /api/account` with the in-memory bearer token, and only starts Keycloak's
@@ -201,8 +205,8 @@ to these concrete routes:
   the bytes server-side and the browser never receives a presigned MinIO URL.
   Per-user isolation holds at one server-side choke point (`pathBelongsToUser`
   on the verified `sub`). The `linux-cpu` plus chosen-accelerator real per-user
-  attestation is the remaining
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+  attestation was closed by
+  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
 - **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The backend
   validates the JWT, derives `userId = sub`, removes
   `infernix-demo-objects/users/<userId>/`, deletes the user's demo Pulsar topics, and returns a
@@ -304,7 +308,7 @@ PureScript contract module and the same WS envelope.
 **Current Status.** The SPA ships Chat, Artifacts (webapp-mediated transport, Phase 7 Sprint 7.25),
 the per-user Files view (Phase 7 Sprint 7.26), and the Model picker. Phase 3 Sprint 3.13 removed the
 `/minio/s3` browser-direct path. The `linux-cpu` plus chosen-accelerator real per-user attestation
-is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+was closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
 
 All views are renderers. They apply patches mechanically and render.
 They call no business-rule code. User actions produce typed
@@ -365,7 +369,7 @@ route). `POST /api/objects/upload` carries the bytes and returns an `ArtifactUpl
 canonical `ObjectRef` (no URL); `POST /api/objects/download` returns an `ArtifactDownloadGrant` with
 the render disposition (no URL); `GET /api/objects/download` streams the bytes server-side. The
 browser never receives a presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
-attestation is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+attestation was closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
 
 ## Gating
 

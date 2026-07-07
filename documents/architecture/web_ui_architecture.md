@@ -88,19 +88,25 @@ the themed login and registration titles so theme fallback is visible in the aut
 
 ## Operator Console Ribbon
 
-The authenticated app shell includes an operator ribbon with links to the always-published
-operator route family:
+The authenticated app shell includes an operator ribbon with links to the cluster-wide operator
+route family — but it is **admin-only** (Phase 9):
 
 - `Harbor` -> `/harbor`
 - `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
 
-The ribbon is part of `.app-shell`, so the existing auth gate hides it before login. The browser
-auth module writes the Keycloak access token into the same-origin `infernix_operator_token` cookie
-when login or refresh succeeds and clears it on logout. Envoy Gateway's
-`SecurityPolicy/infernix-operator-routes-jwt` validates that cookie, or an explicit
-`Authorization: Bearer ...` header, before forwarding `/harbor` or `/pulsar/admin`
-to their upstream services. The same cookie authenticates browser-issued media `src` GETs against
-the webapp `/api/objects/download` proxy.
+The ribbon is part of `.app-shell`, so the auth gate hides it before login; after login it is shown
+**only to admins**. `web/src/index.html` decodes the `infernix_operator_token` cookie and marks
+`<html>.infernix-admin` when the token carries the `infernix-admin` realm role, and CSS hides the
+ribbon for everyone else. The browser auth module writes the Keycloak access token into the
+same-origin `infernix_operator_token` cookie when login or refresh succeeds and clears it on logout.
+Envoy Gateway's `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
+admin-authorizes**: it validates that cookie (or an explicit `Authorization: Bearer ...` header) and
+then requires the `infernix-admin` realm role before forwarding `/harbor`, `/harbor/api`,
+`/pulsar/admin`, or `/pulsar/ws` to their upstream services — so a non-admin token is rejected at the
+edge (403) regardless of the ribbon. The same cookie authenticates browser-issued media `src` GETs
+against the webapp `/api/objects/download` proxy. Non-admin users get chat / artifacts / files and a
+personal dashboard scoped to their own `sub`; the admin cluster-wide panel and `/api/admin/overview`
+are the Phase 9 monitoring surface. See [access_control_doctrine.md](access_control_doctrine.md).
 
 There is no `MinIO S3` ribbon link: Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route.
 End-user artifact upload, download, and preview flow through the webapp's `/api/objects` endpoints,

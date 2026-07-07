@@ -210,6 +210,25 @@ WebSocket-delivered `ConversationStatePatch` deltas rather than a direct HTTP re
 cycle. Production deployments leave `demo_ui = false`, the Phase 7 demo surface is absent, and the
 production coordinator plus engine pools remain present.
 
+Phase 9 adds role-based access control and monitoring on top of the demo. Per-user object and chat
+isolation (Phase 7) is unchanged; Phase 9 adds the orthogonal admin-vs-user dimension: only members
+of the `infernix-admin` Keycloak realm role reach the cluster-wide operator consoles (Harbor, Pulsar
+Admin) and cluster-wide monitoring, while every other authenticated user — including self-registered
+users — sees only their own data (chat, artifacts, files, and a personal dashboard). Enforcement is
+at the Envoy edge `SecurityPolicy` (admin authorization on all four operator routes, gateway NodePort
+30090) and the backend (`withAdminRequest` on `GET /api/cache`, `/api/cache/{evict,rebuild}`, and the
+`GET /api/admin/overview` cluster-wide monitoring endpoint); the Apple host-worker loopback data plane
+(MinIO NodePort 30011, Pulsar-proxy NodePort 30080, `127.0.0.1`) is trust-boundary-internal, never
+transits the admin-gated edge, and its loopback binding is enforced by `infernix lint chart` plus a
+generated-Kind-config unit assertion. Per-user object isolation additionally gains a MinIO STS
+defense-in-depth layer (a scoped credential keyed to `users/<sub>/`, gated by
+`cluster.minio.stsPerUser`). Phase 9 is code-side closed (2026-07-06, machine-independent gates green)
+with the [Wave Q](cohort-validation-waves.md) single-accelerator cohort proof pending. The doctrine
+lives at
+[../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md);
+the execution-ordered buildout lives at
+[phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md).
+
 ## Supported Outcome
 
 `infernix` targets these rules:

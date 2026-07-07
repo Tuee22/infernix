@@ -872,6 +872,70 @@
           justify-content: center;
         }
       }
+      /* Phase 9: cluster-wide surfaces are admin-only. The operator consoles
+         (Harbor, Pulsar Admin), the five infrastructure/topology summary cells
+         (.summary-item.cluster-summary), and the cluster monitoring panel
+         (#admin-panel) are hidden for every non-admin (and pre-login, where
+         .app-shell is already hidden); they appear only once the admin-detection
+         script marks <html> with .infernix-admin. The per-user personal
+         dashboard, the Catalog and Connection cells stay visible to every
+         authenticated user. The edge SecurityPolicy + backend admin gate are the
+         real gates — this CSS only hides links so non-admins never see
+         cluster-wide surfaces. */
+      html:not(.infernix-admin) .operator-ribbon,
+      html:not(.infernix-admin) .summary-item.cluster-summary,
+      html:not(.infernix-admin) #admin-panel {
+        display: none !important;
+      }
+      /* Phase 9 Sprints 9.5/9.6: the admin monitoring panel and the per-user
+         personal dashboard cards. */
+      .dashboard-panel {
+        margin-top: 16px;
+        padding: 16px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 12px;
+        background: rgba(148, 163, 184, 0.06);
+      }
+      .dashboard-panel-head {
+        display: flex;
+        align-items: baseline;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+      }
+      .dashboard-panel-head h2 {
+        font-size: 1rem;
+        margin: 0;
+      }
+      .dashboard-status {
+        font-size: 0.8rem;
+        opacity: 0.7;
+      }
+      .dashboard-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+        gap: 12px;
+      }
+      .dashboard-metric {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .dashboard-list {
+        margin: 12px 0 0;
+        padding-left: 18px;
+        max-height: 160px;
+        overflow-y: auto;
+      }
+      .dashboard-list li {
+        font-size: 0.85rem;
+        opacity: 0.85;
+      }
+      .dashboard-note {
+        margin: 12px 0 0;
+        font-size: 0.78rem;
+        opacity: 0.6;
+      }
     </style>
   </head>
   <body class="auth-unknown">
@@ -916,24 +980,28 @@
             <a class="operator-link" data-operator-route="/harbor" href="/harbor" target="_blank" rel="noreferrer">Harbor</a>
             <a class="operator-link" data-operator-route="/pulsar/admin" href="/pulsar/admin/admin/v2/clusters" target="_blank" rel="noreferrer">Pulsar Admin</a>
           </nav>
+          <!-- Phase 9: the five infrastructure/topology cells are cluster-wide
+               platform data (.summary-item.cluster-summary) and are hidden from
+               non-admins. Catalog (models available) and Connection (the user's
+               own auth state) stay visible to every authenticated user. -->
           <div class="summary-grid">
-            <div class="summary-item">
+            <div class="summary-item cluster-summary">
               <span class="summary-label">Runtime</span>
               <strong id="runtime-mode" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item">
+            <div class="summary-item cluster-summary">
               <span class="summary-label">Control Plane</span>
               <strong id="control-plane-context" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item">
+            <div class="summary-item cluster-summary">
               <span class="summary-label">Daemon</span>
               <strong id="daemon-location" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item">
+            <div class="summary-item cluster-summary">
               <span class="summary-label">Dispatch</span>
               <strong id="inference-dispatch-mode" class="summary-value">loading</strong>
             </div>
-            <div class="summary-item">
+            <div class="summary-item cluster-summary">
               <span class="summary-label">Edge</span>
               <strong id="edge-port" class="summary-value">loading</strong>
             </div>
@@ -946,6 +1014,47 @@
               <strong id="connection-state" class="summary-value">loading</strong>
             </div>
           </div>
+          <!-- Phase 9 Sprint 9.6: every authenticated user gets a personal
+               dashboard scoped strictly to their own data (own stored objects /
+               artifacts). Disjoint per user by construction — the backend
+               /api/objects/list derives the users/<sub>/ scope from the caller's
+               verified Keycloak subject; no cluster-wide data appears here. -->
+          <section id="personal-dashboard" class="dashboard-panel" aria-label="Your workspace">
+            <div class="dashboard-panel-head">
+              <h2>Your workspace</h2>
+              <span id="personal-dashboard-status" class="dashboard-status">loading…</span>
+            </div>
+            <div class="dashboard-metrics">
+              <div class="dashboard-metric">
+                <span class="summary-label">Your objects</span>
+                <strong id="personal-object-count" class="summary-value">–</strong>
+              </div>
+            </div>
+            <ul id="personal-object-list" class="dashboard-list"></ul>
+            <p class="dashboard-note">Scoped strictly to your account — no other user's data is shown.</p>
+          </section>
+          <!-- Phase 9 Sprint 9.5: the admin-only cluster-wide monitoring panel
+               (#admin-panel, hidden from non-admins). It reads the admin-gated
+               /api/admin/overview endpoint (real substrate / dispatch / catalog /
+               engine-pool / model-cache / all-user aggregates). The edge
+               SecurityPolicy + backend admin gate are the real gates. -->
+          <section id="admin-panel" class="dashboard-panel admin-panel" aria-label="Cluster-wide monitoring">
+            <div class="dashboard-panel-head">
+              <h2>Cluster monitoring</h2>
+              <span id="admin-panel-status" class="dashboard-status">loading…</span>
+            </div>
+            <div class="dashboard-metrics">
+              <div class="dashboard-metric"><span class="summary-label">Substrate</span><strong id="admin-substrate" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Dispatch</span><strong id="admin-dispatch" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Catalog</span><strong id="admin-catalog-count" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Engines</span><strong id="admin-engine-count" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Engine pools</span><strong id="admin-pool-count" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Engine members</span><strong id="admin-member-count" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Model cache</span><strong id="admin-cache-count" class="summary-value">–</strong></div>
+              <div class="dashboard-metric"><span class="summary-label">Users w/ objects</span><strong id="admin-user-count" class="summary-value">–</strong></div>
+            </div>
+            <p class="dashboard-note">Cluster-wide — visible to administrators only.</p>
+          </section>
         </div>
       </header>
       <main class="app-main">
@@ -961,5 +1070,153 @@
       </main>
     </div>
     <script type="module" src="./app.js"></script>
+    <script>
+      // Phase 9 admin gating (cosmetic; the edge SecurityPolicy is the real
+      // gate). Decode the operator cookie's JWT and mark <html> with
+      // .infernix-admin when it carries the infernix-admin realm role, so the
+      // operator ribbon (Harbor, Pulsar Admin) is shown only to admins. This
+      // reads the same infernix_operator_token cookie the edge validates; the
+      // cookie is written asynchronously after login and cleared on logout, so
+      // re-check on an interval and on focus/visibility. <html> is used (not
+      // <body>) because the app rewrites the body class on every render.
+      (function () {
+        var ADMIN_ROLE = "infernix-admin";
+        var COOKIE = "infernix_operator_token";
+        function readCookie(name) {
+          return (
+            document.cookie
+              .split(";")
+              .map(function (part) { return part.trim(); })
+              .filter(function (part) { return part.indexOf(name + "=") === 0; })
+              .map(function (part) { return part.slice(name.length + 1); })[0] || ""
+          );
+        }
+        function base64UrlDecode(segment) {
+          var padded = segment.replace(/-/g, "+").replace(/_/g, "/");
+          while (padded.length % 4) padded += "=";
+          try { return atob(padded); } catch (error) { return ""; }
+        }
+        function tokenHasAdminRole(token) {
+          if (!token) return false;
+          var parts = token.split(".");
+          if (parts.length < 2) return false;
+          try {
+            var payload = JSON.parse(base64UrlDecode(parts[1]));
+            var access = payload.realm_access || {};
+            var roles = access.roles || [];
+            return Array.isArray(roles) && roles.indexOf(ADMIN_ROLE) !== -1;
+          } catch (error) {
+            return false;
+          }
+        }
+        function apply() {
+          document.documentElement.classList.toggle(
+            "infernix-admin",
+            tokenHasAdminRole(readCookie(COOKIE))
+          );
+        }
+        apply();
+        setInterval(apply, 1000);
+        document.addEventListener("visibilitychange", apply);
+        window.addEventListener("focus", apply);
+      })();
+    </script>
+    <script>
+      // Phase 9 Sprints 9.5/9.6 dashboard data (real endpoints; the edge
+      // SecurityPolicy + backend admin gate are the real access gates). The
+      // per-user personal dashboard reads /api/objects/list (scoped server-side
+      // to the caller's users/<sub>/ prefix). The admin monitoring panel reads
+      // the admin-gated /api/admin/overview. Both authenticate with the same
+      // access token the app stores after login (the infernix_operator_token
+      // cookie, falling back to window.__infernixAccessToken).
+      (function () {
+        var COOKIE = "infernix_operator_token";
+        function readCookie(name) {
+          return (
+            document.cookie
+              .split(";")
+              .map(function (part) { return part.trim(); })
+              .filter(function (part) { return part.indexOf(name + "=") === 0; })
+              .map(function (part) { return part.slice(name.length + 1); })[0] || ""
+          );
+        }
+        function authHeaders() {
+          var token = readCookie(COOKIE) || window.__infernixAccessToken || "";
+          return token ? { Authorization: "Bearer " + token } : null;
+        }
+        function signedIn() {
+          return document.body.classList.contains("auth-signed-in");
+        }
+        function isAdmin() {
+          return document.documentElement.classList.contains("infernix-admin");
+        }
+        function setText(id, value) {
+          var el = document.getElementById(id);
+          if (el) el.textContent = value;
+        }
+        function fmt(n) {
+          return n === null || n === undefined ? "–" : String(n);
+        }
+        function refreshPersonalDashboard() {
+          var headers = authHeaders();
+          if (!signedIn() || !headers) return;
+          setText("personal-dashboard-status", "refreshing…");
+          fetch("/api/objects/list", { headers: headers })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function (objects) {
+              var list = Array.isArray(objects) ? objects : [];
+              setText("personal-object-count", String(list.length));
+              var ul = document.getElementById("personal-object-list");
+              if (ul) {
+                ul.innerHTML = "";
+                list.slice(0, 20).forEach(function (obj) {
+                  var li = document.createElement("li");
+                  var key = (obj && obj.objectKey) || "";
+                  li.textContent = key.split("/").slice(-1)[0] || key;
+                  ul.appendChild(li);
+                });
+              }
+              setText("personal-dashboard-status", "up to date");
+            })
+            .catch(function (status) {
+              setText("personal-dashboard-status", "unavailable (" + status + ")");
+            });
+        }
+        function refreshAdminPanel() {
+          var headers = authHeaders();
+          if (!signedIn() || !isAdmin() || !headers) return;
+          setText("admin-panel-status", "refreshing…");
+          fetch("/api/admin/overview", { headers: headers })
+            .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+            .then(function (o) {
+              setText("admin-substrate", o.substrate || o.runtimeMode || "–");
+              setText("admin-dispatch", o.dispatchMode || "–");
+              setText("admin-catalog-count", fmt(o.catalogModelCount));
+              setText("admin-engine-count", fmt(o.engineBindingCount));
+              setText("admin-pool-count", fmt(o.enginePoolCount));
+              setText("admin-member-count", fmt(o.engineMemberCount));
+              setText("admin-cache-count", fmt(o.modelCacheEntryCount));
+              setText(
+                "admin-user-count",
+                o.usersWithObjects === null || o.usersWithObjects === undefined
+                  ? "n/a"
+                  : String(o.usersWithObjects)
+              );
+              setText("admin-panel-status", "up to date");
+            })
+            .catch(function (status) {
+              setText("admin-panel-status", "unavailable (" + status + ")");
+            });
+        }
+        function refreshAll() {
+          refreshPersonalDashboard();
+          refreshAdminPanel();
+        }
+        refreshAll();
+        setInterval(refreshAll, 15000);
+        document.addEventListener("visibilitychange", refreshAll);
+        window.addEventListener("focus", refreshAll);
+      })();
+    </script>
   </body>
 </html>

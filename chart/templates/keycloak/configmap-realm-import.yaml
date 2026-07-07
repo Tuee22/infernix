@@ -67,7 +67,50 @@ data:
                 "access.token.claim": "true",
                 "introspection.token.claim": "true"
               }
+            },
+            {
+              "name": "infernix-realm-roles",
+              "protocol": "openid-connect",
+              "protocolMapper": "oidc-usermodel-realm-role-mapper",
+              "consentRequired": false,
+              "config": {
+                "multivalued": "true",
+                "userinfo.token.claim": "false",
+                "id.token.claim": "false",
+                "access.token.claim": "true",
+                "claim.name": "realm_access.roles",
+                "jsonType.label": "String"
+              }
             }
+          ]
+        }
+      ],
+      "roles": {
+        "realm": [
+          {
+            "name": "{{ .Values.keycloak.realm.adminRealmRole }}",
+            "description": "Infernix cluster-wide admin: operator consoles + monitoring"
+          }
+        ]
+      },
+      "users": [
+        {
+          "username": "{{ .Values.keycloak.realm.demoAdmin.username }}",
+          "enabled": true,
+          "emailVerified": true,
+          "email": "{{ .Values.keycloak.realm.demoAdmin.username }}@infernix.invalid",
+          "firstName": "Infernix",
+          "lastName": "Admin",
+          "requiredActions": [],
+          "credentials": [
+            {
+              "type": "password",
+              "value": "{{ .Values.keycloak.realm.demoAdmin.password }}",
+              "temporary": false
+            }
+          ],
+          "realmRoles": [
+            "{{ .Values.keycloak.realm.adminRealmRole }}"
           ]
         }
       ]

@@ -23,9 +23,11 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `GET /api/models/:modelId` returns model metadata, selected engine, and request-shape
   information
 - `GET /api/demo-config` returns the serialized generated demo config for the active runtime mode
-- `GET /api/cache` returns manifest-backed cache status for the active runtime mode
-- `POST /api/cache/evict` removes derived cache directories while retaining the durable manifest
-- `POST /api/cache/rebuild` rebuilds derived cache directories from the durable manifest set
+- `GET /api/cache` (**admin-only**, Phase 9 Sprint 9.3) returns manifest-backed cache status for the active runtime mode
+- `POST /api/cache/evict` (**admin-only**, Phase 9) removes derived cache directories while retaining the durable manifest
+- `POST /api/cache/rebuild` (**admin-only**, Phase 9) rebuilds derived cache directories from the durable manifest set
+- `GET /api/admin/overview` (**admin-only**, Phase 9) returns cluster-wide monitoring for the admin panel
+- `GET /api/cache`, `POST /api/cache/evict`, `POST /api/cache/rebuild`, and `GET /api/admin/overview` all require the `infernix-admin` realm role (`jwtClaimsHasRealmRole`, backend `withAdminRequest`): 401 without a token, 403 for a valid non-admin token, 2xx for an admin token. `GET /api/cache` was unauthenticated before Phase 9 Sprint 9.3 gated it. See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md)
 - the `/api/objects` family is the webapp object-proxy (Phase 7 Sprint 7.25): the browser
   uploads and downloads artifact **bytes** through the webapp, which reads and writes MinIO
   server-side over the cluster-internal endpoint. The browser never receives a presigned MinIO URL.

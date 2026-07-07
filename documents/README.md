@@ -23,7 +23,7 @@
   PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the
   product-agnostic durable-context primitives — event-sourced state, deterministic reducer
-  plus prefix-hash chain, single-flight dispatcher, compacted metadata projections, presigned
+  plus prefix-hash chain, single-flight dispatcher, compacted metadata projections, webapp-mediated
   object storage, JWKS-backed JWT, and stateless WebSocket coordination — reusable across
   future SPA-style apps built on the inference platform
 - [architecture/demo_app_design.md](architecture/demo_app_design.md) defines the demo-specific
@@ -38,6 +38,10 @@
   each authenticated user's MinIO objects and chat conversations are isolated: the Keycloak `sub` is
   the canonical identity, all namespacing is derived server-side from it, and a single server-side
   trust boundary (`pathBelongsToUser` / `topicBelongsToUser`) authorizes every operation
+- [architecture/access_control_doctrine.md](architecture/access_control_doctrine.md) defines the
+  role-based access-control contract: the cluster-wide admin vs. per-user split, the Keycloak
+  `infernix-admin` realm role and its enforcement at the browser edge and backend, and why the Apple
+  host-worker loopback data plane bypasses the admin-gated edge
 - [architecture/daemon_topology.md](architecture/daemon_topology.md) defines the supported
   three-role daemon model — stateless frontend, stateless coordinator, and substrate-specific
   engine pools — including HA replica policy, per-substrate placement, library footprint per role,
@@ -52,6 +56,8 @@
   and inference, the artifact + `.ready` readiness contract, the websocket snapshot/patch surface,
   the coordination primitives, and the forward-only-DAG + single-accelerator-per-phase phasing rules
 - [development/local_dev.md](development/local_dev.md) describes the supported local workflows
+- [development/no_env_vars.md](development/no_env_vars.md) defines the developer-facing rules for
+  writing Infernix code without consuming environment variables or PATH
 - [development/assistant_workflow.md](development/assistant_workflow.md) defines the canonical
   repository-level workflow rules for automated agents and LLM coding assistants
 - [development/haskell_style.md](development/haskell_style.md) defines the enforced Haskell
@@ -73,6 +79,10 @@
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
 - [engineering/build_artifacts.md](engineering/build_artifacts.md) defines build-output isolation
+- [engineering/host_tools_manifest.md](engineering/host_tools_manifest.md) defines the host-manifest
+  record reflected from the `Infernix.HostConfig` decoder types
+- [engineering/cluster_config_manifest.md](engineering/cluster_config_manifest.md) defines the
+  cluster-config record reflected from the `Infernix.ClusterConfig` decoder types
 - [engineering/apple_silicon_metal_headless_builds.md](engineering/apple_silicon_metal_headless_builds.md)
   defines the Tart-free Apple Metal/Core ML materialization target and engine-artifact manifest
   contract

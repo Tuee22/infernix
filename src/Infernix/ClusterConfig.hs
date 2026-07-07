@@ -89,7 +89,14 @@ data MinioWiring = MinioWiring
     minioRegion :: Text,
     minioPresignExpirySeconds :: Natural,
     minioModelsBucket :: Text,
-    minioDemoArtifactsBucket :: Text
+    minioDemoArtifactsBucket :: Text,
+    -- | Phase 9 Sprint 9.7: when 'True', the webapp object-proxy exchanges the
+    -- shared root credential for a per-user MinIO STS credential scoped to the
+    -- caller's @users\/<sub>\/@ prefix before each per-user object operation
+    -- (defense-in-depth: the IAM layer denies cross-user access even if the
+    -- server-side path check were bypassed). 'False' keeps the root-credential
+    -- object path. The live cross-user IAM-denial proof is the Wave Q residual.
+    minioStsPerUser :: Bool
   }
   deriving (Eq, Show, Generic)
 
@@ -105,6 +112,7 @@ minioFieldOptions =
         "minioPresignExpirySeconds" -> "presignExpirySeconds"
         "minioModelsBucket" -> "modelsBucket"
         "minioDemoArtifactsBucket" -> "demoArtifactsBucket"
+        "minioStsPerUser" -> "stsPerUser"
         other -> other
     }
 
@@ -300,7 +308,14 @@ defaultMinioWiring =
       minioRegion = "us-east-1",
       minioPresignExpirySeconds = 900,
       minioModelsBucket = "infernix-models",
-      minioDemoArtifactsBucket = "infernix-demo-objects"
+      minioDemoArtifactsBucket = "infernix-demo-objects",
+      -- Phase 9 Sprint 9.7: default ON. Wave Q (apple-silicon) proved the
+      -- per-user MinIO STS AssumeRole scoped-credential object path works
+      -- end-to-end against the chart's MinIO (upload/list/download succeed via
+      -- the scoped credential; cross-user access is denied), so the shared root
+      -- credential is no longer the sole isolation boundary by default. The
+      -- object-proxy still enforces `pathBelongsToUser` as the first-line gate.
+      minioStsPerUser = True
     }
 
 defaultKeycloakWiring :: KeycloakWiring
@@ -390,6 +405,8 @@ renderMinioWiring value =
     <> dhallText (minioModelsBucket value)
     <> ", demoArtifactsBucket = "
     <> dhallText (minioDemoArtifactsBucket value)
+    <> ", stsPerUser = "
+    <> dhallBool (minioStsPerUser value)
     <> " }"
 
 renderKeycloakWiring :: KeycloakWiring -> String
@@ -454,6 +471,10 @@ dhallList itemType renderItem values =
 
 dhallNatural :: Natural -> String
 dhallNatural = show
+
+dhallBool :: Bool -> String
+dhallBool True = "True"
+dhallBool False = "False"
 
 dhallText :: Text -> String
 dhallText value =

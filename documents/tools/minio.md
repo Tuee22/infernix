@@ -106,6 +106,32 @@ See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for
 storage contract and [../engineering/object_storage.md](../engineering/object_storage.md) for
 the presigned-URL contract.
 
+## Per-user STS scoping (Phase 9)
+
+As an IAM-layer defense-in-depth behind the server-side `pathBelongsToUser` check, the
+`infernix-demo` object-proxy can exchange the shared root MinIO credential for a short-lived,
+per-user scoped credential before each per-user object operation (upload/download/list/delete).
+
+- the exchange is a MinIO STS `AssumeRole` call served on MinIO's existing endpoint (no extra
+  chart resource), carrying an inline session policy that scopes the s3 object actions to
+  `arn:aws:s3:::infernix-demo-objects/users/<sub>/*` and constrains `ListBucket` with an
+  `s3:prefix` condition on the same `users/<sub>/` prefix, so the derived credential cannot touch
+  another user's objects even at the IAM layer
+- the machinery is `Infernix.Objects.Sts` (`userScopedPolicyDocument`, `signedStsAssumeRoleRequest`
+  — header-based SigV4 over the `sts` service — and `parseAssumeRoleCredentials`); the derived
+  session token threads through the signed S3 query as `X-Amz-Security-Token` via the optional
+  `presignedSessionToken` field on `Infernix.Objects.Presigned.PresignedUrlConfig`
+- gated by the cluster-config field `cluster.minio.stsPerUser : Bool` (**default `True`**); when
+  `True` the object-proxy uses the scoped credential, otherwise it uses the shared root credential
+- this is a **second** boundary: the server-side `pathBelongsToUser` check on the verified `sub`
+  remains the first-line gate, and STS ensures the shared root credential is no longer the sole
+  isolation. Wave Q (apple-silicon, 2026-07-07) proved the live path: with `stsPerUser = True` the
+  object upload / list / download succeed through the scoped credential against the chart's MinIO,
+  and cross-user access is denied.
+
+See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md) and
+[../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
+
 ## Image Inventory
 
 The supported MinIO deployment uses upstream multi-arch images. `bitnamilegacy/*` is not part

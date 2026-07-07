@@ -28,6 +28,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, newIORef, readIORef, writeIORef)
+import Data.List (nub)
 import Data.Maybe (fromMaybe, listToMaybe)
 import Data.String (fromString)
 import Data.Text (Text)
@@ -73,6 +74,7 @@ import Infernix.Objects.Presigned
     presignedBucketUrlWithQuery,
     presignedUrlForRequest,
   )
+import Infernix.Objects.Sts qualified as Sts
 import Infernix.Runtime
   ( evictCache,
     listCacheManifests,
@@ -104,6 +106,7 @@ import Network.HTTP.Client
     responseTimeout,
     responseTimeoutMicro,
   )
+import Network.HTTP.Client qualified as HttpClient
 import Network.HTTP.Types
   ( Status,
     hAuthorization,
@@ -239,7 +242,8 @@ loadBucketRepairConfig clusterConfig = do
         presignedRegion = ClusterConfig.minioRegion minio,
         presignedAccessKeyId = SecretsConfig.minioAccessKey minioCreds,
         presignedSecretAccessKey = SecretsConfig.minioSecretKey minioCreds,
-        presignedExpirySeconds = 60
+        presignedExpirySeconds = 60,
+        presignedSessionToken = Nothing
       }
 
 ensureDemoBucketsWithRetry :: PresignedUrlConfig -> [Text] -> IO ()
@@ -337,13 +341,16 @@ application options jwksCache realmConfig maybeClusterConfig request respond = d
           serveModel options modelIdValue respond
     ["api", "cache"]
       | requestMethod request == methodGet && demoEnabled ->
-          serveCacheStatus options respond
+          withAdminRequest jwksCache realmConfig request respond (serveCacheStatus options respond)
     ["api", "cache", "evict"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleCacheMutation options request EvictCache respond
+          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options request EvictCache respond)
     ["api", "cache", "rebuild"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleCacheMutation options request RebuildCache respond
+          withAdminRequest jwksCache realmConfig request respond (handleCacheMutation options request RebuildCache respond)
+    ["api", "admin", "overview"]
+      | requestMethod request == methodGet && demoEnabled ->
+          handleAdminOverview options jwksCache realmConfig request respond
     ["api", "account"]
       | requestMethod request == methodDelete && demoEnabled ->
           handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond
@@ -492,6 +499,164 @@ validateBearerToken jwksCache realmConfig token = do
           Right claims ->
             Right (UserId (Jwt.jwtClaimSubject claims))
 
+-- | The Infernix cluster-wide admin realm role. Matches the chart default
+-- @keycloak.realm.adminRealmRole@; Keycloak emits it in @realm_access.roles@.
+infernixAdminRealmRole :: Text
+infernixAdminRealmRole = "infernix-admin"
+
+-- | Authenticate the caller AND require the admin realm role. Gates the
+-- cluster-wide model-cache mutations so ordinary or self-registered users
+-- (whose tokens carry no admin role) cannot mutate shared cluster state.
+-- Accepts the Authorization header or the operator cookie, like
+-- 'authenticateRequestUser'. Returns 401 without a token, 403 for a valid
+-- non-admin token.
+authenticateAdminRequest ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  IO (Either AuthFailure UserId)
+authenticateAdminRequest jwksCache realmConfig request =
+  case adminRequestToken of
+    Nothing -> pure (Left (AuthFailure status401 "missing bearer token"))
+    Just token -> do
+      jwksResult <- loadJwksCached jwksCache realmConfig
+      case jwksResult of
+        Left jwksError ->
+          pure (Left (AuthFailure status503 ("JWKS fetch failed: " <> jwksError)))
+        Right jwks -> do
+          now <- getCurrentTime
+          pure $
+            case verifyAndParseJwt (realmValidationConfig realmConfig) now jwks token of
+              Left jwtError ->
+                Left (AuthFailure status401 ("invalid JWT: " <> renderJwtError jwtError))
+              Right claims
+                | Jwt.jwtClaimsHasRealmRole infernixAdminRealmRole claims ->
+                    Right (UserId (Jwt.jwtClaimSubject claims))
+                | otherwise ->
+                    Left (AuthFailure status403 "admin realm role required")
+  where
+    adminRequestToken =
+      case extractBearerToken request of
+        Just token -> Just token
+        Nothing -> cookieBearerToken request
+
+-- | Run @action@ only if the caller carries the admin realm role; otherwise
+-- respond with the auth failure (401/403/503). Gates @\/api\/cache\/{evict,rebuild}@.
+withAdminRequest ::
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived ->
+  IO responseReceived
+withAdminRequest jwksCache realmConfig request respond action = do
+  authResult <- authenticateAdminRequest jwksCache realmConfig request
+  case authResult of
+    Left authFailure -> respondAuthFailure authFailure respond
+    Right _ -> action
+
+-- | @GET \/api\/admin\/overview@ — Phase 9 Sprint 9.5. The admin-only
+-- cluster-wide monitoring surface. Admin-gated ('withAdminRequest'), it
+-- aggregates only real, cluster-wide platform state the webapp already
+-- observes: the active substrate + dispatch mode, the generated catalog /
+-- engine-pool sizes, the coordinator-visible model-cache manifest count, and
+-- the number of distinct @users\/<sub>\/@ prefixes present in the demo-objects
+-- bucket (the all-user object footprint). Every field is derived, never
+-- fabricated; the user count is reported as @null@ with an explicit error
+-- string if MinIO cannot be listed. Non-admins never reach this endpoint.
+handleAdminOverview ::
+  DemoApiOptions ->
+  JwksCache ->
+  KeycloakRealmConfig ->
+  Request ->
+  (Response -> IO responseReceived) ->
+  IO responseReceived
+handleAdminOverview options jwksCache realmConfig request respond =
+  withAdminRequest jwksCache realmConfig request respond $ do
+    demoConfig <- decodeDemoConfigFile (demoConfigPath options)
+    let activeRuntimeMode = configRuntimeMode demoConfig
+    manifests <- listCacheManifests (demoPaths options) activeRuntimeMode
+    userCountResult <- countUsersWithObjects
+    let usersWithObjectsMaybe = either (const Nothing) Just userCountResult
+        usersWithObjectsErrorMaybe = either Just (const Nothing) userCountResult
+    respond
+      ( jsonResponse
+          status200
+          ( object
+              [ "runtimeMode" .= runtimeModeId activeRuntimeMode,
+                "substrate" .= runtimeModeId activeRuntimeMode,
+                "dispatchMode" .= bridgeModeLabel (demoBridgeMode options),
+                "demoUiEnabled" .= demoUiEnabled demoConfig,
+                "catalogModelCount" .= length (models demoConfig),
+                "engineBindingCount" .= length (engines demoConfig),
+                "engineNames" .= nub (map engineBindingName (engines demoConfig)),
+                "enginePoolCount" .= length (enginePools demoConfig),
+                "engineMemberCount" .= length (engineMembers demoConfig),
+                "modelCacheEntryCount" .= length manifests,
+                "usersWithObjects" .= (usersWithObjectsMaybe :: Maybe Int),
+                "usersWithObjectsError" .= (usersWithObjectsErrorMaybe :: Maybe String)
+              ]
+          )
+      )
+
+-- | The dispatch-mode label the admin overview reports for the active demo
+-- bridge posture.
+bridgeModeLabel :: DemoBridgeMode -> Text
+bridgeModeLabel DirectDemoInference = "direct"
+bridgeModeLabel PulsarDaemonBridge = "pulsar"
+
+-- | Count the distinct @users\/<sub>\/@ prefixes present in the demo-objects
+-- bucket. This is the real all-user footprint the admin overview surfaces
+-- (users who have stored at least one object). Returns @Left@ with a diagnostic
+-- when the object-storage config is missing or MinIO cannot be listed, so the
+-- overview reports the count honestly instead of fabricating one.
+countUsersWithObjects :: IO (Either String Int)
+countUsersWithObjects = do
+  presignedResult <- loadInternalMinioPresignedConfig
+  case presignedResult of
+    Left configError -> pure (Left configError)
+    Right presigned -> do
+      attempt <- try @SomeException (listMinioUserObjectPrefixes presigned)
+      case attempt of
+        Left err -> pure (Left (show err))
+        Right prefixes -> pure (Right (length prefixes))
+
+-- | List the distinct top-level @users\/<sub>\/@ common prefixes in the
+-- demo-objects bucket via a delimited MinIO ListObjectsV2. Each prefix is one
+-- user with stored objects.
+listMinioUserObjectPrefixes :: PresignedUrlConfig -> IO [Text]
+listMinioUserObjectPrefixes config = do
+  manager <- newManager defaultManagerSettings
+  now <- getCurrentTime
+  let DemoObjectsBucket bucket = defaultDemoObjectsBucket
+      signed =
+        presignedBucketUrlWithQuery
+          config
+          PresignedBucketRequest
+            { presignedBucketRequestMethod = HttpGet,
+              presignedBucketRequestBucket = bucket,
+              presignedBucketRequestNow = now
+            }
+          [ ("list-type", "2"),
+            ("prefix", "users/"),
+            ("delimiter", "/")
+          ]
+  requestValue <- parseRequest (Text.unpack (unPresignedUrl signed))
+  response <-
+    httpLbs
+      (requestValue {responseTimeout = responseTimeoutMicro 5000000})
+      manager
+  case statusCode (responseStatus response) of
+    200 ->
+      let bodyText = TextEncoding.decodeUtf8 (LazyByteString.toStrict (responseBody response))
+       in pure (nub (extractXmlTagValues "Prefix" bodyText))
+    404 -> pure []
+    code ->
+      ioError
+        ( userError
+            ("MinIO ListObjectsV2 for user prefixes returned HTTP " <> show code)
+        )
+
 -- | The operator-console cookie the SPA writes after login
 -- (chart values @operatorConsole.jwtGating.cookieName@; the Keycloak edge
 -- SecurityPolicy reads the same cookie for operator routes).
@@ -539,7 +704,7 @@ handleObjectsUpload jwksCache realmConfig request respond = do
           if not (pathBelongsToUser userId (objectKey objectReference))
             then respond (textResponse status403 "object key is outside the caller's scope")
             else do
-              presignedResult <- loadInternalMinioPresignedConfig
+              presignedResult <- loadUserScopedMinioPresignedConfig userId
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
@@ -629,7 +794,7 @@ handleObjectsDownloadBytes jwksCache realmConfig request respond = do
           if not (pathBelongsToUser userId keyValue)
             then respond (textResponse status403 "object key is outside the caller's scope")
             else do
-              presignedResult <- loadInternalMinioPresignedConfig
+              presignedResult <- loadUserScopedMinioPresignedConfig userId
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
@@ -664,7 +829,7 @@ handleObjectsList jwksCache realmConfig request respond = do
   case authResult of
     Left authFailure -> respondAuthFailure authFailure respond
     Right userId -> do
-      presignedResult <- loadInternalMinioPresignedConfig
+      presignedResult <- loadUserScopedMinioPresignedConfig userId
       case presignedResult of
         Left configError ->
           respond (textResponse status503 ("object storage config missing: " <> configError))
@@ -701,7 +866,7 @@ handleObjectsDelete jwksCache realmConfig request respond = do
           if not (pathBelongsToUser userId keyValue)
             then respond (textResponse status403 "object key is outside the caller's scope")
             else do
-              presignedResult <- loadInternalMinioPresignedConfig
+              presignedResult <- loadUserScopedMinioPresignedConfig userId
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
@@ -1047,6 +1212,104 @@ loadInternalMinioPresignedConfig =
          in (scheme, hostPort, "")
     )
 
+-- | Phase 9 Sprint 9.7: the credential source for a per-user object-proxy
+-- operation. When the mounted cluster config sets @minio.stsPerUser = True@,
+-- this exchanges the shared root credential for a short-lived MinIO STS
+-- credential scoped by an inline session policy to the caller's
+-- @users\/<sub>\/@ prefix — a second, IAM-layer isolation boundary independent
+-- of the server-side 'pathBelongsToUser' check. When the flag is 'False' (the
+-- default) it returns the root-credential config unchanged, preserving the
+-- validated Phase 7 object path; Wave Q flips the flag on and proves the live
+-- cross-user IAM denial.
+loadUserScopedMinioPresignedConfig :: UserId -> IO (Either String PresignedUrlConfig)
+loadUserScopedMinioPresignedConfig userId = do
+  rootResult <- loadInternalMinioPresignedConfig
+  case rootResult of
+    Left err -> pure (Left err)
+    Right rootConfig -> do
+      maybeClusterConfig <- tryLoadClusterConfig
+      let stsEnabled =
+            maybe
+              False
+              (ClusterConfig.minioStsPerUser . ClusterConfig.clusterMinio)
+              maybeClusterConfig
+      if not stsEnabled
+        then pure (Right rootConfig)
+        else mintScopedPresignedConfig rootConfig userId
+
+-- | The lifetime of a per-user scoped MinIO credential. Comfortably longer
+-- than a single object operation, short enough that a leaked scoped credential
+-- expires quickly.
+perUserStsDurationSeconds :: Int
+perUserStsDurationSeconds = 3600
+
+-- | Exchange the root credential for a per-user scoped MinIO STS credential via
+-- @AssumeRole@ with the 'Sts.userScopedPolicyDocument' session policy. Returns
+-- a presigned config carrying the scoped access key + session token so every
+-- minted URL is IAM-limited to the caller's prefix.
+mintScopedPresignedConfig :: PresignedUrlConfig -> UserId -> IO (Either String PresignedUrlConfig)
+mintScopedPresignedConfig rootConfig userId = do
+  now <- getCurrentTime
+  let DemoObjectsBucket bucket = defaultDemoObjectsBucket
+      stsConfig =
+        Sts.StsConfig
+          { Sts.stsScheme = presignedScheme rootConfig,
+            Sts.stsEndpoint = presignedEndpoint rootConfig,
+            Sts.stsRegion = presignedRegion rootConfig,
+            Sts.stsAccessKeyId = presignedAccessKeyId rootConfig,
+            Sts.stsSecretAccessKey = presignedSecretAccessKey rootConfig,
+            Sts.stsDurationSeconds = perUserStsDurationSeconds,
+            Sts.stsBucket = bucket
+          }
+      signed = Sts.signedStsAssumeRoleRequest stsConfig userId now
+  attempt <- try @SomeException $ do
+    manager <- newManager defaultManagerSettings
+    base <- parseRequest (Text.unpack (Sts.signedStsUrl signed))
+    httpLbs
+      ( base
+          { method = methodPost,
+            requestBody = RequestBodyLBS (LazyByteString.fromStrict (TextEncoding.encodeUtf8 (Sts.signedStsBody signed))),
+            HttpClient.requestHeaders =
+              [ (hContentType, TextEncoding.encodeUtf8 (Sts.signedStsContentType signed)),
+                (hAuthorization, TextEncoding.encodeUtf8 (Sts.signedStsAuthorization signed)),
+                ("X-Amz-Date", TextEncoding.encodeUtf8 (Sts.signedStsAmzDate signed))
+              ],
+            responseTimeout = responseTimeoutMicro 10000000
+          }
+      )
+      manager
+  case attempt of
+    Left err -> pure (Left ("MinIO STS AssumeRole request failed: " <> show err))
+    Right response ->
+      pure
+        ( scopedConfigFromResponse
+            rootConfig
+            (statusCode (responseStatus response))
+            (TextEncoding.decodeUtf8 (LazyByteString.toStrict (responseBody response)))
+        )
+
+-- | Interpret the MinIO STS @AssumeRole@ HTTP result into a scoped presigned
+-- config or a typed error.
+scopedConfigFromResponse :: PresignedUrlConfig -> Int -> Text -> Either String PresignedUrlConfig
+scopedConfigFromResponse rootConfig code bodyText
+  | code /= 200 =
+      Left ("MinIO STS AssumeRole returned HTTP " <> show code <> ": " <> Text.unpack (Text.take 300 bodyText))
+  | otherwise = scopedConfigFromCredentials rootConfig bodyText
+
+-- | Fold the parsed scoped credential into a presigned config carrying the
+-- scoped access key + STS session token.
+scopedConfigFromCredentials :: PresignedUrlConfig -> Text -> Either String PresignedUrlConfig
+scopedConfigFromCredentials rootConfig bodyText =
+  case Sts.parseAssumeRoleCredentials bodyText of
+    Left parseError -> Left ("MinIO STS AssumeRole parse failed: " <> parseError)
+    Right creds ->
+      Right
+        rootConfig
+          { presignedAccessKeyId = Sts.scopedAccessKeyId creds,
+            presignedSecretAccessKey = Sts.scopedSecretAccessKey creds,
+            presignedSessionToken = Just (Sts.scopedSessionToken creds)
+          }
+
 loadPresignedConfigWithEndpoint ::
   (ClusterConfig.MinioWiring -> Text) ->
   (Text -> (Text, Text, Text)) ->
@@ -1080,7 +1343,8 @@ loadPresignedConfigWithEndpoint endpointSelector splitEndpoint = do
                 presignedRegion = ClusterConfig.minioRegion minio,
                 presignedAccessKeyId = SecretsConfig.minioAccessKey minioCreds,
                 presignedSecretAccessKey = SecretsConfig.minioSecretKey minioCreds,
-                presignedExpirySeconds = fromIntegral (ClusterConfig.minioPresignExpirySeconds minio)
+                presignedExpirySeconds = fromIntegral (ClusterConfig.minioPresignExpirySeconds minio),
+                presignedSessionToken = Nothing
               }
         )
 

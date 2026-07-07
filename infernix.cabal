@@ -68,6 +68,7 @@ library
         Infernix.Models
         Infernix.Objects.Layout
         Infernix.Objects.Presigned
+        Infernix.Objects.Sts
         Infernix.Objects.Upload
         Infernix.ProjectInit
         Infernix.Python

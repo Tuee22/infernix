@@ -11,21 +11,28 @@
   route-aware docs, and route validation expectations.
 - The routed surface always publishes Harbor and Pulsar, and publishes the demo routes
   only when the active generated config enables the demo UI. MinIO has no external gateway route.
-- When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` requires the
-  Keycloak JWT for direct browser access to `/harbor` and `/pulsar/admin`.
-  The policy accepts the SPA's `infernix_operator_token` cookie and direct
-  `Authorization: Bearer ...` headers.
+- When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
+  admin-authorizes** direct browser access to the operator route family — `/harbor`, `/harbor/api`,
+  `/pulsar/admin`, and `/pulsar/ws` (Phase 9): it accepts the SPA's `infernix_operator_token` cookie or
+  a direct `Authorization: Bearer ...` header, then requires the `infernix-admin` realm role
+  (`defaultAction: Deny`). A valid non-admin token is rejected with HTTP 403. See
+  [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md).
 - The `/minio/s3` edge route is removed (Phase 3 Sprint 3.13): the `infernix-demo`
   webapp is the sole externally routed surface for file storage, mediating every browser
   artifact upload and download server-side through its `/api/objects` endpoints, and the browser
   never reaches MinIO through the gateway. See
   [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) for the
   webapp-mediated single-mediator contract.
-- That JWT gate governs browser/operator access through the Envoy edge only. Trusted in-cluster
-  daemons and host-side launcher tooling reach Pulsar's admin surface through the proxy Service
-  (`ClusterConfig.pulsar.adminUrl`) or its un-gated NodePort directly, not through the gated
-  `/pulsar/admin` edge route — see [../tools/pulsar.md](../tools/pulsar.md). Note `/pulsar/ws` is
-  intentionally absent from the policy, so the websocket surface is never JWT-gated at the edge.
+- That admin gate governs browser/operator access through the Envoy edge only. Trusted in-cluster
+  daemons and the Apple host-worker data plane reach Pulsar through the proxy Service
+  (`ClusterConfig.pulsar.adminUrl`) or its un-gated loopback NodePort directly (Pulsar-proxy `30080`,
+  MinIO `30011`, `listenAddress: 127.0.0.1`), not through the gated edge routes — see
+  [../tools/pulsar.md](../tools/pulsar.md). The loopback binding of every Kind data-plane + edge
+  port mapping (MinIO S3 `30011`, Pulsar proxy `30080`/`30650`, Envoy edge `30090`) is now ENFORCED
+  by `infernix lint chart` (a scanner over the `kind/cluster-*.yaml` files) plus a unit assertion
+  over the binary-generated Kind config (Sprint 9.4). `/pulsar/ws` is now **inside** the operator policy
+  (Phase 9 added it to `targetRefs`), so the browser websocket surface is admin-gated at the edge while
+  the host worker's loopback data plane is unaffected.
 - Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
   exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.
 

@@ -676,6 +676,15 @@ keycloak:
     clientId: infernix-spa
     spaClientId: infernix-spa
     issuerUrl: /auth/realms/infernix
+    # Phase 9: cluster-wide admin RBAC. Only members of this realm role reach
+    # the operator consoles (Harbor, Pulsar Admin) and cluster-wide monitoring;
+    # self-registered users are non-admin by construction.
+    adminRealmRole: infernix-admin
+    # Hardcoded demo admin account in the infernix realm (demo app; not a
+    # production credential). Distinct from the Keycloak master admin below.
+    demoAdmin:
+      username: admin
+      password: infernix-admin-demo
   admin:
     user: admin
     secretName: infernix-keycloak-admin

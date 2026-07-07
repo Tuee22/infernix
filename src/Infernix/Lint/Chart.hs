@@ -296,6 +296,9 @@ runChartLint = do
                 )
             )
         )
+  forM_ kindLoopbackConfigPaths $ \relativePath -> do
+    contents <- readFile (repoRoot paths </> relativePath)
+    checkKindLoopbackBindings relativePath contents
 
 -- | Phase 6 Sprint 6.28 follow-on (May 26, 2026): the chart lint
 -- gate rejects new @env:@ blocks in the three infernix-owned
@@ -321,6 +324,70 @@ dhallBodyRejectionPaths =
   [ "chart/templates/configmap-cluster-config.yaml",
     "chart/templates/secret-cluster-secrets.yaml"
   ]
+
+-- | Phase 9 Sprint 9.4: the data-plane loopback invariant. Every host port
+-- mapping in the committed Kind cluster configs — the MinIO S3 NodePort
+-- (30011) and Pulsar proxy NodePorts (30080/30650) that the Apple host worker
+-- reaches directly, and the admin-gated Envoy edge (30090) — must bind to
+-- @127.0.0.1@ so the cluster data plane and the browser edge are reachable
+-- only on loopback, never on a routable host interface. The generated
+-- @renderKindConfig@ path is pinned by a unit assertion; this gate pins the
+-- committed reference configs.
+kindLoopbackConfigPaths :: [FilePath]
+kindLoopbackConfigPaths =
+  [ "kind/cluster-apple-silicon.yaml",
+    "kind/cluster-linux-cpu.yaml",
+    "kind/cluster-linux-gpu.yaml"
+  ]
+
+-- | Assert every @extraPortMappings@ entry in a Kind config binds to loopback.
+-- A @- containerPort:@ line opens a mapping that must carry a
+-- @listenAddress: "127.0.0.1"@ before the next mapping or end of file; any
+-- @listenAddress:@ whose value is not @127.0.0.1@ is rejected outright.
+checkKindLoopbackBindings :: FilePath -> String -> IO ()
+checkKindLoopbackBindings relativePath = go False . lines
+  where
+    go pendingLoopback [] =
+      when pendingLoopback (missingLoopback "end of file")
+    go pendingLoopback (lineValue : rest) =
+      let trimmed = dropWhile (`elem` (" \t" :: String)) lineValue
+       in if "- containerPort:" `prefixOf` trimmed
+            then do
+              when pendingLoopback (missingLoopback lineValue)
+              go True rest
+            else
+              if "listenAddress:" `prefixOf` trimmed
+                then do
+                  unless (isLoopbackListenAddress trimmed) (nonLoopback lineValue)
+                  go False rest
+                else go pendingLoopback rest
+    missingLoopback context =
+      ioError
+        ( userError
+            ( relativePath
+                <> ": Phase 9 Sprint 9.4 requires every Kind extraPortMappings entry to bind to "
+                <> "127.0.0.1 (the data-plane + admin-gated-edge loopback invariant). A "
+                <> "containerPort mapping has no `listenAddress: \"127.0.0.1\"` before "
+                <> context
+            )
+        )
+    nonLoopback lineValue =
+      ioError
+        ( userError
+            ( relativePath
+                <> ": Phase 9 Sprint 9.4 rejects a non-loopback Kind host port binding. Every "
+                <> "extraPortMappings entry must set `listenAddress: \"127.0.0.1\"`. Found: "
+                <> lineValue
+            )
+        )
+
+-- | Whether a trimmed @listenAddress:@ line binds to @127.0.0.1@, tolerating
+-- quoting and surrounding whitespace.
+isLoopbackListenAddress :: String -> Bool
+isLoopbackListenAddress trimmed =
+  let afterKey = drop (length ("listenAddress:" :: String)) trimmed
+      value = filter (`notElem` ("\"' \t" :: String)) afterKey
+   in value == "127.0.0.1"
 
 -- | Whether a chart-template line is an inline Dhall `let` binding or a
 -- schema-record type line. Comment lines (`#`, `{{/*`, and the leading `*`

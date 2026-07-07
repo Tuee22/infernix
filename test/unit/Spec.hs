@@ -109,6 +109,7 @@ import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
+import Infernix.Objects.Sts qualified as ObjSts
 import Infernix.Routes
   ( renderChartRouteRegistryCommentSection,
     renderEdgeRoutingInventorySection,
@@ -650,6 +651,25 @@ main = do
       assert
         ("containerPath: /var/run/nvidia-container-devices/all" `isInfixOf` generatedLinuxGpuKindConfig)
         "linux-gpu outer-container Kind config keeps the NVIDIA worker device mount"
+      -- Phase 9 Sprint 9.4: the data-plane loopback invariant. The generated
+      -- Kind config must bind every host port mapping to 127.0.0.1 so the MinIO
+      -- S3 (30011) and Pulsar proxy (30080) data-plane NodePorts the Apple host
+      -- worker reaches, and the admin-gated Envoy edge (30090), are reachable
+      -- only on loopback. `infernix lint chart` pins the committed reference
+      -- configs; this pins the binary-owned generator (`renderKindConfig`).
+      let generatedListenAddressLines =
+            filter ("listenAddress:" `isInfixOf`) (lines generatedLinuxGpuKindConfig)
+      assert
+        ( not (null generatedListenAddressLines)
+            && all ("127.0.0.1" `isInfixOf`) generatedListenAddressLines
+        )
+        "Phase 9 Sprint 9.4: generated Kind config binds every host port mapping to the 127.0.0.1 loopback address"
+      assert
+        ("containerPort: 30011" `isInfixOf` generatedLinuxGpuKindConfig)
+        "Phase 9 Sprint 9.4: generated Kind config exposes the MinIO S3 data-plane NodePort mapping (30011)"
+      assert
+        ("containerPort: 30080" `isInfixOf` generatedLinuxGpuKindConfig)
+        "Phase 9 Sprint 9.4: generated Kind config exposes the Pulsar proxy data-plane NodePort mapping (30080)"
       let demoConfig =
             let linuxPools = enginePoolsForMode LinuxCpu
                 linuxMembers = engineMembersForMode LinuxCpu
@@ -1929,7 +1949,8 @@ unitTestClusterConfigFixture demoConfigPathValue =
             minioRegion = "us-east-1",
             minioPresignExpirySeconds = 900,
             minioModelsBucket = "infernix-models",
-            minioDemoArtifactsBucket = "infernix-demo-objects"
+            minioDemoArtifactsBucket = "infernix-demo-objects",
+            minioStsPerUser = True
           },
       clusterKeycloak =
         KeycloakWiring
@@ -2664,7 +2685,29 @@ assertJwtValidation = do
       assert
         (Jwt.jwtClaimIssuer claims == Text.pack issuer)
         "valid JWT decodes the iss claim"
+      assert
+        (not (Jwt.jwtClaimsHasRealmRole "infernix-admin" claims))
+        "JWT without realm_access.roles carries no admin realm role"
     Left err -> fail ("valid JWT was rejected: " <> show err)
+
+  -- Realm-role (admin) claim parsing — Phase 9 RBAC admin gating
+  let adminClaims =
+        Aeson.object
+          [ "sub" Aeson..= ("admin-test" :: String),
+            "iss" Aeson..= issuer,
+            "aud" Aeson..= audience,
+            "exp" Aeson..= (nowSeconds + 60 :: Integer),
+            "realm_access"
+              Aeson..= Aeson.object
+                ["roles" Aeson..= (["infernix-admin", "offline_access"] :: [String])]
+          ]
+      adminToken = signJwt privateKey kid adminClaims
+  case Jwt.verifyAndParseJwt config now jwks adminToken of
+    Right adminTokenClaims ->
+      assert
+        (Jwt.jwtClaimsHasRealmRole "infernix-admin" adminTokenClaims)
+        "JWT with realm_access.roles decodes the admin realm role"
+    Left err -> fail ("valid admin JWT was rejected: " <> show err)
 
   -- Tampered signature
   let tamperedToken = mangleLastChar validToken
@@ -2857,7 +2900,8 @@ assertObjectsLayoutAndPresigning = do
             ObjPresigned.presignedRegion = "us-east-1",
             ObjPresigned.presignedAccessKeyId = "AKIAIOSFODNN7EXAMPLE",
             ObjPresigned.presignedSecretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
-            ObjPresigned.presignedExpirySeconds = 900
+            ObjPresigned.presignedExpirySeconds = 900,
+            ObjPresigned.presignedSessionToken = Nothing
           }
       fixedNow = Data.Time.Clock.POSIX.posixSecondsToUTCTime 1_700_000_000
       url1 = ObjPresigned.presignedPutUrl cfg fixedNow upload
@@ -2944,6 +2988,77 @@ assertObjectsLayoutAndPresigning = do
   assert
     (expiry == "2023-11-14T22:28:20Z")
     "ISO expiry is now + expirySeconds in UTC"
+
+  -- Phase 9 Sprint 9.7: per-user MinIO STS scoped-credential machinery.
+  let aliceScopedPolicy = ObjSts.encodedUserScopedPolicy "infernix-demo-objects" alice
+  assert
+    ("arn:aws:s3:::infernix-demo-objects/users/alice/*" `Text.isInfixOf` aliceScopedPolicy)
+    "STS session policy scopes object actions to the caller's users/<sub>/ prefix"
+  assert
+    ("\"s3:prefix\"" `Text.isInfixOf` aliceScopedPolicy && "users/alice/*" `Text.isInfixOf` aliceScopedPolicy)
+    "STS session policy constrains ListBucket to the caller's prefix via an s3:prefix condition"
+  assert
+    (not ("users/bob/" `Text.isInfixOf` aliceScopedPolicy))
+    "STS session policy for alice never references another user's prefix"
+  let stsConfig =
+        ObjSts.StsConfig
+          { ObjSts.stsScheme = "http",
+            ObjSts.stsEndpoint = "infernix-minio:9000",
+            ObjSts.stsRegion = "us-east-1",
+            ObjSts.stsAccessKeyId = "AKIAIOSFODNN7EXAMPLE",
+            ObjSts.stsSecretAccessKey = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            ObjSts.stsDurationSeconds = 3600,
+            ObjSts.stsBucket = "infernix-demo-objects"
+          }
+      signedStsAlice = ObjSts.signedStsAssumeRoleRequest stsConfig alice fixedNow
+      signedStsAliceAgain = ObjSts.signedStsAssumeRoleRequest stsConfig alice fixedNow
+      signedStsBob = ObjSts.signedStsAssumeRoleRequest stsConfig bob fixedNow
+  assert
+    (signedStsAlice == signedStsAliceAgain)
+    "STS AssumeRole signing is deterministic given the same inputs"
+  assert
+    ("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/" `Text.isInfixOf` ObjSts.signedStsAuthorization signedStsAlice)
+    "STS AssumeRole Authorization header carries the SigV4 credential"
+  assert
+    ("/us-east-1/sts/aws4_request" `Text.isInfixOf` ObjSts.signedStsAuthorization signedStsAlice)
+    "STS AssumeRole signs against the sts service credential scope"
+  assert
+    ("Action=AssumeRole" `Text.isInfixOf` ObjSts.signedStsBody signedStsAlice)
+    "STS AssumeRole request body invokes AssumeRole"
+  assert
+    ("20231114T" `Text.isPrefixOf` ObjSts.signedStsAmzDate signedStsAlice && "Z" `Text.isSuffixOf` ObjSts.signedStsAmzDate signedStsAlice)
+    "STS AssumeRole request stamps a SigV4 amz-date"
+  assert
+    (ObjSts.signedStsBody signedStsAlice /= ObjSts.signedStsBody signedStsBob)
+    "STS AssumeRole request body differs per user (distinct scoped policy)"
+  let sampleAssumeRoleXml =
+        "<AssumeRoleResponse><AssumeRoleResult><Credentials>"
+          <> "<AccessKeyId>SCOPEDKEYID</AccessKeyId>"
+          <> "<SecretAccessKey>scopedsecret</SecretAccessKey>"
+          <> "<SessionToken>scoped-session-token</SessionToken>"
+          <> "<Expiration>2023-11-14T23:28:20Z</Expiration>"
+          <> "</Credentials></AssumeRoleResult></AssumeRoleResponse>"
+  case ObjSts.parseAssumeRoleCredentials sampleAssumeRoleXml of
+    Right creds -> do
+      assert
+        (ObjSts.scopedAccessKeyId creds == "SCOPEDKEYID")
+        "AssumeRole response parse recovers the scoped access key id"
+      assert
+        (ObjSts.scopedSessionToken creds == "scoped-session-token")
+        "AssumeRole response parse recovers the session token"
+    Left err -> fail ("AssumeRole response parse rejected a well-formed body: " <> err)
+  assert
+    (either (const True) (const False) (ObjSts.parseAssumeRoleCredentials "<Empty/>"))
+    "AssumeRole response parse rejects a body without Credentials"
+  -- Session-token-aware presigning threads X-Amz-Security-Token into the signed query.
+  let scopedCfg = cfg {ObjPresigned.presignedSessionToken = Just "scoped-session-token"}
+      scopedUrl = ObjPresigned.presignedPutUrl scopedCfg fixedNow upload
+  assert
+    ("X-Amz-Security-Token=scoped-session-token" `Text.isInfixOf` ObjPresigned.unPresignedUrl scopedUrl)
+    "a scoped presigned URL includes the STS session token as X-Amz-Security-Token"
+  assert
+    (ObjPresigned.unPresignedUrl scopedUrl /= ObjPresigned.unPresignedUrl url1)
+    "the session token participates in the signature (scoped URL differs from the root URL)"
 
 assertDemoBucketBootstrap :: IO ()
 assertDemoBucketBootstrap = do

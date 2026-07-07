@@ -1,1 +1,2 @@
 - figure out what the auth issue is that was revealed in UAT
+- admin credentials: is that a separate login or can every user access the admin portal ?

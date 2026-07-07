@@ -18,6 +18,9 @@
 - Isolation is enforced at a single server-side trust boundary (the webapp / coordinator), on every
   operation, via `pathBelongsToUser` (objects) and `topicBelongsToUser` (chat). Cross-user access is
   impossible by construction, not by browser-side discipline.
+- This doctrine governs the **per-user** dimension only. The orthogonal **admin vs. user** dimension —
+  which cluster-wide surfaces require the `infernix-admin` realm role — is owned by
+  [access_control_doctrine.md](access_control_doctrine.md).
 
 ## Identity
 
@@ -51,6 +54,14 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
   (empty) topic — never the other user's data.
 - **Lifecycle**: account deletion reaps strictly per-`sub` — MinIO under `userPrefix`, Pulsar via
   `topicBelongsToUser`.
+
+Phase 9 Sprint 9.7 adds an orthogonal **IAM-layer** boundary behind this server-side check: when
+`cluster.minio.stsPerUser` is enabled, the object-proxy exchanges the shared root MinIO credential
+for a short-lived MinIO STS credential scoped by an inline session policy to the caller's
+`users/<sub>/` prefix before each object operation, so the shared root credential is no longer the
+sole isolation. `pathBelongsToUser` on the verified `sub` stays the first-line gate; the scoped
+credential is a second, defense-in-depth boundary. See
+[access_control_doctrine.md](access_control_doctrine.md).
 
 ## Current Status
 

@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — reopened for Sprint 6.35 / Wave O expanded MT3 catalog validation
+**Status**: Active — reopened for Wave Q (2026-07-06): real-output + matrix validation hardening (Sprint 6.36). The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -1829,9 +1829,9 @@ None.
 
 ---
 
-## Sprint 6.35: Expanded MT3 Catalog Integration and E2E Gate [Active]
+## Sprint 6.35: Expanded MT3 Catalog Integration and E2E Gate [Done]
 
-**Status**: Active
+**Status**: Done — proven by Wave P (2026-07-04)
 **Code-side closure**: Complete for coverage shape. The integration suite and routed Playwright
 suite already traverse the generated active catalog, and unit/docs lint now see the expanded
 README/catalog matrix with `music-mt3-infer` and `music-mr-mt3`. Current-source
@@ -1882,9 +1882,10 @@ full-suite CPU proof is pending.
 **Cohort gate**: [Wave O](cohort-validation-waves.md) — **both MT3 rows proven 2026-07-02.**
 Rebuilt-image `./bootstrap/linux-cpu.sh test` is **GREEN** (full integration + routed Playwright
 `9/9` over the expanded catalog, real MIDI for both rows), and `./bootstrap/linux-gpu.sh test` proved
-both rows real on CUDA (integration PASS; routed Playwright `8/9`). The clean `linux-gpu` `9/9` is
-blocked only by the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap timeout, now
-owned by **Phase 8 Sprint 8.5** (eager model-cache staging). Apple uses the catalog-supported PyTorch
+both rows real on CUDA (integration PASS; routed Playwright `8/9`). The clean `linux-gpu` `9/9` was
+blocked only by the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap timeout;
+**Wave P** (2026-07-04) closed it once Phase 8 eager model-cache staging pre-staged the Wan weights.
+Apple uses the catalog-supported PyTorch
 CPU binding, but no post-replacement Apple full-suite evidence is claimed until a separate Apple rerun
 records it.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `python/adapters/pytorch_python.py`, `python/engines/pytorch/pyproject.toml`
@@ -1929,18 +1930,53 @@ before the validation phase returns to `Done`.
 
 ### Remaining Work
 
-Both MT3 rows are proven (2026-07-02): `linux-cpu` full-suite GREEN (`9/9`) and `linux-gpu`
-integration + their routed matrix rows real on CUDA. The remaining item is the clean `linux-gpu`
-`9/9`, gated only on **Phase 8 Sprint 8.5** eager model-cache staging (to pre-stage the CUDA-only
-`video-wan21-t2v` weights so its matrix row no longer times out on the cold cache) — not on any MT3
-code.
+Both MT3 rows are proven: `linux-cpu` full-suite GREEN (`9/9`, 2026-07-02) and the clean `linux-gpu`
+`9/9` closed by **Wave P** (2026-07-04) once Phase 8 eager model-cache staging pre-staged the
+CUDA-only `video-wan21-t2v` weights. No remaining work — this sprint is closed.
+
+---
+
+## Sprint 6.36: Real-Output and Matrix Validation Hardening [Planned]
+
+**Status**: Planned
+**Cohort gate**: [Wave Q](cohort-validation-waves.md) — routed proof on Apple + `linux-cpu`; CUDA-only rows on `linux-gpu`.
+**Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`
+**Docs to update**: `documents/development/testing.md`, `documents/development/demo_app_test_plan.md`
+
+### Objective
+
+Close the "proves less than it appears" gaps the 2026-07-06 review found in the fail-closed matrix
+suites, so a shrunken catalog or an empty text result cannot pass.
+
+### Deliverables
+
+- Integration: assert real inline text for the text families (rows 1-7), not just `status=completed` +
+  shape; confirm the per-row byte+magic-byte probe runs for every artifact row.
+- E2E per-row hardening: assert real text for rows 1-7 (defeat the `"No inline output."` fallback in
+  `Chat.purs`); a catalog-completeness guard asserting the picker set equals the matrix rows minus the
+  active-mode residuals; a three-lane union gate (rows unreachable on a single lane); an explicit
+  row-14 xfail carve-out until real-output evidence lands; multi-artifact assertions for source
+  separation (rows 8/9).
+- Platform-state DOM assertions (`#runtime-mode`, `#edge-port`, `#control-plane-context`, …).
+
+### Validation
+
+- Code-side: the assertions compile and run in the browser suite.
+- Cohort: [Wave Q](cohort-validation-waves.md) routed Playwright on Apple + `linux-cpu`.
+
+### Remaining Work
+
+All (planned). RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
+[Phase 9 Sprint 9.8](phase-9-access-control-and-monitoring.md); this sprint owns the matrix +
+integration hardening.
 
 ---
 
 ## Remaining Work
 
-Sprint 6.35 remains open on [Wave O](cohort-validation-waves.md): full rebuilt-image `linux-cpu`
-plus selected `linux-gpu` integration and routed E2E proof for the expanded MT3 catalog.
+The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
+[Wave P](cohort-validation-waves.md) (2026-07-04). The phase is reopened for **Sprint 6.36**
+(real-output + matrix validation hardening) under [Wave Q](cohort-validation-waves.md).
 
 ## Documentation Requirements
 

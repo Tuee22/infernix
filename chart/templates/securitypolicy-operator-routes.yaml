@@ -11,7 +11,13 @@ spec:
       name: infernix-harbor-portal
     - group: gateway.networking.k8s.io
       kind: HTTPRoute
+      name: infernix-harbor-api
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
       name: infernix-pulsar-admin
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: infernix-pulsar-ws
   jwt:
     providers:
       - name: infernix-keycloak
@@ -29,4 +35,23 @@ spec:
           backendRefs:
             - name: infernix-keycloak
               port: {{ .Values.keycloak.service.port }}
+  # Phase 9: a valid infernix-realm JWT is necessary but NOT sufficient for the
+  # operator consoles and cluster-wide surfaces — the caller must also carry the
+  # admin realm role. Self-registered users authenticate but are denied here.
+  # The Apple host-worker data plane never transits this edge: it reaches MinIO
+  # (NodePort 30011) and the Pulsar proxy (NodePort 30080) directly on loopback,
+  # so admin-gating the edge does not touch trust-boundary-internal traffic.
+  authorization:
+    defaultAction: Deny
+    rules:
+      - name: allow-infernix-admins
+        action: Allow
+        principal:
+          jwt:
+            provider: infernix-keycloak
+            claims:
+              - name: realm_access.roles
+                valueType: StringArray
+                values:
+                  - {{ .Values.keycloak.realm.adminRealmRole | quote }}
 {{- end }}

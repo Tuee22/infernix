@@ -44,6 +44,7 @@ let MinioConfig =
       , presignExpirySeconds : Natural
       , modelsBucket : Text
       , demoArtifactsBucket : Text
+      , stsPerUser : Bool
       }
 
 let KeycloakConfig =

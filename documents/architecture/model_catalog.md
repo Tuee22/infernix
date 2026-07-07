@@ -100,11 +100,11 @@ return a typed object reference into `infernix-demo-objects`.
 
 | Matrix row (reference model / format) | Workload family | `ResultFamily` | Result surface |
 |---|---|---|---|
-| SmolLM2-135M-Instruct (HF safetensors) | LLM | `LLM` | `inline_output` |
-| Qwen2.5-1.5B-Instruct-AWQ (AWQ) | LLM | `LLM` | `inline_output` |
-| TinyLlama-1.1B-Chat-v1.0-GPTQ (GPTQ) | LLM | `LLM` | `inline_output` |
-| TinyLlama-1.1B-Chat-v1.0-GGUF (GGUF) | LLM | `LLM` | `inline_output` |
-| Qwen1.5-1.8B-Chat-4bit (MLX) | LLM | `LLM` | `inline_output` |
+| SmolLM2-135M-Instruct (HF safetensors) | LLM | `LlmText` | `inline_output` |
+| Qwen2.5-1.5B-Instruct-AWQ (AWQ) | LLM | `LlmText` | `inline_output` |
+| TinyLlama-1.1B-Chat-v1.0-GPTQ (GPTQ) | LLM | `LlmText` | `inline_output` |
+| TinyLlama-1.1B-Chat-v1.0-GGUF (GGUF) | LLM | `LlmText` | `inline_output` |
+| Qwen1.5-1.8B-Chat-4bit (MLX) | LLM | `LlmText` | `inline_output` |
 | whisper-small (whisper.cpp / GGML) | Speech transcription | `SpeechTranscription` | `inline_output` |
 | faster-whisper-small (CTranslate2) | Speech transcription | `SpeechTranscription` | `inline_output` |
 | htdemucs (Demucs) | Source separation | `SourceSeparation` | `object_ref` |
@@ -118,11 +118,11 @@ return a typed object reference into `infernix-demo-objects`.
 | Apple Stable Diffusion (Core ML) | Image generation | `ImageGeneration` | `object_ref` |
 | Wan2.1-T2V-1.3B (Diffusers / safetensors) | Video generation | `VideoGeneration` | `object_ref` |
 | bark-small (PyTorch / HF) | Audio generation / TTS | `AudioGeneration` | `object_ref` |
-| Audiveris (JVM application) | OMR / notation extraction | `OmrTool` | `object_ref` |
+| Audiveris (JVM application) | OMR / notation extraction | `OpticalMusicRecognition` | `object_ref` |
 
-The nine `ResultFamily` constructors — `LLM`, `SpeechTranscription`, `SourceSeparation`,
+The nine `ResultFamily` constructors — `LlmText`, `SpeechTranscription`, `SourceSeparation`,
 `AudioToMidi`, `MusicTranscription`, `ImageGeneration`, `VideoGeneration`, `AudioGeneration`, and
-`OmrTool` — partition all 19 rows. The two inline-text families (`LLM`, `SpeechTranscription`)
+`OpticalMusicRecognition` — partition all 19 rows. The two inline-text families (`LlmText`, `SpeechTranscription`)
 return `inline_output`; the seven artifact families return an `object_ref` into
 `infernix-demo-objects`.
 

@@ -232,19 +232,18 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
       validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
-      -- Phase 7 Sprint 7.7 follow-on (May 26, 2026): the legacy
-      -- single-binary cache assertions assumed @/api/cache@ on the
-      -- @infernix-demo@ pod could observe every model the engine pod
-      -- has cached. After the supported daemon split (Sprint 7.7),
-      -- the demo pod runs no inference and its
-      -- @modelCacheRoot@-derived manifest listing is empty for
-      -- routed cluster runs. The supported integration assertion is
-      -- now "the cache endpoint is published, reachable, and
-      -- returns a JSON array (possibly empty)".
-      cacheResponse <- httpGet (baseUrl <> "/api/cache")
+      -- Phase 9 Sprint 9.3: @GET /api/cache@ exposes cluster-wide model-cache
+      -- state, so it is now admin-gated (`withAdminRequest`) alongside the
+      -- @/api/cache/{evict,rebuild}@ mutations. Like the Harbor / Pulsar Admin
+      -- operator routes above, the integration lane proves the gate is present
+      -- by asserting an unauthenticated read is rejected 401; the
+      -- admin-authenticated 2xx read (and the non-admin 403) is proven by
+      -- routed Playwright (Sprint 9.8). The engine-pod manifest contents were
+      -- already invisible from the demo pod after the Sprint 7.7 daemon split.
+      (cacheStatusCode, _) <- httpGetWithStatus (baseUrl <> "/api/cache")
       assert
-        ("[" `isInfixOf` compact cacheResponse)
-        "cache status endpoint returns a JSON array (the engine-pod manifest contents are not visible from the demo pod after the daemon split)"
+        (cacheStatusCode == 401)
+        "Phase 9 Sprint 9.3: GET /api/cache is admin-gated and rejects an unauthenticated read with 401"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
       ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
@@ -445,7 +444,8 @@ fetchObjectRefBytes paths state ref =
                       Presigned.presignedRegion = "us-east-1",
                       Presigned.presignedAccessKeyId = "minioadmin",
                       Presigned.presignedSecretAccessKey = "minioadmin123",
-                      Presigned.presignedExpirySeconds = 900
+                      Presigned.presignedExpirySeconds = 900,
+                      Presigned.presignedSessionToken = Nothing
                     }
                 signedUrl =
                   Text.unpack
@@ -579,7 +579,8 @@ uploadIntegrationInputObject paths state objectReference payloadBytes = do
               Presigned.presignedRegion = "us-east-1",
               Presigned.presignedAccessKeyId = "minioadmin",
               Presigned.presignedSecretAccessKey = "minioadmin123",
-              Presigned.presignedExpirySeconds = 900
+              Presigned.presignedExpirySeconds = 900,
+              Presigned.presignedSessionToken = Nothing
             }
         signedUrl =
           Text.unpack

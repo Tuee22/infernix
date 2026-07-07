@@ -107,14 +107,31 @@
   `loginTheme = infernix`, so the routed login and registration pages carry the Infernix-specific
   titles without building a custom Keycloak image
 - when the demo UI is enabled, the signed-in SPA shell exposes an operator console ribbon for
-  `/harbor` and `/pulsar/admin` (Phase 3 Sprint 3.13 removed the `/minio/s3` route; MinIO is reached
-  only through the webapp `/api/objects` proxy; Wave M closed that route surface with `linux-cpu`
-  plus selected `linux-gpu` validation on 2026-06-29). `web/src/Infernix/Web/Auth.js` mirrors the active
-  Keycloak access token into the `infernix_operator_token` cookie on login and refresh, clears it
-  on logout, and `SecurityPolicy/infernix-operator-routes-jwt` accepts that cookie or a direct
-  `Authorization: Bearer ...` header before forwarding those operator route prefixes (the same
-  cookie authenticates browser-issued media `src` GETs against the webapp `/api/objects/download`
-  proxy)
+  `/harbor` and `/pulsar/admin` **only to admins** (Phase 9): `web/src/index.html` marks
+  `<html>.infernix-admin` when the token carries the `infernix-admin` realm role and hides the ribbon
+  otherwise. (Phase 3 Sprint 3.13 removed the `/minio/s3` route; MinIO is reached only through the
+  webapp `/api/objects` proxy; Wave M closed that route surface with `linux-cpu` plus selected
+  `linux-gpu` validation on 2026-06-29.) `web/src/Infernix/Web/Auth.js` mirrors the active Keycloak
+  access token into the `infernix_operator_token` cookie on login and refresh, clears it on logout,
+  and `SecurityPolicy/infernix-operator-routes-jwt` now **authenticates and admin-authorizes** — it
+  accepts that cookie or a direct `Authorization: Bearer ...` header and then requires the
+  `infernix-admin` realm role before forwarding the four operator route prefixes (`/harbor`,
+  `/harbor/api`, `/pulsar/admin`, `/pulsar/ws`); the same cookie authenticates browser-issued media
+  `src` GETs against the webapp `/api/objects/download` proxy
+- Phase 9 role-based access control: the `infernix-admin` Keycloak realm role (emitted in
+  `realm_access.roles`, decoded by `Infernix.Auth.Jwt.jwtClaimRealmRoles` / `jwtClaimsHasRealmRole`)
+  gates every cluster-wide surface. The backend (`withAdminRequest`) requires it on `GET /api/cache`,
+  the `/api/cache/{evict,rebuild}` mutations, and the `GET /api/admin/overview` cluster-wide monitoring
+  endpoint (real substrate / dispatch / catalog / engine-pool / model-cache / all-user aggregates); the
+  SPA (`web/src/index.html`) additionally shows the admin monitoring panel + the five infrastructure
+  summary cells only to admins, while ordinary users get chat / artifacts / files and a personal
+  dashboard scoped to their own `sub`. The Apple host-worker data plane reaches MinIO (NodePort 30011)
+  and the Pulsar proxy (NodePort 30080) directly on loopback (`127.0.0.1`), trust-boundary-internal and
+  never through the admin-gated edge — the loopback binding of every Kind data-plane + edge port mapping
+  is enforced by `infernix lint chart` plus a generated-Kind-config unit assertion. Per-user object
+  isolation additionally carries a MinIO STS defense-in-depth layer (`Infernix.Objects.Sts`: a scoped
+  credential keyed to `users/<sub>/`, gated by `cluster.minio.stsPerUser`). Doctrine:
+  [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md)
 - the signed-in SPA shell exposes `Delete account`. The browser waits for `DELETE /api/account` to
   synchronously remove the caller's `infernix-demo-objects/users/<userId>/` prefix and user-owned
   demo Pulsar topics before redirecting to Keycloak with `kc_action=delete_account`

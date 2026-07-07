@@ -58,6 +58,13 @@ The supported shape uses three MinIO buckets and nothing else:
   `presignPublicEndpoint`). Sprint 7.28 makes the engine/coordinator path derive every generated
   output target under `users/<sub>/contexts/<ctx>/generated/`; Wave N closes the full selected
   `linux-gpu` plus `linux-cpu` cohort validation.
+- Phase 9 Sprint 9.7 adds an IAM-layer defense-in-depth for per-user `infernix-demo-objects`
+  operations: when `cluster.minio.stsPerUser` is enabled, the object-proxy first exchanges the
+  shared root credential for a short-lived MinIO STS credential scoped to `users/<sub>/*` (an inline
+  `AssumeRole` session policy), in addition to the server-side `pathBelongsToUser` check. The
+  presigned-URL minter supports an optional STS session token threaded into the signed S3 query as
+  `X-Amz-Security-Token`. See
+  [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md).
 - Cross-bucket access is not part of the supported contract.
 
 ## Engine Software Artifacts

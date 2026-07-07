@@ -8,7 +8,12 @@ packages = [{ include = "adapters" }]
 [tool.poetry.dependencies]
 python = "^3.12"
 protobuf = "^6.31.1"
-grpcio-tools = "^1.73.0"
+# Pin grpcio-tools to the 1.73.x line: 1.74+ (through 1.82.0) ship a protoc that
+# stamps generated stubs with protobuf gencode 7.35, which the runtime
+# `protobuf` (6.33.6, the `^6.31.1` resolution) rejects as newer-than-runtime.
+# 1.73.x stamps gencode 6.31, compatible with the 6.x runtime. See
+# documents/engineering/dependency_management.md.
+grpcio-tools = ">=1.73.0,<1.74"
 # Phase 7 Sprint 7.7: model_cache.py uses boto3 against MinIO's S3
 # protocol surface to pull weight files lazily on first use. boto3
 # ships SigV4 signing, retries, and streaming GET out of the box; the

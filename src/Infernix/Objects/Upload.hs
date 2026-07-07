@@ -102,7 +102,8 @@ presignedUrlConfig uploadConfig =
       Presigned.presignedRegion = objectUploadRegion uploadConfig,
       Presigned.presignedAccessKeyId = objectUploadAccessKeyId uploadConfig,
       Presigned.presignedSecretAccessKey = objectUploadSecretAccessKey uploadConfig,
-      Presigned.presignedExpirySeconds = objectUploadExpirySeconds uploadConfig
+      Presigned.presignedExpirySeconds = objectUploadExpirySeconds uploadConfig,
+      Presigned.presignedSessionToken = Nothing
     }
 
 objectRequestTimeout :: ResponseTimeout

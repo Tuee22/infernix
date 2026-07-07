@@ -7,6 +7,7 @@ module Infernix.Auth.Jwt
   ( JwtIssuer (..),
     JwtAudience (..),
     JwtClaims (..),
+    jwtClaimsHasRealmRole,
     Jwk (..),
     Jwks (..),
     JwtValidationConfig (..),
@@ -69,7 +70,12 @@ data JwtClaims = JwtClaims
     jwtClaimAudience :: [Text],
     jwtClaimExpiresAtSeconds :: Integer,
     jwtClaimIssuedAtSeconds :: Maybe Integer,
-    jwtClaimNotBeforeSeconds :: Maybe Integer
+    jwtClaimNotBeforeSeconds :: Maybe Integer,
+    -- | Realm roles the token carries in @realm_access.roles@ (Keycloak).
+    -- Empty when the token carries no realm-role claim. Phase 9 admin gating
+    -- reads this to separate cluster-wide operators from ordinary users; the
+    -- @sub@-scoped per-user surfaces never consult it.
+    jwtClaimRealmRoles :: [Text]
   }
   deriving (Eq, Show)
 
@@ -81,6 +87,7 @@ instance FromJSON JwtClaims where
     expVal <- o Aeson..: "exp"
     iatVal <- o Aeson..:? "iat"
     nbfVal <- o Aeson..:? "nbf"
+    realmRoles <- parseRealmRoles o
     pure
       JwtClaims
         { jwtClaimSubject = sub,
@@ -88,9 +95,18 @@ instance FromJSON JwtClaims where
           jwtClaimAudience = aud,
           jwtClaimExpiresAtSeconds = expVal,
           jwtClaimIssuedAtSeconds = iatVal,
-          jwtClaimNotBeforeSeconds = nbfVal
+          jwtClaimNotBeforeSeconds = nbfVal,
+          jwtClaimRealmRoles = realmRoles
         }
     where
+      -- Keycloak emits realm roles as @{"realm_access":{"roles":[...]}}@ in
+      -- the access token. Absent claim or absent @roles@ decodes to no roles;
+      -- a non-object @realm_access@ is a hard parse failure.
+      parseRealmRoles obj = do
+        realmAccess <- obj Aeson..:? "realm_access"
+        case realmAccess of
+          Nothing -> pure []
+          Just roleObject -> roleObject Aeson..:? "roles" Aeson..!= []
       parseAudienceField o = do
         rawValue <- o Aeson..: "aud"
         case rawValue of
@@ -98,6 +114,12 @@ instance FromJSON JwtClaims where
           Aeson.Array values -> traverse parseSingle (foldr (:) [] values)
           _ -> fail "aud must be a string or array of strings"
       parseSingle = Aeson.withText "aud entry" pure
+
+-- | Whether the verified token carries the given realm role in
+-- @realm_access.roles@. Phase 9 admin gating checks the Infernix admin role
+-- with this; ordinary @sub@-scoped per-user surfaces never call it.
+jwtClaimsHasRealmRole :: Text -> JwtClaims -> Bool
+jwtClaimsHasRealmRole role claims = role `elem` jwtClaimRealmRoles claims
 
 -- | One JSON Web Key entry. Only RSA keys are supported at this layer
 -- because Keycloak issues RS256 tokens by default and that is the supported

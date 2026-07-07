@@ -22,7 +22,7 @@ Read first:
 - never run `git add`
 - never run `git commit`
 - never run `git push`
-- keep `DEVELOPMENT_PLAN/` truthful as implementation status changes
+- keep `DEVELOPMENT_PLAN/` aligned with the current implementation state
 - realness by construction: inference engine adapters (`python/adapters/*_python.py`) and native
   runners (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) must return only real model output or
   raise / exit non-zero (→ `status=failed`). No fabricated results — no
@@ -32,8 +32,8 @@ Read first:
   `check-code` AST pass), owned by Phase 0 Sprint 0.12 with its per-runner scope extended by Phases 1/4,
   enforces this. Canonical doctrine:
   [documents/architecture/realness_contract.md](documents/architecture/realness_contract.md)
-- update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
-  supported bootstrap entrypoints change
+- review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
+  the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution
   context: direct `./.build/infernix` only on Apple Silicon, and the Linux outer-container
   launcher for `linux-cpu` or `linux-gpu`
@@ -72,7 +72,7 @@ Read first:
   binary-produced string, never renders/parses Dhall). Schemas are reflected from the Haskell
   decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
   manifest) and `infernix test init` (`./infernix.test.dhall`); there is no auto-generate-if-absent
-  backstop — every command fails fast if its config is missing. The test harness generates
+  backstop — every command fails fast if its config is missing, naming the init to run. The test harness generates
   `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
   the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
   generator); the coordinator eager-stages that set at startup. Canonical doctrine:

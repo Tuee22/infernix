@@ -127,7 +127,9 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
   await page.locator("#login-button").click();
   const credentials = await submitFreshRegistrationForm(page, baseUrl);
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
-  await expectOperatorRibbon(page);
+  // Phase 9 Sprint 9.8: this self-service user is non-admin, so the operator
+  // ribbon (and the cluster-wide surfaces) stay hidden.
+  await expectNoOperatorRibbon(page);
   await waitForSentFrame(wsFrames, (frame) => frame.tag === "ClientHello");
   await waitForReceivedFrame(wsFrames, (frame) => frame.tag === "ServerContextListSnapshot");
   const firstToken = await browserAccessToken(page);
@@ -174,8 +176,17 @@ test("routed WebSocket validates JWTs and reports malformed frames", async ({ pa
   const accessToken = tokenPayload.access_token;
   expect(accessToken).toBeTruthy();
 
-  await expectJwtGatedOperatorRoute(request, `${baseUrl}/harbor`, accessToken);
-  await expectJwtGatedOperatorRoute(request, `${baseUrl}/pulsar/admin/admin/v2/clusters`, accessToken);
+  // Phase 9 Sprint 9.8: the operator routes are admin-authorized at the edge.
+  // A valid self-registered (non-admin) token authenticates but is authorized
+  // away with 403 on every operator route; an unauthenticated request is 401.
+  for (const operatorRoute of [
+    `${baseUrl}/harbor`,
+    `${baseUrl}/harbor/api`,
+    `${baseUrl}/pulsar/admin/admin/v2/clusters`,
+    `${baseUrl}/pulsar/ws`,
+  ]) {
+    await expectJwtGatedOperatorRoute(request, operatorRoute, accessToken);
+  }
   // Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed, so it
   // no longer reaches MinIO (it falls through to the demo SPA route, non-2xx).
   const minioRouteResponse = await request.get(`${baseUrl}/minio/s3/models/demo.bin`);
@@ -500,6 +511,334 @@ test("self-service account deletion reaps demo state before Keycloak account act
       return topics.filter((topic) => topic.includes(claims.sub)).length;
     }, { timeout: 60000 })
     .toBe(0);
+});
+
+// Phase 9 Sprint 9.8: RBAC + dashboard + lifecycle coverage. The hardcoded demo
+// admin (chart values keycloak.realm.demoAdmin) carries the infernix-admin realm
+// role and unlocks every cluster-wide surface; self-registered users are
+// non-admin by construction and are denied at both the edge SecurityPolicy and
+// the backend admin gate.
+test("admin sees cluster-wide surfaces", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  // The published platform state is the cross-check source for the admin's
+  // cluster-summary + monitoring surfaces.
+  const publicationResponse = await request.get(`${baseUrl}/api/publication`);
+  expect(publicationResponse.ok()).toBeTruthy();
+  const publication = await publicationResponse.json();
+  expect(publication.runtimeMode).toBeTruthy();
+
+  await loginExistingKeycloakUser(page, baseUrl, "admin", "infernix-admin-demo");
+  await expect(page.locator("html")).toHaveClass(/infernix-admin/, { timeout: 30000 });
+
+  await expectOperatorRibbon(page);
+  await expectAdminPanel(page);
+  await expect(page.locator("#personal-dashboard")).toBeVisible();
+
+  const clusterSummary = page.locator(".summary-item.cluster-summary");
+  await expect(clusterSummary).toHaveCount(5);
+  for (let index = 0; index < 5; index += 1) {
+    await expect(clusterSummary.nth(index)).toBeVisible();
+  }
+
+  // The five cluster cells are real platform state, not the "loading" /
+  // "Unavailable" placeholders; #runtime-mode mirrors the published runtimeMode.
+  await expect(page.locator("#runtime-mode")).toHaveText(publication.runtimeMode, { timeout: 60000 });
+  for (const cellId of ["#edge-port", "#control-plane-context", "#daemon-location", "#inference-dispatch-mode"]) {
+    await expect(page.locator(cellId)).not.toHaveText("loading", { timeout: 60000 });
+    await expect(page.locator(cellId)).not.toHaveText("Unavailable", { timeout: 60000 });
+  }
+
+  // The admin's browser token passes the edge SecurityPolicy on every operator
+  // route and the backend admin gate.
+  const adminToken = await browserAccessToken(page);
+  expect(adminToken).toBeTruthy();
+  const adminClaims = decodeJwtPayload(adminToken);
+  expect(adminClaims.realm_access?.roles).toContain("infernix-admin");
+
+  for (const operatorRoute of [
+    `${baseUrl}/harbor`,
+    `${baseUrl}/harbor/api`,
+    `${baseUrl}/pulsar/admin/admin/v2/clusters`,
+    `${baseUrl}/pulsar/ws`,
+  ]) {
+    await expectOperatorRouteAllowed(request, operatorRoute, adminToken);
+  }
+
+  const overviewResponse = await request.get(`${baseUrl}/api/admin/overview`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  expect(overviewResponse.status()).toBe(200);
+  const overview = await overviewResponse.json();
+  expect(typeof overview.catalogModelCount).toBe("number");
+  expect(overview.runtimeMode).toBe(publication.runtimeMode);
+
+  const cacheResponse = await request.get(`${baseUrl}/api/cache`, {
+    headers: { Authorization: `Bearer ${adminToken}` },
+  });
+  expect(cacheResponse.status()).toBe(200);
+});
+
+test("non-admin is denied cluster-wide surfaces", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+
+  // A self-registered user is non-admin: no operator ribbon, no admin panel, and
+  // the five cluster-summary cells are hidden.
+  await expectNoOperatorRibbon(page);
+  await expectNoAdminPanel(page);
+  const clusterSummary = page.locator(".summary-item.cluster-summary");
+  await expect(clusterSummary).toHaveCount(5);
+  for (let index = 0; index < 5; index += 1) {
+    await expect(clusterSummary.nth(index)).toBeHidden();
+  }
+  // The user-scoped surfaces stay visible to every authenticated user.
+  await expect(page.locator("#personal-dashboard")).toBeVisible();
+  await expect(page.locator("#catalog-count")).toBeVisible();
+
+  const nonAdminToken = await browserAccessToken(page);
+  expect(nonAdminToken).toBeTruthy();
+
+  // The edge SecurityPolicy authorizes the operator routes to admins only: a
+  // valid non-admin token is 403 everywhere.
+  for (const operatorRoute of [
+    `${baseUrl}/harbor`,
+    `${baseUrl}/harbor/api`,
+    `${baseUrl}/pulsar/admin/admin/v2/clusters`,
+    `${baseUrl}/pulsar/ws`,
+  ]) {
+    await expectOperatorRouteForbidden(request, operatorRoute, nonAdminToken);
+  }
+
+  // The backend admin gate denies the same non-admin token on every admin API.
+  const overviewForbidden = await request.get(`${baseUrl}/api/admin/overview`, {
+    headers: { Authorization: `Bearer ${nonAdminToken}` },
+  });
+  expect(overviewForbidden.status()).toBe(403);
+  const evictForbidden = await request.post(`${baseUrl}/api/cache/evict`, {
+    headers: { Authorization: `Bearer ${nonAdminToken}` },
+  });
+  expect(evictForbidden.status()).toBe(403);
+  const cacheForbidden = await request.get(`${baseUrl}/api/cache`, {
+    headers: { Authorization: `Bearer ${nonAdminToken}` },
+  });
+  expect(cacheForbidden.status()).toBe(403);
+
+  // Unauthenticated admin API access is 401.
+  const overviewUnauthenticated = await request.get(`${baseUrl}/api/admin/overview`);
+  expect(overviewUnauthenticated.status()).toBe(401);
+});
+
+test("personal dashboard is disjoint per user", async ({ page, browser, request, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  // User A signs in through the SPA and uploads one object under their own
+  // users/<sub>/ prefix.
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  const firstToken = await browserAccessToken(page);
+  expect(firstToken).toBeTruthy();
+  const firstClaims = decodeJwtPayload(firstToken);
+  expect(firstClaims.sub).toBeTruthy();
+
+  const contextId = `ctx-${randomUUID()}`;
+  const displayName = `dashboard-object-${randomUUID()}.txt`;
+  const expectedKey = `users/${firstClaims.sub}/contexts/${contextId}/uploads/${displayName}`;
+  const objectBody = `dashboard body ${randomUUID()}\n`;
+  const uploadResponse = await request.post(
+    `${baseUrl}/api/objects/upload?contextId=${encodeURIComponent(contextId)}&displayName=${encodeURIComponent(displayName)}`,
+    {
+      headers: { Authorization: `Bearer ${firstToken}`, "Content-Type": "text/plain" },
+      data: objectBody,
+    },
+  );
+  expect(uploadResponse.ok()).toBeTruthy();
+  const uploadGrant = await uploadResponse.json();
+  expect(uploadGrant.artifactUploadGrantObjectRef.objectKey).toBe(expectedKey);
+
+  // A's personal dashboard reflects A's own object (a focus nudge triggers the
+  // /api/objects/list refresh so we do not wait a full 15s dashboard interval).
+  await expect
+    .poll(
+      async () => {
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        return Number((await page.locator("#personal-object-count").textContent()) || "");
+      },
+      { timeout: 30000 },
+    )
+    .toBeGreaterThanOrEqual(1);
+  await expect(page.locator("#personal-object-list")).toContainText(displayName, { timeout: 30000 });
+
+  // User B (a second browser context / fresh account) sees only their own data.
+  const secondContext = await browser.newContext();
+  const secondPage = await secondContext.newPage();
+  try {
+    await secondPage.goto(baseUrl);
+    await secondPage.locator("#login-button").click();
+    await submitFreshRegistrationForm(secondPage, baseUrl);
+    await expect(secondPage.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+    const secondToken = await browserAccessToken(secondPage);
+    expect(secondToken).toBeTruthy();
+    const secondClaims = decodeJwtPayload(secondToken);
+    expect(secondClaims.sub).not.toBe(firstClaims.sub);
+
+    // Poll the object COUNT (a stable value once the fetch lands), not the
+    // status text — each focus nudge resets the status to "refreshing…", so
+    // polling the status races the refresh. B's own dashboard settles to 0.
+    await expect(secondPage.locator("#personal-dashboard")).toBeVisible();
+    await expect
+      .poll(
+        async () => {
+          await secondPage.evaluate(() => window.dispatchEvent(new Event("focus")));
+          return (await secondPage.locator("#personal-object-count").textContent()) || "";
+        },
+        { timeout: 30000 },
+      )
+      .toBe("0");
+    await expect(secondPage.locator("#personal-object-list")).not.toContainText(displayName);
+
+    // B cannot read A's object through the server-scoped object proxy.
+    const crossUserGet = await request.get(
+      `${baseUrl}/api/objects/download?key=${encodeURIComponent(expectedKey)}&mimeType=${encodeURIComponent("text/plain")}`,
+      { headers: { Authorization: `Bearer ${secondToken}` } },
+    );
+    expect(crossUserGet.status()).toBe(403);
+  } finally {
+    await secondContext.close();
+  }
+
+  // Clean up A's object.
+  const deleteResponse = await request.delete(`${baseUrl}/api/objects?key=${encodeURIComponent(expectedKey)}`, {
+    headers: { Authorization: `Bearer ${firstToken}` },
+  });
+  expect(deleteResponse.ok()).toBeTruthy();
+});
+
+test("returning user signs back in with the stored password", async ({ page, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  const credentials = await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+
+  await page.locator("#logout-button").click();
+  await expect(page.locator("#connection-state")).toHaveText("Signed out");
+
+  // The returning user signs back in with the correct password.
+  await page.locator("#login-button").click();
+  await completeLoginPromptIfPresent(page, credentials);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+});
+
+test("sign-in with the wrong password is rejected at Keycloak", async ({ page, browser, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  // Register a user to obtain valid credentials.
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  const credentials = await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+
+  // Attempt the wrong password in a FRESH context with no Keycloak SSO session
+  // (the app logout clears the local token but not the Keycloak SSO cookie, so
+  // reusing this context would silently SSO past the login form). A wrong
+  // password is rejected by Keycloak: the error renders and the flow never
+  // redirects back to the app with an auth code.
+  const freshContext = await browser.newContext();
+  const freshPage = await freshContext.newPage();
+  try {
+    await freshPage.goto(baseUrl);
+    await freshPage.locator("#login-button").click();
+    const usernameField = freshPage.locator("#username, input[name='username']").first();
+    await expect(usernameField).toBeVisible({ timeout: 60000 });
+    await usernameField.fill(credentials.username);
+    await freshPage.locator("#password, input[name='password']").first().fill(`${credentials.password}-wrong`);
+    await freshPage
+      .locator("#kc-login, #kc-form-buttons input[type='submit'], button[type='submit'], input[type='submit']")
+      .first()
+      .click();
+
+    await expect(
+      freshPage
+        .locator(".kc-feedback-text, #input-error, .pf-c-alert.pf-m-danger, .pf-v5-c-alert.pf-m-danger, .alert-error")
+        .first(),
+    ).toBeVisible({ timeout: 60000 });
+    const stuckUrl = new URL(freshPage.url());
+    expect(stuckUrl.pathname).toContain("/auth/realms/infernix/");
+    expect(stuckUrl.searchParams.has("code")).toBe(false);
+    await expect(freshPage.locator("#username, input[name='username']").first()).toBeVisible();
+  } finally {
+    await freshContext.close();
+  }
+});
+
+test("deleted account credentials can no longer sign in", async ({ page, request, infernixFixture }) => {
+  test.setTimeout(accountDeletionTestTimeoutMs);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  const credentials = await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+
+  // Sign out so no live SSO session survives the deletion, then delete the
+  // account (the app's own DELETE /api/account reaping flow is covered by the
+  // dedicated account-deletion test; here we reach the deleted-account state
+  // deterministically via the Keycloak admin API and prove the auth loop fails).
+  await page.locator("#logout-button").click();
+  await expect(page.locator("#connection-state")).toHaveText("Signed out");
+  await deleteKeycloakUserByUsername(request, baseUrl, credentials.username);
+
+  // The deleted credentials no longer authenticate: Keycloak rejects them and
+  // the app never reaches an authenticated session.
+  await page.locator("#login-button").click();
+  const usernameField = page.locator("#username, input[name='username']").first();
+  await expect(usernameField).toBeVisible({ timeout: 60000 });
+  await usernameField.fill(credentials.username);
+  await page.locator("#password, input[name='password']").first().fill(credentials.password);
+  await page
+    .locator("#kc-login, #kc-form-buttons input[type='submit'], button[type='submit'], input[type='submit']")
+    .first()
+    .click();
+
+  await expect(
+    page
+      .locator(".kc-feedback-text, #input-error, .pf-c-alert.pf-m-danger, .pf-v5-c-alert.pf-m-danger, .alert-error")
+      .first(),
+  ).toBeVisible({ timeout: 60000 });
+  const stuckUrl = new URL(page.url());
+  expect(stuckUrl.pathname).toContain("/auth/realms/infernix/");
+  expect(stuckUrl.searchParams.has("code")).toBe(false);
 });
 
 test("browser artifact upload covers preview media PDF and download-only grants", async ({ page, request, infernixFixture }) => {
@@ -1739,6 +2078,104 @@ async function expectOperatorRibbon(page) {
   await expect(ribbon.locator("[data-operator-route='/minio/s3']")).toHaveCount(0);
 }
 
+// Phase 9 Sprint 9.8: drive the SPA login for an EXISTING account (e.g. the
+// hardcoded demo admin) so window.__infernixAccessToken + the operator cookie
+// carry that account's token. Models registerFreshKeycloakUser but takes the
+// Sign-in path and fills username/password instead of registering.
+async function loginExistingKeycloakUser(page, baseUrl, username, password) {
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  const usernameField = page.locator("#username, input[name='username']").first();
+  await expect(usernameField).toBeVisible({ timeout: 60000 });
+  await usernameField.fill(username);
+  await page.locator("#password, input[name='password']").first().fill(password);
+  await page
+    .locator("#kc-login, #kc-form-buttons input[type='submit'], button[type='submit'], input[type='submit']")
+    .first()
+    .click();
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+}
+
+// Phase 9 Sprint 9.8: a non-admin never sees the operator ribbon — the ribbon is
+// CSS-hidden and <html> never carries the .infernix-admin marker class.
+async function expectNoOperatorRibbon(page) {
+  await expect(page.locator(".operator-ribbon")).toBeHidden();
+  await expect(page.locator("html")).not.toHaveClass(/infernix-admin/);
+}
+
+// Phase 9 Sprint 9.8: the admin monitoring panel is visible (CSS-gated on
+// <html class="infernix-admin">, which already proves the admin gate applied)
+// and populated by the admin-gated /api/admin/overview fetch. A real substrate
+// id is alphanumeric and never the "loading"/"–" placeholder. The fetch only
+// fires once the page is admin, so nudge a dashboard refresh each poll to avoid
+// waiting a full 15s interval.
+async function expectAdminPanel(page) {
+  await expect(page.locator("#admin-panel")).toBeVisible({ timeout: 30000 });
+  await expect
+    .poll(
+      async () => {
+        await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+        return (await page.locator("#admin-substrate").textContent()) || "";
+      },
+      { timeout: 30000 },
+    )
+    .toMatch(/[a-z0-9]/i);
+}
+
+// Phase 9 Sprint 9.8: a non-admin never sees the cluster monitoring panel.
+async function expectNoAdminPanel(page) {
+  await expect(page.locator("#admin-panel")).toBeHidden();
+}
+
+// Phase 9 Sprint 9.8: the edge SecurityPolicy denies a valid non-admin token on
+// every operator route with 403.
+async function expectOperatorRouteForbidden(request, url, token) {
+  const response = await request.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.status()).toBe(403);
+}
+
+// Phase 9 Sprint 9.8: the edge SecurityPolicy lets an admin token PAST the
+// admin authorization — i.e. it is never rejected 401/403. The precise property
+// under test is "admin is not denied by the edge gate", so the backend's own
+// status is allowed through: HTTP consoles (/harbor, /harbor/api, /pulsar/admin)
+// answer 2xx/3xx, while a plain GET to the WebSocket route /pulsar/ws reaches the
+// Pulsar servlet and legitimately answers a non-auth 4xx (upgrade required). The
+// paired expectOperatorRouteForbidden proves the gate denies non-admins with 403,
+// and the /api/admin/overview + /api/cache 200s prove real admin backend access.
+async function expectOperatorRouteAllowed(request, url, token) {
+  const response = await request.get(url, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  expect(response.status()).not.toBe(401);
+  expect(response.status()).not.toBe(403);
+}
+
+// Phase 9 Sprint 9.8: reach the deleted-account state deterministically via the
+// Keycloak admin API (the app's own DELETE /api/account reaping flow is covered
+// by the dedicated account-deletion test). Uses the master-realm superuser to
+// look up and delete the infernix-realm user by exact username.
+async function deleteKeycloakUserByUsername(request, baseUrl, username) {
+  const adminToken = await keycloakAdminAccessToken(request, baseUrl);
+  const lookup = await request.get(
+    `${baseUrl}/auth/admin/realms/infernix/users?username=${encodeURIComponent(username)}&exact=true`,
+    { headers: { Authorization: `Bearer ${adminToken}` } },
+  );
+  expect(lookup.ok()).toBeTruthy();
+  const users = await lookup.json();
+  expect(Array.isArray(users)).toBe(true);
+  expect(users.length).toBeGreaterThan(0);
+  const userId = users[0].id;
+  expect(userId).toBeTruthy();
+  const deletion = await request.delete(
+    `${baseUrl}/auth/admin/realms/infernix/users/${encodeURIComponent(userId)}`,
+    { headers: { Authorization: `Bearer ${adminToken}` } },
+  );
+  expect(deletion.ok()).toBeTruthy();
+  return userId;
+}
+
 async function browserAccessToken(page) {
   return page.evaluate(() => window.__infernixAccessToken || "");
 }
@@ -1752,14 +2189,18 @@ function operatorTokenCookieHeader(accessToken) {
   return `infernix_operator_token=${accessToken}`;
 }
 
-async function expectJwtGatedOperatorRoute(request, url, accessToken) {
+// Phase 9 Sprint 9.8: the operator routes are admin-authorized at the edge
+// (SecurityPolicy defaultAction Deny, allow only realm_access.roles ⊇
+// infernix-admin), so a valid self-registered (non-admin) token is 403 and an
+// unauthenticated request is 401.
+async function expectJwtGatedOperatorRoute(request, url, nonAdminAccessToken) {
   const unauthenticated = await request.get(url);
   expect(unauthenticated.status()).toBe(401);
 
   const authenticated = await request.get(url, {
-    headers: { Authorization: `Bearer ${accessToken}` },
+    headers: { Authorization: `Bearer ${nonAdminAccessToken}` },
   });
-  expect(authenticated.status()).not.toBe(401);
+  expect(authenticated.status()).toBe(403);
 }
 
 async function listDemoTopics(request, baseUrl, accessToken) {

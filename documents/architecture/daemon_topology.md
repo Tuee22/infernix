@@ -389,9 +389,15 @@ The Apple substrate runs the split with the coordinator in cluster and engine me
   survives across cluster restarts on the operator's machine but is
   purgeable; it is not a Kubernetes PVC and is not durable cluster
   state.
+- The Apple host-worker reaches the cluster **data plane directly on loopback**, bypassing the
+  Keycloak-gated browser edge: MinIO over NodePort `30011` and the Pulsar proxy over NodePort `30080`,
+  both bound `listenAddress: 127.0.0.1` by the Kind config. This path is trust-boundary-internal and
+  un-gated; the admin `SecurityPolicy` on the browser edge (gateway NodePort `30090`) never touches it.
+  See [access_control_doctrine.md](access_control_doctrine.md).
 
-The Apple lane is the canonical shape of the supported two-role split,
-not a special case.
+The Apple lane is the canonical shape of the supported three-role split
+(frontend + coordinator in cluster, engine as an on-host daemon), not a
+special case.
 
 ## Production Shape
 

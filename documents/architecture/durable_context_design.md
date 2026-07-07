@@ -5,8 +5,9 @@
 
 > **Purpose**: Define the product-agnostic durable-context primitives —
 > event-sourced state, deterministic reducer plus prefix-hash chain,
-> single-flight dispatcher, compacted metadata projections, presigned object
-> storage, JWKS-backed JWT validation, and stateless WebSocket coordination —
+> single-flight dispatcher, compacted metadata projections, webapp-mediated
+> object storage (server-side proxy — the browser never holds a presigned URL),
+> JWKS-backed JWT validation, and stateless WebSocket coordination —
 > that any SPA-style application built on the Infernix inference platform
 > reuses verbatim.
 
@@ -97,7 +98,9 @@ this section names the surface so primitives-doc readers can locate it.
   - `Infernix.Dispatch.SingleFlight` — per-context dispatcher rule and
     inference request envelope construction
   - `Infernix.Objects.{Layout,Presigned}` — bucket/prefix layout and
-    presigned URL minting with per-user grant-time scope checks
+    server-side SigV4 signing (against the cluster-internal endpoint) behind
+    the webapp object-proxy, with per-user scope checks — the browser never
+    receives a presigned URL
   - `Infernix.Auth.Jwt` — JWKS-backed JWT validation parametric in
     `<jwtIssuer>` and `<jwtAudience>`
 - **Application glue (`<appNamespace>.*`).** Concrete IdP wiring, WS
@@ -189,8 +192,9 @@ Reconstitution sequence after a fresh login from any device:
    forwards a `ConversationState` snapshot.
 5. Subsequent events on any of those topics yield typed patches over the
    WS; browser applies them.
-6. Artifacts render against presigned MinIO GET URLs minted on demand via
-   `<objectsApiPath>`.
+6. Artifacts render by fetching bytes through the webapp object-proxy at
+   `<objectsApiPath>` (which signs SigV4 server-side against the
+   cluster-internal endpoint); the browser never receives a presigned MinIO URL.
 
 Survives:
 
@@ -316,12 +320,12 @@ users/<userId>/contexts/<contextId>/uploads/<objectKey>
 users/<userId>/contexts/<contextId>/generated/<objectKey>
 ```
 
-Presigned URL minting is performed by `<objectsApiPath>` with grant-time
-scope checks that derive the object prefix from the authenticated user's
-`sub` claim. Users cannot mint the default route for another user's
-prefix. Presigned URLs are bearer capabilities until expiry, so they are
-treated as session-confidential. See [../tools/minio.md](../tools/minio.md)
-for the bucket contract.
+`<objectsApiPath>` reads and writes objects **server-side**: it derives the
+object prefix from the authenticated user's `sub` claim, authorizes it with
+`pathBelongsToUser`, and signs SigV4 against the cluster-internal endpoint to
+issue the PUT/GET itself. The browser holds only the webapp origin and never
+receives a presigned MinIO URL, so a user cannot reach another user's prefix by
+construction. See [../tools/minio.md](../tools/minio.md) for the bucket contract.
 
 The demo binding sets `<objectsBucket> = infernix-demo-objects` and
 `<objectsApiPath> = /api/objects`.
@@ -426,8 +430,9 @@ covered by:
 - JWT validation edge cases parameterized in `<jwtIssuer>` and
   `<jwtAudience>` (expired, wrong issuer, wrong audience, malformed,
   valid)
-- presigned URL minting tests with arbitrary `<objectsBucket>` and scope
-  policy variants
+- server-side object-proxy authorization tests (upload / download / list scoped
+  to `users/<sub>/`, cross-user prefix rejected with HTTP 403) with arbitrary
+  `<objectsBucket>` variants
 - compacted-topic projection tests with synthetic in-memory broker plus live Pulsar compaction
   validation for the demo binding
 - non-chaos live Pulsar prompt roundtrip through the demo binding's dispatcher, engine, result

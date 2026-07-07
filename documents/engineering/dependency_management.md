@@ -4,7 +4,22 @@
 **Referenced by**: [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
 
 > **Purpose**: Document the supported Haskell dependency posture, including the project-wide
-> `cabal.project` flags that unlock current upstream packages against the project's GHC.
+> `cabal.project` flags that unlock current upstream packages against the project's GHC, plus the
+> narrow Python-side pin that keeps the generated protobuf stubs runnable.
+
+## Python `protobuf` / `grpcio-tools` compatibility pin
+
+`python/pyproject.toml` pins `grpcio-tools = ">=1.73.0,<1.74"`. The pin exists because
+`grpcio-tools 1.74`+ (through at least `1.82.0`) ship a `protoc` that stamps generated `*_pb2.py`
+stubs with protobuf **gencode 7.35**, while the project's runtime `protobuf` resolves to the
+`^6.31.1` line (`6.33.6`). At import time `protobuf`'s `runtime_version` guard rejects a stub whose
+gencode is newer than the runtime (`gencode 7.35.0 > runtime 6.33.6`), which breaks
+`poetry run check-code`, `infernix test unit`'s Apple-engine adapter import, and the cluster runtime
+**image build** (`docker build ... && poetry run check-code`). `grpcio-tools 1.73.x` stamps
+gencode 6.31, which the 6.x runtime accepts. The lockfile (`python/poetry.lock`) is `.gitignore`d /
+`.dockerignore`d, so the tracked `pyproject.toml` constraint is the single durable source of the
+resolution for both host venvs and the fresh in-image `poetry install`. Revisit the pin only
+together with a coordinated bump of the runtime `protobuf` major and the generated-stub regeneration.
 
 ## Toolchain Pin
 

@@ -49,7 +49,13 @@ data PresignedUrlConfig = PresignedUrlConfig
     presignedRegion :: Text,
     presignedAccessKeyId :: Text,
     presignedSecretAccessKey :: Text,
-    presignedExpirySeconds :: Int
+    presignedExpirySeconds :: Int,
+    -- | Phase 9 Sprint 9.7: the STS session token when the credential is a
+    -- short-lived per-user scoped credential minted through MinIO
+    -- @AssumeRole@. When present it is included in the signed query as
+    -- @X-Amz-Security-Token@ so MinIO accepts and IAM-scopes the request;
+    -- 'Nothing' for the long-lived root/service credential.
+    presignedSessionToken :: Maybe Text
   }
   deriving (Eq, Show)
 
@@ -168,9 +174,12 @@ presignedS3Url config method canonicalPath now extraQuery =
       credentialScope = dateStamp <> "/" <> region <> "/" <> service <> "/aws4_request"
       credential = accessKeyId <> "/" <> credentialScope
       signedHeaders = "host" :: Text
+      sessionTokenParams =
+        maybe [] (\token -> [("X-Amz-Security-Token", token)]) (presignedSessionToken config)
       queryParams =
         sort
           ( extraQuery
+              <> sessionTokenParams
               <> [ ("X-Amz-Algorithm", "AWS4-HMAC-SHA256"),
                    ("X-Amz-Credential", credential),
                    ("X-Amz-Date", amzDate),

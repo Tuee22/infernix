@@ -3457,7 +3457,8 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
             Presigned.presignedRegion = "us-east-1",
             Presigned.presignedAccessKeyId = "minioadmin",
             Presigned.presignedSecretAccessKey = "minioadmin123",
-            Presigned.presignedExpirySeconds = 900
+            Presigned.presignedExpirySeconds = 900,
+            Presigned.presignedSessionToken = Nothing
           }
   manager <- newManager tlsManagerSettings
   let pollIntervalSeconds = 5
@@ -3787,7 +3788,8 @@ loadBootstrapPresignedConfig = do
                 Presigned.presignedRegion = Cluster.minioRegion minio,
                 Presigned.presignedAccessKeyId = Secrets.minioAccessKey minioCreds,
                 Presigned.presignedSecretAccessKey = Secrets.minioSecretKey minioCreds,
-                Presigned.presignedExpirySeconds = fromIntegral (Cluster.minioPresignExpirySeconds minio)
+                Presigned.presignedExpirySeconds = fromIntegral (Cluster.minioPresignExpirySeconds minio),
+                Presigned.presignedSessionToken = Nothing
               }
         )
 

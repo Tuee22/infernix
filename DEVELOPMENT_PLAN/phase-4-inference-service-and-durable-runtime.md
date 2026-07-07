@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — reopened for Sprint 4.22 / Wave O MT3 catalog replacement proof
+**Status**: Active — reopened for Wave Q (2026-07-06): matrix substrate-accuracy closure (Sprint 4.25). The prior Wave O MT3 reopen (Sprint 4.22) is closed — proven by Wave P (2026-07-04).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -1434,9 +1434,9 @@ None.
 
 ---
 
-## Sprint 4.22: Modern Music-Transcription Models and JAX/TF Retirement [Active]
+## Sprint 4.22: Modern Music-Transcription Models and JAX/TF Retirement [Done]
 
-**Status**: Active
+**Status**: Done — MT3 catalog replacement proven by Wave P (2026-07-04)
 **Code-side closure**: Complete for the 2026-06-30 MT3 replacement. Rebind the music-transcription rows to maintained PyTorch/ONNX models
 on existing adapters: MT3-PyTorch and MR-MT3 through `openmirlab/mt3-infer`, Omnizart → a
 modern PyTorch transcription model (`piano_transcription_inference`), basic-pitch → its
@@ -1508,9 +1508,10 @@ full-suite CPU proof is pending.
 MR-MT3 `T5Block.forward` `past_key_values`→`past_key_value` compat fix landed; rebuilt-image
 `./bootstrap/linux-cpu.sh test` is **GREEN** (integration real MIDI for both rows + routed Playwright
 `9/9` incl. the per-model matrix), and `./bootstrap/linux-gpu.sh test` proved both rows real on CUDA
-(integration PASS; routed Playwright `8/9`). The one remaining red is the clean `linux-gpu` full
-`9/9`, blocked solely by the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap
-timeout — now owned by **Phase 8 Sprint 8.5** (eager model-cache staging). The Apple catalog binding
+(integration PASS; routed Playwright `8/9`). The clean `linux-gpu` full `9/9` was blocked solely by
+the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap timeout; **Wave P**
+(2026-07-04) closed it once Phase 8 eager model-cache staging pre-staged the Wan weights. The Apple
+catalog binding
 is supported as a PyTorch CPU route, but no post-replacement Apple full-suite proof is claimed until
 an Apple cohort rerun records it.
 **Implementation**: `src/Infernix/Models.hs`, `python/adapters/pytorch_python.py`, `python/adapters/model_bootstrap.py`, `python/engines/pytorch/pyproject.toml`, `docker/Dockerfile`
@@ -1645,10 +1646,52 @@ None.
 
 ---
 
+## Sprint 4.25: Matrix Substrate-Accuracy Closure [Planned]
+
+**Status**: Planned
+**Cohort gate**: [Wave Q](cohort-validation-waves.md) — the CUDA GPU-accuracy rows need a CUDA Linux host; code-side + `linux-cpu` + Apple are validatable first.
+**Implementation**: `src/Infernix/Engines/LinuxNative.hs`, `python/adapters/*.py`, `python/native-runners/apple_native_runner.py`, `docker/Dockerfile`, `src/Infernix/Models.hs`, `README.md`
+**Docs to update**: `README.md` (matrix Notes), `documents/architecture/model_catalog.md`
+
+### Objective
+
+Make every matrix cell accurate for the substrate its README column advertises, and close two
+substrate-divergence defects surfaced by the 2026-07-06 review.
+
+### Deliverables
+
+- Row 11 (basic-pitch ONNX) CUDA lane: implement `CUDAExecutionProvider` + install `onnxruntime-gpu`,
+  **or** relabel the README cell `ONNX Runtime (CPU)` (`LinuxNative.hs` hardcodes
+  `CPUExecutionProvider`; only the CPU `onnxruntime` wheel is installed today).
+- Rows 4/6 (llama.cpp GGUF, whisper.cpp speech) CUDA lane: bake CUDA-enabled binaries, **or** document
+  that the CUDA column runs the CPU Ubuntu-release binaries today (`docker/Dockerfile`; the bindings
+  carry `requiresGpu=True` but the baked binaries are CPU).
+- Row 14 (`piano_transcription`): correct the stale `Models.hs` "test is red until the adapter binding
+  lands" note — the binding is landed (`pytorch_python.py`); only cohort real-output evidence is pending.
+- Row 17 (Wan2.1-T2V) Apple: implement the MPS viability path **or** keep it the documented Apple
+  residual (`residualMatrixRowIdsForMode AppleSilicon`), with the union-coverage invariant satisfied by
+  the real CUDA cell.
+- Substrate-divergence guards: add the divide-by-zero guard to the Linux basic-pitch onset path that
+  the Apple runner already has; make the Apple smoke fail closed if the engine runtime does not import.
+
+### Validation
+
+- Code-side: `cabal build all`, `infernix lint docs`, and the Python `check-code` AST/realness gate.
+- Cohort: Apple + `linux-cpu` real-output for the affected rows; CUDA GPU-accuracy is the named
+  [Wave Q](cohort-validation-waves.md) `linux-gpu` residual.
+
+### Remaining Work
+
+All (planned).
+
+---
+
 ## Remaining Work
 
-Sprint 4.22 remains open on [Wave O](cohort-validation-waves.md): full rebuilt-image `linux-cpu`
-plus selected `linux-gpu` integration and routed E2E proof for the two new MT3 rows.
+The MT3 catalog-replacement reopen (Sprint 4.22) is **closed** — proven by
+[Wave P](cohort-validation-waves.md) (2026-07-04). The phase is reopened for **Sprint 4.25** (matrix
+substrate-accuracy closure) under [Wave Q](cohort-validation-waves.md); the CUDA GPU-accuracy rows are
+the named `linux-gpu` cohort residual.
 
 ---
 
