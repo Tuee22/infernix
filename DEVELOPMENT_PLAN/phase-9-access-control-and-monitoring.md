@@ -1,7 +1,11 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active — code-side closed (2026-07-06) and **apple-silicon Wave Q live-validated
-(2026-07-07)**; the `linux-cpu` shared-lane rerun is the remaining residual for full `Done`.
+**Status**: Done — code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+`apple-silicon` and `linux-cpu` (2026-07-07)**: full `cluster up` on each cohort proved the RBAC
+403/2xx-by-role contract, the admin `realm_access.roles` claim, the loopback data-plane split,
+per-user isolation, the default-on per-user STS scoped-credential object path, and (apple) the routed
+Playwright RBAC/dashboard/lifecycle suite 7/7 — with the deployed SPA carrying the admin panel +
+personal dashboard on both. No remaining Phase 9 work.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —
@@ -56,12 +60,25 @@ reconciled with the `infernix-admin` role + admin user) then exercised the RBAC 
   cells; non-admin denied; personal dashboard disjoint; logout/re-login/token-refresh; returning-user
   sign-in; wrong-password rejected; deleted-account auth loop).
 
-The remaining residual for full `Done` is the `linux-cpu` shared-lane rerun (the RBAC / STS / dashboard
-behavior is substrate-independent — identical chart, demo image, Keycloak realm, and `SecurityPolicy`).
+**Wave Q `linux-cpu` live validation (2026-07-07).** A full `./bootstrap/linux-cpu.sh build` +
+`up` (outer-container launcher on the native-arm64 colima daemon; the image build passed the in-image
+`poetry run check-code` with the dependency-pin fix; substrate `linux-cpu`, edge `127.0.0.1:9090`,
+12/12 models staged) reproduced the same result: unauthenticated 401 on every gated route; by-role
+403 (non-admin) / 2xx (admin) over the four operator routes + `/api/cache` + `/api/admin/overview`
+(`/pulsar/ws` admin → 404); `GET /api/admin/overview` returns real `linux-cpu` aggregates
+(catalog 12, 7 engines, 7 pools, 1 member); per-user isolation (A reads own, B denied A's key 403,
+B's list disjoint); the default-on per-user STS scoped-credential object path works end-to-end; and
+the deployed SPA carries the admin panel + personal dashboard. Notably the admin access token minted
+**without** any profile patch, confirming the realm-import admin-profile fix. The routed Playwright
+browser rendering is substrate-independent (identical baked SPA) and is covered by the apple-silicon
+7/7 run.
 
-## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Active]
+Both the chosen accelerator cohort (`apple-silicon`) and `linux-cpu` have passed the phase's
+full RBAC/STS/dashboard gates against the same frozen phase state, so Phase 9 is `Done`.
 
-**Status**: Active
+## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
+
+**Status**: Done
 **Code-side closure**: `infernix-admin` realm role + `oidc-usermodel-realm-role-mapper`
 (`realm_access.roles`) + hardcoded `admin` user land in `chart/templates/keycloak/configmap-realm-import.yaml`
 driven by `chart/values.yaml` (`keycloak.realm.adminRealmRole`, `keycloak.realm.demoAdmin`); realm
@@ -71,7 +88,7 @@ blocked by an "Update Account Information" required action — a fix landed duri
 apple-silicon validation, where the admin browser login (and Playwright admin test) then passed.
 **Cohort gate**: [Wave Q](cohort-validation-waves.md) — **apple-silicon closed 2026-07-07**: the live
 realm import emitted `realm_access.roles ⊇ infernix-admin` in an issued admin access token (absent for
-a self-service token). `linux-cpu` shared-lane rerun remains.
+a self-service token). `linux-cpu` cohort also closed 2026-07-07.
 **Implementation**: `chart/templates/keycloak/configmap-realm-import.yaml`, `chart/values.yaml`
 **Docs to update**: `documents/tools/keycloak.md`, `documents/architecture/access_control_doctrine.md`
 
@@ -88,11 +105,11 @@ non-admin by construction.
 
 ### Remaining Work
 apple-silicon Wave Q closed 2026-07-07 (live realm import; admin token carried `realm_access.roles ⊇
-infernix-admin`); `linux-cpu` shared-lane rerun remains.
+infernix-admin`); `linux-cpu` cohort also closed 2026-07-07.
 
-## Sprint 9.2: Backend realm-role claim parsing [Active]
+## Sprint 9.2: Backend realm-role claim parsing [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: `Infernix.Auth.Jwt.JwtClaims` gains `jwtClaimRealmRoles` parsed from
 `realm_access.roles`; `jwtClaimsHasRealmRole` predicate exported; unit coverage green host-native
 (`test/unit/Spec.hs` admin/non-admin token cases); `cabal build all` green.
@@ -112,11 +129,11 @@ Let the backend read the caller's realm roles so `/api/*` handlers can distingui
 
 ### Remaining Work
 None code-side; apple-silicon Wave Q closed 2026-07-07 (admin token carried `infernix-admin`, a
-self-service token did not); `linux-cpu` shared-lane rerun remains.
+self-service token did not); `linux-cpu` cohort also closed 2026-07-07.
 
-## Sprint 9.3: Edge admin authorization + ungated-route closure [Active]
+## Sprint 9.3: Edge admin authorization + ungated-route closure [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: `chart/templates/securitypolicy-operator-routes.yaml` gains an `authorization`
 rule (`defaultAction: Deny`, allow only `realm_access.roles` ⊇ `infernix-admin`) and adds the
 previously ungated `infernix-harbor-api` + `infernix-pulsar-ws` HTTPRoutes to `targetRefs`;
@@ -146,11 +163,11 @@ edge, and close the routes that had no gate at all.
 
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 — unauthenticated 401 + by-role 403 (non-admin) / 2xx (admin)
-  over all four operator routes + `GET /api/cache` proven live; `linux-cpu` shared-lane rerun remains.
+  over all four operator routes + `GET /api/cache` proven live; `linux-cpu` cohort also closed 2026-07-07.
 
-## Sprint 9.4: Apple host-worker loopback data-plane invariant [Active]
+## Sprint 9.4: Apple host-worker loopback data-plane invariant [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: the loopback invariant is now **enforced**. `infernix lint chart` gains a scanner
 (`Infernix.Lint.Chart.checkKindLoopbackBindings`) over the three `kind/cluster-*.yaml` configs that
 rejects any `extraPortMappings` entry not bound to `127.0.0.1`; a unit assertion pins the
@@ -182,11 +199,11 @@ un-gated and trust-boundary-internal, and keeps working while the browser edge i
 
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 — MinIO (30011) + Pulsar proxy (30080) loopback data plane
-  answered 200 un-gated while `/harbor` required admin; `linux-cpu` shared-lane rerun remains.
+  answered 200 un-gated while `/harbor` required admin; `linux-cpu` cohort also closed 2026-07-07.
 
-## Sprint 9.5: Admin operator-ribbon gating + cluster-wide monitoring panel [Active]
+## Sprint 9.5: Admin operator-ribbon gating + cluster-wide monitoring panel [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: the operator ribbon is now admin-only — `web/src/index.html` hides
 `.operator-ribbon` for every non-admin (`html:not(.infernix-admin)`) and a small cookie-driven
 detector marks `<html>.infernix-admin` when the `infernix_operator_token` JWT carries
@@ -217,15 +234,15 @@ health, catalog size, all-user counts, runtime/substrate/dispatch).
 
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 (Playwright: admin renders panel + ribbon + cluster cells,
-  non-admin does not; `/api/admin/overview` returns real aggregates); `linux-cpu` rerun remains.
+  non-admin does not; `/api/admin/overview` returns real aggregates); `linux-cpu` cohort also closed 2026-07-07.
 - Fold the ribbon + panel + grid gate into PureScript state (`AppState.isAdmin` + `renderAuthGate`) as
   the idiomatic form once the web build lane (`spago` + `infernix.dhall`) is available — the current
   verbatim-copied `index.html` detector + vanilla-JS panels are the verified-without-build interim
   (the plan explicitly accepts this interim, per Sprint 9.5 code-side closure).
 
-## Sprint 9.6: User personal dashboard [Active]
+## Sprint 9.6: User personal dashboard [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: `web/src/index.html` gains a `#personal-dashboard` panel visible to every
 authenticated user (`#personal-object-count`, `#personal-object-list`, `#personal-dashboard-status`),
 populated by a vanilla-JS fetch of the existing per-user `GET /api/objects/list`. It is disjoint per user
@@ -249,13 +266,13 @@ existing per-user `/api/objects/list`. No cluster-wide data.
 
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 (Playwright + API: user B's dashboard disjoint from A;
-  cross-user object GET → 403); `linux-cpu` shared-lane rerun remains.
+  cross-user object GET → 403); `linux-cpu` cohort also closed 2026-07-07.
 - Fold the dashboard into PureScript state once the `spago` build lane is available (the `index.html`
   vanilla-JS panel is the verified-without-build interim, consistent with Sprint 9.5).
 
-## Sprint 9.7: Per-user MinIO STS defense-in-depth [Active]
+## Sprint 9.7: Per-user MinIO STS defense-in-depth [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: the scoped-credential machinery is landed and unit-covered. `Infernix.Objects.Sts`
 provides the inline session policy (`userScopedPolicyDocument` — s3 object actions scoped to
 `arn:aws:s3:::infernix-demo-objects/users/<sub>/*`, `ListBucket` constrained by an `s3:prefix`
@@ -276,7 +293,8 @@ with `cluster.minio.stsPerUser = True`, the object path works end-to-end through
 inline session policy grants only the caller's `users/<sub>/*` prefix, and cross-user access is denied),
 proving MinIO `AssumeRole` is functional and the shared root credential is no longer the sole boundary.
 `defaultMinioWiring.minioStsPerUser` is now `True` (the object-proxy still enforces `pathBelongsToUser`
-as the first-line gate). `linux-cpu` shares the same MinIO chart and is the remaining shared-lane rerun.
+as the first-line gate). `linux-cpu` shares the same MinIO chart and was also live-validated 2026-07-07
+(the scoped-credential upload/download succeeded there too).
 **Implementation**: `src/Infernix/Objects/Sts.hs`, `src/Infernix/Objects/Presigned.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/ClusterConfig.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/tools/minio.md`, `documents/architecture/tenant_isolation_doctrine.md`, `documents/engineering/object_storage.md`, `documents/engineering/cluster_config_manifest.md`
 
@@ -297,11 +315,12 @@ retire the single-shared-root-credential-as-only-isolation posture). No user-fac
   download succeed through the scoped credential and cross-user access is denied (403).
 
 ### Remaining Work
-- `linux-cpu` shared-lane rerun (same MinIO chart; RBAC/STS behavior is substrate-independent).
+- None — `linux-cpu` cohort also live-validated 2026-07-07 (scoped-credential object path green; parity
+  with apple-silicon).
 
-## Sprint 9.8: RBAC + dashboard + lifecycle e2e [Active]
+## Sprint 9.8: RBAC + dashboard + lifecycle e2e [Done]
 
-**Status**: Active
+**Status**: Done
 **Code-side closure**: the RBAC/dashboard/lifecycle Playwright spec is authored in
 `web/playwright/inference.spec.js` (parses under `node --check`): the auth-lifecycle test's non-admin
 user now asserts the ribbon is **absent**; a stricter operator-route helper asserts 403 for a non-admin
@@ -335,7 +354,7 @@ currently assert the *old* (any-user-sees-operator-consoles) behavior.
 
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 — the routed Playwright RBAC + dashboard + lifecycle suite
-  ran 7/7 PASS against the live edge; `linux-cpu` shared-lane rerun remains.
+  ran 7/7 PASS against the live edge; `linux-cpu` cohort also closed 2026-07-07.
 
 ## Documentation Requirements
 

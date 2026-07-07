@@ -67,10 +67,13 @@ The admin/user role model is implemented under
   for the policy document, the signed `AssumeRole` request, response parsing, and session-token
   presigning.
 
-The remaining Phase 9 work is the [Wave Q](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
-single-accelerator cohort proof: the routed 403/2xx-by-role e2e, the admin/personal dashboards
-rendering under a live edge, the Apple host-worker loopback data-plane check, and — after flipping
-`cluster.minio.stsPerUser` on — the live cross-user IAM-denial proof.
+Phase 9 is **Done**: [Wave Q](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) cohort-validated live
+on **both `apple-silicon` and `linux-cpu`** (2026-07-07). Each cohort's full `cluster up` proved
+unauthenticated 401 on every gated route; by-role 403 (non-admin) / 2xx (admin) over the four operator
+routes + `/api/cache` + `/api/admin/overview`; the admin `realm_access.roles ⊇ infernix-admin` claim; the
+loopback data-plane split; per-user isolation; and the now-default-on per-user STS scoped-credential
+object path. The apple-silicon cohort additionally ran the routed Playwright RBAC / dashboard /
+lifecycle suite 7/7 (substrate-independent SPA).
 
 ## Validation
 

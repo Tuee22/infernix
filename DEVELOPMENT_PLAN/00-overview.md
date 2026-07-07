@@ -222,9 +222,12 @@ at the Envoy edge `SecurityPolicy` (admin authorization on all four operator rou
 transits the admin-gated edge, and its loopback binding is enforced by `infernix lint chart` plus a
 generated-Kind-config unit assertion. Per-user object isolation additionally gains a MinIO STS
 defense-in-depth layer (a scoped credential keyed to `users/<sub>/`, gated by
-`cluster.minio.stsPerUser`). Phase 9 is code-side closed (2026-07-06, machine-independent gates green)
-with the [Wave Q](cohort-validation-waves.md) single-accelerator cohort proof pending. The doctrine
-lives at
+`cluster.minio.stsPerUser`, now default on). Phase 9 is **Done** — code-side closed (2026-07-06,
+machine-independent gates green) and [Wave Q](cohort-validation-waves.md) cohort-validated live on
+**both `apple-silicon` and `linux-cpu`** (2026-07-07: by-role 403/2xx over all operator routes +
+`/api/cache` + `/api/admin/overview`, the admin `realm_access.roles` claim, the loopback split,
+per-user isolation, the STS scoped-credential object path, and routed Playwright RBAC/dashboard/
+lifecycle 7/7 on apple). The doctrine lives at
 [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md);
 the execution-ordered buildout lives at
 [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md).
