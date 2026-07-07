@@ -29,9 +29,12 @@ When the flag is on:
 
 ## Image Topology
 
-`infernix` and `infernix-demo` share the default Cabal library exposed by the `infernix` package
-and ship in the same runtime image family on the cluster path. The chart workload entrypoint
-selects which executable runs where that executable is deployed.
+The cluster ships a single `infernix` executable — `infernix.cabal` declares exactly one
+`executable infernix`, there is no separate `infernix-demo` executable — in one runtime image
+family on the cluster path. Each chart workload selects its role through the entrypoint
+(`DaemonRole = Coordinator | Engine | Webapp`): the `infernix-demo` Deployment runs
+`infernix service --role webapp`, the coordinator runs the coordinator role, and engines run the
+engine role.
 
 On Apple Silicon, the cluster deploys `infernix-demo`, `infernix-coordinator`, and the
 support-service stack, while the canonical Apple inference executor remains a host-native
@@ -118,7 +121,7 @@ credential or presigned MinIO URL (see
 **Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
 route + `presignPublicEndpoint`). The user artifact path is the webapp-mediated `/api/objects`
 proxy; there is no presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
-attestation is the remaining [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+attestation closed under [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) (2026-06-29).
 
 ## Account Deletion
 

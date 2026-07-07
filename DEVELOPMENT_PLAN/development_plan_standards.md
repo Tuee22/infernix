@@ -300,10 +300,11 @@ Rules:
   engine execution and result publication happen, not whether the coordinator exists.
 - **Durable state lives only in MinIO and Pulsar.** Pulsar carries every typed event
   stream (conversation log, contexts metadata, drafts, inference request/batch/result, the
-  `infernix/system/model.bootstrap.request` topic family). MinIO holds binary blobs in two
+  `infernix/system/model.bootstrap.request` topic family). MinIO holds binary blobs in three
   buckets: `infernix-models` (always-on; platform model weights eagerly staged at coordinator
-  startup from the mounted `infernix.dhall` model set, with producer-dedup + Failover for
-  exactly-once semantics) and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
+  startup from the mounted substrate model set, with producer-dedup + Failover for
+  exactly-once semantics), `infernix-engine-artifacts` (always-on; optional immutable engine
+  payloads), and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
   artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
   placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
 - On `apple-silicon`, the in-cluster `infernix-coordinator` Deployment owns cluster-side
@@ -477,7 +478,7 @@ Rules:
   same role as the staged outer-container payload; on Apple it intentionally differs from the
   host-role payload under `./.build/`.
 - Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
-  at `/opt/build/infernix.dhall`.
+  at `/opt/build/infernix-substrate.dhall`.
 - Apple host daemon consumers read host-role config from `./.build/`, even when the Apple topology
   also republishes cluster-role payloads into the cluster for service daemons, routed demo, or
   other support surfaces.
@@ -517,6 +518,7 @@ All supported repository operations close through the `infernix` CLI.
 
 The canonical command surface is:
 
+- `infernix init`
 - `infernix service`
 - `infernix cluster up`
 - `infernix cluster down`
@@ -529,12 +531,18 @@ The canonical command surface is:
 - `infernix lint docs`
 - `infernix lint proto`
 - `infernix lint chart`
+- `infernix test init`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
 - `infernix test e2e`
 - `infernix test all`
 - `infernix docs check`
+
+The `infernix internal ...` family (e.g. `internal materialize-substrate`,
+`internal dhall-schema`, `internal demo-config`, `internal discover`) is a real registry surface of
+operator-facing lifecycle and validation helpers; its full enumeration lives in
+[../documents/reference/cli_reference.md](../documents/reference/cli_reference.md).
 
 Rules:
 

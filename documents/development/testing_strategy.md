@@ -182,8 +182,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   correctness is covered by the integration layer's per-model Pulsar roundtrip. The routed
   Playwright suite also covers the Keycloak self-registration auth-code smoke, routed WebSocket
   valid/malformed-token handshake validation, expired-token rejection, typed malformed-frame
-  error validation, real-Keycloak-JWT `/api/objects` grant validation, same-user routed presigned
-  MinIO PUT/GET byte equality, cross-user object-prefix isolation, and the routed download-grant
+  error validation, real-Keycloak-JWT `/api/objects` grant validation, same-user webapp
+  `/api/objects` proxy upload/download byte equality (no presigned MinIO URL),
+  cross-user object-prefix isolation, and the routed download-grant
   MIME disposition matrix. The browser artifact path covers app-owned PKCE login, local context
   creation, bounded text/JSON previews, inline image/audio/video media URL wiring, browser-native
   PDF URL wiring, MIDI / MusicXML / generic-binary download-only states, and the per-model smoke

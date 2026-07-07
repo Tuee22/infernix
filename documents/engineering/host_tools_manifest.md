@@ -127,7 +127,7 @@ publication selector.
 | chown | `toolPaths.chown` | `/usr/sbin/chown` | `/usr/bin/chown` |
 | nvidia-smi | `toolPaths.nvidiaSmi` | n/a | `/usr/bin/nvidia-smi` |
 | nvkind | `toolPaths.nvkind` | n/a | `/usr/local/bin/nvkind` |
-| skopeo | `toolPaths.skopeo` | n/a | `/usr/bin/skopeo` |
+| skopeo | `toolPaths.skopeo` | `/opt/homebrew/bin/skopeo` | `/usr/bin/skopeo` |
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
 
 The former `tart` field (Haskell record selector `hostTart`) is no longer part of the current

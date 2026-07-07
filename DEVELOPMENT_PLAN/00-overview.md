@@ -46,7 +46,7 @@ adapter harnesses selected from the staged substrate file. Each harness dispatch
 engine entrypoint, fetches model weights lazily from the `infernix-models` MinIO bucket, and
 publishes the typed per-family result surface. Realness is guaranteed by construction — the engine
 code cannot fabricate a result (enforced by the realness lint). Waves K/L delivered real per-family
-output for their then-active catalogs, and Wave O owns proof for the MT3 rows added on 2026-06-30. On Apple Silicon
+output for their then-active catalogs, and the MT3 rows added on 2026-06-30 closed under Wave P on 2026-07-04. On Apple Silicon
 the Haskell binaries build host-native and run on the host against Metal. Sprint 1.14 removes the
 legacy Sprint 1.13 `tart` / `hostTart` / `AppleTart` implementation from the current host-tool
 schema and retargets the retained `materialize-metal-engines` command to typed engine-artifact
@@ -54,8 +54,10 @@ manifests. Sprint 1.15 now materializes real Apple native runner roots for Core 
 llama.cpp/whisper.cpp Metal, CTranslate2, ONNX Runtime, and Audiveris, and validates installed
 smokes on the Apple host. The Phase 1 headless materialization foundation stands; the earlier
 Phase 4/6 `linux-gpu` plus `linux-cpu` real-output reopen is closed for the then-active catalogs by
-Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion is the current
-Phase 4/6 proof gap and is tracked by Wave O. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion closed under Wave P
+on 2026-07-04; Phases 4 and 6 are now Active for the Wave Q matrix substrate-accuracy reopen
+(Sprints 4.25/6.36), whose only open residual is the CUDA GPU-accuracy rows needing a CUDA Linux
+host. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -108,7 +110,7 @@ Apple native engine roots, proves the generated Metal runtime bridge smoke, smok
 installed Core ML/CTranslate2/MLX/ONNX/Audiveris runner roots, verifies the Core ML venv imports
 Basic Pitch plus Apple's Stable Diffusion pipeline, and passes Apple integration plus focused
 routed Playwright. The earlier CUDA Linux real-output reopen is closed under Wave K for the
-then-active Linux catalogs, and Wave O tracks the post-replacement MT3 rows added on 2026-06-30.
+then-active Linux catalogs, and the post-replacement MT3 rows added on 2026-06-30 closed under Wave P on 2026-07-04.
 The Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
 cluster cycles. The run completed cache lifecycle, service runtime loop, durable Pulsar topic
@@ -135,7 +137,7 @@ for all five native adapters with `--require-native-payload`, and then passed fu
 `./bootstrap/linux-gpu.sh test` plus rebuilt-image `./bootstrap/linux-cpu.sh test` on 2026-06-20.
 That closure proved the routed `linux-gpu` plus `linux-cpu` architecture, HA, and Linux payload
 service path against the then-current source. Later realness work closed under Wave K for the
-then-active Linux catalogs, and Wave O tracks the post-replacement MT3 rows added on 2026-06-30. The legacy
+then-active Linux catalogs, and the post-replacement MT3 rows added on 2026-06-30 closed under Wave P on 2026-07-04. The legacy
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
@@ -173,8 +175,8 @@ Playwright `9/9`.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed`. Waves K/L re-attested their then-active catalogs, and Wave O owns the post-replacement MT3 proof. |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top; architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and Wave O owns the post-replacement MT3 proof. |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed`. Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top; architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
@@ -709,7 +711,7 @@ The plan keeps control-plane execution context separate from substrate.
 - the staged outer-container substrate `.dhall` sits at
   `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher and is
   the source material for cluster ConfigMap publication, which mounts the file at
-  `/opt/build/infernix.dhall` inside cluster-resident pods
+  `/opt/build/infernix-substrate.dhall` inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 
@@ -795,4 +797,6 @@ surface above.
 - [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md)
 - [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
 - [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md)
+- [phase-8-zero-tracked-dhall-config-and-eager-model-cache.md](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md)
+- [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md)
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)

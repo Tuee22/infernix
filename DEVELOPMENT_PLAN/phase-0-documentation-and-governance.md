@@ -12,15 +12,15 @@ Phase 0 closes the documentation bootstrap only. Later phases still own follow-o
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
 
-> **Realness reopen (governed-doc reconciliation).** The realness-by-construction program (reopened
-> Phases 1/4/6) changes the model bindings and replaces the "real-output proof remains a substrate
-> cohort gate" softener with a code-enforced realness invariant. Phase 0 therefore **reopens**
-> (`Active`, Sprint 0.11) to reconcile the governed docs — the README matrix + Coverage Closure Rules
+> **Realness reopen (governed-doc reconciliation).** The realness-by-construction program (Phases
+> 1/4/6) changed the model bindings and replaced the "real-output proof remains a substrate
+> cohort gate" softener with a code-enforced realness invariant. Phase 0 reopened under Sprint 0.11
+> to reconcile the governed docs — the README matrix + Coverage Closure Rules
 > (in lockstep with `Models.hs` and `model_catalog.md`), `model_catalog.md` / `testing_strategy.md` /
 > `python_policy.md`, a new realness doctrine home, and the forbidden-phrase purge — and to review
-> `README.md` / `AGENTS.md` / `CLAUDE.md` together. This is machine-independent (Axis-1 only:
-> `infernix lint docs` / `docs check`); it has no accelerator gate and does not block any accelerator
-> phase.
+> `README.md` / `AGENTS.md` / `CLAUDE.md` together, then **re-closed**. This was machine-independent
+> (Axis-1 only: `infernix lint docs` / `docs check`); it had no accelerator gate and blocked no
+> accelerator phase.
 
 ## Current Repo Assessment
 
@@ -434,8 +434,8 @@ governed docs: update the README "Comprehensive Model / Format / Engine Matrix" 
 lockstep with `Models.hs` and `model_catalog.md` so the `infernix lint docs` matrix↔catalog parity holds;
 rewrite `model_catalog.md`, `testing_strategy.md`, and `python_policy.md` to the realness invariant; add
 the new realness doctrine home (a dedicated `documents/architecture/realness_contract.md` or a canonical
-`model_catalog.md` section); add the retired wordings ("validation artifact", "cpu smoke", "Wave I still
-owns replacing", "native-validation") to `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` and purge them
+`model_catalog.md` section); add the retired wordings ("real-output proof remains", "Wave I still
+owns replacing") to `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` and purge them
 from the governed docs; and review `README.md` + `AGENTS.md` + `CLAUDE.md` together for the new
 prerequisites and the realness lint gate. Validated by `infernix lint docs` + `infernix docs check`.
 **Implementation**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `documents/development/python_policy.md`, `documents/architecture/realness_contract.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Models.hs`
@@ -481,7 +481,7 @@ mechanically enforced by two machine-independent lints owned here as governance:
 `infernix-haskell-style` cabal test; forbids `emit_fallback_result`, `infernix_emit_validation_result`,
 `native-validation`, `b64decode`, `native fallback` — `np.zeros` is intentionally not token-forbidden
 since real engines use it for scratch buffers). The lint **mechanism** is Phase 0
-governance; its **per-runner scope** (`realnessScopedFile`) is extended by each accelerator phase as it
+governance; its **per-runner scope** (`realnessScopedFiles`) is extended by each accelerator phase as it
 de-stubs — Phase 4 adds `Engines/LinuxNative.hs`, Phase 1 adds `Engines/AppleSilicon.hs` — so the lint
 is green at every phase's closure and no accelerator phase waits on another.
 **Implementation**: `python/adapters/common.py`, `src/Infernix/Lint/HaskellStyle.hs`
@@ -495,7 +495,7 @@ to own — or wait on — the lint, and any reintroduced fabrication fails the q
 ### Deliverables
 
 - the Python `check-code` AST realness guard and the Haskell `realnessFabricationViolations` lint, both
-  machine-independent, with a per-runner `realnessScopedFile` extended by the accelerator phases
+  machine-independent, with a per-runner `realnessScopedFiles` extended by the accelerator phases
 
 ### Validation
 

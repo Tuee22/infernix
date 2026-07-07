@@ -63,8 +63,9 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   nullary sums emit `{"tag": "ConstructorName"}`; positional sums emit
   `{"tag": "...", "contents": ...}`; record-syntax sums spread their constructor's fields
   beside the `tag` key (matching Aeson's `TaggedObject "tag" "contents"` behavior). The
-  PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` covers 43 cases
-  across every Phase 7 type to keep the lockstep mechanically enforced.
+  PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` exercises
+  encode/decode roundtrips and wire-shape assertions across every Phase 7 type to keep the
+  lockstep mechanically enforced.
 
 **Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
 route + `presignPublicEndpoint`). The browser receives only object refs and the webapp performs

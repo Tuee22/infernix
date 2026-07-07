@@ -112,7 +112,7 @@ hydrates and re-smokes package-backed installed roots. Linux native roots exerci
 payload smoke over the image-baked native layer, Apple native roots exercise real runner smoke, and
 Wave L closed the routed full-suite Apple real-output gate for its then-active catalog. Wave K closed
 the Linux routed full-suite real-output delivery that consumes the Linux payloads through the service
-path for its then-active catalog; Wave O owns proof for post-replacement MT3 rows added on 2026-06-30.
+path for its then-active catalog; Wave P closed proof for post-replacement MT3 rows added on 2026-06-30.
 
 ## Linux Native Engine Artifacts
 
@@ -140,7 +140,7 @@ families, fail with exit 75 until the requested model-cache entry has a `.ready`
 emit the local
 `infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
 upload bridge. The reopened Phases 4/6 own full routed real-output delivery, with realness enforced
-in the engine code by the realness lint. Wave K covers its then-active catalog; Wave O owns proof for
+in the engine code by the realness lint. Wave K covers its then-active catalog; Wave P closed proof for
 post-replacement MT3 rows added on 2026-06-30.
 
 ## Generated Demo Config Publication
@@ -163,7 +163,10 @@ that consume the file link the same library through the in-cluster `infernix` bi
   rendered from the active staged substrate metadata and `demo_ui` setting rather than copied
   verbatim from the host-role file under `./.build/`
 - in cluster-resident execution contexts, the ConfigMap-backed file is mounted beside the binary
-- the cluster pod's ConfigMap-backed mount path is `/opt/build/infernix.dhall`
+- the cluster pod's ConfigMap-backed substrate mount path is
+  `/opt/build/infernix-substrate.dhall` (chart `demoConfig.mountPath=/opt/build`,
+  `fileName=infernix-substrate.dhall`); the separate Phase-8 cluster-wiring `ClusterConfig`
+  ConfigMap mounts at `/opt/infernix/cluster.dhall` (subPath `cluster.dhall`)
 
 ## Rules
 

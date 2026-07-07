@@ -55,11 +55,13 @@
 > contract, disable upstream auto-downloads, and are generated for `linux-cpu`, `linux-gpu`, and
 > `apple-silicon` (Apple uses the PyTorch CPU path; no MPS claim is made). Earlier Wave K/Wave L
 > evidence remains valid only for the catalogs that existed when those waves ran. The post-replacement
-> full-suite proof is [Wave O](cohort-validation-waves.md).
+> full-suite proof is **closed**: [Wave O](cohort-validation-waves.md) proved both MT3 rows and
+> [Wave P](cohort-validation-waves.md) (2026-07-04) closed the full suite (including the 27 GB
+> `video-wan21-t2v` row).
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python
 adapter boundary, the Pulsar-driven request or result contract, the explicit engine-runner
-dispatch, the mounted `InfernixCluster.dhall` cluster-wiring contract, and the reopened
+dispatch, the mounted `/opt/infernix/cluster.dhall` cluster-wiring contract, and the reopened
 substrate-neutral engine-pool routing contract. The runtime, catalog, cache, object-storage,
 daemon-role, and substrate-file contracts have prior closure evidence from Wave A (Apple) and
 Wave C (CUDA Linux), but Sprint 4.19 reopens the routing schema and runtime contract so Apple,
@@ -72,7 +74,11 @@ routing, proto fields, adapter and worker dispatch, the native-fallback removal,
 coverage — is **Complete** and was proven by the machine-independent gate set (`cabal build all`,
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 `infernix docs check`, `poetry run check-code`) on the recorded CUDA Linux host (x86_64 + RTX 5090).
-The phase is `Active` only for the Sprint 4.22 MT3 catalog replacement proof. The 2026-06-20 CUDA
+The phase is `Active` for the Wave Q Sprint 4.25 matrix substrate-accuracy closure, whose only open
+residual is the CUDA GPU-accuracy rows (ONNX `CUDAExecutionProvider` + `onnxruntime-gpu`; CUDA
+`llama.cpp`/`whisper.cpp` binaries) on a `linux-gpu` host — code-side, `linux-cpu`, and Apple are
+validatable first. The prior Wave O MT3 catalog-replacement reopen (Sprint 4.22) is closed — proven
+by [Wave P](cohort-validation-waves.md) (2026-07-04). The 2026-06-20 CUDA
 Linux closure on the selected `linux-gpu` accelerator plus `linux-cpu`, per
 [development_plan_standards.md](development_plan_standards.md) Section Q, remains valid for the
 then-active catalog. The real per-family inference contract was re-validated through the Wave I
@@ -694,7 +700,7 @@ extends this startup contract with explicit cluster and host daemon roles.
   the host daemon role, and routed manual inference continues to succeed through the clustered
   `infernix-demo` surface by entering the cluster daemon path before reaching host inference
 - Linux substrate daemons read the mounted ConfigMap-backed substrate file at
-  `/opt/build/infernix.dhall` and do not rely on runtime-mode flags
+  `/opt/build/infernix-substrate.dhall` and do not rely on runtime-mode flags
 - manual inference through `infernix-demo` and service-loop execution both use the engine binding
   selected in `.dhall` for the active README row
 - runtime validation fails if the service or demo app falls back to simulated route, transport, or
@@ -956,88 +962,25 @@ resolve `torch` from two indices.
 ## Sprint 4.17: Per-Engine Engine Images and Batch Routing [Done]
 
 **Status**: Done
-**Code-side closure**: Complete for the machine-independent scope on the recorded Linux outer-container lane. The foundation
-is still present — `docker/Dockerfile` is the slim control-plane/coordinator image (**22.4 GB**, down
-from 121 GB, no framework venvs), `docker/engine.Dockerfile` builds per-engine images (CUDA-runtime
-base + binary + one engine's `--with cuda` venv), the `transformers` per-engine image is
-GPU-validated (`torch.cuda.is_available()` True + adapter import inside it with `--gpus all`), and the
-`vllm` pin is `0.11.0`. Current June 11, 2026 validation also proves the `vllm` and `pytorch`
-per-engine images build from the split Dockerfile before the TensorFlow/Basic Pitch dependency
-residual was exposed; the TensorFlow engine image now installs only the maintained TensorFlow CUDA
-stack while Basic Pitch TensorFlow is tracked as a named residual. The follow-up routed run passed
-Haskell style, Haskell unit, and web unit gates, then exposed the Linux outer-container retained
-Harbor Patroni scrub gap; the lifecycle now scrubs non-retained Patroni claim roots before claim
-directory creation and after retained-state sync on all lanes. The cluster-side wiring is now code-side implemented: generated linux-gpu substrate files include
-the validated `enginePools` / `engineMembers` graph plus explicit `engineDaemons` metadata derived
-from that graph, the coordinator routes Python-native requests to derived pool/model topics,
+**Code-side closure**: Complete for the machine-independent scope. `docker/Dockerfile` is the slim
+control-plane/coordinator image (**22.4 GB**, no framework venvs) and `docker/engine.Dockerfile`
+builds per-engine images (CUDA-runtime base + binary + one engine's `--with cuda` venv, the
+`transformers` per-engine image GPU-validated with `torch.cuda.is_available()` True under `--gpus
+all`, `vllm` pinned `0.11.0`). The cluster-side wiring is implemented: generated `linux-gpu`
+substrate files carry the `enginePools` / `engineMembers` graph plus derived `engineDaemons`
+metadata, the coordinator routes Python-native requests to derived pool/model topics,
 `infernix service --role engine --engine-name NAME` selects the matching stable member id, the chart
-renders `infernix-engine-<engine>` Deployments and PDBs, and the lifecycle
-builds/publishes/overlays per-engine images through the Harbor path. Current validation
-evidence on June 11, 2026: temp-copy Linux GPU launcher `cabal build all` PASS,
-`cabal test infernix-unit` PASS, and `cabal test infernix-haskell-style` PASS; current-source
-`cabal run exe:infernix -- lint docs`, `docs check`, `lint chart`, `lint files`, and `lint proto`
-all exit 0; current-source `internal materialize-substrate linux-gpu --demo-ui true` plus
-`internal demo-config validate` renders and validates the engine-pool/member graph and derived
-linux-gpu pool/model batch topics. The first governed rerun after the single-GPU scheduling fix passed
-style/unit/web gates but failed during Harbor publication with a retained `harbor-registry` MinIO
-bucket / fresh Harbor database blob mismatch. The rerun after the initial bucket reset still passed
-style/unit/web gates but failed during Harbor publication of `infernix-engine-diffusers-linux-gpu`
-with `blob sha256:05ec76e31584... not found`; investigation found stale MinIO
-`.minio.sys/multipart` registry-upload metadata plus a Linux host-bind teardown path that skipped
-the non-retained scrub. Lifecycle code now scrubs the Harbor registry bucket, registry bucket
-metadata, MinIO multipart/tmp working sets, and non-retained Patroni roots on startup and
-`cluster down`, leaving model and demo object buckets durable. The governed rerun after that
-cleanup again passed style/unit/web gates and proved teardown leaves no stale registry/multipart/tmp
-directories, but still failed on the first diffusers image push with
-`blob sha256:4614b301... not found`. Investigation found the local repo-owned images were Docker 29
-/ BuildKit OCI indexes with attestation metadata. Bootstrap and lifecycle builds now pass
-`--provenance=false`, and lifecycle reuse rejects local image-index descriptors so stale index tags
-are rebuilt as plain single-platform images before pushing to Harbor. The governed rerun with that
-fix rebuilt all five per-engine images as plain Docker manifests (`vllm`, `pytorch`, `tensorflow`,
-`jax`, and `diffusers`) and again passed style/unit/web gates, but Harbor publication still failed
-while pushing `infernix-engine-diffusers-linux-gpu` after 8 retries with
-`blob sha256:05ec76e31584... not found`. The retained Harbor Redis dump contains stale
-repository blob-cache keys for the missing digests while the MinIO registry bucket is scrubbed;
-lifecycle cleanup now also removes the Harbor Redis claim root with the rebuildable registry
-bucket/cache state. The next governed rerun passed Haskell style, Haskell unit, and web unit
-gates; push/pull-verified all five per-engine images, the slim control-plane image, and chart
-upstream images through Harbor; deployed the final chart; and completed `cluster up`. It then
-failed in per-model inference at `audio-basic-pitch-onnx` because the native ONNX Runtime
-audio-to-MIDI lane produced a failed/inline result where the `AudioToMidi` contract requires an
-`infernix-demo-objects/*.mid` object reference. After the integration harness input/status
-follow-up, the governed `./bootstrap/linux-gpu.sh build` passed and produced the plain Docker
-manifest launcher image `sha256:2d6cfd42ca59ee7fbd9669a8c32738ed0ba44ef09706b469d12c8803b520e030`.
-The latest governed `./bootstrap/linux-gpu.sh test` rerun again passed Haskell style, Haskell unit,
-and web unit gates, push/pull-verified all five per-engine images plus the control-plane and chart
-upstream images through Harbor, completed final chart rollout and route probes, then failed at the
-first native-process-runner row, `llm-tinyllama-gguf`, because the base engine pod had no
-`/workspace/.data/engines/llama-cpp-cli/bin/llama-cli`. Current source closes that missing-root
-surface: native runners resolve image-baked Linux artifacts from
-`/opt/infernix/engines/<adapterId>/bin/...` after checking the repo data root,
-`infernix internal materialize-linux-native-engines` writes typed manifests and smoke-validated
-entrypoints for the runnable Linux native adapter ids, and `docker/Dockerfile` bakes those roots
-into the substrate image. Current source also threads non-secret model-cache hints to native
-runners and maps native exit 75 to `model_cache_not_populated` so future native cache misses use
-the same bootstrap retry family as Python adapters; artifact-producing native runners can receive
-a worker-owned `--output-dir`, return an `infernix-native-artifact-file:<path>` marker, and let the
-Haskell worker upload the file to `infernix-demo-objects` with secret-backed MinIO credentials. The
-current CUDA Linux cycle replaces the runner-contract placeholders with runtime-backed wrappers
-over image-baked `llama.cpp`, `whisper.cpp`, ONNX Runtime/CTranslate2, Basic Pitch ONNX,
-faster-whisper, and Audiveris payloads. The remaining CUDA Linux blocker is rerunning serialized
-per-engine validation so the native rows consume those payloads through live MinIO-backed
-model/input hydration. Current source also passes typed model-cache/MinIO fields to
-Python adapters; mounted linux-gpu validation passes `cabal test infernix-unit`, `cabal test
-infernix-haskell-style`, `cabal build test:infernix-integration`,
-`poetry --directory python run check-code`, `cabal run exe:infernix -- lint docs`, `docs check`,
-`lint files`, `lint proto`, and `lint chart`; current validation also passes
-`cabal run exe:infernix -- internal materialize-linux-native-engines`,
-`cabal run exe:infernix -- lint docs`, `cabal run exe:infernix -- docs check`,
-`cabal run exe:infernix -- test unit`, and `cabal run exe:infernix -- test lint` with mounted live
-source after adding the Linux native runner-root materializer. The 2026-06-16 Apple host refresh
-rechecks the machine-independent Phase 4 gate slice with `poetry run check-code` from `python/`,
-`cabal build test:infernix-integration`, `cabal build all`, `./.build/infernix test unit`,
-`./.build/infernix test lint`, `./.build/infernix docs check`, and focused
-`./.build/infernix lint files/docs/proto/chart`.
+renders `infernix-engine-<engine>` Deployments and PDBs, and the lifecycle builds/publishes/overlays
+per-engine images through Harbor. Linux native runners resolve image-baked artifacts from
+`/opt/infernix/engines/<adapterId>/bin/...` after checking the repo data root, `infernix internal
+materialize-linux-native-engines` writes typed manifests and smoke-validated entrypoints baked by
+`docker/Dockerfile`, native exit 75 maps to `model_cache_not_populated` (reusing the Python
+bootstrap retry family), and artifact-producing runners emit an `infernix-native-artifact-file:<path>`
+marker the worker uploads to `infernix-demo-objects` with secret-backed MinIO credentials. The Linux
+payloads are runtime-backed wrappers over image-baked `llama.cpp`, `whisper.cpp`, ONNX
+Runtime/CTranslate2, Basic Pitch ONNX, faster-whisper, and Audiveris. The per-rebuild Harbor
+registry/multipart scrub and native-root debugging history lives in
+[cohort-validation-waves.md](cohort-validation-waves.md).
 **Cohort gate**: Closed [Wave I](cohort-validation-waves.md), Stage 2 (CUDA Linux).
 **Implementation**: `docker/Dockerfile`, `src/Infernix/Models.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `bootstrap/linux-gpu.sh`
 **Docs to update**: `DEVELOPMENT_PLAN/system-components.md`, `documents/architecture/daemon_topology.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
@@ -1052,7 +995,7 @@ own framework, making the cluster image flow practical.
 ### Deliverables
 
 - **Dockerfile multi-stage split**: a shared `builder` stage (GHC + `cabal build all` + web build +
-  proto + framework-free python) produces the `infernix`/`infernix-demo` binaries; a slim
+  proto + framework-free python) produces the `infernix` binary; a slim
   **control-plane / coordinator image** (`infernix-linux-gpu:local`) carries the binaries + the
   framework-free `python/` project + the cluster toolbelt, with **no** framework venvs; one
   **per-engine image** per framework engine (`infernix-engine-<engine>-linux-gpu:local` =
@@ -1104,7 +1047,7 @@ own framework, making the cluster image flow practical.
   routed E2E for the then-active GPU browser matrix. The same then-current source passed
   rebuilt-image `./bootstrap/linux-cpu.sh test`. Basic Pitch TensorFlow remains outside the active
   runtime catalog; MT3-PyTorch, MR-MT3, and Omnizart are maintained PyTorch music-transcription rows,
-  with post-replacement MT3 proof tracked by Wave O.
+  with post-replacement MT3 proof closed by Waves O/P (2026-07-04).
 
 ---
 
@@ -1308,8 +1251,9 @@ Dhall type expressions its decoders accept.
 
 ### Remaining Work
 
-None. The coordinator topic-lifecycle owner and reflected-schema command are closed, the checked-in
-`dhall/Infernix*.dhall` files are the reflected output, and `infernix lint docs` now rejects schema
+None. The coordinator topic-lifecycle owner and reflected-schema command are closed; the schema is
+emitted on demand by `infernix internal dhall-schema host|cluster|secrets|substrate` from the Haskell
+decoder types (no `.dhall` schema is version-controlled), and `infernix lint docs` now rejects schema
 drift against the in-binary renderer.
 
 ---
@@ -1398,7 +1342,7 @@ SDXL-Turbo + Wan2.1 video via Diffusers) were already real engine code with vali
 so the CPU-lane fixes carried over and the GPU lane went green on the first cluster run — plus 9/9 e2e
 specs. [Wave K](cohort-validation-waves.md) is therefore **fully closed** for that then-active Linux
 catalog (both Linux accelerators). The later 2026-06-30 MT3 replacement is tracked by Sprint 4.22 and
-Wave O; Wave K does not claim full-suite evidence for rows added after it ran. Wave L closed the Apple
+was proven by Waves O/P (2026-07-04); Wave K does not claim full-suite evidence for rows added after it ran. Wave L closed the Apple
 real-engine residual on 2026-06-29 for the then-active Apple catalog. Machine-independent gates (`cabal build all`,
 `cabal test infernix-unit`, `infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 `infernix docs check`, `poetry run check-code`) are green.
@@ -1437,83 +1381,28 @@ None.
 ## Sprint 4.22: Modern Music-Transcription Models and JAX/TF Retirement [Done]
 
 **Status**: Done — MT3 catalog replacement proven by Wave P (2026-07-04)
-**Code-side closure**: Complete for the 2026-06-30 MT3 replacement. Rebind the music-transcription rows to maintained PyTorch/ONNX models
-on existing adapters: MT3-PyTorch and MR-MT3 through `openmirlab/mt3-infer`, Omnizart → a
-modern PyTorch transcription model (`piano_transcription_inference`), basic-pitch → its
-official ONNX runtime; drop the finicky JAX/ancient-TF pins. The now-dead `jax_python` /
-`tensorflow_python` adapters + their `python/engines/{jax,tensorflow}` venv projects + `pyproject.toml`
-scripts + the `Models.hs` `engineBindingForSelectedEngine` cases are **retired (deleted) 2026-06-23**
-(the resolved "support all mainstream formats" decision dropped TF/JAX coverage rather than binding new
-real rows); update `Models.hs` bindings/URLs and `model_catalog.md`. The MT3-PyTorch, MR-MT3, and
-Omnizart row identities are declared-runnable PyTorch rows in the matrix lockstep. The **Omnizart row's
-real engine landed code-side 2026-06-23** (build + `infernix lint docs` / `test unit` / `test lint`
-green): a `_transcribe_piano` branch on the `pytorch-python` adapter runs the maintained ByteDance
-`piano_transcription_inference` CRNN over the real input audio, with its checkpoint resolved from the
-model_cache (the real Zenodo `.pth` staged via the bootstrap path, not the package's HOME auto-download —
-no-env-vars + model_cache doctrine), and `librosa` + `piano-transcription-inference` added to the pytorch
-engine venv. The **MT3-PyTorch and MR-MT3 rows landed code-side 2026-06-30**: the `pytorch-python`
-adapter loads `mt3_infer` with explicit model-cache paths and `auto_download=False`; the model
-bootstrap helper stages the MT3-PyTorch pretrained directory from `kunato/mt3-pytorch` and MR-MT3
-from the Hugging Face checkpoint. The generated catalogs include both MT3 rows on all three
-substrates: `linux-cpu` uses PyTorch CPU, `linux-gpu` uses PyTorch CUDA, and `apple-silicon` uses
-the PyTorch CPU path until an upstream MPS path is validated. Machine-independent validation for the
-new rows is green in the current source (`./bootstrap/linux-cpu.sh build`,
-`poetry --directory python run check-code`, PyTorch engine dependency dry-run,
-Linux-image current-source `infernix lint docs`, and Linux-image current-source
-`cabal test infernix-unit`).
-The first 2026-07-01 rebuilt `linux-cpu` full-suite attempt reached catalog-driven
-per-model inference and failed closed on `music-mt3-infer`: `mt3-infer 0.1.3`
-imports `checkpoint` from `transformers.models.t5.modeling_t5`, but the unbounded
-PyTorch engine solve selected `transformers 4.57.6`, where that internal symbol
-is absent. `mt3-infer 0.1.3` declares `transformers >=4.35.0`, so a lower
-dependency pin is not a valid solve; the PyTorch adapter now installs a narrow
-compatibility shim that exposes the real `torch.utils.checkpoint.checkpoint`
-function at the Hugging Face T5 module attribute that `mt3-infer` imports.
-The next rebuilt CPU attempt advanced past that import and failed closed on `mt3-infer`'s
-undeclared `absl` import; the PyTorch engine now declares `absl-py >=2.0`, and a targeted
-shimmed-image probe imports the MT3-PyTorch `t5`, `vocabularies`, `note_sequences`, and
-`metrics_utils` modules after installing that dependency. A third rebuilt CPU attempt
-(`infernix-linux-cpu:local` manifest
-`sha256:bc7c8735e72f7fd03b1f76808020b796779e91f52d4bc6d0971bd5d07406c89d`) passed Haskell style,
-Python `check-code`, Haskell unit, and web contracts (`71/71`), reached catalog-driven
-`music-mt3-infer`, and failed closed on the next real upstream compatibility break:
-`transformers >=4.50` removed `GenerationMixin` inheritance from `PreTrainedModel`, leaving
-MT3's custom T5 wrapper without `.generate`. The PyTorch engine now constrains `transformers` to
-`>=4.46,<4.50` across CPU, CUDA, and Apple PyTorch groups while retaining the real checkpoint shim.
-The fourth rebuilt CPU image
-(`sha256:ecc7e1b68ee8194cdac7633a607a481ab40e3a645038c4b0f5c60b213f4c89bf`) selected
-`transformers 4.49.0`, passed Haskell style and Python `check-code`, then failed in `infernix-unit`
-because the Sprint 4.16 framework-venv assertion still expected the old PyTorch
-`transformers >=4.46` line. Unit coverage now asserts the bounded PyTorch dependency block, and a
-mounted capped-image `infernix-unit` rerun passes with that fix. Rebuilt CPU/GPU cohort proof
-remains pending. The next rebuilt CPU image
-(`sha256:d478db2f41420427c7d1f93adf22eac35f4dc384bf4fc432986aaa4017abee8b`, created
-`2026-07-01T15:35:30.229849055-04:00`) selected `transformers 4.49.0`, `absl-py 2.4.0`,
-`mt3-infer 0.1.3`, and `piano-transcription-inference 0.0.6`; its full-suite run passed Haskell
-style, Python `check-code`, Haskell unit, and web contracts (`71/71`), published to Harbor, reached
-real catalog-driven `music-mt3-infer`, and failed closed inside MT3 generation because the upstream
-custom T5 attention path dereferenced `cache_position[-1]` while `cache_position` was `None`. The
-adapter now disables generation caching for `music-mt3-infer`, matching the upstream MR-MT3
-adapter's no-cache generation strategy; mounted Linux-image `poetry --directory python run
-check-code` is green. The rebuilt CPU image
-(`sha256:b5fb4e6c82b7dc9f46c04f7e7910dd460bcb516518ecdf8d5c313e4303947ad8`, created
-`2026-07-01T16:37:11.897901769-04:00`) passed Haskell style, Python `check-code`, Haskell unit,
-and web contracts (`71/71`), reached `per-model inference: linux-cpu`, and failed closed on the
-same upstream T5 `cache_position` path with the no-cache wrapper visible in the traceback. A deeper
-MT3 compatibility fix now wraps Hugging Face `T5Block.forward` for MT3 imports and supplies
-`cache_position` when the upstream `mt3-infer` custom stack omits it; mounted Linux-image
-`poetry --directory python run check-code` and a PyTorch-engine T5Block probe are green. Rebuilt
-full-suite CPU proof is pending.
-**Cohort gate**: [Wave O](cohort-validation-waves.md) — **both MT3 rows proven 2026-07-02.** The
-MR-MT3 `T5Block.forward` `past_key_values`→`past_key_value` compat fix landed; rebuilt-image
-`./bootstrap/linux-cpu.sh test` is **GREEN** (integration real MIDI for both rows + routed Playwright
-`9/9` incl. the per-model matrix), and `./bootstrap/linux-gpu.sh test` proved both rows real on CUDA
-(integration PASS; routed Playwright `8/9`). The clean `linux-gpu` full `9/9` was blocked solely by
-the MT3-unrelated CUDA-only `video-wan21-t2v` cold-cache lazy-bootstrap timeout; **Wave P**
-(2026-07-04) closed it once Phase 8 eager model-cache staging pre-staged the Wan weights. The Apple
-catalog binding
-is supported as a PyTorch CPU route, but no post-replacement Apple full-suite proof is claimed until
-an Apple cohort rerun records it.
+**Code-side closure**: Complete. The music-transcription rows are rebound to maintained PyTorch/ONNX
+models on existing adapters: MT3-PyTorch and MR-MT3 run through `openmirlab/mt3-infer` on the
+`pytorch-python` adapter (explicit model-cache paths, `auto_download=False`; MT3-PyTorch staged as a
+two-file pretrained directory from `kunato/mt3-pytorch`, MR-MT3 as the Hugging Face `mt3.pth`),
+Omnizart runs the maintained ByteDance `piano_transcription_inference` CRNN over the real input
+audio, and basic-pitch uses its official ONNX runtime. The dead `jax_python` / `tensorflow_python`
+adapters, their `python/engines/{jax,tensorflow}` venv projects and `pyproject.toml` scripts, and the
+corresponding `Models.hs` `engineBindingForSelectedEngine` cases were **retired (deleted) 2026-06-23**
+(the resolved "support all mainstream formats" decision dropped TF/JAX coverage rather than binding
+new real rows). The generated catalogs include both MT3 rows on all three substrates: `linux-cpu` and
+`apple-silicon` use the PyTorch CPU path (no MPS claim), `linux-gpu` uses PyTorch CUDA. The adapter
+pins the upstream `transformers`/`mt3-infer` compatibility surface — bounded `transformers
+>=4.46,<4.50`, the real `torch.utils.checkpoint` T5 shim, the `absl-py` dependency, and the MT3 /
+MR-MT3 `T5Block.forward` `cache_position` / `past_key_value` wrappers — so both rows produce real
+MIDI. The per-rebuild dependency-resolution history lives in
+[cohort-validation-waves.md](cohort-validation-waves.md).
+**Cohort gate**: Closed — [Wave O](cohort-validation-waves.md) proved both MT3 rows real
+(`music-mt3-infer`, `music-mr-mt3`) and [Wave P](cohort-validation-waves.md) (2026-07-04) closed the
+full suite: both `linux-gpu` and `linux-cpu` `infernix test all` are GREEN with routed Playwright
+`9/9` including the per-model matrix and the 27 GB `video-wan21-t2v` row (unblocked by Phase 8 eager
+model-cache staging). The `apple-silicon` binding runs the PyTorch CPU route; no post-replacement
+Apple full-suite proof is claimed until an Apple cohort rerun records it.
 **Implementation**: `src/Infernix/Models.hs`, `python/adapters/pytorch_python.py`, `python/adapters/model_bootstrap.py`, `python/engines/pytorch/pyproject.toml`, `docker/Dockerfile`
 **Docs to update**: `README.md`, `documents/architecture/model_catalog.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1532,31 +1421,17 @@ already supported, eliminating the JAX/ancient-TF stacks.
 ### Validation
 
 - Code-side: `./bootstrap/linux-cpu.sh build`, `poetry --directory python run check-code`, PyTorch
-  engine dependency dry-run, Linux-image current-source `infernix lint docs`, and Linux-image
-  current-source `cabal test infernix-unit` are green for the new MT3 bindings.
-- Pending cohort proof: rebuilt `./bootstrap/linux-cpu.sh test` and selected
-  `./bootstrap/linux-gpu.sh test` must pass with both MT3 rows producing real MIDI output; any Apple
-  full-suite claim requires a separate Apple rerun.
-- Current failed evidence: the 2026-07-01 rebuilt `./bootstrap/linux-cpu.sh test` attempt reached
-  `music-mt3-infer` and failed closed on the `mt3-infer`/`transformers` compatibility error above;
-  the follow-up shimmed rebuilt attempt advanced to the next real `mt3-infer` import gap and failed
-  on missing `absl`; the next rebuilt image passed the front gates and failed closed on
-  `transformers >=4.50` missing `.generate` for MT3's custom T5 wrapper; the capped rebuild selected
-  `transformers 4.49.0` and exposed the stale unit assertion for the PyTorch dependency block. A
-  mounted capped-image `infernix-unit` rerun passes after the assertion fix; rebuilt full-suite rerun
-  reached real MT3 generation and failed closed on the upstream custom T5 `cache_position` path under
-  `transformers 4.49.0`. The adapter then disabled generation caching for `music-mt3-infer`; mounted
-  Linux-image `poetry --directory python run check-code` passed, but the rebuilt image
-  `sha256:b5fb4e6c82b7dc9f46c04f7e7910dd460bcb516518ecdf8d5c313e4303947ad8` still failed closed on
-  the same upstream T5 `cache_position` path with the wrapper in the traceback. The adapter now wraps
-  Hugging Face `T5Block.forward` for MT3 imports and supplies `cache_position` when the upstream
-  `mt3-infer` custom stack omits it; mounted Linux-image `poetry --directory python run check-code`
-  and a PyTorch-engine T5Block probe pass. A rebuilt full-suite rerun remains pending.
+  engine dependency dry-run, Linux-image `infernix lint docs`, and `cabal test infernix-unit` are
+  green for the MT3 bindings.
+- Cohort: rebuilt `./bootstrap/linux-cpu.sh test` and `./bootstrap/linux-gpu.sh test` both pass with
+  both MT3 rows producing real MIDI output (closed by Waves O/P; the per-rebuild
+  `transformers`/`mt3-infer` compatibility history is recorded in
+  [cohort-validation-waves.md](cohort-validation-waves.md)).
 
 ### Remaining Work
 
-Wave O: rerun the full integration and routed E2E matrices for the expanded catalogs, record the
-`music-mt3-infer` and `music-mr-mt3` real-output proof, and only then re-close this sprint.
+None. Closed by [Wave P](cohort-validation-waves.md) (2026-07-04), which recorded the
+`music-mt3-infer` and `music-mr-mt3` real-output proof on both Linux accelerators.
 
 ---
 

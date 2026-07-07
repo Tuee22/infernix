@@ -91,7 +91,7 @@ cache contains a `.ready` sentinel, can emit a local artifact-file marker for Ha
 upload, and delegate strict smoke checks to those baked payloads, including launching Audiveris
 through Java on the native image architecture. The reopened Phases 4/6 own full routed
 `linux-gpu` plus `linux-cpu` real-output delivery, with realness enforced in the engine code by the
-realness lint. Wave K proves the then-active Linux catalogs; Wave O owns proof for the MT3 rows added
+realness lint. Wave K proves the then-active Linux catalogs; Wave P closed proof for the MT3 rows added
 on 2026-06-30.
 
 ## Generated Demo Config Contract
@@ -105,7 +105,7 @@ The generated demo catalog is the source of truth for the active runtime mode.
 - `infernix internal materialize-substrate <runtime-mode>` is the explicit staging helper, and
   `--demo-ui false` emits a demo-off config without hand-editing the file
 - in cluster-resident execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
-  beside the binary at `/opt/build/infernix.dhall`; cluster daemons read the cluster-role
+  beside the binary at `/opt/build/infernix-substrate.dhall`; cluster daemons read the cluster-role
   payload there at startup rather than watching it for reloads
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset

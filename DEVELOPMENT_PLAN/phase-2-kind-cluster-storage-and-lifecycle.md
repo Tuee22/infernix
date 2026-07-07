@@ -339,7 +339,7 @@ around one Compose-driven outer container for both Linux substrates.
 
 - `cluster up` publishes the cluster-role substrate payload into `ConfigMap/infernix-demo-config`
 - cluster-resident consumers mount that ConfigMap at
-  `/opt/build/infernix.dhall`
+  `/opt/build/infernix-substrate.dhall`
 - the outer-container control plane stages the Linux cluster-role payload at the image-local
   `/workspace/.build/outer-container/build/infernix.dhall` path when it needs to know
   its own substrate
@@ -506,28 +506,16 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
 
 ### Validation
 
-- `bash -n bootstrap/apple-silicon.sh bootstrap/linux-cpu.sh bootstrap/linux-gpu.sh
-  bootstrap/common.sh` passes for the narrowed launcher scripts
+- all four bootstrap scripts parse under `bash -n` as narrowed launcher scripts
 - `cabal build all` passes with binary-owned substrate preflight, Harbor-first publication, and
   retained-state repair changes
-- on the recorded validation, `./bootstrap/apple-silicon.sh doctor`, `build`, `up`, `status`, `test`,
-  `down`, and final `status` had passed on the legacy Apple Silicon hardware with the shell
-  script building the host binary and delegating lifecycle commands to `./.build/infernix`;
-  that proof point no longer counts as current evidence
-- the recorded validation Apple `up` and `test all` output had shown `preload-bootstrap-images`
-  skipping broad pre-Harbor support-image preload and then publishing and verifying Harbor-backed
-  image refs before final rollout on the legacy hardware; this is no longer a current proof
-  point
-- the recorded validation Apple `test` lane had passed Haskell style, Haskell unit, PureScript unit,
-  Haskell integration, routed Playwright E2E, split-daemon Apple inference, and repeated internal
-  retained-state cluster `down` or `up` cycles on the legacy hardware; this is no longer a
-  current proof point
-- the recorded validation Apple `status` after explicit bootstrap `down` had reported
-  `clusterPresent: False`, `lifecycleStatus: idle`, and `lifecyclePhase: cluster-absent`, with
-  retained `./.build/`, `./.data/`, local images, and the Apple host binary still present, on
-  the legacy hardware; this is no longer a current proof point
-- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
-  `linux-cpu` and `linux-gpu` gates.
+- the narrowed bootstrap launchers delegate `doctor`, `build`, `up`, `status`, `test`, and `down`
+  to the `infernix` binary, which owns Harbor-first publication, the pre-Harbor support-image
+  preload skip, and retained-state teardown; the end-to-end lifecycle, full `test` lane, and
+  post-`down` idle status are exercised per cohort in
+  [the cohort validation waves](cohort-validation-waves.md)
+- Apple cohort validation closed in [Wave A](cohort-validation-waves.md); CUDA Linux validation
+  closed in [Wave C](cohort-validation-waves.md).
 
 ### Remaining Work
 
@@ -562,6 +550,18 @@ materialized in Phase 1 Sprint 1.11.
   `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Discover.hs` becomes
   `runHostTool hostConfig <HostTool> args` reading the absolute path from
   `HostConfig.toolPaths.*`.
+- shared cluster/monitor subprocess environments (`clusterSubprocessBaseEnvFor` in
+  `src/Infernix/Cluster.hs`, `processMonitorBaseEnvFor` in `src/Infernix/ProcessMonitor.hs`) derive
+  `PATH` from the staged host manifest's `toolPaths.*` parent directories — including Apple Silicon
+  Homebrew's `/opt/homebrew/bin` — so nested third-party invocations resolve the same absolute
+  binaries, with a minimal POSIX `PATH` as the fallback for `HostConfig`-less unit fixtures.
+- the Harbor host-side port is chosen dynamically by `chooseHarborPort` (attempting `30002` first
+  and incrementing until a free host TCP port is found), recorded under
+  `./.data/runtime/harbor-port.json`, while the in-cluster Kubernetes NodePort stays `30002`; the
+  registry health probe (`waitForHarborRegistryResult`) bounds each `curl` attempt with `-m 30`.
+- engine command overrides flow through `clusterConfig.engine.commandOverrides` in
+  `chart/values.yaml` rather than rendered `INFERNIX_ENGINE_COMMAND_*` env entries
+  (`engineCommandOverridesFromEnvironment` is retired).
 
 ### Validation
 
@@ -581,99 +581,7 @@ materialized in Phase 1 Sprint 1.11.
 
 ### Remaining Work
 
-Env-side retirement landed on the recorded validation:
-
-- **`INFERNIX_HOST_KIND_ROOT` read retired in `src/Infernix/Cluster.hs.resolveHostKindRoot`.**
-  The supported `Paths.kindRoot` field is already derived from
-  `HostConfig.hostFilesystem.hostKindRoot` in
-  `Infernix.Config.discoverPaths`, so `resolveHostKindRoot` now flows
-  through `resolveHostRepoPath paths (kindRuntimeRoot paths runtimeMode)`
-  without consulting `lookupEnv`.
-- **`INFERNIX_HOST_REPO_ROOT` read retired in `Cluster.hs.resolveHostRepoRoot`
-  and `kindUsesHostBindMounts`.** Both now read
-  `HostConfig.hostFilesystem.hostRepoRoot` indirectly via
-  `Paths.repoRoot` and the typed `Config.controlPlaneContext paths`
-  check; the env-var consultation is deleted.
-- **`HOSTNAME` env read retired in `Cluster.hs.currentLauncherContainerName`.**
-  The supported in-container hostname discovery now reads
-  `/etc/hostname` directly (Docker writes the container id there at
-  startup); the `hostname` binary stays as the fallback path. New
-  helper `readEtcHostnameMaybe` provides the typed file-backed
-  alternative.
-- **`getEnvironment` whole-env captures retired in
-  `Cluster.hs.runCommandWithInput`, `Cluster.hs.tryCommand`, and
-  `ProcessMonitor.hs.tryCommandMonitored`.** Each now derives the
-  subprocess `PATH` from the staged host manifest's `toolPaths.*`
-  parent directories (`clusterSubprocessBaseEnvFor` in `Cluster.hs`,
-  `processMonitorBaseEnvFor` in `ProcessMonitor.hs`) so nested
-  third-party invocations (most importantly `kind` shelling out to
-  `docker` via PATH lookup) resolve the same absolute binaries the
-  binary itself uses, including Apple Silicon Homebrew's
-  `/opt/homebrew/bin` prefix; the minimal POSIX
-  `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`
-  chain stays as the fallback for unit-test fixtures without a
-  `HostConfig`. `LANG=C.UTF-8` + `LC_ALL=C.UTF-8` round out the
-  fixed env; nothing inherits from the daemon's `environ`. The
-  prior hardcoded-only PATH constant
-  (`/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`)
-  was insufficient on Apple Silicon because Homebrew installs at
-  `/opt/homebrew/bin`, and was surfaced by the recorded-validation Apple
-  cohort rerun (`kind get clusters` failed with "exec: docker:
-  executable file not found in $PATH"). The manifest-derived PATH
-  helper fixed it without re-introducing env-var consumption.
-- **Harbor registry health probe (`waitForHarborRegistryResult` in
-  `src/Infernix/Cluster.hs`) now passes `-m 30` to `curl`** so the
-  bounded 60-attempt × 5s retry loop actually surfaces a typed
-  "Harbor registry never became ready" error within ~30 minutes
-  when the host-side NodePort target is unreachable. The recorded-validation
-  Apple cohort rerun surfaced an indefinite hang when an unrelated
-  host process (a VSCode Helper plugin worker) was squatting on
-  `127.0.0.1:30002`, leaving the `cluster up` Harbor publication
-  step waiting forever on an `ESTABLISHED` TCP connection that
-  never returned an HTTP response. The Kind host-side Harbor port is
-  chosen dynamically by `chooseHarborPort`
-  (`src/Infernix/Cluster.hs`), which mirrors `chooseEdgePort` by
-  attempting `30002` first and incrementing until a free host TCP
-  port is found; the chosen value is recorded under
-  `./.data/runtime/harbor-port.json` and rendered into the Kind
-  config's `hostPort` mapping for `containerPort: 30002`. The
-  in-cluster Kubernetes NodePort stays `30002`, so the chart's Harbor
-  sub-chart still resolves to `<node>:30002` in-cluster while the host
-  probe and containerd registry-hosts namespace honor whatever host
-  port is free. This keeps the supported cluster lifecycle
-  operator-environment-agnostic.
-- **`engineCommandOverridesFromEnvironment` legacy.** The Sprint 4.13
-  chart no longer renders per-binding `INFERNIX_ENGINE_COMMAND_*` env
-  entries, so `Cluster.hs.writeHelmValuesFile` passes an empty
-  override list to `renderHelmValues`. Engine command overrides now
-  flow through `clusterConfig.engine.commandOverrides` in
-  `chart/values.yaml` directly.
-- **Imports cleaned up.** `src/Infernix/Cluster.hs` no longer imports
-  from `System.Environment`; `src/Infernix/ProcessMonitor.hs` no
-  longer imports `getEnvironment`. The `Data.Maybe (isJust)` import
-  is removed.
-- **Unit-test fixture rewiring.** `test/unit/Spec.hs` Kind-config
-  rendering assertion previously injected
-  `INFERNIX_HOST_REPO_ROOT=/host/infernix` via `withOptionalEnv` and
-  asserted host paths under `/host/infernix/...`. The supported
-  override path now flows through the
-  `linuxOuterContainerUnitTestFixture` `HostConfig.hostRepoRoot`
-  field directly; the assertion compares against the typed fixture's
-  `realRepoRoot` instead.
-- **`Engines/AppleSilicon.hs` `getEnvironment` capture retired
-  (code-side).** The host setup entrypoint invocation now matches the
-  supported Python worker setup path: Poetry virtualenv placement is
-  owned by `python/poetry.toml`, the adapter install root is passed as
-  `--install-root`, and the spawned setup process receives an empty
-  environment rather than inheriting the operator process environment.
-
-Verified end-to-end on the host: `cabal build all`, `cabal test
-infernix-unit` (70/70 tests), `cabal test infernix-haskell-style`,
-and `./.build/infernix lint {chart,files,docs,proto}` all exit zero.
-The Phase 2 forbidden-env grep gate
-(`grep -rEn 'lookupEnv|getEnv |getEnvironment|setEnv|unsetEnv' src/Infernix/Cluster.hs src/Infernix/ProcessMonitor.hs src/Infernix/Engines/AppleSilicon.hs`)
-returns only documented-retirement comment references — no live
-reads remain.
+None.
 
 ---
 

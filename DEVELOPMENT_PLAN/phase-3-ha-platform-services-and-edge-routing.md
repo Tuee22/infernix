@@ -89,7 +89,8 @@ reserved cluster object-store path.
 
 - MinIO always deploys as a four-node distributed cluster with manual PV backing
 - repo-owned values suppress hard pod anti-affinity that would block local Kind scheduling
-- MinIO console and S3 API are both exposed through the shared edge
+- MinIO has no external gateway route and no console route (Sprint 3.13); the browser reaches it
+  only server-side through the cookie-authenticated webapp `/api/objects` proxy
 - the chart reserves MinIO as the Kind-backed object-store target for Harbor and cluster-routed
   object-store access, while durable object-store state lives only in the MinIO buckets
   `infernix-models` (always-on platform model weights),
@@ -101,7 +102,8 @@ reserved cluster object-store path.
 
 - `infernix cluster up` creates a healthy four-node distributed MinIO deployment
 - MinIO PVCs bind via `infernix-manual`
-- routed MinIO console and S3 surfaces respond on the shared edge port
+- MinIO exposes no browser-facing edge route (Sprint 3.13); the webapp `/api/objects` proxy is its
+  only external surface
 
 ### Remaining Work
 
@@ -430,74 +432,14 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 
 ### Remaining Work
 
-Landed the recorded validation:
-
-- `docker/playwright.Dockerfile` deleted.
-- `compose.yaml` `playwright` service block deleted; the file now
-  declares only the `infernix` service with its two supported bind
-  mounts.
-- `docker/Dockerfile` gains a dedicated `RUN` step that
-  invokes
-  `apt-get update && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit && rm -rf /var/lib/apt/lists/*`
-  so the launcher image carries Chromium / Firefox / WebKit plus their
-  system dependencies.
-- `src/Infernix/CLI.hs.runRuntimeModeE2E` routes the outer-container
-  path through the new `runInContainerPlaywright` helper that writes a
-  typed JSON fixture (`<runtimeRoot>/playwright-fixture.json`) and
-  then runs `npm --prefix web exec -- playwright test playwright/inference.spec.js`
-  inside the launcher container. The legacy
-  `runPlaywrightImage`/`docker compose run --rm playwright` path is
-  gone. The Apple host-native branch now writes the same fixture and
-  runs the same Playwright suite via host-native `npm exec` against
-  the published localhost edge port.
-- `web/playwright.config.js` (new) reads the repo-relative
-  `.data/runtime/playwright-fixture.json` and exposes the
-  expected daemon location / executor location / dispatch mode /
-  upstream mode through Playwright's `use:` block under the
-  `infernix-e2e` project.
-- `web/playwright/inference.spec.js` rewritten: the per-test handler
-  receives the typed `infernixFixture` Playwright option instead of reading any
-  `process.env.INFERNIX_*` field or a hardcoded `/workspace` fixture
-  path.
-- The seven legacy env vars
-  (`INFERNIX_EDGE_PORT`, `INFERNIX_PLAYWRIGHT_HOST`,
-  `INFERNIX_PLAYWRIGHT_NETWORK`,
-  `INFERNIX_EXPECT_DAEMON_LOCATION`,
-  `INFERNIX_EXPECT_INFERENCE_EXECUTOR_LOCATION`,
-  `INFERNIX_EXPECT_INFERENCE_DISPATCH_MODE`,
-  `INFERNIX_EXPECT_API_UPSTREAM_MODE`) are gone from `src/`,
-  `compose.yaml`, `docker/`, and `web/playwright/`; only retirement
-  doc-comments remain.
-
-Verified end-to-end on the host: `cabal build all` clean,
-`cabal test infernix-unit` and `cabal test infernix-haskell-style`
-pass, `node --check web/playwright.config.js`,
-`node --check web/playwright/inference.spec.js`, and
-`infernix lint {files,chart,docs,proto}` exit zero after the May 27
-documentation refresh. The Sprint 3.10 grep gate
-(`grep -rEn 'INFERNIX_EDGE_PORT|INFERNIX_PLAYWRIGHT_*|INFERNIX_EXPECT_*' src/ compose.yaml docker/ web/`)
-returns only retirement doc-comments (in `src/Infernix/CLI.hs`,
-`web/playwright.config.js`, and the Phase 5 Sprint 5.9 binary-resolution note in
-`web/test/run_playwright_matrix.mjs`); no live INFERNIX_EDGE_PORT /
-INFERNIX_PLAYWRIGHT_* / INFERNIX_EXPECT_* reads remain.
-
-Closed validation:
-
-- **Linux in-container Playwright E2E proof point on the recorded validation (legacy hardware).** The
-  clean-env compose-run command
-  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test e2e`
-  had reconciled the live `linux-gpu` cluster, ran Playwright inside the
-  launcher image, reported `1 passed`, then executed its teardown
-  cleanup on the legacy Linux/CUDA host. That proof point is no longer current; CUDA Linux
-  cohort rerun closed in Wave C on the native Linux/CUDA host.
-- Apple host-native E2E validation closed in Waves A.1/A.2 using the same typed fixture path.
+None.
 
 ---
 
 ## Sprint 3.11: Apple Silicon Native Architecture, Bitnamilegacy Retirement, Harbor Port Dynamic Discovery [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs` (`clusterWorkloadArchitecture`, `chooseHarborPort`, `currentKindHarborPort`, `clusterSubprocessBaseEnvFor`, `renderKindConfig`, `renderHelmValues`, `harborApiHost`, `publishClusterImages`, `prepareKindNodeRuntimePaths`, `writeRegistryHostsConfig`), `src/Infernix/Cluster/PublishImages.hs` (`HarborPublishOptions.harborTargetArchitecture`, `pinLocalImageToTargetArchitecture`, `extractDigestForArchitecture`, `contentAddressTagFromManifestPayload`, `pushUpstreamMultiArchViaImagetools`, `recoverOriginalTag`, the MinIO overlay), `src/Infernix/ProcessMonitor.hs` (`processMonitorBaseEnvFor`), `src/Infernix/Storage.hs` (`harborPortPath`, `readHarborPortMaybe`), `src/Infernix/Types.hs` (`ClusterState.harborPort`), `src/Infernix/HostConfig.hs` (`defaultAppleHostNativeHostConfig`), `src/Infernix/DemoConfig.hs` (`materializeHostManifestFile`, `resolveOperatorHomeDirectory`), `app/Main.hs` (`hSetBuffering LineBuffering`), `chart/values.yaml` (MinIO overrides + console disabled), `test/unit/Spec.hs` (`samplePublishedImages`, overlay assertions, `contentAddressTagFromManifestPayload` arch fixture).
+**Implementation**: `src/Infernix/Cluster.hs` (`clusterWorkloadArchitecture`, `chooseHarborPort`, `currentKindHarborPort`, `clusterSubprocessBaseEnvFor`, `renderKindConfig`, `renderHelmValues`, `harborApiHost`, `publishClusterImages`, `prepareKindNodeRuntimePaths`, `writeRegistryHostsConfig`), `src/Infernix/Cluster/PublishImages.hs` (`HarborPublishOptions.harborTargetArchitecture`, `pinLocalImageToTargetArchitecture`, `extractDigestForArchitecture`, `contentAddressTagFromManifestPayload`, `pushUpstreamMultiArchViaImagetools`, `recoverOriginalTag`, the MinIO overlay), `src/Infernix/ProcessMonitor.hs` (`processMonitorBaseEnvFor`), `src/Infernix/Storage.hs` (`harborPortPath`, `readHarborPortMaybe`), `src/Infernix/Types.hs` (`ClusterState.harborPort`), `src/Infernix/HostConfig.hs` (`defaultAppleHostNativeHostConfig`), `src/Infernix/DemoConfig.hs` (`materializeHostManifestFile`, `resolveOperatorHomeDirectory`), `app/Main.hs` (`hSetBuffering LineBuffering`), `chart/values.yaml` (hand-authored `infernixMinio` StatefulSet config), `test/unit/Spec.hs` (`samplePublishedImages`, overlay assertions, `contentAddressTagFromManifestPayload` arch fixture).
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `documents/tools/minio.md`, `documents/tools/harbor.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/architecture/overview.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, `README.md`.
 
 ### Objective
@@ -526,13 +468,16 @@ workers dialed `localhost` literally.
   through `HarborPublishOptions.harborTargetArchitecture`. The
   `hydrateMissingHostWarmupImage` mirror.gcr.io fallback (formerly
   hardcoded `linux/amd64`) reads the same resolved architecture.
-- **`bitnamilegacy/*` retirement.** `chart/values.yaml` overrides
-  `minio.image.repository → minio/minio`,
-  `minio.clientImage.repository → minio/mc`,
-  `minio.defaultInitContainers.volumePermissions.image.repository → busybox`,
-  and sets `minio.console.enabled: false`. The Harbor overlay code in
-  `PublishImages.hs` drops the `console` block. `hostCachedWarmupImageRefs`
-  tracks the new image inventory.
+- **`bitnamilegacy/*` retirement.** The upstream bitnami MinIO sub-chart is
+  retired in favor of a hand-authored MinIO StatefulSet under
+  `chart/templates/minio/`, driven by the `infernixMinio:` block in
+  `chart/values.yaml` (`image.repository: docker.io/minio/minio`,
+  `clientImage.repository: docker.io/minio/mc`,
+  `initImage.repository: docker.io/busybox`). There is no separate MinIO
+  console workload or route. The Harbor overlay code in `PublishImages.hs`
+  overrides `infernixMinio.image` / `clientImage` / `initImage` to the
+  Harbor-mirrored refs. `hostCachedWarmupImageRefs` tracks the resulting
+  image inventory.
 - **Harbor port dynamic discovery.** `chooseHarborPort` selects a free
   host-side port starting at `30002`, persists to
   `./.data/runtime/harbor-port.json`, and is reused on subsequent
@@ -580,7 +525,7 @@ workers dialed `localhost` literally.
   - Substrate-aware publication ran every upstream image through
     `docker pull --platform linux/arm64` and `skopeo` paths with
     `--override-arch=arm64` (verified in the streamed phase output).
-    All 9 platform images (`infernix-linux-cpu`, `apachepulsar/pulsar-all`,
+    All 11 platform images (`infernix-linux-cpu`, `apachepulsar/pulsar-all`,
     `busybox`, `envoyproxy/gateway`, `minio/mc`, `minio/minio`,
     `percona/percona-distribution-postgresql`,
     `percona/percona-pgbackrest`, `percona/percona-pgbouncer`,

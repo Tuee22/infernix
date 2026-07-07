@@ -11,15 +11,17 @@
   supported durable home for binary blobs
 - MinIO runs as a four-node distributed cluster on the supported Kind path; each MinIO drive
   requests `64Gi` so the retained `infernix-models` bucket can hold the linux-gpu full-catalog
-  lazy-bootstrap set without hitting MinIO's low-free-space guard during later model rows
+  eagerly-staged model set without hitting MinIO's low-free-space guard during later model rows
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
 - the supported durable target shape uses **three MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
-    lazily on first use by the coordinator's bootstrap subscription on
-    `infernix/system/model.bootstrap.request`; read by every engine pod (Linux) and the
-    on-host engine daemon (Apple)
+    eagerly at coordinator startup from the mounted substrate model set, gated by the
+    `warm-model-cache` cluster-up barrier (Phase 8 Sprint 8.5); the
+    `infernix/system/model.bootstrap.request` topic is now only the on-demand fallback for an
+    engine that hits an unstaged model; read by every engine pod (Linux) and the on-host engine
+    daemon (Apple)
   - `infernix-engine-artifacts` — always-on (not demo-gated); immutable content-addressed engine
     software payloads such as wheelhouses, native binaries, Core ML compiled models, JVM tools,
     and reusable Apple or Linux materialization payloads; model weights never live here
@@ -45,8 +47,11 @@
 <!-- infernix:route-registry:minio:start -->
 - MinIO has no external gateway route; the browser reaches objects only through the `infernix-demo` webapp `/api/objects` proxy.
 <!-- infernix:route-registry:minio:end -->
-- the supported Gateway contract targets the live MinIO console and S3 surfaces, and integration
-  requires those real upstream responses on the shared edge
+- there is no `/minio/s3` route and no MinIO console route: Phase 3 Sprint 3.13 removed both the
+  external `/minio/s3` gateway route and the MinIO console (closed under Wave M, 2026-06-29). The
+  browser reaches MinIO only server-side through the cookie-authenticated webapp `/api/objects`
+  proxy (`POST /upload`, `GET /download`, `POST /download`, `GET /list`, `DELETE`), all per-user
+  scoped; no `/minio/s3` route is on any operator or JWT-gated ribbon list
 
 ## Demo Artifact Bucket
 
@@ -97,10 +102,11 @@ The `infernix-demo-objects` bucket lives alongside the always-on `infernix-model
   MusicXML/MXL notation variants (`application/vnd.recordare.musicxml+xml`,
   `application/vnd.recordare.musicxml`, `application/vnd.recordare.musicxml-compressed`), and
   arbitrary binary downloads
-- in-browser rendering uses raw `<img>`, `<audio>`, and `<video>` elements against presigned
-  URLs where the artifact is actually browser-renderable; text/JSON uses bounded preview,
-  PDF uses browser-native document handling, and MIDI, MusicXML/MXL, unknown, or generic
-  binary artifacts are download-only by default
+- in-browser rendering uses raw `<img>`, `<audio>`, and `<video>` elements that fetch bytes
+  through the `/api/objects/download` proxy where the artifact is actually browser-renderable —
+  object grants carry no presigned MinIO URL; text/JSON uses bounded preview, PDF uses
+  browser-native document handling, and MIDI, MusicXML/MXL, unknown, or generic binary artifacts
+  are download-only by default
 
 See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for the full
 storage contract and [../engineering/object_storage.md](../engineering/object_storage.md) for

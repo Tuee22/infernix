@@ -17,7 +17,7 @@ executable-only and records named residual rows separately through `residualMatr
 catalogs, named residual rows, and `Not recommended` states so documentation cannot silently
 re-promote a residual or hide a runnable binding. Realness for the runnable rows is enforced in the
 engine code by the realness lint. Earlier Waves K/L prove the catalogs that existed when those waves
-ran; post-replacement proof for the two 2026-06-30 MT3 rows is tracked by Wave O in the development
+ran; post-replacement proof for the two 2026-06-30 MT3 rows closed under Wave P (2026-07-04) in the development
 plan.
 
 ## Contract

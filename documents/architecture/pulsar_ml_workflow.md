@@ -135,8 +135,10 @@ unrepresentable in the domain.
 `infernix` status as of 2026-06-18: the coordinator calls startup-topic
 reconciliation from the typed demo/runtime graph before schema registration, and
 the binary exposes `infernix internal dhall-schema host|cluster|secrets|substrate`
-for decoder-reflected schema output. The one-binary Webapp-role consolidation
-remains open.
+for decoder-reflected schema output. The one-binary Webapp-role consolidation has
+landed: `infernix.cabal` declares the single `executable infernix`, and the Webapp
+runs as `DaemonRole = Webapp` (the legacy `infernix` + `infernix-demo` split was
+retired 2026-06-30).
 
 ## Phasing rules (both repos)
 
@@ -159,7 +161,7 @@ These two rules govern every phase in both repos' `DEVELOPMENT_PLAN/`:
 
 A project conforms to this contract when all hold:
 
-- [ ] One binary; role ∈ `{Engine, Coordinator, Webapp}` selected by typed Dhall.
+- [x] One binary; role ∈ `{Engine, Coordinator, Webapp}` selected by typed Dhall.
 - [ ] Engine is the only role that computes; Webapp and Coordinator run no ML.
 - [ ] Webapp is substrate-agnostic (talks to Pulsar + MinIO only).
 - [x] Coordinator owns explicit topic lifecycle; no implicit auto-create, no

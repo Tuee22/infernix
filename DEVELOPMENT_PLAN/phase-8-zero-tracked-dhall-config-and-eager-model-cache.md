@@ -139,10 +139,10 @@ Move all remaining Dhall generation out of Helm into the binary; Helm becomes a 
   values — they are not `let`/schema Dhall) — no `let …`/schema Dhall inside any chart template
 - `renderHelmValues` also emits `clusterConfig.keycloak.{baseUrl,clientId,jwksUrl}` (from the same
   resolved wiring) alongside `body`, because the operator-routes SecurityPolicy template reads those
-  Helm **values** (not the rendered body) to build its JWT `issuer` + `remoteJWKS`. The 2026-07-04
-  cohort run caught that an interim edit dropping this block reverted the SecurityPolicy issuer to the
-  `127.0.0.1` chart default, 401-ing every valid operator token (routed Playwright specs 154/369); the
-  unit suite now guards that `clusterConfig.keycloak.baseUrl` is the routed edge URL
+  Helm **values** (not the rendered body) to build its JWT `issuer` + `remoteJWKS`; the wiring resolves
+  to the routed edge base URL so the SecurityPolicy issuer matches the operator token, guarded by the
+  unit suite (`clusterConfig.keycloak.baseUrl` is the routed edge URL) and cohort-proven under
+  [cohort-validation-waves.md](cohort-validation-waves.md) Wave P
 - `infernix lint chart` rejects any Dhall `let`/`in {`/schema body inside a chart template
   (`dhallBodyRejectionPaths` + `isDhallBodyLine`)
 
@@ -180,12 +180,12 @@ inference races a cold cache.
   `sweepEagerModelCache` (forked in `startCoordinatorLoops`), reusing the idempotent
   download/upload/`.ready` logic (`processBootstrapRequest`, which short-circuits on an existing
   sentinel). The config is required upstream (`decodeDemoConfigFile` fails fast when absent)
-- a `warm-model-cache` `cluster up` lifecycle phase (`warmModelCache` → `waitForEagerModelCacheReady`)
-  blocks completion until every listed model has its `.ready` sentinel, using a progress-based
-  deadline (keep waiting while new sentinels appear; give up only after a stall window). It polls
-  MinIO at the host-reachable node-port endpoint per control-plane context and is best-effort: a stall
-  past the deadline is a warning, not a hard failure, because the forked eager sweep plus the lazy
-  fallback still complete staging
+- the eager coordinator sweep stages the mounted model set at startup; a `warm-model-cache` `cluster
+  up` lifecycle phase (`warmModelCache` → `waitForEagerModelCacheReady`) wraps a best-effort host-side
+  MinIO poll of the `.ready` sentinels at the host-reachable node-port endpoint per control-plane
+  context. That poll is non-observing today (reports `0/16` and warns-and-proceeds rather than truly
+  blocking); the eager sweep still stages the weights, and making the poll observe the sentinels so it
+  deterministically blocks is the tracked follow-on
 - the model set is the mounted `infernix.dhall` (the source of truth); `src/Infernix/Models.hs`
   `matrixRows`/`catalogForMode` is documented as a **demo-only** generator of that list, not a core
   dependency
@@ -251,17 +251,14 @@ None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
 ## Documentation Requirements
 
-### Engineering docs
-
+**Engineering docs to create/update:**
 - [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md) — the authoritative doctrine (zero-tracked-Dhall, binary-generated, init/test-init, fail-fast, harness lifecycle, model SSoT, eager staging).
 - [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md) and [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md) — reflected-schema + binary-rendered ConfigMap/Secret contract.
 
-### Product or reference docs
-
+**Product or reference docs to create/update:**
 - [../documents/reference/cli_reference.md](../documents/reference/cli_reference.md) and [../documents/reference/cli_surface.md](../documents/reference/cli_surface.md) — gain `infernix init` and `infernix test init` alongside their `CommandRegistry.hs` entries (Sprint 8.2).
 - [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md), [../documents/development/local_dev.md](../documents/development/local_dev.md) — init-first workflow and harness create/delete lifecycle.
 
-### Cross-references
-
+**Cross-references to add:**
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — the retired tracked-schema, Helm-rendered-cluster-config, and lazy-model-bootstrap surfaces.
 - [development_plan_standards.md](development_plan_standards.md) Sections U (configuration substrate) and V (host tools manifest).

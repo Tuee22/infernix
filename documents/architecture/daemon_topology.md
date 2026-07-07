@@ -326,7 +326,7 @@ this table lists which shared modules each role loads at runtime.
 | `Infernix.Dispatch.SingleFlight` | — | ✓ | — |
 | `Infernix.Bridge.Result` | — | ✓ | — |
 | `Infernix.Bootstrap.Models` | — | ✓ | — |
-| `Infernix.Objects.Layout` | ✓ | — | — |
+| `Infernix.Objects.Layout` | ✓ | — | ✓ |
 | `Infernix.Objects.Presigned` | ✓ | — | — |
 | `Infernix.Auth.Jwt` | ✓ | — | — |
 | `Infernix.Runtime`, `.Cache`, `.Worker` | — | — | ✓ |

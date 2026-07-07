@@ -138,7 +138,7 @@ operations have a buildx-capable CLI when needed.
   Linux Playwright runtime
 - `RUNTIME_MODE=linux-cpu` with `BASE_IMAGE=ubuntu:24.04` produces `infernix-linux-cpu:local`
 - `RUNTIME_MODE=linux-gpu` with
-  `BASE_IMAGE=nvidia/cuda:13.2.1-cudnn-runtime-ubuntu24.04` produces
+  `BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04` produces
   `infernix-linux-gpu:local`
 - the substrate image installs Node.js 22.5+, the shared Poetry project, generated protobuf stubs,
   the built `web/dist/` bundle, Playwright browsers, and the `nvkind` binary during image build,

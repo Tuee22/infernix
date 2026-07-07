@@ -150,8 +150,9 @@ Direct reference path:
   subscriptions across distinct host ids so broker-native backpressure assigns work to available
   hosts; exact-host routes use derived per-host topics with `Exclusive`. Current Apple integration
   evidence includes two same-machine host-member daemons on one `Shared` subscription; physical
-  multi-host distribution is hardware-deferred, and the current Wave J backlog/backpressure gate is
-  a single-host logical multi-member Pulsar harness.
+  multi-host distribution is hardware-deferred. The single-host logical multi-member Pulsar
+  backlog/backpressure gate closed in Wave J (2026-06-20); validation evidence lives in
+  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 - model weights for the host engine come from the `infernix-models` MinIO bucket, which the
   coordinator eagerly stages at startup from the mounted `infernix.dhall` (the same `warm-model-cache`
   staging the in-cluster Linux engine pods rely on). The host daemon caches
@@ -189,7 +190,7 @@ Direct reference path:
 The supported Apple Silicon control plane runs cluster workloads natively as `linux/arm64`.
 The publication path does not depend on Rosetta, QEMU, or any other cross-architecture emulation
 layer.
-`clusterWorkloadArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
+`clusterWorkloadArchitectureForHostArchitecture AppleSilicon` returns `"arm64"` in `src/Infernix/Cluster.hs`,
 and every Harbor `docker pull --platform linux/<arch>` and `skopeo copy --override-arch=<arch>`
 invocation reads from that mapping. The chart's MinIO sub-chart uses upstream multi-arch
 images (`minio/minio`, `minio/mc`, `busybox`) — not single-architecture amd64-only packaging.
@@ -220,8 +221,10 @@ The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed fro
 host-tool schema and prerequisite path. The retained
 `infernix internal materialize-metal-engines` helper is the Tart-free manifest materialization
 surface; the current Apple host materializes the real runner roots, proves the fixed Metal runtime
-bridge, and smoke-loads the installed native artifacts. The remaining Sprint 1.15 cohort gate is
-full routed real output for the Apple catalog plus `linux-cpu`.
+bridge, and smoke-loads the installed native artifacts. The Sprint 1.15 cohort gate — full routed
+real output for the Apple catalog plus `linux-cpu` — closed in Wave L; current cohort validation
+evidence lives in
+[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 The authoritative replacement design is
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
@@ -235,7 +238,7 @@ space freed. Check for stale local Harbor-tagged runtime image ids such as
 `localhost:30002/library/infernix-linux-cpu:sha256-*` in the already selected Docker daemon before
 assuming retained MinIO state is still the cause. `Insufficient memory` scheduling events or
 Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope must be
-reconciled before the Wave L gate can be claimed.
+reconciled before an Apple cohort validation pass can be claimed.
 
 ## Harbor Host-Port Conflicts
 

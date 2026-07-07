@@ -8,8 +8,9 @@
 
 ## When Python Is Allowed
 
-Python is permitted only under `python/adapters/` and only when the bound inference engine has no
-non-Python binding.
+Python is permitted only under `python/adapters/` (python-stdio engine bindings) and
+`python/native-runners/` (the Apple native-process runner), and only when the bound inference engine
+has no non-Python binding on that path.
 
 - supported Python-native engines live as per-engine modules inside the shared adapter package
 - each adapter is a thin module that reads one worker-owned request payload from stdin, runs the
@@ -17,9 +18,9 @@ non-Python binding.
 - the Haskell worker (`src/Infernix/Runtime/Worker.hs`) is the single dispatch point for
   Python-native bindings; it resolves an engine-specific Poetry entrypoint and exchanges typed
   protobuf worker messages over stdio
-- no other Python lives in this repository on the supported path; build helpers, lint, chart
-  discovery, image publishing, demo-config parsing, docs validation, and the demo HTTP host are
-  all Haskell
+- the only other Python on the supported path is the Apple native-process runner under
+  `python/native-runners/`; build helpers, lint, chart discovery, image publishing, demo-config
+  parsing, docs validation, and the demo HTTP host are all Haskell
 
 ## Toolchain
 
@@ -140,7 +141,9 @@ own isolated in-project venv:
   all three substrates; post-replacement full-suite proof is tracked by
   [Wave O](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
-`find python -name '*.py' -type f` still returns only files under `python/adapters/`; the
+`find python -name '*.py' -type f` returns only files under `python/adapters/` and
+`python/native-runners/` (the Apple native-process runner `apple_native_runner.py`, itself
+framework-free at module top level with frameworks lazy-imported inside its function bodies); the
 `python/engines/<engine>/` projects carry only `pyproject.toml` + `poetry.toml`, and their `.venv/`
 trees are gitignored build artifacts.
 
@@ -202,7 +205,7 @@ Current state:
   an optional `--output-dir`; if they print `infernix-native-artifact-file:<path>`, the Haskell
   worker performs the credentialed MinIO upload and returns the object reference. The reopened
   Phases 4/6 own routed full-suite real-output delivery against live MinIO; Wave K covers its
-  then-active catalog, and Wave O owns post-replacement proof for the MT3 rows added on 2026-06-30.
+  then-active catalog, and Wave P closed post-replacement proof for the MT3 rows added on 2026-06-30.
   Realness is enforced in the engine code by the realness lint.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the

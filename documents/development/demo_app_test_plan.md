@@ -26,9 +26,9 @@
 - The Playwright source is identical across `apple-silicon`, `linux-cpu`, and `linux-gpu`;
   substrate selection lives only in the generated `.dhall` the demo app reads.
 
-## Webapp-Mediated Object E2E (target)
+## Webapp-Mediated Object E2E
 
-At the target the object-grant and isolation e2e prove the webapp is the single mediator for every
+The object-grant and isolation e2e prove the webapp is the single mediator for every
 browser artifact upload and download (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md) and
 [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)). The
@@ -44,16 +44,9 @@ preview, download-only MIDI / MusicXML / generic-binary) is asserted from the we
 `/api/objects/download` response and the corresponding rendered browser surface — the dedicated
 artifact-rendering coverage added under Sprint 7.27, which drives each supported artifact class
 through the rendered `Files` and Artifacts surfaces and asserts the family-appropriate rendered
-shape (never a golden string).
-
-**Current Status.** The webapp-mediated upload/download, the cross-user-403 boundary assertions,
-and the Sprint 7.27 rendering tests above describe the declarative target. The present routed
-Playwright suite (described under Current Status below) still exchanges the Keycloak code for an
-access token, mints presigned MinIO grants at `/api/objects`, and PUT/GETs bytes directly through
-the routed MinIO URLs over the gateway `/minio/s3` route; per-user isolation holds today via
-per-object scoped grants plus the mint-time `pathBelongsToUser` check. The migration to
-webapp-mediated object I/O is tracked by reopened Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25
-(with the rendering coverage under Sprint 7.27), validated under
+shape (never a golden string). This webapp-mediated object I/O is shipped (Phase 3 Sprint 3.13
+removed the external `/minio/s3` gateway route and the MinIO console route; browser-facing
+presigned MinIO URLs no longer exist), validated under
 [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 ## Current Status
@@ -80,8 +73,9 @@ browser self-registration smoke reaches `/auth`, creates an account without emai
 and returns to the SPA with an OIDC authorization code. The routed Playwright suite exchanges
 that code for a real access token, proves malformed bearer rejection on
 `/api/objects/upload`, proves the backend accepts the real token for scoped `/api/objects`
-upload/download grant minting, then PUTs and GETs bytes through the routed presigned MinIO URLs
-with exact content equality. The suite opens `/ws` with a real Keycloak access token and
+upload/download, then POSTs bytes to `/api/objects/upload` and GETs them back through
+`/api/objects/download` with exact content equality — the grant carries no presigned MinIO URL and
+the browser never reaches MinIO through the gateway. The suite opens `/ws` with a real Keycloak access token and
 verifies a malformed token does not open a browser WebSocket; the valid connection returns a
 tagged `ServerError` for a malformed frame. The suite registers a second Keycloak user for the
 same context id and display name, proves the second user's grant points at a distinct
@@ -92,15 +86,16 @@ PDF, bounded JSON/text preview, and download-only MIDI / MusicXML / generic-bina
 browser artifact flow starts from the routed SPA login button, completes the app-owned PKCE
 redirect through Keycloak self-registration, creates a context, uploads supported browser
 artifact classes through the rendered Artifacts form, and validates bounded text/JSON previews,
-inline image/audio/video routed media URLs, browser-native PDF URL wiring, and MIDI / MusicXML
-/ generic-binary download-only states through routed presigned grants. The routed Playwright
+inline image/audio/video media URLs served by the webapp `/api/objects/download` proxy,
+browser-native PDF URL wiring, and MIDI / MusicXML / generic-binary download-only states through
+that same proxy. The routed Playwright
 suite also asserts the pre-auth landing shows exactly two CTAs (`Sign in` and `Create account`),
 hides the app shell, routes each CTA to the matching Keycloak login or registration form, and
 asserts the themed Keycloak titles (`Sign in to Infernix` and
 `Create your Infernix account`).
 The auth lifecycle test also asserts the signed-in operator ribbon links and the
 `infernix_operator_token` cookie lifecycle, while the routed WebSocket/JWT test checks that
-anonymous requests to `/harbor`, `/pulsar/admin`, and `/minio/s3` receive the edge JWT rejection
+anonymous requests to `/harbor` and `/pulsar/admin` receive the edge JWT rejection
 and the same routes progress to their upstreams when the request carries the real Keycloak token.
 The routed Playwright run passes the per-model smoke matrix across every active catalog row; the full gate also
 covers the durable-context browser flow with frontend pod replacement: the test deletes all
@@ -208,11 +203,11 @@ routes `Sign in` to the Keycloak login form, and routes `Create account` directl
 Keycloak registration form through `kc_action=register`. The same assertions check that the
 repo-owned Keycloak theme is active by looking for the Infernix-specific login and registration
 titles.
-After login, the auth lifecycle smoke checks the operator ribbon links to `/harbor`,
-`/pulsar/admin/admin/v2/clusters`, and `/minio/s3`; it also verifies the same access token is
-written to the `infernix_operator_token` cookie on login/refresh and cleared on logout. The routed
-JWT smoke probes the three gated operator route prefixes without a token and with the real bearer
-token.
+After login, the auth lifecycle smoke checks the operator ribbon links to `/harbor` and
+`/pulsar/admin/admin/v2/clusters` (and asserts no `/minio/s3` ribbon link exists); it also verifies
+the same access token is written to the `infernix_operator_token` cookie on login/refresh and
+cleared on logout. The routed JWT smoke probes the two gated operator route prefixes without a token
+and with the real bearer token.
 The account-deletion smoke creates a real user, writes a draft and a MinIO object, verifies the
 user's demo Pulsar topics are present, clicks `Delete account`, accepts the browser confirmation,
 and asserts `DELETE /api/account` reports deleted MinIO objects and Pulsar topics before the next
@@ -220,9 +215,10 @@ Keycloak request carries `kc_action=delete_account`.
 The routed Keycloak self-registration smoke verifies the `/auth` browser surface, account
 creation without email verification, and OIDC authorization-code redirect back to the SPA. The
 suite exchanges that code through the routed token endpoint and validates `/api/objects` with
-both malformed and real bearer tokens, proving JWT-backed grant minting and per-user object-key
-scoping; it PUTs bytes through the minted routed MinIO upload URL, GETs them through the minted
-download URL, and asserts exact content equality. The suite opens `/ws` with the real token and
+both malformed and real bearer tokens, proving JWT-backed authorization and per-user object-key
+scoping; it POSTs bytes to `/api/objects/upload`, GETs them back through `/api/objects/download`,
+and asserts exact content equality — the grant carries no presigned MinIO URL and the browser never
+reaches MinIO through the gateway. The suite opens `/ws` with the real token and
 verifies a malformed token does not open a browser WebSocket; a token minted from the Keycloak
 admin realm does not open `/ws`, and the same wrong-realm token receives `401` from
 `/api/objects/upload`. A malformed frame on the valid connection yields the tagged `ServerError`.
@@ -256,8 +252,8 @@ the textarea value.
   after the refresh grant. The pre-auth landing smoke asserts the anonymous shell exposes exactly
   the two supported CTA entry points, that each lands on the matching Keycloak form, and that the
   mounted `infernix` Keycloak theme is active. The same auth lifecycle checks cover the operator
-  ribbon and the cookie that Envoy Gateway's JWT policy reads for `/harbor`, `/pulsar/admin`, and
-  `/minio/s3`. Account deletion coverage verifies the backend state reap happens before the
+  ribbon and the cookie that Envoy Gateway's JWT policy reads for `/harbor` and `/pulsar/admin`.
+  Account deletion coverage verifies the backend state reap happens before the
   Keycloak `delete_account` action begins.
 - **Context lifecycle.** New-context dialog open/close without backend state; create; rename;
   soft-delete; select context. The browser now opens and closes the new-context dialog without
@@ -287,7 +283,8 @@ the textarea value.
 - **Artifact upload lifecycle** per supported artifact class (image, playable audio, video,
   text/JSON, PDF, MIDI, MusicXML/MXL notation, generic binary): open upload, select file,
   observe progress, see artifact appear in Artifacts view AND in the per-context conversation
-  thread as a `UserUpload` event. Browser upload to MinIO is covered for text, JSON, PNG, WAV,
+  thread as a `UserUpload` event. Browser upload through the webapp `/api/objects/upload` proxy is
+  covered for text, JSON, PNG, WAV,
   MP4, PDF, MIDI, MusicXML, and generic binary fixtures with Artifacts view render/download
   states asserted. Browser uploads now send `ClientRecordUpload` and the backend maps it to a
   `ConversationUserUploadEvent`. Prompt submit now sends the current context's uploaded
@@ -296,8 +293,8 @@ the textarea value.
   asserted through an inbound `ServerConversationPatch` append frame. Browser-visible upload-event
   assertions now cover the outbound `ClientRecordUpload`, inbound `ConversationUserUploadEvent`
   append patch, and rendered Chat upload message for each supported browser fixture.
-- **Artifact download lifecycle.** Click an artifact; presigned GET resolves; inline render
-  via `<img>` / `<audio>` / `<video>` where applicable; bounded text/JSON preview and
+- **Artifact download lifecycle.** Click an artifact; the webapp `/api/objects/download` proxy
+  streams the bytes; inline render via `<img>` / `<audio>` / `<video>` where applicable; bounded text/JSON preview and
   browser-native PDF handling where applicable; MIDI, MusicXML/MXL, unknown, and generic
   binary artifacts download otherwise. The routed backend grant-disposition matrix for these
   MIME classes is covered; browser click/render behavior is covered for bounded text/JSON
@@ -407,8 +404,8 @@ e2e/browser layer asserts the family-appropriate rendered surface:
   continuation in the Chat thread.
 - **Speech transcription** (whisper.cpp, faster-whisper CT2) — rendered inline transcript text.
 - **Source separation** (Demucs, Open-Unmix) — playable audio players for the stem object refs.
-- **Audio-to-MIDI** (basic-pitch TensorFlow/Core ML/ONNX) — a MIDI download-only artifact.
-- **Music transcription** (MT3-PyTorch, MR-MT3, Omnizart) — a MIDI or MusicXML download-only artifact.
+- **Audio-to-MIDI** (basic-pitch Core ML/ONNX) — a MIDI download-only artifact.
+- **Music transcription** (MT3-PyTorch, MR-MT3, ByteDance Piano Transcription) — a MIDI or MusicXML download-only artifact.
 - **Image generation** (SDXL-Turbo, Apple SD Core ML) — an inline `<img>` render.
 - **Video generation** (Wan2.1) — an inline `<video>` render.
 - **Audio generation / TTS** (bark) — an inline `<audio>` player.

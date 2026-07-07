@@ -1,7 +1,7 @@
 # Phase 5: Web UI and Shared Types
 
 **Status**: Done
-**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
+**Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
 > generator, the `purescript-spec` test framework, the cluster-resident browser SPA, and the
@@ -14,7 +14,7 @@ source, the generated contract path under `web/src/Generated/`, the clustered de
 the container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement
 in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1-5.10 have
 their deliverables closed in the worktree; Apple cohort validation closed in Waves A/A.2, and
-CUDA Linux cohort validation closed in Wave C.
+the CUDA Linux `linux-cpu` and `linux-gpu` gates passed on the recorded validation.
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
 WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
@@ -366,13 +366,13 @@ discovery, setup `--install-root` CLI args, the protobuf `WorkerRequest` envelop
   `node --check web/scripts/install-purescript.mjs`, and the grep gates above exit zero.
 - `cabal test infernix-unit` and `cabal run infernix -- lint {docs,files,chart,proto}` exit
   zero.
-- Apple cohort validation closed in Waves A/A.2; CUDA Linux validation closed in Wave C with
-  full `linux-cpu` and `linux-gpu` gates.
+- Apple cohort validation closed in Waves A/A.2; the CUDA Linux `linux-cpu` and `linux-gpu` gates
+  passed on the recorded validation.
 
 ### Remaining Work
 
-None. Apple cohort validation closed in [Wave A/A.2](cohort-validation-waves.md), and CUDA Linux
-cohort validation closed in [Wave C](cohort-validation-waves.md).
+None. Apple cohort validation closed in [Wave A/A.2](cohort-validation-waves.md), and the CUDA
+Linux `linux-cpu` and `linux-gpu` gates passed on the recorded validation.
 
 ---
 
@@ -392,9 +392,9 @@ Playwright contract directly.
 ### Deliverables
 
 - Sprint 5.5 Deliverables describe the Playwright runtime baked into the Linux substrate image
-  directly, without referencing the prior sidecar.
-- Sprint 5.9 Validation prose uses cohort closure markers and keeps `Wave A/A.2`
-  and `Wave C` references for cohort closure.
+  directly.
+- Sprint 5.9 Validation prose states cohort closure declaratively and points at the owning
+  cohort-validation waves.
 
 ### Validation
 
@@ -409,8 +409,8 @@ None.
 
 ## Remaining Work
 
-None. Sprints 5.1-5.10 are `Done`; Apple cohort validation closed in Waves A/A.2 and CUDA Linux
-cohort validation closed in Wave C.
+None. Sprints 5.1-5.10 are `Done`; Apple cohort validation closed in Waves A/A.2 and the CUDA
+Linux `linux-cpu` and `linux-gpu` gates passed on the recorded validation.
 
 ---
 

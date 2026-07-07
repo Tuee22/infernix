@@ -4,7 +4,8 @@ the retired bitnami sub-chart's NodePort Service. This is the
 in-cluster S3 endpoint referenced by:
 
 - `cluster.dhall.MinioConfig.endpoint` -> `http://infernix-minio.platform.svc.cluster.local:9000`
-- the Envoy Gateway `/minio/s3` HTTPRoute -> forwards to `infernix-minio:9000`
+- the webapp `/api/objects` object-proxy, server-side (Phase 3 Sprint 3.13 removed the external
+  `/minio/s3` gateway route; the browser never reaches MinIO directly)
 - the Harbor registry's S3 storage backend (`regionendpoint: http://infernix-minio.platform.svc.cluster.local:9000`)
 - the demo backend's presigned-URL signer (operator user/password from `infernix-cluster-secrets`)
 

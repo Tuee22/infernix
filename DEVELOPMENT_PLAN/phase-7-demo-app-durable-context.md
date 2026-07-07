@@ -1095,9 +1095,10 @@ for the authoritative target shape.
   `infernix-models/<modelId>/<filename>`, PUTs the `.ready` sentinel last, then publishes
   `model.bootstrap.ready.<modelId>`. Engines wait on the ready event with a 900-second bounded
   cold-bootstrap timeout and load from MinIO
-- **Two MinIO buckets, drop the placeholders.** `infernix-models` is always-on and holds
+- **Three MinIO buckets, drop the placeholders.** `infernix-models` is always-on and holds
   platform model weights, tokenizers, and configs under `<modelId>/<filename>` with a
-  `.ready` sentinel; `infernix-demo-objects` is demo-gated and holds user uploads plus
+  `.ready` sentinel; `infernix-engine-artifacts` is always-on and holds optional immutable
+  engine payloads; `infernix-demo-objects` is demo-gated and holds user uploads plus
   engine-generated artifacts under `users/<userId>/contexts/<contextId>/{uploads,generated}/`.
   The chart-reserved `infernix-runtime` and `infernix-results` placeholders are removed
 - **Uniform model-cache adapter helper.** `python/adapters/model_cache.py` defines
@@ -1500,8 +1501,9 @@ Closure notes: none.
 
 Land the demo's user-facing MinIO bucket `infernix-demo-objects` plus per-user prefix layout
 and the `/api/objects` HTTP endpoint that mints presigned PUT and GET URLs scoped to the
-authenticated user. The bucket is the demo-gated half of the supported two-bucket model
-defined in Sprint 7.7 (`infernix-models` is the always-on platform-weights half).
+authenticated user. The bucket is the demo-gated member of the supported three-bucket model
+defined in Sprint 7.7 (`infernix-models` always-on platform weights and
+`infernix-engine-artifacts` always-on engine payloads are the other two).
 
 ### Deliverables
 
@@ -2132,248 +2134,23 @@ and the multi-user throughput / fan-in batching / fan-out test.
 
 ### Remaining Work
 
-the recorded cohort validation code-side implementation:
-
-- `src/Infernix/Runtime/Pulsar.hs.publishDemoClientMessage` discovers the active Pulsar
-  transport from mounted `ClusterConfig` (falling back through the existing transport discovery
-  path), maps browser `WsClientMessage` frames to typed JSON events, and publishes them to the
-  supported durable topic families:
-  - `ClientSubmitPrompt` / `ClientCancelPrompt` → per-context
-    `demo.conversation.<userId>.<contextId>`
-  - `ClientUpdateDraft` → per-user compacted `demo.user.<userId>.drafts`
-  - `ClientCreateContext` / `ClientRenameContext` / `ClientSoftDeleteContext` → per-user
-    compacted `demo.user.<userId>.contexts`
-- WebSocket producers use mutation-scoped one-message producer names and WebSocket
-  `initialSequenceId` baselines derived from client idempotency, prompt, draft, or context keys
-  so the broker-side dedup gate can collapse reconnect or retry duplicates without treating later
-  independent client keys as non-monotonic repeats.
-- `src/Infernix/Demo/WebSocket.hs` now dispatches through
-  `WebSocketOptions.wsDispatchClientMessage`; `src/Infernix/Demo/Api.hs` wires that callback to
-  `publishDemoClientMessage`.
-- `test/unit/Spec.hs.assertDemoWebSocketPublicationPlanning` covers the pure publication plan for
-  prompt, cancel, context-created, draft-update, hello, and subscribe frames.
-
-the recorded cohort validation durable topic-family implementation:
-
-- `src/Infernix/Runtime/Pulsar.hs` exposes `publishRawTopicPayload` and
-  `readRawTopicPayloads` for integration-only broker probes and decodes Pulsar Reader
-  envelopes with their broker message key (`key` / `partitionKey`) plus base64 payload.
-- WebSocket publication planning now carries an optional Pulsar message key. Conversation events
-  remain unkeyed append-only log entries; compacted contexts and drafts publish with message key
-  `contextId`; `publishBootstrapReadyEvent` publishes bootstrap-ready records with message key
-  `modelId`.
-- `test/unit/Spec.hs.assertDemoWebSocketPublicationPlanning` asserts those key choices for
-  conversation, context-created, and draft-update frames.
-- `test/integration/Spec.hs.validateDurableTopicFamilyRoundTrips` publishes and reads back real
-  broker records for:
-  - `ClientCreateContext` -> `demo.user.<userId>.contexts`, asserting key `contextId` and a
-    decoded `ContextCreated` payload
-  - `ClientUpdateDraft` -> `demo.user.<userId>.drafts`, asserting key `contextId` and a decoded
-    `DraftUpdated` payload
-  - `ClientCancelPrompt` -> `demo.conversation.<userId>.<contextId>`, asserting no message key
-    and a decoded `ConversationCancelEvent`
-  - raw `ModelBootstrapReadyEvent` -> `model.bootstrap.ready.<modelId>`, asserting key
-    `modelId` and a decoded ready event
-- `test/integration/Spec.hs.validateCompactedTopicBrokerBehavior` reads the live
-  `infernix/demo` compaction threshold through the Pulsar admin API, asserts the supported
-  100 MiB policy, publishes superseded and latest records to isolated contexts and drafts
-  topics, triggers topic compaction through the admin API, and uses a Java Pulsar client in the
-  toolset pod with `readCompacted(true)` to assert exactly one latest payload per `contextId`.
-  This closes Sprint 7.5's broker-side compaction validation gate.
-- `test/integration/Spec.hs.validateProducerDeduplicationBehavior` publishes duplicate
-  frontend messages with the same mutation-scoped producer name and WebSocket
-  `initialSequenceId`-backed sequence id, then reads the isolated topics through a real Pulsar
-  Reader. The append-only conversation topic stores exactly one duplicate cancel event, and the
-  compacted draft topic stores exactly one duplicate draft event, proving the broker's
-  producer-dedup gate for simulated frontend reconnects.
-- `test/integration/Spec.hs.validateDurableContextPromptRoundTrip` publishes
-  `ClientCreateContext`, creates the conversation topic with a no-op cancel, waits for dispatcher
-  discovery, publishes `ClientSubmitPrompt`, and asserts the real broker conversation log receives
-  a completed `ConversationInferenceResultEvent` with inline output. This proves the
-  WS-published context metadata -> Pulsar -> coordinator contexts consumer ->
-  `ContextModelMap` -> dispatcher model-id resolution path plus the non-chaos dispatcher ->
-  request/batch -> engine -> result-bridge -> conversation-log path on Linux GPU. Frontend
-  pod-kill reconnect coverage closed in the recorded cohort validation routed E2E pass, and coordinator
-  replacement coverage closed in Wave C.
-
-the recorded cohort validation Linux GPU validation implementation, now retired by the
-pool-routing replacement:
-
-- `src/Infernix/Cluster.hs.cluster status` no longer emits the legacy
-  `publicationHostInferenceBatchTopic`; status and `/api/publication` expose derived engine-pool
-  routing metadata instead.
-- `test/integration/Spec.hs` now asserts the legacy `hostInferenceBatchTopic` field is absent from
-  routed publication JSON, asserts the matching `publicationHostInferenceBatchTopic` line is absent
-  from `cluster status`, and verifies the generated demo config routes coordinator request topics to
-  derived pool/model topics.
-- The Linux GPU launcher image was rebuilt with
-  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build`, then validated with
-  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test unit`,
-  `... infernix test lint`, and `... infernix test integration`; all three commands exited
-  zero. The integration run reached `cluster up complete`, exercised the linux-gpu
-  per-model inference, cache lifecycle, and service runtime loops, then tore the cluster down
-  cleanly with `cluster down complete`.
-- The recorded validation mounted validation pass built and ran the updated library, unit tests,
-  Haskell style gate, and integration suite inside the Linux GPU outer container. The clean
-  baked-image pass
-  rebuilt `infernix-linux-gpu:local` and then ran
-  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test integration`;
-  the integration run reached `integration-step: durable Pulsar topic families: linux-gpu` and
-  then completed `cluster down complete`.
-- A follow-on mounted Linux GPU validation on the recorded cohort validation added the compaction behavior proof
-  above and passed `cabal test infernix-integration`; the passing run completed
-  `integration tests passed` and `cluster down complete`.
-- A later the recorded cohort validation mounted Linux GPU validation corrected the frontend producer-dedup wiring
-  to use WebSocket `initialSequenceId` query parameters plus mutation-scoped producer names,
-  hardened Docker Hub mirror fallback for multi-arch Harbor publication and Linux warmup image
-  hydration, and passed:
-  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm --volume /home/matt/infernix:/workspace infernix cabal build test:infernix-unit test:infernix-integration`,
-  `... cabal test infernix-unit`, `... cabal test infernix-haskell-style`, and
-  `... cabal test infernix-integration`. The final integration run reached
-  `integration-step: durable Pulsar topic families: linux-gpu`, completed the duplicate
-  conversation/draft producer-dedup assertions, reported `integration tests passed`, and tore down
-  with `cluster down complete`.
-- A subsequent the recorded cohort validation mounted Linux GPU validation added the durable-context prompt
-  roundtrip through the dispatcher and result bridge. It passed
-  `env -i LAUNCHER_IMAGE=infernix-linux-gpu:local /usr/bin/docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm --volume /home/matt/infernix:/workspace infernix cabal build test:infernix-integration`,
-  `... cabal test infernix-haskell-style`, and `... cabal test infernix-integration`. The
-  integration run submitted a real prompt, observed the completed conversation result event,
-  reported `integration tests passed`, and tore down with `cluster down complete`.
-- A the recorded cohort validation Linux/CUDA-host code-side implementation added the remaining Linux-owned Wave C
-  integration cases to `test/integration/Spec.hs` and the supporting helpers in
-  `src/Infernix/Runtime/Pulsar.hs` and `src/Infernix/Cluster.hs`:
-  - `linux-cpu` now renders a two-worker Kind topology and two `infernix-engine` replicas;
-    warmup and final Harbor-backed image preloads target every worker.
-  - frontend pod replacement publishes a durable draft, deletes one `infernix-demo` pod,
-    re-reads state through Pulsar, then submits a durable prompt and asserts exactly-one
-    request/batch/result/conversation-result flow.
-  - coordinator pod replacement and engine pod replacement submit durable prompts, replace a pod,
-    wait for rollout, and assert completed writeback plus exactly-one broker pipeline counts.
-  - engine node drain drains one ready engine node, proves the remaining engine still completes a
-    durable prompt exactly once, then uncordons and waits for the HA shape to recover.
-  - model-bootstrap dedup publishes duplicate bootstrap requests for an isolated model around
-    coordinator replacement and asserts exactly one ready event on `model.bootstrap.ready.<model>`.
-  - multi-user throughput uses a `ThroughputMatrix` parameter record with the integration-default
-    compact matrix (3 users x 2 contexts x 2 prompts) and reports p95 completion latency while
-    asserting exact prompt/result counts per context. Larger matrices can now run through
-    `validateMultiUserDurablePromptThroughputWith` without rewriting the suite.
-  - the mounted compile check
-    `env LAUNCHER_IMAGE=infernix-linux-cpu:local docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm --volume /home/matt/infernix:/workspace infernix cabal build test:infernix-integration`
-    exits zero. The following full `linux-cpu` and `linux-gpu` `infernix test all` validations
-    closed Wave C.
-  - the first full `./bootstrap/linux-cpu.sh test` rerun on the recorded cohort validation passed rebuilt-image
-    docs lint, Haskell style, Haskell unit, PureScript build, and web unit tests before failing
-    in pre-scenario Harbor publication: the outer-container `skopeo copy` fallback used
-    `127.0.0.1:30002`, which is launcher-container loopback, not the Kind control-plane
-    NodePort. `src/Infernix/Cluster/PublishImages.hs` now routes only the `skopeo`
-    destination transport ref through `harborApiHost`.
-  - the next full `./bootstrap/linux-cpu.sh test` rerun on the recorded cohort validation passed docs lint,
-    Haskell style, Haskell unit, PureScript build, web unit, and Harbor publication before
-    stalling in Helm readiness because the host-mounted containerd registry-hosts file still
-    targeted a stale `infernix-linux-gpu-80707-control-plane:30002` mirror. The root cause was
-    the shared `./.build/kind/registry` path across CPU/GPU lanes plus the host-bind path skipping
-    node priming. `src/Infernix/Cluster.hs` now scopes registry-hosts roots by runtime mode
-    (`./.build/kind/<runtime-mode>/registry`) and always primes every Kind node's mounted
-    `/etc/containerd/certs.d` namespace from the launcher-local hosts file after cluster create or
-    reuse; checked-in Kind templates and docs were updated. The following rebuilt-image rerun
-    verified the repaired hosts file on the CPU control-plane and both workers, completed
-    `cluster up`, and reached the durable prompt integration assertions.
-  - the latest full `./bootstrap/linux-cpu.sh test` rerun on the recorded cohort validation passed rebuilt-image
-    docs lint, Haskell style, Haskell unit, PureScript build, web unit, Harbor publication,
-    final Helm readiness, and `cluster up` before the prior durable-context prompt roundtrip
-    failed because the first result written for that prompt was not `completed`. The code-side
-    fix makes that roundtrip use the newer durable context helper that waits for the contexts
-    metadata topic, waits one dispatcher-discovery cycle, captures the submitted prompt message
-    id, and waits for the result payload for that exact prompt; the following rebuilt-image rerun
-    advanced past this roundtrip.
-  - the following rebuilt-image `./bootstrap/linux-cpu.sh test` rerun passed the durable prompt
-    roundtrip, frontend pod replacement, and coordinator pod replacement checks, then failed at
-    `integration-step: engine pod replacement preserves durable prompt result` because the exact
-    prompt's conversation result payload was present but not `completed` (the assertion did not yet
-    print the payload). The fix removes the dispatcher-side race that could publish an empty-model-id
-    inference request before the contexts-metadata consumer hydrated `ContextModelMap`, commits the
-    dispatcher reducer state only after the outbound inference request publish succeeds, and prints
-    the full result payload on any chaos non-`completed` assertion.
-  - the rebuilt-image rerun against the dispatcher race fix passed docs lint, Haskell style,
-    Haskell unit, PureScript build, web unit, Harbor publication, final Helm readiness,
-    `cluster up`, the durable prompt roundtrip, and reached `integration-step: frontend pod
-    replacement preserves durable state`, then failed the new raw-topic exactly-once assertion:
-    the prompt with Pulsar WebSocket message id `CNgBEAEwAA==` had one request and one batch but
-    two raw inference results and two conversation results. The root cause is that
-    `parseMessageIdToSequenceId` only handled colon-form Pulsar ids, so WebSocket base64 message
-    ids produced no `initialSequenceId` and broker dedup could not collapse duplicate engine /
-    result-bridge publishes. The code-side fix now parses Pulsar WebSocket base64 message ids,
-    keeps the colon parser for compatibility, scopes coordinator batch and engine result producer
-    names by context id, and adds unit coverage for the failed id shape. Mounted Linux
-    outer-container `cabal build test:infernix-unit test:infernix-integration`,
-    `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `infernix lint docs`
-    pass.
-  - the rebuilt-image `./bootstrap/linux-cpu.sh test` rerun then passed Haskell style, Haskell
-    unit, PureScript build, web unit tests, full integration, every Sprint 7.14 LinuxCpu chaos
-    scenario above, platform recovery checks, and routed Playwright E2E (7/7). The multi-user
-    throughput smoke matrix reported `users=3 contextsPerUser=2 promptsPerContext=2
-    totalPrompts=12 p95Seconds=78.95681428909302`; the passing launcher image digest was
-    `sha256:a9f1f19aa9bb492c5186a0f6df8f864ee4e0c900c8209f0434ef64cf6cc821a7`.
-  - the first full `./bootstrap/linux-gpu.sh test` attempt on the recorded cohort validation against rebuilt
-    launcher image digest
-    `sha256:1eb0863f8c7cbd19b4d87ab25796535ec592d19e965a1a54351d258d31c1c594`
-    passed Haskell style, Haskell unit, PureScript build, web unit tests, full integration,
-    and six of seven routed Playwright E2E specs. The remaining per-model smoke matrix spec
-    failed after timing out waiting for an inbound WebSocket frame after frame index `78`;
-    the cluster tore down cleanly.
-  - the recorded cohort validation Playwright follow-on keeps the per-model browser matrix strict on completed
-    inference results but replaces the generic 10-second inbound-frame wait with a five-minute
-    completed-conversation-result wait, matching the integration first-run inference budget. It
-    also fails early with the actual result payload when the backend returns `failed`. The rebuilt
-    GPU launcher image carrying this fix has manifest-list digest
-    `sha256:0cbd34f71a3a39b96e17740843b06d08a5c5e55096fd3f42f9f4e565d2a196a5`.
-  - the fixed full `./bootstrap/linux-gpu.sh test` rerun passed Haskell style, Haskell unit,
-    PureScript build, web unit tests, full integration, platform recovery checks, and routed
-    Playwright E2E (7/7). The per-model browser matrix completed all 16 `linux-gpu` catalog
-    rows in 7.9 minutes; the full Playwright file reported `7 passed (8.7m)`, and cluster
-    teardown returned cleanly.
-  - the final the recorded cohort validation `linux-gpu` closure rerun rebuilt the launcher after the browser-level
-    frontend pod-replacement fixture implemented. The final image digest is
-    `sha256:fd951113735f94b613a2fa014088f22e89a4df0b78193cd1ec76d6a44e191689`. The rebuilt-image
-    `infernix lint docs` gate passed, then `./bootstrap/linux-gpu.sh test` passed Haskell style,
-    Haskell unit, PureScript build, 71/71 web unit tests, full integration, platform recovery
-    checks, and routed Playwright E2E. The artifact/chat browser test deleted all
-    `infernix-demo` pods, waited for replacements, reconnected, resubscribed, and submitted
-    another prompt in 40.4 seconds. The per-model browser matrix completed all 16 `linux-gpu`
-    catalog rows in 2.2 minutes; the full Playwright file reported `7 passed (3.5m)`, and
-    cluster teardown returned cleanly.
-  - the recorded cohort validation residual sweep adds real deployed-Keycloak wrong-realm negative coverage in
-    `web/playwright/inference.spec.js`: a token minted from the Keycloak admin realm is rejected
-    with `401` by `/api/objects/upload`, and the same wrong-realm token cannot open the routed
-    `/ws` WebSocket. Existing unit coverage still covers wrong issuer, wrong audience, expired,
-    malformed, and unknown-key JWT cases at the validator layer.
-  - the rebuilt-image `./bootstrap/linux-gpu.sh test` rerun after that residual sweep passed
-    Haskell style, Python checks, Haskell unit, PureScript build, 71/71 web unit tests, full
-    integration, platform recovery checks, and routed Playwright E2E (7/7). The browser suite
-    included the wrong-realm `/api/objects/upload` and `/ws` negatives plus the fixture-backed
-    artifact flow; the full file reported `7 passed (2.2m)`. The launcher image digest was
-    `sha256:521a56ac6f79bf1ce5bc9d7dcd9c872e897ce4b4882661d4ada2f62faa108d7b`.
-  - the matching rebuilt-image `./bootstrap/linux-cpu.sh build` completed on the recorded cohort validation against
-    launcher image digest
-    `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`. The subsequent
-    `./bootstrap/linux-cpu.sh test` run passed Haskell style, Python checks, Haskell unit,
-    PureScript build, 71/71 web unit tests, and the full integration suite, including the
-    LinuxCpu chaos/throughput scenarios. The compact throughput matrix reported
-    `users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
-    p95Seconds=74.05106592178345`. The run was paused at operator request during the following
-    browser/e2e cluster bootstrap, before Playwright executed; `./bootstrap/linux-cpu.sh down`
-    then removed the partially bootstrapped CPU Kind cluster.
-  - the resumed rebuilt-image `./bootstrap/linux-cpu.sh test` run on the recorded cohort validation passed Haskell
-    style, Python checks, Haskell unit, PureScript build, 71/71 web unit tests, full integration,
-    platform recovery checks, and routed Playwright E2E (7/7) against the same launcher image
-    digest. Integration included frontend pod replacement, coordinator replacement,
-    engine replacement, engine node drain, model-bootstrap deduplication, Linux engine
-    anti-affinity, multi-user durable prompt throughput, Harbor recovery, MinIO durability,
-    routed Pulsar recovery, PostgreSQL failover, and PostgreSQL lifecycle rebinding. The compact
-    throughput matrix reported `users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12
-    p95Seconds=76.06613969802856`. The Playwright file reported `7 passed (2.1m)`.
-
-Closure notes: none.
+None. The integration layer is closed. `src/Infernix/Runtime/Pulsar.hs.publishDemoClientMessage`
+maps browser `WsClientMessage` frames onto the durable topic families
+(conversation / compacted contexts / compacted drafts / bootstrap-ready) with mutation-scoped
+producer names and idempotency-derived WebSocket `initialSequenceId` baselines so broker dedup
+collapses reconnect and retry duplicates, and `src/Infernix/Demo/Api.hs` wires that callback
+through `WebSocketOptions.wsDispatchClientMessage`. `test/integration/Spec.hs` covers the
+real-broker contract: durable topic-family roundtrips (`validateDurableTopicFamilyRoundTrips`),
+compacted latest-per-key behavior (`validateCompactedTopicBrokerBehavior`, closing Sprint 7.5's
+compaction gate), producer dedup (`validateProducerDeduplicationBehavior`), the non-chaos
+durable-context prompt roundtrip (`validateDurableContextPromptRoundTrip`), the per-role chaos
+cases (frontend / coordinator / engine pod replacement, engine node drain, model-bootstrap
+request/ready deduplication across coordinator replacement, Linux engine anti-affinity), and the
+parameterized multi-user throughput matrix (`validateMultiUserDurablePromptThroughput` /
+`...With`, integration default 3 users x 2 contexts x 2 prompts). Cohort closure — the native
+`linux-cpu` and real-hardware `linux-gpu` full `infernix test all` gates — is recorded in
+[Wave C](cohort-validation-waves.md); per-run image digests and the attempt-by-attempt history
+live there, not here.
 
 ---
 
@@ -2754,8 +2531,9 @@ Per-sprint dated proof points are removed; cohort closure references via
   (`infernix-coordinator` + substrate-specific engine pools + demo-gated `infernix-demo`) and the supported
   MinIO-backed object-storage contract, with cleanup receipts held in
   `legacy-tracking-for-deletion.md`.
-- Sprint 7.8/7.14/7.15/7.17 prose drops dated hardware proof points; cohort closure references
-  remain.
+- Sprint 7.8/7.14/7.15/7.17 prose is declarative current-state; dated hardware proof points and
+  per-run attempt chronology live in [cohort-validation-waves.md](cohort-validation-waves.md), and
+  cohort closure references remain.
 - Per-sprint Validation sections retain test-name and gate references, drop daily proof points,
   and anchor on the canonical architecture documents.
 
@@ -2768,88 +2546,6 @@ Per-sprint dated proof points are removed; cohort closure references via
 ### Remaining Work
 
 None.
-
----
-
-## Remaining Work
-
-None.
-
-## Closure Notes
-
-- Sprint 7.28 closed on 2026-06-30 through the full `linux-gpu` plus `linux-cpu` cohort gates.
-- Sprint 7.24 closed on 2026-06-20 through [Wave J](cohort-validation-waves.md): the selected
-  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-- Sprints 7.25-7.27 closed on 2026-06-29 through [Wave M](cohort-validation-waves.md): the selected
-  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
-- Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
-
----
-
-## Documentation Requirements
-
-**Engineering docs to create/update:**
-- [../documents/engineering/implementation_boundaries.md](../documents/engineering/implementation_boundaries.md) — Application Library Boundary section split into frontend, coordinator daemon, and engine daemon roles; coordinator additionally owns `Infernix.Bootstrap.Models`
-- [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md) — full rewrite for the supported target shape: drop `./.data/object-store/`, drop `s3://infernix-runtime/`, drop `/objects/:objectRef`; document the model-weight bucket, engine-artifact bucket, demo-object bucket, and `.ready` sentinel pattern
-- [../documents/engineering/portability.md](../documents/engineering/portability.md) — row 63 rewritten in 3-role daemon vocabulary
-- [../documents/engineering/k8s_storage.md](../documents/engineering/k8s_storage.md) — no daemon has a PVC; engine pod uses `emptyDir` with `sizeLimit` for model cache only; eviction enforced by adapter
-
-**Architecture docs to create/update:**
-- [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md) — new product-agnostic primitives doc
-- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — demo-specific bindings on top of the primitives doc
-- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — new authoritative 3-role daemon model doc
-- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — durable-context surface delta and new view modules
-- [../documents/architecture/runtime_modes.md](../documents/architecture/runtime_modes.md) — Service Placement rewritten in 3-role daemon vocabulary
-- [../documents/architecture/overview.md](../documents/architecture/overview.md) — pointer to the new designs
-
-**Development docs to create/update:**
-- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — new authoritative test plan
-- [../documents/development/frontend_contracts.md](../documents/development/frontend_contracts.md) — new ADTs and Haskell-first logic discipline
-- [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md) — three validation layers cross-link
-- [../documents/development/chaos_testing.md](../documents/development/chaos_testing.md) — per-role chaos cases (frontend, coordinator, engine, engine-node drain)
-- [../documents/development/purescript_policy.md](../documents/development/purescript_policy.md) — new view modules note
-
-**Reference docs to create/update:**
-- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — `/auth`, `/ws`, `/api/objects` routes, frontend termination note
-- [../documents/reference/api_surface.md](../documents/reference/api_surface.md) — `/api/objects` HTTP route
-
-**Tools docs to create/update:**
-- [../documents/tools/keycloak.md](../documents/tools/keycloak.md) — new authoritative Keycloak surface
-- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — demo conversation and metadata topics; `inference.batch.<mode>` topic family on every substrate; new `infernix/system/model.bootstrap.request` topic with Failover subscription contract, model-scoped message key, and attempt-scoped dedup key
-- [../documents/tools/minio.md](../documents/tools/minio.md) — full bucket inventory rewrite: drop `infernix-runtime` and `infernix-results`; add `infernix-models` always-on; document the `.ready` sentinel; demo artifact bucket retained
-
-**Operations docs to update:**
-- [../documents/operations/cluster_bootstrap_runbook.md](../documents/operations/cluster_bootstrap_runbook.md) — Keycloak addition note plus coordinator + engine pod inventory; expected `infernix kubectl get pvc -A` is empty; `infernix-models` bucket validation; first-use bootstrap latency note
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — coordinator + engine 3-role naming for the Apple lane; host engine daemon pool membership via stable host ids, `Shared` normal pools, and pinned `Exclusive` routes; host engine pulls weights from MinIO `infernix-models` via the same bootstrap workflow
-
-**Development docs to create/update:**
-(Already listed above; reaffirmed here that Sprint 7.7 adds bootstrap chaos cases to
-`chaos_testing.md` and a per-engine MinIO smoke matrix to `demo_app_test_plan.md`.)
-
-**Chart assets to create/update (delivered by Sprint 7.7):**
-- `chart/templates/deployment-coordinator.yaml` (new)
-- `chart/templates/deployment-engine.yaml` (new — `emptyDir` `model-cache` mount with `sizeLimit`)
-- `chart/templates/poddisruptionbudget-coordinator.yaml` (new)
-- `chart/templates/poddisruptionbudget-engine.yaml` (new)
-- `chart/templates/poddisruptionbudget-demo.yaml` (new)
-- `chart/templates/deployment-service.yaml` (deleted)
-- `chart/templates/persistentvolumeclaim-service-data.yaml` (deleted)
-- `chart/values.yaml` (drop `infernix-runtime` and `infernix-results` placeholder buckets; add `infernix-models` always-on; new `coordinator`, `engine`, `demo` HA stanzas; `engine.modelCache.sizeLimit` knob)
-
-**Root docs to update:**
-- [../README.md](../README.md) — short orientation paragraph framing the durable-context Chat surface as the supported manual-inference path; 3-role daemon naming; no PVC on any daemon; model weights eagerly staged to MinIO by the coordinator at startup (Phase 8); ephemeral `emptyDir` for engine model cache
-- [README.md](README.md) — Phase 7 row in Document Index and Phase Overview
-- [00-overview.md](00-overview.md) — Phase 7 in architecture baseline and dependency chain
-- [system-components.md](system-components.md) — Keycloak, demo MinIO bucket, demo Pulsar topic families, new routes, coordinator + engine Deployments, new `infernix-models` bucket, new `model.bootstrap.request` topic, no-PVC daemon shape
-- [development_plan_standards.md](development_plan_standards.md) — Sections K + L updated for the 3-role daemon contract, Linux anti-affinity, Apple host-id pool membership, the no-PVC posture, and MinIO + Pulsar as the only durable state
-- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — new Pending Removal entries for `./.data/object-store/`, the `s3://infernix-runtime/` URI scheme, the 80-char inline-payload threshold, the `/objects/:objectRef` route, and the chart-reserved `infernix-runtime` + `infernix-results` placeholder buckets; the previously-listed `persistentvolumeclaim-service-data.yaml` removal is reaffirmed and broadened to "no PVC on any daemon"
-
-**Cross-references to add:**
-- align Phase 7 entries in [README.md](README.md), [00-overview.md](00-overview.md), and
-  [system-components.md](system-components.md) with
-  [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md),
-  [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), and
-  [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 
 ---
 
@@ -3221,10 +2917,9 @@ lifecycle rebinding, and demo-off coordinator/engine publication.
 pinned duplicate-consumer rejection, same-machine Apple `Shared` coexistence, and Apple
 production `demo_ui = false` assertions, plus the single-host logical `Shared`
 backlog/backpressure harness. The current full Apple aggregate `./.build/infernix test all` also
-passes against this state, and Linux CPU integration proves pool placement/backpressure in Kind. It
-still must prove Linux GPU/CUDA pool placement and pass full cohort validation before this sprint
-can move to `Done`; physical Apple multi-host operation is hardware-deferred proof while no second
-Apple host is available.
+passes against this state, and Linux CPU integration proves pool placement/backpressure in Kind.
+Physical Apple multi-host operation is hardware-deferred proof while no second Apple host is
+available.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `test/unit/Spec.hs`, `test/integration/Spec.hs`
 **Docs to update**: [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/tools/pulsar.md](../documents/tools/pulsar.md), [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md), [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -3334,7 +3029,8 @@ cross-user access is impossible by construction.
 ### Deliverables
 
 - `Demo/Api.hs` proxies upload/download bytes over the internal MinIO endpoint
-  (`loadInternalMinioPresignedConfig` plus `Objects/Upload.hs` put/get helpers)
+  (`loadInternalMinioPresignedConfig` plus the file-local `putMinioObjectBytes` /
+  `getMinioObjectBytes` signers, not `Infernix.Objects.Upload`)
 - `artifactUploadGrantPresignedUrl` and `artifactDownloadGrantPresignedUrl` removed from `Contracts.hs`
 - `sanitizeFilename` applied to the client-supplied display name
 - `pathBelongsToUser` plus `topicBelongsToUser` reused as the single server-side choke point
@@ -3532,16 +3228,85 @@ None. The generated-artifact legacy row has moved to Completed in
 
 ---
 
+## Remaining Work
+
+None.
+
+## Closure Notes
+
+- Sprint 7.28 closed on 2026-06-30 through the full `linux-gpu` plus `linux-cpu` cohort gates.
+- Sprint 7.24 closed on 2026-06-20 through [Wave J](cohort-validation-waves.md): the selected
+  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
+- Sprints 7.25-7.27 closed on 2026-06-29 through [Wave M](cohort-validation-waves.md): the selected
+  `linux-gpu` accelerator and `linux-cpu` full-suite gates both passed against current source.
+- Physical Apple multi-host routing is deferred hardware proof, not open Phase 7 work.
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
-- [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md) - substrate-neutral engine-pool routing doctrine.
-- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) - coordinator and engine pool topology.
-- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) - shared-pool and pinned-route subscription rules.
-- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) - operator-facing Apple host-member pool behavior.
+- [../documents/engineering/implementation_boundaries.md](../documents/engineering/implementation_boundaries.md) — Application Library Boundary section split into frontend, coordinator daemon, and engine daemon roles; coordinator additionally owns `Infernix.Bootstrap.Models`
+- [../documents/engineering/object_storage.md](../documents/engineering/object_storage.md) — full rewrite for the supported target shape: drop `./.data/object-store/`, drop `s3://infernix-runtime/`, drop `/objects/:objectRef`; document the model-weight bucket, engine-artifact bucket, demo-object bucket, and `.ready` sentinel pattern
+- [../documents/engineering/portability.md](../documents/engineering/portability.md) — row 63 rewritten in 3-role daemon vocabulary
+- [../documents/engineering/k8s_storage.md](../documents/engineering/k8s_storage.md) — no daemon has a PVC; engine pod uses `emptyDir` with `sizeLimit` for model cache only; eviction enforced by adapter
 
-**Product or reference docs to create/update:**
-- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) - durable-context validation references when singleton tests move.
+**Architecture docs to create/update:**
+- [../documents/architecture/engine_pool_routing.md](../documents/architecture/engine_pool_routing.md) — substrate-neutral engine-pool routing doctrine: startup-time pool assignment, `Shared` normal pools, and pinned `Exclusive` routes
+- [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md) — new product-agnostic primitives doc
+- [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md) — demo-specific bindings on top of the primitives doc
+- [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md) — new authoritative 3-role daemon model doc
+- [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — durable-context surface delta and new view modules
+- [../documents/architecture/runtime_modes.md](../documents/architecture/runtime_modes.md) — Service Placement rewritten in 3-role daemon vocabulary
+- [../documents/architecture/overview.md](../documents/architecture/overview.md) — pointer to the new designs
+
+**Development docs to create/update:**
+- [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — new authoritative test plan
+- [../documents/development/frontend_contracts.md](../documents/development/frontend_contracts.md) — new ADTs and Haskell-first logic discipline
+- [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md) — three validation layers cross-link
+- [../documents/development/chaos_testing.md](../documents/development/chaos_testing.md) — per-role chaos cases (frontend, coordinator, engine, engine-node drain)
+- [../documents/development/purescript_policy.md](../documents/development/purescript_policy.md) — new view modules note
+
+**Reference docs to create/update:**
+- [../documents/reference/web_portal_surface.md](../documents/reference/web_portal_surface.md) — `/auth`, `/ws`, `/api/objects` routes, frontend termination note
+- [../documents/reference/api_surface.md](../documents/reference/api_surface.md) — `/api/objects` HTTP route
+
+**Tools docs to create/update:**
+- [../documents/tools/keycloak.md](../documents/tools/keycloak.md) — new authoritative Keycloak surface
+- [../documents/tools/pulsar.md](../documents/tools/pulsar.md) — demo conversation and metadata topics; `inference.batch.<mode>` topic family on every substrate; new `infernix/system/model.bootstrap.request` topic with Failover subscription contract, model-scoped message key, and attempt-scoped dedup key
+- [../documents/tools/minio.md](../documents/tools/minio.md) — full bucket inventory rewrite: drop `infernix-runtime` and `infernix-results`; add `infernix-models` always-on; document the `.ready` sentinel; demo artifact bucket retained
+
+**Operations docs to update:**
+- [../documents/operations/cluster_bootstrap_runbook.md](../documents/operations/cluster_bootstrap_runbook.md) — Keycloak addition note plus coordinator + engine pod inventory; expected `infernix kubectl get pvc -A` is empty; `infernix-models` bucket validation; first-use bootstrap latency note
+- [../documents/operations/apple_silicon_runbook.md](../documents/operations/apple_silicon_runbook.md) — coordinator + engine 3-role naming for the Apple lane; host engine daemon pool membership via stable host ids, `Shared` normal pools, and pinned `Exclusive` routes; host engine pulls weights from MinIO `infernix-models` via the same bootstrap workflow
+
+**Development docs to create/update:**
+(Already listed above; reaffirmed here that Sprint 7.7 adds bootstrap chaos cases to
+`chaos_testing.md` and a per-engine MinIO smoke matrix to `demo_app_test_plan.md`.)
+
+**Chart assets to create/update (delivered by Sprint 7.7):**
+- `chart/templates/deployment-coordinator.yaml` (new)
+- `chart/templates/deployment-engine.yaml` (new — `emptyDir` `model-cache` mount with `sizeLimit`)
+- `chart/templates/poddisruptionbudget-coordinator.yaml` (new)
+- `chart/templates/poddisruptionbudget-engine.yaml` (new)
+- `chart/templates/poddisruptionbudget-demo.yaml` (new)
+- `chart/templates/deployment-service.yaml` (deleted)
+- `chart/templates/persistentvolumeclaim-service-data.yaml` (deleted)
+- `chart/values.yaml` (drop `infernix-runtime` and `infernix-results` placeholder buckets; add `infernix-models` always-on; new `coordinator`, `engine`, `demo` HA stanzas; `engine.modelCache.sizeLimit` knob)
+
+**Root docs to update:**
+- [../README.md](../README.md) — short orientation paragraph framing the durable-context Chat surface as the supported manual-inference path; 3-role daemon naming; no PVC on any daemon; model weights eagerly staged to MinIO by the coordinator at startup (Phase 8); ephemeral `emptyDir` for engine model cache
+- [README.md](README.md) — Phase 7 row in Document Index and Phase Overview
+- [00-overview.md](00-overview.md) — Phase 7 in architecture baseline and dependency chain
+- [system-components.md](system-components.md) — Keycloak, demo MinIO bucket, demo Pulsar topic families, new routes, coordinator + engine Deployments, new `infernix-models` bucket, new `model.bootstrap.request` topic, no-PVC daemon shape
+- [development_plan_standards.md](development_plan_standards.md) — Sections K + L updated for the 3-role daemon contract, Linux anti-affinity, Apple host-id pool membership, the no-PVC posture, and MinIO + Pulsar as the only durable state
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — new Pending Removal entries for `./.data/object-store/`, the `s3://infernix-runtime/` URI scheme, the 80-char inline-payload threshold, the `/objects/:objectRef` route, and the chart-reserved `infernix-runtime` + `infernix-results` placeholder buckets; the previously-listed `persistentvolumeclaim-service-data.yaml` removal is reaffirmed and broadened to "no PVC on any daemon"
 
 **Cross-references to add:**
-- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) - completed removal row for `engine.lock` as the primary Apple singleton primitive.
+- align Phase 7 entries in [README.md](README.md), [00-overview.md](00-overview.md), and
+  [system-components.md](system-components.md) with
+  [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md),
+  [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), and
+  [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
+- [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — completed removal row for `engine.lock` as the primary Apple singleton primitive (superseded by stable host-id pool membership plus pinned `Exclusive` routing)
+
