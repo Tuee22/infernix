@@ -45,6 +45,21 @@ backpressure on unique derived pool/model topics; Linux GPU/CUDA cohort validati
 [Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
 is hardware-deferred proof while no second Apple host is available.
 
+**Resource-safety scope (open gap).** The routing controls here — Pulsar consumer permits, receiver
+backlog, and `maxInflightPerMember` — plus the model cache (LRU in
+`python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*, not host
+inference RAM. On `apple-silicon` there are no in-cluster engine pods: every pool runs on the single
+on-host `infernix service` daemon, serialized one model at a time as fresh subprocesses, with no
+per-model RAM footprint, no inference-RAM budget, no admission control, and no RAM eviction. Peak
+resident memory is therefore unbounded, so sustained load across the model catalog can exhaust host
+RAM and let the OS SIGKILL the daemon (an uncontrolled process death, not a clean `status=failed`).
+A per-model RAM budget plus an admission gate on the serialized on-host path is a known, still-open
+gap reopened as Phase 4 Sprint 4.26
+([phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)),
+paired with the memory-bounded validation lane in Phase 6 Sprint 6.37
+([phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md));
+see [cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) Wave R.
+
 ## Routing Model
 
 The routing graph is:
@@ -56,7 +71,10 @@ model id -> engine pool -> derived work topic -> eligible engine members
 The coordinator chooses a pool topic, not a concrete node, for normal scalable work. Pulsar chooses
 which eligible consumer receives the next message based on consumer permits and receiver backlog.
 Busy members stop accepting new permits or keep receiver queues small; idle members continue
-granting permits and naturally receive more work.
+granting permits and naturally receive more work. These controls bound in-flight request concurrency
+and the disk model cache, not host inference RAM; on `apple-silicon` one serialized on-host daemon
+runs all pools, so `maxInflightPerMember = 1` does not bound cumulative or peak resident memory (open
+gap — see **Resource-safety scope** under Current Status and Phase 4 Sprint 4.26).
 
 Pinned routing is explicit and separate:
 
@@ -103,9 +121,12 @@ engineMembers =
   ]
 ```
 
-The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). Kubernetes placement details stay in chart
-values and Kubernetes scheduling primitives; the routing graph only names durable pool/member
-identity. The invariants are fixed:
+The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). `maxInflightPerMember` caps per-member
+in-flight request concurrency and disk-cache churn, not host inference RAM — on `apple-silicon` all
+pools share one serialized on-host daemon, so it does not bound cumulative or peak memory (open gap;
+see **Resource-safety scope** under Current Status and Phase 4 Sprint 4.26). Kubernetes placement
+details stay in chart values and Kubernetes scheduling primitives; the routing graph only names
+durable pool/member identity. The invariants are fixed:
 
 - pool ids are unique
 - member ids are unique within the substrate
@@ -150,7 +171,11 @@ The implemented contract uses startup-time assignment: change the Dhall pool/mem
 or publish it, then restart or roll out affected daemon processes. Cache state is independent of
 assignment state. Removing a model from a member stops new work for that model after restart and
 makes the cache entry evictable; it does not immediately delete warm artifacts unless an explicit
-drain-and-evict operation or cache pressure requires it.
+drain-and-evict operation or disk cache pressure requires it. Here "cache" and "cache pressure" mean
+the on-disk model-cache LRU (`python/adapters/model_cache.py`) only; there is no host inference-RAM
+eviction concept, so this reclaims disk, not resident memory. Bounding peak RAM on the serialized
+`apple-silicon` on-host path is the reopened Phase 4 Sprint 4.26 / Phase 6 Sprint 6.37 gap (see
+**Resource-safety scope** under Current Status).
 
 A future hot-reload extension may use compacted Pulsar desired-state topics:
 

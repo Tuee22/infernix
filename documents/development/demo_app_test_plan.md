@@ -97,13 +97,23 @@ The auth lifecycle test also asserts the signed-in operator ribbon links and the
 `infernix_operator_token` cookie lifecycle, while the routed WebSocket/JWT test checks that
 anonymous requests to `/harbor` and `/pulsar/admin` receive the edge JWT rejection
 and the same routes progress to their upstreams when the request carries the real Keycloak token.
-The routed Playwright run passes the per-model smoke matrix across every active catalog row; the full gate also
+Where inference runs on in-cluster engine pods, the routed Playwright run passes the per-model smoke matrix across every active catalog row; the full gate also
 covers the durable-context browser flow with frontend pod replacement: the test deletes all
 `infernix-demo` pods, waits for replacements, verifies reconnect plus active-context
 resubscribe, and submits another prompt. The startup MinIO bucket repair, real wrong-realm
 Keycloak token rejection for `/api/objects` and `/ws`, throughput matrix parameterization, and
 extracted Playwright artifact fixtures under `web/test/fixtures/artifactSamples.js` are part of
-the supported surface.
+the supported surface. On `apple-silicon` there are no in-cluster engine pods: every active model
+runs serialized as a fresh subprocess on the on-host `infernix service` daemon with no per-model
+RAM footprint, no per-substrate inference-RAM budget, no admission control, and no RAM eviction —
+only the disk model cache (LRU in `python/adapters/model_cache.py`) is bounded, so peak resident
+memory is unbounded. A full per-model `infernix test integration` / per-model smoke run across the
+current 16-model catalog therefore exhausts host RAM and the OS SIGKILLs the daemon before all rows
+complete — an uncontrolled process death, not a clean `status=failed`. Closing this apple-silicon
+inference-RAM admission + bounded-peak gap is reopened plan work owned by
+[Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) paired
+with [Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md) (see
+[cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) Wave R, RED).
 
 ## Unit Layer
 
@@ -151,7 +161,12 @@ Coverage:
   host-topic metadata is absent from supported publication/status outputs.
 - **Linux GPU service-loop round-trip.** The same run exercises cluster up, routed API
   probes, per-model inference, cache lifecycle, service runtime loop, and clean cluster down
-  from the rebuilt CUDA launcher image.
+  from the rebuilt CUDA launcher image. Linux GPU runs inference on in-cluster engine pods; the
+  `apple-silicon` on-host `infernix service` daemon instead serializes every model with no
+  per-model RAM budget or admission, so its full per-model run is OS-OOM-killed rather than reaching
+  a clean down (see Current Status;
+  [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) +
+  [Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)).
 - **Durable Pulsar topic-family round-trip.** The integration suite
   publishes `ClientCreateContext`, `ClientUpdateDraft`, `ClientCancelPrompt`, and a raw
   `ModelBootstrapReadyEvent`, reads them back with Pulsar Readers, asserts the compacted
@@ -344,10 +359,37 @@ The per-model smoke matrix is a parameterized Playwright flow.
 - **Closure rule.** Across the active substrate's catalog, every non-`Not recommended` row in
   the README "Comprehensive Model / Format / Engine Matrix" has one passing smoke flow.
   Failure on any row fails the suite. Test reports name the substrate and the catalog entry
-  explicitly.
+  explicitly. This closure holds where inference runs on in-cluster engine pods; on
+  `apple-silicon` the full per-model matrix does not currently complete, because every model runs
+  serialized on the on-host `infernix service` daemon with no per-model RAM budget or admission and
+  the full 16-model run exhausts host RAM and is OS-OOM-killed before all rows reach
+  `status = Completed` (peak resident memory is unbounded) — a known gap owned by
+  [Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md) +
+  [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) (see
+  [cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) Wave R).
 - Canonical fixtures are checked into the repo under `web/test/fixtures/` and held under a
   strict size cap; large outputs derive from these via the engines under test rather than
   being checked in.
+
+### Real-Inline-Output and Catalog-Completeness Guards
+
+The routed browser matrix closes the two ways an empty or fabricated result could otherwise
+slip through a smoke row:
+
+- **Real inline text for text-family rows.** The Chat result renderer
+  (`web/src/Infernix/Web/Chat.purs`) tags each result-message body with
+  `data-inline-output="present"` when it carries real inline output and
+  `data-inline-output="absent"` when it renders the `No inline output.` placeholder. For the
+  text families (LLM continuation, speech transcription) the routed matrix
+  (`web/playwright/inference.spec.js`) requires `data-inline-output="present"` and rejects the
+  placeholder, so a row cannot pass on an empty or fabricated result hidden behind the
+  placeholder — the assertion is on the presence of real rendered inline output, still never a
+  golden string.
+- **Catalog-completeness guard.** The matrix asserts the model-picker option set equals the
+  published demo-config catalog — the README "Comprehensive Model / Format / Engine Matrix" rows
+  minus the active mode's residual rows — so a catalog row silently dropped from the picker (and
+  therefore never exercised by the smoke iteration) fails the guard rather than shrinking
+  coverage undetected.
 
 ## Multi-User Throughput / Fan-In Batching / Fan-Out Test
 
@@ -416,7 +458,14 @@ MIDI/MusicXML download) and never by golden strings. Inline-text rows render dir
 `inline_output`; artifact rows render or download from a typed `object_ref` into the always-on
 infernix-demo-objects bucket. Realness is guaranteed by construction — the engine code cannot
 fabricate a result (enforced by the realness lint) — so the browser trusts the result and fails closed
-on `status=failed`; the reopened Phases 1/4/6 deliver real output per accelerator. A wave proves the
+on `status=failed` whenever the engine surfaces a terminal status; the reopened Phases 1/4/6 deliver
+real output per accelerator. This fail-closed guarantee assumes the daemon reaches a `status`: on
+`apple-silicon` a full per-model run has no per-model RAM budget or admission, so it exhausts host
+RAM and the OS SIGKILLs the on-host daemon before any `status=failed` is emitted — uncontrolled
+process death, not a clean fail — a known gap owned by
+[Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) +
+[Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md) (see
+[cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) Wave R). A wave proves the
 catalog that existed when it ran; rows added later require the current active wave before the browser
 workflow is claimed proven. The union across the three substrate catalogs covers every README matrix
 row even though no single substrate carries all 19 rows.

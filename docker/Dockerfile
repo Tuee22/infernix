@@ -261,6 +261,7 @@ RUN printf '%s\n' \
     '    , nvkind = "/usr/local/bin/nvkind"' \
     '    , skopeo = "/usr/bin/skopeo"' \
     '    , hostname = "/usr/bin/hostname"' \
+    '    , sysctl = "/sbin/sysctl"' \
     '    }' \
     ', filesystem =' \
     '    { repoRoot = "/workspace"' \

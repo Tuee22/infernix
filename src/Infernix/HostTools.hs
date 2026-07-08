@@ -14,6 +14,7 @@ module Infernix.HostTools
     hostToolPath,
     hostToolFallbackCandidates,
     hostToolFallbackPath,
+    readHostToolFallback,
     runHostTool,
     runHostToolWithCwd,
     readHostTool,
@@ -28,6 +29,7 @@ import Infernix.HostConfig
   ( HostConfig (..),
     HostToolPaths (..),
   )
+import System.Directory (doesFileExist)
 import System.Exit (ExitCode)
 import System.Process
   ( CreateProcess (cwd),
@@ -80,6 +82,8 @@ data HostTool
   | HostNvkind
   | HostSkopeo
   | HostHostname
+  | HostSysctl
+  | HostColima
   deriving (Eq, Show)
 
 -- | The supported short name for a tool, used in lint messages and
@@ -123,6 +127,8 @@ hostToolName tool = case tool of
   HostNvkind -> "nvkind"
   HostSkopeo -> "skopeo"
   HostHostname -> "hostname"
+  HostSysctl -> "sysctl"
+  HostColima -> "colima"
 
 -- | Look up the absolute path for a tool. An empty path means the
 -- active execution context does not provide the tool (e.g. @apt-get@
@@ -173,6 +179,8 @@ hostToolFallbackCandidates tool = case tool of
   HostNvkind -> ["/usr/local/bin/nvkind", "/usr/bin/nvkind"]
   HostSkopeo -> ["/opt/homebrew/bin/skopeo", "/usr/bin/skopeo"]
   HostHostname -> ["/bin/hostname", "/usr/bin/hostname"]
+  HostSysctl -> ["/usr/sbin/sysctl", "/sbin/sysctl"]
+  HostColima -> ["/opt/homebrew/bin/colima"]
 
 -- | Deterministic absolute fallback for pure call sites that cannot
 -- check the filesystem before constructing a process description.
@@ -183,6 +191,25 @@ hostToolFallbackPath tool =
   case hostToolFallbackCandidates tool of
     [] -> Nothing
     candidate : _ -> Just candidate
+
+-- | Phase 4 Sprint 4.26 — run a bootstrap-adjacent host-provisioning probe by
+-- its first existing fixed candidate path (absolute, from
+-- 'hostToolFallbackCandidates'), capturing stdout. Returns 'Nothing' when no
+-- candidate exists on the host. Unlike 'readHostTool', this never consults the
+-- manifest, so it fits tools that are intentionally not manifest-owned (e.g.
+-- @colima@, read — never managed — by the inference-RAM budget resolver). The
+-- resolved path is always absolute, so it does not depend on @\$PATH@.
+readHostToolFallback :: HostTool -> [String] -> String -> IO (Maybe String)
+readHostToolFallback tool args input = do
+  maybePath <- firstExistingCandidate (hostToolFallbackCandidates tool)
+  case maybePath of
+    Nothing -> pure Nothing
+    Just path -> Just <$> readProcess path args input
+  where
+    firstExistingCandidate [] = pure Nothing
+    firstExistingCandidate (candidate : rest) = do
+      present <- doesFileExist candidate
+      if present then pure (Just candidate) else firstExistingCandidate rest
 
 pickToolPath :: HostTool -> HostToolPaths -> Text
 pickToolPath tool paths = case tool of
@@ -222,6 +249,13 @@ pickToolPath tool paths = case tool of
   HostNvkind -> hostNvkind paths
   HostSkopeo -> hostSkopeo paths
   HostHostname -> hostHostname paths
+  HostSysctl -> hostSysctl paths
+  -- Phase 4 Sprint 4.26: colima is an Apple-only host-provisioning probe read
+  -- (never managed) by the inference-RAM budget resolver. It is deliberately
+  -- NOT a manifest-owned tool (the Linux launcher manifest carries no colima
+  -- field), so it has no 'HostToolPaths' entry and resolves through its fixed
+  -- fallback candidate instead.
+  HostColima -> ""
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value
 -- can be customized further by callers that need stdin/stdout/stderr

@@ -540,6 +540,15 @@ appendConversationMessage document container message = do
   article <- createElement document "article" ("chat-message " <> summary.kind)
   label <- textElement document "div" "chat-message-label" summary.label
   body <- textElement document "p" "chat-message-body" summary.body
+  -- Phase 6 Sprint 6.36: mark whether a result message carried real inline
+  -- output. The routed E2E asserts text-family rows produce
+  -- @data-inline-output="present"@ with real text, so a fabricated or empty
+  -- result rendered behind the "No inline output." placeholder
+  -- (@data-inline-output="absent"@) can no longer pass a real-output check.
+  case messageResultInlinePresence message of
+    Just present ->
+      Element.setAttribute "data-inline-output" (if present then "present" else "absent") body
+    Nothing -> pure unit
   appendElement article label
   appendElement article body
   -- Phase 6 Sprint 6.3: render the per-family inference-result artifact
@@ -549,6 +558,16 @@ appendConversationMessage document container message = do
   -- the engine binding upstream from the active `.dhall`.
   traverse_ (appendResultArtifact document article) (messageResultArtifacts message)
   appendElement container article
+
+-- | Phase 6 Sprint 6.36 — whether a result message carried real inline output.
+-- @Just true@ for a result with inline text, @Just false@ for a result without
+-- (the "No inline output." placeholder), and @Nothing@ for non-result messages.
+messageResultInlinePresence :: ConversationMessage -> Maybe Boolean
+messageResultInlinePresence (ConversationMessage message) =
+  case message.conversationMessageEvent of
+    ConversationInferenceResultEvent (ConversationInferenceResultPayload result) ->
+      Just (isJust result.inferenceResultInlineOutput)
+    _ -> Nothing
 
 -- | The inference-result artifact object references carried by a result
 -- message (empty for prompt / upload / cancel messages and for the inline

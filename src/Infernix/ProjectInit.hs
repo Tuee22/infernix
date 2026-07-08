@@ -29,6 +29,7 @@ import Infernix.DemoConfig
     materializeHostManifestFile,
     materializeHostSecrets,
     renderGeneratedDemoConfig,
+    resolveInferenceRamBudgetMib,
     writeProjectConfigFile,
   )
 import Infernix.Types (RuntimeMode)
@@ -57,9 +58,12 @@ runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
           )
       runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
       let demoUiEnabled = fromMaybe True maybeDemoUi
-      writtenRuntime <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabled
+      -- Phase 4 Sprint 4.26 — write the host manifest first: the runtime
+      -- config's apple-silicon inference RAM budget is resolved from the host
+      -- manifest's sysctl/colima tool paths, so it must exist beforehand.
       writtenHost <- materializeHostManifestFile paths
       writtenSecrets <- materializeHostSecrets paths
+      writtenRuntime <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabled
       putStrLn ("init: wrote " <> writtenRuntime)
       putStrLn ("init: wrote " <> writtenHost)
       putStrLn ("init: wrote " <> writtenSecrets)
@@ -72,9 +76,10 @@ runTestInit maybeRuntimeMode maybeDemoUi = do
   paths <- discoverPaths
   ensureRepoLayout paths
   runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
+  inferenceRamBudgetMibValue <- resolveInferenceRamBudgetMib paths runtimeMode
   let demoUiEnabled = fromMaybe True maybeDemoUi
       testConfig = testConfigPath paths
-      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabled
+      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabled inferenceRamBudgetMibValue
   writeProjectConfigFile testConfig payload
   putStrLn ("test init: wrote " <> testConfig)
 

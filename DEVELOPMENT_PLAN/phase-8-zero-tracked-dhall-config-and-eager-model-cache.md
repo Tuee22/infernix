@@ -169,6 +169,14 @@ None (code-side); cohort full-suite decode-in-pod tracked with the Phase 8 cohor
 > did not affect the 9/9 result. Making the barrier's poll observe the sentinels (so it deterministically
 > blocks) is a follow-up; the eager sweep + lazy fallback already guarantee correctness.
 
+> **Apple-silicon cohort not run (2026-07-07).** This sprint's cohort gate is Wave P (`linux-gpu` +
+> `linux-cpu`) only; no apple-silicon full-suite ran. The eager-stage-**all** behavior here is the
+> trigger that surfaces the apple-silicon inference RAM gap: on `apple-silicon` every staged model
+> runs on the single on-host daemon, so a full per-model `test integration` attempts all 16 and
+> exhausts host RAM (OS OOM-kill). The zero-tracked-Dhall + disk-cache-staging contract stays `Done`;
+> the RAM-safety fix is owned by Phase 4 Sprint 4.26 (paired with Phase 6 Sprint 6.37). If that fix
+> changes Apple staging to bounded/lazy, this sprint reopens.
+
 ### Objective
 
 Replace the lazy per-inference model bootstrap with eager staging driven by the mounted config, so no

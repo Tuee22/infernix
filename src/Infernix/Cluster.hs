@@ -46,7 +46,7 @@ import Infernix.ClusterConfig
   )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload)
+import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceRamBudgetMib)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
@@ -754,12 +754,13 @@ prepareClusterUpInputs paths runtimeMode = do
   requestedPulsarHttpPort <- choosePulsarHttpPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
+  inferenceRamBudgetMibValue <- resolveInferenceRamBudgetMib paths runtimeMode
   let demoUiEnabledValue = demoUiEnabled generatedConfig
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
       mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator)
+      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator inferenceRamBudgetMibValue)
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)

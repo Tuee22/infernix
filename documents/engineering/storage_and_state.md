@@ -30,6 +30,19 @@ publication mirrors, the runtime model cache, Playwright output,
 transient Kind or `nvkind` scratch kubeconfig files, and stale
 repo-local kubeconfig lock files.
 
+This inventory bounds only **disk** state; it does not cover inference RAM. On the
+`apple-silicon` substrate there are no in-cluster engine pods — every active model runs on the
+on-host `infernix service` daemon as a fresh, serialized (one-at-a-time) subprocess with no RAM
+budget, admission control, or eviction. The disk model cache
+(`python/adapters/model_cache.py` LRU) is the only bounded resource, so peak resident memory is
+unbounded: a full per-model `infernix test integration` over the current 16-model catalog
+exhausts host RAM and the OS SIGKILLs the daemon (an uncontrolled process death, not a clean
+`status=failed`). Closing this gap is reopened plan work —
+[Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+(inference-RAM admission + bounded peak) paired with
+[Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+(memory-bounded validation lane).
+
 The durability split is unchanged by the object-access target, but how
 the browser reaches the user-visible `infernix-demo-objects` bytes is
 moving: at the declarative target the `infernix-demo` webapp is the
@@ -82,7 +95,11 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   `/model-cache` (Linux substrates) or the host's
   `./.data/runtime/model-cache/` (Apple silicon) repopulates from
   MinIO on the next adapter call via
-  `python/adapters/model_cache.get_model_path`.
+  `python/adapters/model_cache.get_model_path`. This disposability is a
+  **disk**-state property only and is not a full resource-safety guarantee: on
+  `apple-silicon` the on-host daemon's inference RAM is unbudgeted and unbounded (a full
+  per-model run OS-OOM-kills the daemon), a known open gap reopened as Phase 4 Sprint 4.26 +
+  Phase 6 Sprint 6.37.
 - Build roots and frontend bundles are disposable because the supported build and web workflows
   regenerate them from source.
 

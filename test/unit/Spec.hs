@@ -70,7 +70,7 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
-import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, materializeHostSecrets)
+import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, materializeHostSecrets, validateDemoConfig)
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
@@ -718,7 +718,8 @@ main = do
                     modelsBucket = defaultModelsBucket,
                     modelBootstrapTopic = defaultModelBootstrapTopic,
                     engines = engineBindingsForMode LinuxCpu,
-                    models = catalogForMode LinuxCpu
+                    models = catalogForMode LinuxCpu,
+                    inferenceRamBudgetMib = linuxEngineInferenceRamBudgetMib
                   }
           demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
@@ -939,7 +940,8 @@ main = do
                     modelsBucket = defaultModelsBucket,
                     modelBootstrapTopic = defaultModelBootstrapTopic,
                     engines = engineBindingsForMode AppleSilicon,
-                    models = catalogForMode AppleSilicon
+                    models = catalogForMode AppleSilicon,
+                    inferenceRamBudgetMib = appleUnitInferenceRamBudgetMib
                   }
           appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
           expectedAppleMemberTopics =
@@ -950,6 +952,24 @@ main = do
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
+      -- Phase 4 Sprint 4.26 — the on-host inference RAM admission budget
+      -- round-trips through the substrate config and validation rejects an
+      -- apple config with a model exceeding it while accepting an in-budget one.
+      assert
+        (inferenceRamBudgetMib decodedAppleConfig == appleUnitInferenceRamBudgetMib)
+        "apple host demo-config preserves the inference RAM budget"
+      assert
+        (all ((> 0) . modelRamFootprintMib) (models decodedAppleConfig))
+        "every apple catalog model declares a positive RAM footprint"
+      assert
+        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = appleUnitInferenceRamBudgetMib})))
+        "validateDemoConfig accepts an apple config whose models all fit the inference RAM budget"
+      assert
+        (either ("inference RAM budget" `isInfixOf`) (const False) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = 512})))
+        "validateDemoConfig rejects an apple config with a model exceeding the inference RAM budget"
+      assert
+        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = 0})))
+        "validateDemoConfig treats a non-positive budget as unenforced (no over-budget rejection)"
       assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
       assert
@@ -3244,7 +3264,8 @@ assertLinuxHostBatchForwarding paths = do
             modelsBucket = defaultModelsBucket,
             modelBootstrapTopic = defaultModelBootstrapTopic,
             engines = engineBindingsForMode LinuxCpu,
-            models = catalogForMode LinuxCpu
+            models = catalogForMode LinuxCpu,
+            inferenceRamBudgetMib = linuxEngineInferenceRamBudgetMib
           }
       daemonConfig =
         DaemonConfig
@@ -3288,6 +3309,12 @@ assertLinuxHostBatchForwarding paths = do
         if isDoesNotExistError err
           then pure ()
           else ioError err
+
+-- | Phase 4 Sprint 4.26 — a generous apple-silicon inference RAM budget for
+-- unit fixtures, chosen well above every catalog model's conservative RAM
+-- footprint so the full generated apple catalog validates cleanly.
+appleUnitInferenceRamBudgetMib :: Int
+appleUnitInferenceRamBudgetMib = 65536
 
 unitWebappDaemonConfig :: RuntimeMode -> [Text.Text] -> Text.Text -> DaemonConfig
 unitWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =

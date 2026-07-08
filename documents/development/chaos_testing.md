@@ -78,6 +78,32 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   the extra replica unschedulable with the expected Kubernetes placement diagnostic. On Apple,
   multiple distinct host ids may subscribe to a shared model pool and broker backpressure distributes
   work to members with capacity; pinned host routes use `Exclusive` and reject duplicate consumers.
+- **Engine inference-RAM exhaustion on the `apple-silicon` on-host daemon (clean-fail by
+  construction).** On `apple-silicon` every active model runs on the on-host `infernix service`
+  daemon (no in-cluster engine pods), serialized one model at a time as fresh subprocesses under a
+  single execution lock (`engineExecutionLock` in `src/Infernix/Runtime/Daemon.hs`). The substrate
+  now carries a resolved per-host inference-RAM budget (`DemoConfig.inferenceRamBudgetMib`, computed
+  by `src/Infernix/DemoConfig.hs` `resolveInferenceRamBudgetMib` as host physical RAM minus the
+  colima VM pledge minus a host reserve), and every model carries a conservative peak host-resident
+  footprint (`ModelDescriptor.modelRamFootprintMib`). At the serialized critical section
+  `src/Infernix/Runtime/Pulsar.hs` `overRamBudgetRejection` runs admission control before launching
+  the engine subprocess: a model whose footprint exceeds the budget publishes a clean per-row
+  `status=failed` (a real `InferenceResult` naming the footprint and budget, not a fabrication)
+  instead of being launched, and `validateDemoConfig` fails an over-budget `apple-silicon` config
+  fast at materialization time. Because execution is serialized to one admitted model, peak resident
+  memory is bounded and the OS never OOM-kills the daemon. The former uncontrolled OS OOM SIGKILL of
+  the daemon on an over-budget catalog is the resolved gap: the realness fail-cleanly contract now
+  holds for host memory on `apple-silicon` — memory exhaustion is a clean per-row failure rather than
+  an uncontrolled process death, owned by
+  [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
+  Sprint 4.26 (admission + bounded peak) paired with
+  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+  Sprints 6.36/6.37 (memory-bounded validation lane, with
+  `test/integration/Spec.hs` `classifyAppleMemoryBoundedResult` distinguishing a clean over-budget
+  `status=failed` from a stall or a fabricated pass). The footprint-approaches-budget HA/chaos case —
+  the full-catalog per-model `infernix test integration` plus routed matrix completing or
+  failing-closed per row with zero OS OOM-kill — is exercised against the live cluster in the Wave R
+  single-accelerator cohort rerun.
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
 deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the

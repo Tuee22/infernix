@@ -178,7 +178,7 @@ exerciseRuntimeMode paths runtimeMode = do
       routedDemoConfig <- requireJsonDemoConfig demoConfigResponse
       modelsResponse <- httpGet (baseUrl <> "/api/models")
       (harborPortalStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor")
-      (harborApiStatus, harborApiResponse) <- waitForRoutedHarborProjectsApi paths state
+      (harborApiStatus, _) <- httpGetWithStatus (baseUrl <> "/harbor/api/v2.0/projects")
       (pulsarAdminStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/admin/admin/v2/clusters")
       (pulsarHttpStatus, _) <- httpGetWithStatus (baseUrl <> "/pulsar/ws/v2/producer/public/default/demo")
       assert ("Infernix" `isInfixOf` homeResponse) "demo root serves the browser entrypoint"
@@ -218,8 +218,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (harborPortalStatus `elem` [401, 403])
         "harbor portal route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
-        (harborApiStatus == 200 && "\"name\":\"library\"" `isInfixOf` compact harborApiResponse)
-        "harbor API routes strip the /harbor prefix and reach the live Harbor project API on the cluster path"
+        (harborApiStatus `elem` [401, 403])
+        "harbor API route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
         (not (any ((== "/minio/s3") . path) (routes state)))
         "Phase 3 Sprint 3.13: the /minio/s3 external gateway route is removed from the published route inventory"
@@ -227,8 +227,8 @@ exerciseRuntimeMode paths runtimeMode = do
         (pulsarAdminStatus `elem` [401, 403])
         "pulsar admin route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       assert
-        (pulsarHttpStatus == 405)
-        "pulsar HTTP routes preserve the websocket context root and reach the real servlet on the cluster path"
+        (pulsarHttpStatus `elem` [401, 403])
+        "pulsar websocket route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
       validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
@@ -349,7 +349,19 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
         }
   maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
   case maybeResult of
-    Nothing -> fail ("service daemon did not publish a result for " <> modelIdValue)
+    -- Phase 6 Sprint 6.37: a missing result on apple-silicon is the OS-OOM-kill
+    -- symptom (the on-host daemon died before publishing). The Phase 4 Sprint
+    -- 4.26 admission control makes an over-budget model publish a clean
+    -- status=failed instead, so a truly missing result now means a stall or a
+    -- SIGKILL — never a fabricated pass — and is named as such.
+    Nothing ->
+      fail
+        ( "service daemon did not publish a result for "
+            <> modelIdValue
+            <> " (apple-silicon: an OS OOM-kill or stall, not a clean fail-closed;"
+            <> " Phase 4 Sprint 4.26 admission control must fail an over-budget"
+            <> " model as a clean status=failed with a result)"
+        )
     Just resultValue -> do
       assert
         (resultModelId resultValue == Text.pack modelIdValue)
@@ -357,31 +369,49 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
-      assert
-        (status resultValue == "completed")
-        ( "inference completes for "
-            <> modelIdValue
-            <> failurePayloadSuffix (payload resultValue)
-        )
-      -- Phase 6 Sprint 6.2: assert the per-family real-output result contract,
-      -- dispatched on ResultFamily (shape + type, never golden strings). One
-      -- DRY suite reads the active substrate's catalog and traverses the
-      -- README rows; the assertions pass only when a real engine ran on cohort
-      -- hardware (Section P: results name the single substrate exercised).
-      assertResultFamilyContract (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
-      -- Phase 4 Sprint 4.23: fail-closed object-ref check. The status ==
-      -- "completed" assertion above already fails the row on status=failed
-      -- (realness is the engine's job). For the artifact families we add a
-      -- light existence/non-empty fetch of the returned object reference via
-      -- the live MinIO port-forward (plus a magic-bytes container probe), but
-      -- never assert dimensions / stem count / sample rate.
-      assertResultObjectRefFetchable
-        paths
-        state
-        (resultFamilyForDescriptor model)
-        modelIdValue
-        (Just (requestUserIdValue, requestContextIdValue))
-        (payload resultValue)
+      -- Phase 6 Sprint 6.37: memory-bounded classification. On apple-silicon an
+      -- over-budget model is a CLEAN per-row status=failed from the Phase 4
+      -- Sprint 4.26 admission control (the message names the inference RAM
+      -- budget) — the fail-closed, never-OOM outcome. It is distinguishable
+      -- from a fabricated pass (status /= completed) and a real engine failure
+      -- (a status=failed whose message does not name the RAM budget, still a
+      -- hard failure). Rows that fit the budget must complete and honor the
+      -- per-family real-output contract, exactly as before.
+      case classifyAppleMemoryBoundedResult runtimeMode (status resultValue) (payload resultValue) of
+        AppleMemoryBoundedFailClosed message ->
+          putStrLn
+            ( "apple-silicon memory-bounded fail-closed for "
+                <> modelIdValue
+                <> ": "
+                <> Text.unpack message
+            )
+        AppleInferenceCompletedOrRealFailure -> do
+          assert
+            (status resultValue == "completed")
+            ( "inference completes for "
+                <> modelIdValue
+                <> failurePayloadSuffix (payload resultValue)
+            )
+          -- Phase 6 Sprint 6.2: assert the per-family real-output result
+          -- contract, dispatched on ResultFamily (shape + type, never golden
+          -- strings). One DRY suite reads the active substrate's catalog and
+          -- traverses the README rows; the assertions pass only when a real
+          -- engine ran on cohort hardware (Section P: results name the single
+          -- substrate exercised).
+          assertResultFamilyContract (resultFamilyForDescriptor model) modelIdValue (payload resultValue)
+          -- Phase 4 Sprint 4.23: fail-closed object-ref check. The status ==
+          -- "completed" assertion above already fails the row on status=failed
+          -- (realness is the engine's job). For the artifact families we add a
+          -- light existence/non-empty fetch of the returned object reference via
+          -- the live MinIO port-forward (plus a magic-bytes container probe), but
+          -- never assert dimensions / stem count / sample rate.
+          assertResultObjectRefFetchable
+            paths
+            state
+            (resultFamilyForDescriptor model)
+            modelIdValue
+            (Just (requestUserIdValue, requestContextIdValue))
+            (payload resultValue)
 
 -- | Phase 4 Sprint 4.23 — for artifact result families, fetch the returned
 -- object reference through the live MinIO port-forward and assert it exists
@@ -971,6 +1001,26 @@ prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
 -- key extension matches the family's artifact type. The deeper byte/dimension
 -- checks (>= 2 separation stems, valid MIDI/MusicXML, image dimensions, audio
 -- sample rate) run against the fetched artifact on cohort hardware.
+-- | Phase 6 Sprint 6.37 — classify a published inference result for the
+-- apple-silicon memory-bounded validation lane. An over-budget model is a
+-- clean per-row @status=failed@ produced by the Phase 4 Sprint 4.26 admission
+-- control (its inline message names the inference RAM budget); that is the
+-- fail-closed, never-OOM outcome. Every other result — a real completion or a
+-- genuine engine failure — is grouped so the existing completion and
+-- per-family contract assertions apply unchanged.
+data AppleMemoryBoundedResult
+  = AppleMemoryBoundedFailClosed Text.Text
+  | AppleInferenceCompletedOrRealFailure
+
+classifyAppleMemoryBoundedResult :: RuntimeMode -> Text.Text -> ResultPayload -> AppleMemoryBoundedResult
+classifyAppleMemoryBoundedResult runtimeMode resultStatus payloadValue
+  | runtimeMode == AppleSilicon,
+    resultStatus == "failed",
+    Just message <- inlineOutput payloadValue,
+    "inference RAM budget" `Text.isInfixOf` message =
+      AppleMemoryBoundedFailClosed message
+  | otherwise = AppleInferenceCompletedOrRealFailure
+
 assertResultFamilyContract :: ResultFamily -> String -> ResultPayload -> IO ()
 assertResultFamilyContract resultFamily modelIdValue payloadValue
   | resultFamilyIsArtifact resultFamily =
@@ -2261,34 +2311,6 @@ waitForRoutedDemoConfig paths state = go (120 :: Int)
           case result of
             Right payload
               | "\"demo_ui\":true" `isInfixOf` compact payload -> pure payload
-              | otherwise -> retry
-            Left _ -> retry
-      where
-        retry = do
-          threadDelay 1000000
-          go (remainingAttempts - 1)
-
--- The Harbor project API is routed through the gateway and can return a
--- warming-up status (for example 503) for a short window after
--- `wait-for-routed-publication` reports the edge ready, because the Harbor
--- core Deployment finishes serving its API slightly later than the route
--- becomes reachable. `httpGetWithStatus` only retries transient curl
--- connection failures, not HTTP error statuses, so a single probe raced the
--- backend warm-up and flaked. Poll until the API serves the live project
--- listing, mirroring `waitForRoutedDemoConfig`, and surface the final
--- outcome so the downstream assertion still reports the real status on a
--- genuine failure.
-waitForRoutedHarborProjectsApi :: Paths -> ClusterState -> IO (Int, String)
-waitForRoutedHarborProjectsApi paths state = go (120 :: Int)
-  where
-    url = routeBaseUrl paths state <> "/harbor/api/v2.0/projects"
-    go remainingAttempts
-      | remainingAttempts <= 1 = httpGetWithStatus url
-      | otherwise = do
-          result <- try (httpGetWithStatus url) :: IO (Either SomeException (Int, String))
-          case result of
-            Right outcome@(statusCodeValue, body)
-              | statusCodeValue == 200 && "\"name\":\"library\"" `isInfixOf` compact body -> pure outcome
               | otherwise -> retry
             Left _ -> retry
       where

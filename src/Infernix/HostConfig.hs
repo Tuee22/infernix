@@ -86,7 +86,8 @@ data HostToolPaths = HostToolPaths
     hostNvidiaSmi :: Text,
     hostNvkind :: Text,
     hostSkopeo :: Text,
-    hostHostname :: Text
+    hostHostname :: Text,
+    hostSysctl :: Text
   }
   deriving (Eq, Show, Generic)
 
@@ -228,6 +229,7 @@ renderHostConfig hostConfig =
             <> renderText "nvkind" hostNvkind
             <> renderText "skopeo" hostSkopeo
             <> renderText "hostname" hostHostname
+            <> renderText "sysctl" hostSysctl
             <> "  }",
           ", filesystem =",
           renderHeadText "repoRoot" hostRepoRoot
@@ -298,7 +300,8 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostNvidiaSmi = "/usr/bin/nvidia-smi",
             hostNvkind = "/usr/local/bin/nvkind",
             hostSkopeo = "/usr/bin/skopeo",
-            hostHostname = "/usr/bin/hostname"
+            hostHostname = "/usr/bin/hostname",
+            hostSysctl = "/sbin/sysctl"
           },
       hostFilesystem =
         HostFilesystem
@@ -361,7 +364,8 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostNvidiaSmi = "",
             hostNvkind = "",
             hostSkopeo = "/opt/homebrew/bin/skopeo",
-            hostHostname = "/bin/hostname"
+            hostHostname = "/bin/hostname",
+            hostSysctl = "/usr/sbin/sysctl"
           },
       hostFilesystem =
         HostFilesystem

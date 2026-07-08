@@ -46,6 +46,16 @@ Each generated entry includes:
 - named residual status when a researched matrix cell is intentionally not runnable
 - request shape metadata used by the API, UI, and tests
 - runtime-lane metadata such as GPU requirement and lane identifier
+- `modelRamFootprintMib`: a conservative peak host-resident memory footprint (MiB) for one
+  serialized inference on the unified-memory / CPU path. `Models.hs`
+  `conservativeRamFootprintMibForRow` assigns per-family/per-engine footprints (biased high) until a
+  measured peak-RSS pass refines them. The field is threaded through the hand-written JSON codec, the
+  Dhall decoder/renderer/type in `src/Infernix/Substrate.hs`, and the purescript-bridge
+  `ModelDescriptor` (generated `web/src/Generated/Contracts.purs`), so every generated catalog entry
+  carries it. On apple-silicon it is the RAM-admission input: a model whose `modelRamFootprintMib`
+  exceeds the resolved `inferenceRamBudgetMib` is rejected with a clean typed `status=failed` before
+  the engine subprocess launches, so the serialized on-host engine never OOM-kills the daemon (the
+  former OOM gap is resolved — the contract is now fail-clean-never-OOM by construction).
 
 ## Rules
 
@@ -133,6 +143,23 @@ README matrix. Rows whose engine cell for the active substrate is `Not recommend
 from that substrate's runnable catalog. Rows whose engine cell is a named residual are omitted from
 the runtime catalog and listed by `residualMatrixRowIdsForMode` so tests and planning can prove
 they are deliberate unresolved support instead of accidental catalog drift.
+
+### Engine-cell accuracy for the CPU-provider and residual rows
+
+The generated binding records each engine cell exactly as the runner executes it today, so the
+catalog does not overstate GPU acceleration:
+
+- Row 11 (basic-pitch ONNX): the linux-gpu cell reads `ONNX Runtime (CPU)` with `requiresGpu=False`
+  in the `Models.hs` `ModeBinding`. The runner uses `CPUExecutionProvider` with the CPU onnxruntime
+  wheel, so the row is not GPU-scheduled. The real `CUDAExecutionProvider` + `onnxruntime-gpu` path
+  is a named linux-gpu residual.
+- Rows 4 and 6 (llama.cpp GGUF, whisper.cpp): the engine cells are retained, but the linux-gpu
+  column runs the CPU Ubuntu binary today; a CUDA-built binary is the named linux-gpu residual.
+- Row 14 (piano_transcription / music-omnizart): the binding is landed and wired on the pytorch
+  adapter; real-output evidence is pending its cohort wave.
+- Row 17 (Wan2.1-T2V): the Apple cell stays a documented residual
+  (`residualMatrixRowIdsForMode AppleSilicon`); union coverage is satisfied by the real linux-gpu
+  Diffusers cell.
 
 ## Cross-References
 

@@ -161,7 +161,12 @@ The product-agnostic inference executor. Owns:
   (`python/adapters/model_cache.py`) on first use. Every
   engine, every model, goes through the same helper — no per-engine
   bytes-loading code. LRU eviction inside the cache keeps usage under
-  `sizeLimit`.
+  `sizeLimit`. This bounds only the on-disk weight footprint; it is not
+  an inference-RAM bound. Resident memory during model execution is not
+  yet capped on any substrate, so the disk cache plus Pulsar
+  permits/backpressure are **not** a complete resource-safety story (see
+  **Failure Semantics per Role** and the reopened
+  [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)).
 - The node's **KV cache, in-memory only**, scoped to
   `(contextId, prefixHash)`
 - `prefixHash` verification before KV-cache reuse; rebuild from
@@ -200,7 +205,7 @@ object-presign, or WebSocket modules.
 |---|---|---|---|---|---|---|
 | Frontend | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no special resources | **no PVC** |
 | Coordinator | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no GPU | **no PVC** (Pulsar subscription cursors are broker-side durable) |
-| Engine | Linux: `Deployment`; Apple: host daemon member | Linux: ≤ number of engine-capable nodes per deployment; Apple: one member per stable host id | Linux: **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname`; Apple: host-id uniqueness plus pinned-topic `Exclusive` ownership when exact-host routing is used | Linux: `maxUnavailable: 1`; Apple: host process supervised outside Kubernetes | linux-cpu: explicit `engine.resources` CPU/memory requests and limits (`2Gi` request / `4Gi` limit by default, `768Mi` request / `3584Mi` limit in the Apple-hosted `linux-cpu` local validation profile); linux-gpu generated lifecycle values use a `4Gi` request / `16Gi` limit plus `nvidia.com/gpu: 1`, `runtimeClassName: nvidia`, and `infernix.runtime/gpu: "true"` node selection so the routed diffusers video row can load without cgroup OOM; repo-owned single-GPU values start heavyweight deployments at zero replicas and validation scales one at a time; apple-silicon: no in-cluster engine pod | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`), and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
+| Engine | Linux: `Deployment`; Apple: host daemon member | Linux: ≤ number of engine-capable nodes per deployment; Apple: one member per stable host id | Linux: **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname`; Apple: host-id uniqueness plus pinned-topic `Exclusive` ownership when exact-host routing is used | Linux: `maxUnavailable: 1`; Apple: host process supervised outside Kubernetes | linux-cpu: explicit `engine.resources` CPU/memory requests and limits (`2Gi` request / `4Gi` limit by default, `768Mi` request / `3584Mi` limit in the Apple-hosted `linux-cpu` local validation profile); linux-gpu generated lifecycle values use a `4Gi` request / `16Gi` limit plus `nvidia.com/gpu: 1`, `runtimeClassName: nvidia`, and `infernix.runtime/gpu: "true"` node selection so the routed diffusers video row can load without cgroup OOM; repo-owned single-GPU values start heavyweight deployments at zero replicas and validation scales one at a time; apple-silicon: no in-cluster engine pod, so every active model runs on the on-host `infernix service` daemon (serialized one model at a time as fresh subprocesses), which currently has **no inference-RAM budget and no admission control** — peak resident memory is unbounded, a known gap reopened as [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`), and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
 
 **Linux engine placement rule.** Two engines from the same Linux engine Deployment on one node would
 mean:
@@ -224,8 +229,11 @@ derived from the typed engine-pool graph.
 
 **Apple silicon symmetry.** On Apple substrates engine members are on-host `infernix service`
 daemons with stable host ids, not Kubernetes pods. Normal Apple model pools use `Shared`
-subscriptions across distinct host ids, and each daemon grants broker permits only when it has local
-capacity. Exact-host routes use derived per-host topics with `Exclusive`.
+subscriptions across distinct host ids so broker-native permits distribute work. Capacity-based
+admission — a daemon granting broker permits only when it has local inference-RAM headroom — is
+**not yet implemented** (target [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md));
+daemons currently accept routed work with no resident-memory bound. Exact-host routes use derived
+per-host topics with `Exclusive`.
 
 **No daemon has a PVC on any substrate.** The engine pod's
 `emptyDir` model cache is ephemeral per-pod storage capped by
@@ -368,6 +376,7 @@ three roles share access to:
 | Coordinator pod crash | Failover subscription's active replica is unreachable | Pulsar promotes a surviving coordinator replica; unacked conversation events redelivered to the new active dispatcher; unacked inference results redelivered to the new active result-bridge; producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. |
 | Engine member crash | Active engine member disappears | Pulsar redelivers the unacked pool-topic message to another eligible member when the route is a `Shared` pool. The receiving engine has a KV-cache miss on that request's `prefixHash` and rebuilds from the conversation log; producer dedup on `inference.result.<mode>` prevents a duplicate result if the original engine had partially published. |
 | Engine node drain | Engine members on that node go away | Kubernetes placement and PDBs protect Linux pools; Apple host daemons stop granting permits or unsubscribe while draining. Pulsar redelivery and KV-cache rebuild are the same as the member-crash case for shared pools. |
+| Engine host-daemon inference-RAM exhaustion (apple-silicon) | On the on-host daemon, model loads can exceed host RAM; there is no inference-RAM budget, admission control, or eviction (the disk model cache bounds only disk) | **Not yet a clean recovery.** Current behavior: the OS OOM-kills (`SIGKILL`s) the daemon — an uncontrolled process death, **not** a per-request `status=failed`, so the fail-clean / never-fabricate-or-crash realness contract is unmet for host memory. A full per-model `infernix test integration` run over the current 16-model catalog reproduces this. Target: RAM admission control that fails the over-budget request with `status=failed` while the daemon stays up (reopened [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) + [Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)). |
 | Pulsar broker / MinIO / IdP outage | Standard HA recovery (3-broker Pulsar, 4-replica MinIO, HA-deployed IdP) | Frontend caches JWKS with short TTL so brief IdP outages do not break existing sessions; the rest of the path uses Pulsar's own HA. |
 
 ## Apple Silicon Mapping
@@ -382,7 +391,9 @@ The Apple substrate runs the split with the coordinator in cluster and engine me
   `./.data/runtime/model-cache/`, runs the Apple-native adapter, owns the in-memory KV cache, and
   publishes `inference.result.apple-silicon`.
 - Normal Apple pools use `Shared` across distinct host ids so Pulsar broker backpressure assigns
-  work to available hosts. Pinned Apple routes use per-host derived topics and `Exclusive`.
+  work to hosts with consumer-permit availability (receiver-queue headroom, not inference-RAM
+  headroom — RAM-based admission is the not-yet-implemented [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)).
+  Pinned Apple routes use per-host derived topics and `Exclusive`.
 - The chart never deploys an in-cluster `infernix-engine` pod on `apple-silicon`; Apple engine
   membership is host-daemon membership.
 - The host-local model cache under `./.data/runtime/model-cache/`
@@ -398,6 +409,33 @@ The Apple substrate runs the split with the coordinator in cluster and engine me
 The Apple lane is the canonical shape of the supported three-role split
 (frontend + coordinator in cluster, engine as an on-host daemon), not a
 special case.
+
+### On-host engine RAM admission
+
+On `apple-silicon` the engine's model memory is host RAM, so the on-host daemon
+enforces resident-memory admission at execution time. The daemon executes one
+inference at a time under a single MVar (`engineExecutionLock` in
+`Infernix.Runtime.Daemon`). Inside that serialized critical section, before the
+engine subprocess is launched, `Infernix.Runtime.Pulsar.overRamBudgetRejection`
+compares the selected model's `modelRamFootprintMib` against the substrate's
+resolved `inferenceRamBudgetMib`. An over-budget model publishes a clean
+per-request `status=failed` — a real `InferenceResult` naming the model,
+footprint, and budget, not a fabrication — and its subprocess is never launched.
+Because execution is serialized, peak resident memory is bounded to the one
+admitted model, so the OS never OOM-kills the daemon: the prior host-RAM OOM gap
+is resolved, and the contract is now fail-clean-never-OOM by construction.
+
+`Infernix.DemoConfig.resolveInferenceRamBudgetMib` derives the budget from host
+physical RAM (`sysctl -n hw.memsize`, via the manifest `HostSysctl` tool) minus the
+colima VM pledge (a read-only `colima list --json` probe resolved through a
+bootstrap-adjacent fixed candidate — colima is read, never managed, and is not a
+manifest tool) minus a host reserve,
+and `validateDemoConfig` fails materialization fast if any model's footprint
+exceeds the budget. This host-RAM admission is apple-silicon-specific: Linux
+engine members run in Kubernetes-bounded pods whose resident memory is capped by
+the pod memory limit, so the host-RAM admission does not fire on `linux-cpu` or
+`linux-gpu` (there the resolved budget is recorded informationally as the engine
+pod memory limit).
 
 ## Production Shape
 

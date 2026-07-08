@@ -22,6 +22,10 @@ module Infernix.Models
     engineBindingForSelectedEngine,
     engineBindingsForMode,
     encodeDemoConfig,
+    conservativeRamFootprintMibForRow,
+    defaultInferenceRamBudgetMib,
+    linuxEngineInferenceRamBudgetMib,
+    appleFallbackInferenceRamBudgetMib,
     engineMemberPinnedTopicForMode,
     engineMemberRequestTopics,
     engineMembersForMode,
@@ -633,8 +637,70 @@ descriptorForMode runtimeMode row = do
         runtimeMode = runtimeMode,
         runtimeLane = laneFor runtimeMode (bindingRequiresGpu binding),
         requiresGpu = bindingRequiresGpu binding,
-        notes = rowNotes row
+        notes = rowNotes row,
+        modelRamFootprintMib = conservativeRamFootprintMibForRow row binding
       }
+
+-- | Phase 4 Sprint 4.26 — conservative peak host-resident memory
+-- footprint (MiB) for one serialized inference of a catalog row on the
+-- unified-memory / CPU path. Keyed on the model family plus the selected
+-- engine so heavy families (image/video diffusion, source separation)
+-- carry a large footprint while compact GGUF/whisper.cpp rows carry a
+-- small one. These are deliberately conservative per-engine defaults —
+-- biased high — until a measured peak-RSS pass on Apple hardware
+-- (Phase 6 Sprint 6.37 / Wave R) refines them. The on-host
+-- 'apple-silicon' admission control rejects any model whose footprint
+-- exceeds the substrate 'inferenceRamBudgetMib', so an under-estimate is
+-- the only unsafe direction.
+conservativeRamFootprintMibForRow :: MatrixRow -> ModeBinding -> Int
+conservativeRamFootprintMibForRow row binding =
+  case rowFamily row of
+    "llm"
+      | engineHas "gguf" || engineHas "llama.cpp" -> 3072
+      | engineHas "mlx" -> 6144
+      | otherwise -> 4096
+    "speech" -> 3072
+    "music" -> 6144
+    "image" -> 12288
+    "video" -> 28672
+    "tool" -> 3072
+    "audio"
+      | rowHas "demucs" || rowHas "unmix" -> 8192
+      | rowHas "bark" -> 5120
+      | rowHas "basic-pitch" -> 2048
+      | otherwise -> 4096
+    _ -> 4096
+  where
+    engineHas needle = needle `Text.isInfixOf` Text.toLower (bindingEngine binding)
+    rowHas needle = needle `Text.isInfixOf` Text.toLower (rowId row)
+
+-- | Phase 4 Sprint 4.26 — the Linux engine pod memory limit (MiB),
+-- mirroring @chart/values.yaml@ @engine.resources.limits.memory@ (4Gi).
+-- On Linux the engine runs in a Kubernetes-bounded pod, so the host-RAM
+-- admission control does not fire; this value is recorded in the
+-- generated substrate config for observability only.
+linuxEngineInferenceRamBudgetMib :: Int
+linuxEngineInferenceRamBudgetMib = 4096
+
+-- | Phase 4 Sprint 4.26 — the assumed @apple-silicon@ inference-RAM
+-- budget (MiB) used only when the host-native resolver cannot read host
+-- physical RAM (host physical RAM − colima pledge − reserve is the normal
+-- path). Set to the supported-Apple-dev-host floor (16 GiB), which is at
+-- or above every catalog model's conservative footprint so a discovery
+-- failure still yields a validatable config rather than blocking bring-up;
+-- the real host budget from @sysctl@ replaces it whenever discovery works.
+appleFallbackInferenceRamBudgetMib :: Int
+appleFallbackInferenceRamBudgetMib = 16384
+
+-- | Phase 4 Sprint 4.26 — the pure per-substrate inference-RAM budget
+-- default. The Apple value is the conservative fallback that the IO
+-- resolver ('Infernix.DemoConfig.resolveInferenceRamBudgetMib') replaces
+-- with the host-computed budget at materialization time.
+defaultInferenceRamBudgetMib :: RuntimeMode -> Int
+defaultInferenceRamBudgetMib runtimeMode = case runtimeMode of
+  AppleSilicon -> appleFallbackInferenceRamBudgetMib
+  LinuxCpu -> linuxEngineInferenceRamBudgetMib
+  LinuxGpu -> linuxEngineInferenceRamBudgetMib
 
 bindingForMode :: RuntimeMode -> MatrixRow -> Maybe ModeBinding
 bindingForMode runtimeMode row = case runtimeMode of
@@ -805,7 +871,7 @@ matrixRows =
       "Audio Input"
       (Just (ModeBinding "ONNX Runtime" False))
       (Just (ModeBinding "ONNX Runtime CPU" False))
-      (Just (ModeBinding "ONNX Runtime CUDA" True)),
+      (Just (ModeBinding "ONNX Runtime (CPU)" False)),
     mkRow
       "music-mt3-infer"
       "music-mt3-infer"
@@ -843,7 +909,7 @@ matrixRows =
       "PyTorch"
       "piano_transcription_inference"
       "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1"
-      "Modern PyTorch transcription model replacing the ancient-TensorFlow Omnizart stack; runs on the shared pytorch adapter. Declared-runnable target; its test is red until the adapter binding lands."
+      "Modern PyTorch transcription model replacing the ancient-TensorFlow Omnizart stack; runs on the shared pytorch adapter. The engine binding is landed and wired (pytorch_python.py); real-output cohort evidence is pending the Wave Q gate."
       "Audio Input"
       (Just (ModeBinding "PyTorch MPS" False))
       (Just (ModeBinding "PyTorch CPU" False))

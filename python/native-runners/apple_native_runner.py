@@ -108,23 +108,39 @@ def _run_smoke(args: RunnerArgs) -> int:
 
 
 def _smoke_python_runtime(args: RunnerArgs) -> None:
+    # Phase 4 Sprint 4.25 — fail closed. The engine runtime lives in the
+    # per-engine venv, so a smoke run under any other interpreter cannot
+    # validate it; previously this returned green in that case, masking a
+    # missing or broken venv. Require the venv interpreter, then import the
+    # real engine runtime and surface any ImportError as a non-zero failure
+    # rather than a silent pass.
     venv_root = (args.install_root / "venv").resolve()
     executable = pathlib.Path(sys.executable).resolve()
     if not _path_is_under(executable, venv_root):
-        return
+        raise RunnerFailure(
+            f"apple native smoke for {args.adapter_id} must run under the engine venv "
+            f"({venv_root}); the engine runtime cannot be validated from {executable}",
+            70,
+        )
     adapter_id = args.adapter_id
-    if adapter_id == "ctranslate2-native":
-        import ctranslate2  # noqa: F401
-        import faster_whisper  # noqa: F401
-    elif adapter_id == "onnx-runtime-native":
-        import onnxruntime  # noqa: F401
-    elif adapter_id == "mlx-native":
-        import mlx_lm  # noqa: F401
-    elif adapter_id == "coreml-native":
-        import basic_pitch  # noqa: F401
-        import python_coreml_stable_diffusion.pipeline  # noqa: F401
-    else:
-        raise RunnerFailure(f"unsupported Python smoke adapter: {adapter_id}", 64)
+    try:
+        if adapter_id == "ctranslate2-native":
+            import ctranslate2  # noqa: F401
+            import faster_whisper  # noqa: F401
+        elif adapter_id == "onnx-runtime-native":
+            import onnxruntime  # noqa: F401
+        elif adapter_id == "mlx-native":
+            import mlx_lm  # noqa: F401
+        elif adapter_id == "coreml-native":
+            import basic_pitch  # noqa: F401
+            import python_coreml_stable_diffusion.pipeline  # noqa: F401
+        else:
+            raise RunnerFailure(f"unsupported Python smoke adapter: {adapter_id}", 64)
+    except ImportError as import_error:
+        raise RunnerFailure(
+            f"apple native engine runtime for {adapter_id} failed to import: {import_error}",
+            70,
+        ) from import_error
 
 
 def _path_is_under(path: pathlib.Path, root: pathlib.Path) -> bool:

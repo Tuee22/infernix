@@ -73,7 +73,8 @@ data DhallDemoConfig = DhallDemoConfig
     dhallModelsBucket :: Text,
     dhallModelBootstrapTopic :: Text,
     dhallEngines :: [DhallEngineBinding],
-    dhallModels :: [DhallModelDescriptor]
+    dhallModels :: [DhallModelDescriptor],
+    dhallInferenceRamBudgetMib :: Int
   }
   deriving (Generic)
 
@@ -146,7 +147,8 @@ data DhallModelDescriptor = DhallModelDescriptor
     dhallModelRuntimeMode :: Text,
     dhallRuntimeLane :: Text,
     dhallRequiresGpu :: Bool,
-    dhallNotes :: Text
+    dhallNotes :: Text,
+    dhallModelRamFootprintMib :: Int
   }
   deriving (Generic)
 
@@ -245,7 +247,8 @@ demoConfigFromDhall rawConfig = do
         modelsBucket = dhallModelsBucket rawConfig,
         modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
         engines = engineValues,
-        models = modelValues
+        models = modelValues,
+        inferenceRamBudgetMib = dhallInferenceRamBudgetMib rawConfig
       }
 
 deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
@@ -383,7 +386,8 @@ modelDescriptorFromDhall rawModel = do
         runtimeMode = runtimeModeValue,
         runtimeLane = runtimeLaneValue,
         requiresGpu = dhallRequiresGpu rawModel,
-        notes = dhallNotes rawModel
+        notes = dhallNotes rawModel,
+        modelRamFootprintMib = dhallModelRamFootprintMib rawModel
       }
 
 requestFieldFromDhall :: DhallRequestField -> Either String RequestField
@@ -423,6 +427,7 @@ renderSubstrateConfig demoConfig =
       ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
       ", engines = " <> dhallList engineBindingType renderEngineBinding (engines demoConfig),
       ", models = " <> dhallList modelDescriptorType renderModelDescriptor (models demoConfig),
+      ", inferenceRamBudgetMib = " <> dhallInteger (inferenceRamBudgetMib demoConfig),
       "}"
     ]
 
@@ -520,6 +525,8 @@ renderModelDescriptor model =
     <> dhallBool (requiresGpu model)
     <> ", notes = "
     <> dhallText (notes model)
+    <> ", modelRamFootprintMib = "
+    <> dhallInteger (modelRamFootprintMib model)
     <> " }"
 
 renderRequestField :: RequestField -> String
@@ -585,4 +592,4 @@ modelDescriptorType :: String
 modelDescriptorType =
   "{ matrixRowId : Text, modelId : Text, displayName : Text, family : Text, description : Text, artifactType : Text, referenceModel : Text, downloadUrl : Text, selectedEngine : Text, requestShape : List "
     <> requestFieldType
-    <> ", runtimeMode : Text, runtimeLane : Text, requiresGpu : Bool, notes : Text }"
+    <> ", runtimeMode : Text, runtimeLane : Text, requiresGpu : Bool, notes : Text, modelRamFootprintMib : Integer }"

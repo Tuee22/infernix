@@ -89,6 +89,14 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   directly on the private `WorkerRequest` envelope; the shared adapter entrypoints call
   `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk
   path to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket.
+  Caveat: that quota bounds only the on-disk model cache (`python/adapters/model_cache.py` LRU) —
+  the subsequent load of weights into the on-host `apple-silicon` `infernix service` inference
+  process is not RAM-budgeted today (no per-model footprint, admission, or eviction), so peak
+  resident memory is unbounded and a full per-model `infernix test integration` run over the current
+  catalog can exhaust host RAM and get the daemon OS OOM-killed (an uncontrolled process death, not a
+  clean `status=failed`). This RAM-safety gap is a known open item, targeted by Phase 4 Sprint 4.26
+  (apple-silicon inference RAM admission + bounded peak) with Phase 6 Sprint 6.37 (memory-bounded
+  validation lane).
 - the runtime worker invokes the engine for the selected binding — the Python adapter
   transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
   resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`

@@ -1357,6 +1357,15 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
         .filter((option) => option.value),
     );
   expect(modelPickerOptions.length).toBeGreaterThan(0);
+  // Phase 6 Sprint 6.36: catalog-completeness guard. The picker must expose
+  // EXACTLY the active substrate's published catalog (the README matrix rows
+  // minus the active-mode residuals, since residuals never enter
+  // catalogForMode), so a silently shrunken catalog cannot pass by exercising
+  // fewer rows. Compare the picker option ids to the demo-config model ids as
+  // sets.
+  const pickerModelIds = modelPickerOptions.map((option) => option.value).sort();
+  const catalogModelIds = demoConfig.models.map((model) => model.modelId).sort();
+  expect(pickerModelIds).toEqual(catalogModelIds);
   await page.locator("[data-role='close-new-context']").click();
   await expect(page.locator("[data-role='new-context-dialog']")).toHaveCount(0);
 
@@ -1488,9 +1497,18 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     const resultMessage = page.locator(".chat-message.result").last();
     await expect(resultMessage).toBeVisible({ timeout: 60000 });
     if (expectedKind === "text") {
-      await expect(resultMessage.locator(".chat-message-body")).not.toHaveText("", {
-        timeout: 30000,
+      // Phase 6 Sprint 6.36: assert REAL inline text, not merely a non-empty
+      // body. The "No inline output." placeholder is itself non-empty text, so
+      // a fabricated or empty result would slip past a bare not-empty check.
+      // Chat.purs marks the body with data-inline-output="present" only when
+      // the result carried real inline output, so require that marker and
+      // reject the placeholder outright.
+      const resultBody = resultMessage.locator(".chat-message-body");
+      await expect(resultBody).toHaveAttribute("data-inline-output", "present", {
+        timeout: 60000,
       });
+      await expect(resultBody).not.toHaveText("No inline output.");
+      await expect(resultBody).not.toHaveText("", { timeout: 30000 });
       await expect(resultMessage.locator(".chat-result-artifact")).toHaveCount(0);
     } else {
       const artifacts = resultMessage.locator(`.chat-result-${expectedKind}`);

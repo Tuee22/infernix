@@ -11,8 +11,12 @@
   `infernix lint proto`, and `infernix lint chart` checks together with the aggregate
   `infernix docs check`, `infernix test lint`, `infernix test unit`,
   `infernix test integration`, `infernix test e2e`, and `infernix test all` entrypoints
-- Validation is fail-fast: it reports drift or missing prerequisites and stops instead of silently
-  rewriting tracked source or substituting another lane.
+- Validation is fail-fast for drift and missing prerequisites: it reports them and stops instead of
+  silently rewriting tracked source or substituting another lane. This fail-fast guarantee is scoped
+  to drift and prerequisites; host resource exhaustion is handled separately by apple-silicon
+  inference-RAM admission, which bounds peak resident memory and classifies an over-budget model as a
+  clean per-row `status=failed` — see the resource-exhaustion classification under Lifecycle Failure
+  Classification.
 - Integration and routed E2E coverage derive their target set from the active generated catalog,
   so changing the staged substrate changes the exercised entries automatically.
 - Cross-hardware validation is cohort-based: day-to-day phase work validates on the current
@@ -70,6 +74,27 @@
   internal cluster bring-up or teardown rounds inside `infernix test all`
 - treat the supported path as stalled only when the command exits non-zero or the heartbeat stops
   refreshing across multiple monitor intervals during one of those monitored phases
+- resource exhaustion is a distinct third class from stall and clean failure: on `apple-silicon`
+  there are no in-cluster engine pods — all active models run on the on-host `infernix service`
+  daemon, serialized one-model-at-a-time as fresh subprocesses under a single execution lock,
+  bounded on disk by the model cache (LRU in `python/adapters/model_cache.py`) and in resident
+  memory by inference-RAM admission
+- each `ModelDescriptor` carries a conservative peak host-resident footprint
+  (`modelRamFootprintMib`), and the resolved `DemoConfig.inferenceRamBudgetMib` — host physical RAM
+  minus the colima VM pledge minus a host reserve — bounds it; at the serialized critical section an
+  over-budget model publishes a clean `status=failed` real `InferenceResult` instead of launching the
+  engine subprocess, so peak resident memory is bounded to one admitted model and the OS never
+  OOM-kills the daemon by construction. `validateDemoConfig` additionally fails fast at
+  materialization on any apple-silicon model whose footprint exceeds the budget
+- the former OOM behavior — an unbounded per-model `infernix test integration` traversal that
+  exhausted host RAM and let the OS SIGKILL the daemon — is the resolved gap (Phase 4 Sprint 4.26,
+  Phase 6 Sprint 6.37): the integration suite's `classifyAppleMemoryBoundedResult` now reads an
+  over-budget model as a clean per-row `status=failed` whose message names the inference-RAM budget,
+  distinct from a stall (a genuinely missing result, named as the OS-OOM-kill symptom) and from a
+  fabricated pass, while rows that fit the budget still complete and honor the per-family
+  real-output contract
+- the full-catalog Apple per-model integration and routed matrix completing or failing-closed per
+  row with zero OS OOM-kill is the Wave R single-accelerator cohort residual
 
 ## Canonical Entry Points
 
@@ -82,7 +107,7 @@
 | `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
 | `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
-| `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry |
+| `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is resident-memory bounded on `apple-silicon` by inference-RAM admission, classifying an over-budget model as a clean per-row `status=failed` (see Lifecycle Failure Classification) |
 | `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
 | `infernix test all` | run every supported validation layer in sequence for the active staged substrate |
 
@@ -114,7 +139,11 @@
   [../development/testing_strategy.md](../development/testing_strategy.md).
 - `infernix test e2e` proves that the demo SPA can exercise every demo-visible generated
   catalog entry through the shared routed surface, with supported Playwright launchers sanitizing
-  conflicting `NO_COLOR` and `FORCE_COLOR` pairs before the child process starts.
+  conflicting `NO_COLOR` and `FORCE_COLOR` pairs before the child process starts. The routed browser
+  matrix asserts real inline text for text families through the `data-inline-output="present"` marker
+  on the result message body — rejecting the `No inline output.` placeholder so a fallback cannot
+  pass — and a catalog-completeness guard asserts the model-picker option set equals the published
+  demo-config catalog (README matrix rows minus active-mode residuals).
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
   the active staged substrate without dropping any layer.
 - phase closure evidence records the host cohort that ran it; one cohort passing may leave a named

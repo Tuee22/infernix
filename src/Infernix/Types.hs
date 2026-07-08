@@ -311,7 +311,17 @@ data DemoConfig = DemoConfig
     -- (Phase 7 Sprint 7.7).
     modelBootstrapTopic :: Text,
     engines :: [EngineBinding],
-    models :: [ModelDescriptor]
+    models :: [ModelDescriptor],
+    -- | Phase 4 Sprint 4.26 — the per-substrate available-inference-RAM
+    -- budget (MiB). On @apple-silicon@ this is the host budget computed
+    -- at materialization time (host physical RAM − colima VM pledge −
+    -- host reserve); on-host inference admission control enforces it and
+    -- 'Infernix.DemoConfig.validateDemoConfig' rejects any model whose
+    -- 'modelRamFootprintMib' exceeds it. On Linux substrates the engine
+    -- runs in a Kubernetes-bounded pod, so this records the engine pod
+    -- memory limit informationally and the host-RAM admission guard is a
+    -- no-op (a value @<= 0@ means "not host-enforced").
+    inferenceRamBudgetMib :: Int
   }
   deriving (Eq, Read, Show)
 
@@ -553,7 +563,17 @@ data ModelDescriptor = ModelDescriptor
     runtimeMode :: RuntimeMode,
     runtimeLane :: RuntimeLane,
     requiresGpu :: Bool,
-    notes :: Text
+    notes :: Text,
+    -- | Phase 4 Sprint 4.26 — conservative peak host-resident memory
+    -- footprint (MiB) for one serialized inference of this model on the
+    -- unified-memory / CPU execution path. This is the binding constraint
+    -- on @apple-silicon@, where model memory is host RAM; the on-host
+    -- engine's admission control ('Infernix.Runtime' critical section)
+    -- and 'Infernix.DemoConfig.validateDemoConfig' reject a model whose
+    -- footprint exceeds the substrate's 'inferenceRamBudgetMib'. Values
+    -- are conservative per-engine defaults until a measured peak-RSS pass
+    -- refines them.
+    modelRamFootprintMib :: Int
   }
   deriving (Eq, Read, Show)
 
@@ -573,7 +593,8 @@ instance ToJSON ModelDescriptor where
         "runtimeMode" .= runtimeMode modelDescriptor,
         "runtimeLane" .= runtimeLane modelDescriptor,
         "requiresGpu" .= requiresGpu modelDescriptor,
-        "notes" .= notes modelDescriptor
+        "notes" .= notes modelDescriptor,
+        "modelRamFootprintMib" .= modelRamFootprintMib modelDescriptor
       ]
 
 instance FromJSON ModelDescriptor where
@@ -593,6 +614,7 @@ instance FromJSON ModelDescriptor where
       <*> value .: "runtimeLane"
       <*> value .: "requiresGpu"
       <*> value .: "notes"
+      <*> value .:? "modelRamFootprintMib" .!= 0
 
 -- | Phase 4 Sprint 4.15 — the closed set of per-family result contracts.
 -- Each README matrix row resolves to exactly one 'ResultFamily' (via
@@ -776,7 +798,8 @@ instance ToJSON DemoConfig where
         "models_bucket" .= modelsBucket demoConfig,
         "model_bootstrap_topic" .= modelBootstrapTopic demoConfig,
         "engines" .= engines demoConfig,
-        "models" .= models demoConfig
+        "models" .= models demoConfig,
+        "inferenceRamBudgetMib" .= inferenceRamBudgetMib demoConfig
       ]
 
 instance FromJSON DemoConfig where
@@ -836,6 +859,7 @@ instance FromJSON DemoConfig where
       <*> pure modelBootstrapTopicValue
       <*> value .: "engines"
       <*> value .: "models"
+      <*> value .:? "inferenceRamBudgetMib" .!= 0
 
 -- | Supported always-on MinIO bucket name holding platform model weights.
 -- The coordinator's bootstrap Failover subscription is the only writer; engines

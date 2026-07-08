@@ -159,7 +159,15 @@ Direct reference path:
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
   state on the operator's machine (not a Kubernetes PVC, not durable cluster state) and is
   purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap
-  subscription; subsequent uses are local-cache hits
+  subscription; subsequent uses are local-cache hits. The on-host `infernix service` daemon runs
+  each active model serialized as a fresh subprocess under a single execution lock
+  (`engineExecutionLock`) and admits each inference against the resolved `inferenceRamBudgetMib`
+  (see the "Inference RAM Budget and Host-Memory Admission" section): an over-budget model
+  publishes a clean `status=failed` real `InferenceResult` naming the budget instead of launching,
+  so peak resident memory is bounded to one admitted model and the daemon is never OS-OOM-killed.
+  This disk cache (LRU in `python/adapters/model_cache.py`) remains a separate bounded host-daemon
+  resource and is purgeable; disk-cache purging is independent of the RAM budget, which is resolved
+  from host physical RAM minus the colima VM pledge minus a host reserve
 - the Apple host bootstrap uses Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, and related
   operator tools rather than a broader manual prerequisite list
 - Docker-backed lifecycle or validation work on Apple requires an already selected native arm64
@@ -236,9 +244,55 @@ capacity failures before routed inference are real environment failures, not acc
 `XMinioStorageFull` from Harbor's MinIO backend means the Docker VM disk needs reclaimable cache
 space freed. Check for stale local Harbor-tagged runtime image ids such as
 `localhost:30002/library/infernix-linux-cpu:sha256-*` in the already selected Docker daemon before
-assuming retained MinIO state is still the cause. `Insufficient memory` scheduling events or
-Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope must be
-reconciled before an Apple cohort validation pass can be claimed.
+assuming retained MinIO state is still the cause. Cluster-side `Insufficient memory` scheduling
+events or Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope
+must be reconciled before an Apple cohort validation pass can be claimed.
+
+Host-daemon inference RAM is a separate concern and must not be conflated with the Docker VM
+envelope. The on-host `infernix service` daemon serializes inference under a single execution
+lock and admits each model against the resolved `inferenceRamBudgetMib` — host physical RAM
+minus the colima VM pledge minus a host reserve (see the "Inference RAM Budget and Host-Memory
+Admission" section). A full per-model `infernix test integration` run over the current catalog now
+either completes or fails cleanly per model: an over-budget model publishes a clean `status=failed`
+naming the budget instead of OS-OOM-killing the daemon. That clean failure is a product-contract
+outcome, not a VM-envelope reconcile — growing the Docker VM memory envelope does not change
+host-RAM admission. To admit a larger model, raise the resolved budget by freeing host headroom
+(for example, lowering the colima memory pledge, which increases host RAM minus colima pledge),
+then re-run `infernix init` / `cluster up` to re-resolve it. The memory-bounded Apple lane (Phase 6
+Sprint 6.37; cohort-validation-waves.md Wave R) validates this fail-clean-never-OOM contract.
+
+## Inference RAM Budget and Host-Memory Admission
+
+On `apple-silicon`, model weights load into host physical RAM (the unified-memory / CPU path),
+so the on-host `infernix service` daemon admits inference against a resolved inference RAM
+budget. `infernix init` and `cluster up` compute that budget from live host measurements: host
+physical RAM (`sysctl -n hw.memsize`) minus the colima VM's pledged memory (`colima list --json`)
+minus a fixed host reserve. `infernix init` writes the host manifest (`./infernix-host.dhall`)
+with the absolute `sysctl` (`/usr/sbin/sysctl`) and `colima` (`/opt/homebrew/bin/colima`) tool
+paths before the runtime config, so the budget resolves at materialization time and is staged into
+the substrate as `inferenceRamBudgetMib`. On `linux-cpu` / `linux-gpu` the budget is informational
+only — engine pods are Kubernetes-memory-bounded, so host-RAM admission does not fire there.
+
+- `validateDemoConfig` fails fast at `infernix init` and `cluster up`: if any catalog model's
+  conservative peak footprint (`modelRamFootprintMib`) exceeds the resolved `inferenceRamBudgetMib`,
+  the command exits with a typed error naming the model, its footprint, and the budget rather than
+  bringing up a cluster that would over-commit host RAM. A non-positive budget leaves admission
+  unenforced.
+- At runtime the daemon serializes inference under a single execution lock and admits each model at
+  that critical section. An over-budget model publishes a clean `status=failed` real
+  `InferenceResult` whose message names the inference RAM budget, instead of launching the engine
+  subprocess. Because execution is serialized to one admitted model, peak resident memory is bounded
+  and the OS never OOM-kills the daemon — an over-budget model is a clean per-row product failure,
+  not a daemon death or an OS SIGKILL.
+- To run a larger model whose footprint exceeds the current budget, free host headroom so the
+  resolved budget rises. The most direct lever is lowering the colima VM memory pledge, which raises
+  host physical RAM minus colima pledge; re-run `infernix init` / `cluster up` afterward to
+  re-resolve the budget from the new measurements.
+
+This is the resolved form of the former host-memory gap: a full per-model run over the current
+catalog either completes or fails cleanly per model, and no longer OS-SIGKILLs the daemon. The
+memory-bounded Apple lane in Phase 6 Sprint 6.37 (cohort-validation-waves.md Wave R) validates this
+fail-clean-never-OOM-by-construction contract.
 
 ## Harbor Host-Port Conflicts
 

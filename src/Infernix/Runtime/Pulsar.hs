@@ -94,7 +94,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
-import Data.List (intercalate, sort)
+import Data.List (find, intercalate, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
@@ -2296,10 +2296,15 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
           modifyMVar_ engineExecutionLock $ \() -> do
             let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
                 requestIdValue = view ProtoInferenceFields.requestId decodedRequest
+            let maybeRejection =
+                  if Text.null modelIdValue
+                    then Just (emptyModelIdRejectionResult runtimeMode decodedRequest)
+                    else overRamBudgetRejection runtimeMode demoConfig modelIdValue decodedRequest
             publishedResult <-
-              if Text.null modelIdValue
-                then pure (emptyModelIdRejectionResult runtimeMode decodedRequest)
-                else publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest
+              maybe
+                (publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest)
+                pure
+                maybeRejection
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
             -- engine-side inference so the host daemon log surfaces the
             -- request id, resolved model id, and final status. Diagnoses
@@ -3890,6 +3895,73 @@ emptyModelIdRejectionTimestamp =
   case parseTimeM True defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" "1970-01-01T00:00:00Z" of
     Just timestamp -> timestamp
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
+
+-- | Phase 4 Sprint 4.26 — on-host (@apple-silicon@) inference RAM
+-- admission control. Evaluated under the serialized engine-execution
+-- lock, so at most one inference is resident at a time and peak resident
+-- memory is bounded to the admitted model's footprint. When the resolved
+-- model's declared 'modelRamFootprintMib' exceeds the substrate's
+-- 'inferenceRamBudgetMib', the request is rejected as a clean
+-- @status=failed@ instead of launching the engine subprocess and letting
+-- the OS OOM-kill the host daemon. Enforced only on @apple-silicon@,
+-- where the engine runs host-native against unified memory; Linux engines
+-- run in Kubernetes-bounded pods (@Nothing@ there), and a non-positive
+-- budget disables the guard.
+overRamBudgetRejection ::
+  RuntimeMode ->
+  DemoConfig ->
+  Text.Text ->
+  ProtoInference.InferenceRequest ->
+  Maybe InferenceResult
+overRamBudgetRejection runtimeMode demoConfig modelIdValue protoRequest
+  | runtimeMode /= AppleSilicon = Nothing
+  | budgetMib <= 0 = Nothing
+  | otherwise =
+      case find ((== modelIdValue) . modelId) (models demoConfig) of
+        Just model
+          | modelRamFootprintMib model > budgetMib ->
+              Just (overRamBudgetRejectionResult runtimeMode model budgetMib protoRequest)
+        _ -> Nothing
+  where
+    budgetMib = inferenceRamBudgetMib demoConfig
+
+overRamBudgetRejectionResult ::
+  RuntimeMode ->
+  ModelDescriptor ->
+  Int ->
+  ProtoInference.InferenceRequest ->
+  InferenceResult
+overRamBudgetRejectionResult runtimeMode model budgetMib protoRequest =
+  let envelopeUserId = view ProtoInferenceFields.userId protoRequest
+      envelopeContextId = view ProtoInferenceFields.contextId protoRequest
+      envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
+   in InferenceResult
+        { requestId = view ProtoInferenceFields.requestId protoRequest,
+          resultModelId = modelId model,
+          resultMatrixRowId = matrixRowId model,
+          resultRuntimeMode = runtimeMode,
+          resultSelectedEngine = selectedEngine model,
+          status = "failed",
+          payload =
+            ResultPayload
+              { inlineOutput =
+                  Just
+                    ( "inference rejected: model "
+                        <> modelId model
+                        <> " requires ~"
+                        <> Text.pack (show (modelRamFootprintMib model))
+                        <> " MiB, which exceeds the apple-silicon inference RAM budget of "
+                        <> Text.pack (show budgetMib)
+                        <> " MiB (host physical RAM minus the colima VM pledge and host reserve). "
+                        <> "Free host memory or run this model on a Linux GPU lane."
+                    ),
+                objectRef = Nothing
+              },
+          createdAt = emptyModelIdRejectionTimestamp,
+          resultUserId = envelopeUserId,
+          resultContextId = envelopeContextId,
+          resultCausalRef = envelopeCausalRef
+        }
 
 publishedResultFromRequest ::
   Maybe PulsarTransport ->

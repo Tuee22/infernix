@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — reopened for Wave Q (2026-07-06): matrix substrate-accuracy closure (Sprint 4.25). The prior Wave O MT3 reopen (Sprint 4.22) is closed — proven by Wave P (2026-07-04).
+**Status**: Active — Sprints 4.25 (matrix substrate-accuracy closure) and 4.26 (apple-silicon inference RAM admission) are code-side complete and machine-independent-validated on this Apple host (2026-07-08), and the **full Apple cohort is GREEN** ([Wave R](cohort-validation-waves.md)): the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and the routed `test e2e` per-model browser matrix passed (all 16 models real output through the UI, including the relabeled row-11 basic-pitch ONNX (CPU) row). The remaining sign-off is the `linux-cpu` full-suite (shared with Phase 6) plus the CUDA GPU-accuracy `linux-gpu` rows (need a CUDA Linux host). The prior Wave O MT3 reopen (Sprint 4.22) is closed — proven by Wave P (2026-07-04).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -19,7 +19,9 @@
 > (Audiveris, never invoked) rows return constant/placeholder artifacts while whisper.cpp/CTranslate2
 > mask runtime failures. Phase 4 therefore **reopened** Sprints 4.21–4.23 to deliver
 > realness by construction — the engine code is made structurally incapable of returning a fabricated
-> result (every missing-weights/load/engine failure raises → `status=failed`), with real Linux engines,
+> result (every missing-weights/load/engine failure raises → `status=failed`; host-memory exhaustion
+> on `apple-silicon` is a separate, still-open gap — see the RAM-safety reopen below and Sprint 4.26),
+> with real Linux engines,
 > fixed weight provisioning, ONNX adoption where it is the mature free choice, and modern PyTorch
 > rebinds for the music-transcription rows. The guarantee is mechanically enforced by a new realness
 > lint owned with [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md).
@@ -29,6 +31,21 @@
 > the Apple real-engine gate is [Wave L](cohort-validation-waves.md), owned by the reopened
 > [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md),
 > and closed on 2026-06-29. The removed fabrication surfaces are tracked in
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+> **RAM-safety reopen (apple-silicon, 2026-07-07; code-side closed 2026-07-08).** The
+> realness-by-construction guarantee above — every failure raises → `status=failed`, never a
+> fabricated or silent result — held for engine *logic* but **not** for host memory on
+> `apple-silicon`: all active models run on the on-host `infernix service` daemon serialized
+> one-model-at-a-time as fresh subprocesses, and before Sprint 4.26 there was no per-model RAM
+> footprint, per-substrate inference-RAM budget, or admission control, so a full per-model
+> `test integration` drove the host into memory exhaustion and the OS SIGKILLed the daemon.
+> **Sprint 4.26 closes this code-side**: `ModelDescriptor` now carries a conservative
+> `modelRamFootprintMib`, `DemoConfig` carries a host-computed `inferenceRamBudgetMib`,
+> `validateDemoConfig` fails fast on an over-budget apple-silicon config, and the serialized engine
+> critical section rejects an over-budget model as a clean `status=failed` (`overRamBudgetRejection`).
+> The full-catalog Apple never-OOM cohort proof is the named [Wave R](cohort-validation-waves.md)
+> residual (paired with Phase 6 Sprint 6.37). The retired unbounded path is tracked in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 > **Common-shape reopen (Pulsar ML-Workflow convergence).** Phase 4's two
@@ -263,7 +280,7 @@ derived local cache state become authoritative.
 
 **Status**: Done
 **Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host. The real Apple-native Metal engine path depends on Sprint 1.14's headless Metal/Core ML materialization and runs only on Apple
-**Cohort gate**: Closed — Sprint 1.14's headless Apple Metal/Core ML materialization lane is closed, and recorded Apple integration/e2e/all evidence proves the host-side bridge. Sprint 1.15 / Wave L owns routed real-output proof for the real Apple native payloads, so that evidence is not a Phase 4.3 blocker under the Section Q single-accelerator gate.
+**Cohort gate**: Closed — Sprint 1.14's headless Apple Metal/Core ML materialization lane is closed, and recorded Apple integration/e2e/all evidence proves the host-side bridge. Sprint 1.15 / Wave L owns routed real-output proof for the real Apple native payloads, so that evidence is not a Phase 4.3 blocker under the Section Q single-accelerator gate. Apple closure here reflects the then-active pre-MT3 / pre-Phase-8-eager catalog only; on the current 16-model catalog a full per-model `test integration` is OOM-blocked on Apple (Sprint 4.26).
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
@@ -830,7 +847,6 @@ being contradicted by it.
 **Code-side closure**: Complete — `buildPayload :: ResultFamily -> Text -> ResultPayload` now routes text families to `inlineOutput` and artifact families to `objectRef` (no longer hardcoding `objectRef = Nothing`), the `WorkerResponse` object-ref output field was added, `resultFamilyForDescriptor` covers all 19 rows, and the unit tests assert the routing and resolution; proven by the machine-independent gate set (`cabal test infernix-unit`) on the recorded CUDA Linux host. It built on the Sprint 4.1 types and the Sprint 4.7 adapter seam
 **Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — `linux-gpu` plus `linux-cpu` assert the per-family result contract per active-substrate row (exercised by Phase 6)
 **Implementation**: `proto/infernix/runtime/inference.proto`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Storage.hs`, `python/adapters/`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
-**Blocked by**: 4.1, 4.7
 **Docs to update**: `documents/architecture/model_catalog.md`, `documents/engineering/object_storage.md`, `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
 ### Objective
@@ -1343,7 +1359,8 @@ so the CPU-lane fixes carried over and the GPU lane went green on the first clus
 specs. [Wave K](cohort-validation-waves.md) is therefore **fully closed** for that then-active Linux
 catalog (both Linux accelerators). The later 2026-06-30 MT3 replacement is tracked by Sprint 4.22 and
 was proven by Waves O/P (2026-07-04); Wave K does not claim full-suite evidence for rows added after it ran. Wave L closed the Apple
-real-engine residual on 2026-06-29 for the then-active Apple catalog. Machine-independent gates (`cabal build all`,
+real-engine residual on 2026-06-29 for the then-active Apple catalog; no current-catalog Apple full
+per-model attestation exists — the current 16-model run is OOM-blocked (Sprint 4.26). Machine-independent gates (`cabal build all`,
 `cabal test infernix-unit`, `infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 `infernix docs check`, `poetry run check-code`) are green.
 **Cohort gate**: Closed [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu` real
@@ -1460,7 +1477,8 @@ utterance — a genuinely-spoken mono 16 kHz sample should be sourced for the sp
 real-output proof. Machine-independent gates gate the next step.
 **Cohort gate**: Closed [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`; the same
 substrate-agnostic fixtures re-run on `apple-silicon` under [Wave L](cohort-validation-waves.md), which
-closed on 2026-06-29.
+closed on 2026-06-29 for the then-active pre-MT3 catalog only; no current-catalog Apple full per-model
+attestation exists — the current 16-model run is OOM-blocked (Sprint 4.26).
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/fixtures/artifactSamples.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`
 
@@ -1521,11 +1539,12 @@ None.
 
 ---
 
-## Sprint 4.25: Matrix Substrate-Accuracy Closure [Planned]
+## Sprint 4.25: Matrix Substrate-Accuracy Closure [Active]
 
-**Status**: Planned
-**Cohort gate**: [Wave Q](cohort-validation-waves.md) — the CUDA GPU-accuracy rows need a CUDA Linux host; code-side + `linux-cpu` + Apple are validatable first.
-**Implementation**: `src/Infernix/Engines/LinuxNative.hs`, `python/adapters/*.py`, `python/native-runners/apple_native_runner.py`, `docker/Dockerfile`, `src/Infernix/Models.hs`, `README.md`
+**Status**: Active — code-side complete and machine-independent-validated; the real CUDA-accelerated implementation of the relabeled rows is the named `linux-gpu` residual.
+**Code-side closure**: Complete (2026-07-08). Row 11 relabeled to the honest `ONNX Runtime (CPU)` on the `linux-gpu` lane (`Models.hs` ModeBinding + README cell in lockstep, `requiresGpu` flipped to `False` so the row is no longer GPU-scheduled — the runner runs `CPUExecutionProvider` with the CPU `onnxruntime` wheel); rows 4/6 keep their `llama.cpp` / `whisper.cpp` cells and the README notes now document that the CUDA column runs the CPU Ubuntu binary today; row 14 (`music-omnizart` / `piano_transcription`) `Models.hs` note reconciled to "binding landed and wired, real-output evidence pending Wave Q"; row 17 (Wan2.1-T2V) kept as the documented Apple residual with union coverage named; the Linux basic-pitch onset divide-by-zero guard was ported from the Apple runner (`LinuxNative.hs`); the Apple native smoke now fails closed (raises `RunnerFailure`) when run off the engine venv or when the engine runtime cannot import (`apple_native_runner.py`). Proven by `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and `poetry --directory python run check-code` on this Apple host.
+**Cohort gate**: [Wave R](cohort-validation-waves.md) — Apple + `linux-cpu` real-output for the affected rows; the real `CUDAExecutionProvider` + `onnxruntime-gpu` / CUDA-built `llama.cpp`/`whisper.cpp` path is the named `linux-gpu` residual (needs a CUDA Linux host).
+**Implementation**: `src/Infernix/Engines/LinuxNative.hs`, `python/native-runners/apple_native_runner.py`, `src/Infernix/Models.hs`, `README.md`
 **Docs to update**: `README.md` (matrix Notes), `documents/architecture/model_catalog.md`
 
 ### Objective
@@ -1535,38 +1554,94 @@ substrate-divergence defects surfaced by the 2026-07-06 review.
 
 ### Deliverables
 
-- Row 11 (basic-pitch ONNX) CUDA lane: implement `CUDAExecutionProvider` + install `onnxruntime-gpu`,
-  **or** relabel the README cell `ONNX Runtime (CPU)` (`LinuxNative.hs` hardcodes
-  `CPUExecutionProvider`; only the CPU `onnxruntime` wheel is installed today).
-- Rows 4/6 (llama.cpp GGUF, whisper.cpp speech) CUDA lane: bake CUDA-enabled binaries, **or** document
-  that the CUDA column runs the CPU Ubuntu-release binaries today (`docker/Dockerfile`; the bindings
-  carry `requiresGpu=True` but the baked binaries are CPU).
-- Row 14 (`piano_transcription`): correct the stale `Models.hs` "test is red until the adapter binding
+- Row 11 (basic-pitch ONNX) CUDA lane: **relabeled** the README cell `ONNX Runtime (CPU)` and the
+  matching `Models.hs` ModeBinding (`requiresGpu = False`), because `LinuxNative.hs` runs
+  `CPUExecutionProvider` and only the CPU `onnxruntime` wheel is installed. The real
+  `CUDAExecutionProvider` + `onnxruntime-gpu` path is the named `linux-gpu` residual.
+- Rows 4/6 (llama.cpp GGUF, whisper.cpp speech) CUDA lane: **documented** that the CUDA column runs the
+  CPU Ubuntu-release binaries today (README Notes); a CUDA-built binary is the named `linux-gpu` residual.
+- Row 14 (`piano_transcription`): corrected the stale `Models.hs` "test is red until the adapter binding
   lands" note — the binding is landed (`pytorch_python.py`); only cohort real-output evidence is pending.
-- Row 17 (Wan2.1-T2V) Apple: implement the MPS viability path **or** keep it the documented Apple
-  residual (`residualMatrixRowIdsForMode AppleSilicon`), with the union-coverage invariant satisfied by
-  the real CUDA cell.
-- Substrate-divergence guards: add the divide-by-zero guard to the Linux basic-pitch onset path that
-  the Apple runner already has; make the Apple smoke fail closed if the engine runtime does not import.
+- Row 17 (Wan2.1-T2V) Apple: kept as the documented Apple residual
+  (`residualMatrixRowIdsForMode AppleSilicon`), with the union-coverage invariant satisfied by the real
+  CUDA cell and stated in the README Note.
+- Substrate-divergence guards: **added** the divide-by-zero guard to the Linux basic-pitch onset path
+  that the Apple runner already has; the Apple smoke now fails closed when the engine runtime does not
+  import.
 
 ### Validation
 
-- Code-side: `cabal build all`, `infernix lint docs`, and the Python `check-code` AST/realness gate.
-- Cohort: Apple + `linux-cpu` real-output for the affected rows; CUDA GPU-accuracy is the named
-  [Wave Q](cohort-validation-waves.md) `linux-gpu` residual.
+- Code-side: `cabal build all`, `infernix lint docs`, and the Python `check-code` AST/realness gate — all green (2026-07-08).
+- Cohort: Apple + `linux-cpu` real-output for the affected rows ([Wave R](cohort-validation-waves.md)); the real CUDA GPU-accuracy path is the named `linux-gpu` residual.
 
 ### Remaining Work
 
-All (planned).
+Cohort validation only: the Apple + `linux-cpu` real-output rerun for the affected rows
+([Wave R](cohort-validation-waves.md)), and the CUDA-accelerated implementation on a `linux-gpu` host.
+Code-side is complete.
+
+---
+
+## Sprint 4.26: Apple-Silicon Inference RAM Admission and Bounded Peak (Fail-Clean, Never OOM) [Active]
+
+**Status**: Active — code-side complete and machine-independent-validated; the **Apple integration cohort is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model `test integration` all `status=completed`, zero OS OOM-kill). Remaining is the routed Apple/`linux-cpu` Playwright per-model matrix (shared with Sprint 6.36).
+**Code-side closure**: Complete (2026-07-08). `ModelDescriptor` gained `modelRamFootprintMib` threaded through every mirror (hand-written JSON codec in `Types.hs`, the Dhall decoder/renderer/type in `Substrate.hs`, and the purescript-bridge `ModelDescriptor` + generated `Contracts.purs`); `Models.conservativeRamFootprintMibForRow` assigns conservative per-family/per-engine footprints (biased high) until a measured peak-RSS pass. `DemoConfig` gained `inferenceRamBudgetMib`, resolved at materialization time by `DemoConfig.resolveInferenceRamBudgetMib`: on `apple-silicon` it is host physical RAM (`sysctl -n hw.memsize`, via the new manifest-owned `HostSysctl` tool) − the colima VM pledge (a **read-only** `colima list --json` probe resolved through a bootstrap-adjacent fixed candidate path — `HostTools.readHostToolFallback`; colima is read, never managed, and is deliberately **not** a manifest-owned tool, so the Linux launcher manifest carries no colima field) − a host reserve; on Linux it records the engine pod memory limit. `validateDemoConfig` adds an `apple-silicon`-scoped config-time hard-fail naming any over-budget model, its footprint, and the budget. The serialized engine-execution critical section in `Runtime/Pulsar.hs` (already single-inference-at-a-time under `engineExecutionLock`) now runs `overRamBudgetRejection` before launching a subprocess: an over-budget model publishes a clean `status=failed` instead of being launched. Proven by `cabal build all`, `cabal test infernix-unit` (with the new `validateDemoConfig` reject/accept assertions), `cabal test infernix-haskell-style`, `infernix lint files|docs|chart|proto`, `infernix docs check`, the web unit suite (`71/71`), and `poetry --directory python run check-code`. On this host the resolver computes a real budget of 13312 MiB (64 GiB − 48 GiB colima − 3 GiB reserve), which the whole apple catalog fits.
+**Cohort gate**: [Wave R](cohort-validation-waves.md) apple-silicon — **GREEN (2026-07-08)**: a full host-native `cluster up` (edge `127.0.0.1:9090`, published `inferenceRamBudgetMib = +13312`) then `./.build/infernix test integration` drove all 16 apple catalog models to `status=completed` with **zero** OS OOM-kill, including the heavy diffusion rows; the suite advanced past the fail-closed per-model step into the HA tail. The cohort run also surfaced and fixed the Dockerfile stage-zero host-manifest schema drift (the hand-written `/opt/infernix/dhall/InfernixHost.dhall` now emits the new `sysctl`/`colima` tool paths). Paired with Phase 6 Sprint 6.37.
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostTools.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Web/Contracts.hs`, `docker/Dockerfile`
+**Docs to update**: `documents/architecture/realness_contract.md`, `documents/architecture/daemon_topology.md`, `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `README.md`
+
+### Objective
+
+Make on-host (`apple-silicon`) inference RAM-safe by construction: peak resident memory is bounded
+against an explicit per-substrate budget, and the only legitimate hard-fail is a single model whose
+footprint exceeds the total available inference RAM — surfaced as a clean `status=failed`, never an
+OS OOM-kill.
+
+### Deliverables
+
+- **Done.** Per-model RAM footprint (`modelRamFootprintMib`) on `ModelDescriptor` and every mirror
+  layer (JSON codec, Dhall decoder/renderer/type, PureScript contract), from a conservative
+  per-engine default until a measured peak-RSS pass refines it.
+- **Done.** Per-substrate available-inference-RAM budget (`inferenceRamBudgetMib`) on `DemoConfig`,
+  computed per substrate (apple-silicon: host physical RAM − colima pledge − host reserve via
+  `sysctl`/`colima`; linux-cpu/gpu: recorded engine pod memory limit).
+- **Done.** Config-time hard-fail in `validateDemoConfig`: an over-budget model is a typed error
+  naming the model, its footprint, and the budget (enforced on `apple-silicon`, where model memory is
+  host RAM; Linux engines run in Kubernetes-bounded pods).
+- **Done.** Runtime admission control at the serialized engine-execution critical section
+  (`overRamBudgetRejection`) so an over-budget model fails cleanly instead of being launched;
+  serialization bounds peak resident memory to one admitted model at a time.
+
+### Validation
+
+- Unit: `validateDemoConfig` rejects an over-budget config and accepts an in-budget one — **green**
+  (`cabal test infernix-unit`, `cabal test infernix-haskell-style`, 2026-07-08).
+- Cohort (apple-silicon, paired with Phase 6 Sprint 6.37): **GREEN ([Wave R](cohort-validation-waves.md), 2026-07-08)** —
+  a full 16-model per-model `test integration` completed with all `status=completed` and **zero** OS
+  OOM-kill on this Apple host.
+
+### Remaining Work
+
+None for the apple-silicon integration gate — the never-OOM proof is GREEN
+([Wave R](cohort-validation-waves.md), 2026-07-08). The routed Apple/`linux-cpu` Playwright per-model
+matrix (Sprint 6.36) is the only shared residual. The retired unbounded on-host inference path is
+recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 
 ## Remaining Work
 
 The MT3 catalog-replacement reopen (Sprint 4.22) is **closed** — proven by
-[Wave P](cohort-validation-waves.md) (2026-07-04). The phase is reopened for **Sprint 4.25** (matrix
-substrate-accuracy closure) under [Wave Q](cohort-validation-waves.md); the CUDA GPU-accuracy rows are
-the named `linux-gpu` cohort residual.
+[Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 4.25** (matrix substrate-accuracy closure)
+and **Sprint 4.26** (apple-silicon inference RAM admission + bounded peak) are **code-side complete
+and machine-independent-validated** (2026-07-08): the per-model RAM footprint, per-substrate budget,
+config-time hard-fail, and runtime admission control all landed and pass the machine-independent gate
+set. The remaining work is single-accelerator sign-off only, tracked as the named
+[Wave R](cohort-validation-waves.md) residual: the full-catalog Apple per-model `test integration`
+never-OOM proof (paired with Phase 6 Sprint 6.37) plus the CUDA GPU-accuracy `linux-gpu` rows
+(real `CUDAExecutionProvider`/CUDA-built binaries), which need a CUDA Linux host. The retired unbounded
+on-host inference path is recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 

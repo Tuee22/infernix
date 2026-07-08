@@ -86,6 +86,7 @@ data ModelDescriptor = ModelDescriptor
     runtimeLane :: Text.Text,
     requiresGpu :: Bool,
     notes :: Text.Text,
+    modelRamFootprintMib :: Int,
     requestShape :: [RequestField]
   }
   deriving (Eq, Generic, Show)
@@ -634,6 +635,7 @@ renderPursContractFooter activeRuntimeMode =
             "  , runtimeLane :: String",
             "  , requiresGpu :: Boolean",
             "  , notes :: String",
+            "  , modelRamFootprintMib :: Int",
             "  , requestShape :: Array RequestFieldRecord",
             "  }",
             "",
@@ -652,6 +654,7 @@ renderPursContractFooter activeRuntimeMode =
             "  , runtimeLane: value.runtimeLane",
             "  , requiresGpu: value.requiresGpu",
             "  , notes: value.notes",
+            "  , modelRamFootprintMib: value.modelRamFootprintMib",
             "  , requestShape: map requestFieldRecord value.requestShape",
             "  }",
             "",
@@ -761,6 +764,7 @@ modelDescriptorFromInternal internalModel =
       runtimeLane = Types.runtimeLaneId (Types.runtimeLane internalModel),
       requiresGpu = Types.requiresGpu internalModel,
       notes = Types.notes internalModel,
+      modelRamFootprintMib = Types.modelRamFootprintMib internalModel,
       requestShape = map requestFieldFromInternal (Types.requestShape internalModel)
     }
 
@@ -820,6 +824,7 @@ renderModel modelDescriptor =
           runtimeLane = modelRuntimeLane,
           requiresGpu = modelRequiresGpu,
           notes = modelNotes,
+          modelRamFootprintMib = modelRamFootprint,
           requestShape = modelRequestShape
         } = modelDescriptor
    in "    ModelDescriptor\n"
@@ -861,6 +866,9 @@ renderModel modelDescriptor =
         <> "\n"
         <> "      , notes: "
         <> show (Text.unpack modelNotes)
+        <> "\n"
+        <> "      , modelRamFootprintMib: "
+        <> show modelRamFootprint
         <> "\n"
         <> "      , requestShape:\n"
         <> "          ["

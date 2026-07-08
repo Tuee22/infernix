@@ -11,29 +11,38 @@ module Infernix.DemoConfig
     renderGeneratedDemoConfig,
     renderGeneratedDemoConfigPayload,
     renderModelListing,
+    resolveInferenceRamBudgetMib,
     stripDemoConfigBanner,
+    validateDemoConfig,
     validateDemoConfigFile,
     writeProjectConfigFile,
   )
 where
 
-import Control.Exception (IOException, bracketOnError, catch)
+import Control.Exception (IOException, SomeException, bracketOnError, catch, try)
+import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Char (isSpace)
 import Data.List (intercalate, nub)
-import Data.Maybe (isNothing)
+import Data.Maybe (isNothing, listToMaybe, mapMaybe)
+import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
+import Infernix.HostConfig (HostConfig)
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostTools qualified as HostTools
 import Infernix.Models
-  ( catalogForMode,
+  ( appleFallbackInferenceRamBudgetMib,
+    catalogForMode,
     encodeDemoConfig,
     engineBindingsForMode,
     engineMemberRequestTopics,
     engineMembersForMode,
     enginePoolsForMode,
+    linuxEngineInferenceRamBudgetMib,
     requestTopicsForMode,
     resultTopicForMode,
   )
@@ -82,8 +91,9 @@ validateDemoConfigFile filePath = do
 
 materializeGeneratedDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
 materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue = do
+  budgetMib <- resolveInferenceRamBudgetMib paths runtimeMode
   let filePath = Config.generatedDemoConfigPath paths
-      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue
+      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue budgetMib
   writeProjectConfigFile filePath payload
   pure filePath
 
@@ -170,11 +180,11 @@ ignoreIo action = action `catch` ignoreIOException
 ignoreIOException :: IOException -> IO ()
 ignoreIOException _ = pure ()
 
-renderGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> ByteString.ByteString
+renderGeneratedDemoConfig :: Paths -> RuntimeMode -> Bool -> Int -> ByteString.ByteString
 renderGeneratedDemoConfig paths runtimeMode demoUiEnabledValue =
   renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue (defaultDaemonRoleForMaterializedFile paths runtimeMode)
 
-renderGeneratedDemoConfigPayload :: Paths -> RuntimeMode -> Bool -> DaemonRole -> ByteString.ByteString
+renderGeneratedDemoConfigPayload :: Paths -> RuntimeMode -> Bool -> DaemonRole -> Int -> ByteString.ByteString
 renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole =
   renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole (catalogForMode runtimeMode)
 
@@ -183,8 +193,8 @@ renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue daemonRole
 -- demo catalog ('catalogForMode'); the image-baked config passes @[]@ so
 -- @docker run --rm@ never stages weights and the ConfigMap-mounted config is the
 -- source of truth at deploy.
-renderGeneratedDemoConfigPayloadWithModels :: Paths -> RuntimeMode -> Bool -> DaemonRole -> [ModelDescriptor] -> ByteString.ByteString
-renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole modelSet =
+renderGeneratedDemoConfigPayloadWithModels :: Paths -> RuntimeMode -> Bool -> DaemonRole -> [ModelDescriptor] -> Int -> ByteString.ByteString
+renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue daemonRole modelSet budgetMib =
   LazyByteString.toStrict
     ( encodeDemoConfig
         DemoConfig
@@ -205,7 +215,8 @@ renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue 
             modelsBucket = defaultModelsBucket,
             modelBootstrapTopic = defaultModelBootstrapTopic,
             engines = engineBindingsForMode runtimeMode,
-            models = modelSet
+            models = modelSet,
+            inferenceRamBudgetMib = budgetMib
           }
     )
 
@@ -215,6 +226,7 @@ renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue 
 -- at deploy.
 materializeEmptyModelsDemoConfigFile :: Paths -> RuntimeMode -> Bool -> IO FilePath
 materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue = do
+  budgetMib <- resolveInferenceRamBudgetMib paths runtimeMode
   let filePath = Config.generatedDemoConfigPath paths
       payload =
         renderGeneratedDemoConfigPayloadWithModels
@@ -223,6 +235,7 @@ materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue = do
           demoUiEnabledValue
           (defaultDaemonRoleForMaterializedFile paths runtimeMode)
           []
+          budgetMib
   writeProjectConfigFile filePath payload
   pure filePath
 
@@ -231,6 +244,106 @@ defaultDaemonRoleForMaterializedFile paths runtimeMode =
   case (Config.controlPlaneContext paths, runtimeMode) of
     (Config.HostNative, AppleSilicon) -> Engine
     _ -> Coordinator
+
+-- | Phase 4 Sprint 4.26 — resolve the per-substrate available-inference-RAM
+-- budget (MiB) at materialization time.
+--
+-- * @apple-silicon@: the on-host engine runs host-native outside the colima
+--   VM, so the budget is host physical RAM (@sysctl -n hw.memsize@) minus the
+--   colima VM pledge (@colima list --json@) minus a host reserve for the OS
+--   and control-plane binary. Any discovery failure falls back to the
+--   conservative 'appleFallbackInferenceRamBudgetMib' (biased low so a failure
+--   rejects large models rather than risking an OS OOM-kill).
+-- * @linux-cpu@ / @linux-gpu@: the engine runs in a Kubernetes-bounded pod, so
+--   the value records the engine pod memory limit
+--   ('linuxEngineInferenceRamBudgetMib') for observability; host-RAM admission
+--   control does not fire on those lanes.
+resolveInferenceRamBudgetMib :: Paths -> RuntimeMode -> IO Int
+resolveInferenceRamBudgetMib paths runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> resolveAppleInferenceRamBudgetMib paths
+    LinuxCpu -> pure linuxEngineInferenceRamBudgetMib
+    LinuxGpu -> pure linuxEngineInferenceRamBudgetMib
+
+-- | Host reserve (MiB) held back from the Apple inference budget for the OS,
+-- the host-native control-plane binary, and the Node/Playwright surface that
+-- runs during routed E2E.
+appleHostReserveMib :: Int
+appleHostReserveMib = 3072
+
+-- | Never let the resolved Apple budget fall to or below zero (which the
+-- consumers read as "not host-enforced"); floor at a small positive value so
+-- admission control stays on and at least compact models remain runnable.
+appleMinInferenceRamBudgetMib :: Int
+appleMinInferenceRamBudgetMib = 1024
+
+resolveAppleInferenceRamBudgetMib :: Paths -> IO Int
+resolveAppleInferenceRamBudgetMib paths = do
+  resolved <-
+    try
+      ( do
+          hostConfig <- HostConfig.decodeHostConfigFile (Config.hostConfigPath paths)
+          physicalMib <- appleHostPhysicalRamMib hostConfig
+          colimaMib <- appleColimaPledgeMib
+          pure (max appleMinInferenceRamBudgetMib (physicalMib - colimaMib - appleHostReserveMib))
+      )
+  case resolved :: Either SomeException Int of
+    Right budgetMib -> pure budgetMib
+    Left _ -> pure appleFallbackInferenceRamBudgetMib
+
+appleHostPhysicalRamMib :: HostConfig -> IO Int
+appleHostPhysicalRamMib hostConfig = do
+  output <- HostTools.readHostTool hostConfig HostTools.HostSysctl ["-n", "hw.memsize"] ""
+  case readMaybeInt (filter (not . isSpace) output) of
+    Just bytes -> pure (bytes `div` bytesPerMib)
+    Nothing -> ioError (userError ("could not parse hw.memsize from sysctl output: " <> output))
+
+-- | The colima VM's pledged memory (MiB). Reads @colima list --json@ (one JSON
+-- object per line, via the bootstrap-adjacent fixed candidate path — colima is
+-- read, never managed, and is not a manifest-owned tool) and takes the running
+-- profile's @memory@ (bytes), preferring the @default@ profile. When colima is
+-- unavailable or no profile is running (no colima VM), the pledge is zero and
+-- the whole host RAM is available to inference — so colima discovery is
+-- non-fatal and never forces the resolver onto its low fallback.
+appleColimaPledgeMib :: IO Int
+appleColimaPledgeMib = do
+  result <- try (HostTools.readHostToolFallback HostTools.HostColima ["list", "--json"] "")
+  case result :: Either SomeException (Maybe String) of
+    Right (Just output) -> pure (colimaPledgeMibFromJsonLines output)
+    _ -> pure 0
+
+colimaPledgeMibFromJsonLines :: String -> Int
+colimaPledgeMibFromJsonLines output =
+  let profiles = mapMaybe decodeProfileLine (lines output)
+      running = filter ((== "Running") . colimaStatus) profiles
+      preferred = filter ((== "default") . colimaName) running
+      chosen = listToMaybe (preferred <> running)
+   in maybe 0 (\profile -> fromInteger (colimaMemory profile `div` toInteger bytesPerMib)) chosen
+  where
+    decodeProfileLine line =
+      Aeson.decodeStrict (ByteStringChar8.pack line) :: Maybe ColimaProfile
+
+data ColimaProfile = ColimaProfile
+  { colimaName :: Text,
+    colimaStatus :: Text,
+    colimaMemory :: Integer
+  }
+
+instance Aeson.FromJSON ColimaProfile where
+  parseJSON =
+    Aeson.withObject "ColimaProfile" $ \value ->
+      ColimaProfile
+        <$> value Aeson..: "name"
+        <*> value Aeson..: "status"
+        <*> value Aeson..: "memory"
+
+bytesPerMib :: Int
+bytesPerMib = 1048576
+
+readMaybeInt :: String -> Maybe Int
+readMaybeInt text = case reads text of
+  [(value, "")] -> Just value
+  _ -> Nothing
 
 coordinatorDaemonConfig :: RuntimeMode -> DaemonConfig
 coordinatorDaemonConfig runtimeMode =
@@ -399,9 +512,35 @@ validateDemoConfig allowEmptyModels demoConfig
       Left ("duplicate matrix row ids detected: " <> intercalate ", " duplicateMatrixRows)
   | duplicateEngineNames /= [] =
       Left ("duplicate engine bindings detected: " <> intercalate ", " duplicateEngineNames)
+  | overBudgetModelDescriptions /= [] =
+      Left
+        ( "models exceed the "
+            <> Text.unpack (runtimeModeId (configRuntimeMode demoConfig))
+            <> " inference RAM budget of "
+            <> show (inferenceRamBudgetMib demoConfig)
+            <> " MiB: "
+            <> intercalate ", " overBudgetModelDescriptions
+        )
   | otherwise = Right demoConfig
   where
     bootstrapEmptyModels = allowEmptyModels && null (models demoConfig)
+    -- Phase 4 Sprint 4.26 — the host-RAM admission guard is meaningful only on
+    -- @apple-silicon@, where the engine runs host-native and a model's resident
+    -- footprint is host RAM. On Linux the engine runs in a Kubernetes-bounded
+    -- pod, so the recorded budget is informational and this guard is a no-op.
+    inferenceRamAdmissionEnforced =
+      configRuntimeMode demoConfig == AppleSilicon
+        && inferenceRamBudgetMib demoConfig > 0
+    overBudgetModelDescriptions
+      | not inferenceRamAdmissionEnforced = []
+      | otherwise =
+          [ Text.unpack (modelId model)
+              <> " ("
+              <> show (modelRamFootprintMib model)
+              <> " MiB)"
+          | model <- models demoConfig,
+            modelRamFootprintMib model > inferenceRamBudgetMib demoConfig
+          ]
     invalidEngineBinding engineBinding =
       any
         (Text.null . Text.strip)
