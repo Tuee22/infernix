@@ -119,38 +119,24 @@ The model cache is ephemeral: a pod restart wipes `/model-cache/` and
 the next load repopulates from MinIO. Aggressive eviction is by
 design — the user explicitly accepted repeated MinIO pulls as the
 price of true daemon statelessness. This LRU policy bounds the on-DISK
-model cache only; it places no bound on resident inference RAM. On the
-`apple-silicon` substrate there are no in-cluster engine pods — all
-active models run serialized one-at-a-time as fresh subprocesses on the
-on-host `infernix service` daemon, with no per-model RAM footprint, no
-inference-RAM budget, no admission control, and no RAM eviction, so peak
-resident memory is UNBOUNDED. A full per-model `infernix test integration`
-run over the current 16-model catalog exhausted host RAM and the daemon
-was OS-OOM-killed (an uncontrolled SIGKILL, not a clean `status=failed`).
-Closing this host-memory gap is reopened as Phase 4 Sprint 4.26
-(apple-silicon inference RAM admission + bounded peak) with Phase 6
-Sprint 6.37 (apple-silicon memory-bounded validation lane).
+model cache only; resident model memory is governed separately by typed
+runtime admission.
 
 **RAM admission is a distinct bound from the disk cache quota.** The
 `emptyDir` `/model-cache` `sizeLimit` (`engine.modelCache.sizeLimit` /
 `engineModelCacheQuotaBytes`) LRU quota bounds DISK — how many staged
 model weights sit on the cache mount before least-recently-used weights
 are evicted — and does not govern resident MEMORY. Resident inference
-memory is bounded separately by a RAM-admission contract: each
-`ModelDescriptor` carries a conservative peak host-resident footprint
-`modelRamFootprintMib`, and each substrate resolves an
-`inferenceRamBudgetMib` (on `apple-silicon`, host physical RAM minus the
-colima VM pledge minus a host reserve). The RAM budget governs whether an
-inference is ADMITTED — the serialized on-host apple engine publishes a
-clean `status=failed` for an over-budget model before launching the
-engine subprocess — while the disk quota governs LRU EVICTION of staged
-weights; the two are orthogonal (a model can be cache-resident on disk
-yet refused admission on RAM, or admitted on RAM while its weights were
-just evicted from disk and must be re-pulled). Because execution is
-serialized to one admitted model under a single lock, peak resident
-memory is bounded, so the former host-RAM gap noted above is now closed:
-the daemon fails cleanly and is never OS-OOM-killed by construction
-(Phase 4 Sprint 4.26, validated by Phase 6 Sprint 6.37).
+memory is bounded separately by a resource-admission contract: each
+`ModelDescriptor` carries `modelRamFootprintMib`, and each substrate
+resolves an `InferenceMemoryBudget` (Apple unified host RAM, Linux CPU
+pod RAM, or Linux GPU VRAM). The budget governs whether an inference is
+ADMITTED: an over-budget model returns typed `ModelMemoryLimitExceeded {
+requiredMib, availableMib, resource, source }` before launch, while the
+disk quota governs LRU EVICTION of staged weights. The two are
+orthogonal: a model can be cache-resident on disk yet refused admission
+on memory, or admitted on memory while its weights were just evicted
+from disk and must be re-pulled.
 
 For real per-family artifact inference outputs (source-separation
 stems, audio-to-MIDI and music-transcription MIDI / MusicXML,
@@ -176,12 +162,13 @@ object refs. Wave N closes the full selected `linux-gpu` plus
 Non-text INPUTS are carried the same way: an audio or image input is
 staged into `infernix-demo-objects` under the per-user `uploads/`
 prefix and referenced on the request as a typed object reference,
-rather than inlined. `ResultPayload` carries the
-`oneof {inline_output, object_ref}` discriminant on the wire, and
-`buildPayload` routes text families to inline output and artifact
-families to object references. The newer proto fields are a non-text
-INPUT object reference on `InferenceRequest` / `WorkerRequest` and an
-object-reference OUTPUT on `WorkerResponse` for the artifact adapters.
+rather than inlined. Successful `ResultPayload`s carry `inline_output` or
+`object_ref`, while failed payloads carry typed `InferenceError` values.
+`buildPayload` routes text-family successes to inline output and
+artifact-family successes to object references. The newer proto fields
+are a non-text INPUT object reference on `InferenceRequest` /
+`WorkerRequest` and an object-reference OUTPUT on `WorkerResponse` for
+the artifact adapters.
 For native-process-runner artifact families, the child process may return a local artifact-file
 marker instead of doing its own MinIO write; the Haskell worker uploads that file to the same
 Haskell-derived generated-object target using secret-backed presigned PUT credentials and publishes
@@ -240,11 +227,8 @@ adapter helper enforces LRU eviction inside the quota. On the Apple
 on-host engine daemon, an equivalent host-local cache lives under
 `./.data/runtime/model-cache/`; it is purgeable host state on the
 operator's machine, not durable cluster state. This posture bounds DISK
-only: neither kubelet nor the adapter helper bounds resident inference
-RAM, and the `apple-silicon` on-host daemon has no RAM budget, admission
-control, or eviction at all — so this is not a complete resource-safety
-story. See the host inference-RAM gap under Engine Model-Weight Loading
-and Validation (reopened as Phase 4 Sprint 4.26 + Phase 6 Sprint 6.37).
+only: model memory is governed separately by the typed resource-admission
+policy described under Engine Model-Weight Loading and Validation.
 
 Browsers fetch generated artifacts exclusively through the webapp's
 `/api/objects` endpoints against the `infernix-demo-objects` MinIO
@@ -290,17 +274,10 @@ The routed Linux GPU E2E flow validates the server-side
 - `infernix test integration` covers the `emptyDir` DISK LRU eviction
   policy in the adapter helper on the Linux engine pod: sustained load
   does not exhaust ephemeral storage and does not restart the engine pod.
-  This validated bound is DISK-only. Host inference RAM on the
-  `apple-silicon` substrate is UNBOUNDED — active models run serialized as
-  fresh subprocesses on the on-host `infernix service` daemon with no RAM
-  budget, admission control, or eviction, and a full per-model
-  `infernix test integration` run over the current 16-model catalog
-  exhausted host RAM and the daemon was OS-OOM-killed (an uncontrolled
-  SIGKILL, not a clean `status=failed`). This is a known, still-open gap:
-  the realness "fail cleanly, never crash" contract is not yet satisfied
-  for host memory on `apple-silicon`. It is reopened as Phase 4 Sprint 4.26
-  (apple-silicon inference RAM admission + bounded peak) with Phase 6
-  Sprint 6.37 (apple-silicon memory-bounded validation lane).
+  This validated bound is DISK-only. Model memory is covered by separate
+  resource-admission tests that assert typed `ModelMemoryLimitExceeded`
+  rather than parsing output text or treating a missing result as
+  capacity failure.
 - `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a real
   Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
   Keycloak users with the same context id and display name.

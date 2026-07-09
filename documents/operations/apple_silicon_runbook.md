@@ -164,10 +164,10 @@ Direct reference path:
   purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap
   subscription; subsequent uses are local-cache hits. The on-host `infernix service` daemon runs
   each active model serialized as a fresh subprocess under a single execution lock
-  (`engineExecutionLock`) and admits each inference against the resolved `inferenceRamBudgetMib`
-  (see the "Inference RAM Budget and Host-Memory Admission" section): an over-budget model
-  publishes a clean `status=failed` real `InferenceResult` naming the budget instead of launching,
-  so peak resident memory is bounded to one admitted model and the daemon is never OS-OOM-killed.
+  (`engineExecutionLock`) and admits each inference against the typed `InferenceMemoryBudget`
+  (see the "Inference Memory Budget and Host-Memory Admission" section): an over-budget model
+  publishes a clean `status=failed` real `InferenceResult` with typed `ModelMemoryLimitExceeded`
+  quantities instead of launching, so peak resident memory is bounded to one admitted model.
   This disk cache (LRU in `python/adapters/model_cache.py`) remains a separate bounded host-daemon
   resource and is purgeable; disk-cache purging is independent of the RAM budget, which is resolved
   from host physical RAM minus the colima VM pledge minus a host reserve
@@ -252,50 +252,42 @@ events or Keycloak `OOMKilled` events mean the Apple local topology or Docker VM
 must be reconciled before an Apple cohort validation pass can be claimed.
 
 Host-daemon inference RAM is a separate concern and must not be conflated with the Docker VM
-envelope. The on-host `infernix service` daemon serializes inference under a single execution
-lock and admits each model against the resolved `inferenceRamBudgetMib` — host physical RAM
-minus the colima VM pledge minus a host reserve (see the "Inference RAM Budget and Host-Memory
-Admission" section). A full per-model `infernix test integration` run over the current catalog now
-either completes or fails cleanly per model: an over-budget model publishes a clean `status=failed`
-naming the budget instead of OS-OOM-killing the daemon. That clean failure is a product-contract
-outcome, not a VM-envelope reconcile — growing the Docker VM memory envelope does not change
-host-RAM admission. To admit a larger model, raise the resolved budget by freeing host headroom
-(for example, lowering the colima memory pledge, which increases host RAM minus colima pledge),
-then re-run `infernix init` / `cluster up` to re-resolve it. The memory-bounded Apple lane (Phase 6
-Sprint 6.37; cohort-validation-waves.md Wave R) validates this fail-clean-never-OOM contract.
+envelope. The on-host `infernix service` daemon serializes inference under a single execution lock
+and admits each model against the Apple `InferenceMemoryBudget` — host physical RAM minus the
+Colima VM pledge minus a host reserve (see the "Inference Memory Budget and Host-Memory Admission"
+section). A full per-model `infernix test integration` run over the current catalog either completes
+or fails cleanly per model: an over-budget model publishes typed `ModelMemoryLimitExceeded` with
+`requiredMib` and `availableMib`. That clean failure is a product-contract outcome, not a
+VM-envelope reconcile — growing the Docker VM memory envelope does not change host-RAM admission. To
+admit a larger model, raise the resolved budget by freeing host headroom (for example, lowering the
+Colima memory pledge, which increases host RAM minus Colima pledge), then re-run `infernix init` /
+`cluster up` to re-resolve it.
 
-## Inference RAM Budget and Host-Memory Admission
+## Inference Memory Budget and Host-Memory Admission
 
 On `apple-silicon`, model weights load into host physical RAM (the unified-memory / CPU path),
-so the on-host `infernix service` daemon admits inference against a resolved inference RAM
-budget. `infernix init` and `cluster up` compute that budget from live host measurements: host
-physical RAM (`sysctl -n hw.memsize`) minus the colima VM's pledged memory (`colima list --json`)
-minus a fixed host reserve. `infernix init` writes the host manifest (`./infernix-host.dhall`)
-with the absolute `sysctl` (`/usr/sbin/sysctl`) and `colima` (`/opt/homebrew/bin/colima`) tool
-paths before the runtime config, so the budget resolves at materialization time and is staged into
-the substrate as `inferenceRamBudgetMib`. On `linux-cpu` / `linux-gpu` the budget is informational
-only — engine pods are Kubernetes-memory-bounded, so host-RAM admission does not fire there.
+so the on-host `infernix service` daemon admits inference against a resolved memory budget.
+`infernix init` and `cluster up` compute that budget from live host measurements: host physical RAM
+(`sysctl -n hw.memsize`) minus the Colima VM's pledged memory (`colima list --json`) minus a fixed
+host reserve. The budget is represented as an explicit `InferenceMemoryBudget`; an over-pledged host
+computes an enforced `0 MiB` budget rather than relying on a hardcoded floor or treating
+non-positive values as unenforced.
 
-- `validateDemoConfig` fails fast at `infernix init` and `cluster up`: if any catalog model's
-  conservative peak footprint (`modelRamFootprintMib`) exceeds the resolved `inferenceRamBudgetMib`,
-  the command exits with a typed error naming the model, its footprint, and the budget rather than
-  bringing up a cluster that would over-commit host RAM. A non-positive budget leaves admission
-  unenforced.
+- `validateDemoConfig` may report capacity diagnostics, but it must not fail the daemon solely
+  because one catalog model's `modelRamFootprintMib` exceeds the resolved Apple budget. Smaller
+  configured models must still serve.
 - At runtime the daemon serializes inference under a single execution lock and admits each model at
   that critical section. An over-budget model publishes a clean `status=failed` real
-  `InferenceResult` whose message names the inference RAM budget, instead of launching the engine
-  subprocess. Because execution is serialized to one admitted model, peak resident memory is bounded
-  and the OS never OOM-kills the daemon — an over-budget model is a clean per-row product failure,
-  not a daemon death or an OS SIGKILL.
+  `InferenceResult` with `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib,
+  resource, source }`, instead of launching the engine subprocess. Because execution is serialized
+  to one admitted model, peak resident memory is bounded.
 - To run a larger model whose footprint exceeds the current budget, free host headroom so the
-  resolved budget rises. The most direct lever is lowering the colima VM memory pledge, which raises
-  host physical RAM minus colima pledge; re-run `infernix init` / `cluster up` afterward to
+  resolved budget rises. The most direct lever is lowering the Colima VM memory pledge, which raises
+  host physical RAM minus Colima pledge; re-run `infernix init` / `cluster up` afterward to
   re-resolve the budget from the new measurements.
 
-This is the resolved form of the former host-memory gap: a full per-model run over the current
-catalog either completes or fails cleanly per model, and no longer OS-SIGKILLs the daemon. The
-memory-bounded Apple lane in Phase 6 Sprint 6.37 (cohort-validation-waves.md Wave R) validates this
-fail-clean-never-OOM-by-construction contract.
+Linux uses the same typed admission policy with different budget sources: `linux-cpu` admits
+against the cluster engine pod memory limit, and `linux-gpu` admits against GPU VRAM.
 
 ## Harbor Host-Port Conflicts
 

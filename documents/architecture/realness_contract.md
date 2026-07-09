@@ -13,11 +13,9 @@
   successful (`status=completed`) result is the output of a real model run; every missing-weights,
   model-load, or engine-runtime failure **raises / exits non-zero** and surfaces as `status=failed`.
   This is an *engine-logic* guarantee for in-band failures the adapter/runner can raise or exit on,
-  and on `apple-silicon` — where every model runs on the on-host `infernix service` daemon rather than
-  an in-cluster engine pod — it now also covers *host memory*: an over-budget model is
-  admission-rejected as a clean `status=failed` before its subprocess is launched, so peak resident
-  memory is bounded to one admitted model and the daemon is never OS-OOM-killed. See Current Status for
-  the memory-admission contract.
+  and it also covers model-memory capacity through typed runtime admission: an over-budget request
+  is rejected as a clean `status=failed` with `InferenceError.ModelMemoryLimitExceeded` before its
+  subprocess or worker is launched. See Current Status for the memory-admission contract.
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
@@ -30,10 +28,9 @@
 The single `status=completed` site (`src/Infernix/Runtime.hs`) is reached only on a real engine
 `Right output`. `python/adapters/common.py` maps any adapter exception to `failed`; the Haskell worker
 maps non-zero exit / empty stdout / missing artifact to `failed`. That mapping fires only when the
-subprocess actually exits or returns; the one failure mode it could not catch — a host-memory OOM that
-SIGKILLs the on-host `apple-silicon` daemon before any exit code exists — is now prevented up front by
-RAM admission control (see Current Status), which rejects an over-budget model as a clean
-`status=failed` rather than launching it. Within that scope, realness holds iff every adapter and
+subprocess actually exits or returns; model-memory capacity is therefore checked before launch by
+the shared admission policy (see Current Status), which rejects an over-budget model as typed
+`ModelMemoryLimitExceeded` rather than launching it. Within that scope, realness holds iff every adapter and
 native runner has **no fabrication branch**:
 
 - **Adapter** (`python/adapters/*_python.py` via `common.py` `run_*_adapter`): the only success is
@@ -70,50 +67,40 @@ catalogs, with Wave O owning post-replacement proof for the MT3 rows added on 20
 real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`, never a
 fabricated pass.
 
-**Resolved: realness-by-construction extended to host memory (apple-silicon).** The one remaining
-non-clean failure mode — a host-memory OOM that SIGKILL'd the on-host `apple-silicon` daemon instead of
-mapping to `status=failed` — is now closed by construction (Phase 4 Sprint 4.26; memory-bounded
-validation lane Phase 6 Sprint 6.37). On `apple-silicon` there are still no in-cluster engine pods:
-every active model runs on the on-host `infernix service` daemon, serialized one model at a time as a
-fresh subprocess. Four mechanisms now bound peak resident memory to a single admitted model:
+**Reopened: realness-by-construction extends to typed resource admission.** Phase 4 Sprint 4.27,
+Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38 generalize the earlier Apple host-RAM guard into a DRY
+admission doctrine across substrates. The mechanisms are:
 
 - **Per-model footprint.** `ModelDescriptor` (`src/Infernix/Types.hs`) carries
-  `modelRamFootprintMib`, a conservative peak host-resident footprint (MiB) for one serialized
-  inference on the unified-memory / CPU path; `src/Infernix/Models.hs`
-  `conservativeRamFootprintMibForRow` assigns it per family/engine, biased high until a measured
-  peak-RSS pass refines it.
-- **Per-substrate budget.** `DemoConfig` (`src/Infernix/Types.hs`) carries `inferenceRamBudgetMib`,
-  resolved at materialization by `src/Infernix/DemoConfig.hs` `resolveInferenceRamBudgetMib`: on
-  `apple-silicon` it is host physical RAM (`sysctl -n hw.memsize`) minus the colima VM pledge
-  (`colima list --json`) minus a host reserve; on `linux-cpu` / `linux-gpu` it records the engine pod
-  memory limit (informational — Linux engines run in Kubernetes-bounded pods, so host-RAM admission
-  does not fire there).
-- **Config-time hard-fail.** `validateDemoConfig` fails fast on an over-budget `apple-silicon`
-  config: any model whose `modelRamFootprintMib` exceeds `inferenceRamBudgetMib` is a typed error
-  naming the model, footprint, and budget. Enforced only on `apple-silicon` (where model memory is
-  host RAM); a non-positive budget means unenforced.
-- **Serialized admission control.** The daemon runs one inference at a time under a single MVar
-  (`engineExecutionLock`, `src/Infernix/Runtime/Daemon.hs`). Inside that critical section,
-  `src/Infernix/Runtime/Pulsar.hs` `overRamBudgetRejection` runs *before* the engine subprocess is
-  launched: an over-budget model publishes a clean `status=failed` (a real `InferenceResult`, not a
-  fabrication) instead of being launched. Because execution is serialized, peak resident memory is
-  bounded to one admitted model, so the OS never OOM-kills the daemon.
+  `modelRamFootprintMib`, a conservative model memory footprint (MiB) for one inference;
+  `src/Infernix/Models.hs` `conservativeRamFootprintMibForRow` assigns it per family/engine, biased
+  high until measured RSS / VRAM passes refine it.
+- **Typed budget.** `DemoConfig` carries an `InferenceMemoryBudget` value rather than integer
+  sentinel semantics. `EnforcedMemoryBudget { resource, source, availableMib }` is always enforced,
+  including `0 MiB`; `UnenforcedMemoryBudget { reason }` is explicit.
+- **Substrate budget sources.** `apple-silicon` uses unified host RAM after the Colima pledge and
+  host reserve; `linux-cpu` uses the active Kubernetes engine pod memory limit; `linux-gpu` uses the
+  selected GPU VRAM quantity.
+- **No catalog-wide capacity fail-fast.** Validation may report capacity diagnostics, but a single
+  over-budget catalog entry must not make the entire daemon config invalid. Smaller configured models
+  must continue to run.
+- **Typed failure payload.** Runtime admission publishes `status=failed` with
+  `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`
+  before launch. The error is a closed ADT branch in `ResultPayload`, not successful inline output
+  and not a parsed string.
 
 Together these make an over-budget model a clean, mapped `status=failed` — the same fail-clean
-guarantee the engine-logic invariant gives, now extended to host memory as realness-by-construction.
-The single-accelerator sign-off (the full-catalog apple `infernix test integration` run + routed
-matrix completing or failing-closed per row with zero OS OOM-kill) is tracked as Wave R in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+guarantee the engine-logic invariant gives, now extended to model-memory capacity as
+realness-by-construction.
 
 ## Validation
 
 - `infernix test lint` fails on any reintroduced fabrication (the Haskell + Python passes above).
 - `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` pass only on real inference for
   the active catalog; withholding weights or the engine yields a visible `status=failed`. This
-  fail-closed mapping covers engine-logic failures; on `apple-silicon`, host-memory exhaustion is
-  additionally covered by RAM admission control, which rejects an over-budget model as a clean
-  `status=failed` rather than letting the OS SIGKILL the daemon (Current Status; Phase 4 Sprint 4.26 +
-  Phase 6 Sprint 6.37).
+  fail-closed mapping covers engine-logic failures; model-memory capacity is additionally covered by
+  typed resource admission, which rejects an over-budget request as `ModelMemoryLimitExceeded`
+  before launch (Current Status; Phase 4 Sprint 4.27 + Phase 5 Sprint 5.11 + Phase 6 Sprint 6.38).
 - `infernix lint docs` rejects the retired fabrication-blessing doc phrases.
 
 ## Cross-References

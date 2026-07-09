@@ -46,16 +46,16 @@ Each generated entry includes:
 - named residual status when a researched matrix cell is intentionally not runnable
 - request shape metadata used by the API, UI, and tests
 - runtime-lane metadata such as GPU requirement and lane identifier
-- `modelRamFootprintMib`: a conservative peak host-resident memory footprint (MiB) for one
-  serialized inference on the unified-memory / CPU path. `Models.hs`
-  `conservativeRamFootprintMibForRow` assigns per-family/per-engine footprints (biased high) until a
-  measured peak-RSS pass refines them. The field is threaded through the hand-written JSON codec, the
-  Dhall decoder/renderer/type in `src/Infernix/Substrate.hs`, and the purescript-bridge
-  `ModelDescriptor` (generated `web/src/Generated/Contracts.purs`), so every generated catalog entry
-  carries it. On apple-silicon it is the RAM-admission input: a model whose `modelRamFootprintMib`
-  exceeds the resolved `inferenceRamBudgetMib` is rejected with a clean typed `status=failed` before
-  the engine subprocess launches, so the serialized on-host engine never OOM-kills the daemon (the
-  former OOM gap is resolved — the contract is now fail-clean-never-OOM by construction).
+- `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one inference on the
+  selected engine path. `Models.hs` `conservativeRamFootprintMibForRow` assigns per-family/per-engine
+  footprints (biased high) until measured peak RSS / VRAM passes refine them. The field is threaded
+  through the hand-written JSON codec, the Dhall decoder/renderer/type in
+  `src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
+  `web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. It is the shared
+  runtime admission input for Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. A model
+  whose footprint exceeds the active enforced budget is rejected per request with a typed
+  `ModelMemoryLimitExceeded` `InferenceError` that carries `requiredMib` and `availableMib`; it must
+  not make the entire generated daemon config invalid.
 
 ## Rules
 
@@ -70,11 +70,12 @@ Each generated entry includes:
 
 ## ResultFamily and Result-Surface Mapping
 
-Every README matrix row resolves to a closed `ResultFamily` sum type and a single result-surface
+Every README matrix row resolves to a closed `ResultFamily` sum type and a success result-surface
 shape — either an inline text payload or a typed object reference into the always-on
-`infernix-demo-objects` MinIO bucket. This mapping is the canonical home for the 19-row to
-`ResultFamily` and inline-vs-object-ref correspondence; it is consistent with the per-family
-result contract in
+`infernix-demo-objects` MinIO bucket. Failed results carry a closed `InferenceError` sum type
+instead of reusing successful inline output. This mapping is the canonical home for the 19-row to
+`ResultFamily`, success surface, and error-surface correspondence; it is consistent with the
+per-family result contract in
 [../development/testing_strategy.md](../development/testing_strategy.md) and the demo validation
 surface in [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 
@@ -95,12 +96,15 @@ and tests share.
 
 ### Proto facts
 
-`ResultPayload` carries `oneof {inline_output, object_ref}` on the wire. `buildPayload` now routes
-LLM and speech results to inline text and artifact families to object references. The newer proto
-fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and an
-object-ref **output** on `WorkerResponse` for the artifact adapters.
-Artifact results always use the always-on `infernix-demo-objects` bucket, never the retired
-`infernix-runtime` / `infernix-results` buckets.
+`ResultPayload` carries successful payloads as `inline_output` or `object_ref`, and failed payloads
+as a typed `InferenceError` branch. `buildPayload` routes LLM and speech successes to inline text
+and artifact successes to object references. Runtime admission builds
+`InferenceError.ModelMemoryLimitExceeded` with explicit `required_mib` and `available_mib`
+quantities plus the budget resource/source, so browser and integration tests do not parse human
+text to identify memory-capacity failures. The newer proto fields are a non-text **input**
+object-ref on `InferenceRequest` / `WorkerRequest` and an object-ref **output** on
+`WorkerResponse` for the artifact adapters. Artifact results always use the always-on
+`infernix-demo-objects` bucket, never the retired `infernix-runtime` / `infernix-results` buckets.
 
 ### Row-to-ResultFamily table
 

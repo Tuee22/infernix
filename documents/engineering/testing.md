@@ -13,9 +13,9 @@
   `infernix test integration`, `infernix test e2e`, and `infernix test all` entrypoints
 - Validation is fail-fast for drift and missing prerequisites: it reports them and stops instead of
   silently rewriting tracked source or substituting another lane. This fail-fast guarantee is scoped
-  to drift and prerequisites; host resource exhaustion is handled separately by apple-silicon
-  inference-RAM admission, which bounds peak resident memory and classifies an over-budget model as a
-  clean per-row `status=failed` — see the resource-exhaustion classification under Lifecycle Failure
+  to drift and prerequisites; model resource capacity is handled separately by runtime admission,
+  which classifies an over-budget request as typed `InferenceError.ModelMemoryLimitExceeded` and does
+  not fail the whole daemon — see the resource-exhaustion classification under Lifecycle Failure
   Classification.
 - Integration and routed E2E coverage derive their target set from the active generated catalog,
   so changing the staged substrate changes the exercised entries automatically.
@@ -74,27 +74,21 @@
   internal cluster bring-up or teardown rounds inside `infernix test all`
 - treat the supported path as stalled only when the command exits non-zero or the heartbeat stops
   refreshing across multiple monitor intervals during one of those monitored phases
-- resource exhaustion is a distinct third class from stall and clean failure: on `apple-silicon`
-  there are no in-cluster engine pods — all active models run on the on-host `infernix service`
-  daemon, serialized one-model-at-a-time as fresh subprocesses under a single execution lock,
-  bounded on disk by the model cache (LRU in `python/adapters/model_cache.py`) and in resident
-  memory by inference-RAM admission
-- each `ModelDescriptor` carries a conservative peak host-resident footprint
-  (`modelRamFootprintMib`), and the resolved `DemoConfig.inferenceRamBudgetMib` — host physical RAM
-  minus the colima VM pledge minus a host reserve — bounds it; at the serialized critical section an
-  over-budget model publishes a clean `status=failed` real `InferenceResult` instead of launching the
-  engine subprocess, so peak resident memory is bounded to one admitted model and the OS never
-  OOM-kills the daemon by construction. `validateDemoConfig` additionally fails fast at
-  materialization on any apple-silicon model whose footprint exceeds the budget
-- the former OOM behavior — an unbounded per-model `infernix test integration` traversal that
-  exhausted host RAM and let the OS SIGKILL the daemon — is the resolved gap (Phase 4 Sprint 4.26,
-  Phase 6 Sprint 6.37): the integration suite's `classifyAppleMemoryBoundedResult` now reads an
-  over-budget model as a clean per-row `status=failed` whose message names the inference-RAM budget,
-  distinct from a stall (a genuinely missing result, named as the OS-OOM-kill symptom) and from a
-  fabricated pass, while rows that fit the budget still complete and honor the per-family
-  real-output contract
-- the full-catalog Apple per-model integration and routed matrix completing or failing-closed per
-  row with zero OS OOM-kill is the Wave R single-accelerator cohort residual
+- resource exhaustion is a distinct third class from stall and clean failure: every active model
+  carries `ModelDescriptor.modelRamFootprintMib`, and each substrate resolves an explicit
+  `InferenceMemoryBudget` before launch
+- the active budget is typed, not a magic integer: Apple uses unified host RAM after the Colima
+  pledge and reserve, Linux CPU uses the engine pod memory limit, and Linux GPU uses GPU VRAM;
+  `EnforcedMemoryBudget 0 MiB` remains enforced, while `UnenforcedMemoryBudget` is an explicit
+  constructor for intentionally unlimited cases
+- an over-budget model publishes a clean `status=failed` real `InferenceResult` with
+  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` instead
+  of launching the engine subprocess. The generated config must remain usable when only some models
+  are over budget, so smaller rows still complete and honor their per-family real-output contract
+- the integration classifier must identify memory-capacity failure by the typed error constructor
+  and MiB fields, distinct from a stall (a genuinely missing result, including the historical
+  OS-OOM-kill symptom) and from a fabricated pass. This is reopened as Phase 4 Sprint 4.27, Phase 5
+  Sprint 5.11, and Phase 6 Sprint 6.38
 
 ## Canonical Entry Points
 
@@ -107,7 +101,7 @@
 | `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
 | `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
-| `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is resident-memory bounded on `apple-silicon` by inference-RAM admission, classifying an over-budget model as a clean per-row `status=failed` (see Lifecycle Failure Classification) |
+| `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is bounded by substrate-specific resource admission, classifying an over-budget model as typed `ModelMemoryLimitExceeded` (see Lifecycle Failure Classification) |
 | `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
 | `infernix test all` | run every supported validation layer in sequence for the active staged substrate |
 

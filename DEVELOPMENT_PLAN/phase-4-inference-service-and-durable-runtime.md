@@ -1,6 +1,11 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done — Sprints 4.25 (matrix substrate-accuracy closure) and 4.26 (apple-silicon inference RAM admission) are implemented, documented, and validated. Wave R closed the Apple cohort on 2026-07-08: the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and the routed `test e2e` per-model browser matrix passed with real output through the UI. Wave S closed the Linux lanes on 2026-07-09: rebuilt `linux-cpu` image `sha256:cfcd0c617a70919a1d083b43dfa66e9041b215a27a176ab82c2d806a36cf7627` passed `./bootstrap/linux-cpu.sh test`, and rebuilt `linux-gpu` image `sha256:31e076d62e5aab45d0f0894fcac86e634f1850aa46ae4611258f8ae3fab2ad66` plus engine images `pytorch` `sha256:978779650affd4490b16913216fed83c7f942112da23d152eb1acd58b26b1585`, `diffusers` `sha256:5643d7fdd17e599503328f6476d3a4d8dc1cc8d65c751fa2a1abaa5960ee25a0`, and `vllm` `sha256:9be7ac2a614e235bcb346e4f9e4ff0433e7183bed7cfc170501d86d13ea21a61` passed `./bootstrap/linux-gpu.sh test` with full integration and routed Playwright `15/15`. The prior Wave O MT3 reopen (Sprint 4.22) is closed — proven by Wave P (2026-07-04).
+**Status**: Active — Sprint 4.27 reopens runtime resource admission to replace the Apple-only
+integer budget, config-time over-budget fail-fast, hardcoded floor, and stringly runtime failure
+payload with pure `InferenceMemoryBudget` / `InferenceError` types. Earlier Sprints 4.25 and 4.26
+remain closed for their original evidence: Wave R closed the Apple cohort on 2026-07-08, and Wave S
+closed the Linux lanes on 2026-07-09. The prior Wave O MT3 reopen (Sprint 4.22) is closed — proven
+by Wave P (2026-07-04).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -41,14 +46,24 @@
 > one-model-at-a-time as fresh subprocesses, and before Sprint 4.26 there was no per-model RAM
 > footprint, per-substrate inference-RAM budget, or admission control, so a full per-model
 > `test integration` drove the host into memory exhaustion and the OS SIGKILLed the daemon.
-> **Sprint 4.26 closes this code-side**: `ModelDescriptor` now carries a conservative
+> **Sprint 4.26 closed that code-side gap for its original scope**: `ModelDescriptor` now carries a conservative
 > `modelRamFootprintMib`, `DemoConfig` carries a host-computed `inferenceRamBudgetMib`,
 > `validateDemoConfig` fails fast on an over-budget apple-silicon config, and the serialized engine
 > critical section rejects an over-budget model as a clean `status=failed` (`overRamBudgetRejection`).
 > The full-catalog Apple never-OOM cohort proof closed in [Wave R](cohort-validation-waves.md)
 > (paired with Phase 6 Sprint 6.37), and the current Linux full-suite reruns closed in
 > [Wave S](cohort-validation-waves.md). The retired unbounded path is tracked in
-> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+> [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). Sprint 4.27 supersedes the
+> config-wide fail-fast and stringly-result pieces of that implementation.
+
+> **Resource-admission doctrine reopen (2026-07-09).** Sprint 4.26 proved the value of serialized
+> runtime admission, but its catalog-wide fail-fast and stringly result payload are too restrictive.
+> Sprint 4.27 keeps request-time admission while making the budget and error model pure: a generated
+> catalog may contain models larger than the daemon's current budget, smaller models must still run,
+> and an oversized request returns typed `InferenceError.ModelMemoryLimitExceeded` with explicit
+> `requiredMib` and `availableMib`. The Apple hardcoded floor is replaced by an explicit
+> `EnforcedMemoryBudget 0 MiB` when the computed host budget is zero or negative; Linux CPU admits
+> against the cluster engine pod memory limit; Linux GPU admits against GPU VRAM.
 
 > **Common-shape reopen (Pulsar ML-Workflow convergence).** Phase 4's two
 > common-shape deltas toward the shared contract (see [README.md](README.md) →
@@ -1599,6 +1614,9 @@ None.
 ## Sprint 4.26: Apple-Silicon Inference RAM Admission and Bounded Peak (Fail-Clean, Never OOM) [Done]
 
 **Status**: Done — code-side complete and machine-independent-validated; the Apple integration and routed per-model matrix are GREEN ([Wave R](cohort-validation-waves.md), 2026-07-08), and the rebuilt `linux-cpu` full-suite rerun is GREEN ([Wave S](cohort-validation-waves.md), 2026-07-09).
+**Supersession note**: Sprint 4.27 keeps the serialized runtime-admission idea but supersedes this
+sprint's catalog-wide fail-fast, integer sentinel/floor, Apple-only budget scope, and stringly result
+payload.
 **Code-side closure**: Complete (2026-07-08). `ModelDescriptor` gained `modelRamFootprintMib` threaded through every mirror (hand-written JSON codec in `Types.hs`, the Dhall decoder/renderer/type in `Substrate.hs`, and the purescript-bridge `ModelDescriptor` + generated `Contracts.purs`); `Models.conservativeRamFootprintMibForRow` assigns conservative per-family/per-engine footprints (biased high) until a measured peak-RSS pass. `DemoConfig` gained `inferenceRamBudgetMib`, resolved at materialization time by `DemoConfig.resolveInferenceRamBudgetMib`: on `apple-silicon` it is host physical RAM (`sysctl -n hw.memsize`, via the new manifest-owned `HostSysctl` tool) − the colima VM pledge (a **read-only** `colima list --json` probe resolved through a bootstrap-adjacent fixed candidate path — `HostTools.readHostToolFallback`; colima is read, never managed, and is deliberately **not** a manifest-owned tool, so the Linux launcher manifest carries no colima field) − a host reserve; on Linux it records the engine pod memory limit. `validateDemoConfig` adds an `apple-silicon`-scoped config-time hard-fail naming any over-budget model, its footprint, and the budget. The serialized engine-execution critical section in `Runtime/Pulsar.hs` (already single-inference-at-a-time under `engineExecutionLock`) now runs `overRamBudgetRejection` before launching a subprocess: an over-budget model publishes a clean `status=failed` instead of being launched. Proven by `cabal build all`, `cabal test infernix-unit` (with the new `validateDemoConfig` reject/accept assertions), `cabal test infernix-haskell-style`, `infernix lint files|docs|chart|proto`, `infernix docs check`, the web unit suite (`71/71`), and `poetry --directory python run check-code`. On this host the resolver computes a real budget of 13312 MiB (64 GiB − 48 GiB colima − 3 GiB reserve), which the whole apple catalog fits.
 **Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux — **GREEN**: a full host-native `cluster up` (edge `127.0.0.1:9090`, published `inferenceRamBudgetMib = +13312`) then `./.build/infernix test integration` drove all 16 apple catalog models to `status=completed` with **zero** OS OOM-kill, including the heavy diffusion rows; routed Apple Playwright then exercised the per-model matrix. The 2026-07-09 `linux-cpu` full suite passed in Kubernetes-bounded engine pods, where host-RAM admission is a no-op by design. The Apple cohort run also surfaced and fixed the Dockerfile stage-zero host-manifest schema drift (the hand-written `/opt/infernix/dhall/InfernixHost.dhall` now emits the new `sysctl` tool path and keeps colima out of the manifest).
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostTools.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Web/Contracts.hs`, `docker/Dockerfile`
@@ -1644,13 +1662,69 @@ None. The retired unbounded on-host inference path is recorded in
 
 ---
 
+## Sprint 4.27: Typed Resource Memory Admission and Inference Errors [Active]
+
+**Status**: Active — doctrine and documentation are being updated; implementation and validation remain open.
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`,
+`src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`,
+`src/Infernix/Storage.hs`, `proto/infernix/runtime/inference.proto`,
+`src/Infernix/Bridge/Result.hs`, `src/Infernix/Cluster.hs`, and the substrate budget-resolution
+helpers used by generated config and runtime admission.
+**Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`,
+`documents/architecture/model_catalog.md`, `documents/architecture/daemon_topology.md`,
+`documents/architecture/engine_pool_routing.md`, `documents/architecture/realness_contract.md`,
+`documents/engineering/testing.md`, `documents/development/testing_strategy.md`,
+`documents/development/chaos_testing.md`, `documents/operations/apple_silicon_runbook.md`,
+and this plan.
+
+### Objective
+
+Generalize the FIFO/serialized RAM guard into a pure, DRY resource-admission model across
+substrates without making capacity a daemon-startup veto. Runtime admission rejects only the
+oversized request, and the result payload carries a typed error with explicit quantities.
+
+### Deliverables
+
+- `InferenceMemoryBudget` is a closed type: `EnforcedMemoryBudget` carries `resource`, `source`,
+  and `availableMib`, while `UnenforcedMemoryBudget` is explicit and never inferred from
+  non-positive integers.
+- `InferenceError` is a closed ADT with `ModelMemoryLimitExceeded` carrying at least `modelId`,
+  `requiredMib`, `availableMib`, budget resource, and budget source. Other failure classes remain
+  typed rather than generic strings.
+- `ResultPayload` / protobuf / storage / Pulsar conversion support a typed error branch distinct
+  from successful `inline_output` and `object_ref`.
+- `validateDemoConfig` no longer fails the entire daemon solely because one model exceeds the active
+  memory budget. It may emit capacity diagnostics, but runtime admission owns rejection.
+- Apple budget resolution removes the hardcoded floor. An over-pledged host computes an enforced
+  `0 MiB` budget instead of accidentally disabling the guard.
+- `linux-cpu` admission uses the cluster engine pod memory limit. `linux-gpu` admission uses GPU
+  VRAM, because supported GPU models allocate there.
+
+### Validation
+
+- Unit tests cover pure admission decisions for in-budget, over-budget, enforced zero, and explicit
+  unenforced budgets.
+- Unit tests prove config validation accepts mixed catalogs where at least one model is too large.
+- Proto/storage/Pulsar roundtrips preserve typed `ModelMemoryLimitExceeded` fields.
+- Substrate tests prove Apple, Linux CPU, and Linux GPU resolve the intended budget resource/source.
+
+### Remaining Work
+
+- Implement the typed budget and error ADTs, protobuf changes, and conversion paths.
+- Replace the Apple-only `overRamBudgetRejection` string payload with the shared pure admission
+  function.
+- Wire Linux CPU and Linux GPU budget sources into runtime admission.
+- Move the superseded fail-fast/stringly surfaces to completed legacy tracking after code removal.
+
+---
+
 ## Remaining Work
 
-None. The MT3 catalog-replacement reopen (Sprint 4.22) is **closed** — proven by
-[Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 4.25** (matrix substrate-accuracy closure)
-and **Sprint 4.26** (apple-silicon inference RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md)
-and [Wave S](cohort-validation-waves.md). The retired unbounded on-host inference path is recorded in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+Sprint 4.27 is open for typed resource memory admission and typed inference error payloads. The MT3
+catalog-replacement reopen (Sprint 4.22) is **closed** — proven by [Wave P](cohort-validation-waves.md)
+(2026-07-04). **Sprint 4.25** (matrix substrate-accuracy closure) and **Sprint 4.26**
+(apple-silicon inference RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md)
+and [Wave S](cohort-validation-waves.md) for their original scopes.
 
 ---
 

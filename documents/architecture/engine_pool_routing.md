@@ -48,19 +48,14 @@ is hardware-deferred proof while no second Apple host is available.
 **Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog
 (each consumer's `receiverQueueSize` is fixed at 1 today) — plus the model cache (LRU in
 `python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*; `maxInflightPerMember`
-is a validated per-member invariant (see the Typed Configuration note below). Host inference RAM is
-bounded separately since Phase 4 Sprint 4.26. On `apple-silicon` every pool runs on the single on-host
-`infernix service` daemon, serialized one model at a time as fresh subprocesses, under a per-substrate
-`inferenceRamBudgetMib` (host RAM − colima pledge − reserve) and a per-model `modelRamFootprintMib`. A
-config-time hard-fail plus serialized-critical-section admission control rejects an over-budget model
-as a clean `status=failed` rather than letting the OS SIGKILL the daemon; Wave R (2026-07-08) proved
-the full 16-model Apple lane with zero OS OOM-kill.
-A per-model RAM budget plus an admission gate on the serialized on-host path is a known, still-open
-gap reopened as Phase 4 Sprint 4.26
-([phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)),
-paired with the memory-bounded validation lane in Phase 6 Sprint 6.37
-([phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md));
-see [cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) Wave R.
+is a validated per-member invariant (see the Typed Configuration note below). Model memory is
+bounded separately by the reopened typed admission doctrine in Phase 4 Sprint 4.27 / Phase 6 Sprint
+6.38. The shared admission policy compares each model's `modelRamFootprintMib` against the active
+enforced `InferenceMemoryBudget`: Apple uses unified host RAM after the Colima pledge and reserve,
+Linux CPU uses the engine pod memory limit, and Linux GPU uses GPU VRAM. Admission failures are
+per-request `status=failed` results carrying a typed `ModelMemoryLimitExceeded` `InferenceError`
+with `requiredMib` and `availableMib`; a too-large catalog entry must not invalidate the whole
+daemon or prevent smaller models from running.
 
 ## Routing Model
 
@@ -74,9 +69,8 @@ The coordinator chooses a pool topic, not a concrete node, for normal scalable w
 which eligible consumer receives the next message based on consumer permits and receiver backlog.
 Busy members stop accepting new permits or keep receiver queues small; idle members continue
 granting permits and naturally receive more work. These controls bound in-flight request concurrency
-and the disk model cache, not host inference RAM; on `apple-silicon` one serialized on-host daemon
-runs all pools, so `maxInflightPerMember = 1` does not bound cumulative or peak resident memory (open
-gap — see **Resource-safety scope** under Current Status and Phase 4 Sprint 4.26).
+and the disk model cache, not model memory capacity. Memory capacity is handled by the shared
+admission policy described in **Resource-safety scope**.
 
 Pinned routing is explicit and separate:
 
@@ -131,10 +125,10 @@ The substrate decoder type is the exact schema (print it with `infernix internal
 **validated per-member invariant** (parsed, rendered, and asserted `> 0`); it does not yet change
 runtime concurrency — each engine consumer hardcodes `receiverQueueSize = 1`, so the effective
 per-consumer in-flight is 1 regardless of the configured value (wiring the field into the consumer
-permits is tracked future work). It never bounds host inference RAM; that is handled separately by
-the Phase 4 Sprint 4.26 `inferenceRamBudgetMib` admission control (see **Resource-safety scope**). Kubernetes placement
-details stay in chart values and Kubernetes scheduling primitives; the routing graph only names
-durable pool/member identity. The invariants are fixed:
+permits is tracked future work). It never bounds model memory; that is handled separately by the
+typed resource-admission policy (see **Resource-safety scope**). Kubernetes placement details stay in
+chart values and Kubernetes scheduling primitives; the routing graph only names durable pool/member
+identity. The invariants are fixed:
 
 - pool ids are unique
 - member ids are unique within the substrate
@@ -180,10 +174,9 @@ or publish it, then restart or roll out affected daemon processes. Cache state i
 assignment state. Removing a model from a member stops new work for that model after restart and
 makes the cache entry evictable; it does not immediately delete warm artifacts unless an explicit
 drain-and-evict operation or disk cache pressure requires it. Here "cache" and "cache pressure" mean
-the on-disk model-cache LRU (`python/adapters/model_cache.py`) only; there is no host inference-RAM
-eviction concept, so this reclaims disk, not resident memory. Bounding peak RAM on the serialized
-`apple-silicon` on-host path is the reopened Phase 4 Sprint 4.26 / Phase 6 Sprint 6.37 gap (see
-**Resource-safety scope** under Current Status).
+the on-disk model-cache LRU (`python/adapters/model_cache.py`) only; there is no resident-memory
+eviction concept, so this reclaims disk, not resident memory. A model either fits the active memory
+budget for that request or returns typed `ModelMemoryLimitExceeded`.
 
 A future hot-reload extension may use compacted Pulsar desired-state topics:
 

@@ -26,15 +26,10 @@
   `engine.modelCache.sizeLimit`); the adapter helper runs LRU eviction inside that quota.
   The engine's KV cache is in-memory and rebuilds from the Pulsar conversation log on
   restart via `prefixHash`. The `sizeLimit`/LRU quota bounds only the on-disk `emptyDir`
-  cache; in-memory inference RAM — resident model weights plus the in-memory KV cache — has no
-  per-model or per-substrate budget, so peak resident memory is unbounded and the disk cache alone
-  is not a complete resource-safety story. On the `apple-silicon` substrate models run on the on-host
-  `infernix service` daemon (no in-cluster engine pod), where a full per-model `infernix test
-  integration` over the current catalog exhausts host RAM and the OS SIGKILLs the daemon — an
-  uncontrolled process death, not a clean `status=failed`. Inference-RAM admission and a bounded peak
-  are a known open gap, targeted by
-  [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) and
-  [Phase 6 Sprint 6.37](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md).
+  cache; model memory is governed separately by runtime admission. Each model's
+  `modelRamFootprintMib` is compared with the active `InferenceMemoryBudget` before launch: Apple
+  unified host RAM, Linux CPU engine pod RAM, or Linux GPU VRAM. An over-budget request returns
+  typed `ModelMemoryLimitExceeded` with explicit MiB quantities instead of launching the engine.
   Model weights themselves live in the `infernix-models` MinIO
   bucket on the four `64Gi` MinIO data claims and are streamed into the engine pod's `emptyDir` from
   the eagerly pre-staged bucket (the coordinator stages every mounted-config model at startup via the

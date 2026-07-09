@@ -71,21 +71,23 @@ generic placeholder branch. The runtime worker invokes the selected Python adapt
 streams model weights from the eagerly pre-staged `infernix-models` MinIO bucket via
 `adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
 guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
-realness lint). That construction guarantee now covers both output fabrication and host memory: on
-`apple-silicon` there are no in-cluster engine pods and every active model runs serialized,
-one-at-a-time as a fresh subprocess, on the on-host `infernix service` daemon under a per-model RAM
-budget and admission control, alongside the bounded disk model cache
+realness lint). That construction guarantee covers host memory through request-time admission rather
+than catalog-wide startup rejection: on `apple-silicon` there are no in-cluster engine pods and every
+active model runs serialized, one-at-a-time as a fresh subprocess, on the on-host `infernix service`
+daemon under a per-model RAM budget and admission control, alongside the bounded disk model cache
 (`python/adapters/model_cache.py`). Peak resident memory is therefore bounded to one admitted model:
-an over-budget model publishes a clean `status=failed` real `InferenceResult` before the engine
-subprocess launches instead of being launched, so a full per-model `infernix test integration` on
-the current catalog completes or fails clean per row and the OS never OOM-kills the daemon. The
-fail-clean realness contract now holds for host memory on `apple-silicon`; the former unbounded-RAM
-OOM gap is resolved by
+an over-budget request publishes a clean `status=failed` real `InferenceResult` with a typed
+`ModelMemoryLimitExceeded` error before the engine subprocess launches. The error carries explicit
+MiB quantities for the model footprint and available daemon budget, so larger catalog entries no
+longer prevent smaller entries from serving. The fail-clean realness contract for host memory on
+`apple-silicon` was introduced by
 [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 Sprint 4.26 (inference RAM admission + bounded peak) paired with
 [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-Sprint 6.37 (memory-bounded validation lane). See the Per-Substrate Inference RAM Budget section
-below for the resolved budget contract. Phase 1 Sprint 1.15 materializes real Apple native engine roots, replacing the former
+Sprint 6.37 (memory-bounded validation lane) and is reopened under Sprint 4.27 / Sprint 6.38 to
+remove catalog-wide fail-fast and make the error surface typed across substrates. See the
+Per-Substrate Inference RAM Budget section below for the updated budget contract. Phase 1 Sprint
+1.15 materializes real Apple native engine roots, replacing the former
 validation wrappers; Wave L records routed real-output proof for the then-active Apple catalog. Apple native engine artifacts resolve from
 `./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
 Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
@@ -108,34 +110,40 @@ through Java on the native image architecture. The reopened Phases 4/6 own full 
 realness lint. Wave K proves the then-active Linux catalogs; Wave P closed proof for the MT3 rows added
 on 2026-06-30.
 
-## Per-Substrate Inference RAM Budget
+## Per-Substrate Inference Memory Budget
 
-The generated substrate config carries a per-substrate inference RAM budget so the on-host Apple
-engine bounds peak resident memory by construction. Each `ModelDescriptor` records a conservative
-peak host-resident footprint (`modelRamFootprintMib`, MiB) for one serialized inference on the
-unified-memory / CPU path, and `DemoConfig` records the substrate's `inferenceRamBudgetMib`,
-resolved at materialization time by `resolveInferenceRamBudgetMib` in `src/Infernix/DemoConfig.hs`:
+The generated substrate config carries a resource-specific inference memory budget used by a shared
+pure admission policy. Each `ModelDescriptor` records a conservative footprint
+(`modelRamFootprintMib`, MiB), and `DemoConfig` records an `InferenceMemoryBudget` value instead of
+using integer sentinels. The target shape is explicit:
 
-- on `apple-silicon` the budget is host physical RAM (`sysctl -n hw.memsize`, via the manifest
-  `HostSysctl` tool) minus the colima VM pledge (a read-only `colima list --json` probe resolved
-  through a bootstrap-adjacent fixed candidate — colima is read, never managed, and is not a
-  manifest-owned tool) minus a host reserve — the memory actually available to the on-host
-  `infernix service` daemon once the Colima Linux VM has taken its pledge
-- on `linux-cpu` / `linux-gpu` the budget records the engine pod memory limit for information only;
-  Linux engines run in Kubernetes-bounded pods, so the effective ceiling is the k8s pod memory
-  limit and host-RAM admission does not fire
+- `EnforcedMemoryBudget { resource, source, availableMib }` means admission always compares a
+  model footprint against the available quantity, including `0 MiB`
+- `UnenforcedMemoryBudget { reason }` means there is intentionally no comparable runtime limit
+- `ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }` is the
+  typed `InferenceError` constructor published when admission rejects a request
 
-Both the config-time hard-fail and the runtime admission are `apple-silicon`-scoped, because there
-model memory is host RAM. At materialization time `validateDemoConfig` fails fast when any model's
-`modelRamFootprintMib` exceeds the resolved `inferenceRamBudgetMib`, emitting a typed error that
-names the model, its footprint, and the budget; a non-positive budget is treated as unenforced. At
-runtime, because the Apple engine executes one inference at a time under a single
-`engineExecutionLock`, `overRamBudgetRejection` (`src/Infernix/Runtime/Pulsar.hs`) runs inside that
-serialized critical section before the engine subprocess launches: an over-budget model publishes a
-clean `status=failed` real `InferenceResult` instead of being launched, so peak resident memory
-stays bounded to one admitted model and the OS never OOM-kills the daemon. `infernix init` writes
-the host manifest — carrying the `sysctl` and `colima` absolute-path tool entries — before the
-runtime config so the budget resolves.
+This removes the old need for hardcoded floors such as `max 1024 ...`: an over-pledged Apple host
+computes an enforced `0 MiB` budget, not a non-positive integer that accidentally disables the
+guard. Validation may report capacity diagnostics, but it must not reject the entire daemon solely
+because one configured model exceeds the current budget. The smaller configured models still serve.
+
+Budget sources are substrate-specific while admission and error construction stay DRY:
+
+- on `apple-silicon`, the budget source is host physical RAM (`sysctl -n hw.memsize`, via the
+  manifest `HostSysctl` tool) minus the Colima VM pledge (read-only `colima list --json`, read but
+  never managed) minus a host reserve, with resource `UnifiedHostRam`
+- on `linux-cpu`, the budget source is the Kubernetes engine pod memory limit for the active
+  cluster workload, with resource `PodRam`; this is the real cluster cap and must participate in
+  runtime admission
+- on `linux-gpu`, the budget source is the selected GPU VRAM quantity, with resource `GpuVram`,
+  because the supported GPU model allocations live in VRAM rather than CPU RAM
+
+At runtime, each substrate calls the same pure admission function before launching the engine
+subprocess or worker. When the model footprint exceeds the enforced budget, the daemon publishes a
+clean `status=failed` `InferenceResult` whose payload is a typed `InferenceError`, not successful
+inline output. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
+the model footprint and available memory in MiB.
 
 ## Generated Demo Config Contract
 
@@ -174,8 +182,8 @@ target shape is the three-role daemon model codified in
   so the real Apple engine gate fits constrained Colima memory; Linux generated values retain the
   HA-shaped platform defaults and own the HA evidence. This single-replica sizing bounds the
   control-plane Harbor/Pulsar/coordinator/demo services; the on-host `infernix service` inference
-  RAM is separately bounded by the per-substrate `inferenceRamBudgetMib` admission (see Per-Substrate
-  Inference RAM Budget and Phase 4 Sprint 4.26), so peak inference RAM stays within budget by
+  RAM is separately bounded by the typed resource-admission policy (see Per-Substrate Inference
+  Memory Budget and Phase 4 Sprint 4.27), so peak inference memory stays within budget by
   construction. The chart ships
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
   `clusterServiceEnabled` returns `False` on every substrate, and
@@ -206,10 +214,9 @@ target shape is the three-role daemon model codified in
   node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
   topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
 - direct host runs and cluster-resident placements both launch the same process-isolated
-  engine-worker contract and honor the same adapter-specific command overrides; on `apple-silicon`
-  that process isolation serializes one model at a time as a fresh subprocess and applies
-  host-memory admission at the serialized critical section, so it bounds peak inference RAM to one
-  admitted model (Phase 4 Sprint 4.26 + Phase 6 Sprint 6.37)
+  engine-worker contract and honor the same adapter-specific command overrides; runtime admission
+  applies the active `InferenceMemoryBudget` before launch and returns typed
+  `ModelMemoryLimitExceeded` when the model does not fit
 - switching runtime modes changes generated catalog content and engine bindings, not the service
   placement contract
 

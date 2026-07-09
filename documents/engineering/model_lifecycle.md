@@ -20,10 +20,10 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
 
 ## Current Status
 
-- Phase 4 (inference service) and Phase 6 (validation/E2E) are **Done** — Sprints 4.26/6.37
-  (apple-silicon inference RAM admission + memory-bounded validation lane) closed; Wave R
-  (2026-07-08) proved the full 16-model Apple lane with zero OS OOM-kill and Wave S (2026-07-09)
-  closed the rebuilt `linux-cpu` and `linux-gpu` full suites.
+- Phase 4 (inference service), Phase 5 (web UI/shared types), and Phase 6 (validation/E2E) are
+  **Active** again for the resource-admission doctrine: Sprints 4.27/5.11/6.38 replace the
+  Apple-only stringly capacity surface with typed `InferenceError` payloads and resource-specific
+  budgets across Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM.
 - Phase 9 (access control + monitoring) is **Active** — the RBAC/STS/dashboard surface was Wave Q
   cohort-validated on both `apple-silicon` and `linux-cpu` (2026-07-07), but a later UAT pass
   surfaced an unresolved authentication issue (repo-root `notes.txt`) that keeps the phase `Active`.
@@ -92,14 +92,12 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   directly on the private `WorkerRequest` envelope; the shared adapter entrypoints call
   `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk
   path to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket.
-  Note: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU); the
-  subsequent load of weights into the on-host `apple-silicon` `infernix service` inference process is
-  additionally RAM-budgeted since Phase 4 Sprint 4.26. A per-substrate `inferenceRamBudgetMib` (host
-  RAM − colima pledge − reserve) and a per-model `modelRamFootprintMib` drive a config-time hard-fail
-  and serialized-critical-section admission control, so an over-budget model is rejected as a clean
-  `status=failed` instead of OS-OOM-killing the daemon. Wave R (2026-07-08) proved the full 16-model
-  Apple `test integration` with zero OS OOM-kill; Phase 6 Sprint 6.37 classifies that fail-closed
-  result distinctly from a stall or a fabricated pass.
+  Note: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU); model
+  memory is separately budgeted by the reopened resource-admission doctrine. A per-model
+  `modelRamFootprintMib` is compared against an explicit `InferenceMemoryBudget` before launch:
+  Apple unified host RAM, Linux CPU pod RAM, or Linux GPU VRAM. An over-budget request returns typed
+  `ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`, while smaller configured models
+  continue to run.
 - the runtime worker invokes the engine for the selected binding — the Python adapter
   transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
   resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`

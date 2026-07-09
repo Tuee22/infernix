@@ -1,6 +1,8 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done
+**Status**: Active — Sprint 5.11 reopens browser contracts and the demo UI for typed inference
+errors. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
+no-env scopes.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -9,15 +11,18 @@
 
 ## Phase Status
 
-Phase 5 closes around the PureScript demo UI, the Haskell-owned browser-contract
-source, the generated contract path under `web/src/Generated/`, the clustered demo hosting rule,
-the container-owned routed Playwright executor, and the Phase 5.9 process-environment retirement
-in the demo backend, Python adapter layer, and web/Node helper scripts. Sprints 5.1-5.10 have
-their deliverables closed in the worktree; Apple cohort validation closed in Waves A/A.2, and
-the CUDA Linux `linux-cpu` and `linux-gpu` gates passed on the recorded validation.
+Phase 5's original PureScript demo UI, Haskell-owned browser-contract source, generated contract
+path under `web/src/Generated/`, clustered demo hosting rule, container-owned routed Playwright
+executor, and Phase 5.9 process-environment retirement are closed for Sprints 5.1-5.10. Sprint
+5.11 is active for typed inference errors in the browser contract and demo UI.
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
 WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
+
+Sprint 5.11 reopens the shared type boundary for runtime failures: failed inference results must
+carry closed `InferenceError` values through the Haskell browser contracts, generated PureScript
+types, WebSocket patches, and Chat rendering. `ModelMemoryLimitExceeded` is rendered from explicit
+`requiredMib` and `availableMib` fields, not from a generic string or successful inline output.
 
 ## Current Repo Assessment
 
@@ -411,10 +416,51 @@ None.
 
 ---
 
+## Sprint 5.11: Typed Inference Errors in Browser Contracts and Demo UI [Active]
+
+**Status**: Active — doctrine and documentation are being updated; implementation and validation remain open.
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `src/Infernix/Bridge/Result.hs`,
+`web/src/Infernix/Web/Chat.purs`, `web/src/Generated/Contracts.purs`,
+`web/test/Infernix/Web/ContractsSpec.purs`, `web/test/Infernix/Web/ChatSpec.purs`, and routed
+Playwright assertions under `web/playwright/`.
+**Docs to update**: `README.md`, `documents/development/demo_app_test_plan.md`,
+`documents/reference/web_portal_surface.md`, `documents/reference/api_surface.md`,
+`documents/development/frontend_contracts.md`, `documents/development/testing_strategy.md`, and this
+plan.
+
+### Objective
+
+Expose inference failures as pure typed data in the browser contract and render memory-capacity
+failures as helpful UI messages with explicit quantities.
+
+### Deliverables
+
+- Browser-facing result types include a typed `InferenceError` branch rather than only
+  `inlineOutput` / artifact fields.
+- `ModelMemoryLimitExceeded` renders the model footprint and available daemon budget in MiB.
+- The UI does not parse generic strings to identify model-size errors.
+- Existing successful result rendering for inline text and artifacts remains unchanged.
+
+### Validation
+
+- PureScript contract tests roundtrip each `InferenceError` constructor used by the backend.
+- Chat/view-model tests cover `ModelMemoryLimitExceeded` rendering from fields.
+- Routed Playwright covers selecting an over-budget model and seeing the capacity message while a
+  smaller model remains runnable in the same daemon session.
+
+### Remaining Work
+
+- Implement generated/shared browser types for `InferenceError`.
+- Update Chat rendering and tests for typed capacity failures.
+- Align API/reference docs after the backend payload shape lands.
+
+---
+
 ## Remaining Work
 
-None. Sprints 5.1-5.10 are `Done`; Apple cohort validation closed in Waves A/A.2 and the CUDA
-Linux `linux-cpu` and `linux-gpu` gates passed on the recorded validation.
+Sprint 5.11 is open for typed inference errors in the browser contracts and demo UI. Sprints
+5.1-5.10 are `Done`; Apple cohort validation closed in Waves A/A.2 and the CUDA Linux `linux-cpu`
+and `linux-gpu` gates passed on the recorded validation.
 
 ---
 

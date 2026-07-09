@@ -1,6 +1,11 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — Sprints 6.36 (real-output + matrix validation hardening) and 6.37 (apple-silicon memory-bounded validation lane, unblocked by Phase 4 Sprint 4.26 admission control) are implemented, documented, and validated. Wave R closed the Apple cohort on 2026-07-08: the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and `test e2e` ran the routed per-model browser matrix with the `data-inline-output` real-text and catalog-completeness assertions. Wave S closed the Linux lanes on 2026-07-09: rebuilt `linux-cpu` image `sha256:cfcd0c617a70919a1d083b43dfa66e9041b215a27a176ab82c2d806a36cf7627` passed `./bootstrap/linux-cpu.sh test`, and rebuilt `linux-gpu` image `sha256:31e076d62e5aab45d0f0894fcac86e634f1850aa46ae4611258f8ae3fab2ad66` plus engine images `pytorch` `sha256:978779650affd4490b16913216fed83c7f942112da23d152eb1acd58b26b1585`, `diffusers` `sha256:5643d7fdd17e599503328f6476d3a4d8dc1cc8d65c751fa2a1abaa5960ee25a0`, and `vllm` `sha256:9be7ac2a614e235bcb346e4f9e4ff0433e7183bed7cfc170501d86d13ea21a61` passed `./bootstrap/linux-gpu.sh test` with integration PASS and routed Playwright `15/15`. The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04). Note: the routed Playwright suite grew from **9** specs to **15** when the Phase 9 auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later waves record `15/15`.
+**Status**: Active — Sprint 6.38 reopens validation for typed resource memory admission across
+Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Sprints 6.36 and 6.37 remain closed
+for their original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed
+by Wave P (2026-07-04). Note: the routed Playwright suite grew from **9** specs to **15** when the
+Phase 9 auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later
+waves record `15/15`.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -59,8 +64,17 @@
 > Playwright 9/9 over the expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8
 > eager model-cache staging.
 
-Phase 6 is `Done` for Wave Q Sprint 6.36 (real-output and matrix validation hardening, opened
-2026-07-06) and Sprint 6.37 (apple-silicon memory-bounded validation lane); the prior Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave P (2026-07-04). It
+> **Resource-admission validation reopen (2026-07-09).** Sprint 6.38 validates the doctrine added by
+> Phase 4 Sprint 4.27 and Phase 5 Sprint 5.11. The suites must prove that one over-budget model does
+> not fail daemon startup, that a smaller model still runs in the same configured catalog, that Apple
+> zero/negative computed budgets remain enforced without hardcoded floors, that Linux CPU uses the
+> cluster engine pod memory limit, that Linux GPU uses GPU VRAM, and that classifiers identify
+> capacity failures by `InferenceError.ModelMemoryLimitExceeded` plus explicit MiB fields.
+
+Phase 6 is `Active` for Sprint 6.38. Wave Q Sprint 6.36 (real-output and matrix validation
+hardening, opened 2026-07-06) and Sprint 6.37 (apple-silicon memory-bounded validation lane) remain
+closed for their original scope; the prior Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave
+P (2026-07-04). It
 otherwise closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
@@ -1951,9 +1965,14 @@ RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
 
 ## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Done]
 
-**Status**: Done — unblocked by Phase 4 Sprint 4.26; the memory-exhaustion classification is in the integration lane, the **Apple integration never-OOM proof is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model `test integration` all `status=completed`, zero OS OOM-kill), and Wave S revalidated the Linux full suites where host-RAM admission is a no-op because engines run in Kubernetes-bounded pods.
+**Status**: Done — unblocked by Phase 4 Sprint 4.26 for the original Apple-only classifier; the
+memory-exhaustion classification is in the integration lane, the **Apple integration never-OOM proof
+is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model
+`test integration` all `status=completed`, zero OS OOM-kill), and Wave S revalidated the Linux full
+suites for that scope. Sprint 6.38 supersedes this with typed resource-admission validation across
+Apple, Linux CPU, and Linux GPU.
 **Code-side closure**: Complete for the classification (2026-07-08). Phase 4 Sprint 4.26's admission control landed, so an over-budget apple-silicon model now publishes a clean `status=failed` instead of OS-OOM-killing the daemon. The integration lane adds `classifyAppleMemoryBoundedResult`: an over-budget model is a clean per-row `AppleMemoryBoundedFailClosed` (its message names the inference RAM budget), distinguishable from a fabricated pass (`status /= completed`) and a real engine failure; a genuinely missing result is named as the OS-OOM-kill / stall symptom. Rows that fit the budget must still complete and honor the per-family real-output contract, so behavior is unchanged on hosts where the whole catalog fits. Verified by `cabal build all` (the integration suite compiles) and `cabal test infernix-haskell-style`.
-**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **GREEN (2026-07-08)**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **GREEN (2026-07-09)**: inference runs in in-cluster engine pods, so host-RAM admission is a no-op and the full `./bootstrap/linux-cpu.sh test` / `./bootstrap/linux-gpu.sh test` suites validate the same fail-closed result handling.
+**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **GREEN (2026-07-08)**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **GREEN (2026-07-09)** for the original fail-closed result-handling scope; Linux CPU pod-memory and Linux GPU VRAM admission are reopened in Sprint 6.38.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -1993,15 +2012,57 @@ Code-side (the classification) is complete.
 
 ---
 
+## Sprint 6.38: Typed Resource Admission Validation Across Substrates [Active]
+
+**Status**: Active — doctrine and documentation are being updated; implementation and validation remain open.
+**Implementation**: `test/unit/`, `test/integration/Spec.hs`, `web/test/`, `web/playwright/`,
+`src/Infernix/Lint/Docs.hs`, and substrate-specific validation helpers that inspect generated
+runtime config and live daemon results.
+**Docs to update**: `README.md`, `documents/development/testing_strategy.md`,
+`documents/development/chaos_testing.md`, `documents/development/demo_app_test_plan.md`,
+`documents/engineering/testing.md`, `documents/architecture/realness_contract.md`, and this plan.
+
+### Objective
+
+Prove typed memory admission behaves correctly across substrates and cannot regress to catalog-wide
+startup failure, stringly error parsing, or disabled guards on zero/negative budgets.
+
+### Deliverables
+
+- Unit coverage for pure admission decisions across `UnifiedHostRam`, `PodRam`, and `GpuVram`.
+- Config-validation coverage proving a catalog with at least one over-budget model still validates
+  when other models fit.
+- Apple budget coverage proving over-pledged host calculation yields enforced `0 MiB`, not
+  `UnenforcedMemoryBudget`.
+- Linux CPU coverage proving admission uses the cluster engine pod memory limit.
+- Linux GPU coverage proving admission uses GPU VRAM rather than CPU RAM.
+- Integration and browser coverage proving `ModelMemoryLimitExceeded` reaches the result bridge and
+  UI as typed data with explicit `requiredMib` / `availableMib`.
+
+### Validation
+
+- `infernix test unit` covers pure admission, config validation, and payload conversion.
+- `infernix test integration` exercises over-budget and in-budget rows in one daemon session.
+- `infernix test e2e` verifies the demo-app capacity message and smaller-model success.
+- `infernix lint docs` rejects retired doctrine that says Linux memory budgets are informational or
+  that config validation fails the daemon for any over-budget model.
+
+### Remaining Work
+
+- Add unit fixtures for mixed-size catalogs and enforced zero budgets.
+- Add substrate budget-source assertions for Linux CPU and Linux GPU.
+- Add integration/E2E assertions for typed capacity errors and smaller-model continuity.
+
+---
+
 ## Remaining Work
 
-None. The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
+Sprint 6.38 is open for typed resource admission validation across Apple, Linux CPU, and Linux GPU.
+The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
 [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36** (real-output + matrix validation
 hardening) and **Sprint 6.37** (apple-silicon memory-bounded validation lane) are closed by
-[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md): the
-`data-inline-output` real-text marker, the catalog-completeness guard, and the integration
-memory-exhaustion classification all landed and passed the full Apple, `linux-cpu`, and `linux-gpu`
-validation gates.
+[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md) for their original
+scopes.
 
 ## Documentation Requirements
 

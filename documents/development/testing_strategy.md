@@ -35,23 +35,19 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   flight
 - active phase docs record hardware-cohort residuals explicitly when one machine has validated and
   the counterpart Apple Silicon or CUDA Linux closure batch remains
-- resource safety on the host-native `apple-silicon` lane is bounded by construction: every active
-  model runs on the on-host `infernix service` daemon serialized one-model-at-a-time as fresh
-  subprocesses, and Phase 4 Sprint 4.26 inference-RAM admission now bounds peak resident host memory
-  to one admitted model on top of the DISK model cache (`python/adapters/model_cache.py`). Each model
-  carries a conservative peak host-resident footprint (`modelRamFootprintMib`), the materialized
-  `DemoConfig` resolves an `inferenceRamBudgetMib`, and an over-budget model publishes a clean
-  `status=failed` at the serialized critical section instead of launching its engine subprocess, so a
-  full per-model `infernix test integration` traversal of the current 16-model catalog completes
-  (rows that fit the budget) or fails closed per row (over-budget = clean `status=failed`) with zero
-  OS OOM-kill. This closed the former still-open gap tracked as
+- resource safety is being generalized by the reopened typed admission doctrine: each model carries
+  a conservative footprint (`modelRamFootprintMib`), each substrate resolves an explicit
+  `InferenceMemoryBudget`, and an over-budget request returns a clean `status=failed` with typed
+  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` before
+  the engine launches. Apple uses unified host RAM after the Colima pledge and reserve, Linux CPU
+  uses the engine pod memory limit, and Linux GPU uses GPU VRAM. Validation must prove that one
+  oversized catalog entry does not fail daemon startup or block smaller models. This reopens
   [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
-  Sprint 4.26 (inference-RAM admission + bounded peak) and
+  Sprint 4.27,
+  [../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md](../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md)
+  Sprint 5.11, and
   [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-  Sprint 6.37 (memory-bounded validation lane); see the `## Apple-Silicon Memory-Bounded Validation`
-  section below and
-  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
-  Wave R
+  Sprint 6.38
 
 ## Validation Layers
 
@@ -88,10 +84,10 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `cluster status`, every generated active-mode catalog entry from the mounted demo config,
   demo-ui disablement on the `linux-cpu` lane via
   `infernix internal materialize-substrate linux-cpu --demo-ui false`, and edge-port rediscovery
-  on the host-native `apple-silicon` lane. On `apple-silicon` this per-model catalog traversal is
-  memory-bounded by Phase 4 Sprint 4.26 admission: a full run of the current 16-model catalog
-  completes (rows that fit the budget) or fails closed per row (over-budget = clean `status=failed`)
-  with zero OS OOM-kill (see `## Apple-Silicon Memory-Bounded Validation`)
+  on the host-native `apple-silicon` lane. This per-model catalog traversal is bounded by the
+  resource-admission doctrine: a full run completes rows that fit the active budget or fails closed
+  per row with typed `ModelMemoryLimitExceeded` and explicit MiB quantities (see
+  `## Resource Memory-Bounded Validation`)
 - `infernix test e2e` validates the routed browser surface through the full durable-context
   Playwright flow alongside the SPA root, the `Infernix` heading, and the published platform-state
   JSON endpoints
@@ -167,10 +163,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - `infernix test integration` serializes the active staged substrate into the generated demo config and
   publication state, then validates the routed demo API, auxiliary routed prefixes, every
   generated active-mode catalog entry, cache mutation endpoints, and the daemon request or result
-  loop for the active substrate. On `apple-silicon` this per-model traversal of the current 16-model
-  catalog is memory-bounded by Phase 4 Sprint 4.26 admission and either completes or fails closed
-  per row (over-budget = clean `status=failed`) with zero OS OOM-kill (see
-  `## Apple-Silicon Memory-Bounded Validation`)
+  loop for the active substrate. This per-model traversal is bounded by runtime memory admission and
+  either completes or fails closed per row with typed `ModelMemoryLimitExceeded` (see
+  `## Resource Memory-Bounded Validation`)
 - `infernix test integration` also validates `cluster status`, `cluster down`, and repeated
   `cluster up` behavior for the active substrate
 - `infernix test integration` also validates the routed `GET /api/cache`,
@@ -246,15 +241,13 @@ The runtime worker dispatches through the selected engine binding, fetches model
 the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
 typed per-family result surface. Realness is guaranteed by construction — the engine code cannot
 return a fabricated result (enforced by the realness lint), so the suites trust the result and fail
-closed on `status=failed`. On the `apple-silicon` lane that fail-closed guarantee now extends to
-host memory: Phase 4 Sprint 4.26 inference-RAM admission bounds peak resident memory to one admitted
-model, so an over-budget model publishes a clean `status=failed` at the serialized critical section
-instead of exhausting host RAM, and a full per-model run of the current 16-model catalog completes
-or fails closed per row with zero OS OOM-kill (see `## Apple-Silicon Memory-Bounded Validation`;
-Phase 4 Sprint 4.26 + Phase 6 Sprint 6.37). The Phases 1/4/6 work delivers and re-attests real
-output per accelerator, and not-yet-real rows are explicit residuals. When a catalog row is added after a
-cohort wave, that older wave remains valid only for its then-active catalog; the new row is not
-considered proven until the active wave reruns the catalog-driven integration and browser matrices.
+closed on `status=failed`. That fail-closed guarantee extends to model memory through the reopened
+resource-admission doctrine: an over-budget request publishes typed `ModelMemoryLimitExceeded`
+before launch, while rows that fit the active budget still run. The Phases 1/4/6 work delivers and
+re-attests real output per accelerator, and not-yet-real rows are explicit residuals. When a catalog
+row is added after a cohort wave, that older wave remains valid only for its then-active catalog;
+the new row is not considered proven until the active wave reruns the catalog-driven integration and
+browser matrices.
 
 ### One DRY substrate-aware suite
 
@@ -286,12 +279,15 @@ The integration suite dispatches each row to its `ResultFamily` assertion:
 - **Audio generation / TTS** (bark): text -> valid audio; `object_ref`.
 - **OMR tool** (Audiveris): image/PDF -> MusicXML; `object_ref`.
 
-`ResultPayload` carries `oneof {inline_output, object_ref}` on the wire, and `buildPayload` routes
-LLM and speech families to inline output while artifact families return object references. The
-newer proto fields are a non-text **input** object-ref on `InferenceRequest` / `WorkerRequest` and
-an object-ref **output** on `WorkerResponse` for artifact adapters. Artifact results always use the
-always-on infernix-demo-objects bucket, never the retired infernix-runtime / infernix-results
-buckets.
+`ResultPayload` carries successful payloads as `inline_output` or `object_ref` and failed payloads
+as a typed `InferenceError` branch. `buildPayload` routes LLM and speech successes to inline output
+while artifact successes return object references. Runtime admission failures use
+`InferenceError.ModelMemoryLimitExceeded` with explicit `required_mib` and `available_mib`
+quantities plus budget resource/source; tests must assert those fields directly rather than parsing
+human text. The newer proto fields are a non-text **input** object-ref on `InferenceRequest` /
+`WorkerRequest` and an object-ref **output** on `WorkerResponse` for artifact adapters. Artifact
+results always use the always-on infernix-demo-objects bucket, never the retired infernix-runtime /
+infernix-results buckets.
 
 ### Substrate-agnostic Playwright layer
 
@@ -312,34 +308,25 @@ as a mechanical invariant: `allMatrixRowIds` is exported from `Models.hs`, the u
 invariant proves no row is omitted from catalogs or residual accounting; it does not replace the
 current cohort run required to prove newly added runnable rows.
 
-## Apple-Silicon Memory-Bounded Validation
+## Resource Memory-Bounded Validation
 
-With Phase 4 Sprint 4.26 inference-RAM admission landed, the host-native `apple-silicon` per-model
-`infernix test integration` traversal is memory-bounded by construction. Every model carries a
-conservative peak host-resident footprint (`modelRamFootprintMib`), the materialized `DemoConfig`
-resolves an `inferenceRamBudgetMib` (Apple physical RAM from `sysctl -n hw.memsize` minus the colima
-VM pledge minus a host reserve), and the on-host daemon serializes execution under a single lock so
-peak resident memory is bounded to one admitted model. An over-budget model is rejected at that
-serialized critical section and publishes a clean `status=failed` (a real `InferenceResult`, not a
-fabrication) instead of launching its engine subprocess, so the OS never OOM-kills the daemon. This
-is the fail-clean-never-OOM contract that replaced the earlier resolved gap where an unbounded
-per-model run could exhaust host RAM and get the daemon OS-SIGKILL'd.
+With the reopened resource-admission doctrine, per-model integration traversal is memory-bounded by
+construction across substrates. Every model carries `modelRamFootprintMib`, the active substrate
+resolves an `InferenceMemoryBudget`, and the daemon rejects only the oversized request before the
+engine launches. Apple serializes on the host daemon; Linux CPU admits against the Kubernetes engine
+pod memory limit; Linux GPU admits against GPU VRAM.
 
-A full per-model apple-silicon run therefore has exactly two per-row outcomes and no third:
+A full per-model run therefore has exactly two per-row outcomes and no third:
 
-- **completes** — the model fits `inferenceRamBudgetMib`, runs, and honors its per-family
-  real-output contract; or
-- **fails closed** — the model's footprint exceeds the budget, so the row is a clean per-row
-  `status=failed` whose message names the inference RAM budget.
+- **completes** — the model fits the active enforced budget, runs, and honors its per-family
+  real-output contract
+- **fails closed** — the model's footprint exceeds the active budget, so the row is a clean per-row
+  `status=failed` with typed `ModelMemoryLimitExceeded` and explicit MiB quantities
 
-`classifyAppleMemoryBoundedResult` in `test/integration/Spec.hs` enforces this by distinguishing the
-clean fail-closed result from the two disallowed outcomes: a **stall** (a genuinely missing result —
-the former OS-OOM-kill symptom, now named as a real defect signal rather than an expected capacity
-limit) and a **fabricated pass**. This is the Wave R single-accelerator cohort gate, paired across
-Phase 4 Sprint 4.26 (admission + bounded peak) and Phase 6 Sprint 6.37 (memory-bounded validation
-lane); see
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
-Wave R.
+The validation classifier must distinguish a typed memory-capacity failure from the two disallowed
+outcomes: a **stall** (a genuinely missing result, including the historical OS-OOM-kill symptom) and
+a **fabricated pass**. This is owned by Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6 Sprint
+6.38.
 
 ## Durable-Context Demo Validation
 

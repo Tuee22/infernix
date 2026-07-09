@@ -502,8 +502,10 @@ warning classification. In short:
 
 - long image publication, final-image preload, Apple retained-state replay, and early Kubernetes
   readiness warnings can be healthy convergence while lifecycle heartbeat fields continue to update
-- host-native inference is RAM-budgeted per substrate with admission control, so a model whose
-  footprint exceeds the substrate's inference-RAM budget fails cleanly (`status=failed`) rather than
+- inference is budgeted against the resource that actually holds model weights: Apple unified host
+  RAM, Linux CPU engine-pod RAM, or Linux GPU VRAM. A model whose declared memory requirement exceeds
+  the daemon's typed budget fails cleanly as a `ModelMemoryLimitExceeded` inference error, carrying
+  both the model requirement and available limit as explicit MiB quantities, rather than
   OOM-killing the daemon; a host `SystemOOM` outside that budgeted path is environment contention and
   should be addressed before rerunning heavy lifecycle work
 - buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
@@ -823,9 +825,11 @@ this section is an orientation summary.
   bound on either role
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
-- host-native inference is bounded by an explicit per-substrate inference-RAM budget with admission
-  control: a model whose footprint exceeds the budget fails cleanly (`status=failed`) rather than
-  exhausting host memory, so a full per-model run cannot OOM-kill the on-host daemon
+- inference memory is bounded by an explicit per-substrate, resource-specific budget with admission
+  control: Apple compares models against unified host RAM, Linux CPU compares against the engine pod
+  RAM limit, and Linux GPU compares against GPU VRAM. A model whose requirement exceeds that budget
+  produces a typed `ModelMemoryLimitExceeded` error result with `requiredMib` and `availableMib`
+  quantities instead of exhausting the daemon
 
 ## Messaging and Lane Model
 
@@ -876,12 +880,13 @@ contracts.
   path under the demo surface
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
-  audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`. Realness
-  is guaranteed by construction — the engine code is structurally incapable of returning a
-  fabricated result (the realness lint forbids it). Cohort waves prove the catalog that existed when
-  they ran; rows added later, including the 2026-06-30 MT3 replacements, require the active Wave O
-  rerun before their full integration/e2e proof is claimed. Rows whose real engine is not yet landed
-  are explicit residuals. One DRY
+  audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`, with
+  typed inference errors classified separately from successful output payloads. Realness is
+  guaranteed by construction — the engine code is structurally incapable of returning a fabricated
+  result (the realness lint forbids it). Cohort waves prove the catalog that existed when they ran;
+  rows added later, including the 2026-06-30 MT3 replacements, require the active Wave O rerun before
+  their full integration/e2e proof is claimed. Rows whose real engine is not yet landed are explicit
+  residuals. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
   `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
@@ -950,14 +955,17 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   handling where needed
 - the validation surface must cover every supported matrix row through the appropriate mix of unit,
   integration, and Playwright or browser-driven checks
-- each matrix row carries a per-family result contract — its `ResultFamily` and whether it returns
-  inline text or an `infernix-demo-objects` object reference, owned by
-  [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md) — and the
-  integration and Playwright suites assert that result surface and fail closed on `status=failed`.
-  Realness is guaranteed by construction — the engine code cannot fabricate a result (enforced by the
-  realness lint); delivery across substrates is owned by the reopened Phases 1/4/6, and rows whose real
-  engine is not yet landed are explicit residuals. The union-coverage invariant ("every row real on at
-  least one substrate") is mechanically checked under `infernix lint docs`
+- each matrix row carries a per-family result contract — its `ResultFamily`, whether successful
+  output returns inline text or an `infernix-demo-objects` object reference, and which typed
+  `InferenceError` variants are valid failure results, owned by
+  [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md). The integration
+  and Playwright suites assert the success surface and fail closed on `status=failed` while checking
+  typed errors such as `ModelMemoryLimitExceeded` by constructor and explicit MiB quantities rather
+  than parsing human-readable text. Realness is guaranteed by construction — the engine code cannot
+  fabricate a result (enforced by the realness lint); delivery across substrates is owned by the
+  reopened Phases 1/4/6, and rows whose real engine is not yet landed are explicit residuals. The
+  union-coverage invariant ("every row real on at least one substrate") is mechanically checked under
+  `infernix lint docs`
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
   the matrix to only the local Kind demo-ground launcher paths
 

@@ -41,16 +41,23 @@ unconditional operator ribbon, the single shared `minioadmin` credential) closed
 schema files and Helm-assembled Dhall bodies were removed — all moved to Completed.
 
 The items that remain below are genuinely still-present: the intentionally-retained lazy
-per-inference model-bootstrap *fallback* (the eager `warm-model-cache` path is primary) and the
-staged substrate-catalog filename consolidation. The CUDA-labeled-but-CPU matrix cells (Phase 4
-Sprint 4.25) and the unbounded, no-admission apple-silicon on-host inference path (Phase 4 Sprint
-4.26 + Phase 6 Sprint 6.37) were **replaced code-side under Wave R (2026-07-08)** and moved to
-Completed below, with the single-accelerator cohort sign-off named as the Wave R residual.
+per-inference model-bootstrap *fallback* (the eager `warm-model-cache` path is primary), the staged
+substrate-catalog filename consolidation, and the resource-admission surfaces superseded by the
+2026-07-09 doctrine. The CUDA-labeled-but-CPU matrix cells (Phase 4 Sprint 4.25) and the original
+unbounded, no-admission apple-silicon on-host inference path (Phase 4 Sprint 4.26 + Phase 6 Sprint
+6.37) were **replaced code-side under Wave R (2026-07-08)** and moved to Completed below, with the
+single-accelerator cohort sign-off named as the Wave R residual. The Sprint 4.26 replacement itself
+now has narrower pending cleanup rows for catalog-wide fail-fast, integer sentinel/floor semantics,
+and stringly result payloads.
 
 | Location | Why it is slated for removal | Owning phase or sprint |
 |----------|------------------------------|------------------------|
 | The lazy per-inference model-bootstrap workflow — the `persistent://infernix/system/model.bootstrap.request` topic family + `model.bootstrap.ready.<modelId>` events, `src/Infernix/Bootstrap/Models.hs` coordinator Failover bootstrap subscription, the `modelBootstrapTopic` config field, and the "engine sees uncached model → publishes bootstrap request" hot path. | Replaced by the coordinator's **eager** `warm-model-cache` staging of every model listed in the mounted `infernix.dhall` at cluster-up (a cluster-up barrier). The model set is the mounted config (source of truth); `src/Infernix/Models.hs` is a demo-only generator of that list. The download/upload/`.ready` mechanics are retained; only the per-request trigger is retired (engine lazy path kept as fallback). | Phase 8 Sprint 8.5 |
 | The staged substrate-catalog filename `infernix-substrate.dhall` under the build root (mounted into cluster pods at `/opt/build/infernix-substrate.dhall`). | The Phase 8 config doctrine names `./infernix.dhall` as the operator runtime-config convention (created by `infernix init`), but the build-staged substrate catalog file is still named `infernix-substrate.dhall` and has not been consolidated to that convention. The auto-materialize-if-absent preflight this item previously bundled was already removed by Phase 8 Sprints 8.2/8.3/8.6 (config is now created only by explicit `infernix init` / `infernix test init`, with every command failing fast and naming the init to run when its config is missing). | Filename consolidation: not yet scheduled |
+| Catalog-wide model-memory fail-fast in `src/Infernix/DemoConfig.hs::validateDemoConfig`. | The 2026-07-09 doctrine allows a generated catalog to include models larger than the current daemon budget as long as smaller models can still run. Validation may report capacity diagnostics, but it must not fail the entire daemon because any one model exceeds the active memory budget. Runtime admission owns per-request rejection. | Phase 4 Sprint 4.27 + Phase 6 Sprint 6.38 |
+| Integer/sentinel budget semantics and Apple hardcoded floor in `src/Infernix/DemoConfig.hs` / runtime admission (`appleMinInferenceRamBudgetMib`, `max 1024 ...`, and non-positive budget means unenforced). | Replace with a pure `InferenceMemoryBudget` ADT. `EnforcedMemoryBudget 0 MiB` remains enforced when an Apple host is over-pledged; `UnenforcedMemoryBudget` is explicit. The same shape must support Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. | Phase 4 Sprint 4.27 |
+| Apple-only, stringly runtime memory rejection in `src/Infernix/Runtime/Pulsar.hs::overRamBudgetRejection` and result conversion paths that encode failures as successful inline output text. | Replace with a shared pure admission function and a typed `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }` branch in `ResultPayload`, protobuf, storage, result bridge, browser contracts, and demo UI rendering. Tests must assert constructors and quantities, not parse human text. | Phase 4 Sprint 4.27 + Phase 5 Sprint 5.11 + Phase 6 Sprint 6.38 |
+
 ## Completed
 
 | Location | Why it was slated for removal | Owning phase or sprint |
