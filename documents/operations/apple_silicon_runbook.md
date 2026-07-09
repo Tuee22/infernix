@@ -48,6 +48,8 @@
 
 ## Supported Flow
 
+- run `./bootstrap/apple-silicon.sh build`
+- run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
 - run `./bootstrap/apple-silicon.sh up`
 - run `./bootstrap/apple-silicon.sh status`
 - run `./bootstrap/apple-silicon.sh test`
@@ -63,6 +65,7 @@ Direct reference path:
 
 - build both Haskell binaries with
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+- run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
 - run `./.build/infernix cluster up`
 - run `./.build/infernix test all`
 

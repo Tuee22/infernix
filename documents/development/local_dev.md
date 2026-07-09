@@ -38,6 +38,8 @@
 ## Apple Host-Native Flow
 
 ```bash
+./bootstrap/apple-silicon.sh build
+./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
 ./bootstrap/apple-silicon.sh test

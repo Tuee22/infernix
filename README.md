@@ -270,6 +270,8 @@ Use the substrate bootstrap that matches the host you actually want to run:
 
 ```bash
 # Apple Silicon / Metal host-native lane.
+./bootstrap/apple-silicon.sh build
+./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 
 # Ubuntu 24.04 CPU lane.
@@ -552,6 +554,8 @@ commands run through the outer-container launcher.
 Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned bootstrap:
 
 ```bash
+./bootstrap/apple-silicon.sh build
+./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
 ./bootstrap/apple-silicon.sh test
@@ -562,6 +566,7 @@ Direct reference commands:
 
 ```bash
 cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+./.build/infernix init
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix test all

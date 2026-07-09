@@ -43,9 +43,11 @@ Usage:
 
 Commands:
   help        Show this help text.
-  doctor      Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`.
+  doctor      Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`;
+              also reports whether Poetry has been bootstrapped yet.
   build       Ensure prerequisites and build both host binaries under ./.build/.
-  up          Ensure prerequisites, build the host binary, and run \`cluster up\`.
+  up          Ensure prerequisites, build the host binary, and run \`cluster up\`;
+              requires config from \`./.build/infernix init\` when missing.
   run-daemon  Run the on-host \`infernix service\` engine daemon in the foreground; required for
               inference on Apple Silicon after \`up\` and not spawned by \`up\` itself.
   status      Show \`cluster status\`.
@@ -74,6 +76,7 @@ Available Apple Silicon commands:
 
 Direct reference commands:
   cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+  ./.build/infernix init
   ./.build/infernix cluster up
   ./.build/infernix service
   ./.build/infernix cluster status
@@ -152,12 +155,33 @@ ensure_skopeo() {
   ensure_brew_formula skopeo
 }
 
+# Diagnostic only: Poetry is not a generic platform prerequisite (see
+# documents/development/python_policy.md). `infernix` bootstraps a
+# user-local Poetry executable itself the first time an Apple adapter
+# setup or validation path needs one, provided `./infernix-host.dhall`
+# already exists (created by `infernix init`). This check only surfaces
+# status from `doctor`/`build`/`up` so an unbootstrapped Poetry is visible
+# early instead of only as a deeper `cluster up` failure.
+check_poetry() {
+  local home_dir
+  local candidate
+  home_dir="$(bootstrap::effective_home)"
+  for candidate in "${home_dir}/.local/share/pypoetry/venv/bin/poetry" "${home_dir}/.local/bin/poetry"; do
+    if [[ -x "${candidate}" ]]; then
+      bootstrap::info "Poetry is available at ${candidate}."
+      return 0
+    fi
+  done
+  bootstrap::info "Poetry is not yet bootstrapped. infernix bootstraps it automatically the first time an Apple adapter setup path needs one, once ./infernix-host.dhall exists (run \`./.build/infernix init\` first if you have not already)."
+}
+
 ensure_build_prerequisites() {
   bootstrap::require_macos
   ensure_homebrew
   ensure_ghcup_toolchain
   ensure_protobuf_compiler
   ensure_skopeo
+  check_poetry
 }
 
 # The hermetic PATH=/usr/bin:/bin set at the top of this script keeps the

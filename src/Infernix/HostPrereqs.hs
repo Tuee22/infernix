@@ -15,7 +15,7 @@ import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (toLower)
 import Data.List (nub)
 import Infernix.CommandRegistry (Command (..))
-import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, targetRuntimeModeForExecutionContext)
+import Infernix.Config (ControlPlaneContext (HostNative), controlPlaneContext, discoverPaths, requireHostManifest, targetRuntimeModeForExecutionContext)
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Types (RuntimeMode (AppleSilicon))
 import System.Directory (doesFileExist)
@@ -52,7 +52,8 @@ ensureAppleHostPrerequisites maybeRuntimeMode command = do
       requireBrewExecutable brewExecutable
       mapM_ (ensureHomebrewManagedTool brewExecutable) (filter (/= ApplePoetry) requirements)
       when (requiresDockerDaemon requirements) ensureSelectedDockerDaemonReady
-      when (ApplePoetry `elem` requirements) $
+      when (ApplePoetry `elem` requirements) $ do
+        requireHostManifest paths
         void (ensurePoetryExecutable paths)
 
 appleHostRequirementIds :: RuntimeMode -> Command -> [String]

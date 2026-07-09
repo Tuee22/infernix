@@ -19,6 +19,7 @@ module Infernix.Config
     testConfigPath,
     publishedConfigMapCatalogPath,
     publishedConfigMapManifestPath,
+    requireHostManifest,
     resolveRuntimeMode,
     targetRuntimeModeForExecutionContext,
     watchedDemoConfigPath,
@@ -265,6 +266,27 @@ testConfigPath paths = repoRoot paths </> "infernix.test.dhall"
 -- `/opt/infernix/dhall/InfernixHost.dhall` fallback for image runtime.
 hostConfigPath :: Paths -> FilePath
 hostConfigPath paths = repoRoot paths </> "infernix-host.dhall"
+
+-- | Fail fast with the canonical "run infernix init" message when the
+-- host manifest is missing on a host-native execution context. Shared by
+-- 'Infernix.CLI.discoverCliCommandPaths' and
+-- 'Infernix.HostPrereqs.ensureAppleHostPrerequisites' so both surfaces
+-- report the same actionable error instead of failing deeper (e.g. inside
+-- the Apple Poetry bootstrap, which needs the manifest to locate the
+-- operator's home directory) with a message that does not name the
+-- missing manifest as the actual cause.
+requireHostManifest :: Paths -> IO ()
+requireHostManifest paths =
+  case (pathsHostConfig paths, controlPlaneContext paths) of
+    (Nothing, HostNative) ->
+      ioError
+        ( userError
+            ( "host manifest missing at "
+                <> hostConfigPath paths
+                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
+            )
+        )
+    _ -> pure ()
 
 publishedConfigMapCatalogPath :: Paths -> FilePath
 publishedConfigMapCatalogPath paths =
