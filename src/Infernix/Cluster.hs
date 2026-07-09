@@ -843,16 +843,8 @@ discoverClusterCommandPaths :: IO Paths
 discoverClusterCommandPaths = do
   paths <- Config.discoverPaths
   Config.ensureRepoLayout paths
-  case (Config.controlPlaneContext paths, Config.pathsHostConfig paths) of
-    (HostNative, Nothing) ->
-      ioError
-        ( userError
-            ( "host manifest missing at "
-                <> Config.hostConfigPath paths
-                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
-            )
-        )
-    _ -> pure paths
+  Config.requireHostManifest paths
+  pure paths
 
 matchingClusterState :: RuntimeMode -> Maybe ClusterState -> Maybe ClusterState
 matchingClusterState runtimeMode maybeState =
