@@ -55,7 +55,9 @@ this canonical list.
   `os.environ` reads in web/Python code. Canonical: [no_env_vars.md](no_env_vars.md) and
   [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 - zero version-controlled `.dhall`: the `infernix` binary is the sole generator of every `.dhall`;
-  operators create config with `infernix init` / `infernix test init` (fail-fast if missing).
+  operators create config with `infernix init` / `infernix test init`; ordinary `infernix`
+  commands fail fast if config is missing, while `./bootstrap/apple-silicon.sh up` explicitly runs
+  `./.build/infernix init --if-missing` before `cluster up`.
   Canonical: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 
 ## Supported Build And Operator Workflows

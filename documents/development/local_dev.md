@@ -39,7 +39,6 @@
 
 ```bash
 ./bootstrap/apple-silicon.sh build
-./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
 ./bootstrap/apple-silicon.sh test
@@ -70,9 +69,11 @@ Create config explicitly:
   fast if `./infernix.dhall` already exists unless `--force`.
 - `infernix test init` writes the thin `./infernix.test.dhall` that the test harness reads.
 
-There is no auto-generate-if-absent backstop: every runtime, cluster, cache, and aggregate
-`infernix test …` command fails fast naming the exact init to run when its config is missing
-(focused `infernix lint …` and `infernix docs check` remain config-independent). The test harness
+There is no hidden auto-generate-if-absent backstop inside ordinary `infernix` commands: every
+runtime, cluster, cache, and aggregate `infernix test …` command fails fast naming the exact init to
+run when its config is missing (focused `infernix lint …` and `infernix docs check` remain
+config-independent). `./bootstrap/apple-silicon.sh up` is the stage-0 convenience exception: it
+explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The test harness
 owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2e|all` reads
 `./infernix.test.dhall` (fail fast → `infernix test init`), backs up any existing `./infernix.dhall`,
 generates the harness config from the test config, runs the suites, and restores the backup (or

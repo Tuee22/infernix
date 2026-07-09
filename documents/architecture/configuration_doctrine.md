@@ -17,12 +17,15 @@
   binary-produced string (`nindent`). Schemas are **reflected from the Haskell decoder types**
   (`renderDecoderExpected (Dhall.auto @T)`), so the emitted schema cannot drift from what the
   decoder accepts.
-- **Config is created by explicit `init`.** `infernix init` writes the operator's runtime
+- **Config is created by `init`.** `infernix init` writes the operator's runtime
   `./infernix.dhall` (the substrate: runtime mode, daemon roles, model set) and the host manifest
   `./infernix-host.dhall`. `infernix test init` writes the thin `./infernix.test.dhall`. There is
-  **no auto-generate-if-absent backstop** anywhere.
+  **no hidden auto-generate-if-absent backstop** inside ordinary `infernix` commands. The Apple
+  stage-0 bootstrap wrapper is the sole convenience exception: `./bootstrap/apple-silicon.sh up`
+  explicitly invokes `./.build/infernix init --if-missing` before `cluster up`.
 - **Everything fails fast when its config is missing**, naming the init to run
-  (e.g. `runtime config missing at ./infernix.dhall; run \`infernix init\``).
+  (e.g. `runtime config missing at ./infernix.dhall; run \`infernix init\``), unless the operator
+  entered through that Apple bootstrap wrapper.
 - **The test harness owns the runtime config during a run**: driven by `./infernix.test.dhall`, it
   generates `./infernix.dhall`, runs the suites, and deletes it (self-created-only guard); it fails
   fast if `./infernix.dhall` already exists.

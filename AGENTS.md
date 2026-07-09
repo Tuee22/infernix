@@ -75,8 +75,9 @@ Read first:
   sole generator of every `.dhall` — including the ConfigMap/Secret bodies (Helm only `nindent`s a
   binary-produced string, never renders/parses Dhall). Schemas are reflected from the Haskell
   decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
-  manifest) and `infernix test init` (`./infernix.test.dhall`); there is no auto-generate-if-absent
-  backstop — every command fails fast if its config is missing, naming the init to run. The test harness generates
+  manifest) and `infernix test init` (`./infernix.test.dhall`); ordinary `infernix` commands fail
+  fast if config is missing, naming the init to run, while `./bootstrap/apple-silicon.sh up`
+  explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The test harness generates
   `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
   the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
   generator); the coordinator eager-stages that set at startup. Canonical doctrine:

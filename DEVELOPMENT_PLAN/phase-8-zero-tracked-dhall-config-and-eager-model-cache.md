@@ -5,8 +5,9 @@
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
 > binary as the sole generator of every `.dhall` (including ConfigMap/Secret bodies), explicit
-> `init` / `test init` creation, fail-fast-if-missing, and a test harness that generates the runtime
-> config, runs, and deletes it — and replace the lazy per-inference model bootstrap with eager
+> `init` / `test init` creation, ordinary commands failing fast when config is missing, Apple
+> bootstrap `up` explicitly running `init --if-missing`, and a test harness that generates the
+> runtime config, runs, and deletes it — and replace the lazy per-inference model bootstrap with eager
 > coordinator model-cache staging driven by the mounted `infernix.dhall`.
 
 ## Phase Status
@@ -77,6 +78,9 @@ Make config creation explicit and DRY: one defaults owner shared by `init` and t
 - top-level `infernix test init` writes the thin `./infernix.test.dhall` and needs no pre-existing config
 - `Config.hs` exposes `runtimeConfigPath` (`./infernix.dhall`) and `testConfigPath`
   (`./infernix.test.dhall`); existing readers follow the relocated path
+- `./bootstrap/apple-silicon.sh up` is a stage-0 convenience wrapper over the explicit init surface:
+  it runs `./.build/infernix init --if-missing` before `cluster up`; `infernix cluster up` itself
+  still fails fast when config is missing
 
 ### Validation
 
@@ -95,7 +99,9 @@ None.
 
 ### Objective
 
-Remove every auto-generate-if-absent path so a missing config is a loud, actionable error.
+Remove hidden auto-generate-if-absent paths so a missing config is a loud, actionable error unless
+the operator enters through the Apple bootstrap wrapper, which explicitly invokes
+`infernix init --if-missing`.
 
 ### Deliverables
 

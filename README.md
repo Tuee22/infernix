@@ -271,7 +271,6 @@ Use the substrate bootstrap that matches the host you actually want to run:
 ```bash
 # Apple Silicon / Metal host-native lane.
 ./bootstrap/apple-silicon.sh build
-./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 
 # Ubuntu 24.04 CPU lane.
@@ -555,7 +554,6 @@ Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned boot
 
 ```bash
 ./bootstrap/apple-silicon.sh build
-./.build/infernix init
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
 ./bootstrap/apple-silicon.sh test
@@ -662,7 +660,9 @@ The canonical supported CLI surface is the single `infernix` binary.
 
 - `infernix init [--runtime-mode M] [--demo-ui true|false]` — generate the operator's runtime
   `./infernix.dhall` (the substrate) and host manifest `./infernix-host.dhall`. All other commands
-  fail fast with a "run init" reminder until this exists; there is no auto-generation backstop
+  fail fast with a "run init" reminder until this exists; there is no hidden auto-generation
+  backstop inside ordinary `infernix` commands. `./bootstrap/apple-silicon.sh up` explicitly runs
+  `./.build/infernix init --if-missing` before `cluster up`
 - `infernix test init` — generate the thin `./infernix.test.dhall` the test harness reads
 - `infernix service` — production Pulsar consumer; binds no HTTP listener. Routing is owned
   by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests
@@ -706,8 +706,9 @@ not a parallel lifecycle surface.
   or `nvkind` create or delete uses a transient scratch kubeconfig while the published repo-local
   kubeconfig remains the supported operator surface
 - `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
-  the substrate-specific binary or container launcher are ready; they do not directly manage Kind,
-  Kubernetes resources, manifests, or cluster workload image pulls
+  the substrate-specific binary or container launcher are ready; Apple `up` also invokes
+  `./.build/infernix init --if-missing` before `cluster up`. The bootstrap scripts do not directly
+  manage Kind, Kubernetes resources, manifests, or cluster workload image pulls
 - `infernix init` is the operator surface for creating the runtime `infernix.dhall`;
   `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` is the internal
   generator (used by `init`, the test harness, and `cluster up`) that renders the demo substrate

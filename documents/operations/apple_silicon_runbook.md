@@ -49,8 +49,8 @@
 ## Supported Flow
 
 - run `./bootstrap/apple-silicon.sh build`
-- run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
-- run `./bootstrap/apple-silicon.sh up`
+- run `./bootstrap/apple-silicon.sh up`; it runs `./.build/infernix init --if-missing` before
+  `cluster up`
 - run `./bootstrap/apple-silicon.sh status`
 - run `./bootstrap/apple-silicon.sh test`
 - use `./.build/infernix kubectl ...` instead of mutating global

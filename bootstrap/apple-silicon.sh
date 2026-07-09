@@ -46,8 +46,8 @@ Commands:
   doctor      Ensure Homebrew, ghcup, GHC ${APPLE_GHC_VERSION}, Cabal ${APPLE_CABAL_VERSION}, and \`protoc\`;
               also reports whether Poetry has been bootstrapped yet.
   build       Ensure prerequisites and build both host binaries under ./.build/.
-  up          Ensure prerequisites, build the host binary, and run \`cluster up\`;
-              requires config from \`./.build/infernix init\` when missing.
+  up          Ensure prerequisites, build the host binary, reconcile \`./infernix.dhall\` /
+              \`./infernix-host.dhall\` via \`infernix init --if-missing\`, and run \`cluster up\`.
   run-daemon  Run the on-host \`infernix service\` engine daemon in the foreground; required for
               inference on Apple Silicon after \`up\` and not spawned by \`up\` itself.
   status      Show \`cluster status\`.
@@ -172,7 +172,7 @@ check_poetry() {
       return 0
     fi
   done
-  bootstrap::info "Poetry is not yet bootstrapped. infernix bootstraps it automatically the first time an Apple adapter setup path needs one, once ./infernix-host.dhall exists (run \`./.build/infernix init\` first if you have not already)."
+  bootstrap::info "Poetry is not yet bootstrapped. infernix bootstraps it automatically the first time an Apple adapter setup path needs one, once ./infernix-host.dhall exists (run \`infernix init\` first if you have not already)."
 }
 
 ensure_build_prerequisites() {
@@ -220,6 +220,7 @@ command_build() {
 
 command_up() {
   build_launcher
+  run_launcher init --if-missing
   run_launcher cluster up
 }
 
