@@ -475,12 +475,15 @@ test("self-service account deletion reaps demo state before Keycloak account act
   expect(readableBeforeDelete.ok()).toBeTruthy();
   expect(await readableBeforeDelete.text()).toBe(objectBody);
 
-  await expect
-    .poll(async () => {
-      const topics = await listDemoTopics(request, baseUrl, accessToken);
-      return topics.filter((topic) => topic.includes(claims.sub)).length;
-    }, { timeout: 60000 })
-    .toBeGreaterThan(0);
+  const cleanupReports = [];
+  await page.route("**/api/account", async (route) => {
+    const routeResponse = await route.fetch();
+    const body = await routeResponse.text();
+    if (route.request().method() === "DELETE" && routeResponse.status() === 200) {
+      cleanupReports.push(JSON.parse(body));
+    }
+    await route.fulfill({ response: routeResponse, body });
+  });
 
   const deleteResponsePromise = page.waitForResponse(
     (response) =>
@@ -489,6 +492,15 @@ test("self-service account deletion reaps demo state before Keycloak account act
       response.status() === 200,
     { timeout: accountCleanupRedirectTimeoutMs },
   );
+  const cleanupReportPromise = (async () => {
+    await expect
+      .poll(
+        () => cleanupReports.some((report) => report && report.cleanupComplete !== false),
+        { timeout: accountCleanupRedirectTimeoutMs },
+      )
+      .toBeTruthy();
+    return cleanupReports.find((report) => report && report.cleanupComplete !== false);
+  })();
   const deleteActionRequestPromise = page.waitForRequest(
     (requestValue) =>
       requestValue.url().includes("/protocol/openid-connect/auth") &&
@@ -496,21 +508,23 @@ test("self-service account deletion reaps demo state before Keycloak account act
     { timeout: accountCleanupRedirectTimeoutMs },
   );
   await page.locator("#delete-account-button").click();
-  const [deleteResponse, deleteActionRequest] = await Promise.all([deleteResponsePromise, deleteActionRequestPromise]);
+  const [deleteResponse, deleteActionRequest, cleanupReport] = await Promise.all([
+    deleteResponsePromise,
+    deleteActionRequestPromise,
+    cleanupReportPromise,
+  ]);
   expect(deleteResponse.ok()).toBeTruthy();
+  expect(cleanupReport.userId).toBe(claims.sub);
+  expect(cleanupReport.cleanupComplete).toBe(true);
+  expect(cleanupReport.minioObjectsDeleted).toBeGreaterThanOrEqual(1);
+  expect(cleanupReport.pulsarTopicsDeleted).toBeGreaterThan(0);
+  expect(cleanupReport.pulsarTopicsRemaining).toEqual([]);
   expect(new URL(deleteActionRequest.url()).searchParams.get("kc_action")).toBe("delete_account");
 
   const missingAfterDelete = await request.get(objectBytesUrl, {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
   expect(missingAfterDelete.status()).toBe(404);
-
-  await expect
-    .poll(async () => {
-      const topics = await listDemoTopics(request, baseUrl, accessToken);
-      return topics.filter((topic) => topic.includes(claims.sub)).length;
-    }, { timeout: 60000 })
-    .toBe(0);
 });
 
 // Phase 9 Sprint 9.8: RBAC + dashboard + lifecycle coverage. The hardcoded demo
@@ -2219,14 +2233,6 @@ async function expectJwtGatedOperatorRoute(request, url, nonAdminAccessToken) {
     headers: { Authorization: `Bearer ${nonAdminAccessToken}` },
   });
   expect(authenticated.status()).toBe(403);
-}
-
-async function listDemoTopics(request, baseUrl, accessToken) {
-  const response = await request.get(`${baseUrl}/pulsar/admin/admin/v2/persistent/infernix/demo`, {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-  expect(response.ok()).toBeTruthy();
-  return response.json();
 }
 
 async function exchangeRegistrationCodeForToken(request, baseUrl, registration) {

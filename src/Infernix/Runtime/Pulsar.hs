@@ -3394,26 +3394,33 @@ processBootstrapRequest transport systemNamespace request = do
               }
       manager <- newManager tlsManagerSettings
       now <- getCurrentTime
+      let downloadUrl = BootstrapModels.bootstrapRequestDownloadUrl request
       sentinelPresent <- minioObjectExists presigned manager sentinelObject
-      if sentinelPresent
-        then publishBootstrapReadyEvent transport systemNamespace request
-        else do
-          let downloadUrl = BootstrapModels.bootstrapRequestDownloadUrl request
-          if isPackageBackedNativeModel modelId
-            then putMinioObject presigned manager now sentinelObject "ready\n"
-            else
-              if isHuggingFaceModelRepoUrl downloadUrl || isMultiFileModelRepoUrl downloadUrl
-                then runModelBootstrapSnapshotHelper presigned request
-                else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath -> do
-                  putMinioObjectFile presigned manager now payloadObject downloadedPath
-                  putMinioObject presigned manager now sentinelObject "ready\n"
+      if isMultiFileModelRepoUrl downloadUrl
+        then do
+          runModelBootstrapSnapshotHelper presigned request
           publishBootstrapReadyEvent transport systemNamespace request
+        else
+          if sentinelPresent
+            then publishBootstrapReadyEvent transport systemNamespace request
+            else do
+              if isPackageBackedNativeModel modelId
+                then putMinioObject presigned manager now sentinelObject "ready\n"
+                else
+                  if isHuggingFaceModelRepoUrl downloadUrl
+                    then runModelBootstrapSnapshotHelper presigned request
+                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath -> do
+                      putMinioObjectFile presigned manager now payloadObject downloadedPath
+                      putMinioObject presigned manager now sentinelObject "ready\n"
+              publishBootstrapReadyEvent transport systemNamespace request
 
 -- | Phase 8 Sprint 8.5: eager model-cache staging. On coordinator startup,
 -- stage every model listed in the mounted substrate config so no inference
 -- ever races a cold cache. Reuses the idempotent
 -- download/upload/@.ready@-sentinel logic ('processBootstrapRequest'), which
--- short-circuits when the sentinel is already present. The lazy
+-- short-circuits when the sentinel is already present for single-payload
+-- sources. Multi-file snapshot sources still enter the helper so retained
+-- content validators can repair a stale prefix before the ready event. The lazy
 -- 'runModelBootstrapLoop' remains the on-demand fallback. Each model is
 -- staged independently: a failure is logged and does not abort the sweep, so
 -- the remaining models still stage (the coordinator surfaces per-model

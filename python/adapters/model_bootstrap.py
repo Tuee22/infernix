@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import json
 import tempfile
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +29,10 @@ _MT3_PYTORCH_PRETRAINED_FILES = {
     "config.json": "https://raw.githubusercontent.com/kunato/mt3-pytorch/master/pretrained/config.json",
     "mt3.pth": "https://media.githubusercontent.com/media/kunato/mt3-pytorch/master/pretrained/mt3.pth",
 }
+_MT3_PYTORCH_MT3_PTH_BYTES = 183_672_643
+_MT3_PYTORCH_MT3_PTH_SHA256 = (
+    "b8a3807ed265059abd25ad7f68142c06c35e8f6144dcaa45bd55946a3745398f"
+)
 
 
 def run_model_bootstrap_from_argv() -> int:
@@ -50,7 +57,12 @@ def run_model_bootstrap_from_argv() -> int:
         secret_key=args.minio_secret_key,
         region=args.minio_region,
     )
-    if _sentinel_exists(client, args.models_bucket, args.model_id):
+    if _existing_model_cache_ready(
+        client,
+        args.models_bucket,
+        args.model_id,
+        args.download_url,
+    ):
         _write_ready_sentinel(client, args.models_bucket, args.model_id)
         return 0
     if _is_package_backed_native_model(args.model_id):
@@ -102,6 +114,71 @@ def _sentinel_exists(client: Any, bucket: str, model_id: str) -> bool:
         return True
     except Exception:
         return False
+
+
+def _existing_model_cache_ready(
+    client: Any, bucket: str, model_id: str, download_url: str
+) -> bool:
+    if not _sentinel_exists(client, bucket, model_id):
+        return False
+    if not _is_mt3_pytorch_pretrained(download_url):
+        return True
+    if _mt3_pytorch_objects_are_valid(client, bucket, model_id):
+        return True
+    _delete_model_prefix(client, bucket, model_id)
+    return False
+
+
+def _mt3_pytorch_objects_are_valid(client: Any, bucket: str, model_id: str) -> bool:
+    try:
+        config_size = _object_size(client, bucket, f"{model_id}/config.json")
+        checkpoint_size = _object_size(client, bucket, f"{model_id}/mt3.pth")
+        index_size = _object_size(
+            client, bucket, f"{model_id}/{NATIVE_SNAPSHOT_INDEX_NAME}"
+        )
+    except Exception:
+        return False
+    expected_shape = (
+        100 <= config_size <= 1024 * 1024
+        and checkpoint_size == _MT3_PYTORCH_MT3_PTH_BYTES
+        and index_size > 0
+    )
+    if not expected_shape:
+        return False
+    try:
+        with tempfile.TemporaryDirectory(prefix="infernix-mt3-cache-check-") as root:
+            snapshot_root = Path(root)
+            client.download_file(
+                bucket, f"{model_id}/config.json", str(snapshot_root / "config.json")
+            )
+            client.download_file(
+                bucket, f"{model_id}/mt3.pth", str(snapshot_root / "mt3.pth")
+            )
+            _validate_mt3_pytorch_snapshot(snapshot_root)
+    except Exception:
+        return False
+    return True
+
+
+def _object_size(client: Any, bucket: str, key: str) -> int:
+    response = client.head_object(Bucket=bucket, Key=key)
+    return int(response["ContentLength"])
+
+
+def _delete_model_prefix(client: Any, bucket: str, model_id: str) -> None:
+    prefix = f"{model_id}/"
+    paginator = client.get_paginator("list_objects_v2")
+    pending: list[dict[str, str]] = []
+    for page in paginator.paginate(Bucket=bucket, Prefix=prefix):
+        for item in page.get("Contents", []) or []:
+            key = item.get("Key")
+            if key:
+                pending.append({"Key": key})
+            if len(pending) == 1000:
+                client.delete_objects(Bucket=bucket, Delete={"Objects": pending})
+                pending = []
+    if pending:
+        client.delete_objects(Bucket=bucket, Delete={"Objects": pending})
 
 
 def _write_ready_sentinel(client: Any, bucket: str, model_id: str) -> None:
@@ -252,6 +329,48 @@ def _download_mt3_pytorch_pretrained(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
     for relative_path, target_url in _MT3_PYTORCH_PRETRAINED_FILES.items():
         _download_single_payload(target_url, destination / relative_path)
+    _validate_mt3_pytorch_snapshot(destination)
+
+
+def _validate_mt3_pytorch_snapshot(root: Path) -> None:
+    config_path = root / "config.json"
+    checkpoint_path = root / "mt3.pth"
+    with config_path.open("r", encoding="utf-8") as handle:
+        json.load(handle)
+    checkpoint_size = checkpoint_path.stat().st_size
+    if checkpoint_size != _MT3_PYTORCH_MT3_PTH_BYTES:
+        raise RuntimeError(
+            "refusing to stage MT3-PyTorch checkpoint from "
+            f"{_MT3_PYTORCH_PRETRAINED_FILES['mt3.pth']}: expected "
+            f"{_MT3_PYTORCH_MT3_PTH_BYTES} bytes, got {checkpoint_size}"
+        )
+    checkpoint_sha256 = _sha256_file(checkpoint_path)
+    if checkpoint_sha256 != _MT3_PYTORCH_MT3_PTH_SHA256:
+        raise RuntimeError(
+            "refusing to stage MT3-PyTorch checkpoint from "
+            f"{_MT3_PYTORCH_PRETRAINED_FILES['mt3.pth']}: expected sha256 "
+            f"{_MT3_PYTORCH_MT3_PTH_SHA256}, got {checkpoint_sha256}"
+        )
+    if not zipfile.is_zipfile(checkpoint_path):
+        raise RuntimeError(
+            "refusing to stage MT3-PyTorch checkpoint: mt3.pth is not a "
+            "valid PyTorch zip archive"
+        )
+    with zipfile.ZipFile(checkpoint_path) as archive:
+        bad_member = archive.testzip()
+    if bad_member is not None:
+        raise RuntimeError(
+            "refusing to stage MT3-PyTorch checkpoint: mt3.pth failed zip "
+            f"integrity at {bad_member}"
+        )
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _download_open_unmix_umxhq(destination: Path) -> None:

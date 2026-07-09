@@ -55,16 +55,18 @@ llama.cpp/whisper.cpp Metal, CTranslate2, ONNX Runtime, and Audiveris, and valid
 smokes on the Apple host. The Phase 1 headless materialization foundation stands; the earlier
 Phase 4/6 `linux-gpu` plus `linux-cpu` real-output reopen is closed for the then-active catalogs by
 Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion closed under Wave P
-on 2026-07-04; Phases 4 and 6 are Active with the Wave Q matrix substrate-accuracy reopen
-(Sprints 4.25/6.36) and the apple-silicon inference RAM-safety reopen (Sprints 4.26/6.37) now
+on 2026-07-04; Phases 4 and 6 are Done after the Wave Q matrix substrate-accuracy reopen
+(Sprints 4.25/6.36) and the apple-silicon inference RAM-safety reopen (Sprints 4.26/6.37). They are
 **code-side complete and machine-independent-validated under Wave R (2026-07-08)**: an explicit
 per-model `modelRamFootprintMib` and per-substrate `inferenceRamBudgetMib` (apple-silicon: host
 physical RAM − colima pledge − host reserve) make on-host inference RAM-safe by construction — a
 config-time hard-fail plus serialized-critical-section admission control reject an over-budget model
 as a clean `status=failed` instead of an OS OOM-kill — and the matrix-accuracy fixes relabel/document
-the CUDA lanes honestly. The only open residual is single-accelerator sign-off: the full-catalog
-Apple per-model never-OOM rerun (paired 4.26/6.37) plus the CUDA GPU-accuracy rows needing a CUDA
-Linux host. The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
+the CUDA lanes honestly, while the validation suites add the real-inline-text marker,
+catalog-completeness guard, and memory-exhaustion classification. Wave R proved the full-catalog
+Apple never-OOM rerun, and Wave S (2026-07-09) proved the rebuilt `linux-cpu` and `linux-gpu` full
+suites against the current supported catalog.
+The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
 `cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
@@ -187,9 +189,10 @@ bound (reopened 2026-07-07) is **code-side closed under Wave R (2026-07-08)**: a
 `modelRamFootprintMib` + per-substrate `inferenceRamBudgetMib` (host RAM − colima pledge − reserve),
 a config-time hard-fail, and serialized-critical-section admission control now reject an over-budget
 model as a clean `status=failed` instead of an OS OOM-kill (Phase 4 Sprint 4.26 + Phase 6 Sprint
-6.37); the full-catalog Apple never-OOM cohort proof is the named Wave R residual. Waves K/L
-re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top — proven on the Linux lanes. On `apple-silicon` the Phase 4 Sprint 4.26 admission control (landed Wave R, 2026-07-08) makes an over-budget model publish a clean `status=failed` instead of OS-OOM-killing the daemon, and the Phase 6 Sprint 6.37 integration `classifyAppleMemoryBoundedResult` classifies that clean fail-closed distinctly from a stall or a fabricated pass; the full-catalog Apple per-model never-OOM rerun is the named Wave R residual. Architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
+6.37); the full-catalog Apple never-OOM cohort proof closed in Wave R, and the current Linux full
+suite closed in Wave S. Waves K/L re-attested their then-active catalogs, and the post-replacement
+MT3 rows closed under Wave P (2026-07-04). |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top — proven on the Linux lanes. On `apple-silicon` the Phase 4 Sprint 4.26 admission control (landed Wave R, 2026-07-08) makes an over-budget model publish a clean `status=failed` instead of OS-OOM-killing the daemon, and the Phase 6 Sprint 6.37 integration `classifyAppleMemoryBoundedResult` classifies that clean fail-closed distinctly from a stall or a fabricated pass; the full-catalog Apple per-model never-OOM rerun closed in Wave R, and Wave S closed the current Linux CPU/GPU full suites. Architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 

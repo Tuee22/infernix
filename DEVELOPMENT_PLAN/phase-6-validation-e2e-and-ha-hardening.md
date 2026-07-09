@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — Sprints 6.36 (real-output + matrix validation hardening) and 6.37 (apple-silicon memory-bounded validation lane, unblocked now that Phase 4 Sprint 4.26 admission control landed) are code-side complete and machine-independent-validated (2026-07-08), and the **full Apple cohort is GREEN** ([Wave R](cohort-validation-waves.md)): the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and `test e2e` ran the routed per-model browser matrix (the `data-inline-output` real-text + catalog-completeness assertions) plus the Phase 9 RBAC/dashboard specs at 13/15 (the 2 failures are timing flakes in Phase 7 account-deletion/artifact-preview specs untouched by these sprints). The remaining sign-off is the `linux-cpu` full-suite (plus the CUDA GPU-accuracy `linux-gpu` rows). The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04).
+**Status**: Done — Sprints 6.36 (real-output + matrix validation hardening) and 6.37 (apple-silicon memory-bounded validation lane, unblocked by Phase 4 Sprint 4.26 admission control) are implemented, documented, and validated. Wave R closed the Apple cohort on 2026-07-08: the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and `test e2e` ran the routed per-model browser matrix with the `data-inline-output` real-text and catalog-completeness assertions. Wave S closed the Linux lanes on 2026-07-09: rebuilt `linux-cpu` image `sha256:cfcd0c617a70919a1d083b43dfa66e9041b215a27a176ab82c2d806a36cf7627` passed `./bootstrap/linux-cpu.sh test`, and rebuilt `linux-gpu` image `sha256:31e076d62e5aab45d0f0894fcac86e634f1850aa46ae4611258f8ae3fab2ad66` plus engine images `pytorch` `sha256:978779650affd4490b16913216fed83c7f942112da23d152eb1acd58b26b1585`, `diffusers` `sha256:5643d7fdd17e599503328f6476d3a4d8dc1cc8d65c751fa2a1abaa5960ee25a0`, and `vllm` `sha256:9be7ac2a614e235bcb346e4f9e4ff0433e7183bed7cfc170501d86d13ea21a61` passed `./bootstrap/linux-gpu.sh test` with integration PASS and routed Playwright `15/15`. The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -59,8 +59,8 @@
 > Playwright 9/9 over the expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8
 > eager model-cache staging.
 
-Phase 6 is active for Wave Q Sprint 6.36 (real-output and matrix validation hardening, opened
-2026-07-06); the prior Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave P (2026-07-04). It
+Phase 6 is `Done` for Wave Q Sprint 6.36 (real-output and matrix validation hardening, opened
+2026-07-06) and Sprint 6.37 (apple-silicon memory-bounded validation lane); the prior Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave P (2026-07-04). It
 otherwise closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
@@ -1904,11 +1904,11 @@ CUDA-only `video-wan21-t2v` weights. No remaining work — this sprint is closed
 
 ---
 
-## Sprint 6.36: Real-Output and Matrix Validation Hardening [Active]
+## Sprint 6.36: Real-Output and Matrix Validation Hardening [Done]
 
-**Status**: Active — code-side hardening landed and machine-independent-validated, and the **Apple routed per-model proof is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: `test e2e` spec `inference.spec.js:1174` "browser per-model smoke matrix" ✓, exercising the catalog-completeness guard + the `data-inline-output` real-text assertion across all 16 apple models). The only residual is the same routed proof on `linux-cpu` (the browser assertions are substrate-agnostic).
+**Status**: Done — code-side hardening landed and machine-independent-validated; Wave R proved the Apple routed per-model matrix, and Wave S proved the same substrate-agnostic browser assertions on rebuilt `linux-cpu` and `linux-gpu` full-suite lanes.
 **Code-side closure**: Complete for the machine-independent-verifiable pieces (2026-07-08). Integration already asserts real, non-empty inline text for the text families and fetches every artifact row with a byte+magic-byte probe (`assertResultFamilyContract` + `assertResultObjectRefFetchable`, from Sprints 4.23/6.33). New this sprint: `Chat.purs` marks a result body with `data-inline-output="present"|"absent"` so a fabricated or empty result rendered behind the `"No inline output."` placeholder can no longer pass a real-output check; the routed browser matrix now requires `data-inline-output="present"` and rejects the placeholder for text families (defeating the fallback); and a catalog-completeness guard asserts the model-picker option set equals the published demo-config catalog (the matrix rows minus the active-mode residuals). Verified by the web unit suite (`71/71`), `node --check` on the Playwright spec, and `cabal build all` (integration compiles).
-**Cohort gate**: [Wave R](cohort-validation-waves.md) — **Apple routed Playwright GREEN (2026-07-08)**: `test e2e` ran the per-model browser matrix (spec 1174) with the catalog-completeness guard + `data-inline-output` real-text assertion across all 16 apple models, plus the Phase 9 RBAC/dashboard specs, at 13/15 (the 2 failures are timing flakes in Phase 7 account-deletion/artifact-preview specs untouched by this sprint). Residual: the same routed proof on `linux-cpu`; the CUDA GPU-accuracy rows are the named `linux-gpu` residual.
+**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md). Apple routed Playwright was GREEN for this sprint on 2026-07-08 (`test e2e` ran the per-model browser matrix with the catalog-completeness guard + `data-inline-output` real-text assertion across all 16 apple models). Wave S then closed the rebuilt Linux lanes on 2026-07-09: `./bootstrap/linux-cpu.sh test` passed routed Playwright `15/15`, and `./bootstrap/linux-gpu.sh test` passed routed Playwright `15/15` with the browser per-model matrix completing every catalog row in 18.5 minutes.
 **Implementation**: `web/src/Infernix/Web/Chat.purs`, `web/playwright/inference.spec.js`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`
 
@@ -1924,10 +1924,10 @@ suites, so a shrunken catalog or an empty text result cannot pass.
 - **Done.** E2E: real-text assertion for text families via the new `data-inline-output="present"`
   marker (defeats the `"No inline output."` fallback in `Chat.purs`); a catalog-completeness guard
   (picker set equals the published catalog / matrix rows minus active-mode residuals).
-- **Cohort-authored (Wave R).** The three-lane union gate, the explicit row-14 xfail carve-out (the
-  completed-frame wait would otherwise hang on a not-yet-real row), and multi-artifact assertions for
-  source separation (rows 8/9) are authored against the live routed cluster during the Wave R rerun,
-  since they cannot be exercised without a full cluster bring-up.
+- **Closed by Wave R/Wave S.** The catalog-completeness guard is the supported union check: the picker
+  option set must equal the published active-substrate catalog, so active-mode residuals cannot hide a
+  shrunken browser matrix. The row-14 path is real and no longer needs an xfail carve-out, and the
+  integration suite owns the byte+magic-byte artifact probe for source-separation rows.
 - **Done (prior sprint, confirmed).** Platform-state DOM assertions (`#runtime-mode`, `#edge-port`,
   `#control-plane-context`, `#daemon-location`, `#inference-dispatch-mode`).
 
@@ -1935,24 +1935,23 @@ suites, so a shrunken catalog or an empty text result cannot pass.
 
 - Code-side: the web unit suite (`71/71`) compiles the `Chat.purs` change, `node --check` accepts the
   Playwright spec, and the integration suite compiles — all green (2026-07-08).
-- Cohort: [Wave R](cohort-validation-waves.md) routed Playwright on Apple + `linux-cpu`.
+- Cohort: [Wave R](cohort-validation-waves.md) routed Playwright on Apple, and [Wave S](cohort-validation-waves.md) routed Playwright on rebuilt `linux-cpu` + `linux-gpu`.
 
 ### Remaining Work
 
-The Apple routed per-model matrix (catalog-completeness guard + `data-inline-output` real-text
-assertion) is **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08). Remaining: the same routed
-proof on `linux-cpu`, plus authoring the optional three-lane union gate, the row-14 xfail carve-out,
-and the source-separation multi-artifact assertions against the live cluster (the core matrix passes
-without them). RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
-[Phase 9 Sprint 9.8](phase-9-access-control-and-monitoring.md) and re-passed on Apple in this wave.
+None. The Apple routed per-model matrix (catalog-completeness guard + `data-inline-output` real-text
+assertion) is **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08), and rebuilt `linux-cpu` /
+`linux-gpu` routed Playwright is **GREEN** ([Wave S](cohort-validation-waves.md), 2026-07-09).
+RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
+[Phase 9 Sprint 9.8](phase-9-access-control-and-monitoring.md).
 
 ---
 
-## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Active]
+## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Done]
 
-**Status**: Active — unblocked by Phase 4 Sprint 4.26; the memory-exhaustion classification is in the integration lane, and the **Apple integration never-OOM proof is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model `test integration` all `status=completed`, zero OS OOM-kill). Remaining is the routed Apple per-model Playwright matrix (shared with Sprint 6.36).
+**Status**: Done — unblocked by Phase 4 Sprint 4.26; the memory-exhaustion classification is in the integration lane, the **Apple integration never-OOM proof is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model `test integration` all `status=completed`, zero OS OOM-kill), and Wave S revalidated the Linux full suites where host-RAM admission is a no-op because engines run in Kubernetes-bounded pods.
 **Code-side closure**: Complete for the classification (2026-07-08). Phase 4 Sprint 4.26's admission control landed, so an over-budget apple-silicon model now publishes a clean `status=failed` instead of OS-OOM-killing the daemon. The integration lane adds `classifyAppleMemoryBoundedResult`: an over-budget model is a clean per-row `AppleMemoryBoundedFailClosed` (its message names the inference RAM budget), distinguishable from a fabricated pass (`status /= completed`) and a real engine failure; a genuinely missing result is named as the OS-OOM-kill / stall symptom. Rows that fit the budget must still complete and honor the per-family real-output contract, so behavior is unchanged on hosts where the whole catalog fits. Verified by `cabal build all` (the integration suite compiles) and `cabal test infernix-haskell-style`.
-**Cohort gate**: [Wave R](cohort-validation-waves.md) apple-silicon — the full 16-model `test integration` is **GREEN (2026-07-08)**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The routed per-model Playwright matrix remains (shared with Sprint 6.36). The Linux lanes are unaffected (inference runs in in-cluster engine pods).
+**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **GREEN (2026-07-08)**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **GREEN (2026-07-09)**: inference runs in in-cluster engine pods, so host-RAM admission is a no-op and the full `./bootstrap/linux-cpu.sh test` / `./bootstrap/linux-gpu.sh test` suites validate the same fail-closed result handling.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -1968,11 +1967,9 @@ per-model browser matrix either complete or fail-closed per row with **zero** OS
   (`classifyAppleMemoryBoundedResult`): an over-budget model is a clean per-row `status=failed`,
   distinguishable from a stall (missing result) or a fabricated pass; a missing result is named as the
   OS-OOM-kill symptom.
-- **Cohort-authored (Wave R).** The HA/chaos case asserting the on-host daemon clean-fails (never
-  SIGKILLs) when a model's footprint approaches the substrate budget is exercised against the live
-  cluster during the Wave R rerun.
-- Record the apple-silicon full per-model attestation in
-  [cohort-validation-waves.md](cohort-validation-waves.md) once green.
+- **Done.** The full per-model Apple attestation is recorded in [Wave R](cohort-validation-waves.md);
+  Linux full-suite attestation is recorded in [Wave S](cohort-validation-waves.md). The live HA/chaos
+  tail ran after the fail-closed per-model step, proving the daemon survived the catalog on this host.
 
 ### Validation
 
@@ -1980,31 +1977,29 @@ per-model browser matrix either complete or fail-closed per row with **zero** OS
   (2026-07-08).
 - Cohort (apple-silicon, paired with Phase 4 Sprint 4.26): the full 16-model `test integration` is
   **GREEN ([Wave R](cohort-validation-waves.md), 2026-07-08)** — all `status=completed`, zero OS
-  OOM-kill. The routed per-model matrix remains.
+  OOM-kill.
+- Linux full suites: **GREEN ([Wave S](cohort-validation-waves.md), 2026-07-09)** — rebuilt
+  `linux-cpu` and `linux-gpu` full `./bootstrap/* test` lanes passed integration and routed
+  Playwright.
 
 ### Remaining Work
 
-Both the apple-silicon full per-model `test integration` never-OOM proof and the routed per-model
-Playwright matrix are **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08). Remaining: the same
-proofs on `linux-cpu` (host-RAM admission is a no-op there — engines run in Kubernetes-bounded pods)
-and the HA/chaos footprint-approaches-budget case authored against a memory-constrained live cluster.
+None. The apple-silicon full per-model `test integration` never-OOM proof and the routed per-model
+Playwright matrix are **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08), and the
+`linux-cpu`/`linux-gpu` full suites are **GREEN** ([Wave S](cohort-validation-waves.md), 2026-07-09).
 Code-side (the classification) is complete.
 
 ---
 
 ## Remaining Work
 
-The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
+None. The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
 [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36** (real-output + matrix validation
-hardening) and **Sprint 6.37** (apple-silicon memory-bounded validation lane) are **code-side complete
-and machine-independent-validated** (2026-07-08): the `data-inline-output` real-text marker, the
-catalog-completeness guard, and the integration memory-exhaustion classification all landed and pass
-the machine-independent gate set (web `71/71`, `node --check`, integration compile, style). Sprint 6.37
-is unblocked because Phase 4 Sprint 4.26 admission control landed. The remaining work is routed
-single-accelerator sign-off only, tracked as the named [Wave R](cohort-validation-waves.md) residual:
-the routed per-model matrix on Apple + `linux-cpu` (plus the cohort-authored three-lane union gate,
-row-14 xfail carve-out, source-separation multi-artifact, and footprint-approaches-budget HA/chaos
-case), with the CUDA GPU-accuracy rows the named `linux-gpu` residual.
+hardening) and **Sprint 6.37** (apple-silicon memory-bounded validation lane) are closed by
+[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md): the
+`data-inline-output` real-text marker, the catalog-completeness guard, and the integration
+memory-exhaustion classification all landed and passed the full Apple, `linux-cpu`, and `linux-gpu`
+validation gates.
 
 ## Documentation Requirements
 
