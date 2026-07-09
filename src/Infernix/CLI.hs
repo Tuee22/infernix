@@ -697,16 +697,8 @@ removeEnvironmentVariables names =
 discoverCliCommandPaths :: IO Paths
 discoverCliCommandPaths = do
   paths <- discoverPaths
-  case (pathsHostConfig paths, controlPlaneContext paths) of
-    (Nothing, HostNative) ->
-      ioError
-        ( userError
-            ( "host manifest missing at "
-                <> hostConfigPath paths
-                <> "; run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall"
-            )
-        )
-    _ -> pure paths
+  requireHostManifest paths
+  pure paths
 
 resolveCliCommandWithPaths :: Paths -> FilePath -> IO FilePath
 resolveCliCommandWithPaths paths command =
