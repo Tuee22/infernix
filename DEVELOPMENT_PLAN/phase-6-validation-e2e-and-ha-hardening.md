@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — Sprints 6.36 (real-output + matrix validation hardening) and 6.37 (apple-silicon memory-bounded validation lane, unblocked by Phase 4 Sprint 4.26 admission control) are implemented, documented, and validated. Wave R closed the Apple cohort on 2026-07-08: the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and `test e2e` ran the routed per-model browser matrix with the `data-inline-output` real-text and catalog-completeness assertions. Wave S closed the Linux lanes on 2026-07-09: rebuilt `linux-cpu` image `sha256:cfcd0c617a70919a1d083b43dfa66e9041b215a27a176ab82c2d806a36cf7627` passed `./bootstrap/linux-cpu.sh test`, and rebuilt `linux-gpu` image `sha256:31e076d62e5aab45d0f0894fcac86e634f1850aa46ae4611258f8ae3fab2ad66` plus engine images `pytorch` `sha256:978779650affd4490b16913216fed83c7f942112da23d152eb1acd58b26b1585`, `diffusers` `sha256:5643d7fdd17e599503328f6476d3a4d8dc1cc8d65c751fa2a1abaa5960ee25a0`, and `vllm` `sha256:9be7ac2a614e235bcb346e4f9e4ff0433e7183bed7cfc170501d86d13ea21a61` passed `./bootstrap/linux-gpu.sh test` with integration PASS and routed Playwright `15/15`. The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04).
+**Status**: Done — Sprints 6.36 (real-output + matrix validation hardening) and 6.37 (apple-silicon memory-bounded validation lane, unblocked by Phase 4 Sprint 4.26 admission control) are implemented, documented, and validated. Wave R closed the Apple cohort on 2026-07-08: the 16-model per-model `test integration` all `status=completed` with zero OS OOM-kill, and `test e2e` ran the routed per-model browser matrix with the `data-inline-output` real-text and catalog-completeness assertions. Wave S closed the Linux lanes on 2026-07-09: rebuilt `linux-cpu` image `sha256:cfcd0c617a70919a1d083b43dfa66e9041b215a27a176ab82c2d806a36cf7627` passed `./bootstrap/linux-cpu.sh test`, and rebuilt `linux-gpu` image `sha256:31e076d62e5aab45d0f0894fcac86e634f1850aa46ae4611258f8ae3fab2ad66` plus engine images `pytorch` `sha256:978779650affd4490b16913216fed83c7f942112da23d152eb1acd58b26b1585`, `diffusers` `sha256:5643d7fdd17e599503328f6476d3a4d8dc1cc8d65c751fa2a1abaa5960ee25a0`, and `vllm` `sha256:9be7ac2a614e235bcb346e4f9e4ff0433e7183bed7cfc170501d86d13ea21a61` passed `./bootstrap/linux-gpu.sh test` with integration PASS and routed Playwright `15/15`. The prior Wave O MT3 reopen (Sprint 6.35) is closed — proven by Wave P (2026-07-04). Note: the routed Playwright suite grew from **9** specs to **15** when the Phase 9 auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later waves record `15/15`.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -417,9 +417,11 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 ### Remaining Work
 
 None for the cluster-lifecycle contract (`cluster up`/`status`/`down` validated on both execution
-contexts, apple-silicon included). The **full per-model apple-silicon environment-matrix run** is not
-green — it exhausts host RAM and the OS SIGKILLs the daemon; that residual is owned by Sprint 6.37
-(paired with Phase 4 Sprint 4.26) and is currently red.
+contexts, apple-silicon included). The **full per-model apple-silicon environment-matrix run** is now
+**green**: Sprint 4.26 admission control makes an over-budget model fail clean (`status=failed`)
+instead of OS-OOM-killing the daemon, and [Wave R](cohort-validation-waves.md) (2026-07-08) proved
+the full 16-model Apple `test integration` with zero OS OOM-kill (owned by Sprint 6.37, paired with
+Phase 4 Sprint 4.26).
 
 ---
 

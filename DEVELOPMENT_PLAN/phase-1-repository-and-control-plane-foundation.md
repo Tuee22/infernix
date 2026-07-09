@@ -481,7 +481,9 @@ launcher story onto the requested Apple-host-native and Linux-Compose doctrines.
 
 ### Validation
 
-- `./.build/infernix --help` no longer documents `--runtime-mode`
+- `./.build/infernix --help` no longer documents `--runtime-mode` as a runtime *override* selector;
+  it survives only as a config-generation flag on `infernix init` / `infernix test init` (which
+  materialize a chosen substrate's `infernix.dhall`), never as a runtime substrate override
 - `./.build/infernix internal materialize-substrate apple-silicon` stages the active substrate
   without any runtime-mode flag or user-facing environment override
 - supported Linux containerized commands run through `docker compose run --rm infernix infernix ...`
@@ -552,7 +554,7 @@ shrinks to `./.data` plus the Docker socket only.
 ### Validation
 
 - `cabal build all` clean, `infernix test lint` clean, `infernix test unit` clean.
-- `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoCLI}.hs` returns zero matches.
+- `grep -rn 'lookupEnv\|getEnv' src/Infernix/{Config,CLI,DemoConfig}.hs` returns zero matches.
 - `grep -rn 'INFERNIX_BUILD_ROOT\|INFERNIX_DATA_ROOT\|INFERNIX_COMPOSE_SUBSTRATE\|INFERNIX_COMPOSE_DEMO_UI\|INFERNIX_BOOTSTRAP_YES' src/ bootstrap/ compose.yaml docker/` returns zero matches.
 - `./bootstrap/linux-cpu.sh doctor` runs cleanly under `env -i /usr/bin/bash` (empty starting env).
 - Wave C closed the Linux stage-zero bootstrap proofs on the native Linux/CUDA host:

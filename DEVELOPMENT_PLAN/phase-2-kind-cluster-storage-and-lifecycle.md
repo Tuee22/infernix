@@ -343,8 +343,9 @@ around one Compose-driven outer container for both Linux substrates.
 - the outer-container control plane stages the Linux cluster-role payload at the image-local
   `/workspace/.build/outer-container/build/infernix.dhall` path when it needs to know
   its own substrate
-- the cluster publication contract uses the same stable `infernix.dhall` filename in the
-  repo-local mirror and in-cluster mount
+- the cluster publication contract mirrors the payload locally under the `infernix.dhall` filename
+  and mounts it in-cluster under the `infernix-substrate.dhall` filename (the ConfigMap key rendered
+  from `demoConfig.fileName`)
 - the supported Linux control-plane launcher is Compose for both `linux-cpu` and `linux-gpu`
 - `compose.yaml` defines the single launcher service and defaults to the CPU snapshot; the GPU lane
   selects the active `infernix-linux-gpu:local` snapshot through a one-shot Compose image selector
@@ -360,7 +361,7 @@ around one Compose-driven outer container for both Linux substrates.
   cluster up` materializes or verifies the Linux CPU cluster-role substrate payload and publishes
   it into the ConfigMap without any runtime-mode flag
 - `infernix kubectl get configmap infernix-demo-config -n platform -o yaml` shows the current
-  `infernix.dhall` key and the cluster-role payload
+  `infernix-substrate.dhall` key and the cluster-role payload
 - `LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu
   --file compose.yaml run --rm infernix infernix cluster up` exercises the same supported launcher
   surface for `linux-gpu` without shell-owned substrate staging

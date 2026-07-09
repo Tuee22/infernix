@@ -266,9 +266,10 @@ to these concrete values:
 Topic and bucket shapes follow the templates in
 [durable_context_design.md § Pulsar Topology](durable_context_design.md#pulsar-topology)
 and [§ Object Storage Layout](durable_context_design.md#object-storage-layout).
-With the demo's bindings, the concrete topic names become
-`persistent://infernix/demo/conversation.<userId>.<contextId>` and
-similar, and the bucket prefix root is
+With the demo's bindings, the concrete durable-context topic names carry a leading `demo.` local
+segment — `persistent://infernix/demo/demo.conversation.<userId>.<contextId>`,
+`persistent://infernix/demo/demo.user.<userId>.contexts`, and
+`persistent://infernix/demo/demo.user.<userId>.drafts` — and the bucket prefix root is
 `<objectsBucket>/users/<userId>/contexts/<contextId>/`.
 
 Inference dispatch reuses the existing shared
@@ -382,7 +383,7 @@ Every Phase 7 surface is gated by the active substrate's generated
   `/` SPA route are absent from the routed surface
 - the demo MinIO bucket is absent
 - the `infernix/demo` Pulsar topic namespace (including the
-  `conversation.*`, `user.*.contexts`, and `user.*.drafts` shapes) is
+  `demo.conversation.*`, `demo.user.*.contexts`, and `demo.user.*.drafts` shapes) is
   absent
 
 Production deployments leave `demo_ui = false` and accept inference work

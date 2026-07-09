@@ -146,8 +146,9 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
     # result-publish budget. Move the model and every tensor input to the
     # device, leaving non-tensor processor entries (e.g. voice presets) intact.
     device = _preferred_torch_device(torch)
-    processor = AutoProcessor.from_pretrained(str(weights_dir))
-    model = BarkModel.from_pretrained(str(weights_dir)).to(device)
+    processor = AutoProcessor.from_pretrained(str(weights_dir), local_files_only=True)
+    model = BarkModel.from_pretrained(str(weights_dir), local_files_only=True)
+    model = model.to(device)
     inputs = processor(context.input_text)
     inputs = {
         key: (value.to(device) if hasattr(value, "to") else value)

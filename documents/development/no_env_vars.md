@@ -211,8 +211,9 @@ The repo-local lint gates are:
   `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, `unsetEnv` in
   `src/`, `app/`, `test/`, and `Setup.hs` except for the deterministic `Env.setEnv "PATH"` setup shim.
 - `src/Infernix/Lint/HaskellStyle.hs.forbiddenBareProcCommands` — rejects
-  `proc "<bare-name>"` whose name matches a tool in the host-manifest schema
-  (reflected from the `HostConfig` decoder type; see `Infernix.HostTools`).
+  `proc "<bare-name>"` whose name matches a registered host tool. The list is derived from the
+  `Infernix.HostTools.HostTool` enum via `hostToolCommandNames` (which mirrors the
+  `HostConfig`/`HostToolPaths` schema), so it cannot drift from the tool set.
 - `src/Infernix/Lint/Docs.hs` — rejects governed-doc language that presents project-prefixed env
   names or shell path overrides as supported operator configuration outside the legacy-tracking
   ledger and documented exception docs. Phase 6 Sprint 6.34 expanded its required-doc and phase-doc

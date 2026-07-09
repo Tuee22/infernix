@@ -563,6 +563,46 @@ def _run_realness_ast_check(adapters_dir: Path) -> None:
         raise RuntimeError("realness check failed:\n" + "\n".join(violations))
 
 
+def _run_native_runner_realness_check(runners_dir: Path) -> None:
+    """Realness guard for the native-runner CLIs (``python/native-runners``).
+
+    The name/except heuristics used for the per-family ``*_python.py`` transform
+    modules do not transfer here: a native runner is a CLI with a legitimate
+    ``smoke`` subcommand and fail-closed error-code ``return`` statements inside
+    ``except`` handlers. This applies only the module-agnostic fabrication
+    signals — artifact bytes built from a ``bytes([...])`` literal or a decoded
+    constant — so a hardcoded-artifact regression in the runner is still caught.
+    """
+    violations: list[str] = []
+    for path in sorted(runners_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                name: str | None = None
+                if isinstance(node.func, ast.Name):
+                    name = node.func.id
+                elif isinstance(node.func, ast.Attribute):
+                    name = node.func.attr
+                if name == "bytes" and node.args and isinstance(node.args[0], ast.List):
+                    violations.append(
+                        f"{path.name}:{node.lineno}: bytes([...]) literal "
+                        "fabricates artifact bytes"
+                    )
+                if (
+                    name in {"b64decode", "b64encode"}
+                    and node.args
+                    and isinstance(node.args[0], ast.Constant)
+                ):
+                    violations.append(
+                        f"{path.name}:{node.lineno}: decoding a literal constant "
+                        "fabricates artifact bytes"
+                    )
+    if violations:
+        raise RuntimeError(
+            "native-runner realness check failed:\n" + "\n".join(violations)
+        )
+
+
 def run_check_code() -> int:
     project_root = Path(__file__).resolve().parent.parent
     env = {"MYPYPATH": str(generated_proto_root)}
@@ -574,6 +614,7 @@ def run_check_code() -> int:
     for command in commands:
         subprocess.run(command, cwd=project_root, check=True, env=env)
     _run_realness_ast_check(project_root / "adapters")
+    _run_native_runner_realness_check(project_root / "native-runners")
     return 0
 
 

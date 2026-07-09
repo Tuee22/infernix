@@ -97,7 +97,34 @@ checkFile root relativePath = do
           [] -> []
           '\n' : _ -> []
           _ -> [relativePath <> ": missing trailing newline"]
-  pure (lineFailures <> newlineFailure)
+  pure (lineFailures <> newlineFailure <> envReadFailures relativePath contents)
+
+-- | Reject environment reads in web/Python product code: no `os.environ` /
+-- `os.getenv` under `python/`, and no `process.env` under `web/`. The supported
+-- configuration substrate is typed input, not the process environment
+-- (documents/architecture/configuration_doctrine.md); comment-only mentions are
+-- allowed so the rule can be documented in source.
+envReadFailures :: FilePath -> String -> [String]
+envReadFailures relativePath contents =
+  concatMap check (zip [(1 :: Int) ..] (lines contents))
+  where
+    isPython = "python/" `isPrefixOf` relativePath && ".py" `isSuffixOf` relativePath
+    isWeb =
+      "web/" `isPrefixOf` relativePath
+        && any (`isSuffixOf` relativePath) [".js", ".mjs", ".purs"]
+    check (lineNumber, lineValue)
+      | isPython && not (lineIsComment "#" lineValue) =
+          [ relativePath <> ":" <> show lineNumber <> ": forbidden environment read `" <> token <> "`; Python config must come from typed inputs, not the process environment"
+          | token <- ["os.environ", "os.getenv"],
+            token `isInfixOf` lineValue
+          ]
+      | isWeb && not (lineIsComment "//" lineValue) =
+          [ relativePath <> ":" <> show lineNumber <> ": forbidden environment read `process.env`; web config must come from typed inputs, not the process environment"
+          | "process.env" `isInfixOf` lineValue
+          ]
+      | otherwise = []
+    lineIsComment marker lineValue =
+      marker `isPrefixOf` dropWhile (`elem` [' ', '\t']) lineValue
 
 rstrip :: String -> String
 rstrip = reverse . dropWhile (`elem` [' ', '\t']) . reverse
@@ -163,7 +190,11 @@ sourceSnapshotManifestPath = "/opt/infernix/source-snapshot-files.txt"
 isTrackedGeneratedPath :: FilePath -> Bool
 isTrackedGeneratedPath relativePath =
   or
-    [ "/__pycache__/" `isInfixOf` relativePath,
+    [ -- Zero version-controlled `.dhall`: the `infernix` binary is the sole
+      -- generator of every `.dhall` (configuration_doctrine.md), so any tracked
+      -- `.dhall` is a forbidden generated artifact.
+      ".dhall" `isSuffixOf` relativePath,
+      "/__pycache__/" `isInfixOf` relativePath,
       "__pycache__" `isSuffixOf` relativePath,
       ".pyc" `isSuffixOf` relativePath,
       relativePath == "poetry.lock",

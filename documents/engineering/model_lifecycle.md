@@ -20,16 +20,19 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
 
 ## Current Status
 
-- Phase 4 (inference service) is **Active** under Wave Q, Sprint 4.25; Phase 6 is **Active** under
-  Wave Q, Sprint 6.36 — both reopened for matrix substrate-accuracy.
-- Phase 9 (access control + monitoring) is **Done** under Wave Q on both `apple-silicon` and
-  `linux-cpu` (2026-07-07).
+- Phase 4 (inference service) and Phase 6 (validation/E2E) are **Done** — Sprints 4.26/6.37
+  (apple-silicon inference RAM admission + memory-bounded validation lane) closed; Wave R
+  (2026-07-08) proved the full 16-model Apple lane with zero OS OOM-kill and Wave S (2026-07-09)
+  closed the rebuilt `linux-cpu` and `linux-gpu` full suites.
+- Phase 9 (access control + monitoring) is **Active** — the RBAC/STS/dashboard surface was Wave Q
+  cohort-validated on both `apple-silicon` and `linux-cpu` (2026-07-07), but a later UAT pass
+  surfaced an unresolved authentication issue (repo-root `notes.txt`) that keeps the phase `Active`.
 - The MT3 catalog-replacement work (Wave O) is **closed**, proven by Wave P (2026-07-04): both
   `linux-gpu` and `linux-cpu` ran full `infernix test all` GREEN with routed Playwright 9/9,
   including the `music-mt3-infer`, `music-mr-mt3`, and 27 GB `video-wan21-t2v` matrix rows.
-- The only live residual is the Wave Q `linux-gpu` CUDA GPU-accuracy proof (ONNX
-  `CUDAExecutionProvider` + `onnxruntime-gpu`; CUDA llama.cpp/whisper.cpp binaries), which needs a
-  CUDA Linux host; the code-side, `linux-cpu`, and Apple rows are validatable first.
+- One named hardening residual remains: a real `linux-gpu` CUDA GPU-accuracy path for the ONNX row
+  (`CUDAExecutionProvider` + `onnxruntime-gpu`; CUDA llama.cpp/whisper.cpp binaries), tracked as a
+  future item needing a CUDA Linux host — the supported cell runs the CPU ONNX provider today.
 
 ## Validation
 
@@ -89,14 +92,14 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   directly on the private `WorkerRequest` envelope; the shared adapter entrypoints call
   `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk
   path to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket.
-  Caveat: that quota bounds only the on-disk model cache (`python/adapters/model_cache.py` LRU) —
-  the subsequent load of weights into the on-host `apple-silicon` `infernix service` inference
-  process is not RAM-budgeted today (no per-model footprint, admission, or eviction), so peak
-  resident memory is unbounded and a full per-model `infernix test integration` run over the current
-  catalog can exhaust host RAM and get the daemon OS OOM-killed (an uncontrolled process death, not a
-  clean `status=failed`). This RAM-safety gap is a known open item, targeted by Phase 4 Sprint 4.26
-  (apple-silicon inference RAM admission + bounded peak) with Phase 6 Sprint 6.37 (memory-bounded
-  validation lane).
+  Note: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU); the
+  subsequent load of weights into the on-host `apple-silicon` `infernix service` inference process is
+  additionally RAM-budgeted since Phase 4 Sprint 4.26. A per-substrate `inferenceRamBudgetMib` (host
+  RAM − colima pledge − reserve) and a per-model `modelRamFootprintMib` drive a config-time hard-fail
+  and serialized-critical-section admission control, so an over-budget model is rejected as a clean
+  `status=failed` instead of OS-OOM-killing the daemon. Wave R (2026-07-08) proved the full 16-model
+  Apple `test integration` with zero OS OOM-kill; Phase 6 Sprint 6.37 classifies that fail-closed
+  result distinctly from a stall or a fabricated pass.
 - the runtime worker invokes the engine for the selected binding — the Python adapter
   transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
   resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`

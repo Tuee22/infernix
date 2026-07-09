@@ -144,6 +144,12 @@
   on the result message body — rejecting the `No inline output.` placeholder so a fallback cannot
   pass — and a catalog-completeness guard asserts the model-picker option set equals the published
   demo-config catalog (README matrix rows minus active-mode residuals).
+- `infernix test e2e` also proves the Phase 9 admin-vs-user access-control contract at the browser
+  edge: an admin session sees the operator ribbon, cluster-wide monitoring panel, and cluster summary
+  cells; a non-admin is denied the four operator routes (403) and sees only its own personal
+  dashboard; and the account lifecycle (sign-in, wrong-password rejection, self-service deletion,
+  post-deletion auth loop) runs end-to-end. The per-spec detail lives in
+  [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
   the active staged substrate without dropping any layer.
 - phase closure evidence records the host cohort that ran it; one cohort passing may leave a named

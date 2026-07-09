@@ -166,9 +166,10 @@ The lint gates carry an explicit exception list naming this and any future upstr
 
 ## Validation
 
-- `infernix lint files` rejects new `lookupEnv` / `getEnv` / `proc "<bare-name>"` outside the
-  documented exception list; `infernix test lint` rejects `findExecutable` / `findExecutables`
-  discovery outside the lint module's own token list.
+- `infernix test lint` (the Haskell-style suite) rejects new `lookupEnv` / `getEnv` /
+  `proc "<bare-name>"` and `findExecutable` / `findExecutables` discovery outside the lint module's
+  own token list and the documented exception list. `infernix lint files` rejects `os.environ` /
+  `os.getenv` reads under `python/`, `process.env` reads under `web/`, and any tracked `.dhall`.
 - `infernix lint chart` rejects any `env:` block in the infernix-owned
   `deployment-{coordinator,engine,demo}.yaml`, and any Dhall `let …`/schema body inside a chart
   template (Helm must only `nindent` a binary-produced payload string).

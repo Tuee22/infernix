@@ -42,13 +42,17 @@ Always-published operator prefixes:
 On the real Kind path those routes are published by `Gateway/infernix-edge`,
 `EnvoyProxy/infernix-edge`, and the repo-owned HTTPRoute set.
 
-When the demo UI is enabled, direct browser access to `/harbor` and `/pulsar/admin`
-is additionally protected by
-`SecurityPolicy/infernix-operator-routes-jwt`. The policy validates the same Keycloak JWT the SPA
-uses for `/ws` and `/api/objects`, accepting either the `infernix_operator_token` cookie written by
-the SPA after login / refresh or an `Authorization: Bearer ...` header for direct operator probes.
-There is no `/minio/s3` edge route (Phase 3 Sprint 3.13): MinIO is reachable only through the
-webapp `/api/objects` proxy.
+When the demo UI is enabled, the four operator routes (the Harbor portal, the Harbor API,
+`/pulsar/admin`, and `/pulsar/ws`) are **admin-gated** by
+`SecurityPolicy/infernix-operator-routes-jwt` (Phase 9). The policy validates the same Keycloak JWT
+the SPA uses for `/ws` and `/api/objects` — accepting either the `infernix_operator_token` cookie
+written by the SPA after login / refresh or an `Authorization: Bearer ...` header — **and** requires
+the `infernix-admin` realm role (`authorization: defaultAction: Deny` plus an `allow-infernix-admins`
+rule over the `realm_access.roles` claim). A valid JWT is therefore necessary but not sufficient: a
+self-registered (non-admin) token is denied **403**, and anonymous traffic is denied **401**.
+[../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md) is the
+canonical contract for the admin-vs-user split. There is no `/minio/s3` edge route (Phase 3 Sprint
+3.13): MinIO is reachable only through the webapp `/api/objects` proxy.
 
 ## Durable Context Surface
 
@@ -118,18 +122,23 @@ Keycloak image.
 
 ## Operator Console Ribbon
 
-Authenticated users see an operator ribbon in the app shell with direct links to:
+**Admin** users see an operator ribbon in the app shell with direct links to:
 
 - `Harbor` at `/harbor`
 - `Pulsar Admin` at `/pulsar/admin/admin/v2/clusters`
 
-The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing state. The SPA writes
-the `infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token,
-and clears the cookie on logout. That cookie is what lets ordinary browser navigation to the
-operator links pass the edge JWT policy while keeping those same route prefixes closed to
-anonymous traffic. The same cookie authenticates browser-issued media `src` GETs against the
-webapp `/api/objects/download` proxy, which `img`/`audio`/`video`/`iframe` elements cannot set
-headers on.
+The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing state, and the SPA
+additionally hides it for every non-admin (a cosmetic `.infernix-admin` class set only when the
+token carries the `infernix-admin` realm role). That CSS is cosmetic — the real gates are the edge
+`SecurityPolicy` and the backend, which both deny a non-admin. The SPA writes the
+`infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token, and
+clears the cookie on logout. Only an **admin** token in that cookie passes the edge authorization on
+the operator routes; a non-admin token is denied 403 and anonymous traffic 401. The same cookie also
+authenticates browser-issued media `src` GETs against the webapp `/api/objects/download` proxy — a
+**per-user**, JWT-validated route (not admin-gated) — which `img`/`audio`/`video`/`iframe` elements
+cannot set headers on. The admin cluster-wide monitoring panel reads the admin-gated
+`GET /api/admin/overview`, and the backend additionally admin-gates `GET /api/cache` and
+`/api/cache/{evict,rebuild}`.
 
 The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. The former
 `MinIO S3` ribbon link is removed (Phase 3 Sprint 3.13): MinIO is no longer browser-reachable;

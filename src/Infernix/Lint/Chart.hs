@@ -219,13 +219,21 @@ requiredPhrases =
     ( "chart/templates/securitypolicy-operator-routes.yaml",
       [ "kind: SecurityPolicy",
         "name: infernix-operator-routes-jwt",
+        -- all four admin-gated operator routes must be targeted
         "name: infernix-harbor-portal",
+        "name: infernix-harbor-api",
         "name: infernix-pulsar-admin",
+        "name: infernix-pulsar-ws",
         "jwt:",
         "cookies:",
         ".Values.operatorConsole.jwtGating.cookieName",
         "remoteJWKS:",
-        ".Values.clusterConfig.keycloak.jwksUrl"
+        ".Values.clusterConfig.keycloak.jwksUrl",
+        -- Phase 9: a valid JWT is necessary but not sufficient — the admin
+        -- authorization rule (deny-by-default + admin realm role) must be present
+        "authorization:",
+        "defaultAction: Deny",
+        ".Values.keycloak.realm.adminRealmRole"
       ]
     )
   ]
@@ -270,11 +278,11 @@ runChartLint = do
         ( ioError
             ( userError
                 ( relativePath
-                    <> ": Phase 6 Sprint 6.28 chart lint gate rejects `env:` blocks "
+                    <> ": Phase 6 Sprint 6.28 chart lint gate rejects `env:`/`envFrom:` blocks "
                     <> "in infernix-owned deployment templates. The supported flow reads "
                     <> "runtime wiring from the mounted `cluster.dhall` ConfigMap and "
                     <> "credentials from the mounted `infernix-cluster-secrets` Secret. "
-                    <> "Found `env:` at: "
+                    <> "Found `env:`/`envFrom:` at: "
                     <> lineValue
                 )
             )
@@ -409,10 +417,13 @@ isCommentLine ('*' : _) = True
 isCommentLine ('{' : '{' : '/' : '*' : _) = True
 isCommentLine _ = False
 
--- | Whether a single chart-template line starts an @env:@ block.
--- Matches the canonical pod-spec position (leading whitespace, then
--- the literal @env:@, optionally trailing whitespace). Comment lines
--- starting with @#@ are skipped.
+-- | Whether a single chart-template line starts an @env:@ or @envFrom:@ block.
+-- Matches the canonical pod-spec position (leading whitespace, then the literal
+-- @env:@ / @envFrom:@, optionally trailing whitespace). Comment lines starting
+-- with @#@ are skipped. Only the three infernix-owned daemon templates
+-- ('envBlockRejectionPaths') are scanned; the MinIO and Keycloak upstream
+-- component templates carry their own @envFrom:@ surfaces and are intentionally
+-- out of scope.
 isEnvBlockStartLine :: String -> Bool
 isEnvBlockStartLine lineValue =
   let leadingTrimmed = dropWhile (`elem` (" \t" :: String)) lineValue
@@ -420,7 +431,9 @@ isEnvBlockStartLine lineValue =
 
 isEnvBlockTrimmed :: String -> Bool
 isEnvBlockTrimmed ('#' : _) = False
-isEnvBlockTrimmed trimmed = dropTrailingWhitespace trimmed == "env:"
+isEnvBlockTrimmed trimmed =
+  let normalized = dropTrailingWhitespace trimmed
+   in normalized == "env:" || normalized == "envFrom:"
 
 dropTrailingWhitespace :: String -> String
 dropTrailingWhitespace = reverse . dropWhile (`elem` (" \t\r" :: String)) . reverse

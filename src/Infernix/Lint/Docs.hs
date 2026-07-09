@@ -3,9 +3,9 @@ module Infernix.Lint.Docs
   )
 where
 
-import Control.Monad (forM_, unless, when)
+import Control.Monad (forM, forM_, unless, when)
 import Data.Char (isSpace, toLower)
-import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, nub)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub)
 import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Infernix.CommandRegistry
@@ -29,7 +29,7 @@ import Infernix.Routes
     renderWebPortalRoutesSection,
   )
 import Infernix.Types (RuntimeMode (..), allRuntimeModes, matrixRowId, referenceModel, runtimeModeId, selectedEngine)
-import System.Directory (doesFileExist, doesPathExist)
+import System.Directory (doesDirectoryExist, doesFileExist, doesPathExist, listDirectory)
 import System.FilePath (dropDrive, normalise, takeDirectory, (</>))
 
 requiredDocs :: [FilePath]
@@ -42,6 +42,7 @@ requiredDocs =
     "documents/architecture/durable_context_design.md",
     "documents/architecture/engine_pool_routing.md",
     "documents/architecture/object_access_doctrine.md",
+    "documents/architecture/access_control_doctrine.md",
     "documents/architecture/overview.md",
     "documents/architecture/model_catalog.md",
     "documents/architecture/pulsar_ml_workflow.md",
@@ -58,6 +59,7 @@ requiredDocs =
     "documents/development/python_policy.md",
     "documents/development/purescript_policy.md",
     "documents/development/testing_strategy.md",
+    "documents/development/demo_app_test_plan.md",
     "documents/engineering/apple_silicon_metal_headless_builds.md",
     "documents/engineering/build_artifacts.md",
     "documents/engineering/cluster_config_manifest.md",
@@ -127,8 +129,29 @@ phaseDocs =
     "DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md",
     "DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md",
     "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md",
-    "DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md"
+    "DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md",
+    "DEVELOPMENT_PLAN/phase-8-zero-tracked-dhall-config-and-eager-model-cache.md",
+    "DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md"
   ]
+
+-- | Recursively list markdown files under a repo-relative directory, returning
+-- repo-relative paths in the same forward-slash form as 'requiredDocs' /
+-- 'phaseDocs'. Used by the coverage-completeness drift guard in 'runDocsLint'.
+listMarkdownFilesUnder :: FilePath -> FilePath -> IO [FilePath]
+listMarkdownFilesUnder root relativeDir = do
+  entries <- listDirectory (root </> relativeDir)
+  fmap concat $
+    forM entries $ \entry -> do
+      let childRelative = relativeDir <> "/" <> entry
+      isDirectory <- doesDirectoryExist (root </> childRelative)
+      if isDirectory
+        then listMarkdownFilesUnder root childRelative
+        else pure [childRelative | ".md" `isSuffixOf` childRelative]
+
+-- | Whether a discovered @DEVELOPMENT_PLAN/@ path is a numbered phase plan.
+isPhasePlanDoc :: FilePath -> Bool
+isPhasePlanDoc relativePath =
+  "DEVELOPMENT_PLAN/phase-" `isPrefixOf` relativePath && ".md" `isSuffixOf` relativePath
 
 data RootDocRule = RootDocRule
   { rootDocPath :: FilePath,
@@ -363,6 +386,19 @@ runDocsLint = do
     exists <- doesFileExist fullPath
     unless exists $
       ioError (userError ("missing governed document: " <> relativePath))
+  -- Coverage completeness (drift guard): every markdown file actually present
+  -- under documents/ must be registered in requiredDocs, and every
+  -- DEVELOPMENT_PLAN/phase-*.md must be registered in phaseDocs. This stops a
+  -- newly added governed doc or phase plan from silently bypassing the
+  -- metadata / relative-link / Documentation-Requirements checks below.
+  discoveredDocs <- listMarkdownFilesUnder (repoRoot paths) "documents"
+  forM_ discoveredDocs $ \relativePath ->
+    unless (relativePath `elem` requiredDocs) $
+      ioError (userError ("governed document not registered in requiredDocs (add it there): " <> relativePath))
+  discoveredPlanDocs <- listMarkdownFilesUnder (repoRoot paths) "DEVELOPMENT_PLAN"
+  forM_ (filter isPhasePlanDoc discoveredPlanDocs) $ \relativePath ->
+    unless (relativePath `elem` phaseDocs) $
+      ioError (userError ("phase plan not registered in phaseDocs (add it there): " <> relativePath))
   readmeContents <- readFile (repoRoot paths </> "README.md")
   unless ("documents/" `isInfixOf` readmeContents && "DEVELOPMENT_PLAN/" `isInfixOf` readmeContents) $
     ioError (userError "README.md must reference documents/ and DEVELOPMENT_PLAN/")

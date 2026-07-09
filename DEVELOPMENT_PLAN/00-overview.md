@@ -184,7 +184,7 @@ Playwright `9/9`.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint forbids any fabricated result; missing-weights/load/engine failures raise → `failed`. The `apple-silicon` host-inference RAM
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint is a mechanical tripwire rejecting the named fabrication patterns (a regression guard, not an exhaustive proof), and the engine code is fail-closed so missing-weights/load/engine failures raise → `failed`. The `apple-silicon` host-inference RAM
 bound (reopened 2026-07-07) is **code-side closed under Wave R (2026-07-08)**: a per-model
 `modelRamFootprintMib` + per-substrate `inferenceRamBudgetMib` (host RAM − colima pledge − reserve),
 a config-time hard-fail, and serialized-critical-section admission control now reject an over-budget
@@ -196,6 +196,8 @@ MT3 rows closed under Wave P (2026-07-04). |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
+Beyond the Phase 9 admin overview (`/api/admin/overview`) and per-user personal dashboard, no
+general observability stack (metrics, tracing, log aggregation) is deployed.
 Monitoring is not a supported first-class surface.
 
 Phase 7 adds the multi-user durable-context demo application on top of this platform.
@@ -240,12 +242,14 @@ at the Envoy edge `SecurityPolicy` (admin authorization on all four operator rou
 transits the admin-gated edge, and its loopback binding is enforced by `infernix lint chart` plus a
 generated-Kind-config unit assertion. Per-user object isolation additionally gains a MinIO STS
 defense-in-depth layer (a scoped credential keyed to `users/<sub>/`, gated by
-`cluster.minio.stsPerUser`, now default on). Phase 9 is **Done** — code-side closed (2026-07-06,
+`cluster.minio.stsPerUser`, now default on). Phase 9 is **Active** — code-side closed (2026-07-06,
 machine-independent gates green) and [Wave Q](cohort-validation-waves.md) cohort-validated live on
 **both `apple-silicon` and `linux-cpu`** (2026-07-07: by-role 403/2xx over all operator routes +
 `/api/cache` + `/api/admin/overview`, the admin `realm_access.roles` claim, the loopback split,
 per-user isolation, the STS scoped-credential object path, and routed Playwright RBAC/dashboard/
-lifecycle 7/7 on apple). The doctrine lives at
+lifecycle 7/7 on apple) — but a later UAT pass surfaced an unresolved authentication issue
+(repo-root `notes.txt`), so the phase stays `Active` with a named UAT auth residual until it is
+diagnosed and re-validated. The doctrine lives at
 [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md);
 the execution-ordered buildout lives at
 [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md).

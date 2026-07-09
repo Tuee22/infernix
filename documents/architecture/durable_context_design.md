@@ -264,10 +264,12 @@ The reducer's projection-layer dedup rule: the first event with a given
 are dropped. The raw log may contain duplicates from retries; the
 projected state never does.
 
-The reducer also emits a `ConversationStatePatch` for each new event.
-Patches are mechanical deltas (`AppendTurn`, `UpdateTurnStatus`,
-`AppendArtifact`) that the browser applies without business logic. The
-patch stream is what flows over the WS; the snapshot is what flows on
+The reducer also emits a `ConversationStatePatch` for each new event. The
+patch has two mechanical variants — `AppendMessage` (one message plus the new
+prefix hash) and `ReplaceSnapshot` (a full state replace) — that the browser
+applies by folding messages by id, without business logic. The reducer emits
+`AppendMessage` per event; `ReplaceSnapshot` carries the first-connect snapshot.
+The patch stream is what flows over the WS; the snapshot is what flows on
 first connect.
 
 ## Pulsar Topology
@@ -281,6 +283,12 @@ The application's topics sit under `persistent://<topicNamespace>/`.
 | Drafts | `persistent://<topicNamespace>/user.<userId>.drafts` | 1 | full | on (key: `contextId`) |
 | Inference request | `persistent://<topicNamespace>/inference.request.<runtimeMode>` | 1 | full | off |
 | Inference result | `persistent://<topicNamespace>/inference.result.<runtimeMode>` | 1 | full | off |
+
+The patterns above are the product-agnostic template. A concrete app namespaces the durable-context
+local topic names with an application segment: the demo binds them as
+`demo.conversation.<userId>.<contextId>`, `demo.user.<userId>.contexts`, and
+`demo.user.<userId>.drafts` (see [demo_app_design.md](demo_app_design.md)), while the shared
+`inference.{request,result}.<runtimeMode>` topics keep their plain names.
 
 Single-partition topics give total broker order over messages from any
 number of producers. Schemas are registered via the Pulsar admin API at
@@ -336,7 +344,8 @@ The dispatcher is a pure fold over the conversation log. The dispatch
 rule:
 
 > Dispatch inference for a `UserPrompt` iff every prior `UserPrompt` in
-> the log has a matching `InferenceResult`.
+> the log is resolved — i.e. has a matching `InferenceResult` **or** a
+> matching `UserCancel`.
 
 That decision is a deterministic function of the log prefix.
 Implementation: a Pulsar named `Failover` subscription per conversation
@@ -348,10 +357,13 @@ it folds the same log.
 **Two prompts in a row.** Permitted. UI renders the second prompt as
 "queued" until the first completes. State is derived from the same fold.
 
-**Cancellation.** `UserCancel` is an event on the log. The engine
-produces an `InferenceResult` with `status = Cancelled` (or ignores the
-cancel if a Completed result was already published). Replay is
-deterministic.
+**Cancellation.** `UserCancel` is an event on the log. It resolves the
+target prompt in the projection immediately — the reducer's `isResolving`
+treats `UserCancel` as a resolver — so the single-flight slot is freed and
+the next queued prompt can dispatch even before the engine responds. The
+engine still produces an `InferenceResult` with `status = Cancelled` (or
+ignores the cancel if a Completed result was already published) so the
+engine-side lifecycle stays consistent. Replay is deterministic.
 
 ## Engine Cache Consistency
 

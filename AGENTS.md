@@ -19,6 +19,10 @@ Read first:
 
 ## Non-Negotiable Rules
 
+> These hard-stops are the inline operational mirror of the canonical list in
+> [documents/development/assistant_workflow.md](documents/development/assistant_workflow.md); keep the
+> mirror and the canonical list in sync when a rule changes.
+
 - never run `git add`
 - never run `git commit`
 - never run `git push`

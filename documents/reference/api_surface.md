@@ -28,6 +28,7 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 - `POST /api/cache/rebuild` (**admin-only**, Phase 9) rebuilds derived cache directories from the durable manifest set
 - `GET /api/admin/overview` (**admin-only**, Phase 9) returns cluster-wide monitoring for the admin panel
 - `GET /api/cache`, `POST /api/cache/evict`, `POST /api/cache/rebuild`, and `GET /api/admin/overview` all require the `infernix-admin` realm role (`jwtClaimsHasRealmRole`, backend `withAdminRequest`): 401 without a token, 403 for a valid non-admin token, 2xx for an admin token. `GET /api/cache` was unauthenticated before Phase 9 Sprint 9.3 gated it. See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md)
+- `DELETE /api/account` (JWT-validated, per-user; `handleAccountDeletion`) deletes the caller's account data — it reaps the caller's `users/<sub>/` MinIO prefix and the caller's demo Pulsar conversation / metadata / draft topics. See [web_portal_surface.md](web_portal_surface.md)
 - the `/api/objects` family is the webapp object-proxy (Phase 7 Sprint 7.25): the browser
   uploads and downloads artifact **bytes** through the webapp, which reads and writes MinIO
   server-side over the cluster-internal endpoint. The browser never receives a presigned MinIO URL.

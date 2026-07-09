@@ -35,7 +35,7 @@
 ### `lint`
 
 - `infernix lint files` - runs the tracked-file and generated-artifact hygiene checks
-- `infernix lint docs` - runs the governed documentation validator
+- `infernix lint docs` - runs the governed-documentation and development-plan-shape validator (`runDocsLint`)
 - `infernix lint proto` - runs the protobuf contract validator
 - `infernix lint chart` - runs the Helm and chart ownership validator
 
@@ -50,7 +50,7 @@
 
 ### `docs`
 
-- `infernix docs check` - runs the canonical documentation validator
+- `infernix docs check` - alias of `lint docs` (same `runDocsLint`); runs the governed-documentation and development-plan-shape validator
 
 ### `internal`
 

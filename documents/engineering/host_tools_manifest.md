@@ -201,8 +201,9 @@ When a sprint introduces a new external CLI:
    call site. Never write `proc "<bare-name>"` directly or call `findExecutable` /
    `findExecutables` to discover a manifest-owned tool.
 4. Document the field + supported defaults in this manifest doc (the per-tool table above).
-5. The Haskell-style lint gate (`disallowedProcCommands`) recognizes the new name automatically
-   because it reads the schema field list.
+5. The Haskell-style lint gate (`forbiddenBareProcCommands`, derived from the `HostTools.HostTool`
+   enum via `hostToolCommandNames`) picks up the new command automatically — adding the `HostTool`
+   constructor extends the gate, so it cannot drift from the registered tool set.
 
 ## Validation
 

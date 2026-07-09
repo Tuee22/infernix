@@ -45,14 +45,16 @@ backpressure on unique derived pool/model topics; Linux GPU/CUDA cohort validati
 [Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
 is hardware-deferred proof while no second Apple host is available.
 
-**Resource-safety scope (open gap).** The routing controls here — Pulsar consumer permits, receiver
-backlog, and `maxInflightPerMember` — plus the model cache (LRU in
-`python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*, not host
-inference RAM. On `apple-silicon` there are no in-cluster engine pods: every pool runs on the single
-on-host `infernix service` daemon, serialized one model at a time as fresh subprocesses, with no
-per-model RAM footprint, no inference-RAM budget, no admission control, and no RAM eviction. Peak
-resident memory is therefore unbounded, so sustained load across the model catalog can exhaust host
-RAM and let the OS SIGKILL the daemon (an uncontrolled process death, not a clean `status=failed`).
+**Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog
+(each consumer's `receiverQueueSize` is fixed at 1 today) — plus the model cache (LRU in
+`python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*; `maxInflightPerMember`
+is a validated per-member invariant (see the Typed Configuration note below). Host inference RAM is
+bounded separately since Phase 4 Sprint 4.26. On `apple-silicon` every pool runs on the single on-host
+`infernix service` daemon, serialized one model at a time as fresh subprocesses, under a per-substrate
+`inferenceRamBudgetMib` (host RAM − colima pledge − reserve) and a per-model `modelRamFootprintMib`. A
+config-time hard-fail plus serialized-critical-section admission control rejects an over-budget model
+as a clean `status=failed` rather than letting the OS SIGKILL the daemon; Wave R (2026-07-08) proved
+the full 16-model Apple lane with zero OS OOM-kill.
 A per-model RAM budget plus an admission gate on the serialized on-host path is a known, still-open
 gap reopened as Phase 4 Sprint 4.26
 ([phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)),
@@ -87,7 +89,11 @@ Pinned routes are for exact-host or exact-placement requirements, not for ordina
 ## Typed Configuration
 
 The staged substrate file describes engine pools and durable engine members with substrate-neutral
-fields:
+fields. **The example below is illustrative of the field *shape* across substrates, not a valid
+single-substrate `infernix.dhall`:** a real staged file carries exactly one substrate's pools, gives
+each pool a distinct model id, and declares every member it references in `engineMembers`
+(`validateDemoConfig` rejects a mixed-substrate list, a reused model id, or an undeclared member such
+as `mac-mini-2` below).
 
 ```dhall
 enginePools =
@@ -121,10 +127,12 @@ engineMembers =
   ]
 ```
 
-The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). `maxInflightPerMember` caps per-member
-in-flight request concurrency and disk-cache churn, not host inference RAM — on `apple-silicon` all
-pools share one serialized on-host daemon, so it does not bound cumulative or peak memory (open gap;
-see **Resource-safety scope** under Current Status and Phase 4 Sprint 4.26). Kubernetes placement
+The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). `maxInflightPerMember` is a
+**validated per-member invariant** (parsed, rendered, and asserted `> 0`); it does not yet change
+runtime concurrency — each engine consumer hardcodes `receiverQueueSize = 1`, so the effective
+per-consumer in-flight is 1 regardless of the configured value (wiring the field into the consumer
+permits is tracked future work). It never bounds host inference RAM; that is handled separately by
+the Phase 4 Sprint 4.26 `inferenceRamBudgetMib` admission control (see **Resource-safety scope**). Kubernetes placement
 details stay in chart values and Kubernetes scheduling primitives; the routing graph only names
 durable pool/member identity. The invariants are fixed:
 

@@ -160,9 +160,13 @@
   daemon, and Wave J closed the current Linux GPU/CUDA plus rebuilt-image `linux-cpu` engine-pool
   placement/backpressure validation on 2026-06-20; Wave M closed the webapp object-proxy reopen
   (2026-06-29), Wave N closed generated-artifact ownership (2026-06-30), Wave P closed the MT3
-  catalog replacement plus Phase 8 (2026-07-04), and Wave Q closed Phase 9 access control and
-  monitoring on both `apple-silicon` and `linux-cpu` (2026-07-07)
-- Monitoring is not a supported first-class surface.
+  catalog replacement plus Phase 8 (2026-07-04), and Wave Q cohort-validated the Phase 9
+  access-control/monitoring RBAC/STS/dashboard surface on both `apple-silicon` and `linux-cpu`
+  (2026-07-07); a later UAT pass then reopened Phase 9 as `Active` for an unresolved authentication
+  issue (repo-root `notes.txt`)
+- Beyond the Phase 9 admin overview (`/api/admin/overview`) and per-user personal dashboard, no
+  general observability stack (metrics, tracing, log aggregation) is deployed.
+  Monitoring is not a supported first-class surface.
 
 ## Operator and Host Components
 

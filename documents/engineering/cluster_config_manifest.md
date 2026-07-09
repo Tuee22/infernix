@@ -128,7 +128,7 @@ This table records the typed input families read by each consumer.
 | Input family | Dhall field family | Read by |
 |--------------|--------------------|---------|
 | Pulsar admin, WebSocket, HTTP, service URL, tenant, and namespace inputs | `pulsar.*` | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Conversation/Topic.hs` |
-| MinIO endpoint, public presign endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
+| MinIO endpoint, region, presign-expiry, and model-bucket inputs | `minio.*` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_cache.py` |
 | MinIO access-key and secret-key inputs | `readFile (SecretsConfig.minio.credentialsPath)` -> `accessKey` / `secretKey` | `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs` |
 | Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
 | Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/Webapp.hs`, `src/Infernix/Service.hs` |

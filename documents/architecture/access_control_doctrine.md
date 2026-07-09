@@ -20,6 +20,11 @@
 - **Admin identity is a realm role, not a user id.** Keycloak emits the `infernix-admin` role in
   `realm_access.roles`; the hardcoded `admin` account (demo app) carries it. Self-registered users
   never receive it.
+- **How an operator becomes admin.** Admin is a **separate login**, not a mode of a regular account:
+  sign in as the pre-seeded admin account (username `keycloak.realm.demoAdmin.username`, default
+  `admin`; password `keycloak.realm.demoAdmin.password`, both in `chart/values.yaml`). That account is
+  the only principal granted `infernix-admin`; a self-registered user cannot be elevated in the demo,
+  so no ordinary user can reach the admin portal.
 
 ## Identity and roles
 
@@ -44,6 +49,14 @@ The last row is the reason admin-gating the edge is safe: the Apple host-native 
 the cluster data plane directly on loopback (see
 [daemon_topology.md](daemon_topology.md) and `src/Infernix/Runtime/Pulsar.hs`), so it is unaffected by
 the Keycloak+admin gate on the browser edge (30090).
+
+> **Known residual (UAT).** A later UAT pass surfaced an unresolved authentication issue, so Phase 9
+> is `Active` (see the plan's
+> [Remaining Work — UAT auth residual](../../DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md)).
+> One candidate lead to investigate — not a confirmed root cause — is that the edge admin access token
+> is written to a JS-readable, non-`Secure` cookie (`infernix_operator_token`, `SameSite=Lax`) in
+> `web/src/Infernix/Web/Auth.js` and consumed verbatim by the edge `SecurityPolicy`; a role-bearing
+> token near the ~4 KB cookie limit could be silently dropped and 401 a real admin.
 
 ## Current Status
 

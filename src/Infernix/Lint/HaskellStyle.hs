@@ -270,32 +270,11 @@ bareNameProcViolations sourceFile numberedLines
         needle `isInfixOf` lineValue
       ]
 
+-- | Derived from the 'HostTools.HostTool' enum (via 'HostTools.hostToolCommandNames')
+-- so the forbidden bare-name set cannot drift from the registered host-tool set:
+-- adding a 'HostTool' constructor automatically extends this gate.
 forbiddenBareProcCommands :: [String]
-forbiddenBareProcCommands =
-  [ "docker",
-    "kubectl",
-    "helm",
-    "kind",
-    "cabal",
-    "ghc",
-    "ghcup",
-    "ormolu",
-    "hlint",
-    "npm",
-    "node",
-    "python3",
-    "poetry",
-    "protoc",
-    "git",
-    "tar",
-    "curl",
-    "apt-get",
-    "brew",
-    "colima",
-    "skopeo",
-    "sudo",
-    "systemctl"
-  ]
+forbiddenBareProcCommands = HostTools.hostToolCommandNames
 
 bareNameProcExemptedFiles :: [FilePath]
 bareNameProcExemptedFiles =

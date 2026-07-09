@@ -102,10 +102,15 @@ service:
 daemonSplit:
   enabled: true
 
-# Phase 4 Sprint 4.13: typed cluster-wiring values rendered into
-# `ConfigMap/infernix-cluster-config` and consumed by every cluster-
-# resident `infernix` daemon at startup. Mirrors the
-# `dhall/InfernixCluster.dhall` schema; see
+# Phase 4 Sprint 4.13 / Phase 8 Sprint 8.4: typed cluster-wiring values. The
+# `ConfigMap/infernix-cluster-config` body is the binary-rendered
+# `.Values.clusterConfig.body` `cluster.dhall` string
+# (`Infernix.ClusterConfig.renderClusterConfig`), which Helm only `nindent`s —
+# per the zero-tracked-`.dhall` doctrine there is no tracked
+# `dhall/InfernixCluster.dhall` file; the schema is reflected from the
+# `Infernix.ClusterConfig` decoder type. The structured `clusterConfig.name` and
+# `clusterConfig.keycloak.*` values are the only ones consumed structurally by
+# templates (e.g. the operator-routes SecurityPolicy issuer); see
 # `documents/engineering/cluster_config_manifest.md` for the full
 # per-field origin mapping.
 #

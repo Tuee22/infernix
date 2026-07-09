@@ -203,9 +203,10 @@ durable-context application. The product-agnostic primitives this binding is bui
   `ServerError` handling, and `/api/objects` grant plus same-user MinIO byte roundtrip on the
   clean rebuilt Linux GPU launcher. The browser shell also owns the PKCE redirect completion,
   local context creation,
-  browser upload to MinIO, bounded text/JSON previews, inline image/audio/video rendering,
-  browser-native PDF URL wiring, and MIDI / MusicXML / generic download-only states through
-  presigned grants. Successful browser uploads now send `ClientRecordUpload` so the backend
+  browser upload through the webapp `/api/objects` proxy, bounded text/JSON previews, inline
+  image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML / generic
+  download-only states — all mediated by the webapp object-proxy over typed `ObjectRef`s, never a
+  presigned MinIO URL the browser holds. Successful browser uploads now send `ClientRecordUpload` so the backend
   appends a typed `ConversationUserUploadEvent` to the conversation log. The Chat form now sends
   `ClientSubmitPrompt` over the active WebSocket and includes the current context's uploaded
   `ObjectRef`s in `promptUserUploads`; `ClientHello` starts per-user context/draft streams;

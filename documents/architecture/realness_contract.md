@@ -21,7 +21,9 @@
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
-  `check-code` AST pass) makes the invariant mechanical so it cannot regress.
+  `check-code` AST pass) is a mechanical regression tripwire on a fixed set of named fabrication
+  tokens and AST shapes. It catches the known fabrication patterns rather than proving the absence of
+  every conceivable one; the invariant ultimately rests on the fail-closed engine code plus review.
 
 ## The invariant
 
@@ -51,8 +53,8 @@ native runner has **no fabrication branch**:
 
 | Surface | Mechanism | Forbids |
 |---|---|---|
-| Haskell | `realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs`, run under the `infernix-haskell-style` cabal test (`infernix test lint`), scoped via `realnessScopedFile` (`Engines/LinuxNative.hs` landed under Phase 4; `Engines/AppleSilicon.hs` added under Phase 1) | the fabrication tokens `emit_fallback_result`, `infernix_emit_validation_result`, `native-validation`, `b64decode` (constant artifact), `native fallback` (`np.zeros` is *not* token-forbidden — real engines use it for scratch buffers; the fake-input pattern is a doctrine prohibition, not a token check) |
-| Python | AST pass in `python/adapters/common.py` `run_check_code` (`poetry run check-code`) | `return` inside `except`, `ArtifactResult(data=bytes([...]))` / `b64decode("...")`, and `_validation_*` / `*_smoke*` / `*_fallback*` helper definitions |
+| Haskell | `realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs`, run under the `infernix-haskell-style` cabal test (`infernix test lint`), scoped via `realnessScopedFiles` (`Engines/LinuxNative.hs` landed under Phase 4; `Engines/AppleSilicon.hs` added under Phase 1) | the fabrication tokens `emit_fallback_result`, `infernix_emit_validation_result`, `native-validation`, `b64decode` (constant artifact), `native fallback` (`np.zeros` is *not* token-forbidden — real engines use it for scratch buffers; the fake-input pattern is a doctrine prohibition, not a token check) |
+| Python | AST passes in `python/adapters/common.py` `run_check_code` (`poetry run check-code`) | **`python/adapters/*_python.py`**: `return` inside `except`, `bytes([...])` / `b64decode("...")` constant-artifact bytes, and `_validation_*` / `*_smoke*` / `*_fallback*` helper definitions. **`python/native-runners/*.py`**: the module-agnostic constant-artifact signals only (`bytes([...])` / decoded literal) — the name/except heuristics do not transfer because a native runner is a CLI with a legitimate `smoke` subcommand and fail-closed error-code `return`s; its realness otherwise rests on the exit-non-zero fail-closed structure plus review |
 | Docs | `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` | the retired fabrication-blessing wording in governed docs |
 
 ## Current Status

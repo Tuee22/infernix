@@ -11,6 +11,7 @@
 module Infernix.HostTools
   ( HostTool (..),
     hostToolName,
+    hostToolCommandNames,
     hostToolPath,
     hostToolFallbackCandidates,
     hostToolFallbackPath,
@@ -84,7 +85,7 @@ data HostTool
   | HostHostname
   | HostSysctl
   | HostColima
-  deriving (Eq, Show)
+  deriving (Bounded, Enum, Eq, Show)
 
 -- | The supported short name for a tool, used in lint messages and
 -- diagnostic output so a missing 'HostToolPaths' field surfaces a
@@ -129,6 +130,13 @@ hostToolName tool = case tool of
   HostHostname -> "hostname"
   HostSysctl -> "sysctl"
   HostColima -> "colima"
+
+-- | Every external command name, derived from the 'HostTool' enum. The
+-- bare-name @proc@ lint in @Infernix.Lint.HaskellStyle@ reuses this so its
+-- forbidden-command set cannot drift from the registered tool set: adding a
+-- 'HostTool' constructor automatically extends the lint's coverage.
+hostToolCommandNames :: [String]
+hostToolCommandNames = map (Text.unpack . hostToolName) [minBound .. maxBound]
 
 -- | Look up the absolute path for a tool. An empty path means the
 -- active execution context does not provide the tool (e.g. @apt-get@

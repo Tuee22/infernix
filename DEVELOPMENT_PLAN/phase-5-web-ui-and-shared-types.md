@@ -123,16 +123,20 @@ contract and behaves predictably.
 
 ### Deliverables
 
-- `purescript-spec` suites cover generated contracts, model-list rendering, manual inference forms,
-  request-shape presentation, and result presentation
+- `purescript-spec` suites cover the generated contract constants (`apiBasePath`,
+  `maxInlineOutputLength`, request/result topics, `runtimeMode`) and the generated engine/model
+  catalog (per-substrate counts + metadata presence); the original manual-inference view specs are
+  superseded by the Phase 7 `Chat` / `Contracts` / `Artifacts` view-model specs
 - frontend tests run through the CLI-owned validation surface
-- the browser-independent view model proves that rendered catalog membership matches the generated catalog
+- the browser-independent view model asserts the generated engine/model catalog counts and metadata
+  match the active substrate
 
 ### Validation
 
 - `infernix test unit` runs `spago test` alongside Haskell unit tests
 - contract tests fail when request or response shapes drift from the Haskell-owned source
-- view-level specs fail when rendered catalog membership or ordering drifts from the generated catalog
+- the contract/count specs fail when the generated engine/model catalog counts or metadata drift from
+  the generated catalog
 
 ### Remaining Work
 
@@ -193,7 +197,7 @@ Playwright executor from the active substrate image on Linux.
   sidecar service
 - `infernix test e2e` invokes `npm --prefix web exec -- playwright test` inside the Linux
   launcher image; Apple host-native E2E uses host `npm exec` with the same typed fixture and
-  is queued for the Apple cohort validation batch
+  is closed in [Wave A.2](cohort-validation-waves.md)
 - the chart does not deploy a separate web workload or web image
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
 
@@ -288,7 +292,7 @@ the inference batch execution moves to host daemons.
 
 - the routed demo app remains cluster-resident on Apple and Linux substrates alike
 - Apple host-native E2E orchestration uses host `npm exec` with the same typed fixture and is
-  queued for the Apple cohort validation batch
+  closed in [Wave A.2](cohort-validation-waves.md)
 - Linux outer-container E2E orchestration runs `npm --prefix web exec -- playwright test` from
   inside the active substrate image
 - Docker is a hard prerequisite for `infernix test e2e` on Linux substrates; the Apple branch runs
@@ -307,7 +311,7 @@ the inference batch execution moves to host daemons.
 
 ### Validation
 
-- Apple routed E2E runner code is landed and queued for the Apple cohort validation batch
+- Apple routed E2E runner code is landed and closed in [Wave A.2](cohort-validation-waves.md)
 - Linux routed E2E passes through the in-substrate Playwright executor without any host daemon
   management
 - Apple and Linux routed E2E pass through the same browser-visible flows without substrate-specific

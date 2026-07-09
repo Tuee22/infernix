@@ -909,7 +909,7 @@ matrixRows =
       "PyTorch"
       "piano_transcription_inference"
       "https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1"
-      "Modern PyTorch transcription model replacing the ancient-TensorFlow Omnizart stack; runs on the shared pytorch adapter. The engine binding is landed and wired (pytorch_python.py); real-output cohort evidence is pending the Wave Q gate."
+      "Modern PyTorch transcription model replacing the ancient-TensorFlow Omnizart stack; runs on the shared pytorch adapter. The engine binding is landed and wired (pytorch_python.py); real-output cohort evidence closed under Wave R (Apple, 2026-07-08) and Wave S (Linux, 2026-07-09)."
       "Audio Input"
       (Just (ModeBinding "PyTorch MPS" False))
       (Just (ModeBinding "PyTorch CPU" False))

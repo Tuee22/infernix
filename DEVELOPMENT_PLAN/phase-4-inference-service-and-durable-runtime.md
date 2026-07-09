@@ -20,7 +20,8 @@
 > mask runtime failures. Phase 4 therefore **reopened** Sprints 4.21–4.23 to deliver
 > realness by construction — the engine code is made structurally incapable of returning a fabricated
 > result (every missing-weights/load/engine failure raises → `status=failed`; host-memory exhaustion
-> on `apple-silicon` is a separate, still-open gap — see the RAM-safety reopen below and Sprint 4.26),
+> on `apple-silicon` was a separate gap, now **closed** by Sprint 4.26 admission control and
+> [Wave R](cohort-validation-waves.md) (2026-07-08, full 16-model Apple lane with zero OS OOM-kill)),
 > with real Linux engines,
 > fixed weight provisioning, ONNX adoption where it is the mature free choice, and modern PyTorch
 > rebinds for the music-transcription rows. The guarantee is mechanically enforced by a new realness
@@ -292,7 +293,7 @@ derived local cache state become authoritative.
 
 **Status**: Done
 **Code-side closure**: Complete — the host-side service wiring that loads engine artifacts from `./.data/engines/<adapterId>/` and publishes the per-family result is in place; proven by the machine-independent gate set (`cabal build all`, `cabal test infernix-unit`) on the recorded CUDA Linux host. The real Apple-native Metal engine path depends on Sprint 1.14's headless Metal/Core ML materialization and runs only on Apple
-**Cohort gate**: Closed — Sprint 1.14's headless Apple Metal/Core ML materialization lane is closed, and recorded Apple integration/e2e/all evidence proves the host-side bridge. Sprint 1.15 / Wave L owns routed real-output proof for the real Apple native payloads, so that evidence is not a Phase 4.3 blocker under the Section Q single-accelerator gate. Apple closure here reflects the then-active pre-MT3 / pre-Phase-8-eager catalog only; on the current 16-model catalog a full per-model `test integration` is OOM-blocked on Apple (Sprint 4.26).
+**Cohort gate**: Closed — Sprint 1.14's headless Apple Metal/Core ML materialization lane is closed, and recorded Apple integration/e2e/all evidence proves the host-side bridge. Sprint 1.15 / Wave L owns routed real-output proof for the real Apple native payloads, so that evidence is not a Phase 4.3 blocker under the Section Q single-accelerator gate. Apple closure here reflects the then-active pre-MT3 / pre-Phase-8-eager catalog; the current 16-model catalog full per-model `test integration` was proven OOM-free on Apple by Sprint 4.26 admission control ([Wave R](cohort-validation-waves.md), 2026-07-08).
 **Implementation**: `src/Infernix/Service.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/runtime_modes.md`, `documents/engineering/object_storage.md`, `documents/operations/apple_silicon_runbook.md`, `documents/engineering/portability.md`
 
@@ -1371,8 +1372,9 @@ so the CPU-lane fixes carried over and the GPU lane went green on the first clus
 specs. [Wave K](cohort-validation-waves.md) is therefore **fully closed** for that then-active Linux
 catalog (both Linux accelerators). The later 2026-06-30 MT3 replacement is tracked by Sprint 4.22 and
 was proven by Waves O/P (2026-07-04); Wave K does not claim full-suite evidence for rows added after it ran. Wave L closed the Apple
-real-engine residual on 2026-06-29 for the then-active Apple catalog; no current-catalog Apple full
-per-model attestation exists — the current 16-model run is OOM-blocked (Sprint 4.26). Machine-independent gates (`cabal build all`,
+real-engine residual on 2026-06-29 for the then-active Apple catalog; the current-catalog Apple full
+16-model per-model attestation closed under Sprint 4.26 admission control + [Wave R](cohort-validation-waves.md)
+(2026-07-08) with zero OS OOM-kill. Machine-independent gates (`cabal build all`,
 `cabal test infernix-unit`, `infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 `infernix docs check`, `poetry run check-code`) are green.
 **Cohort gate**: Closed [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu` real
@@ -1489,8 +1491,9 @@ utterance — a genuinely-spoken mono 16 kHz sample should be sourced for the sp
 real-output proof. Machine-independent gates gate the next step.
 **Cohort gate**: Closed [Wave K](cohort-validation-waves.md) — `linux-gpu` + `linux-cpu`; the same
 substrate-agnostic fixtures re-run on `apple-silicon` under [Wave L](cohort-validation-waves.md), which
-closed on 2026-06-29 for the then-active pre-MT3 catalog only; no current-catalog Apple full per-model
-attestation exists — the current 16-model run is OOM-blocked (Sprint 4.26).
+closed on 2026-06-29 for the then-active pre-MT3 catalog; the current-catalog Apple full 16-model
+per-model attestation closed under Sprint 4.26 admission control + [Wave R](cohort-validation-waves.md)
+(2026-07-08) with zero OS OOM-kill.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `web/test/fixtures/artifactSamples.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`
 

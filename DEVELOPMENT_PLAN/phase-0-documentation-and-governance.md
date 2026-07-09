@@ -409,10 +409,16 @@ the pass. The supported shape is anchored on
 - `infernix lint docs` exits zero against the rewritten prose surfaces.
 - The README/doc lexical guard for unsupported historical-state and time-relative terms returns
   zero matches.
-- `grep -rEn "Sprint [0-9]+\.[0-9]+|[A-Z][a-z]+ [0-9]+, 202[0-9]|202[0-9]-[0-9]{2}-[0-9]{2}" README.md documents/`
-  returns zero matches in body prose.
-- `grep -rEn "infernix-service|ClusterDaemon|HostDaemon|\./.data/object-store|infernix-runtime|infernix-results|/objects/:objectRef|objectStoreRoot" README.md documents/`
-  returns zero matches.
+- Sprint 0.10 editorial-pass gates (one-time, not enduring lint checks): at the 0.10 close,
+  `grep -rEn "Sprint [0-9]+\.[0-9]+|[A-Z][a-z]+ [0-9]+, 202[0-9]|202[0-9]-[0-9]{2}-[0-9]{2}" README.md documents/`
+  and
+  `grep -rEn "infernix-service|ClusterDaemon|HostDaemon|\./.data/object-store|infernix-runtime|infernix-results|/objects/:objectRef|objectStoreRoot" README.md documents/`
+  returned zero body-prose matches. They were a one-time editorial sweep, not enduring gates:
+  reopened phases (4/6/7/9) and the validation-status matrix have since intentionally added factual
+  dated **Wave/Sprint evidence citations** to `README.md` status prose and some governed docs'
+  `## Current Status` sections, so the raw greps no longer return zero. The enduring
+  machine-enforced guard is the lint lexical check above (`infernix lint docs`), which still forbids
+  unsupported historical-state and time-relative *narrative* terms.
 - The development-plan lexical guard for unsupported historical-state terms returns matches only
   inside `legacy-tracking-for-deletion.md`.
 - Read-through of `phase-0` → `phase-7` end-to-end: a fresh reader can follow the development

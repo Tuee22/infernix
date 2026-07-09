@@ -1217,9 +1217,10 @@ loadInternalMinioPresignedConfig =
 -- this exchanges the shared root credential for a short-lived MinIO STS
 -- credential scoped by an inline session policy to the caller's
 -- @users\/<sub>\/@ prefix — a second, IAM-layer isolation boundary independent
--- of the server-side 'pathBelongsToUser' check. When the flag is 'False' (the
--- default) it returns the root-credential config unchanged, preserving the
--- validated Phase 7 object path; Wave Q flips the flag on and proves the live
+-- of the server-side 'pathBelongsToUser' check. The flag defaults to 'True'
+-- (STS-scoped credential by default). When it is 'False' — the opt-out — this
+-- returns the shared root-credential config unchanged, preserving the validated
+-- Phase 7 object path; Wave Q validated the default-on scoped path and its live
 -- cross-user IAM denial.
 loadUserScopedMinioPresignedConfig :: UserId -> IO (Either String PresignedUrlConfig)
 loadUserScopedMinioPresignedConfig userId = do

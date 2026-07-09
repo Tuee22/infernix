@@ -301,7 +301,7 @@ lintCommandFamily =
       familyOverview = "runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets",
       familyCommands =
         [ simpleCommand "lint files" "runs the tracked-file and generated-artifact hygiene checks" LintFilesCommand,
-          simpleCommand "lint docs" "runs the governed documentation validator" LintDocsCommand,
+          simpleCommand "lint docs" "runs the governed-documentation and development-plan-shape validator (`runDocsLint`)" LintDocsCommand,
           simpleCommand "lint proto" "runs the protobuf contract validator" LintProtoCommand,
           simpleCommand "lint chart" "runs the Helm and chart ownership validator" LintChartCommand
         ]
@@ -328,7 +328,7 @@ docsCommandFamily =
     { familyTopic = "docs",
       familyOverview = "validates the governed documentation suite and the development-plan shape",
       familyCommands =
-        [ simpleCommand "docs check" "runs the canonical documentation validator" DocsCheckCommand
+        [ simpleCommand "docs check" "alias of `lint docs` (same `runDocsLint`); runs the governed-documentation and development-plan-shape validator" DocsCheckCommand
         ]
     }
 

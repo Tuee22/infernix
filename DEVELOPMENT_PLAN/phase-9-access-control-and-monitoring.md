@@ -1,11 +1,14 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done — code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
-`apple-silicon` and `linux-cpu` (2026-07-07)**: full `cluster up` on each cohort proved the RBAC
-403/2xx-by-role contract, the admin `realm_access.roles` claim, the loopback data-plane split,
-per-user isolation, the default-on per-user STS scoped-credential object path, and (apple) the routed
-Playwright RBAC/dashboard/lifecycle suite 7/7 — with the deployed SPA carrying the admin panel +
-personal dashboard on both. No remaining Phase 9 work.
+**Status**: Active — code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+`apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
+on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
+loopback data-plane split, per-user isolation, the default-on per-user STS scoped-credential object
+path, and (apple) the routed Playwright RBAC/dashboard/lifecycle suite 7/7 — with the deployed SPA
+carrying the admin panel + personal dashboard on both. **Open residual**: a subsequent UAT pass
+surfaced an authentication issue that is not yet diagnosed, plus an admin-access documentation gap
+(`../notes.txt`). The phase stays `Active` until the UAT auth item is closed — see
+**Remaining Work — UAT auth residual** below.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —
@@ -73,8 +76,33 @@ the deployed SPA carries the admin panel + personal dashboard. Notably the admin
 browser rendering is substrate-independent (identical baked SPA) and is covered by the apple-silicon
 7/7 run.
 
-Both the chosen accelerator cohort (`apple-silicon`) and `linux-cpu` have passed the phase's
-full RBAC/STS/dashboard gates against the same frozen phase state, so Phase 9 is `Done`.
+Both the chosen accelerator cohort (`apple-silicon`) and `linux-cpu` passed the phase's
+full RBAC/STS/dashboard gates against the same frozen phase state, so the RBAC/STS/dashboard
+*surface* is validated. A **later UAT pass** then surfaced an unresolved authentication issue, so
+Phase 9 is `Active` with the UAT auth residual below rather than `Done`.
+
+## Remaining Work — UAT auth residual [Active]
+
+Two open items recorded in the repo-root `../notes.txt` sit squarely in Phase 9's admin-vs-user
+access domain and are not yet closed:
+
+1. **Undiagnosed UAT auth issue.** A UAT pass revealed an authentication failure whose root cause is
+   not yet identified. The Wave Q evidence above validated the *frozen* pre-UAT state; it does not
+   cover this issue. Diagnosis is deferred to a dedicated follow-on.
+   - **Candidate lead (unconfirmed):** the edge admin access token is written to a JS-readable,
+     non-`Secure` cookie (`infernix_operator_token`, `SameSite=Lax`, no `HttpOnly`/`Secure`) in
+     `web/src/Infernix/Web/Auth.js` and consumed verbatim by the edge `SecurityPolicy`. A
+     role-bearing token near the ~4 KB cookie limit could be silently dropped and 401 a real admin.
+     This is a lead to investigate, not a confirmed root cause. See also the documented Envoy
+     `Host`-rewrite issuer-mismatch failure mode in `src/Infernix/Demo/Auth.hs`.
+2. **Admin-access documentation gap** (answered here; doc fix tracked in the doctrine docs). Admin is
+   a **separate login**: a single hardcoded `admin` account (`keycloak.realm.demoAdmin.username` /
+   `.password`) is the only principal granted the `infernix-admin` realm role. Self-registered users
+   are non-admin **by construction** and are denied at both the edge `SecurityPolicy` and the backend
+   `withAdminRequest` gate — no ordinary user can reach the admin portal.
+
+Phase 9 moves back to `Done` only once item 1 is diagnosed and closed (and re-validated on the
+chosen accelerator plus `linux-cpu`).
 
 ## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
 
@@ -333,7 +361,7 @@ routed edge, so its run is the cohort gate.
 **Cohort gate**: [Wave Q](cohort-validation-waves.md) — routed Playwright on the selected accelerator
 plus `linux-cpu`.
 **Implementation**: `web/playwright/inference.spec.js`
-**Docs to update**: `documents/development/testing.md`, `documents/development/demo_app_test_plan.md`
+**Docs to update**: `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`
 
 ### Objective
 Prove the admin/user split and the account lifecycle end-to-end, and flip the existing tests that
@@ -360,7 +388,7 @@ currently assert the *old* (any-user-sees-operator-consoles) behavior.
 
 **Engineering docs to create/update:**
 - `documents/engineering/edge_routing.md` — operator routes are admin-authorized; loopback data-plane NodePorts are trust-boundary-internal, localhost-only, un-gated
-- `documents/development/testing.md` — the RBAC/dashboard/lifecycle e2e contract
+- `documents/engineering/testing.md` — the RBAC/dashboard/lifecycle e2e contract
 
 **Product or architecture docs to create/update:**
 - `documents/architecture/access_control_doctrine.md` (new, Authoritative source) — admin/user role model, Keycloak claim mapping, the edge-vs-data-plane enforcement split, and the "admins see cluster-wide, users see only their own data" invariant

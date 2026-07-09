@@ -32,6 +32,10 @@ Rules:
 - the `# Title` line is the first non-empty line in the file
 - `**Status**:` is required
 - `**Referenced by**:` is required, even when there is only one cross-reference
+- `**Referenced by**:` lists governed docs or plan sections that reference **or are closely related
+  to** this document. It is a topical navigation aid, not a guarantee of a reciprocal link: an entry
+  `X` need not itself link back here, and the validator checks only that each named target resolves
+  to an existing file
 - the purpose quote block is required
 
 ## Broad Doctrine Structure

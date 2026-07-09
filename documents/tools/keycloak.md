@@ -21,6 +21,12 @@
 - the realm definition is pre-seeded by an in-binary reconcile path during `cluster up`; the
   realm allows self-signup with username and password, has email verification disabled, has
   no MFA, no federation, and no social login
+- the realm also pre-seeds the cluster-wide **admin** RBAC: an `infernix-admin` realm role, an
+  `oidc-usermodel-realm-role-mapper` emitting `realm_access.roles`, and a hardcoded `admin` account
+  (`keycloak.realm.demoAdmin`, demo-only, distinct from the Keycloak master admin) pre-assigned that
+  role. Admin is a separate login; self-registered users are non-admin by construction. The role
+  contract is owned by
+  [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md)
 - the realm includes a public OIDC client for the SPA at the demo SPA route; `cluster up`
   reconciles browser redirect URIs and web origins for the operator-facing edge URL before the
   routed publication probe declares the cluster ready

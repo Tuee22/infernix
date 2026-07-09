@@ -15,15 +15,18 @@
 > [configuration_doctrine.md](../documents/architecture/configuration_doctrine.md). It supersedes the
 > earlier "checked-in decoder-reflected `dhall/Infernix*.dhall` schema files + `lint docs` file-drift
 > check" mechanism (Phase 4 Sprint 4.13 follow-ons) and the Helm-rendered cluster-config ConfigMap
-> (Phase 4), and it retires the lazy per-inference model-bootstrap workflow
-> (`src/Infernix/Bootstrap/Models.hs` + the `model.bootstrap.request` topic family) in favour of
-> eager startup staging. The retired surfaces are recorded in
+> (Phase 4), and it retires the **per-inference trigger** for the lazy model-bootstrap workflow in
+> favour of eager startup staging. `src/Infernix/Bootstrap/Models.hs` and the
+> `model.bootstrap.request` topic family are **retained** as the on-demand fallback — the coordinator
+> still forks `runModelBootstrapLoop` at startup (`src/Infernix/Runtime/Daemon.hs`); only the lazy
+> per-request trigger is retired (Sprint 8.5). The retired trigger is recorded in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Sprint 8.1: Zero Version-Controlled Dhall [Done]
 
 **Status**: Done
 **Implementation**: `infernix.cabal`, `docker/Dockerfile`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `src/Infernix/DhallSchema.hs`, `src/Infernix/DhallSchema/Reflection.hs`
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`
 
 ### Objective
 
@@ -88,6 +91,7 @@ None.
 
 **Status**: Done
 **Implementation**: `src/Infernix/CLI.hs` (`discoverCliCommandPaths`), `src/Infernix/DemoConfig.hs` (`materializeHostManifestFile`, `materializeHostSecrets`; `ensureGeneratedDemoConfigFile` deleted), `src/Infernix/Runtime/Worker.hs` (`loadHostWorkerSecrets`), `src/Infernix/Cluster.hs` (`requireGeneratedDemoConfigFile`, `discoverClusterCommandPaths`)
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/development/local_dev.md`
 
 ### Objective
 
@@ -119,6 +123,7 @@ None.
 **Code-side closure**: `cabal build all`, `infernix test unit` (new `defaultClusterConfig` decode + `renderHelmValues` body/manifest assertions), `infernix test lint`/`lint chart`/`lint files`/`lint docs`/`lint proto`, `docs check` all pass (machine-independent, 2026-07-03).
 **Cohort gate**: the in-pod decode of the binary-rendered `cluster.dhall` / `InfernixSecrets.dhall` is covered by the same `linux-cpu` plus selected `linux-gpu` full-suite that closes Phase 8 (Wave O successor).
 **Implementation**: `src/Infernix/ClusterConfig.hs` (`defaultClusterConfig` + default wirings), `src/Infernix/Cluster.hs` (`renderHelmValues` `clusterConfig.body` / `clusterSecrets.manifest`, `resolvedKeycloakWiring`), `chart/templates/configmap-cluster-config.yaml`, `chart/templates/secret-cluster-secrets.yaml`, `src/Infernix/Lint/Chart.hs`
+**Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/architecture/configuration_doctrine.md`
 
 ### Objective
 
@@ -160,6 +165,7 @@ None (code-side); cohort full-suite decode-in-pod tracked with the Phase 8 cohor
 
 **Status**: Done — cohort gate closed 2026-07-04 (see [cohort-validation-waves.md](cohort-validation-waves.md) Wave P). The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright **9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB `video-wan21-t2v` row that previously timed out cold now completes (gpu 18.2 m, cpu 16.5 m) because the coordinator's eager sweep begins staging at cluster-up. gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs` (`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs` (`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache` lifecycle phase, `resolveWarmModelCacheMinioHost` via `kindControlPlaneIpv4`), `src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`), `src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs` (demo-only-generator doc), `docker/Dockerfile`
+**Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/architecture/daemon_topology.md`
 
 > **Known residual (non-blocking):** the coordinator's forked eager sweep is the mechanism that
 > delivers the outcome (Wan staged in time → 9/9 on both lanes). The `warm-model-cache` `cluster up`

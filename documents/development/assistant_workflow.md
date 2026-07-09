@@ -8,25 +8,55 @@
 
 ## Scope
 
-This document is the canonical home for assistant-facing repository workflow rules. `AGENTS.md`
-and `CLAUDE.md` stay as governed entry documents that summarize and link here instead of carrying
-parallel long-form workflow contracts.
+This document is the canonical home for assistant-facing repository workflow rules, including the
+full Non-Negotiable Rules list below. `AGENTS.md` and `CLAUDE.md` stay as governed entry documents:
+they carry an inline operational mirror of that list (they are auto-loaded by assistant tooling) and
+link here, rather than carrying parallel long-form workflow narrative. When a rule changes, update
+this list and the two entry-doc mirrors in the same change, and keep the mirrors a faithful subset of
+this canonical list.
 
 ## Non-Negotiable Rules
 
-- make requested file changes directly in the working tree
-- use read-only Git inspection commands when needed
-- never run `git add`
-- never run `git commit`
-- never run `git push`
+**Workflow and Git**
+
+- make requested file changes directly in the working tree; use read-only Git inspection when needed
+- never run `git add`, `git commit`, or `git push`
 - keep `DEVELOPMENT_PLAN/` truthful as implementation status changes
-- use `documents/` as the canonical home for architecture, development, engineering, operations,
-  and reference guidance
-- update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance changes
+- use `documents/` as the canonical home for architecture, development, engineering, operations, and
+  reference guidance; the root entry docs summarize and link here
+- update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
+  supported bootstrap entrypoints change
+- run `infernix lint docs` before closing documentation changes, in the active execution context
+  (direct `./.build/infernix` on Apple Silicon; the Linux outer-container launcher for `linux-cpu` /
+  `linux-gpu`)
+
+**Build and validation**
+
 - keep repo-owned shell limited to the supported `bootstrap/*.sh` stage-0 host bootstrap surface:
   scripts may reconcile prerequisites and build or enter the active launcher, while cluster
   lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor publication, validation,
   and teardown remain `infernix`-owned
+- use direct host `cabal` only for the Apple Silicon host-native control plane; do not use host
+  `cabal` for Linux or CUDA validation — use the containerized outer-control-plane path
+- never use cross-architecture emulation for development or validation; do not create or switch
+  Docker contexts or provision a Colima VM on Apple Silicon (the existing native arm64 daemon is used)
+- do not install Xcode or rely on Tart for Apple engine work; the Apple Metal/Core ML path is
+  headless — see
+  [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
+
+**Code invariants (lint-enforced — see the linked doctrine)**
+
+- realness by construction: adapters (`python/adapters/*_python.py`) and native runners
+  (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) return only real model output or raise /
+  exit non-zero (→ `status=failed`); no fabrication helpers or failure masks. Canonical:
+  [../architecture/realness_contract.md](../architecture/realness_contract.md)
+- no environment or PATH reads: no Haskell `lookupEnv`/`getEnv`/`setEnv`, no `proc "<bare-name>"`
+  external invocations, no `env:` blocks in infernix-owned chart templates, no `process.env` /
+  `os.environ` reads in web/Python code. Canonical: [no_env_vars.md](no_env_vars.md) and
+  [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
+- zero version-controlled `.dhall`: the `infernix` binary is the sole generator of every `.dhall`;
+  operators create config with `infernix init` / `infernix test init` (fail-fast if missing).
+  Canonical: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 
 ## Supported Build And Operator Workflows
 

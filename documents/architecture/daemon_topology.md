@@ -12,8 +12,9 @@
 ## TL;DR
 
 - Every durable-context application deploys against three daemon roles:
-  **frontend** (per-app pod), **coordinator** (shared, stateless), and
-  **engine** (shared, stateful execution members).
+  **frontend** — the **Webapp** role (`infernix service --role webapp`; `DaemonRole = Webapp`, id
+  `webapp`; "Frontend" is the informal name used in the tables and diagram below) — plus
+  **coordinator** (shared, stateless) and **engine** (shared, stateful execution members).
 - Frontend and coordinator are normal Kubernetes Deployments. The frontend is
   demo-gated; the coordinator remains production infrastructure because it owns
   request-topic fan-in, batching, model routing, result bridging, and model
@@ -92,8 +93,9 @@ needs.
 
 ### Coordinator (`infernix-coordinator`)
 
-The product-agnostic Pulsar coordinator. Owns three Failover
-subscription types:
+The product-agnostic Pulsar coordinator. Owns three `Failover` subscriptions — the single-flight
+dispatcher, the result-bridge, and the model-cache staging worker — plus a `Shared` batcher /
+pool-router consumer:
 
 - **Single-flight dispatcher** via `Infernix.Dispatch.SingleFlight`
   with a Pulsar named `Failover` subscription per per-context
@@ -205,7 +207,7 @@ object-presign, or WebSocket modules.
 |---|---|---|---|---|---|---|
 | Frontend | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no special resources | **no PVC** |
 | Coordinator | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no GPU | **no PVC** (Pulsar subscription cursors are broker-side durable) |
-| Engine | Linux: `Deployment`; Apple: host daemon member | Linux: ≤ number of engine-capable nodes per deployment; Apple: one member per stable host id | Linux: **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname`; Apple: host-id uniqueness plus pinned-topic `Exclusive` ownership when exact-host routing is used | Linux: `maxUnavailable: 1`; Apple: host process supervised outside Kubernetes | linux-cpu: explicit `engine.resources` CPU/memory requests and limits (`2Gi` request / `4Gi` limit by default, `768Mi` request / `3584Mi` limit in the Apple-hosted `linux-cpu` local validation profile); linux-gpu generated lifecycle values use a `4Gi` request / `16Gi` limit plus `nvidia.com/gpu: 1`, `runtimeClassName: nvidia`, and `infernix.runtime/gpu: "true"` node selection so the routed diffusers video row can load without cgroup OOM; repo-owned single-GPU values start heavyweight deployments at zero replicas and validation scales one at a time; apple-silicon: no in-cluster engine pod, so every active model runs on the on-host `infernix service` daemon (serialized one model at a time as fresh subprocesses), which currently has **no inference-RAM budget and no admission control** — peak resident memory is unbounded, a known gap reopened as [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`), and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
+| Engine | Linux: `Deployment`; Apple: host daemon member | Linux: ≤ number of engine-capable nodes per deployment; Apple: one member per stable host id | Linux: **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname`; Apple: host-id uniqueness plus pinned-topic `Exclusive` ownership when exact-host routing is used | Linux: `maxUnavailable: 1`; Apple: host process supervised outside Kubernetes | linux-cpu: explicit `engine.resources` CPU/memory requests and limits (`2Gi` request / `4Gi` limit by default, `768Mi` request / `3584Mi` limit in the Apple-hosted `linux-cpu` local validation profile); linux-gpu generated lifecycle values use a `4Gi` request / `16Gi` limit plus `nvidia.com/gpu: 1`, `runtimeClassName: nvidia`, and `infernix.runtime/gpu: "true"` node selection so the routed diffusers video row can load without cgroup OOM; repo-owned single-GPU values start heavyweight deployments at zero replicas and validation scales one at a time; apple-silicon: no in-cluster engine pod, so every active model runs on the on-host `infernix service` daemon (serialized one model at a time as fresh subprocesses), which since [Phase 4 Sprint 4.26](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md) enforces a per-substrate `inferenceRamBudgetMib` + per-model `modelRamFootprintMib` admission control — an over-budget model is rejected as a clean `status=failed` rather than OS-OOM-killing the daemon (Wave R proved the full 16-model lane with zero OS OOM-kill) | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`), and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
 
 **Linux engine placement rule.** Two engines from the same Linux engine Deployment on one node would
 mean:
@@ -247,7 +249,7 @@ state on the operator's machine, not durable cluster state.
 
 | Substrate | `demo_ui` | Frontend pod | Coordinator pod | Engine placement |
 |---|---|---|---|---|
-| `apple-silicon` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | Apple host-daemon pool members selected by host id |
+| `apple-silicon` | `true` | `infernix-demo` in cluster (single replica — HA-sized-down for Colima) | `infernix-coordinator` in cluster (single replica — HA-sized-down for Colima) | Apple host-daemon pool members selected by host id |
 | `apple-silicon` | `false` | absent | `infernix-coordinator` in cluster | Apple host-daemon pool members selected by host id |
 | `linux-cpu` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | Kubernetes engine pools; the supported local HA lane renders two workers and two engines |
 | `linux-cpu` | `false` | absent | `infernix-coordinator` in cluster | Kubernetes engine pools |
