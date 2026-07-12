@@ -143,7 +143,7 @@ test("browser auth lifecycle covers logout re-login and token refresh", async ({
 
   const reloginStartIndex = wsFrames.sent.length;
   await page.locator("#login-button").click();
-  await completeLoginPromptIfPresent(page, credentials);
+  await completeLoginPrompt(page, credentials);
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
   await waitForSentFrameAfter(wsFrames, reloginStartIndex, (frame) => frame.tag === "ClientHello");
   const reloginToken = await browserAccessToken(page);
@@ -655,6 +655,31 @@ test("non-admin is denied cluster-wide surfaces", async ({ page, request, infern
   expect(overviewUnauthenticated.status()).toBe(401);
 });
 
+test("sign out clears SSO before switching from user to admin", async ({ page, infernixFixture }) => {
+  test.setTimeout(120000);
+  const fixture = infernixFixture;
+  expect(fixture?.host).toBeTruthy();
+  expect(fixture?.edgePort).toBeTruthy();
+  const baseUrl = `http://${fixture.host}:${fixture.edgePort}`;
+
+  await page.goto(baseUrl);
+  await page.locator("#login-button").click();
+  await submitFreshRegistrationForm(page, baseUrl);
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  await expectNoOperatorRibbon(page);
+
+  await page.locator("#logout-button").click();
+  await expect(page.locator("#connection-state")).toHaveText("Signed out", { timeout: 60000 });
+  expect(await browserAccessToken(page)).toBe("");
+  expect(await browserCookieValue(page, baseUrl, "infernix_operator_token")).toBe("");
+
+  await page.locator("#login-button").click();
+  await completeLoginPrompt(page, { username: "admin", password: "infernix-admin-demo" });
+  await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
+  await expect(page.locator("html")).toHaveClass(/infernix-admin/, { timeout: 30000 });
+  await expectOperatorRibbon(page);
+});
+
 test("personal dashboard is disjoint per user", async ({ page, browser, request, infernixFixture }) => {
   test.setTimeout(120000);
   const fixture = infernixFixture;
@@ -761,9 +786,10 @@ test("returning user signs back in with the stored password", async ({ page, inf
   await page.locator("#logout-button").click();
   await expect(page.locator("#connection-state")).toHaveText("Signed out");
 
-  // The returning user signs back in with the correct password.
+  // The returning user signs back in with the correct password after app
+  // Sign out has cleared the upstream Keycloak SSO session.
   await page.locator("#login-button").click();
-  await completeLoginPromptIfPresent(page, credentials);
+  await completeLoginPrompt(page, credentials);
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
 });
 
@@ -780,11 +806,9 @@ test("sign-in with the wrong password is rejected at Keycloak", async ({ page, b
   const credentials = await submitFreshRegistrationForm(page, baseUrl);
   await expect(page.locator("#connection-state")).toHaveText("Authenticated", { timeout: 60000 });
 
-  // Attempt the wrong password in a FRESH context with no Keycloak SSO session
-  // (the app logout clears the local token but not the Keycloak SSO cookie, so
-  // reusing this context would silently SSO past the login form). A wrong
-  // password is rejected by Keycloak: the error renders and the flow never
-  // redirects back to the app with an auth code.
+  // Attempt the wrong password in a fresh context. A wrong password is rejected
+  // by Keycloak: the error renders and the flow never redirects back to the app
+  // with an auth code.
   const freshContext = await browser.newContext();
   const freshPage = await freshContext.newPage();
   try {
@@ -961,13 +985,14 @@ test("browser artifact upload covers preview media PDF and download-only grants"
   await expect(page.locator(".chat-context-item.active")).toHaveAttribute("data-soft-deleted", "true");
 
   await page.locator("#route-artifacts").click();
+  const artifactDownloadOptions = { frames: wsFrames, contextId: subscribeFrame.clientSubscribeContextId };
 
   const textName = `browser-upload-${randomUUID()}.txt`;
   const textCard = await uploadAndDownloadArtifact(page, {
     name: textName,
     mimeType: "text/plain",
     buffer: Buffer.from(textPreviewBody, "utf8"),
-  });
+  }, artifactDownloadOptions);
   await expect(textCard.locator(".artifact-preview-text")).toHaveText(textPreviewBody);
 
   const jsonName = `browser-json-${randomUUID()}.json`;
@@ -975,7 +1000,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: jsonName,
     mimeType: "application/json",
     buffer: Buffer.from(jsonPreviewBody, "utf8"),
-  });
+  }, artifactDownloadOptions);
   await expect(jsonCard.locator(".artifact-preview-text")).toHaveText(jsonPreviewBody);
 
   const pngName = `browser-inline-${randomUUID()}.png`;
@@ -983,7 +1008,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: pngName,
     mimeType: "image/png",
     buffer: tinyPngBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expectRoutedPreviewSource(imageCard, ".artifact-preview-image");
 
   const audioName = `browser-audio-${randomUUID()}.wav`;
@@ -991,7 +1016,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: audioName,
     mimeType: "audio/wav",
     buffer: tinyWavBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expectRoutedPreviewSource(audioCard, ".artifact-preview-audio");
 
   const videoName = `browser-video-${randomUUID()}.mp4`;
@@ -999,7 +1024,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: videoName,
     mimeType: "video/mp4",
     buffer: tinyMp4Buffer(),
-  });
+  }, artifactDownloadOptions);
   await expectRoutedPreviewSource(videoCard, ".artifact-preview-video");
 
   const pdfName = `browser-pdf-${randomUUID()}.pdf`;
@@ -1007,7 +1032,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: pdfName,
     mimeType: "application/pdf",
     buffer: tinyPdfBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expect(pdfCard).toHaveAttribute("data-render-disposition", "BrowserNativePdf");
   await expectRoutedPreviewSource(pdfCard, ".artifact-preview-pdf");
 
@@ -1016,7 +1041,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: midiName,
     mimeType: "audio/midi",
     buffer: tinyMidiBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expectInBrowserRenderReady(midiCard, "RenderMidi", ".artifact-preview-midi");
 
   const musicXmlName = `browser-musicxml-${randomUUID()}.musicxml`;
@@ -1024,7 +1049,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: musicXmlName,
     mimeType: "application/vnd.recordare.musicxml+xml",
     buffer: musicXmlBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expectInBrowserRenderReady(musicXmlCard, "RenderMusicXml", ".artifact-preview-musicxml");
 
   const binaryName = `browser-binary-${randomUUID()}.bin`;
@@ -1032,7 +1057,7 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     name: binaryName,
     mimeType: "application/octet-stream",
     buffer: binaryArtifactBuffer(),
-  });
+  }, artifactDownloadOptions);
   await expectDownloadOnlyReady(binaryCard);
 
   await page.locator("#route-chat").click();
@@ -1485,22 +1510,56 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
       .locator("form[data-role='chat-draft-editor']")
       .evaluate((form) => form.requestSubmit());
 
-    await waitForSentFrameAfter(
+    const submitFrame = await waitForSentFrameAfter(
       wsFrames,
       submitSentStart,
       (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === promptText,
     );
+    const promptPatch = await waitForUserPromptConversationPatchAfter(
+      wsFrames,
+      submitReceivedStart,
+      {
+        contextId,
+        promptText,
+        minimumSocketId: submitFrame.__infernixSocketId,
+      },
+    );
+    const userPromptMessageId = conversationPatchMessageId(promptPatch);
+    expect(userPromptMessageId).toBeTruthy();
 
-    const completedFrame = await waitForCompletedConversationPatchAfter(
+    const terminalResult = await waitForTerminalConversationPatchAfter(
       wsFrames,
       submitReceivedStart,
       {
         contextId,
         modelId,
         promptText,
+        userPromptMessageId,
+        minimumSocketId: submitFrame.__infernixSocketId,
       },
     );
-    expect(JSON.stringify(completedFrame)).toContain("ConversationStateAppendMessage");
+    expect(JSON.stringify(terminalResult.frame)).toContain("ConversationStateAppendMessage");
+
+    const expectedMemoryError = expectedModelMemoryLimitExceeded(model, demoConfig);
+    if (expectedMemoryError) {
+      expect(terminalResult.status).toBe("failed");
+      expectModelMemoryLimitExceededPayload(terminalResult.result.inferenceResultError, expectedMemoryError);
+      await expect(
+        page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
+        `context ${contextId} should remain selected before rendering ${modelId}'s capacity result`,
+      ).toBeVisible({ timeout: 10000 });
+      await expectCapacityResultRendered(page, wsFrames, contextId, modelId, expectedMemoryError, userPromptMessageId);
+      continue;
+    }
+
+    if (terminalResult.status === "failed") {
+      throw new Error(
+        `Model ${modelId} returned an unexpected failed inference result for prompt ${promptText}: ${JSON.stringify(
+          terminalResult.frame,
+        )}`,
+      );
+    }
+    expect(terminalResult.status).toBe("completed");
 
     // Phase 6 Sprint 6.3: assert the per-family rendered result. The browser
     // is substrate-agnostic — it renders from the result payload's family
@@ -1563,6 +1622,31 @@ function expectedResultRenderKind(model) {
     return "download";
   }
   return "text";
+}
+
+function expectedModelMemoryLimitExceeded(model, demoConfig) {
+  const budget = demoConfig?.inferenceMemoryBudget;
+  if (!budget || budget.kind !== "enforced") return null;
+  const requiredMib = Number(model?.modelRamFootprintMib);
+  const availableMib = Number(budget.availableMib);
+  if (!Number.isFinite(requiredMib) || !Number.isFinite(availableMib)) return null;
+  if (requiredMib <= availableMib) return null;
+  return {
+    modelId: model.modelId,
+    requiredMib,
+    availableMib,
+    resource: budget.resource,
+    source: budget.source,
+  };
+}
+
+function expectModelMemoryLimitExceededPayload(error, expected) {
+  expect(error).toBeTruthy();
+  expect(error.modelMemoryLimitExceededModelId).toBe(expected.modelId);
+  expect(error.modelMemoryLimitExceededRequiredMib).toBe(expected.requiredMib);
+  expect(error.modelMemoryLimitExceededAvailableMib).toBe(expected.availableMib);
+  expect(error.modelMemoryLimitExceededResource).toBe(expected.resource);
+  expect(error.modelMemoryLimitExceededSource).toBe(expected.source);
 }
 
 // Phase 4 Sprint 4.23: route each input family to a REAL fixture, dispatched
@@ -1692,6 +1776,12 @@ function conversationPatchMessageId(frame) {
   return frame?.serverConversationPatch?.appendMessage?.conversationMessageId || "";
 }
 
+function conversationPatchUserPromptPayload(frame) {
+  const event = frame?.serverConversationPatch?.appendMessage?.conversationMessageEvent;
+  if (event?.tag !== "ConversationUserPromptEvent") return null;
+  return event.contents || null;
+}
+
 async function registerFreshKeycloakUser(page, baseUrl) {
   const state = `state-${randomUUID()}`;
   const nonce = `nonce-${randomUUID()}`;
@@ -1772,30 +1862,45 @@ async function refreshBrowserSession(page, frames, expectedContextId = null) {
     return window.__infernixRefreshAccessToken();
   });
   expect(refreshedToken).toBeTruthy();
-  await waitForSentFrameAfter(
+  const helloFrame = await waitForSentFrameAfter(
     frames,
     sentStart,
     (frame) => frame.tag === "ClientHello",
     websocketReconnectTimeoutMs,
   );
+  const socketId = helloFrame.__infernixSocketId;
   if (expectedContextId) {
     await waitForSentFrameAfter(
       frames,
       sentStart,
-      (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === expectedContextId,
+      (frame) =>
+        frame.__infernixSocketId === socketId &&
+        frame.tag === "ClientSubscribeContext" &&
+        frame.clientSubscribeContextId === expectedContextId,
+      websocketReconnectTimeoutMs,
+    );
+    await waitForReceivedFrameAfter(
+      frames,
+      receivedStart,
+      (frame) =>
+        frame.__infernixSocketId === socketId &&
+        frame.tag === "ServerConversationSnapshot" &&
+        JSON.stringify(frame).includes(expectedContextId),
       websocketReconnectTimeoutMs,
     );
   }
   await waitForReceivedFrameAfter(
     frames,
     receivedStart,
-    (frame) => frame.tag === "ServerDraftMapSnapshot",
+    (frame) => frame.__infernixSocketId === socketId && frame.tag === "ServerDraftMapSnapshot",
     websocketReconnectTimeoutMs,
   );
+  return socketId;
 }
 
 async function selectContextAndWaitForSubscription(page, frames, contextId) {
   const sentStart = frames.sent.length;
+  const receivedStart = frames.received.length;
   await page
     .locator(`.chat-context-item[data-context-id="${contextId}"] [data-role='select-context']`)
     .click();
@@ -1803,11 +1908,21 @@ async function selectContextAndWaitForSubscription(page, frames, contextId) {
     page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
   ).toBeVisible();
   try {
-    await waitForSentFrameAfter(
+    const subscribeFrame = await waitForSentFrameAfter(
       frames,
       sentStart,
       (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === contextId,
       15000,
+    );
+    const socketId = subscribeFrame.__infernixSocketId;
+    await waitForReceivedFrameAfter(
+      frames,
+      receivedStart,
+      (frame) =>
+        frame.__infernixSocketId === socketId &&
+        frame.tag === "ServerConversationSnapshot" &&
+        JSON.stringify(frame).includes(contextId),
+      websocketReconnectTimeoutMs,
     );
   } catch {
     await refreshBrowserSession(page, frames, contextId);
@@ -1815,24 +1930,57 @@ async function selectContextAndWaitForSubscription(page, frames, contextId) {
 }
 
 function collectWebSocketFrames(page) {
-  const frames = { sent: [], received: [] };
+  const frames = { sent: [], received: [], console: [], pageErrors: [] };
+  let nextSocketId = 0;
+  page.on("console", (message) => {
+    pushCapped(frames.console, {
+      type: message.type(),
+      text: message.text(),
+      location: message.location(),
+    });
+  });
+  page.on("pageerror", (error) => {
+    pushCapped(frames.pageErrors, {
+      name: error.name,
+      message: error.message,
+      stack: error.stack,
+    });
+  });
   page.on("websocket", (socket) => {
+    const socketId = nextSocketId;
+    nextSocketId += 1;
     socket.on("framesent", (frame) => {
       try {
-        frames.sent.push(JSON.parse(String(frame.payload)));
+        frames.sent.push(parseWebSocketJsonFrame(frame, socketId));
       } catch {
         // The test only inspects Infernix JSON envelopes.
       }
     });
     socket.on("framereceived", (frame) => {
       try {
-        frames.received.push(JSON.parse(String(frame.payload)));
+        frames.received.push(parseWebSocketJsonFrame(frame, socketId));
       } catch {
         // The test only inspects Infernix JSON envelopes.
       }
     });
   });
   return frames;
+}
+
+function pushCapped(items, item, limit = 200) {
+  items.push(item);
+  if (items.length > limit) {
+    items.shift();
+  }
+}
+
+function parseWebSocketJsonFrame(frame, socketId) {
+  const parsed = JSON.parse(String(frame.payload));
+  Object.defineProperty(parsed, "__infernixSocketId", {
+    value: socketId,
+    enumerable: false,
+  });
+  return parsed;
 }
 
 async function waitForSentFrame(frames, predicate) {
@@ -1882,7 +2030,7 @@ async function fillDraftAndWaitForUpdate(page, frames, startIndex, contextId, dr
   );
 }
 
-async function waitForCompletedConversationPatchAfter(frames, startIndex, details) {
+async function waitForTerminalConversationPatchAfter(frames, startIndex, details) {
   // Service work uses Pulsar's 900-second ack timeout. A restarted engine can
   // redeliver just after that point, so the browser matrix waits through one
   // full redelivery window plus a second execution window before declaring the
@@ -1900,21 +2048,73 @@ async function waitForCompletedConversationPatchAfter(frames, startIndex, detail
       if (!encoded.includes(details.contextId)) {
         continue;
       }
-      lastContextPatch = frame;
-      if (encoded.includes("\"inferenceResultStatus\":\"failed\"")) {
-        throw new Error(
-          `Model ${details.modelId} returned a failed inference result for prompt ${details.promptText}: ${encoded}`,
-        );
+      if (
+        typeof details.minimumSocketId === "number" &&
+        typeof frame.__infernixSocketId === "number" &&
+        frame.__infernixSocketId < details.minimumSocketId
+      ) {
+        continue;
       }
-      if (encoded.includes("\"inferenceResultStatus\":\"completed\"")) {
+      lastContextPatch = frame;
+      const result = conversationPatchInferenceResult(frame);
+      if (!result) {
+        continue;
+      }
+      if (details.userPromptMessageId && result.inferenceResultUserPromptMessageId !== details.userPromptMessageId) {
+        continue;
+      }
+      if (result.inferenceResultStatus === "failed" || result.inferenceResultStatus === "completed") {
+        return { frame, result, status: result.inferenceResultStatus };
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for terminal conversation result for model ${details.modelId} after ${timeoutMs}ms; received ${frames.received.length - startIndex} inbound frames after index ${startIndex}; last context patch: ${JSON.stringify(lastContextPatch)}`,
+  );
+}
+
+async function waitForUserPromptConversationPatchAfter(frames, startIndex, details) {
+  const timeoutMs = 60000;
+  const deadline = Date.now() + timeoutMs;
+  let lastContextPatch = null;
+  while (Date.now() < deadline) {
+    const receivedFrames = frames.received.slice(startIndex);
+    for (const frame of receivedFrames) {
+      if (frame.tag !== "ServerConversationPatch") {
+        continue;
+      }
+      const encoded = JSON.stringify(frame);
+      if (!encoded.includes(details.contextId)) {
+        continue;
+      }
+      if (
+        typeof details.minimumSocketId === "number" &&
+        typeof frame.__infernixSocketId === "number" &&
+        frame.__infernixSocketId < details.minimumSocketId
+      ) {
+        continue;
+      }
+      lastContextPatch = frame;
+      const prompt = conversationPatchUserPromptPayload(frame);
+      if (!prompt) {
+        continue;
+      }
+      if (prompt.promptText === details.promptText) {
         return frame;
       }
     }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(
-    `Timed out waiting for completed conversation result for model ${details.modelId} after ${timeoutMs}ms; received ${frames.received.length - startIndex} inbound frames after index ${startIndex}; last context patch: ${JSON.stringify(lastContextPatch)}`,
+    `Timed out waiting for user-prompt conversation patch for context ${details.contextId} after ${timeoutMs}ms; last context patch: ${JSON.stringify(lastContextPatch)}`,
   );
+}
+
+function conversationPatchInferenceResult(frame) {
+  const event = frame?.serverConversationPatch?.appendMessage?.conversationMessageEvent;
+  if (event?.tag !== "ConversationInferenceResultEvent") return null;
+  return event.contents || null;
 }
 
 async function waitForFrame(frames, predicate, direction) {
@@ -2095,10 +2295,20 @@ function runInfernixKubectl(fixture, args, timeoutMs = 120000) {
 async function completeLoginPromptIfPresent(page, credentials) {
   const usernameField = page.locator("#username, input[name='username']").first();
   if (await usernameField.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await usernameField.fill(credentials.username);
-    await page.locator("#password, input[name='password']").first().fill(credentials.password);
-    await page.locator("#kc-login, #kc-form-buttons input[type='submit'], button[type='submit'], input[type='submit']").first().click();
+    await fillLoginPrompt(page, usernameField, credentials);
   }
+}
+
+async function completeLoginPrompt(page, credentials) {
+  const usernameField = page.locator("#username, input[name='username']").first();
+  await expect(usernameField).toBeVisible({ timeout: 60000 });
+  await fillLoginPrompt(page, usernameField, credentials);
+}
+
+async function fillLoginPrompt(page, usernameField, credentials) {
+  await usernameField.fill(credentials.username);
+  await page.locator("#password, input[name='password']").first().fill(credentials.password);
+  await page.locator("#kc-login, #kc-form-buttons input[type='submit'], button[type='submit'], input[type='submit']").first().click();
 }
 
 async function expectOperatorRibbon(page) {
@@ -2482,16 +2692,79 @@ async function uploadArtifactThroughBrowser(page, artifact) {
   await expect(artifactsRoot.locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first()).toBeVisible({ timeout: 60000 });
 }
 
-async function uploadAndDownloadArtifact(page, artifact) {
+async function uploadAndDownloadArtifact(page, artifact, options = {}) {
+  const uploadSentStart = options.frames ? options.frames.sent.length : 0;
+  const uploadReceivedStart = options.frames ? options.frames.received.length : 0;
   await uploadArtifactThroughBrowser(page, artifact);
-  const card = page.locator("#artifacts-root").locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first();
-  await expect(card).toBeVisible();
-  const downloadButton = card.locator("[data-role='artifact-download']");
-  await downloadButton.click();
-  await expect(downloadButton).toHaveAttribute("data-download-status", "ready");
-  // Phase 7 Sprint 7.25: the bytes URL is the webapp proxy, never a presigned MinIO URL.
-  await expect(downloadButton).toHaveAttribute("data-download-url", /\/api\/objects\/download\?key=/);
+  if (options.frames && options.contextId) {
+    await waitForArtifactUploadRecorded(
+      options.frames,
+      artifact,
+      options.contextId,
+      uploadSentStart,
+      uploadReceivedStart,
+    );
+  }
+  const card = await clickArtifactDownloadUntilReady(page, artifact);
+  if (artifact.mimeType === "text/plain" || artifact.mimeType === "application/json") {
+    await expect(card.locator(".artifact-preview-text")).toHaveAttribute("data-preview-status", "ready", {
+      timeout: 60000,
+    });
+  }
   return card;
+}
+
+async function waitForArtifactUploadRecorded(frames, artifact, contextId, sentStartIndex, receivedStartIndex) {
+  const uploadFrame = await waitForSentFrameAfter(
+    frames,
+    sentStartIndex,
+    (frame) =>
+      frame.tag === "ClientRecordUpload" &&
+      frame.clientRecordUploadContextId === contextId &&
+      frame.clientRecordUploadPayload?.uploadDisplayName === artifact.name &&
+      frame.clientRecordUploadPayload?.uploadMimeType === artifact.mimeType,
+    60000,
+  );
+  expect(uploadFrame.clientRecordUploadPayload.uploadObjectRef.objectKey).toContain(artifact.name);
+
+  await waitForReceivedFrameAfter(
+    frames,
+    receivedStartIndex,
+    (frame) =>
+      frame.tag === "ServerConversationPatch" &&
+      JSON.stringify(frame).includes("ConversationUserUploadEvent") &&
+      JSON.stringify(frame).includes(contextId) &&
+      JSON.stringify(frame).includes(artifact.name) &&
+      JSON.stringify(frame).includes(artifact.mimeType),
+    60000,
+  );
+}
+
+async function clickArtifactDownloadUntilReady(page, artifact, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastError = null;
+  while (Date.now() < deadline) {
+    const remainingMs = Math.max(1000, deadline - Date.now());
+    const card = page.locator("#artifacts-root").locator(`.artifact-entry[data-display-name="${artifact.name}"]`).first();
+    await expect(card).toBeVisible({ timeout: Math.min(5000, remainingMs) });
+    const downloadButton = card.locator("[data-role='artifact-download']");
+    await downloadButton.click();
+    try {
+      await expect(downloadButton).toHaveAttribute("data-download-status", "ready", {
+        timeout: Math.min(10000, remainingMs),
+      });
+      await expect(downloadButton).toHaveAttribute("data-download-url", /\/api\/objects\/download\?key=/, {
+        timeout: Math.min(5000, Math.max(1000, deadline - Date.now())),
+      });
+      return card;
+    } catch (error) {
+      lastError = error;
+      await page.waitForTimeout(250);
+    }
+  }
+  throw new Error(
+    `Timed out waiting for artifact download grant for ${artifact.name}; last error: ${lastError?.message || "none"}`,
+  );
 }
 
 async function selectFirstSupportedModel(page) {
@@ -2570,4 +2843,161 @@ async function expectDownloadOnlyReady(card) {
 async function expectInBrowserRenderReady(card, dispositionTag, previewSelector) {
   await expect(card).toHaveAttribute("data-render-disposition", dispositionTag);
   await expect(card.locator(previewSelector)).toHaveCount(1);
+}
+
+async function expectCapacityResultRendered(page, frames, contextId, modelId, expectedMemoryError, userPromptMessageId = null) {
+  const expectedText = `Model ${expectedMemoryError.modelId} requires ${expectedMemoryError.requiredMib} MiB; this daemon has ${expectedMemoryError.availableMib} MiB available.`;
+  const resultMessage = page.locator(".chat-message.result").filter({ hasText: expectedText }).last();
+  try {
+    await expect(
+      resultMessage,
+      `capacity result for ${modelId} in context ${contextId} should render`,
+    ).toBeVisible({ timeout: 60000 });
+  } catch (error) {
+    let lastError = error;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      const receivedStart = frames.received.length;
+      const socketId = await refreshBrowserSession(page, frames, contextId);
+      try {
+        await waitForCapacityResultFrameAfter(
+          frames,
+          receivedStart,
+          { contextId, expectedMemoryError, userPromptMessageId, minimumSocketId: socketId },
+          60000,
+        );
+        await expect(
+          resultMessage,
+          `capacity result for ${modelId} in context ${contextId} should render after result-bearing resubscription attempt ${attempt}`,
+        ).toBeVisible({ timeout: 60000 });
+        break;
+      } catch (retryError) {
+        lastError = retryError;
+        if (attempt === 3) {
+          throw new Error(
+            `capacity result for ${modelId} in context ${contextId} did not render after result-bearing resubscription attempt ${attempt}: ${lastError.message}\n${await capacityRenderDiagnostics(
+              page,
+              frames,
+              contextId,
+              expectedMemoryError,
+              userPromptMessageId,
+            )}`,
+          );
+        }
+      }
+    }
+  }
+  await expect(resultMessage.locator(".chat-message-body")).toHaveText(expectedText, { timeout: 60000 });
+  await expect(resultMessage.locator(".chat-result-artifact")).toHaveCount(0);
+}
+
+async function capacityRenderDiagnostics(page, frames, contextId, expectedMemoryError, userPromptMessageId = null) {
+  const pageState = await page.evaluate((activeContextId) => {
+    const activeContext = document.querySelector(".chat-context-item.active");
+    const messages = Array.from(document.querySelectorAll(".chat-message")).map((node) => ({
+      className: node.className,
+      text: (node.textContent || "").replace(/\s+/g, " ").trim(),
+    }));
+    return {
+      url: window.location.href,
+      bodyClass: document.body?.className || "",
+      activeContextId: activeContext?.getAttribute("data-context-id") || "",
+      activeContextText: (activeContext?.textContent || "").replace(/\s+/g, " ").trim(),
+      expectedContextVisible: Boolean(document.querySelector(`.chat-context-item[data-context-id="${activeContextId}"]`)),
+      resultMessageCount: document.querySelectorAll(".chat-message.result").length,
+      messages,
+    };
+  }, contextId);
+  const matchingFrame = [...frames.received]
+    .reverse()
+    .find(
+      (frame) =>
+        conversationFrameTargetsContext(frame, contextId) &&
+        conversationFrameInferenceResults(frame).some((result) =>
+          capacityResultMatches(result, expectedMemoryError, userPromptMessageId),
+        ),
+    );
+  const consoleWarnings = frames.console
+    .filter((entry) => ["warning", "error"].includes(entry.type) || entry.text.includes("WS decode error"))
+    .slice(-20);
+  return JSON.stringify(
+    {
+      pageState,
+      matchingFrame,
+      consoleWarnings,
+      pageErrors: frames.pageErrors.slice(-10),
+    },
+    null,
+    2,
+  );
+}
+
+async function waitForCapacityResultFrameAfter(frames, startIndex, details, timeoutMs = 60000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastContextFrame = null;
+  while (Date.now() < deadline) {
+    const receivedFrames = frames.received.slice(startIndex);
+    for (const frame of receivedFrames) {
+      if (!conversationFrameTargetsContext(frame, details.contextId)) {
+        continue;
+      }
+      if (
+        typeof details.minimumSocketId === "number" &&
+        typeof frame.__infernixSocketId === "number" &&
+        frame.__infernixSocketId < details.minimumSocketId
+      ) {
+        continue;
+      }
+      lastContextFrame = frame;
+      const results = conversationFrameInferenceResults(frame);
+      if (results.some((result) => capacityResultMatches(result, details.expectedMemoryError, details.userPromptMessageId))) {
+        return frame;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Timed out waiting for result-bearing conversation frame for ${details.expectedMemoryError.modelId} in ${details.contextId} after ${timeoutMs}ms; last context frame: ${JSON.stringify(lastContextFrame)}`,
+  );
+}
+
+function conversationFrameTargetsContext(frame, contextId) {
+  if (frame?.tag === "ServerConversationPatch") {
+    return frame.serverConversationPatchContextId === contextId;
+  }
+  if (frame?.tag === "ServerConversationSnapshot") {
+    return frame.serverConversationSnapshot?.conversationStateContextId === contextId;
+  }
+  return false;
+}
+
+function conversationFrameInferenceResults(frame) {
+  if (frame?.tag === "ServerConversationPatch") {
+    const result = conversationPatchInferenceResult(frame);
+    return result ? [result] : [];
+  }
+  if (frame?.tag === "ServerConversationSnapshot") {
+    const messages = frame.serverConversationSnapshot?.conversationStateMessages || [];
+    return messages.map(conversationMessageInferenceResult).filter(Boolean);
+  }
+  return [];
+}
+
+function conversationMessageInferenceResult(message) {
+  const event = message?.conversationMessageEvent;
+  if (event?.tag !== "ConversationInferenceResultEvent") return null;
+  return event.contents || null;
+}
+
+function capacityResultMatches(result, expectedMemoryError, userPromptMessageId = null) {
+  if (!result || result.inferenceResultStatus !== "failed") return false;
+  if (userPromptMessageId && result.inferenceResultUserPromptMessageId !== userPromptMessageId) return false;
+  const error = result.inferenceResultError;
+  return (
+    error &&
+    error.modelMemoryLimitExceededModelId === expectedMemoryError.modelId &&
+    error.modelMemoryLimitExceededRequiredMib === expectedMemoryError.requiredMib &&
+    error.modelMemoryLimitExceededAvailableMib === expectedMemoryError.availableMib &&
+    error.modelMemoryLimitExceededResource === expectedMemoryError.resource &&
+    error.modelMemoryLimitExceededSource === expectedMemoryError.source
+  );
 }

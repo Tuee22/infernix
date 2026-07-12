@@ -129,7 +129,22 @@ message ResultPayload {
   oneof output {
     string inline_output = 1;
     string object_ref = 2;
+    InferenceError inference_error = 3;
   }
+}
+
+message InferenceError {
+  oneof error {
+    ModelMemoryLimitExceeded model_memory_limit_exceeded = 1;
+  }
+}
+
+message ModelMemoryLimitExceeded {
+  string model_id = 1;
+  int32 required_mib = 2;
+  int32 available_mib = 3;
+  string resource = 4;
+  string source = 5;
 }
 
 message InferenceResult {

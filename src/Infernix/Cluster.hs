@@ -46,7 +46,7 @@ import Infernix.ClusterConfig
   )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceRamBudgetMib)
+import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
@@ -437,30 +437,32 @@ clusterUp maybeRuntimeMode = do
   clusterUpWithPulsarBootstrapRepair paths runtimeMode
 
 clusterUpWithPulsarBootstrapRepair :: Paths -> RuntimeMode -> IO ()
-clusterUpWithPulsarBootstrapRepair paths runtimeMode = go False
+clusterUpWithPulsarBootstrapRepair paths runtimeMode = go 0
   where
-    go repairAttempted = do
-      repairAttempted' <-
-        if repairAttempted
-          then pure True
+    maxRepairAttempts = 3 :: Int
+    go repairAttempts = do
+      repairAttempts' <-
+        if repairAttempts >= maxRepairAttempts
+          then pure repairAttempts
           else do
             repaired <- repairInterruptedDirtyPulsarBootstrapState
-            pure (repairAttempted || repaired)
+            pure (if repaired then repairAttempts + 1 else repairAttempts)
       result <- try (clusterUpWithPlatform paths runtimeMode)
       case result of
         Right _ -> pure ()
-        Left err
-          | repairAttempted' -> ioError err
-          | otherwise -> do
-              maybeRepairReason <- detectDirtyPulsarBootstrapState paths runtimeMode
-              case maybeRepairReason of
-                Nothing -> ioError err
-                Just repairReason -> do
-                  putStrLn ("cluster up detected inconsistent retained Pulsar state: " <> repairReason)
-                  clusterDown (Just runtimeMode)
-                  resetPulsarClaimDirectories paths runtimeMode
-                  putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
-                  go True
+        Left err -> do
+          maybeRepairReason <-
+            if repairAttempts' < maxRepairAttempts
+              then detectDirtyPulsarBootstrapState paths runtimeMode
+              else pure Nothing
+          case maybeRepairReason of
+            Nothing -> ioError err
+            Just repairReason -> do
+              putStrLn ("cluster up detected inconsistent retained Pulsar state: " <> repairReason)
+              clusterDown (Just runtimeMode)
+              resetPulsarClaimDirectories paths runtimeMode
+              putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
+              go (repairAttempts' + 1)
     repairInterruptedDirtyPulsarBootstrapState = do
       maybeState <- loadClusterState paths
       case matchingClusterState runtimeMode maybeState >>= lifecycleProgress of
@@ -754,13 +756,13 @@ prepareClusterUpInputs paths runtimeMode = do
   requestedPulsarHttpPort <- choosePulsarHttpPort paths
   generatedConfigPath <- requireGeneratedDemoConfigFile paths runtimeMode
   generatedConfig <- decodeBootstrapDemoConfigFile generatedConfigPath
-  inferenceRamBudgetMibValue <- resolveInferenceRamBudgetMib paths runtimeMode
+  inferenceMemoryBudgetValue <- resolveInferenceMemoryBudget paths runtimeMode
   let demoUiEnabledValue = demoUiEnabled generatedConfig
       publishedCatalogPath = Config.publishedConfigMapCatalogPath paths
       configMapManifestPath = Config.publishedConfigMapManifestPath paths
       publicationPath = Config.publicationStatePath paths
       mountedCatalogPath = Config.watchedDemoConfigPath
-      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator inferenceRamBudgetMibValue)
+      payload = Lazy.fromStrict (renderGeneratedDemoConfigPayload paths runtimeMode demoUiEnabledValue Coordinator inferenceMemoryBudgetValue)
   createDirectoryIfMissing True (buildRoot paths)
   createDirectoryIfMissing True (takeDirectory publishedCatalogPath)
   createDirectoryIfMissing True (takeDirectory configMapManifestPath)

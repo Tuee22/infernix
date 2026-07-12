@@ -131,8 +131,9 @@ The ribbon is inside `.app-shell`, so it is hidden in the anonymous landing stat
 additionally hides it for every non-admin (a cosmetic `.infernix-admin` class set only when the
 token carries the `infernix-admin` realm role). That CSS is cosmetic — the real gates are the edge
 `SecurityPolicy` and the backend, which both deny a non-admin. The SPA writes the
-`infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token, and
-clears the cookie on logout. Only an **admin** token in that cookie passes the edge authorization on
+`infernix_operator_token` cookie whenever it receives or refreshes the Keycloak access token, clears
+the cookie on Sign out, and redirects through Keycloak logout to clear the SSO session. Only an
+**admin** token in that cookie passes the edge authorization on
 the operator routes; a non-admin token is denied 403 and anonymous traffic 401. The same cookie also
 authenticates browser-issued media `src` GETs against the webapp `/api/objects/download` proxy — a
 **per-user**, JWT-validated route (not admin-gated) — which `img`/`audio`/`video`/`iframe` elements

@@ -1,14 +1,19 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active — code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+**Status**: Done — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
 `apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
 on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
 loopback data-plane split, per-user isolation, the default-on per-user STS scoped-credential object
 path, and (apple) the routed Playwright RBAC/dashboard/lifecycle suite 7/7 — with the deployed SPA
-carrying the admin panel + personal dashboard on both. **Open residual**: a subsequent UAT pass
-surfaced an authentication issue that is not yet diagnosed, plus an admin-access documentation gap
-(`../notes.txt`). The phase stays `Active` until the UAT auth item is closed — see
-**Remaining Work — UAT auth residual** below.
+carrying the admin panel + personal dashboard on both. **UAT auth residual diagnosed and code-side
+closed (2026-07-09)**: Sign out previously cleared only local SPA tokens and left the upstream
+Keycloak SSO session alive, so a user trying to switch from a self-registered account to the
+separate hardcoded admin account could silently re-enter the non-admin session and remain denied from
+admin surfaces. The SPA now performs Keycloak OIDC logout (`id_token_hint`, `client_id`,
+`post_logout_redirect_uri`) after local cleanup, and routed Playwright has a regression for
+user-to-admin switching. **Wave U closed on 2026-07-12**: the `linux-cpu` routed gate and selected
+`linux-gpu` routed gate both passed full Playwright `16/16`, including login-prompt-after-sign-out
+and non-admin-to-admin switching.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —
@@ -78,31 +83,28 @@ browser rendering is substrate-independent (identical baked SPA) and is covered 
 
 Both the chosen accelerator cohort (`apple-silicon`) and `linux-cpu` passed the phase's
 full RBAC/STS/dashboard gates against the same frozen phase state, so the RBAC/STS/dashboard
-*surface* is validated. A **later UAT pass** then surfaced an unresolved authentication issue, so
-Phase 9 is `Active` with the UAT auth residual below rather than `Done`.
+*surface* is validated. A **later UAT pass** then surfaced the logout/session-switching issue
+closed code-side in Sprint 9.9. Wave U has now revalidated that residual on `linux-cpu` plus the
+selected `linux-gpu` accelerator, so Phase 9 is `Done`.
 
-## Remaining Work — UAT auth residual [Active]
+## Remaining Work — UAT auth residual [Done]
 
-Two open items recorded in the repo-root `../notes.txt` sit squarely in Phase 9's admin-vs-user
-access domain and are not yet closed:
+The two repo-root `notes.txt` items are now resolved code-side:
 
-1. **Undiagnosed UAT auth issue.** A UAT pass revealed an authentication failure whose root cause is
-   not yet identified. The Wave Q evidence above validated the *frozen* pre-UAT state; it does not
-   cover this issue. Diagnosis is deferred to a dedicated follow-on.
-   - **Candidate lead (unconfirmed):** the edge admin access token is written to a JS-readable,
-     non-`Secure` cookie (`infernix_operator_token`, `SameSite=Lax`, no `HttpOnly`/`Secure`) in
-     `web/src/Infernix/Web/Auth.js` and consumed verbatim by the edge `SecurityPolicy`. A
-     role-bearing token near the ~4 KB cookie limit could be silently dropped and 401 a real admin.
-     This is a lead to investigate, not a confirmed root cause. See also the documented Envoy
-     `Host`-rewrite issuer-mismatch failure mode in `src/Infernix/Demo/Auth.hs`.
-2. **Admin-access documentation gap** (answered here; doc fix tracked in the doctrine docs). Admin is
-   a **separate login**: a single hardcoded `admin` account (`keycloak.realm.demoAdmin.username` /
-   `.password`) is the only principal granted the `infernix-admin` realm role. Self-registered users
-   are non-admin **by construction** and are denied at both the edge `SecurityPolicy` and the backend
-   `withAdminRequest` gate — no ordinary user can reach the admin portal.
+1. **UAT auth issue diagnosed.** The concrete failure mode was local-only Sign out: the SPA cleared
+   its in-memory access token and `infernix_operator_token` cookie but did not clear the Keycloak SSO
+   browser session. A user who signed out of a self-registered non-admin account and then attempted
+   to use the separate admin credentials could be silently signed back in as the old non-admin
+   session and continue receiving 403s for admin surfaces. Sprint 9.9 implements the Keycloak logout
+   redirect and adds routed Playwright coverage for switching from user to admin.
+2. **Admin-access documentation gap answered.** Admin is a **separate login**: a single hardcoded
+   `admin` account (`keycloak.realm.demoAdmin.username` / `.password`) is the only principal granted
+   the `infernix-admin` realm role. Self-registered users are non-admin **by construction** and are
+   denied at both the edge `SecurityPolicy` and the backend `withAdminRequest` gate — no ordinary
+   user can reach the admin portal.
 
-Phase 9 moves back to `Done` only once item 1 is diagnosed and closed (and re-validated on the
-chosen accelerator plus `linux-cpu`).
+**Remaining Work:** None. Sprint 9.9 is re-validated through routed Playwright on `linux-cpu` plus
+the selected `linux-gpu` accelerator.
 
 ## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
 
@@ -383,6 +385,82 @@ currently assert the *old* (any-user-sees-operator-consoles) behavior.
 ### Remaining Work
 - apple-silicon Wave Q closed 2026-07-07 — the routed Playwright RBAC + dashboard + lifecycle suite
   ran 7/7 PASS against the live edge; `linux-cpu` cohort also closed 2026-07-07.
+
+## Sprint 9.9: Keycloak SSO logout and admin account switching [Done]
+
+**Status**: Done — code-side complete; Wave U routed evidence is closed on `linux-cpu` plus the
+selected `linux-gpu` accelerator.
+**Code-side closure**: landed 2026-07-09. `web/src/Infernix/Web/Auth.js` now records Keycloak's
+`id_token`, clears local token/PKCE/refresh/operator-cookie state, and starts Keycloak's OIDC logout
+endpoint with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`. `web/src/Main.purs`
+routes the Sign out button through that logout redirect after closing the local WebSocket/app state.
+`web/playwright/inference.spec.js` now requires the login prompt after Sign out and adds a regression
+that signs in as a self-registered non-admin, signs out, then signs in as the separate hardcoded
+admin and sees the admin marker/ribbon. This closes the UAT root cause code-side: local-only logout
+left the old Keycloak SSO session alive and made user-to-admin switching silently reuse the
+non-admin session.
+**Cohort gate**: [Wave U](cohort-validation-waves.md) — routed Playwright auth/RBAC lifecycle on
+the chosen accelerator plus `linux-cpu`. The 2026-07-10 `linux-cpu` routed run on rebuilt image
+`sha256:c01a9a070ca842b973543301dcbaaa039811492f707fdc20c804aa30bd5f40ee` passed the Sprint 9.9
+auth lifecycle/RBAC/account-switching specs on the live edge. A later routed run on
+`sha256:0bf82aba452b2bee8f5de6c4ee136c7d72537ac0dbd4377ee52ee3718d77c0aa` reconfirmed those Sprint
+9.9 specs while the overall Playwright file reached `15/16`; the sole failure was the Phase 5/6
+per-model matrix visible-capacity-message assertion. The later
+`sha256:4e2e2a9f642ecc15635df849539b82a847d350db19e161cf6517d56a29ea6b62` routed run again passed
+the Sprint 9.9 specs while the overall Playwright file reached `15/16`; the sole failure remained
+the Phase 5/6 matrix render assertion. The later
+`sha256:1374398c498e4fd38e27991c2fe5cc5d4b1b9c19c1f9ace01b23e0722f3ff306` routed run also passed
+the Sprint 9.9 specs while the overall Playwright file reached `15/16`; the sole failure remained
+the Phase 5/6 matrix visible-capacity-message assertion. The later
+`sha256:3161a3846bbc42a97febb186f5fbe063ca0a407cdab5bc888a798e170ef23e3d` routed run again passed
+the Sprint 9.9 auth/RBAC/logout/account-switching specs while the overall Playwright file reached
+`15/16`; the sole failure remained the Phase 5/6 matrix visible-capacity-message assertion. The later
+`sha256:eeb58064f9eca14c008b9c976380c5c7745a4c6079a5bd8885b3935c864532a5` routed run again passed
+the Sprint 9.9 auth/RBAC/logout/account-switching specs while the overall Playwright file reached
+`14/16`; the two failures were the Phase 5/6 artifact-download race and matrix
+visible-capacity-message residuals. The later
+`sha256:d49b4799375df7a0e5726d16717ab6dc4e09fc8baa685969484099027f81c4c8` routed run again passed
+the Sprint 9.9 auth/RBAC/logout/account-switching specs, and the overall Playwright file improved to
+`15/16` with artifact coverage green; the sole failure remained the Phase 5/6 matrix visible-capacity
+render assertion. The later
+`sha256:30d597efe4284a74c606860d7a0ef6d4fd5123076de11ad0c8e3da476925190e` routed run again passed
+the Sprint 9.9 auth/RBAC/logout/account-switching specs while the overall Playwright file reached
+`15/16`; the sole failure remained the Phase 5/6 matrix visible-capacity render assertion. The later
+`sha256:681420399273889da1e64ce6e43576ffe8a06ad87114b8e069903ab79d3d92f9` routed run again passed
+the Sprint 9.9 auth/RBAC/logout/account-switching specs while the overall Playwright file reached
+`15/16`; the sole failure remained the Phase 5/6 matrix visible-capacity render assertion, now after
+a result-bearing resubscription attempt. Rebuilt Linux CPU image
+`sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f`
+(`20088000300` bytes, created `2026-07-12T02:30:27.200982353-04:00`) then passed rebuilt-image
+`infernix test e2e` with routed Playwright `16/16`, including the Sprint 9.9 login-prompt-after-sign-out
+and non-admin-to-admin account-switching regression against the live Keycloak edge. Wave U's
+`linux-cpu` routed evidence is closed. The selected `linux-gpu` rerun on image
+`sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` then passed full routed
+Playwright `16/16`, including the Sprint 9.9 login-prompt-after-sign-out and non-admin-to-admin
+account-switching regression against the live Keycloak edge. Wave U is closed.
+**Implementation**: `web/src/Infernix/Web/Auth.js`, `web/src/Infernix/Web/Auth.purs`,
+`web/src/Main.purs`, `web/playwright/inference.spec.js`
+**Docs to update**: `documents/architecture/access_control_doctrine.md`,
+`documents/architecture/web_ui_architecture.md`, `documents/architecture/demo_app_design.md`,
+`documents/development/demo_app_test_plan.md`, `DEVELOPMENT_PLAN/README.md`, `00-overview.md`,
+`system-components.md`, `cohort-validation-waves.md`
+
+### Objective
+Make Sign out terminate both local SPA state and the upstream Keycloak SSO browser session, so users
+can intentionally switch from a regular self-registered account to the separate admin login.
+
+### Deliverables
+- Keycloak logout redirect from the Sign out button after local app cleanup.
+- `id_token_hint` threading from the token response into the logout redirect.
+- Routed Playwright regression for non-admin sign-out followed by admin sign-in.
+
+### Validation
+- Machine-independent gates: PureScript/web unit build, `node --check web/playwright/inference.spec.js`,
+  `infernix test lint`, `infernix lint docs`, and `infernix docs check`.
+- Cohort gate: routed Playwright auth/RBAC lifecycle on `linux-cpu` plus the selected accelerator.
+
+### Remaining Work
+None.
 
 ## Documentation Requirements
 

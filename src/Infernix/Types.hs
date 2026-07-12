@@ -13,6 +13,9 @@ module Infernix.Types
     EngineMember (..),
     EnginePool (..),
     ErrorResponse (..),
+    InferenceError (..),
+    InferenceMemoryBudget (..),
+    InferenceMemoryResource (..),
     InferenceRequest (..),
     InferenceResult (..),
     LifecycleProgress (..),
@@ -29,12 +32,16 @@ module Infernix.Types
     RuntimeMode (..),
     allRuntimeModes,
     apiUpstreamModeId,
+    admitModelMemory,
     daemonRoleId,
     defaultModelBootstrapTopic,
     defaultModelsBucket,
+    inferenceMemoryBudgetAvailableMib,
+    inferenceMemoryBudgetResourceText,
     parseApiUpstreamMode,
     parseConsumerSubscriptionType,
     parseDaemonRole,
+    parseInferenceMemoryResource,
     parsePulsarConnectionMode,
     parseRequestFieldType,
     parseRuntimeLane,
@@ -312,18 +319,135 @@ data DemoConfig = DemoConfig
     modelBootstrapTopic :: Text,
     engines :: [EngineBinding],
     models :: [ModelDescriptor],
-    -- | Phase 4 Sprint 4.26 — the per-substrate available-inference-RAM
-    -- budget (MiB). On @apple-silicon@ this is the host budget computed
-    -- at materialization time (host physical RAM − colima VM pledge −
-    -- host reserve); on-host inference admission control enforces it and
-    -- 'Infernix.DemoConfig.validateDemoConfig' rejects any model whose
-    -- 'modelRamFootprintMib' exceeds it. On Linux substrates the engine
-    -- runs in a Kubernetes-bounded pod, so this records the engine pod
-    -- memory limit informationally and the host-RAM admission guard is a
-    -- no-op (a value @<= 0@ means "not host-enforced").
-    inferenceRamBudgetMib :: Int
+    -- | Phase 4 Sprint 4.27 — the typed per-substrate memory budget used
+    -- by runtime admission. Enforced budgets reject only the oversized
+    -- request; they no longer invalidate the whole generated catalog.
+    inferenceMemoryBudget :: InferenceMemoryBudget
   }
   deriving (Eq, Read, Show)
+
+data InferenceMemoryResource
+  = UnifiedHostRam
+  | PodRam
+  | GpuVram
+  deriving (Eq, Ord, Read, Show)
+
+inferenceMemoryBudgetResourceText :: InferenceMemoryResource -> Text
+inferenceMemoryBudgetResourceText resource = case resource of
+  UnifiedHostRam -> "unified-host-ram"
+  PodRam -> "pod-ram"
+  GpuVram -> "gpu-vram"
+
+parseInferenceMemoryResource :: Text -> Maybe InferenceMemoryResource
+parseInferenceMemoryResource rawValue = case Text.toLower rawValue of
+  "unified-host-ram" -> Just UnifiedHostRam
+  "pod-ram" -> Just PodRam
+  "gpu-vram" -> Just GpuVram
+  _ -> Nothing
+
+instance ToJSON InferenceMemoryResource where
+  toJSON = String . inferenceMemoryBudgetResourceText
+
+instance FromJSON InferenceMemoryResource where
+  parseJSON = withText "InferenceMemoryResource" $ \rawValue ->
+    case parseInferenceMemoryResource rawValue of
+      Just resource -> pure resource
+      Nothing -> fail ("Unsupported inference memory resource: " <> Text.unpack rawValue)
+
+data InferenceMemoryBudget
+  = EnforcedMemoryBudget
+      { memoryBudgetResource :: InferenceMemoryResource,
+        memoryBudgetSource :: Text,
+        memoryBudgetAvailableMib :: Int
+      }
+  | UnenforcedMemoryBudget
+      { memoryBudgetReason :: Text
+      }
+  deriving (Eq, Read, Show)
+
+instance ToJSON InferenceMemoryBudget where
+  toJSON budget = case budget of
+    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} ->
+      object
+        [ "kind" .= ("enforced" :: Text),
+          "resource" .= memoryBudgetResource,
+          "source" .= memoryBudgetSource,
+          "availableMib" .= memoryBudgetAvailableMib
+        ]
+    UnenforcedMemoryBudget {memoryBudgetReason} ->
+      object
+        [ "kind" .= ("unenforced" :: Text),
+          "reason" .= memoryBudgetReason
+        ]
+
+instance FromJSON InferenceMemoryBudget where
+  parseJSON = withObject "InferenceMemoryBudget" $ \value -> do
+    kind <- value .: "kind"
+    case Text.toLower kind of
+      "enforced" ->
+        EnforcedMemoryBudget
+          <$> value .: "resource"
+          <*> value .: "source"
+          <*> value .: "availableMib"
+      "unenforced" ->
+        UnenforcedMemoryBudget <$> value .:? "reason" .!= "explicitly unenforced"
+      _ -> fail ("Unsupported inference memory budget kind: " <> Text.unpack kind)
+
+inferenceMemoryBudgetAvailableMib :: InferenceMemoryBudget -> Maybe Int
+inferenceMemoryBudgetAvailableMib budget = case budget of
+  EnforcedMemoryBudget {memoryBudgetAvailableMib} -> Just memoryBudgetAvailableMib
+  UnenforcedMemoryBudget {} -> Nothing
+
+data InferenceError
+  = ModelMemoryLimitExceeded
+  { inferenceErrorModelId :: Text,
+    inferenceErrorRequiredMib :: Int,
+    inferenceErrorAvailableMib :: Int,
+    inferenceErrorResource :: InferenceMemoryResource,
+    inferenceErrorSource :: Text
+  }
+  deriving (Eq, Read, Show)
+
+instance ToJSON InferenceError where
+  toJSON errorValue = case errorValue of
+    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} ->
+      object
+        [ "tag" .= ("ModelMemoryLimitExceeded" :: Text),
+          "modelId" .= inferenceErrorModelId,
+          "requiredMib" .= inferenceErrorRequiredMib,
+          "availableMib" .= inferenceErrorAvailableMib,
+          "resource" .= inferenceErrorResource,
+          "source" .= inferenceErrorSource
+        ]
+
+instance FromJSON InferenceError where
+  parseJSON = withObject "InferenceError" $ \value -> do
+    tag <- value .: "tag"
+    case tag of
+      "ModelMemoryLimitExceeded" ->
+        ModelMemoryLimitExceeded
+          <$> value .: "modelId"
+          <*> value .: "requiredMib"
+          <*> value .: "availableMib"
+          <*> value .: "resource"
+          <*> value .: "source"
+      _ -> fail ("Unsupported inference error: " <> Text.unpack tag)
+
+admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Maybe InferenceError
+admitModelMemory budget model =
+  case budget of
+    UnenforcedMemoryBudget {} -> Nothing
+    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib}
+      | modelRamFootprintMib model > memoryBudgetAvailableMib ->
+          Just
+            ModelMemoryLimitExceeded
+              { inferenceErrorModelId = modelId model,
+                inferenceErrorRequiredMib = modelRamFootprintMib model,
+                inferenceErrorAvailableMib = memoryBudgetAvailableMib,
+                inferenceErrorResource = memoryBudgetResource,
+                inferenceErrorSource = memoryBudgetSource
+              }
+      | otherwise -> Nothing
 
 data PulsarConnectionMode
   = ConfiguredTransport
@@ -570,9 +694,9 @@ data ModelDescriptor = ModelDescriptor
     -- on @apple-silicon@, where model memory is host RAM; the on-host
     -- engine's admission control ('Infernix.Runtime' critical section)
     -- and 'Infernix.DemoConfig.validateDemoConfig' reject a model whose
-    -- footprint exceeds the substrate's 'inferenceRamBudgetMib'. Values
-    -- are conservative per-engine defaults until a measured peak-RSS pass
-    -- refines them.
+    -- footprint exceeds the active 'InferenceMemoryBudget'. Values are
+    -- conservative per-engine defaults until measured peak-RSS / VRAM passes
+    -- refine them.
     modelRamFootprintMib :: Int
   }
   deriving (Eq, Read, Show)
@@ -692,7 +816,8 @@ instance ToJSON InferenceRequest where
 
 data ResultPayload = ResultPayload
   { inlineOutput :: Maybe Text,
-    objectRef :: Maybe Text
+    objectRef :: Maybe Text,
+    inferenceError :: Maybe InferenceError
   }
   deriving (Eq, Read, Show)
 
@@ -700,7 +825,8 @@ instance ToJSON ResultPayload where
   toJSON payloadValue =
     object
       [ "inlineOutput" .= inlineOutput payloadValue,
-        "objectRef" .= objectRef payloadValue
+        "objectRef" .= objectRef payloadValue,
+        "inferenceError" .= inferenceError payloadValue
       ]
 
 instance FromJSON ResultPayload where
@@ -708,6 +834,7 @@ instance FromJSON ResultPayload where
     ResultPayload
       <$> value .: "inlineOutput"
       <*> value .: "objectRef"
+      <*> value .:? "inferenceError"
 
 data InferenceResult = InferenceResult
   { requestId :: Text,
@@ -799,7 +926,7 @@ instance ToJSON DemoConfig where
         "model_bootstrap_topic" .= modelBootstrapTopic demoConfig,
         "engines" .= engines demoConfig,
         "models" .= models demoConfig,
-        "inferenceRamBudgetMib" .= inferenceRamBudgetMib demoConfig
+        "inferenceMemoryBudget" .= inferenceMemoryBudget demoConfig
       ]
 
 instance FromJSON DemoConfig where
@@ -842,6 +969,14 @@ instance FromJSON DemoConfig where
     modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
     modelBootstrapTopicValue <-
       value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
+    inferenceMemoryBudgetValue <-
+      do
+        maybeBudget <- value .:? "inferenceMemoryBudget"
+        case maybeBudget of
+          Just budget -> pure budget
+          Nothing -> do
+            legacyBudgetMib <- value .:? "inferenceRamBudgetMib" .!= 0
+            pure (legacyInferenceMemoryBudget runtimeModeValue legacyBudgetMib)
     (DemoConfig runtimeModeValue <$> value .: "edgePort")
       <*> value .: "configMapName"
       <*> value .: "generatedPath"
@@ -859,7 +994,20 @@ instance FromJSON DemoConfig where
       <*> pure modelBootstrapTopicValue
       <*> value .: "engines"
       <*> value .: "models"
-      <*> value .:? "inferenceRamBudgetMib" .!= 0
+      <*> pure inferenceMemoryBudgetValue
+
+legacyInferenceMemoryBudget :: RuntimeMode -> Int -> InferenceMemoryBudget
+legacyInferenceMemoryBudget runtimeMode availableMib =
+  EnforcedMemoryBudget
+    { memoryBudgetResource = legacyResource runtimeMode,
+      memoryBudgetSource = "legacy-inferenceRamBudgetMib",
+      memoryBudgetAvailableMib = max 0 availableMib
+    }
+  where
+    legacyResource mode = case mode of
+      AppleSilicon -> UnifiedHostRam
+      LinuxCpu -> PodRam
+      LinuxGpu -> GpuVram
 
 -- | Supported always-on MinIO bucket name holding platform model weights.
 -- The coordinator's bootstrap Failover subscription is the only writer; engines

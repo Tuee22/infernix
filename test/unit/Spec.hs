@@ -515,7 +515,8 @@ main = do
                 payload =
                   ResultPayload
                     { inlineOutput = Just "legacy output",
-                      objectRef = Nothing
+                      objectRef = Nothing,
+                      inferenceError = Nothing
                     },
                 createdAt = now,
                 resultUserId = "",
@@ -719,7 +720,7 @@ main = do
                     modelBootstrapTopic = defaultModelBootstrapTopic,
                     engines = engineBindingsForMode LinuxCpu,
                     models = catalogForMode LinuxCpu,
-                    inferenceRamBudgetMib = linuxEngineInferenceRamBudgetMib
+                    inferenceMemoryBudget = linuxCpuUnitInferenceMemoryBudget
                   }
           demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
@@ -941,7 +942,7 @@ main = do
                     modelBootstrapTopic = defaultModelBootstrapTopic,
                     engines = engineBindingsForMode AppleSilicon,
                     models = catalogForMode AppleSilicon,
-                    inferenceRamBudgetMib = appleUnitInferenceRamBudgetMib
+                    inferenceMemoryBudget = appleUnitInferenceMemoryBudget
                   }
           appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
           expectedAppleMemberTopics =
@@ -952,24 +953,46 @@ main = do
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
-      -- Phase 4 Sprint 4.26 — the on-host inference RAM admission budget
-      -- round-trips through the substrate config and validation rejects an
-      -- apple config with a model exceeding it while accepting an in-budget one.
+      -- Phase 4 Sprint 4.27 — the typed inference-memory budget
+      -- round-trips through the substrate config. Config validation accepts
+      -- mixed catalogs even when one model is too large; runtime admission
+      -- rejects only the selected oversized request.
       assert
-        (inferenceRamBudgetMib decodedAppleConfig == appleUnitInferenceRamBudgetMib)
-        "apple host demo-config preserves the inference RAM budget"
+        (inferenceMemoryBudget decodedAppleConfig == appleUnitInferenceMemoryBudget)
+        "apple host demo-config preserves the typed inference memory budget"
       assert
         (all ((> 0) . modelRamFootprintMib) (models decodedAppleConfig))
         "every apple catalog model declares a positive RAM footprint"
       assert
-        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = appleUnitInferenceRamBudgetMib})))
-        "validateDemoConfig accepts an apple config whose models all fit the inference RAM budget"
+        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = appleUnitInferenceMemoryBudget})))
+        "validateDemoConfig accepts an apple config whose models all fit the inference memory budget"
       assert
-        (either ("inference RAM budget" `isInfixOf`) (const False) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = 512})))
-        "validateDemoConfig rejects an apple config with a model exceeding the inference RAM budget"
+        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = smallAppleUnitInferenceMemoryBudget})))
+        "validateDemoConfig accepts a mixed apple catalog with an oversized model"
       assert
-        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceRamBudgetMib = 0})))
-        "validateDemoConfig treats a non-positive budget as unenforced (no over-budget rejection)"
+        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = zeroAppleUnitInferenceMemoryBudget})))
+        "validateDemoConfig accepts enforced zero memory budgets"
+      case listToMaybe (models decodedAppleConfig) of
+        Nothing -> fail "expected apple catalog model for admission tests"
+        Just sampleModel -> do
+          assert
+            (isNothing (admitModelMemory appleUnitInferenceMemoryBudget sampleModel))
+            "admitModelMemory admits an in-budget model"
+          case admitModelMemory smallAppleUnitInferenceMemoryBudget sampleModel of
+            Just ModelMemoryLimitExceeded {inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
+              assert
+                (inferenceErrorRequiredMib == modelRamFootprintMib sampleModel && inferenceErrorAvailableMib == 512)
+                "admitModelMemory reports explicit required and available MiB"
+              assert
+                (inferenceErrorResource == UnifiedHostRam && inferenceErrorSource == "unit-test")
+                "admitModelMemory reports the budget resource and source"
+            _ -> fail "admitModelMemory should reject an over-budget model"
+          assert
+            (isJust (admitModelMemory zeroAppleUnitInferenceMemoryBudget sampleModel))
+            "admitModelMemory keeps enforced zero budgets active"
+          assert
+            (isNothing (admitModelMemory (UnenforcedMemoryBudget "unit-test") sampleModel))
+            "admitModelMemory admits when the budget is explicitly unenforced"
       assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
       assert
@@ -1129,6 +1152,32 @@ main = do
       assert
         (objectRef artifactPayload == Just "infernix-demo-objects/image/x/y.png" && isNothing (inlineOutput artifactPayload))
         "Sprint 4.15: buildPayload routes the artifact families to an object reference"
+      let memoryError =
+            ModelMemoryLimitExceeded
+              { inferenceErrorModelId = "image-sdxl-turbo",
+                inferenceErrorRequiredMib = 12288,
+                inferenceErrorAvailableMib = 512,
+                inferenceErrorResource = UnifiedHostRam,
+                inferenceErrorSource = "unit-test"
+              }
+          memoryErrorResult =
+            textPayloadResult
+              { requestId = "req-unit-memory-error",
+                resultModelId = "image-sdxl-turbo",
+                resultMatrixRowId = "image-sdxl-turbo",
+                status = "failed",
+                payload =
+                  ResultPayload
+                    { inlineOutput = Nothing,
+                      objectRef = Nothing,
+                      inferenceError = Just memoryError
+                    }
+              }
+      persistInferenceResult paths memoryErrorResult
+      reloadedMemoryErrorResult <- loadInferenceResult paths "req-unit-memory-error"
+      assert
+        (fmap (inferenceError . payload) reloadedMemoryErrorResult == Just (Just memoryError))
+        "Sprint 4.27: storage protobuf roundtrip preserves typed ModelMemoryLimitExceeded fields"
       -- Phase 4 Sprint 4.15: resultFamilyForDescriptor resolves every catalog
       -- row, classifying LLM/speech as inline text and every other family as
       -- an artifact.
@@ -2020,6 +2069,13 @@ assertJsonRoundtrip label value =
         (decoded == value)
         (label <> ": encode/decode roundtrip diverged. Original=" <> show value <> " Decoded=" <> show decoded)
 
+assertJsonEncodingContains :: (Aeson.ToJSON a) => String -> a -> Text.Text -> IO ()
+assertJsonEncodingContains label value needle = do
+  let encoded = TextEncoding.decodeUtf8 (Lazy.toStrict (Aeson.encode value))
+  assert
+    (needle `Text.isInfixOf` encoded)
+    (label <> ": expected encoded JSON to contain " <> Text.unpack needle <> ", encoded=" <> Text.unpack encoded)
+
 assertDemoConfigDecodeFails :: FilePath -> FilePath -> String -> DemoConfig -> IO ()
 assertDemoConfigDecodeFails root label expectedMessageFragment demoConfig = do
   let configPath = root </> ("invalid-demo-config-" <> label <> ".dhall")
@@ -2048,6 +2104,23 @@ assertPhase7JsonRoundtrips = do
           { Contracts.inferenceResultUserPromptMessageId = messageId,
             Contracts.inferenceResultStatus = "Completed",
             Contracts.inferenceResultInlineOutput = Just "result text",
+            Contracts.inferenceResultError = Nothing,
+            Contracts.inferenceResultArtifacts = []
+          }
+      memoryLimitError =
+        Contracts.ModelMemoryLimitExceeded
+          { Contracts.modelMemoryLimitExceededModelId = "audio-demucs-htdemucs",
+            Contracts.modelMemoryLimitExceededRequiredMib = 8192,
+            Contracts.modelMemoryLimitExceededAvailableMib = 4096,
+            Contracts.modelMemoryLimitExceededResource = "pod-ram",
+            Contracts.modelMemoryLimitExceededSource = "cluster-engine-pod-memory-limit"
+          }
+      failedInferenceResultPayload =
+        Contracts.ConversationInferenceResultPayload
+          { Contracts.inferenceResultUserPromptMessageId = messageId,
+            Contracts.inferenceResultStatus = "failed",
+            Contracts.inferenceResultInlineOutput = Nothing,
+            Contracts.inferenceResultError = Just memoryLimitError,
             Contracts.inferenceResultArtifacts = []
           }
       cancelPayload = Contracts.ConversationCancelPayload messageId
@@ -2061,6 +2134,12 @@ assertPhase7JsonRoundtrips = do
         Contracts.ConversationMessage
           { Contracts.conversationMessageId = messageId,
             Contracts.conversationMessageEvent = Contracts.ConversationUserPromptEvent promptPayload
+          }
+      memoryLimitResultMessage =
+        Contracts.ConversationMessage
+          { Contracts.conversationMessageId = Contracts.MessageId "msg-1-result",
+            Contracts.conversationMessageEvent =
+              Contracts.ConversationInferenceResultEvent failedInferenceResultPayload
           }
       conversationState =
         Contracts.ConversationState
@@ -2078,6 +2157,15 @@ assertPhase7JsonRoundtrips = do
       contextListState = Contracts.ContextListState [contextSummary]
       draftEntry = Contracts.DraftEntry contextId "half-written"
       draftMapState = Contracts.DraftMapState [draftEntry]
+      memoryLimitServerPatch =
+        Contracts.ServerConversationPatch
+          { Contracts.serverConversationPatchContextId = contextId,
+            Contracts.serverConversationPatch =
+              Contracts.ConversationStateAppendMessage
+                { Contracts.appendMessage = memoryLimitResultMessage,
+                  Contracts.appendNewPrefixHash = "memory-limit"
+                }
+          }
   assertJsonRoundtrip "UserId" userId
   assertJsonRoundtrip "ContextId" contextId
   assertJsonRoundtrip "MessageId" messageId
@@ -2093,8 +2181,10 @@ assertPhase7JsonRoundtrips = do
   assertJsonRoundtrip "RenderMidi" Contracts.RenderMidi
   assertJsonRoundtrip "RenderMusicXml" Contracts.RenderMusicXml
   assertJsonRoundtrip "RenderZipStems" Contracts.RenderZipStems
+  assertJsonRoundtrip "InferenceError.ModelMemoryLimitExceeded" memoryLimitError
   assertJsonRoundtrip "UserPromptPayload" promptPayload
   assertJsonRoundtrip "ConversationInferenceResultPayload" inferenceResultPayload
+  assertJsonRoundtrip "ConversationInferenceResultPayload.Failed" failedInferenceResultPayload
   assertJsonRoundtrip "ConversationCancelPayload" cancelPayload
   assertJsonRoundtrip "ConversationUserUploadPayload" uploadPayload
   assertJsonRoundtrip "ConversationEvent.UserPrompt" (Contracts.ConversationUserPromptEvent promptPayload)
@@ -2167,6 +2257,11 @@ assertPhase7JsonRoundtrips = do
               }
         }
     )
+  assertJsonRoundtrip "WsServerMessage.ConversationPatch.MemoryLimitExceeded" memoryLimitServerPatch
+  assertJsonEncodingContains
+    "WsServerMessage.ConversationPatch.MemoryLimitExceeded"
+    memoryLimitServerPatch
+    "\"tag\":\"ModelMemoryLimitExceeded\""
   assertJsonRoundtrip
     "ArtifactUploadRequest"
     ( Contracts.ArtifactUploadRequest
@@ -2221,6 +2316,7 @@ assertConversationPrimitives = do
                   { Contracts.inferenceResultUserPromptMessageId = Contracts.MessageId forPromptMessageId,
                     Contracts.inferenceResultStatus = "Completed",
                     Contracts.inferenceResultInlineOutput = Just "ok",
+                    Contracts.inferenceResultError = Nothing,
                     Contracts.inferenceResultArtifacts = []
                   }
           }
@@ -2423,6 +2519,7 @@ assertKVCacheConsistency = do
                   { Contracts.inferenceResultUserPromptMessageId = Contracts.MessageId promptMessageId,
                     Contracts.inferenceResultStatus = "completed",
                     Contracts.inferenceResultInlineOutput = Just "ok",
+                    Contracts.inferenceResultError = Nothing,
                     Contracts.inferenceResultArtifacts = []
                   }
           }
@@ -2581,6 +2678,7 @@ assertSingleFlightDispatcher = do
                   { Contracts.inferenceResultUserPromptMessageId = Contracts.MessageId forPrompt,
                     Contracts.inferenceResultStatus = "Completed",
                     Contracts.inferenceResultInlineOutput = Just "done",
+                    Contracts.inferenceResultError = Nothing,
                     Contracts.inferenceResultArtifacts = []
                   }
           }
@@ -2842,7 +2940,8 @@ assertObjectsLayoutAndPresigning = do
             payload =
               ResultPayload
                 { inlineOutput = Nothing,
-                  objectRef = Just ref
+                  objectRef = Just ref,
+                  inferenceError = Nothing
                 },
             createdAt = resultNow,
             resultUserId = user,
@@ -3121,6 +3220,9 @@ assertBootstrapModels = do
     (BootstrapModels.readyEventDedupKey ev == "qwen2.5-7b@2026-05-21T00:01:00Z")
     "ready event dedup key is scoped to the ready event"
   assert
+    (BootstrapModels.readyEventDedupKeyForRequest req == "qwen2.5-7b@2026-05-21T00:00:00Z")
+    "request-scoped ready event dedup collapses exact bootstrap request replays"
+  assert
     (BootstrapModels.bootstrapReadyTopicFor "persistent://infernix/system" "qwen2.5-7b" == "persistent://infernix/system/model.bootstrap.ready.qwen2.5-7b")
     "ready topic name follows the supported infernix/system namespace pattern"
   assert
@@ -3187,6 +3289,7 @@ assertResultBridgeAndBatchTopics = do
           (Contracts.MessageId "p-1")
           "Completed"
           (Just "done")
+          Nothing
           []
   case event of
     Contracts.ConversationInferenceResultEvent payload -> do
@@ -3199,6 +3302,9 @@ assertResultBridgeAndBatchTopics = do
       assert
         (Contracts.inferenceResultInlineOutput payload == Just "done")
         "result-bridge event carries the inline output"
+      assert
+        (isNothing (Contracts.inferenceResultError payload))
+        "result-bridge event carries no error for successful inline output"
     _ -> fail "inferenceResultEventFor should produce a ConversationInferenceResultEvent"
 
 assertPulsarMessageIdSequenceParsing :: IO ()
@@ -3265,7 +3371,7 @@ assertLinuxHostBatchForwarding paths = do
             modelBootstrapTopic = defaultModelBootstrapTopic,
             engines = engineBindingsForMode LinuxCpu,
             models = catalogForMode LinuxCpu,
-            inferenceRamBudgetMib = linuxEngineInferenceRamBudgetMib
+            inferenceMemoryBudget = linuxCpuUnitInferenceMemoryBudget
           }
       daemonConfig =
         DaemonConfig
@@ -3315,6 +3421,38 @@ assertLinuxHostBatchForwarding paths = do
 -- footprint so the full generated apple catalog validates cleanly.
 appleUnitInferenceRamBudgetMib :: Int
 appleUnitInferenceRamBudgetMib = 65536
+
+appleUnitInferenceMemoryBudget :: InferenceMemoryBudget
+appleUnitInferenceMemoryBudget =
+  EnforcedMemoryBudget
+    { memoryBudgetResource = UnifiedHostRam,
+      memoryBudgetSource = "unit-test",
+      memoryBudgetAvailableMib = appleUnitInferenceRamBudgetMib
+    }
+
+smallAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
+smallAppleUnitInferenceMemoryBudget =
+  EnforcedMemoryBudget
+    { memoryBudgetResource = UnifiedHostRam,
+      memoryBudgetSource = "unit-test",
+      memoryBudgetAvailableMib = 512
+    }
+
+zeroAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
+zeroAppleUnitInferenceMemoryBudget =
+  EnforcedMemoryBudget
+    { memoryBudgetResource = UnifiedHostRam,
+      memoryBudgetSource = "unit-test",
+      memoryBudgetAvailableMib = 0
+    }
+
+linuxCpuUnitInferenceMemoryBudget :: InferenceMemoryBudget
+linuxCpuUnitInferenceMemoryBudget =
+  EnforcedMemoryBudget
+    { memoryBudgetResource = PodRam,
+      memoryBudgetSource = "cluster-engine-pod-memory-limit",
+      memoryBudgetAvailableMib = linuxEngineInferenceRamBudgetMib
+    }
 
 unitWebappDaemonConfig :: RuntimeMode -> [Text.Text] -> Text.Text -> DaemonConfig
 unitWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
@@ -3739,6 +3877,7 @@ genCausalEvent prompts = do
                   { Contracts.inferenceResultUserPromptMessageId = parentId,
                     Contracts.inferenceResultStatus = "Completed",
                     Contracts.inferenceResultInlineOutput = Just "ok",
+                    Contracts.inferenceResultError = Nothing,
                     Contracts.inferenceResultArtifacts = []
                   }
           }

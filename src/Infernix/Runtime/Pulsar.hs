@@ -94,6 +94,7 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
+import Data.Int (Int32)
 import Data.List (find, intercalate, sort)
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
@@ -149,6 +150,7 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client
   ( Manager,
     RequestBody (RequestBodyLBS, RequestBodyStream),
+    ResponseTimeout,
     brRead,
     defaultManagerSettings,
     httpLbs,
@@ -159,6 +161,8 @@ import Network.HTTP.Client
     requestHeaders,
     responseBody,
     responseStatus,
+    responseTimeout,
+    responseTimeoutMicro,
     withResponse,
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
@@ -509,9 +513,10 @@ streamUserContextListViaPulsar ::
 streamUserContextListViaPulsar transport namespace userIdValue sendMessage = do
   let contextsTopic =
         ConversationTopic.contextsMetadataTopicName namespace userIdValue
-      readerName =
-        "browser-context-list-"
-          <> sanitizeTopic (Contracts.unUserId userIdValue)
+  readerName <-
+    uniqueBrowserReaderName
+      "browser-context-list-"
+      (Contracts.unUserId userIdValue)
   stateRef <- newIORef Map.empty
   topicRef <- requireTopicRef contextsTopic
   let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
@@ -615,9 +620,10 @@ streamUserDraftMapViaPulsar ::
 streamUserDraftMapViaPulsar transport namespace userIdValue sendMessage = do
   let draftsTopic =
         ConversationTopic.draftsMetadataTopicName namespace userIdValue
-      readerName =
-        "browser-draft-map-"
-          <> sanitizeTopic (Contracts.unUserId userIdValue)
+  readerName <-
+    uniqueBrowserReaderName
+      "browser-draft-map-"
+      (Contracts.unUserId userIdValue)
   stateRef <- newIORef Map.empty
   topicRef <- requireTopicRef draftsTopic
   let readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
@@ -721,13 +727,13 @@ streamContextConversationViaPulsar transport namespace userIdValue contextIdValu
             Contracts.conversationStateMessages = [],
             Contracts.conversationStatePrefixHash = ""
           }
-      readerName =
-        "browser-context-"
-          <> sanitizeTopic
-            ( Contracts.unUserId userIdValue
-                <> "-"
-                <> Contracts.unContextId contextIdValue
-            )
+  readerName <-
+    uniqueBrowserReaderName
+      "browser-context-"
+      ( Contracts.unUserId userIdValue
+          <> "-"
+          <> Contracts.unContextId contextIdValue
+      )
   sendMessage (Contracts.ServerConversationSnapshot initialSnapshot)
   reducerStateRef <- newIORef (initialReducerState contextIdValue)
   seenMessageIdsRef <- newIORef Set.empty
@@ -1046,17 +1052,15 @@ publishModelBootstrapRequestViaTransport ::
 publishModelBootstrapRequestViaTransport transport request = do
   let systemNamespace = ConversationTopic.systemTopicNamespace
       requestTopic = ConversationTopic.modelBootstrapRequestTopicName systemNamespace
-      dedupKey = BootstrapModels.bootstrapRequestDedupKey request
       options =
-        (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> dedupKey))
-          { publishMessageKey = Just (BootstrapModels.bootstrapRequestModelId request),
-            publishSequenceId = Just (stableSequenceId dedupKey)
+        (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> BootstrapModels.bootstrapRequestModelId request))
+          { publishMessageKey = Just (BootstrapModels.bootstrapRequestModelId request)
           }
   publishTopicPayload
     transport
     requestTopic
     options
-    dedupKey
+    (BootstrapModels.bootstrapRequestDedupKey request)
     (Lazy.toStrict (encode request))
 
 readRawTopicPayloads ::
@@ -2299,7 +2303,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
             let maybeRejection =
                   if Text.null modelIdValue
                     then Just (emptyModelIdRejectionResult runtimeMode decodedRequest)
-                    else overRamBudgetRejection runtimeMode demoConfig modelIdValue decodedRequest
+                    else memoryAdmissionRejection runtimeMode demoConfig modelIdValue decodedRequest
             publishedResult <-
               maybe
                 (publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest)
@@ -2669,13 +2673,14 @@ bridgeResultToConversation transport topicNamespace resultValue = do
           (Contracts.UserId userIdText)
           (Contracts.ContextId contextIdText)
       authorizedObjectRefs = authorizedGeneratedResultObjectRefs resultValue
-      (inlineOutputValue, statusValue, objectRefValue) =
+      (inlineOutputValue, statusValue, errorValue, objectRefValue) =
         conversationResultEventFields resultValue authorizedObjectRefs
       conversationEvent =
         ResultBridge.inferenceResultEventFor
           (Contracts.MessageId causalRef)
           statusValue
           inlineOutputValue
+          errorValue
           objectRefValue
       options =
         (defaultPublishOptions ("infernix-result-bridge-" <> contextIdText))
@@ -2691,17 +2696,21 @@ bridgeResultToConversation transport topicNamespace resultValue = do
 conversationResultEventFields ::
   InferenceResult ->
   Either Text.Text [Contracts.ObjectRef] ->
-  (Maybe Text.Text, Text.Text, [Contracts.ObjectRef])
+  (Maybe Text.Text, Text.Text, Maybe Contracts.InferenceError, [Contracts.ObjectRef])
 conversationResultEventFields resultValue authorizedObjectRefs =
   case authorizedObjectRefs of
-    Left rejectionMessage -> (Just rejectionMessage, "failed", [])
-    Right refs -> (resultInlineOutput resultValue, status resultValue, refs)
+    Left rejectionMessage -> (Just rejectionMessage, "failed", Nothing, [])
+    Right refs -> (resultInlineOutput resultValue, status resultValue, resultInferenceError resultValue, refs)
 
 resultInlineOutput :: InferenceResult -> Maybe Text.Text
 resultInlineOutput resultValue =
   case payload resultValue of
     ResultPayload {inlineOutput = Just text} -> Just text
     _ -> Nothing
+
+resultInferenceError :: InferenceResult -> Maybe Contracts.InferenceError
+resultInferenceError resultValue =
+  Contracts.inferenceErrorFromRuntime <$> inferenceError (payload resultValue)
 
 authorizedGeneratedResultObjectRefs :: InferenceResult -> Either Text.Text [Contracts.ObjectRef]
 authorizedGeneratedResultObjectRefs resultValue =
@@ -3275,10 +3284,11 @@ renderDispatchedObjectRef objectRef =
 -- 5. Publish a 'ModelBootstrapReadyEvent' on the matching ready topic
 --    and ack the original request.
 --
--- Producer-side dedup on the request topic is scoped to the request
--- attempt, while the message key remains @modelId@. Exact replays of
--- the same request collapse; later recovery attempts can still enqueue
--- work if a previous attempt never produced readiness.
+-- Request messages stay replayable across uncertain Failover boundaries; the
+-- request-attempt key is used by the ready-event producer so exact replays can
+-- enqueue recovery work without publishing duplicate ready events. Later
+-- recovery attempts carry a new @requestedAt@ and therefore receive a fresh
+-- ready-event dedup key.
 runModelBootstrapLoop ::
   PulsarTransport ->
   ConversationTopic.TopicNamespace ->
@@ -3374,11 +3384,7 @@ processBootstrapRequest transport systemNamespace request = do
   presignedConfigResult <- loadBootstrapPresignedConfig
   case presignedConfigResult of
     Left configError ->
-      hPutStrLn
-        stderr
-        ( "model-bootstrap unable to load MinIO credentials: "
-            <> configError
-        )
+      ioError (userError ("model-bootstrap unable to load MinIO credentials: " <> configError))
     Right presigned -> do
       let modelId = BootstrapModels.bootstrapRequestModelId request
           payloadObject =
@@ -3585,7 +3591,7 @@ publishBootstrapReadyEvent transport systemNamespace request = do
             BootstrapModels.readyEventReadyAtIso8601 =
               Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
           }
-      dedupKey = BootstrapModels.readyEventDedupKey event
+      dedupKey = BootstrapModels.readyEventDedupKeyForRequest request
       options =
         (defaultPublishOptions ("infernix-model-bootstrap-" <> dedupKey))
           { publishMessageKey = Just modelId,
@@ -3693,9 +3699,17 @@ minioObjectExists presigned manager objectRef = do
         Presigned.unPresignedUrl
           (Presigned.presignedHeadUrl presigned now objectRef)
   request <- parseRequest (Text.unpack signedUrl)
-  let headRequest = request {method = "HEAD"}
+  let headRequest =
+        request
+          { method = "HEAD",
+            responseTimeout = minioObjectExistsTimeout
+          }
   response <- httpLbs headRequest manager
   pure (statusCode (responseStatus response) == 200)
+
+minioObjectExistsTimeout :: ResponseTimeout
+minioObjectExistsTimeout =
+  responseTimeoutMicro 15000000
 
 putMinioObject ::
   Presigned.PresignedUrlConfig ->
@@ -3712,7 +3726,8 @@ putMinioObject presigned manager now objectRef payload = do
   let putRequest =
         request
           { method = "PUT",
-            requestBody = RequestBodyLBS (Lazy.fromStrict payload)
+            requestBody = RequestBodyLBS (Lazy.fromStrict payload),
+            responseTimeout = minioObjectWriteTimeout
           }
   response <- httpLbs putRequest manager
   let code = statusCode (responseStatus response)
@@ -3749,7 +3764,8 @@ putMinioObjectFile presigned manager now objectRef payloadPath =
               requestBody =
                 RequestBodyStream
                   (fromIntegral payloadSize)
-                  (\needsPopper -> needsPopper popper)
+                  (\needsPopper -> needsPopper popper),
+              responseTimeout = minioObjectWriteTimeout
             }
     response <- httpLbs putRequest manager
     let code = statusCode (responseStatus response)
@@ -3764,6 +3780,10 @@ putMinioObjectFile presigned manager now objectRef payloadPath =
                 <> show code
             )
         )
+
+minioObjectWriteTimeout :: ResponseTimeout
+minioObjectWriteTimeout =
+  responseTimeoutMicro 300000000
 
 -- | Phase 7 Sprint 7.17: @INFERNIX_MINIO_*@ env reads retired. The
 -- supported flow reads non-credential wiring (endpoint, region,
@@ -3885,7 +3905,8 @@ emptyModelIdRejectionResult runtimeMode protoRequest =
               { inlineOutput =
                   Just
                     "request rejected: model id was not resolved for this context (the SPA's ContextCreated event has not been observed yet, or the coordinator's contexts-metadata consumer has not caught up)",
-                objectRef = Nothing
+                objectRef = Nothing,
+                inferenceError = Nothing
               },
           createdAt = emptyModelIdRejectionTimestamp,
           resultUserId = envelopeUserId,
@@ -3903,42 +3924,31 @@ emptyModelIdRejectionTimestamp =
     Just timestamp -> timestamp
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
--- | Phase 4 Sprint 4.26 — on-host (@apple-silicon@) inference RAM
--- admission control. Evaluated under the serialized engine-execution
--- lock, so at most one inference is resident at a time and peak resident
--- memory is bounded to the admitted model's footprint. When the resolved
--- model's declared 'modelRamFootprintMib' exceeds the substrate's
--- 'inferenceRamBudgetMib', the request is rejected as a clean
--- @status=failed@ instead of launching the engine subprocess and letting
--- the OS OOM-kill the host daemon. Enforced only on @apple-silicon@,
--- where the engine runs host-native against unified memory; Linux engines
--- run in Kubernetes-bounded pods (@Nothing@ there), and a non-positive
--- budget disables the guard.
-overRamBudgetRejection ::
+-- | Phase 4 Sprint 4.27 — runtime memory admission. Evaluated under the
+-- serialized engine-execution lock, so at most one inference is resident
+-- at a time and peak resident memory is bounded to the admitted model's
+-- footprint. Enforced budgets reject only the oversized request with a
+-- typed 'InferenceError' payload before launching the engine subprocess.
+memoryAdmissionRejection ::
   RuntimeMode ->
   DemoConfig ->
   Text.Text ->
   ProtoInference.InferenceRequest ->
   Maybe InferenceResult
-overRamBudgetRejection runtimeMode demoConfig modelIdValue protoRequest
-  | runtimeMode /= AppleSilicon = Nothing
-  | budgetMib <= 0 = Nothing
-  | otherwise =
-      case find ((== modelIdValue) . modelId) (models demoConfig) of
-        Just model
-          | modelRamFootprintMib model > budgetMib ->
-              Just (overRamBudgetRejectionResult runtimeMode model budgetMib protoRequest)
-        _ -> Nothing
-  where
-    budgetMib = inferenceRamBudgetMib demoConfig
+memoryAdmissionRejection runtimeMode demoConfig modelIdValue protoRequest =
+  case find ((== modelIdValue) . modelId) (models demoConfig) of
+    Just model ->
+      flip (memoryAdmissionRejectionResult runtimeMode model) protoRequest
+        <$> admitModelMemory (inferenceMemoryBudget demoConfig) model
+    Nothing -> Nothing
 
-overRamBudgetRejectionResult ::
+memoryAdmissionRejectionResult ::
   RuntimeMode ->
   ModelDescriptor ->
-  Int ->
+  InferenceError ->
   ProtoInference.InferenceRequest ->
   InferenceResult
-overRamBudgetRejectionResult runtimeMode model budgetMib protoRequest =
+memoryAdmissionRejectionResult runtimeMode model errorValue protoRequest =
   let envelopeUserId = view ProtoInferenceFields.userId protoRequest
       envelopeContextId = view ProtoInferenceFields.contextId protoRequest
       envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
@@ -3951,18 +3961,9 @@ overRamBudgetRejectionResult runtimeMode model budgetMib protoRequest =
           status = "failed",
           payload =
             ResultPayload
-              { inlineOutput =
-                  Just
-                    ( "inference rejected: model "
-                        <> modelId model
-                        <> " requires ~"
-                        <> Text.pack (show (modelRamFootprintMib model))
-                        <> " MiB, which exceeds the apple-silicon inference RAM budget of "
-                        <> Text.pack (show budgetMib)
-                        <> " MiB (host physical RAM minus the colima VM pledge and host reserve). "
-                        <> "Free host memory or run this model on a Linux GPU lane."
-                    ),
-                objectRef = Nothing
+              { inlineOutput = Nothing,
+                objectRef = Nothing,
+                inferenceError = Just errorValue
               },
           createdAt = emptyModelIdRejectionTimestamp,
           resultUserId = envelopeUserId,
@@ -4014,7 +4015,12 @@ publishedResultFromRequest maybeTransport paths runtimeMode overrides maybeEngin
             resultRuntimeMode = runtimeMode,
             resultSelectedEngine = "",
             status = "failed",
-            payload = ResultPayload {inlineOutput = Just (message errorValue), objectRef = Nothing},
+            payload =
+              ResultPayload
+                { inlineOutput = Just (message errorValue),
+                  objectRef = Nothing,
+                  inferenceError = Nothing
+                },
             createdAt = now,
             resultUserId = envelopeUserId,
             resultContextId = envelopeContextId,
@@ -4343,6 +4349,11 @@ buildReaderSocketPath websocketBase topicRef readerName =
       ("readerName", readerName)
     ]
 
+uniqueBrowserReaderName :: String -> Text.Text -> IO String
+uniqueBrowserReaderName prefix identity = do
+  suffix <- currentProcessLabel
+  pure (prefix <> sanitizeTopic identity <> "-" <> sanitizeTopic suffix)
+
 buildSocketPath :: PulsarWebSocketBase -> String -> [(String, String)] -> String
 buildSocketPath websocketBase relativePath =
   appendQueryParameters
@@ -4560,19 +4571,59 @@ protoResultToDomain protoResult = do
 
 resultPayloadToProto :: ResultPayload -> ProtoInference.ResultPayload
 resultPayloadToProto payloadValue =
-  case objectRef payloadValue of
-    Just objectRefValue -> set (field @"objectRef") objectRefValue defMessage
-    Nothing -> set (field @"inlineOutput") (fromMaybe "" (inlineOutput payloadValue)) defMessage
+  case inferenceError payloadValue of
+    Just errorValue -> set (field @"inferenceError") (inferenceErrorToProto errorValue) defMessage
+    Nothing ->
+      case objectRef payloadValue of
+        Just objectRefValue -> set (field @"objectRef") objectRefValue defMessage
+        Nothing -> set (field @"inlineOutput") (fromMaybe "" (inlineOutput payloadValue)) defMessage
 
 protoPayloadToDomain :: ProtoInference.ResultPayload -> Maybe ResultPayload
 protoPayloadToDomain protoPayload =
   case view ProtoInferenceFields.maybe'output protoPayload of
     Just (ProtoInference.ResultPayload'InlineOutput inlineOutputValue) ->
-      Just (ResultPayload {inlineOutput = Just inlineOutputValue, objectRef = Nothing})
+      Just (ResultPayload {inlineOutput = Just inlineOutputValue, objectRef = Nothing, inferenceError = Nothing})
     Just (ProtoInference.ResultPayload'ObjectRef objectRefValue) ->
-      Just (ResultPayload {inlineOutput = Nothing, objectRef = Just objectRefValue})
+      Just (ResultPayload {inlineOutput = Nothing, objectRef = Just objectRefValue, inferenceError = Nothing})
+    Just (ProtoInference.ResultPayload'InferenceError errorValue) ->
+      ResultPayload Nothing Nothing . Just <$> inferenceErrorFromProto errorValue
     Nothing ->
-      Just (ResultPayload {inlineOutput = Just "", objectRef = Nothing})
+      Just (ResultPayload {inlineOutput = Just "", objectRef = Nothing, inferenceError = Nothing})
+
+inferenceErrorToProto :: InferenceError -> ProtoInference.InferenceError
+inferenceErrorToProto errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded {} ->
+      set (field @"modelMemoryLimitExceeded") (modelMemoryLimitExceededToProto errorValue) defMessage
+
+modelMemoryLimitExceededToProto :: InferenceError -> ProtoInference.ModelMemoryLimitExceeded
+modelMemoryLimitExceededToProto errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} ->
+      set (field @"modelId") inferenceErrorModelId $
+        set (field @"requiredMib") (fromIntegral inferenceErrorRequiredMib :: Int32) $
+          set (field @"availableMib") (fromIntegral inferenceErrorAvailableMib :: Int32) $
+            set (field @"resource") (inferenceMemoryBudgetResourceText inferenceErrorResource) $
+              set (field @"source") inferenceErrorSource defMessage
+
+inferenceErrorFromProto :: ProtoInference.InferenceError -> Maybe InferenceError
+inferenceErrorFromProto protoValue =
+  case view ProtoInferenceFields.maybe'error protoValue of
+    Just (ProtoInference.InferenceError'ModelMemoryLimitExceeded memoryError) ->
+      modelMemoryLimitExceededFromProto memoryError
+    Nothing -> Nothing
+
+modelMemoryLimitExceededFromProto :: ProtoInference.ModelMemoryLimitExceeded -> Maybe InferenceError
+modelMemoryLimitExceededFromProto protoValue = do
+  resource <- parseInferenceMemoryResource (view ProtoInferenceFields.resource protoValue)
+  pure
+    ModelMemoryLimitExceeded
+      { inferenceErrorModelId = view ProtoInferenceFields.modelId protoValue,
+        inferenceErrorRequiredMib = fromIntegral (view ProtoInferenceFields.requiredMib protoValue :: Int32),
+        inferenceErrorAvailableMib = fromIntegral (view ProtoInferenceFields.availableMib protoValue :: Int32),
+        inferenceErrorResource = resource,
+        inferenceErrorSource = view ProtoInferenceFields.source protoValue
+      }
 
 writeInferenceRequestFile :: FilePath -> ProtoInference.InferenceRequest -> IO ()
 writeInferenceRequestFile filePath value = do

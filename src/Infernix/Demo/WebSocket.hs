@@ -197,16 +197,19 @@ runSession options connection userId = do
   sendLock <- newMVar ()
   userStreamsStarted <- newIORef False
   childThreads <- newMVar []
-  receiveLoop sendLock userStreamsStarted childThreads
-    `finally` killSessionChildThreads childThreads
+  activeContextThread <- newMVar Nothing
+  receiveLoop sendLock userStreamsStarted childThreads activeContextThread
+    `finally` do
+      killActiveContextThread activeContextThread
+      killSessionChildThreads childThreads
   where
-    receiveLoop sendLock userStreamsStarted childThreads = do
+    receiveLoop sendLock userStreamsStarted childThreads activeContextThread = do
       incomingResult <- try @SomeException (WS.receiveData connection)
       case incomingResult of
         Left _ -> pure ()
         Right frame -> do
-          handleFrame options sendLock userStreamsStarted childThreads connection userId frame
-          receiveLoop sendLock userStreamsStarted childThreads
+          handleFrame options sendLock userStreamsStarted childThreads activeContextThread connection userId frame
+          receiveLoop sendLock userStreamsStarted childThreads activeContextThread
 
 killSessionChildThreads :: MVar [ThreadId] -> IO ()
 killSessionChildThreads childThreads =
@@ -214,12 +217,33 @@ killSessionChildThreads childThreads =
     forM_ threads killThread
     pure []
 
+killActiveContextThread :: MVar (Maybe ThreadId) -> IO ()
+killActiveContextThread activeContextThread =
+  modifyMVar_ activeContextThread $ \maybeThread -> do
+    forM_ maybeThread killThread
+    pure Nothing
+
 registerSessionChildThread :: MVar [ThreadId] -> ThreadId -> IO ()
 registerSessionChildThread childThreads threadId =
   modifyMVar_ childThreads $ \threads -> pure (threadId : threads)
 
-handleFrame :: WebSocketOptions -> MVar () -> IORef Bool -> MVar [ThreadId] -> WS.Connection -> UserId -> Lazy.ByteString -> IO ()
-handleFrame options sendLock userStreamsStarted childThreads connection userId frame =
+replaceActiveContextThread :: MVar (Maybe ThreadId) -> ThreadId -> IO ()
+replaceActiveContextThread activeContextThread threadId =
+  modifyMVar_ activeContextThread $ \maybePrevious -> do
+    forM_ maybePrevious killThread
+    pure (Just threadId)
+
+handleFrame ::
+  WebSocketOptions ->
+  MVar () ->
+  IORef Bool ->
+  MVar [ThreadId] ->
+  MVar (Maybe ThreadId) ->
+  WS.Connection ->
+  UserId ->
+  Lazy.ByteString ->
+  IO ()
+handleFrame options sendLock userStreamsStarted childThreads activeContextThread connection userId frame =
   case eitherDecodeStrict' (Lazy.toStrict frame) of
     Left decodeError ->
       sendServerMessage
@@ -233,10 +257,19 @@ handleFrame options sendLock userStreamsStarted childThreads connection userId f
     Right clientMessage ->
       case classifyClientMessage userId clientMessage of
         AcknowledgePending ->
-          dispatchClientMessage options sendLock userStreamsStarted childThreads connection userId clientMessage
+          dispatchClientMessage options sendLock userStreamsStarted childThreads activeContextThread connection userId clientMessage
 
-dispatchClientMessage :: WebSocketOptions -> MVar () -> IORef Bool -> MVar [ThreadId] -> WS.Connection -> UserId -> WsClientMessage -> IO ()
-dispatchClientMessage options sendLock userStreamsStarted childThreads connection userId clientMessage =
+dispatchClientMessage ::
+  WebSocketOptions ->
+  MVar () ->
+  IORef Bool ->
+  MVar [ThreadId] ->
+  MVar (Maybe ThreadId) ->
+  WS.Connection ->
+  UserId ->
+  WsClientMessage ->
+  IO ()
+dispatchClientMessage options sendLock userStreamsStarted childThreads activeContextThread connection userId clientMessage =
   case clientMessage of
     ClientHello {} -> do
       alreadyStarted <-
@@ -283,7 +316,9 @@ dispatchClientMessage options sendLock userStreamsStarted childThreads connectio
                           }
                       )
         )
-        >>= registerSessionChildThread childThreads
+        >>= \threadId -> do
+          replaceActiveContextThread activeContextThread threadId
+          registerSessionChildThread childThreads threadId
     _ -> do
       dispatchResult <- wsDispatchClientMessage options userId clientMessage
       case dispatchResult of

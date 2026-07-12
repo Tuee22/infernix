@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import json
 import tempfile
+import time
 import urllib.parse
 import urllib.request
 import zipfile
@@ -327,9 +328,21 @@ def _is_package_backed_native_model(model_id: str) -> bool:
 
 def _download_mt3_pytorch_pretrained(destination: Path) -> None:
     destination.mkdir(parents=True, exist_ok=True)
-    for relative_path, target_url in _MT3_PYTORCH_PRETRAINED_FILES.items():
-        _download_single_payload(target_url, destination / relative_path)
-    _validate_mt3_pytorch_snapshot(destination)
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            for relative_path, target_url in _MT3_PYTORCH_PRETRAINED_FILES.items():
+                _download_single_payload(target_url, destination / relative_path)
+            _validate_mt3_pytorch_snapshot(destination)
+            return
+        except Exception as error:
+            last_error = error
+            for relative_path in _MT3_PYTORCH_PRETRAINED_FILES:
+                (destination / relative_path).unlink(missing_ok=True)
+            if attempt < 2:
+                time.sleep(5.0 * (attempt + 1))
+    if last_error is not None:
+        raise last_error
 
 
 def _validate_mt3_pytorch_snapshot(root: Path) -> None:

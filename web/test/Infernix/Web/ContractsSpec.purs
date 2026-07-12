@@ -35,6 +35,7 @@ import Generated.Contracts
   , DraftEvent(..)
   , DraftMapPatch(..)
   , DraftMapState(..)
+  , InferenceError(..)
   , MessageId(..)
   , ObjectRef(..)
   , UserId(..)
@@ -123,6 +124,52 @@ spec = do
         (ConversationUserPromptEvent sampleUserPromptPayload)
       roundtripJson "ConversationInferenceResultEvent"
         (ConversationInferenceResultEvent sampleInferenceResultPayload)
+      roundtripJson "InferenceError.ModelMemoryLimitExceeded" sampleInferenceError
+      it "decodes a Haskell wire ModelMemoryLimitExceeded server patch" do
+        case (JSON.readJSON rawMemoryLimitServerPatch :: _ WsServerMessage) of
+          Right (ServerConversationPatch record) ->
+            case record.serverConversationPatch of
+              ConversationStateAppendMessage patch ->
+                case patch.appendMessage of
+                  ConversationMessage message ->
+                    case message.conversationMessageEvent of
+                      ConversationInferenceResultEvent (ConversationInferenceResultPayload result) ->
+                        case result.inferenceResultError of
+                          Just
+                            ( ModelMemoryLimitExceeded details ) -> do
+                              details.modelMemoryLimitExceededModelId `shouldEqual` "audio-demucs-htdemucs"
+                              details.modelMemoryLimitExceededRequiredMib `shouldEqual` 8192
+                              details.modelMemoryLimitExceededAvailableMib `shouldEqual` 4096
+                              details.modelMemoryLimitExceededResource `shouldEqual` "pod-ram"
+                          _ -> "decoded inference error" `shouldEqual` "ModelMemoryLimitExceeded"
+                      _ -> "decoded event" `shouldEqual` "ConversationInferenceResultEvent"
+              _ -> "decoded patch" `shouldEqual` "ConversationStateAppendMessage"
+          Right _ -> "decoded message" `shouldEqual` "ServerConversationPatch"
+          Left err -> show err `shouldEqual` "decoded"
+      it "decodes a Haskell wire ModelMemoryLimitExceeded server snapshot" do
+        case (JSON.readJSON rawMemoryLimitServerSnapshot :: _ WsServerMessage) of
+          Right (ServerConversationSnapshot record) ->
+            case record.serverConversationSnapshot of
+              ConversationState snapshot -> do
+                case snapshot.conversationStateContextId of
+                  ContextId context ->
+                    context.unContextId `shouldEqual` "ctx-memory"
+                case snapshot.conversationStateMessages of
+                  [ _, ConversationMessage message ] ->
+                    case message.conversationMessageEvent of
+                      ConversationInferenceResultEvent (ConversationInferenceResultPayload result) ->
+                        case result.inferenceResultError of
+                          Just
+                            ( ModelMemoryLimitExceeded details ) -> do
+                              details.modelMemoryLimitExceededModelId `shouldEqual` "audio-demucs-htdemucs"
+                              details.modelMemoryLimitExceededRequiredMib `shouldEqual` 8192
+                              details.modelMemoryLimitExceededAvailableMib `shouldEqual` 4096
+                              details.modelMemoryLimitExceededResource `shouldEqual` "pod-ram"
+                          _ -> "decoded inference error" `shouldEqual` "ModelMemoryLimitExceeded"
+                      _ -> "decoded event" `shouldEqual` "ConversationInferenceResultEvent"
+                  _ -> "decoded message count" `shouldEqual` "2"
+          Right _ -> "decoded message" `shouldEqual` "ServerConversationSnapshot"
+          Left err -> show err `shouldEqual` "decoded"
       roundtripJson "ConversationCancelEvent"
         (ConversationCancelEvent
             (ConversationCancelPayload { cancelUserPromptMessageId: MessageId { unMessageId: "m-2" } }))
@@ -221,8 +268,93 @@ sampleInferenceResultPayload =
     { inferenceResultUserPromptMessageId: MessageId { unMessageId: "m-1" }
     , inferenceResultStatus: "completed"
     , inferenceResultInlineOutput: Just "world"
+    , inferenceResultError: Nothing
     , inferenceResultArtifacts: []
     }
+
+sampleInferenceError :: InferenceError
+sampleInferenceError =
+  ModelMemoryLimitExceeded
+    { modelMemoryLimitExceededModelId: "image-sdxl-turbo"
+    , modelMemoryLimitExceededRequiredMib: 12288
+    , modelMemoryLimitExceededAvailableMib: 512
+    , modelMemoryLimitExceededResource: "unified-host-ram"
+    , modelMemoryLimitExceededSource: "unit-test"
+    }
+
+rawMemoryLimitServerPatch :: String
+rawMemoryLimitServerPatch =
+  "{"
+    <> "\"tag\":\"ServerConversationPatch\","
+    <> "\"serverConversationPatchContextId\":\"ctx-memory\","
+    <> "\"serverConversationPatch\":{"
+    <> "\"tag\":\"ConversationStateAppendMessage\","
+    <> "\"appendMessage\":{"
+    <> "\"conversationMessageId\":\"m-1-result\","
+    <> "\"conversationMessageEvent\":{"
+    <> "\"tag\":\"ConversationInferenceResultEvent\","
+    <> "\"contents\":{"
+    <> "\"inferenceResultUserPromptMessageId\":\"m-1\","
+    <> "\"inferenceResultStatus\":\"failed\","
+    <> "\"inferenceResultInlineOutput\":null,"
+    <> "\"inferenceResultError\":{"
+    <> "\"tag\":\"ModelMemoryLimitExceeded\","
+    <> "\"modelMemoryLimitExceededModelId\":\"audio-demucs-htdemucs\","
+    <> "\"modelMemoryLimitExceededRequiredMib\":8192,"
+    <> "\"modelMemoryLimitExceededAvailableMib\":4096,"
+    <> "\"modelMemoryLimitExceededResource\":\"pod-ram\","
+    <> "\"modelMemoryLimitExceededSource\":\"cluster-engine-pod-memory-limit\""
+    <> "},"
+    <> "\"inferenceResultArtifacts\":[]"
+    <> "}"
+    <> "}"
+    <> "},"
+    <> "\"appendNewPrefixHash\":\"memory-limit\""
+    <> "}"
+    <> "}"
+
+rawMemoryLimitServerSnapshot :: String
+rawMemoryLimitServerSnapshot =
+  "{"
+    <> "\"tag\":\"ServerConversationSnapshot\","
+    <> "\"serverConversationSnapshot\":{"
+    <> "\"conversationStateContextId\":\"ctx-memory\","
+    <> "\"conversationStateMessages\":["
+    <> "{"
+    <> "\"conversationMessageId\":\"m-1\","
+    <> "\"conversationMessageEvent\":{"
+    <> "\"tag\":\"ConversationUserPromptEvent\","
+    <> "\"contents\":{"
+    <> "\"promptText\":\"run demucs\","
+    <> "\"promptClientIdempotencyKey\":\"prompt-memory\","
+    <> "\"promptUserUploads\":[]"
+    <> "}"
+    <> "}"
+    <> "},"
+    <> "{"
+    <> "\"conversationMessageId\":\"m-1-result\","
+    <> "\"conversationMessageEvent\":{"
+    <> "\"tag\":\"ConversationInferenceResultEvent\","
+    <> "\"contents\":{"
+    <> "\"inferenceResultUserPromptMessageId\":\"m-1\","
+    <> "\"inferenceResultStatus\":\"failed\","
+    <> "\"inferenceResultInlineOutput\":null,"
+    <> "\"inferenceResultError\":{"
+    <> "\"tag\":\"ModelMemoryLimitExceeded\","
+    <> "\"modelMemoryLimitExceededModelId\":\"audio-demucs-htdemucs\","
+    <> "\"modelMemoryLimitExceededRequiredMib\":8192,"
+    <> "\"modelMemoryLimitExceededAvailableMib\":4096,"
+    <> "\"modelMemoryLimitExceededResource\":\"pod-ram\","
+    <> "\"modelMemoryLimitExceededSource\":\"cluster-engine-pod-memory-limit\""
+    <> "},"
+    <> "\"inferenceResultArtifacts\":[]"
+    <> "}"
+    <> "}"
+    <> "}"
+    <> "],"
+    <> "\"conversationStatePrefixHash\":\"memory-limit\""
+    <> "}"
+    <> "}"
 
 sampleUserUploadPayload :: ConversationUserUploadPayload
 sampleUserUploadPayload =

@@ -18,11 +18,15 @@ module Infernix.Web.Chat
   , initialChatViewState
   , contextListEmpty
   , conversationEmpty
+  , conversationForContext
+  , projectRenderableChatState
   , applyConversationStatePatch
+  , upsertConversationState
   , applyContextListPatch
   , applyDraftMapPatch
   , handleServerMessage
   , latestPendingPromptMessageId
+  , messageSummary
   , pendingPromptCount
   , renderChatView
   ) where
@@ -51,6 +55,7 @@ import Generated.Contracts
   , DraftEntry(..)
   , DraftMapPatch(..)
   , DraftMapState(..)
+  , InferenceError(..)
   , MessageId(..)
   , ModelDescriptor
   , ObjectRef(..)
@@ -81,6 +86,7 @@ type ChatRenderOptions =
 type ChatViewState =
   { contexts :: Array ContextSummary
   , activeConversation :: Maybe ConversationState
+  , conversations :: Array ConversationState
   , drafts :: Array DraftEntry
   }
 
@@ -88,6 +94,7 @@ initialChatViewState :: ChatViewState
 initialChatViewState =
   { contexts: []
   , activeConversation: Nothing
+  , conversations: []
   , drafts: []
   }
 
@@ -165,6 +172,44 @@ conversationMessageRawId :: ConversationMessage -> String
 conversationMessageRawId (ConversationMessage record) =
   messageIdRawValue record.conversationMessageId
 
+conversationStateContextIdRaw :: ConversationState -> String
+conversationStateContextIdRaw (ConversationState record) =
+  contextIdRawValue record.conversationStateContextId
+
+conversationForContext :: ContextId -> ChatViewState -> Maybe ConversationState
+conversationForContext contextId state =
+  find (conversationTargetsContext contextId) state.conversations
+
+conversationForPatchContext :: ContextId -> ChatViewState -> Maybe ConversationState
+conversationForPatchContext contextId state =
+  case conversationForContext contextId state of
+    Just conversation -> Just conversation
+    Nothing ->
+      case state.activeConversation of
+        Just conversation | conversationTargetsContext contextId conversation -> Just conversation
+        _ -> Nothing
+
+upsertConversationState :: ConversationState -> Array ConversationState -> Array ConversationState
+upsertConversationState newConversation existing =
+  let
+    newId = conversationStateContextIdRaw newConversation
+    matched =
+      filter (\conversation -> conversationStateContextIdRaw conversation == newId) existing
+    replaced =
+      map
+        ( \conversation ->
+            if conversationStateContextIdRaw conversation == newId then
+              newConversation
+            else
+              conversation
+        )
+        existing
+  in
+    if matched == [] then
+      snoc existing newConversation
+    else
+      replaced
+
 promptKeyText :: ConversationMessage -> Maybe String
 promptKeyText (ConversationMessage record) =
   case record.conversationMessageEvent of
@@ -172,6 +217,45 @@ promptKeyText (ConversationMessage record) =
       case prompt.promptClientIdempotencyKey of
         ClientIdempotencyKey key -> Just key.unClientIdempotencyKey
     _ -> Nothing
+
+mergeConversationSnapshot
+  :: ConversationState
+  -> Maybe ConversationState
+  -> ConversationState
+mergeConversationSnapshot incoming current =
+  case current of
+    Just (ConversationState currentRecord) ->
+      case incoming of
+        ConversationState incomingRecord ->
+          if contextIdRawValue currentRecord.conversationStateContextId == contextIdRawValue incomingRecord.conversationStateContextId then
+            let
+              retained =
+                filter
+                  (\message -> not (messageRepresentedIn incomingRecord.conversationStateMessages message))
+                  currentRecord.conversationStateMessages
+            in
+              if retained == [] then
+                incoming
+              else
+                ConversationState
+                  { conversationStateContextId: incomingRecord.conversationStateContextId
+                  , conversationStateMessages: incomingRecord.conversationStateMessages <> retained
+                  , conversationStatePrefixHash: currentRecord.conversationStatePrefixHash
+                  }
+          else
+            incoming
+    _ -> incoming
+
+messageRepresentedIn :: Array ConversationMessage -> ConversationMessage -> Boolean
+messageRepresentedIn messages candidate =
+  isJust (find (conversationMessageRepresents candidate) messages)
+
+conversationMessageRepresents :: ConversationMessage -> ConversationMessage -> Boolean
+conversationMessageRepresents candidate message =
+  conversationMessageRawId message == conversationMessageRawId candidate
+    || case promptKeyText candidate of
+        Just key -> promptKeyText message == Just key
+        Nothing -> false
 
 -- | Apply a single 'ContextListPatch' to the in-memory contexts list.
 -- | Upsert keys on 'contextSummaryId'; replace simply takes the supplied
@@ -259,6 +343,50 @@ draftEntryRawId (DraftEntry record) = contextIdRawValue record.draftEntryContext
 contextIdRawValue :: ContextId -> String
 contextIdRawValue (ContextId inner) = inner.unContextId
 
+snapshotTargetsActiveContext :: Maybe ContextId -> ConversationState -> Boolean
+snapshotTargetsActiveContext activeContextId (ConversationState record) =
+  case activeContextId of
+    Just active ->
+      contextIdRawValue active == contextIdRawValue record.conversationStateContextId
+    Nothing -> false
+
+snapshotTargetsRenderedConversation :: Maybe ConversationState -> ConversationState -> Boolean
+snapshotTargetsRenderedConversation current incoming =
+  case current of
+    Just (ConversationState currentRecord) ->
+      case incoming of
+        ConversationState incomingRecord ->
+          contextIdRawValue currentRecord.conversationStateContextId == contextIdRawValue incomingRecord.conversationStateContextId
+    Nothing -> false
+
+conversationTargetsContext :: ContextId -> ConversationState -> Boolean
+conversationTargetsContext contextId (ConversationState record) =
+  contextIdRawValue contextId == contextIdRawValue record.conversationStateContextId
+
+patchTargetsActiveContext :: Maybe ContextId -> ContextId -> Boolean
+patchTargetsActiveContext activeContextId patchContextId =
+  case activeContextId of
+    Just active ->
+      contextIdRawValue active == contextIdRawValue patchContextId
+    Nothing -> false
+
+patchTargetsRenderedConversation :: Maybe ConversationState -> ContextId -> Boolean
+patchTargetsRenderedConversation current patchContextId =
+  case current of
+    Just conversation -> conversationTargetsContext patchContextId conversation
+    Nothing -> false
+
+conversationFromActivePatch :: ContextId -> ConversationStatePatch -> ConversationState
+conversationFromActivePatch active patch =
+  case patch of
+    ConversationStateReplaceSnapshot inner -> inner.replaceSnapshot
+    ConversationStateAppendMessage inner ->
+      ConversationState
+        { conversationStateContextId: active
+        , conversationStateMessages: [ inner.appendMessage ]
+        , conversationStatePrefixHash: inner.appendNewPrefixHash
+        }
+
 -- | The supported dispatch helper the WebSocket handler hands off to.
 -- | Returns the next view state; the renderer is responsible for
 -- | drawing the diff. The @activeContextId@ is the context currently
@@ -273,24 +401,49 @@ handleServerMessage
 handleServerMessage activeContextId message state =
   case message of
     ServerConversationSnapshot record ->
-      state
-        { activeConversation = Just record.serverConversationSnapshot
-        }
+      let
+        snapshot = record.serverConversationSnapshot
+        snapshotContext =
+          case snapshot of
+            ConversationState snapshotRecord -> snapshotRecord.conversationStateContextId
+        existing =
+          case conversationForContext snapshotContext state of
+            Just stored -> Just stored
+            Nothing -> state.activeConversation
+        merged = mergeConversationSnapshot snapshot existing
+        conversations = upsertConversationState merged state.conversations
+        shouldRender =
+          snapshotTargetsActiveContext activeContextId snapshot
+            || snapshotTargetsRenderedConversation state.activeConversation snapshot
+      in
+        if shouldRender then
+          state
+            { activeConversation = Just merged
+            , conversations = conversations
+            }
+        else
+          state { conversations = conversations }
     ServerConversationPatch record ->
-      case activeContextId of
-        Just active
-          | contextIdRawValue active == contextIdRawValue record.serverConversationPatchContextId ->
-              state
-                { activeConversation =
-                    case state.activeConversation of
-                      Just current ->
-                        Just (applyConversationStatePatch record.serverConversationPatch current)
-                      Nothing ->
-                        case record.serverConversationPatch of
-                          ConversationStateReplaceSnapshot inner -> Just inner.replaceSnapshot
-                          _ -> Nothing
-                }
-        _ -> state
+      let
+        patchContext = record.serverConversationPatchContextId
+        patched =
+          case conversationForPatchContext patchContext state of
+            Just current ->
+              applyConversationStatePatch record.serverConversationPatch current
+            Nothing ->
+              conversationFromActivePatch patchContext record.serverConversationPatch
+        conversations = upsertConversationState patched state.conversations
+        shouldRender =
+          patchTargetsActiveContext activeContextId patchContext
+            || patchTargetsRenderedConversation state.activeConversation patchContext
+      in
+        if shouldRender then
+          state
+            { activeConversation = Just patched
+            , conversations = conversations
+            }
+        else
+          state { conversations = conversations }
     ServerContextListSnapshot record ->
       case record.serverContextListSnapshot of
         ContextListState inner ->
@@ -367,13 +520,25 @@ renderChatView
   -> ChatViewState
   -> Effect Unit
 renderChatView document container options state = do
+  let renderState = projectRenderableChatState options.activeContextId state
   clearChildren container
   shell <- createElement document "div" "chat-view"
-  contextRail <- renderContextRail document options state
-  conversationPane <- renderConversationPane document options state
+  contextRail <- renderContextRail document options renderState
+  conversationPane <- renderConversationPane document options renderState
   appendElement shell contextRail
   appendElement shell conversationPane
   appendElement container shell
+
+-- | The reducer keeps a per-context conversation cache and a last-rendered
+-- | conversation. When fast patches land while shell focus is changing, the
+-- | cache can be newer than @activeConversation@. Rendering keys on the shell's
+-- | active context first so a stored terminal result cannot be hidden behind a
+-- | stale pane.
+projectRenderableChatState :: Maybe ContextId -> ChatViewState -> ChatViewState
+projectRenderableChatState activeContextId state =
+  case activeContextId >>= \contextId -> conversationForContext contextId state of
+    Just conversation -> state { activeConversation = Just conversation }
+    Nothing -> state
 
 renderContextRail
   :: Document.Document
@@ -655,7 +820,10 @@ messageSummary (ConversationMessage message) =
     ConversationInferenceResultEvent (ConversationInferenceResultPayload result) ->
       { kind: "result"
       , label: "Result - " <> result.inferenceResultStatus
-      , body: fromMaybe "No inline output." result.inferenceResultInlineOutput
+      , body:
+          case result.inferenceResultError of
+            Just error -> inferenceErrorSummary error
+            Nothing -> fromMaybe "No inline output." result.inferenceResultInlineOutput
       }
     ConversationCancelEvent (ConversationCancelPayload cancel) ->
       { kind: "cancel"
@@ -667,6 +835,18 @@ messageSummary (ConversationMessage message) =
       , label: "Upload"
       , body: upload.uploadDisplayName <> " (" <> artifactMimeTypeValue upload.uploadMimeType <> ")"
       }
+
+inferenceErrorSummary :: InferenceError -> String
+inferenceErrorSummary errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded details ->
+      "Model "
+        <> details.modelMemoryLimitExceededModelId
+        <> " requires "
+        <> show details.modelMemoryLimitExceededRequiredMib
+        <> " MiB; this daemon has "
+        <> show details.modelMemoryLimitExceededAvailableMib
+        <> " MiB available."
 
 activeConversationTitle :: ChatViewState -> String
 activeConversationTitle state =

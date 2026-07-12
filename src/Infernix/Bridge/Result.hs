@@ -13,6 +13,7 @@ import Data.Text qualified as Text
 import Infernix.Conversation.Event (ConversationEvent (..))
 import Infernix.Web.Contracts
   ( ConversationInferenceResultPayload (..),
+    InferenceError,
     MessageId (..),
     ObjectRef,
   )
@@ -52,13 +53,15 @@ inferenceResultEventFor ::
   MessageId ->
   Text ->
   Maybe Text ->
+  Maybe InferenceError ->
   [ObjectRef] ->
   ConversationEvent
-inferenceResultEventFor userPromptMessageId status inlineOutput artifacts =
+inferenceResultEventFor userPromptMessageId status inlineOutput inferenceError artifacts =
   ConversationInferenceResultEvent
     ConversationInferenceResultPayload
       { inferenceResultUserPromptMessageId = userPromptMessageId,
         inferenceResultStatus = status,
         inferenceResultInlineOutput = inlineOutput,
+        inferenceResultError = inferenceError,
         inferenceResultArtifacts = artifacts
       }

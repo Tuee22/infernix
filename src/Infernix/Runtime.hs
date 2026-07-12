@@ -108,12 +108,14 @@ buildPayload resultFamily workerOutput
   | resultFamilyIsArtifact resultFamily =
       ResultPayload
         { inlineOutput = Nothing,
-          objectRef = Just workerOutput
+          objectRef = Just workerOutput,
+          inferenceError = Nothing
         }
   | otherwise =
       ResultPayload
         { inlineOutput = Just workerOutput,
-          objectRef = Nothing
+          objectRef = Nothing,
+          inferenceError = Nothing
         }
 
 persistInferenceResult :: Paths -> InferenceResult -> IO ()

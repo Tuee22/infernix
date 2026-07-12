@@ -65,7 +65,7 @@ walkDirectory root relativePath = do
       isDirectory <- doesDirectoryExist childPath
       if isDirectory
         then
-          if any (`isSuffixOf` childRelative) skipDirectories || entry `elem` skipDirectories
+          if shouldSkipDirectory childRelative entry
             then pure []
             else walkDirectory root childRelative
         else do
@@ -80,6 +80,12 @@ shouldCheck relativePath =
     || any (`isSuffixOf` relativePath) checkSuffixes
   where
     fileName = reverse . takeWhile (/= '/') . reverse
+
+shouldSkipDirectory :: FilePath -> FilePath -> Bool
+shouldSkipDirectory childRelative entry =
+  any (`isSuffixOf` childRelative) skipDirectories
+    || entry `elem` skipDirectories
+    || "test-results-" `isPrefixOf` entry
 
 checkFile :: FilePath -> FilePath -> IO [String]
 checkFile root relativePath = do

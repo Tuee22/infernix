@@ -29,7 +29,7 @@ import Infernix.DemoConfig
     materializeHostManifestFile,
     materializeHostSecrets,
     renderGeneratedDemoConfig,
-    resolveInferenceRamBudgetMib,
+    resolveInferenceMemoryBudget,
     writeProjectConfigFile,
   )
 import Infernix.Types (RuntimeMode)
@@ -76,10 +76,10 @@ runTestInit maybeRuntimeMode maybeDemoUi = do
   paths <- discoverPaths
   ensureRepoLayout paths
   runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
-  inferenceRamBudgetMibValue <- resolveInferenceRamBudgetMib paths runtimeMode
+  inferenceMemoryBudgetValue <- resolveInferenceMemoryBudget paths runtimeMode
   let demoUiEnabled = fromMaybe True maybeDemoUi
       testConfig = testConfigPath paths
-      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabled inferenceRamBudgetMibValue
+      payload = renderGeneratedDemoConfig paths runtimeMode demoUiEnabled inferenceMemoryBudgetValue
   writeProjectConfigFile testConfig payload
   putStrLn ("test init: wrote " <> testConfig)
 

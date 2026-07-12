@@ -49,6 +49,7 @@ web/src/Generated/
 web/.parcel-cache/
 web/playwright-report/
 web/test-results/
+web/test-results-*/
 chart/charts/
 Chart.lock
 

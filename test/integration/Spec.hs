@@ -230,7 +230,7 @@ exerciseRuntimeMode paths runtimeMode = do
         (pulsarHttpStatus `elem` [401, 403])
         "pulsar websocket route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
-      validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels
+      validateCatalogModelInferenceForRuntime paths state runtimeMode demoConfig
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
       -- Phase 9 Sprint 9.3: @GET /api/cache@ exposes cluster-wide model-cache
       -- state, so it is now admin-gated (`withAdminRequest`) alongside the
@@ -320,8 +320,8 @@ exerciseRuntimeMode paths runtimeMode = do
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
   assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
 
-validateCatalogModelInference :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateCatalogModelInference paths state runtimeMode modelIdValue = do
+validateCatalogModelInference :: Paths -> ClusterState -> RuntimeMode -> InferenceMemoryBudget -> String -> IO ()
+validateCatalogModelInference paths state runtimeMode budget modelIdValue = do
   requestTopic <-
     case requestTopicsForMode runtimeMode of
       topic : _ -> pure topic
@@ -369,23 +369,21 @@ validateCatalogModelInference paths state runtimeMode modelIdValue = do
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
-      -- Phase 6 Sprint 6.37: memory-bounded classification. On apple-silicon an
-      -- over-budget model is a CLEAN per-row status=failed from the Phase 4
-      -- Sprint 4.26 admission control (the message names the inference RAM
-      -- budget) — the fail-closed, never-OOM outcome. It is distinguishable
-      -- from a fabricated pass (status /= completed) and a real engine failure
-      -- (a status=failed whose message does not name the RAM budget, still a
-      -- hard failure). Rows that fit the budget must complete and honor the
-      -- per-family real-output contract, exactly as before.
-      case classifyAppleMemoryBoundedResult runtimeMode (status resultValue) (payload resultValue) of
-        AppleMemoryBoundedFailClosed message ->
+      -- Phase 6 Sprint 6.38: memory-bounded classification is typed and
+      -- substrate-neutral. An over-budget row is a clean per-request
+      -- @status=failed@ with 'ModelMemoryLimitExceeded' fields; failed rows
+      -- without that typed error still fail closed through the completion
+      -- assertion below.
+      case classifyResourceMemoryAdmissionResult (status resultValue) (payload resultValue) of
+        ResourceMemoryAdmissionFailClosed errorValue -> do
+          assertTypedMemoryAdmissionError budget model (payload resultValue) errorValue
           putStrLn
-            ( "apple-silicon memory-bounded fail-closed for "
+            ( "resource memory admission fail-closed for "
                 <> modelIdValue
                 <> ": "
-                <> Text.unpack message
+                <> show errorValue
             )
-        AppleInferenceCompletedOrRealFailure -> do
+        InferenceCompletedOrRealFailure -> do
           assert
             (status resultValue == "completed")
             ( "inference completes for "
@@ -515,21 +513,27 @@ objectMagicBytesPlausible ref bytes
     hasExtension extension = extension `Text.isSuffixOf` ref
     startsWith signature = signature `ByteString.isPrefixOf` bytes
 
-validateCatalogModelInferenceForRuntime :: Paths -> ClusterState -> RuntimeMode -> [ModelDescriptor] -> IO ()
-validateCatalogModelInferenceForRuntime paths state runtimeMode activeModels =
-  case runtimeMode of
-    LinuxGpu -> validateLinuxGpuCatalogModelInferenceSerially paths state activeModels
-    _ -> forM_ (map (Text.unpack . modelId) activeModels) (validateCatalogModelInference paths state runtimeMode)
+validateCatalogModelInferenceForRuntime :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> IO ()
+validateCatalogModelInferenceForRuntime paths state runtimeMode demoConfig =
+  let activeModels = models demoConfig
+      budget = inferenceMemoryBudget demoConfig
+   in validateCatalogModelInferenceWithBudget paths state runtimeMode budget activeModels
 
-validateLinuxGpuCatalogModelInferenceSerially :: Paths -> ClusterState -> [ModelDescriptor] -> IO ()
-validateLinuxGpuCatalogModelInferenceSerially paths state activeModels = do
+validateCatalogModelInferenceWithBudget :: Paths -> ClusterState -> RuntimeMode -> InferenceMemoryBudget -> [ModelDescriptor] -> IO ()
+validateCatalogModelInferenceWithBudget paths state runtimeMode budget activeModels =
+  case runtimeMode of
+    LinuxGpu -> validateLinuxGpuCatalogModelInferenceSerially paths state budget activeModels
+    _ -> forM_ (map (Text.unpack . modelId) activeModels) (validateCatalogModelInference paths state runtimeMode budget)
+
+validateLinuxGpuCatalogModelInferenceSerially :: Paths -> ClusterState -> InferenceMemoryBudget -> [ModelDescriptor] -> IO ()
+validateLinuxGpuCatalogModelInferenceSerially paths state budget activeModels = do
   let (pythonNativeModels, nativeModels) = partition linuxGpuModelUsesPythonNativeEngine activeModels
       perEngineNames =
         sort
           . nub
           $ map linuxGpuPerEngineDeploymentName pythonNativeModels
   prepareLinuxGpuEngineDeployment state perEngineNames Nothing
-  forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu)
+  forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu budget)
   forM_ perEngineNames $ \engineName -> do
     reportStep ("linux-gpu per-engine deployment: " <> Text.unpack engineName)
     prepareLinuxGpuEngineDeployment state perEngineNames (Just engineName)
@@ -538,7 +542,7 @@ validateLinuxGpuCatalogModelInferenceSerially paths state activeModels = do
       | model <- pythonNativeModels,
         linuxGpuPerEngineDeploymentName model == engineName
       ]
-      (validateCatalogModelInference paths state LinuxGpu)
+      (validateCatalogModelInference paths state LinuxGpu budget)
   prepareLinuxGpuEngineDeployment state perEngineNames Nothing
 
 ensureLinuxGpuRepresentativeEngineDeployment :: ClusterState -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
@@ -763,9 +767,10 @@ objectRefText objectReference =
 
 failurePayloadSuffix :: ResultPayload -> String
 failurePayloadSuffix payloadValue =
-  case inlineOutput payloadValue of
-    Just text -> "; payload: " <> Text.unpack text
-    Nothing -> ""
+  case (inferenceError payloadValue, inlineOutput payloadValue) of
+    (Just errorValue, _) -> "; inferenceError: " <> show errorValue
+    (Nothing, Just text) -> "; payload: " <> Text.unpack text
+    (Nothing, Nothing) -> ""
 
 sanitizeFileToken :: String -> String
 sanitizeFileToken =
@@ -1001,25 +1006,39 @@ prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
 -- key extension matches the family's artifact type. The deeper byte/dimension
 -- checks (>= 2 separation stems, valid MIDI/MusicXML, image dimensions, audio
 -- sample rate) run against the fetched artifact on cohort hardware.
--- | Phase 6 Sprint 6.37 — classify a published inference result for the
--- apple-silicon memory-bounded validation lane. An over-budget model is a
--- clean per-row @status=failed@ produced by the Phase 4 Sprint 4.26 admission
--- control (its inline message names the inference RAM budget); that is the
--- fail-closed, never-OOM outcome. Every other result — a real completion or a
+-- | Phase 6 Sprint 6.38 — classify a published inference result for the
+-- typed resource-admission lane. An over-budget model is a clean per-row
+-- @status=failed@ produced by runtime admission and represented by
+-- 'ModelMemoryLimitExceeded'. Every other result — a real completion or a
 -- genuine engine failure — is grouped so the existing completion and
 -- per-family contract assertions apply unchanged.
-data AppleMemoryBoundedResult
-  = AppleMemoryBoundedFailClosed Text.Text
-  | AppleInferenceCompletedOrRealFailure
+data ResourceMemoryAdmissionResult
+  = ResourceMemoryAdmissionFailClosed InferenceError
+  | InferenceCompletedOrRealFailure
 
-classifyAppleMemoryBoundedResult :: RuntimeMode -> Text.Text -> ResultPayload -> AppleMemoryBoundedResult
-classifyAppleMemoryBoundedResult runtimeMode resultStatus payloadValue
-  | runtimeMode == AppleSilicon,
-    resultStatus == "failed",
-    Just message <- inlineOutput payloadValue,
-    "inference RAM budget" `Text.isInfixOf` message =
-      AppleMemoryBoundedFailClosed message
-  | otherwise = AppleInferenceCompletedOrRealFailure
+classifyResourceMemoryAdmissionResult :: Text.Text -> ResultPayload -> ResourceMemoryAdmissionResult
+classifyResourceMemoryAdmissionResult resultStatus payloadValue
+  | resultStatus == "failed",
+    Just errorValue@ModelMemoryLimitExceeded {} <- inferenceError payloadValue =
+      ResourceMemoryAdmissionFailClosed errorValue
+  | otherwise = InferenceCompletedOrRealFailure
+
+assertTypedMemoryAdmissionError :: InferenceMemoryBudget -> ModelDescriptor -> ResultPayload -> InferenceError -> IO ()
+assertTypedMemoryAdmissionError budget model payloadValue errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
+      assert (isNothing (inlineOutput payloadValue)) "memory admission failure does not masquerade as inline output"
+      assert (isNothing (objectRef payloadValue)) "memory admission failure does not carry an object reference"
+      assert (inferenceErrorModelId == modelId model) "memory admission error reports the selected model id"
+      assert (inferenceErrorRequiredMib == modelRamFootprintMib model) "memory admission error reports the model footprint"
+      assert (inferenceErrorRequiredMib > inferenceErrorAvailableMib) "memory admission error reports an exceeded budget"
+      case budget of
+        EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} -> do
+          assert (inferenceErrorAvailableMib == memoryBudgetAvailableMib) "memory admission error reports the active budget"
+          assert (inferenceErrorResource == memoryBudgetResource) "memory admission error reports the active resource"
+          assert (inferenceErrorSource == memoryBudgetSource) "memory admission error reports the budget source"
+        UnenforcedMemoryBudget {} ->
+          fail "memory admission error was published while the active budget is explicitly unenforced"
 
 assertResultFamilyContract :: ResultFamily -> String -> ResultPayload -> IO ()
 assertResultFamilyContract resultFamily modelIdValue payloadValue

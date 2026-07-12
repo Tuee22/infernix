@@ -4,8 +4,8 @@ module Infernix.ProcessMonitor
   )
 where
 
-import Control.Concurrent (threadDelay)
-import Control.Exception (SomeException, bracket, evaluate, try)
+import Control.Concurrent (forkIO, newEmptyMVar, putMVar, threadDelay, tryReadMVar)
+import Control.Exception (SomeException, bracket, evaluate, throwIO, try)
 import Data.List qualified as List
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..))
@@ -22,7 +22,6 @@ import System.Process
     ProcessHandle,
     StdStream (NoStream, UseHandle),
     createProcess,
-    getProcessExitCode,
     proc,
     waitForProcess,
   )
@@ -93,26 +92,33 @@ waitForMonitoredExit :: Maybe CommandMonitor -> ProcessHandle -> IO ExitCode
 waitForMonitoredExit maybeMonitor processHandle =
   case maybeMonitor of
     Nothing -> waitForProcess processHandle
-    Just monitor -> go 0 0
+    Just monitor -> do
+      processExit <- newEmptyMVar
+      _ <-
+        forkIO $
+          (try (waitForProcess processHandle) :: IO (Either SomeException ExitCode))
+            >>= putMVar processExit
+      go processExit 0 0
       where
         intervalMicros = max 1000000 (monitorIntervalMicros monitor)
         pollIntervalMicros = 1000000
         pollIntervalSeconds = pollIntervalMicros `divUp` 1000000
-        go elapsedMicros elapsedSeconds = do
-          threadDelay pollIntervalMicros
-          let nextElapsedMicros = elapsedMicros + pollIntervalMicros
-              nextElapsedSeconds = elapsedSeconds + pollIntervalSeconds
-          maybeExitCode <- getProcessExitCode processHandle
-          case maybeExitCode of
-            Just exitCode -> pure exitCode
+        go processExit elapsedMicros elapsedSeconds = do
+          maybeExit <- tryReadMVar processExit
+          case maybeExit of
+            Just (Right exitCode) -> pure exitCode
+            Just (Left err) -> throwIO err
             Nothing -> do
+              threadDelay pollIntervalMicros
+              let nextElapsedMicros = elapsedMicros + pollIntervalMicros
+                  nextElapsedSeconds = elapsedSeconds + pollIntervalSeconds
               if nextElapsedMicros >= intervalMicros
                 then do
                   putStrLn (monitorLabel monitor <> ": still running after " <> show nextElapsedSeconds <> "s")
                   monitorHeartbeat monitor nextElapsedSeconds
-                  go 0 nextElapsedSeconds
+                  go processExit 0 nextElapsedSeconds
                 else
-                  go nextElapsedMicros nextElapsedSeconds
+                  go processExit nextElapsedMicros nextElapsedSeconds
 
 mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
 mergeEnvironment baseEnv overrides =

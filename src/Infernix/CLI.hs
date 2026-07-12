@@ -430,6 +430,8 @@ printInternalPulsarResult resultValue = do
       putStrLn ("inlineOutput: " <> Text.unpack inlineOutputValue)
     ResultPayload {objectRef = Just objectRefValue} ->
       putStrLn ("objectRef: " <> Text.unpack objectRefValue)
+    ResultPayload {inferenceError = Just errorValue} ->
+      putStrLn ("inferenceError: " <> show errorValue)
     _ -> pure ()
 
 -- | Phase 3 Sprint 3.10 — invoke Playwright against the routed

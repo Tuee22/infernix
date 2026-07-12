@@ -20,9 +20,13 @@ import Generated.Contracts
   , ClientIdempotencyKey(..)
   , ContextId(..)
   , ContextSummary(..)
+  , ConversationEvent(..)
+  , ConversationMessage(..)
   , ConversationUserUploadPayload(..)
   , ConversationState(..)
+  , ConversationStatePatch(..)
   , DraftEntry(..)
+  , MessageId(..)
   , ModelDescriptor
   , ObjectRef(..)
   , UserId(..)
@@ -53,8 +57,8 @@ import Infernix.Web.Auth
   ( TokenStore
   , beginDeleteAccountRedirect
   , beginLoginRedirect
+  , beginLogoutRedirect
   , beginRegisterRedirect
-  , clearBrowserAuthSession
   , clearToken
   , completeRedirect
   , defaultInfernixRealmConfig
@@ -72,10 +76,13 @@ import Infernix.Web.Browser
   )
 import Infernix.Web.Chat
   ( ChatViewState
+  , applyConversationStatePatch
+  , conversationForContext
   , handleServerMessage
   , initialChatViewState
   , latestPendingPromptMessageId
   , renderChatView
+  , upsertConversationState
   )
 import Infernix.Web.DomEvents (bindChatChrome)
 import Infernix.Web.FilesTransport (bindFilesActions, refreshFilesList)
@@ -188,6 +195,10 @@ main = do
                 }
             )
         Nothing -> Nothing
+    restoredConversations =
+      case restoredConversation of
+        Just conversation -> [ conversation ]
+        Nothing -> []
   stateRef <-
     Ref.new
       { models: []
@@ -196,7 +207,11 @@ main = do
       , selectedModelId: restoredSelectedModelId
       , newContextDialogOpen: false
       , activeContextId: restoredActiveContextId
-      , chat: initialChatViewState { activeConversation = restoredConversation }
+      , chat:
+          initialChatViewState
+            { activeConversation = restoredConversation
+            , conversations = restoredConversations
+            }
       , artifacts: initialArtifactsViewState
       , files: initialFilesViewState
       , authenticated: case maybeToken of
@@ -310,9 +325,9 @@ bindEvents tokenStore stateRef refs = do
         Just connection -> close connection
         Nothing -> pure unit
       clearToken tokenStore
-      clearBrowserAuthSession
       clearStoredActiveContext
       renderAll stateRef refs
+      beginLogoutRedirect defaultInfernixRealmConfig
   EventTarget.addEventListener EventTypes.click logoutListener false (Element.toEventTarget refs.logoutButton)
 
   deleteAccountListener <-
@@ -409,8 +424,12 @@ mountAuthenticatedSession resetReconnectAttempts stateRef refs token = do
           }
       )
       ( \message -> do
-        Ref.modify_ (applyServerMessage message) stateRef
-        renderServerMessage message stateRef refs
+        current <- Ref.read stateRef
+        if current.wsGeneration == nextGeneration then do
+          Ref.modify_ (applyServerMessage message) stateRef
+          renderServerMessage message stateRef refs
+        else
+          pure unit
       )
       (handleSocketClose stateRef refs nextGeneration)
   installForceWebSocketClose (close connection)
@@ -465,6 +484,10 @@ draftMatchesContext contextId (DraftEntry draft) =
 
 contextIdRawValue :: ContextId -> String
 contextIdRawValue (ContextId inner) = inner.unContextId
+
+conversationTargetsContext :: ContextId -> ConversationState -> Boolean
+conversationTargetsContext contextId (ConversationState conversation) =
+  contextIdRawValue contextId == contextIdRawValue conversation.conversationStateContextId
 
 handleSocketClose :: Ref.Ref AppState -> Refs -> Int -> String -> Effect Unit
 handleSocketClose stateRef refs generation _reason = do
@@ -551,6 +574,7 @@ createContext stateRef refs = do
                   current.chat
                     { contexts = snoc current.chat.contexts summary
                     , activeConversation = Just conversation
+                    , conversations = upsertConversationState conversation current.chat.conversations
                     }
               }
         )
@@ -625,7 +649,15 @@ selectContext stateRef refs contextIdText modelId = do
           { activeContextId = Just contextId
           , newContextDialogOpen = false
           , selectedModelId = if selectedContextModelId == "" then state.selectedModelId else Just selectedContextModelId
-          , chat = state.chat { activeConversation = Just conversation }
+          , chat =
+              let
+                selectedConversation =
+                  fromMaybe conversation (conversationForContext contextId state.chat)
+              in
+                state.chat
+                  { activeConversation = Just selectedConversation
+                  , conversations = upsertConversationState selectedConversation state.chat.conversations
+                  }
           }
     )
     stateRef
@@ -685,7 +717,11 @@ submitPrompt stateRef refs promptText = do
               )
             Ref.modify_
               ( \current ->
-                  current { chat = dropDraftForContext contextId current.chat }
+                  current
+                    { chat =
+                        seedSubmittedPrompt contextId uuid payload
+                          (dropDraftForContext contextId current.chat)
+                    }
               )
               stateRef
             setStatus refs.appStatus "app-status ready" "Prompt sent"
@@ -744,6 +780,40 @@ updateDraft stateRef _refs draftText = do
               }
         )
         stateRef
+
+seedSubmittedPrompt :: ContextId -> String -> UserPromptPayload -> ChatViewState -> ChatViewState
+seedSubmittedPrompt contextId uuid payload chat =
+  let
+    optimisticMessage =
+      ConversationMessage
+        { conversationMessageId: MessageId { unMessageId: "local-" <> uuid }
+        , conversationMessageEvent: ConversationUserPromptEvent payload
+        }
+    patch =
+      ConversationStateAppendMessage
+        { appendMessage: optimisticMessage
+        , appendNewPrefixHash: "local-" <> uuid
+        }
+    baseConversation =
+      ConversationState
+        { conversationStateContextId: contextId
+        , conversationStateMessages: []
+        , conversationStatePrefixHash: ""
+        }
+    targetConversation =
+      case conversationForContext contextId chat of
+        Just conversation -> conversation
+        Nothing ->
+          case chat.activeConversation of
+            Just conversation | conversationTargetsContext contextId conversation -> conversation
+            _ -> baseConversation
+    patchedConversation =
+      applyConversationStatePatch patch targetConversation
+  in
+    chat
+      { activeConversation = Just patchedConversation
+      , conversations = upsertConversationState patchedConversation chat.conversations
+      }
 
 handleUploadedArtifact :: Ref.Ref AppState -> Refs -> String -> Effect Unit
 handleUploadedArtifact stateRef refs rawPayload =

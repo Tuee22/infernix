@@ -24,6 +24,7 @@ where
 import Control.Applicative ((<|>))
 import Control.Exception (throwIO)
 import Data.ByteString qualified as ByteString
+import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
@@ -173,9 +174,12 @@ inferenceResultFromProto protoValue = do
 
 resultPayloadToProto :: ResultPayload -> ProtoInference.ResultPayload
 resultPayloadToProto payloadValue =
-  case objectRef payloadValue of
-    Just objectRefValue -> set (field @"objectRef") objectRefValue defMessage
-    Nothing -> set (field @"inlineOutput") (fromMaybe "" (inlineOutput payloadValue)) defMessage
+  case inferenceError payloadValue of
+    Just errorValue -> set (field @"inferenceError") (inferenceErrorToProto errorValue) defMessage
+    Nothing ->
+      case objectRef payloadValue of
+        Just objectRefValue -> set (field @"objectRef") objectRefValue defMessage
+        Nothing -> set (field @"inlineOutput") (fromMaybe "" (inlineOutput payloadValue)) defMessage
 
 resultPayloadFromProto :: ProtoInference.ResultPayload -> Maybe ResultPayload
 resultPayloadFromProto protoValue =
@@ -184,20 +188,60 @@ resultPayloadFromProto protoValue =
       Just
         ResultPayload
           { inlineOutput = Just inlineOutputValue,
-            objectRef = Nothing
+            objectRef = Nothing,
+            inferenceError = Nothing
           }
     Just (ProtoInference.ResultPayload'ObjectRef objectRefValue) ->
       Just
         ResultPayload
           { inlineOutput = Nothing,
-            objectRef = Just objectRefValue
+            objectRef = Just objectRefValue,
+            inferenceError = Nothing
           }
+    Just (ProtoInference.ResultPayload'InferenceError errorValue) ->
+      ResultPayload Nothing Nothing . Just <$> inferenceErrorFromProto errorValue
     Nothing ->
       Just
         ResultPayload
           { inlineOutput = Just "",
-            objectRef = Nothing
+            objectRef = Nothing,
+            inferenceError = Nothing
           }
+
+inferenceErrorToProto :: InferenceError -> ProtoInference.InferenceError
+inferenceErrorToProto errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded {} ->
+      set (field @"modelMemoryLimitExceeded") (modelMemoryLimitExceededToProto errorValue) defMessage
+
+modelMemoryLimitExceededToProto :: InferenceError -> ProtoInference.ModelMemoryLimitExceeded
+modelMemoryLimitExceededToProto errorValue =
+  case errorValue of
+    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} ->
+      set (field @"modelId") inferenceErrorModelId $
+        set (field @"requiredMib") (fromIntegral inferenceErrorRequiredMib :: Int32) $
+          set (field @"availableMib") (fromIntegral inferenceErrorAvailableMib :: Int32) $
+            set (field @"resource") (inferenceMemoryBudgetResourceText inferenceErrorResource) $
+              set (field @"source") inferenceErrorSource defMessage
+
+inferenceErrorFromProto :: ProtoInference.InferenceError -> Maybe InferenceError
+inferenceErrorFromProto protoValue =
+  case view ProtoInferenceFields.maybe'error protoValue of
+    Just (ProtoInference.InferenceError'ModelMemoryLimitExceeded memoryError) ->
+      modelMemoryLimitExceededFromProto memoryError
+    Nothing -> Nothing
+
+modelMemoryLimitExceededFromProto :: ProtoInference.ModelMemoryLimitExceeded -> Maybe InferenceError
+modelMemoryLimitExceededFromProto protoValue = do
+  resource <- parseInferenceMemoryResource (view ProtoInferenceFields.resource protoValue)
+  pure
+    ModelMemoryLimitExceeded
+      { inferenceErrorModelId = view ProtoInferenceFields.modelId protoValue,
+        inferenceErrorRequiredMib = fromIntegral (view ProtoInferenceFields.requiredMib protoValue :: Int32),
+        inferenceErrorAvailableMib = fromIntegral (view ProtoInferenceFields.availableMib protoValue :: Int32),
+        inferenceErrorResource = resource,
+        inferenceErrorSource = view ProtoInferenceFields.source protoValue
+      }
 
 cacheManifestToProto :: FilePath -> CacheManifest -> ProtoManifest.RuntimeManifest
 cacheManifestToProto materializedCachePath manifest =

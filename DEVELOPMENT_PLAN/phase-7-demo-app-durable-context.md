@@ -2252,11 +2252,12 @@ the recorded validation partial implementation:
   `ServerContextListPatch`, the draft `ServerDraftMapPatch` upsert emitted after typing in the
   prompt box, and the draft `ServerDraftMapPatch` remove emitted after prompt submit clears the
   durable draft.
-- `web/src/Infernix/Web/Auth.js` now stores the Keycloak refresh token in memory, schedules
+- `web/src/Infernix/Web/Auth.js` stores the Keycloak refresh token in memory, schedules
   access-token refresh before expiry, exposes the refresh path to the SPA session callback, and
-  clears access token, refresh token, PKCE state, and timer state on local logout. The browser
-  Playwright flow now proves local logout, same-browser re-login, and refresh-token WebSocket
-  re-auth by asserting a new `ClientHello` after the manual refresh hook.
+  clears access token, refresh token, PKCE state, and timer state on logout. Phase 9 Sprint 9.9
+  extends this to Keycloak SSO logout for account switching. The browser Playwright flow proves
+  logout, same-browser re-login, and refresh-token WebSocket re-auth by asserting a new
+  `ClientHello` after the manual refresh hook.
 - `web/src/Main.purs` now owns generation-guarded WebSocket reconnect/reconstitution for
   authenticated sessions: unexpected close clears only the stale connection, schedules reconnect
   with bounded backoff, resends `ClientHello`, and re-sends `ClientSubscribeContext` for the
@@ -2706,7 +2707,8 @@ surface.
   `/pulsar/admin/admin/v2/clusters`, and `/minio/s3`; the ribbon stays hidden with the app shell
   before authentication.
 - `web/src/Infernix/Web/Auth.js` writes the current Keycloak access token to the
-  `infernix_operator_token` cookie on token receipt / refresh and clears the cookie on logout.
+  `infernix_operator_token` cookie on token receipt / refresh and clears the cookie on logout
+  (with Keycloak SSO logout added later by Phase 9 Sprint 9.9).
 - `chart/templates/securitypolicy-operator-routes.yaml` renders
   `SecurityPolicy/infernix-operator-routes-jwt`, targeting the Harbor portal, Pulsar Admin, and
   MinIO S3 HTTPRoutes. The policy accepts either the SPA-written cookie or a direct
@@ -3309,4 +3311,3 @@ None.
   [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), and
   [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md)
 - [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) — completed removal row for `engine.lock` as the primary Apple singleton primitive (superseded by stable host-id pool membership plus pinned `Exclusive` routing)
-

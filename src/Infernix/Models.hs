@@ -650,8 +650,8 @@ descriptorForMode runtimeMode row = do
 -- biased high — until a measured peak-RSS pass on Apple hardware
 -- (Phase 6 Sprint 6.37 / Wave R) refines them. The on-host
 -- 'apple-silicon' admission control rejects any model whose footprint
--- exceeds the substrate 'inferenceRamBudgetMib', so an under-estimate is
--- the only unsafe direction.
+-- exceeds the active 'InferenceMemoryBudget', so an under-estimate is the
+-- only unsafe direction.
 conservativeRamFootprintMibForRow :: MatrixRow -> ModeBinding -> Int
 conservativeRamFootprintMibForRow row binding =
   case rowFamily row of
@@ -694,7 +694,7 @@ appleFallbackInferenceRamBudgetMib = 16384
 
 -- | Phase 4 Sprint 4.26 — the pure per-substrate inference-RAM budget
 -- default. The Apple value is the conservative fallback that the IO
--- resolver ('Infernix.DemoConfig.resolveInferenceRamBudgetMib') replaces
+-- resolver ('Infernix.DemoConfig.resolveInferenceMemoryBudget') replaces
 -- with the host-computed budget at materialization time.
 defaultInferenceRamBudgetMib :: RuntimeMode -> Int
 defaultInferenceRamBudgetMib runtimeMode = case runtimeMode of

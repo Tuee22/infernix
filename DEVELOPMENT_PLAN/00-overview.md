@@ -57,11 +57,14 @@ Phase 4/6 `linux-gpu` plus `linux-cpu` real-output reopen is closed for the then
 Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion closed under Wave P
 on 2026-07-04. The Wave Q matrix substrate-accuracy reopen (Sprints 4.25/6.36) and the original
 apple-silicon inference RAM-safety reopen (Sprints 4.26/6.37) closed under Waves R/S for their
-original scopes. On 2026-07-09, Phases 4, 5, and 6 reopened for typed resource admission: runtime
-admission must use pure `InferenceMemoryBudget` and `InferenceError` types, reject only oversized
-requests with `ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`, keep
-smaller configured models runnable, remove hardcoded Apple budget floors, use Linux CPU pod memory,
-and use Linux GPU VRAM.
+original scopes. On 2026-07-09, Phases 4, 5, and 6 reopened for typed resource admission; the
+code-side implementation is now complete. Runtime admission uses pure `InferenceMemoryBudget` and
+`InferenceError` types, rejects only oversized requests with
+`ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`, keeps smaller configured
+models runnable, removes hardcoded Apple budget floors, uses Linux CPU pod memory, and uses Linux
+GPU VRAM. Wave T closed on 2026-07-12 with `linux-cpu` image
+`sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` plus selected
+`linux-gpu` image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896`.
 The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
@@ -180,8 +183,8 @@ Playwright `9/9`.
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
 | Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint is a mechanical tripwire rejecting the named fabrication patterns (a regression guard, not an exhaustive proof), and the engine code is fail-closed so missing-weights/load/engine failures raise → `failed`. Typed resource admission is active plan work: over-budget models must fail as typed `ModelMemoryLimitExceeded`, not as daemon startup failures or parsed strings. Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top — proven on the Linux lanes. Sprint 6.38 now owns typed resource-admission validation: mixed-size catalogs must start, smaller models must run, and capacity failures must classify by `InferenceError.ModelMemoryLimitExceeded` fields across Apple, Linux CPU, and Linux GPU. Architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint is a mechanical tripwire rejecting the named fabrication patterns (a regression guard, not an exhaustive proof), and the engine code is fail-closed so missing-weights/load/engine failures raise → `failed`. Typed resource admission is implemented and validated: over-budget models fail as typed `ModelMemoryLimitExceeded`, not as daemon startup failures or parsed strings; Wave T closed on `linux-cpu` plus selected `linux-gpu`. Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top — proven on the Linux lanes. Sprint 6.38 has typed resource-admission validation: mixed-size catalogs start, capacity failures classify by `InferenceError.ModelMemoryLimitExceeded` fields, and substrate budget sources are covered for Apple, Linux CPU, and Linux GPU. Wave T's `linux-cpu` plus selected `linux-gpu` full-suite proof closed on 2026-07-12. Architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
@@ -231,14 +234,16 @@ at the Envoy edge `SecurityPolicy` (admin authorization on all four operator rou
 transits the admin-gated edge, and its loopback binding is enforced by `infernix lint chart` plus a
 generated-Kind-config unit assertion. Per-user object isolation additionally gains a MinIO STS
 defense-in-depth layer (a scoped credential keyed to `users/<sub>/`, gated by
-`cluster.minio.stsPerUser`, now default on). Phase 9 is **Active** — code-side closed (2026-07-06,
-machine-independent gates green) and [Wave Q](cohort-validation-waves.md) cohort-validated live on
-**both `apple-silicon` and `linux-cpu`** (2026-07-07: by-role 403/2xx over all operator routes +
-`/api/cache` + `/api/admin/overview`, the admin `realm_access.roles` claim, the loopback split,
-per-user isolation, the STS scoped-credential object path, and routed Playwright RBAC/dashboard/
-lifecycle 7/7 on apple) — but a later UAT pass surfaced an unresolved authentication issue
-(repo-root `notes.txt`), so the phase stays `Active` with a named UAT auth residual until it is
-diagnosed and re-validated. The doctrine lives at
+`cluster.minio.stsPerUser`, now default on). Phase 9 is **Done** — the RBAC/STS/dashboard surface
+is code-side closed (2026-07-06, machine-independent gates green) and
+[Wave Q](cohort-validation-waves.md) cohort-validated live on **both `apple-silicon` and
+`linux-cpu`** (2026-07-07: by-role 403/2xx over all operator routes + `/api/cache` +
+`/api/admin/overview`, the admin `realm_access.roles` claim, the loopback split, per-user isolation,
+the STS scoped-credential object path, and routed Playwright RBAC/dashboard/lifecycle 7/7 on apple).
+Sprint 9.9 code-side closes the later UAT auth issue from repo-root `notes.txt`: Sign out now clears
+the upstream Keycloak SSO session through OIDC logout so users can switch from a self-registered
+account to the separate admin login. Wave U closed the `linux-cpu` and selected `linux-gpu` routed
+cohort validation of that logout/account-switching behavior on 2026-07-12. The doctrine lives at
 [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md);
 the execution-ordered buildout lives at
 [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md).

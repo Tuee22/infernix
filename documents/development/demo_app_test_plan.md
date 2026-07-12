@@ -213,7 +213,9 @@ titles.
 After login, the auth lifecycle smoke checks the operator ribbon links to `/harbor` and
 `/pulsar/admin/admin/v2/clusters` (and asserts no `/minio/s3` ribbon link exists); it also verifies
 the same access token is written to the `infernix_operator_token` cookie on login/refresh and
-cleared on logout. The routed JWT smoke probes the two gated operator route prefixes without a token
+cleared on logout. The auth lifecycle also proves Sign out clears the upstream Keycloak SSO session
+before same-browser re-login and before switching from a self-registered user to the separate admin
+account. The routed JWT smoke probes the two gated operator route prefixes without a token
 and with the real bearer token.
 The account-deletion smoke creates a real user, writes a draft and a MinIO object, verifies the
 user's demo Pulsar topics are present, clicks `Delete account`, accepts the browser confirmation,
@@ -255,7 +257,8 @@ the textarea value.
   authorization-code redirect, token exchange, backend `/api/objects` JWT acceptance, and routed
   WebSocket valid/malformed-token handshake plus expired-token rejection and typed malformed-frame
   error behavior are covered by the current routed smoke. The browser app now also covers local
-  logout, same-browser re-login, and refresh-token WebSocket re-auth through a new `ClientHello`
+  logout, same-browser re-login, user-to-admin account switching, and refresh-token WebSocket
+  re-auth through a new `ClientHello`
   after the refresh grant. The pre-auth landing smoke asserts the anonymous shell exposes exactly
   the two supported CTA entry points, that each lands on the matching Keycloak form, and that the
   mounted `infernix` Keycloak theme is active. The same auth lifecycle checks cover the operator

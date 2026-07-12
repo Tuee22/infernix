@@ -101,7 +101,9 @@ The ribbon is part of `.app-shell`, so the auth gate hides it before login; afte
 **only to admins**. `web/src/index.html` decodes the `infernix_operator_token` cookie and marks
 `<html>.infernix-admin` when the token carries the `infernix-admin` realm role, and CSS hides the
 ribbon for everyone else. The browser auth module writes the Keycloak access token into the
-same-origin `infernix_operator_token` cookie when login or refresh succeeds and clears it on logout.
+same-origin `infernix_operator_token` cookie when login or refresh succeeds, clears it on Sign out,
+and redirects through Keycloak OIDC logout so switching to the separate admin account cannot reuse a
+prior non-admin SSO session.
 Envoy Gateway's `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
 admin-authorizes**: it validates that cookie (or an explicit `Authorization: Bearer ...` header) and
 then requires the `infernix-admin` realm role before forwarding `/harbor`, `/harbor/api`,
@@ -223,7 +225,8 @@ durable-context application. The product-agnostic primitives this binding is bui
   Playwright also asserts browser-uploaded artifacts
   return through inbound `ConversationUserUploadEvent` append patches and render in the active
   Chat conversation with display name plus MIME type. Playwright now also asserts context-list
-  snapshots/patches, draft upsert/remove patches, local logout, same-browser re-login, and
+  snapshots/patches, draft upsert/remove patches, Keycloak-backed logout, same-browser re-login,
+  user-to-admin account switching, and
   refresh-token WebSocket re-auth through a new `ClientHello`. The SPA session layer reconnects
   after unexpected WebSocket close, resends `ClientHello` and the active
   `ClientSubscribeContext`, receives a fresh conversation snapshot, and Playwright submits a

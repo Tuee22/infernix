@@ -112,8 +112,9 @@
   otherwise. (Phase 3 Sprint 3.13 removed the `/minio/s3` route; MinIO is reached only through the
   webapp `/api/objects` proxy; Wave M closed that route surface with `linux-cpu` plus selected
   `linux-gpu` validation on 2026-06-29.) `web/src/Infernix/Web/Auth.js` mirrors the active Keycloak
-  access token into the `infernix_operator_token` cookie on login and refresh, clears it on logout,
-  and `SecurityPolicy/infernix-operator-routes-jwt` now **authenticates and admin-authorizes** — it
+  access token into the `infernix_operator_token` cookie on login and refresh, clears it during
+  Sign out, then redirects through Keycloak OIDC logout so the upstream SSO session is cleared.
+  `SecurityPolicy/infernix-operator-routes-jwt` now **authenticates and admin-authorizes** — it
   accepts that cookie or a direct `Authorization: Bearer ...` header and then requires the
   `infernix-admin` realm role before forwarding the four operator route prefixes (`/harbor`,
   `/harbor/api`, `/pulsar/admin`, `/pulsar/ws`); the same cookie authenticates browser-issued media
@@ -160,10 +161,11 @@
   daemon, and Wave J closed the current Linux GPU/CUDA plus rebuilt-image `linux-cpu` engine-pool
   placement/backpressure validation on 2026-06-20; Wave M closed the webapp object-proxy reopen
   (2026-06-29), Wave N closed generated-artifact ownership (2026-06-30), Wave P closed the MT3
-  catalog replacement plus Phase 8 (2026-07-04), and Wave Q cohort-validated the Phase 9
+  catalog replacement plus Phase 8 (2026-07-04), Wave Q cohort-validated the Phase 9
   access-control/monitoring RBAC/STS/dashboard surface on both `apple-silicon` and `linux-cpu`
-  (2026-07-07); a later UAT pass then reopened Phase 9 as `Active` for an unresolved authentication
-  issue (repo-root `notes.txt`)
+  (2026-07-07), and Wave U closed the `linux-cpu` plus selected `linux-gpu` Sprint 9.9
+  logout/account-switching rerun after the UAT issue in repo-root `notes.txt` was diagnosed and
+  closed code-side
 - Beyond the Phase 9 admin overview (`/api/admin/overview`) and per-user personal dashboard, no
   general observability stack (metrics, tracing, log aggregation) is deployed.
   Monitoring is not a supported first-class surface.

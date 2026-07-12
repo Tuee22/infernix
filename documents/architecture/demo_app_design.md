@@ -91,8 +91,10 @@ state. Upload events return through inbound
 `ConversationUserUploadEvent` append patches and render in the active
 Chat conversation with display name plus MIME type. The browser auth
 layer keeps the Keycloak refresh token in memory, clears local auth
-state on logout, and reconnects the WebSocket after a refresh-token
-grant; Playwright covers logout, same-browser re-login, and
+state on logout, redirects through Keycloak logout to clear the SSO
+session, and reconnects the WebSocket after a refresh-token
+grant; Playwright covers logout, same-browser re-login, user-to-admin
+account switching, and
 refresh-triggered `ClientHello` re-auth. The SPA session layer
 reconnects after an unexpected WebSocket close with a generation guard,
 resends `ClientHello`, re-subscribes the active context, and keeps the

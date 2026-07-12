@@ -3,12 +3,14 @@
 {-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Infernix.Web.Contracts
   ( EngineBinding (..),
     ErrorResponse (..),
     InferenceRequest (..),
     InferenceResult (..),
+    InferenceError (..),
     ModelDescriptor (..),
     RequestField (..),
     ResultPayload (..),
@@ -51,10 +53,11 @@ module Infernix.Web.Contracts
     contractSumTypes,
     renderPursContractFooter,
     taggedSumOptions,
+    inferenceErrorFromRuntime,
   )
 where
 
-import Data.Aeson (FromJSON, ToJSON, defaultOptions)
+import Data.Aeson (FromJSON, ToJSON, defaultOptions, withObject, (.:), (.:?), (.=))
 import Data.Aeson qualified as Aeson
 import Data.List (intercalate)
 import Data.Proxy (Proxy (Proxy))
@@ -99,7 +102,8 @@ data InferenceRequest = InferenceRequest
 
 data ResultPayload = ResultPayload
   { inlineOutput :: Maybe Text.Text,
-    objectRef :: Maybe Text.Text
+    objectRef :: Maybe Text.Text,
+    inferenceError :: Maybe InferenceError
   }
   deriving (Eq, Generic, Show)
 
@@ -201,6 +205,68 @@ instance ToJSON ArtifactRenderDisposition where
 instance FromJSON ArtifactRenderDisposition where
   parseJSON = Aeson.genericParseJSON taggedSumOptions
 
+data InferenceError
+  = ModelMemoryLimitExceeded
+  { modelMemoryLimitExceededModelId :: Text.Text,
+    modelMemoryLimitExceededRequiredMib :: Int,
+    modelMemoryLimitExceededAvailableMib :: Int,
+    modelMemoryLimitExceededResource :: Text.Text,
+    modelMemoryLimitExceededSource :: Text.Text
+  }
+  deriving (Eq, Generic, Show)
+
+instance ToJSON InferenceError where
+  toJSON
+    ModelMemoryLimitExceeded
+      { modelMemoryLimitExceededModelId,
+        modelMemoryLimitExceededRequiredMib,
+        modelMemoryLimitExceededAvailableMib,
+        modelMemoryLimitExceededResource,
+        modelMemoryLimitExceededSource
+      } =
+      Aeson.object
+        [ "tag" .= ("ModelMemoryLimitExceeded" :: Text.Text),
+          "modelMemoryLimitExceededModelId" .= modelMemoryLimitExceededModelId,
+          "modelMemoryLimitExceededRequiredMib" .= modelMemoryLimitExceededRequiredMib,
+          "modelMemoryLimitExceededAvailableMib" .= modelMemoryLimitExceededAvailableMib,
+          "modelMemoryLimitExceededResource" .= modelMemoryLimitExceededResource,
+          "modelMemoryLimitExceededSource" .= modelMemoryLimitExceededSource
+        ]
+
+instance FromJSON InferenceError where
+  parseJSON = withObject "InferenceError" $ \value -> do
+    tag <- value .:? "tag"
+    case tag of
+      Nothing -> parseModelMemoryLimitExceeded value
+      Just "ModelMemoryLimitExceeded" -> parseModelMemoryLimitExceeded value
+      Just other -> fail ("Unsupported inference error: " <> Text.unpack other)
+    where
+      parseModelMemoryLimitExceeded value =
+        ModelMemoryLimitExceeded
+          <$> value .: "modelMemoryLimitExceededModelId"
+          <*> value .: "modelMemoryLimitExceededRequiredMib"
+          <*> value .: "modelMemoryLimitExceededAvailableMib"
+          <*> value .: "modelMemoryLimitExceededResource"
+          <*> value .: "modelMemoryLimitExceededSource"
+
+inferenceErrorFromRuntime :: Types.InferenceError -> InferenceError
+inferenceErrorFromRuntime runtimeError =
+  case runtimeError of
+    Types.ModelMemoryLimitExceeded
+      { Types.inferenceErrorModelId = modelIdValue,
+        Types.inferenceErrorRequiredMib = requiredMibValue,
+        Types.inferenceErrorAvailableMib = availableMibValue,
+        Types.inferenceErrorResource = resourceValue,
+        Types.inferenceErrorSource = sourceValue
+      } ->
+        ModelMemoryLimitExceeded
+          { modelMemoryLimitExceededModelId = modelIdValue,
+            modelMemoryLimitExceededRequiredMib = requiredMibValue,
+            modelMemoryLimitExceededAvailableMib = availableMibValue,
+            modelMemoryLimitExceededResource = Types.inferenceMemoryBudgetResourceText resourceValue,
+            modelMemoryLimitExceededSource = sourceValue
+          }
+
 data UserPromptPayload = UserPromptPayload
   { promptText :: Text.Text,
     promptClientIdempotencyKey :: ClientIdempotencyKey,
@@ -216,6 +282,7 @@ data ConversationInferenceResultPayload = ConversationInferenceResultPayload
   { inferenceResultUserPromptMessageId :: MessageId,
     inferenceResultStatus :: Text.Text,
     inferenceResultInlineOutput :: Maybe Text.Text,
+    inferenceResultError :: Maybe InferenceError,
     inferenceResultArtifacts :: [ObjectRef]
   }
   deriving (Eq, Generic, Show)
@@ -538,6 +605,7 @@ contractSumTypes =
     let proxy = Proxy :: Proxy InferenceRequest in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy ResultPayload in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy InferenceResult in equal proxy (mkSumType proxy),
+    let proxy = Proxy :: Proxy InferenceError in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy ErrorResponse in equal proxy (mkSumType proxy),
     let proxy = Proxy :: Proxy EngineBinding in equal proxy (mkSumType proxy),
     -- Phase 7 newtypes
@@ -661,6 +729,7 @@ renderPursContractFooter activeRuntimeMode =
             "type ResultPayloadRecord =",
             "  { inlineOutput :: Maybe String",
             "  , objectRef :: Maybe String",
+            "  , inferenceError :: Maybe InferenceError",
             "  }",
             "",
             "resultPayloadRecord :: ResultPayload -> ResultPayloadRecord",
@@ -955,6 +1024,17 @@ phase7Sums =
         PursNullary "RenderMidi",
         PursNullary "RenderMusicXml",
         PursNullary "RenderZipStems"
+      ]
+    ),
+    ( "InferenceError",
+      [ PursRecord
+          "ModelMemoryLimitExceeded"
+          [ ("modelMemoryLimitExceededModelId", "String"),
+            ("modelMemoryLimitExceededRequiredMib", "Int"),
+            ("modelMemoryLimitExceededAvailableMib", "Int"),
+            ("modelMemoryLimitExceededResource", "String"),
+            ("modelMemoryLimitExceededSource", "String")
+          ]
       ]
     ),
     ( "ConversationEvent",

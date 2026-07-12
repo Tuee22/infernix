@@ -7,6 +7,7 @@ module Infernix.Bootstrap.Models
     bootstrapSubscriptionName,
     bootstrapRequestDedupKey,
     readyEventDedupKey,
+    readyEventDedupKeyForRequest,
     bootstrapReadyTopicFor,
     readySentinelFilename,
     modelFileObjectKey,
@@ -55,9 +56,10 @@ instance FromJSON ModelBootstrapReadyEvent where
 
 -- | A request the engine pod publishes when its adapter sees an uncached
 -- model. The supported topic is @infernix/system/model.bootstrap.request@.
--- Producer-side dedup is scoped to a single request attempt so exact
--- replays collapse without permanently poisoning later retries for the
--- same model.
+-- The request attempt key is carried through to the ready-event producer. The
+-- request message itself remains replayable so a caller can republish the exact
+-- same attempt after uncertain coordinator failover without relying solely on
+-- broker redelivery of an unacked message.
 data ModelBootstrapRequest = ModelBootstrapRequest
   { bootstrapRequestModelId :: Text,
     bootstrapRequestDownloadUrl :: Text,
@@ -102,6 +104,14 @@ bootstrapRequestDedupKey request =
 readyEventDedupKey :: ModelBootstrapReadyEvent -> Text
 readyEventDedupKey event =
   readyEventModelId event <> "@" <> readyEventReadyAtIso8601 event
+
+-- | Producer-side dedup key used for the ready event emitted in response to a
+-- bootstrap request. Exact request replays may enqueue multiple request
+-- messages after a failover boundary, but they must still collapse to one
+-- ready event for that request attempt. A later recovery attempt carries a new
+-- @requestedAt@ and therefore receives a fresh ready-event dedup key.
+readyEventDedupKeyForRequest :: ModelBootstrapRequest -> Text
+readyEventDedupKeyForRequest = bootstrapRequestDedupKey
 
 -- | Per-model ready-event topic name. Engines @Reader@-subscribe to this
 -- topic with a bounded timeout; the broker preserves the latest message

@@ -13,6 +13,8 @@
 -- |   header.
 -- | * Schedule a refresh before expiry so the WebSocket lifetime never
 -- |   straddles a token-expiry boundary.
+-- | * Clear local token state and redirect through Keycloak logout so
+-- |   the upstream SSO session does not survive Sign out.
 -- |
 -- | The routed SPA owns the PKCE redirect, authorization-code exchange,
 -- | and in-memory access-token handoff used by WebSocket and artifact
@@ -29,6 +31,7 @@ module Infernix.Web.Auth
   , clearToken
   , beginLoginRedirect
   , beginRegisterRedirect
+  , beginLogoutRedirect
   , beginDeleteAccountRedirect
   , completeRedirect
   , clearBrowserAuthSession
@@ -82,6 +85,12 @@ beginLoginRedirect = beginLoginRedirectImpl
 beginRegisterRedirect :: RealmConfig -> Effect Unit
 beginRegisterRedirect = beginRegisterRedirectImpl
 
+-- | Clear local browser token state and start Keycloak's OIDC logout
+-- | redirect. This lets a user sign out and then choose a different
+-- | account, including the separate demo admin account.
+beginLogoutRedirect :: RealmConfig -> Effect Unit
+beginLogoutRedirect = beginLogoutRedirectImpl
+
 -- | Reap demo-owned account state through the backend before starting
 -- | Keycloak's account-deletion Application Initiated Action.
 beginDeleteAccountRedirect :: RealmConfig -> String -> (String -> Effect Unit) -> Effect Unit
@@ -100,6 +109,8 @@ completeRedirect store config onToken =
 foreign import beginLoginRedirectImpl :: RealmConfig -> Effect Unit
 
 foreign import beginRegisterRedirectImpl :: RealmConfig -> Effect Unit
+
+foreign import beginLogoutRedirectImpl :: RealmConfig -> Effect Unit
 
 foreign import beginDeleteAccountRedirectImpl
   :: RealmConfig

@@ -74,7 +74,7 @@ data DhallDemoConfig = DhallDemoConfig
     dhallModelBootstrapTopic :: Text,
     dhallEngines :: [DhallEngineBinding],
     dhallModels :: [DhallModelDescriptor],
-    dhallInferenceRamBudgetMib :: Int
+    dhallInferenceMemoryBudget :: DhallInferenceMemoryBudget
   }
   deriving (Generic)
 
@@ -155,6 +155,18 @@ data DhallModelDescriptor = DhallModelDescriptor
 instance Dhall.FromDhall DhallModelDescriptor where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
+data DhallInferenceMemoryBudget = DhallInferenceMemoryBudget
+  { dhallBudgetKind :: Text,
+    dhallBudgetResource :: Text,
+    dhallBudgetSource :: Text,
+    dhallBudgetAvailableMib :: Int,
+    dhallBudgetReason :: Text
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallInferenceMemoryBudget where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
 data DhallRequestField = DhallRequestField
   { dhallName :: Text,
     dhallLabel :: Text,
@@ -194,6 +206,12 @@ dhallFieldSuffixName suffix =
     "MemberId" -> "memberId"
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
+    "InferenceMemoryBudget" -> "inferenceMemoryBudget"
+    "BudgetKind" -> "kind"
+    "BudgetResource" -> "resource"
+    "BudgetSource" -> "source"
+    "BudgetAvailableMib" -> "availableMib"
+    "BudgetReason" -> "reason"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
@@ -224,6 +242,7 @@ demoConfigFromDhall rawConfig = do
   engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
   engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
   modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
+  memoryBudgetValue <- inferenceMemoryBudgetFromDhall (dhallInferenceMemoryBudget rawConfig)
   let engineDaemonValues =
         if null parsedEngineDaemonValues
           then deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues (dhallConfigResultTopic rawConfig)
@@ -248,8 +267,26 @@ demoConfigFromDhall rawConfig = do
         modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
         engines = engineValues,
         models = modelValues,
-        inferenceRamBudgetMib = dhallInferenceRamBudgetMib rawConfig
+        inferenceMemoryBudget = memoryBudgetValue
       }
+
+inferenceMemoryBudgetFromDhall :: DhallInferenceMemoryBudget -> Either String InferenceMemoryBudget
+inferenceMemoryBudgetFromDhall rawBudget =
+  case Text.toLower (dhallBudgetKind rawBudget) of
+    "enforced" -> do
+      resource <- parseEnum "inferenceMemoryBudget.resource" parseInferenceMemoryResource (dhallBudgetResource rawBudget)
+      pure
+        EnforcedMemoryBudget
+          { memoryBudgetResource = resource,
+            memoryBudgetSource = dhallBudgetSource rawBudget,
+            memoryBudgetAvailableMib = max 0 (dhallBudgetAvailableMib rawBudget)
+          }
+    "unenforced" ->
+      pure
+        UnenforcedMemoryBudget
+          { memoryBudgetReason = dhallBudgetReason rawBudget
+          }
+    other -> Left ("unsupported inferenceMemoryBudget.kind: " <> Text.unpack other)
 
 deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
 deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
@@ -427,9 +464,37 @@ renderSubstrateConfig demoConfig =
       ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
       ", engines = " <> dhallList engineBindingType renderEngineBinding (engines demoConfig),
       ", models = " <> dhallList modelDescriptorType renderModelDescriptor (models demoConfig),
-      ", inferenceRamBudgetMib = " <> dhallInteger (inferenceRamBudgetMib demoConfig),
+      ", inferenceMemoryBudget = " <> renderInferenceMemoryBudget (inferenceMemoryBudget demoConfig),
       "}"
     ]
+
+renderInferenceMemoryBudget :: InferenceMemoryBudget -> String
+renderInferenceMemoryBudget budget =
+  case budget of
+    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} ->
+      "{ kind = "
+        <> dhallText "enforced"
+        <> ", resource = "
+        <> dhallText (inferenceMemoryBudgetResourceText memoryBudgetResource)
+        <> ", source = "
+        <> dhallText memoryBudgetSource
+        <> ", availableMib = "
+        <> dhallInteger memoryBudgetAvailableMib
+        <> ", reason = "
+        <> dhallText ""
+        <> " }"
+    UnenforcedMemoryBudget {memoryBudgetReason} ->
+      "{ kind = "
+        <> dhallText "unenforced"
+        <> ", resource = "
+        <> dhallText ""
+        <> ", source = "
+        <> dhallText ""
+        <> ", availableMib = "
+        <> dhallInteger 0
+        <> ", reason = "
+        <> dhallText memoryBudgetReason
+        <> " }"
 
 renderDaemonConfig :: DaemonConfig -> String
 renderDaemonConfig daemonConfig =

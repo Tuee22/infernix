@@ -1,11 +1,13 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — Sprint 6.38 reopens validation for typed resource memory admission across
-Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Sprints 6.36 and 6.37 remain closed
-for their original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed
-by Wave P (2026-07-04). Note: the routed Playwright suite grew from **9** specs to **15** when the
-Phase 9 auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later
-waves record `15/15`.
+**Status**: Done — Sprint 6.38 is closed for typed resource memory-admission validation across
+Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Wave T closed on 2026-07-12 with
+`linux-cpu` plus the selected `linux-gpu` accelerator. Sprints 6.36 and 6.37 remain closed for their
+original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed by Wave P
+(2026-07-04).
+Note: the routed Playwright suite grew from **9** specs to **15** when the Phase 9
+auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later waves record
+`15/15`.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
 
 > **Purpose**: Define the supported static-quality and single-substrate validation contract for the
@@ -65,16 +67,17 @@ waves record `15/15`.
 > eager model-cache staging.
 
 > **Resource-admission validation reopen (2026-07-09).** Sprint 6.38 validates the doctrine added by
-> Phase 4 Sprint 4.27 and Phase 5 Sprint 5.11. The suites must prove that one over-budget model does
-> not fail daemon startup, that a smaller model still runs in the same configured catalog, that Apple
-> zero/negative computed budgets remain enforced without hardcoded floors, that Linux CPU uses the
-> cluster engine pod memory limit, that Linux GPU uses GPU VRAM, and that classifiers identify
-> capacity failures by `InferenceError.ModelMemoryLimitExceeded` plus explicit MiB fields.
+> Phase 4 Sprint 4.27 and Phase 5 Sprint 5.11. The code-side suite now proves that one over-budget
+> model does not fail daemon startup, Apple zero/negative computed budgets remain enforced without
+> hardcoded floors, Linux CPU uses the cluster engine pod memory limit, Linux GPU uses GPU VRAM, and
+> classifiers identify capacity failures by `InferenceError.ModelMemoryLimitExceeded` plus explicit
+> MiB fields. Wave T's `linux-cpu` and selected `linux-gpu` live integration/e2e evidence now proves
+> smaller models keep running in the same daemon session.
 
-Phase 6 is `Active` for Sprint 6.38. Wave Q Sprint 6.36 (real-output and matrix validation
-hardening, opened 2026-07-06) and Sprint 6.37 (apple-silicon memory-bounded validation lane) remain
-closed for their original scope; the prior Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave
-P (2026-07-04). It
+Phase 6 is `Done`; Sprint 6.38's selected `linux-gpu` Wave T cohort residual is closed. Wave Q Sprint 6.36
+(real-output and matrix validation hardening, opened 2026-07-06) and Sprint 6.37 (apple-silicon
+memory-bounded validation lane) remain closed for their original scope; the prior Wave O MT3 reopen
+(Sprint 6.35) is closed, proven by Wave P (2026-07-04). It
 otherwise closes around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
@@ -2012,12 +2015,216 @@ Code-side (the classification) is complete.
 
 ---
 
-## Sprint 6.38: Typed Resource Admission Validation Across Substrates [Active]
+## Sprint 6.38: Typed Resource Admission Validation Across Substrates [Done]
 
-**Status**: Active — doctrine and documentation are being updated; implementation and validation remain open.
+**Status**: Done — code-side complete and Wave T full live integration/e2e validation is closed on
+`linux-cpu` plus the selected `linux-gpu` accelerator.
+**Code-side closure**: Complete on 2026-07-09 in the Linux outer-container lane. Unit coverage now
+exercises pure admission decisions for enforced, enforced-zero, and explicit unenforced budgets;
+config validation accepts mixed-size catalogs; protobuf/storage/result-bridge roundtrips preserve
+typed `ModelMemoryLimitExceeded`; and `test/integration/Spec.hs` classifies per-row capacity
+failures by constructor and MiB quantities instead of parsing text. Routed Playwright now records the
+browser-facing half of the same contract by accepting only typed `ModelMemoryLimitExceeded` failures
+for rows whose catalog footprint exceeds the active demo-config budget, while preserving
+fail-closed behavior for any other failed result; the web unit suite also covers the live-discovered
+append-before-snapshot race where a fast failed result arrives before the active conversation
+snapshot, and the reducer now preserves already-seen append messages when a stale same-context
+snapshot arrives afterward. The stale-snapshot merge is validated on rebuilt Linux CPU image
+`sha256:05e0aadf5ea0feb98f25e82ab196f23893be0441e59f5e91f9fec346bfa6d8c0` by
+`./bootstrap/linux-cpu.sh build` and
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix
+test unit` (Haskell unit plus web `75/75`). Earlier gates also passed
+`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix
+test lint`, `infernix lint files|docs|proto|chart`, `infernix docs check`, and a source-bound
+`cabal build test:infernix-integration` compile preflight.
+**Latest Wave T evidence**: The 2026-07-10 `./bootstrap/linux-cpu.sh test` rerun on
+`sha256:05e0aadf5ea0feb98f25e82ab196f23893be0441e59f5e91f9fec346bfa6d8c0` passed Haskell style,
+Python `check-code`, Haskell unit, web `75/75`, and the full live integration lane, including typed
+`ModelMemoryLimitExceeded` classifications for the Linux CPU over-budget rows and smaller-model
+continuity through the HA/chaos tail. The routed browser gate remained open in this attempt because Playwright ended
+`14/16`: the pre-existing artifact preview grant timing spec failed, and the matrix row with the
+typed terminal over-budget payload still did not render a visible capacity message.
+**Current fix**: The browser reducer now ignores conversation snapshots whose context does not match
+the active context, and the routed artifact helper waits for bounded text/JSON preview readiness
+after the download grant. Focused mounted-source PureScript validation passes `76/76`; a rebuilt
+`linux-cpu` image
+`sha256:c01a9a070ca842b973543301dcbaaa039811492f707fdc20c804aa30bd5f40ee` passes
+`./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web `76/76`. Its full
+`./bootstrap/linux-cpu.sh test` rerun passed style/static/unit, web `76/76`, and the full live
+integration lane including typed CPU admission and smaller-model continuity; routed Playwright ended
+`15/16` on the remaining capacity-message render race. Current source fixes the stale-displayed-context
+append path and focused mounted-source PureScript validation passes `77/77`; rebuilt image
+`sha256:84e3915260e5fd7684b817bf520e9eaca4f40946665d86ae2afb5276b1eedfcb` now contains this fix and
+passed the `./bootstrap/linux-cpu.sh build` CLI-help smoke plus rebuilt-image `infernix test unit`
+with web `77/77`. The full-suite rerun then passed style/static/unit, typed CPU admission,
+smaller-model continuity, HA/chaos, throughput, platform recovery, lifecycle rebinding, and
+anti-affinity, but failed in a later lifecycle cluster-up after a one-shot retained Pulsar claim-root
+reset was exhausted. Rebuilt image
+`sha256:0bf82aba452b2bee8f5de6c4ee136c7d72537ac0dbd4377ee52ee3718d77c0aa` contains the bounded
+retained Pulsar bootstrap repair-loop fix and passed `./bootstrap/linux-cpu.sh build` plus the
+CLI-help smoke and rebuilt-image `infernix test unit` with web `77/77`. Its full-suite rerun passed
+the front gates and full live integration, including typed CPU admission, smaller-model continuity,
+HA/chaos, throughput (`totalPrompts = 12`, `p95Seconds = 82.15346002578735`), platform recovery,
+lifecycle rebinding, anti-affinity, and the `demo_ui = false` lifecycle; repeated retained-data
+cluster-ups no longer hit the prior dirty Pulsar metadata failure. Routed Playwright reached
+`15/16` and failed only the matrix visible capacity-message assertion after receiving the typed
+terminal `ModelMemoryLimitExceeded` payload. Current source adds a same-rendered-context reducer
+guard for transient `activeContextId` staleness plus a raw Haskell-wire decode regression; focused
+mounted-source PureScript validation passes `79/79`. Rebuilt image
+`sha256:4e2e2a9f642ecc15635df849539b82a847d350db19e161cf6517d56a29ea6b62`
+contains that fix and passed `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and
+rebuilt-image `infernix test unit` with web `79/79`. Its full-suite rerun passed Haskell style,
+Python `check-code`, Haskell unit, web `79/79`, and full live integration, including typed CPU
+admission, smaller-model continuity, throughput (`totalPrompts = 12`,
+`p95Seconds = 65.4941475391388`), platform recovery, lifecycle rebinding, anti-affinity, and the
+`demo_ui = false` lifecycle; routed Playwright reached `15/16` and failed only the visible
+capacity-message matrix assertion. Current source now pins submitted prompts into the active
+conversation before fast terminal results. Rebuilt image
+`sha256:1374398c498e4fd38e27991c2fe5cc5d4b1b9c19c1f9ace01b23e0722f3ff306`
+passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
+`infernix test unit` with web `80/80`. The full-suite rerun on that rebuilt image passed Haskell
+style, Python `check-code`, Haskell unit, web `80/80`, and full live integration, including typed
+CPU admission, smaller-model continuity, platform recovery, lifecycle rebinding, anti-affinity, and
+the `demo_ui = false` lifecycle; routed Playwright reached `15/16` and failed only the visible
+capacity-message DOM assertion after receiving the typed terminal payload. Current source now keeps
+a per-context browser conversation cache and focused mounted-source PureScript validation passes
+`81/81`. Rebuilt Linux CPU image
+`sha256:5ccdac2c89b435c1452f63c7fc5df41ca07893bfabc581134aef95db0468ace9` contains that fix and
+passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image `infernix test
+unit` with web `81/81`. Its full rerun passed the front gates and progressed through the live
+Linux CPU integration lane up to PostgreSQL lifecycle rebinding, then hung in the second
+`cluster up` warm-cache path with an idle MinIO NodePort connection. Current source adds bounded
+MinIO warm-cache/model-bootstrap HTTP calls in `Infernix.Runtime.Pulsar` (`HEAD` sentinel probes
+15s, write responses 300s), and focused mounted-source Haskell validation passes
+`cabal test infernix-unit`. Rebuilt Linux CPU image
+`sha256:f0276a2efcae1fa7b2d33a7bb7a0e442b9d4c2be5687515c439f9cb75bf909ec` contains the timeout fix
+and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
+`infernix test unit` with web `81/81`. Its full `linux-cpu` rerun failed before runtime validation
+on a Haskell style import-order diff in `Infernix.Runtime.Pulsar`; current source applies the
+style-only reorder, and focused mounted-source validation passes `cabal test infernix-haskell-style`.
+Rebuilt Linux CPU image
+`sha256:5d423bd3d988103e6777fcfa80b92da07684263af056f7e6c9395e4802176cec` contains that style fix
+and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
+`infernix test unit` with web `81/81`. Its full rerun passed the front gates and advanced through
+typed CPU admission, HA/recovery, model-bootstrap deduplication, throughput (`totalPrompts = 12`,
+`p95Seconds = 65.50490140914917`), Harbor/MinIO/Pulsar recovery, and PostgreSQL failover before
+stalling in the lifecycle-rebinding second `cluster up` while republishing Harbor images; diagnostics
+showed the integration process sleeping with a direct `[docker] <defunct>` child. Current source
+replaces the monitored subprocess waiter in `Infernix.ProcessMonitor` with a blocking reaper plus
+heartbeat loop; focused mounted-source validation passes `cabal test infernix-haskell-style` and
+`cabal test infernix-unit`. Rebuilt Linux CPU image
+`sha256:ab2f12cd81a094ffc267eacfb637ae055c8b3c8cd31e364dfc2f54cbcdf21597` contains the monitor fix
+and passes `./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web
+`81/81`. Its full `linux-cpu` rerun validated the monitor fix by advancing past the previous
+lifecycle-rebinding publish stall and through typed CPU admission plus HA replacement/drain, then
+failed in the model-bootstrap failover/deduplication integration step after timing out on the ready
+topic for `integration-bootstrap-chaos-1783761854482798`. Current source carries the
+bootstrap-failover remediation, and focused mounted-source `cabal test infernix-haskell-style` plus
+`cabal test infernix-unit` pass. Rebuilt Linux CPU image
+`sha256:534f631468380d9e59df713e4e8c78b976e17b17e0c64eb09be4eff8d6f41388` contains the remediation
+and passes `./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web
+`81/81`. Its full `linux-cpu` rerun passed the front gates, full live integration, the previous
+model-bootstrap failover/deduplication gate, PostgreSQL lifecycle rebinding, anti-affinity, and the
+`demo_ui = false` lifecycle. Routed Playwright passed `15/16`, including Sprint 9.9
+auth/RBAC/account-switching and artifact coverage, then failed only the browser matrix visible
+capacity-result assertion after receiving the typed terminal `ModelMemoryLimitExceeded` payload.
+Current source projects the rendered chat pane from the active context id plus the per-context
+conversation cache so a stored terminal result for the selected context cannot be hidden behind a
+stale `activeConversation` pane. Focused mounted-source PureScript validation passes `82/82`, and
+`node --check web/playwright/inference.spec.js` passes. Rebuilt Linux CPU image
+`sha256:e09f824b06b489a574288dbafcf1c8cc5920ae0bcb1a96cea91306a6cd57221c` contains that
+render-projection fix and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and
+rebuilt-image `infernix test unit` (Haskell unit plus web `82/82`). Its full `linux-cpu` rerun
+passed Haskell style, Python `check-code`, Haskell unit, web `82/82`, and full live integration,
+including typed CPU admission, throughput (`totalPrompts = 12`,
+`p95Seconds = 86.15112495422363`), lifecycle rebinding, anti-affinity, and the `demo_ui = false`
+lifecycle. Routed Playwright reached `15/16` and failed only the `audio-demucs-htdemucs` visible
+capacity-result assertion after proving the target context was active. Current source hardens stale
+WebSocket generation handling and subscription readiness. Focused mounted-source validation passes
+Haskell style/unit for `src/Infernix/Demo/WebSocket.hs`, web unit `82/82`, and
+`node --check web/playwright/inference.spec.js`. Rebuilt Linux CPU image
+`sha256:3161a3846bbc42a97febb186f5fbe063ca0a407cdab5bc888a798e170ef23e3d` contains this fix and
+passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
+`infernix test unit` (Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front
+gates and full live integration, including typed CPU admission, model-bootstrap
+failover/deduplication, throughput (`totalPrompts = 12`, `p95Seconds = 65.46250057220459`),
+lifecycle rebinding, anti-affinity, and `demo_ui = false`; routed Playwright reached `15/16` and
+failed only the `audio-demucs-htdemucs` visible capacity-result assertion after observing and
+validating the typed terminal payload. Current source gives browser-facing Pulsar readers unique
+per-stream names and tags Playwright-observed WebSocket frames by browser socket generation, so the
+matrix waits for live-generation snapshots and terminal patches instead of accepting frames from
+superseded sockets. `node --check web/playwright/inference.spec.js` passes for that helper change.
+Mounted-source Haskell validation also passes `cabal test infernix-haskell-style infernix-unit` with
+`src/Infernix/Runtime/Pulsar.hs` mounted into the Linux CPU launcher image, and `git diff --check`
+is clean for the touched files. Rebuilt Linux CPU image
+`sha256:eeb58064f9eca14c008b9c976380c5c7745a4c6079a5bd8885b3935c864532a5`
+(`20070858505` bytes, created `2026-07-11T14:49:26.455414736-04:00`) contains this fix and passes
+`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
+(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
+integration, proving typed Linux CPU admission, smaller-model continuity, lifecycle rebinding,
+throughput (`totalPrompts = 12`, `p95Seconds = 65.51375341415405`), anti-affinity, and
+`demo_ui = false`. Routed Playwright reached `14/16` and failed on the artifact download-button
+replacement race plus the remaining `audio-demucs-htdemucs` visible capacity-result DOM assertion
+after typed terminal-payload validation. Current source fixes the routed browser harness by waiting
+for upload-record echo before artifact downloads, retrying against a re-resolved artifact card until
+the webapp-proxy download grant is ready, and waiting for the exact typed capacity text with a
+resubscription fallback. `node --check web/playwright/inference.spec.js` and `git diff --check` pass
+for the touched files. Rebuilt Linux CPU image
+`sha256:d49b4799375df7a0e5726d16717ab6dc4e09fc8baa685969484099027f81c4c8`
+(`20070886873` bytes, created `2026-07-11T17:27:02.378037428-04:00`) contains the fix and passes
+`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
+(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
+integration, proving typed Linux CPU admission, smaller-model continuity, lifecycle rebinding,
+throughput (`totalPrompts = 12`, `p95Seconds = 69.06893110275269`), anti-affinity, and
+`demo_ui = false`. Routed Playwright reached `15/16`: artifact upload/preview/download coverage
+passed, but the remaining matrix assertion still failed to render the `audio-demucs-htdemucs`
+capacity result after resubscription. The next Wave T gate is the capacity-result render fix and a
+clean full `linux-cpu` rerun. Current source now waits for the matching server prompt patch and
+requires terminal results to reference that prompt message id; focused
+`node --check web/playwright/inference.spec.js` and `git diff --check` pass for that follow-up.
+Rebuilt Linux CPU image
+`sha256:30d597efe4284a74c606860d7a0ef6d4fd5123076de11ad0c8e3da476925190e`
+(`20070997197` bytes, created `2026-07-11T20:08:36.089424841-04:00`) contains the fix and passes
+`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
+(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
+integration (`totalPrompts = 12`, `p95Seconds = 65.60747718811035`) with the known
+`music-omnizart` warm-cache HTTP 403 warning, then routed Playwright reached `15/16`: Sprint 9.9
+auth/RBAC/logout switching and artifact coverage were green, but the matrix still failed the
+`audio-demucs-htdemucs` visible capacity-result assertion after resubscription. Current source
+strengthens that fallback to require a new-socket conversation snapshot or patch containing the
+matching typed capacity result before asserting the DOM; `node --check web/playwright/inference.spec.js`
+and `git diff --check` pass. Rebuilt Linux CPU image
+`sha256:681420399273889da1e64ce6e43576ffe8a06ad87114b8e069903ab79d3d92f9`
+(`20070973633` bytes, created `2026-07-11T22:49:09.072629435-04:00`) contains that
+fallback and passes `./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image
+`infernix test unit` (Haskell unit plus web `82/82`). The next validation gate is a clean full
+`linux-cpu` rerun on this image, then the selected `linux-gpu` accelerator gate. The full rerun on
+that image passed the front gates and live integration (`totalPrompts = 12`, `p95Seconds =
+70.42682695388794`) with the known `music-omnizart` warm-cache warning, then routed Playwright
+reached `15/16`: Sprint 9.9 auth/RBAC/logout switching and artifact coverage were green, but the
+matrix still failed the `audio-demucs-htdemucs` visible capacity-result assertion even after a
+result-bearing resubscription attempt.
+
+Rebuilt Linux CPU image
+`sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f`
+(`20088000300` bytes, created `2026-07-12T02:30:27.200982353-04:00`) contains the explicit tagged
+`InferenceError` WebSocket contract fix and passes `./bootstrap/linux-cpu.sh build`, the CLI-help
+smoke, rebuilt-image `infernix test unit` (Haskell unit plus web `83/83`), and rebuilt-image
+`infernix test e2e`. The E2E run completed live integration with typed Linux CPU admission,
+smaller-model continuity, HA/chaos, lifecycle, and throughput coverage, then passed routed
+Playwright `16/16` in 3.6 minutes, including the per-model browser matrix in 2.5 minutes.
+Selected accelerator closure followed on rebuilt `linux-gpu` image
+`sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896`; `./bootstrap/linux-gpu.sh test`
+passed Haskell style, Python checks, Haskell unit, web `83/83`, full live integration,
+HA/recovery, and routed Playwright `16/16` in 17.1 minutes. The integration run classified
+over-budget rows as typed `ModelMemoryLimitExceeded` with GPU VRAM budget source
+(`availableMib = 4096`) while smaller rows continued, and the browser matrix verified the routed
+capacity-message path.
+**Cohort gate**: Closed [Wave T](cohort-validation-waves.md) — full live `linux-cpu` and selected
+`linux-gpu` integration/e2e evidence is recorded for typed resource admission.
 **Implementation**: `test/unit/`, `test/integration/Spec.hs`, `web/test/`, `web/playwright/`,
-`src/Infernix/Lint/Docs.hs`, and substrate-specific validation helpers that inspect generated
-runtime config and live daemon results.
+`src/Infernix/Lint/Docs.hs`, `src/Infernix/ProcessMonitor.hs`, and substrate-specific validation
+helpers that inspect generated runtime config and live daemon results.
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`,
 `documents/development/chaos_testing.md`, `documents/development/demo_app_test_plan.md`,
 `documents/engineering/testing.md`, `documents/architecture/realness_contract.md`, and this plan.
@@ -2049,20 +2256,18 @@ startup failure, stringly error parsing, or disabled guards on zero/negative bud
 
 ### Remaining Work
 
-- Add unit fixtures for mixed-size catalogs and enforced zero budgets.
-- Add substrate budget-source assertions for Linux CPU and Linux GPU.
-- Add integration/E2E assertions for typed capacity errors and smaller-model continuity.
+None.
 
 ---
 
 ## Remaining Work
 
-Sprint 6.38 is open for typed resource admission validation across Apple, Linux CPU, and Linux GPU.
-The MT3 catalog-validation reopen (Sprint 6.35) is **closed** — proven by
-[Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36** (real-output + matrix validation
-hardening) and **Sprint 6.37** (apple-silicon memory-bounded validation lane) are closed by
-[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md) for their original
-scopes.
+Sprint 6.38 is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU
+by Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-validation reopen (Sprint
+6.35) is **closed** — proven by [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36**
+(real-output + matrix validation hardening) and **Sprint 6.37**
+(apple-silicon memory-bounded validation lane) are closed by [Wave R](cohort-validation-waves.md)
+and [Wave S](cohort-validation-waves.md) for their original scopes.
 
 ## Documentation Requirements
 

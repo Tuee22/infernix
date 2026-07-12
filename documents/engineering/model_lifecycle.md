@@ -25,8 +25,9 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   Apple-only stringly capacity surface with typed `InferenceError` payloads and resource-specific
   budgets across Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM.
 - Phase 9 (access control + monitoring) is **Active** — the RBAC/STS/dashboard surface was Wave Q
-  cohort-validated on both `apple-silicon` and `linux-cpu` (2026-07-07), but a later UAT pass
-  surfaced an unresolved authentication issue (repo-root `notes.txt`) that keeps the phase `Active`.
+  cohort-validated on both `apple-silicon` and `linux-cpu` (2026-07-07). Sprint 9.9 diagnoses and
+  closes the later UAT logout/account-switching issue code-side; Wave U remains open for routed
+  cohort validation.
 - The MT3 catalog-replacement work (Wave O) is **closed**, proven by Wave P (2026-07-04): both
   `linux-gpu` and `linux-cpu` ran full `infernix test all` GREEN with routed Playwright 9/9,
   including the `music-mt3-infer`, `music-mr-mt3`, and 27 GB `video-wan21-t2v` matrix rows.

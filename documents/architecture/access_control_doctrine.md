@@ -50,21 +50,22 @@ the cluster data plane directly on loopback (see
 [daemon_topology.md](daemon_topology.md) and `src/Infernix/Runtime/Pulsar.hs`), so it is unaffected by
 the Keycloak+admin gate on the browser edge (30090).
 
-> **Known residual (UAT).** A later UAT pass surfaced an unresolved authentication issue, so Phase 9
-> is `Active` (see the plan's
-> [Remaining Work — UAT auth residual](../../DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md)).
-> One candidate lead to investigate — not a confirmed root cause — is that the edge admin access token
-> is written to a JS-readable, non-`Secure` cookie (`infernix_operator_token`, `SameSite=Lax`) in
-> `web/src/Infernix/Web/Auth.js` and consumed verbatim by the edge `SecurityPolicy`; a role-bearing
-> token near the ~4 KB cookie limit could be silently dropped and 401 a real admin.
+> **Active residual (UAT).** A later UAT pass surfaced an account-switching issue: the old Sign out
+> path cleared only local SPA tokens and the `infernix_operator_token` cookie, leaving the upstream
+> Keycloak SSO browser session alive. A user trying to switch from a self-registered non-admin
+> account to the separate admin login could silently re-enter the non-admin session and continue
+> receiving 403s on admin surfaces. Sprint 9.9 is code-side closed: Sign out now redirects through
+> Keycloak OIDC logout with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`. Phase 9
+> stays `Active` until [Wave U](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) records routed
+> `linux-cpu` plus selected-accelerator evidence for that behavior.
 
 ## Current Status
 
 The admin/user role model is implemented under
-[Phase 9](../../DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md). Code-side closed
-(2026-07-06, machine-independent gates green — `cabal build all`, `cabal test infernix-unit`,
-`cabal test infernix-haskell-style`, `infernix lint chart|docs|files|proto`, `infernix docs check`,
-`poetry run check-code`):
+[Phase 9](../../DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md). The original
+RBAC/STS/dashboard surface is code-side closed (2026-07-06, machine-independent gates green —
+`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+`infernix lint chart|docs|files|proto`, `infernix docs check`, `poetry run check-code`):
 
 - the realm role + mapper + hardcoded admin user, the `JwtClaims` role parse + `jwtClaimsHasRealmRole`
   (unit-covered), and the edge `SecurityPolicy` admin `authorization` over all four operator routes;
@@ -79,14 +80,18 @@ The admin/user role model is implemented under
   presigning), gated by `cluster.minio.stsPerUser` and wired into the object-proxy, unit-covered
   for the policy document, the signed `AssumeRole` request, response parsing, and session-token
   presigning.
+- Sprint 9.9 code-side closes the UAT logout/account-switching gap: the SPA records the Keycloak
+  `id_token`, clears local browser auth state, redirects through Keycloak logout, and has routed
+  Playwright coverage for non-admin sign-out followed by hardcoded-admin sign-in.
 
-Phase 9 is **Done**: [Wave Q](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) cohort-validated live
-on **both `apple-silicon` and `linux-cpu`** (2026-07-07). Each cohort's full `cluster up` proved
-unauthenticated 401 on every gated route; by-role 403 (non-admin) / 2xx (admin) over the four operator
-routes + `/api/cache` + `/api/admin/overview`; the admin `realm_access.roles ⊇ infernix-admin` claim; the
-loopback data-plane split; per-user isolation; and the now-default-on per-user STS scoped-credential
-object path. The apple-silicon cohort additionally ran the routed Playwright RBAC / dashboard /
-lifecycle suite 7/7 (substrate-independent SPA).
+Phase 9 is **Active**: [Wave Q](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) cohort-validated
+the original RBAC/STS/dashboard surface live on **both `apple-silicon` and `linux-cpu`** (2026-07-07).
+Each cohort's full `cluster up` proved unauthenticated 401 on every gated route; by-role 403
+(non-admin) / 2xx (admin) over the four operator routes + `/api/cache` + `/api/admin/overview`; the
+admin `realm_access.roles ⊇ infernix-admin` claim; the loopback data-plane split; per-user isolation;
+and the now-default-on per-user STS scoped-credential object path. The apple-silicon cohort
+additionally ran the routed Playwright RBAC / dashboard / lifecycle suite 7/7. Sprint 9.9's logout
+fix now waits on [Wave U](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) routed cohort proof.
 
 ## Validation
 

@@ -24,6 +24,7 @@ import Generated.Contracts
   , ConversationStatePatch(..)
   , DraftEntry(..)
   , DraftMapPatch(..)
+  , InferenceError(..)
   , MessageId(..)
   , ObjectRef
   , UserPromptPayload(..)
@@ -33,10 +34,13 @@ import Infernix.Web.Chat
   ( applyContextListPatch
   , applyConversationStatePatch
   , applyDraftMapPatch
+  , conversationForContext
   , handleServerMessage
   , initialChatViewState
   , latestPendingPromptMessageId
+  , messageSummary
   , pendingPromptCount
+  , projectRenderableChatState
   )
 import Test.Spec (Spec, describe, it)
 import Test.Spec.Assertions (shouldEqual)
@@ -107,6 +111,24 @@ spec = do
         Just _ -> pure unit
         Nothing -> "<activeConversation should not be Nothing>" `shouldEqual` "<set>"
 
+    it "ignores a snapshot for a non-active context" do
+      let activeSnapshot = sampleConversation [ promptMessage "m-1" "hi" ]
+      let stateWithActive =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: activeSnapshot })
+              initialChatViewState
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-9" [ promptMessage "m-9" "other" ] })
+              stateWithActive
+      case next.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-1"
+          conversationMessageCount conv `shouldEqual` 1
+        Nothing -> "<activeConversation should remain set>" `shouldEqual` "<set>"
+
     it "appends a message to the active conversation only when contextIds match" do
       let snapshot = sampleConversation [ promptMessage "m-1" "hi" ]
       let stateWithActive =
@@ -147,6 +169,190 @@ spec = do
       case nextDifferent.activeConversation of
         Just conv -> conversationMessageCount conv `shouldEqual` 1
         Nothing -> "<should still have activeConversation>" `shouldEqual` "<set>"
+
+    it "seeds the active conversation from an append patch when the snapshot races behind it" do
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-1" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              initialChatViewState
+      case next.activeConversation of
+        Just conv -> do
+          conversationMessageCount conv `shouldEqual` 1
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<append patch should seed activeConversation>" `shouldEqual` "<set>"
+
+    it "seeds the active context when a previous context is still displayed" do
+      let previousContextState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-0" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-0" [ promptMessage "m-old" "old" ] })
+              initialChatViewState
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-1" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              previousContextState
+      case next.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-1"
+          conversationMessageCount conv `shouldEqual` 1
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<append patch should replace stale active context>" `shouldEqual` "<set>"
+
+    it "keeps applying patches to the rendered context when activeContextId is transiently absent" do
+      let renderedContextState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-1" [ promptMessage "m-1" "hi" ] })
+              initialChatViewState
+      let next =
+            handleServerMessage
+              Nothing
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-1" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              renderedContextState
+      case next.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-1"
+          conversationMessageCount conv `shouldEqual` 2
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<append patch should update rendered conversation>" `shouldEqual` "<set>"
+
+    it "keeps applying patches to the rendered context when activeContextId is stale" do
+      let renderedContextState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-1" [ promptMessage "m-1" "hi" ] })
+              initialChatViewState
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-0" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-1" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              renderedContextState
+      case next.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-1"
+          conversationMessageCount conv `shouldEqual` 2
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<append patch should update rendered conversation>" `shouldEqual` "<set>"
+
+    it "keeps a raced append when a stale snapshot arrives after it" do
+      let appended =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-1" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              initialChatViewState
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversation [] })
+              appended
+      case next.activeConversation of
+        Just conv -> do
+          conversationMessageCount conv `shouldEqual` 1
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<stale snapshot should not drop append>" `shouldEqual` "<set>"
+
+    it "stores inactive context patches without displacing the rendered context" do
+      let activeState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-1" [ promptMessage "m-1" "hi" ] })
+              initialChatViewState
+      let next =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-2" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              activeState
+      case next.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-1"
+          conversationMessageCount conv `shouldEqual` 1
+        Nothing -> "<active conversation should remain rendered>" `shouldEqual` "<set>"
+      case conversationForContext (ContextId { unContextId: "c-2" }) next of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-2"
+          conversationMessageCount conv `shouldEqual` 1
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<inactive conversation patch should be retained>" `shouldEqual` "<set>"
+
+    it "renders the cached active context when activeConversation is stale" do
+      let staleRenderedState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              (ServerConversationSnapshot { serverConversationSnapshot: sampleConversationFor "c-1" [ promptMessage "m-old" "old" ] })
+              initialChatViewState
+      let cachedTargetState =
+            handleServerMessage
+              (Just (ContextId { unContextId: "c-1" }))
+              ( ServerConversationPatch
+                  { serverConversationPatchContextId: ContextId { unContextId: "c-2" }
+                  , serverConversationPatch:
+                      ConversationStateAppendMessage
+                        { appendMessage: memoryLimitResultMessage
+                        , appendNewPrefixHash: "admission-failed"
+                        }
+                  }
+              )
+              staleRenderedState
+      let renderState =
+            projectRenderableChatState
+              (Just (ContextId { unContextId: "c-2" }))
+              cachedTargetState
+      case renderState.activeConversation of
+        Just conv -> do
+          conversationContextId conv `shouldEqual` "c-2"
+          conversationMessageCount conv `shouldEqual` 1
+          conversationPrefixHash conv `shouldEqual` "admission-failed"
+        Nothing -> "<cached active context should render>" `shouldEqual` "<set>"
 
     it "replaces an optimistic prompt when the broker patch carries the same idempotency key" do
       let snapshot = sampleConversation [ promptMessage "prompt-local" "hi" ]
@@ -228,12 +434,21 @@ spec = do
               initialChatViewState
       messageIdMaybeText (latestPendingPromptMessageId state) `shouldEqual` Just "m-2"
 
+  describe "ChatView messageSummary" do
+    it "renders model memory errors from typed fields" do
+      (messageSummary memoryLimitResultMessage).body
+        `shouldEqual` "Model image-sdxl-turbo requires 12288 MiB; this daemon has 512 MiB available."
+
 -- Sample fixtures.
 
 sampleConversation :: Array ConversationMessage -> ConversationState
 sampleConversation messages =
+  sampleConversationFor "c-1" messages
+
+sampleConversationFor :: String -> Array ConversationMessage -> ConversationState
+sampleConversationFor contextId messages =
   ConversationState
-    { conversationStateContextId: ContextId { unContextId: "c-1" }
+    { conversationStateContextId: ContextId { unContextId: contextId }
     , conversationStateMessages: messages
     , conversationStatePrefixHash: "0000"
     }
@@ -264,6 +479,30 @@ resultMessage promptMessageId =
             { inferenceResultUserPromptMessageId: MessageId { unMessageId: promptMessageId }
             , inferenceResultStatus: "completed"
             , inferenceResultInlineOutput: Just "result text"
+            , inferenceResultError: Nothing
+            , inferenceResultArtifacts: []
+            }
+        )
+    }
+
+memoryLimitResultMessage :: ConversationMessage
+memoryLimitResultMessage =
+  ConversationMessage
+    { conversationMessageId: MessageId { unMessageId: "m-1-result" }
+    , conversationMessageEvent: ConversationInferenceResultEvent
+        ( ConversationInferenceResultPayload
+            { inferenceResultUserPromptMessageId: MessageId { unMessageId: "m-1" }
+            , inferenceResultStatus: "failed"
+            , inferenceResultInlineOutput: Nothing
+            , inferenceResultError: Just
+                ( ModelMemoryLimitExceeded
+                    { modelMemoryLimitExceededModelId: "image-sdxl-turbo"
+                    , modelMemoryLimitExceededRequiredMib: 12288
+                    , modelMemoryLimitExceededAvailableMib: 512
+                    , modelMemoryLimitExceededResource: "unified-host-ram"
+                    , modelMemoryLimitExceededSource: "unit-test"
+                    }
+                )
             , inferenceResultArtifacts: []
             }
         )
@@ -295,6 +534,11 @@ sampleDraft contextIdRaw text =
 
 conversationMessageCount :: ConversationState -> Int
 conversationMessageCount (ConversationState record) = length record.conversationStateMessages
+
+conversationContextId :: ConversationState -> String
+conversationContextId (ConversationState record) =
+  case record.conversationStateContextId of
+    ContextId inner -> inner.unContextId
 
 conversationPrefixHash :: ConversationState -> String
 conversationPrefixHash (ConversationState record) = record.conversationStatePrefixHash

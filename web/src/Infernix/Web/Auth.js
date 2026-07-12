@@ -6,6 +6,7 @@ const refreshMarginSeconds = 180;
 const minimumRefreshDelayMs = 5000;
 
 let refreshToken = null;
+let idToken = null;
 let refreshTimeoutId = null;
 
 function absoluteUrl(value) {
@@ -177,6 +178,9 @@ function handleTokenPayload(config, onToken, payload) {
   if (payload.refresh_token) {
     refreshToken = payload.refresh_token;
   }
+  if (payload.id_token) {
+    idToken = payload.id_token;
+  }
   window.__infernixAccessToken = payload.access_token;
   writeOperatorTokenCookie(payload.access_token);
   window.__infernixRefreshAccessToken = () => refreshAccessToken(config, onToken);
@@ -254,6 +258,18 @@ export const beginRegisterRedirectImpl = (config) => () => {
   beginAuthorizationCodeRedirect(config, "registrations", null).catch((error) => {
     console.error("Unable to begin Keycloak registration", error);
   });
+};
+
+export const beginLogoutRedirectImpl = (config) => () => {
+  const idTokenHint = idToken;
+  clearBrowserAuthSession();
+  const logoutUrl = new URL(`${absoluteUrl(config.issuerUrl)}/protocol/openid-connect/logout`);
+  logoutUrl.searchParams.set("client_id", config.clientId);
+  if (idTokenHint) {
+    logoutUrl.searchParams.set("id_token_hint", idTokenHint);
+  }
+  logoutUrl.searchParams.set("post_logout_redirect_uri", absoluteUrl(config.redirectUri));
+  window.location.assign(logoutUrl.toString());
 };
 
 async function deleteAccountAndRedirect(config, token) {
@@ -355,6 +371,7 @@ export const clearBrowserAuthSession = () => {
   clearRefreshTimer();
   clearPkce();
   refreshToken = null;
+  idToken = null;
   window.__infernixAccessToken = undefined;
   window.__infernixRefreshAccessToken = undefined;
   clearOperatorTokenCookie();

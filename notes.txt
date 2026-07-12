@@ -1,2 +1,6 @@
-- figure out what the auth issue is that was revealed in UAT
-- admin credentials: is that a separate login or can every user access the admin portal ?
+- resolved 2026-07-09: the UAT auth issue was local-only Sign out leaving the Keycloak SSO session
+  alive, which could silently reuse a self-registered non-admin session when the user tried to switch
+  to the admin account. Sprint 9.9 routes Sign out through Keycloak OIDC logout after local cleanup.
+- resolved 2026-07-09: admin is a separate login. The hardcoded demo admin account is the only
+  principal with the `infernix-admin` realm role; self-registered users cannot access the admin
+  portal.
