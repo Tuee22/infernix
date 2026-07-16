@@ -18,7 +18,7 @@ module Infernix.Cluster
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, bracket, displayException, finally, try)
+import Control.Exception (IOException, SomeException, bracket, displayException, finally, throwIO, try)
 import Control.Monad (forM_, unless, when)
 import Data.Aeson (FromJSON (parseJSON), Value (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.Aeson.Key qualified as Key
@@ -48,6 +48,7 @@ import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContex
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
@@ -981,17 +982,26 @@ idleLifecyclePhase actualPresent =
     then "steady-state"
     else "cluster-absent"
 
+-- | Sprint 2.14 (managed-state-transition doctrine): recorded state reads fail
+-- closed. An absent or empty state file is 'Nothing', but a file that exists
+-- with content yet does not decode is a loud 'ClusterStateDecodeFailure' rather
+-- than a silent 'Nothing' — the previous behavior masked a corrupt or residual
+-- file as "no cluster", which skipped retained-state replay during teardown and
+-- risked losing durable data.
 loadClusterState :: Paths -> IO (Maybe ClusterState)
 loadClusterState paths = do
-  stateExists <- doesFileExist (clusterStatePath paths)
-  if stateExists
-    then do
-      maybeState <- readStateFileMaybe (clusterStatePath paths)
-      case maybeState of
-        Just state ->
-          pure (Just (normalizeClusterStatePaths paths state))
-        Nothing -> pure Nothing
-    else pure Nothing
+  let statePath = clusterStatePath paths
+  stateExists <- doesFileExist statePath
+  if not stateExists
+    then pure Nothing
+    else do
+      contents <- readFile statePath
+      case readMaybe contents of
+        Just state -> pure (Just (normalizeClusterStatePaths paths state))
+        Nothing
+          | all isSpace contents -> pure Nothing
+          | otherwise ->
+              throwIO (ClusterStateDecodeFailure statePath (take 200 (trim contents)))
 
 runKubectlCompat :: [String] -> IO ()
 runKubectlCompat args = do

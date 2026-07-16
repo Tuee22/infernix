@@ -115,11 +115,17 @@ def _smoke_python_runtime(args: RunnerArgs) -> None:
     # real engine runtime and surface any ImportError as a non-zero failure
     # rather than a silent pass.
     venv_root = (args.install_root / "venv").resolve()
-    executable = pathlib.Path(sys.executable).resolve()
-    if not _path_is_under(executable, venv_root):
+    # Detect venv membership via sys.prefix (the venv root), not
+    # pathlib(sys.executable).resolve(): the engine venv is created with
+    # --symlinks, so resolving the interpreter follows the symlink out of the
+    # venv to the base framework python and spuriously fails this check.
+    # sys.prefix points at the venv root regardless of symlink-vs-copy mode.
+    prefix = pathlib.Path(sys.prefix).resolve()
+    if not _path_is_under(prefix, venv_root):
         raise RunnerFailure(
             f"apple native smoke for {args.adapter_id} must run under the engine venv "
-            f"({venv_root}); the engine runtime cannot be validated from {executable}",
+            f"({venv_root}); the engine runtime cannot be validated from {sys.executable} "
+            f"(interpreter prefix {prefix})",
             70,
         )
     adapter_id = args.adapter_id

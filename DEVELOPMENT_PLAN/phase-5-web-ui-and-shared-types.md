@@ -1,6 +1,6 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done — Sprint 5.11 is closed for typed inference errors in browser contracts and the
+**Status**: Active — Sprint 5.11 is closed for typed inference errors in browser contracts and the
 demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
 no-env scopes. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu`
 accelerator.
@@ -657,6 +657,52 @@ Sprint 5.11 is closed for typed inference errors in the browser contracts and de
 cohort validation closed in Waves A/A.2 and the CUDA Linux `linux-cpu` and `linux-gpu` gates passed
 on the recorded validation.
 
+Sprint 5.12 reopens this phase for the Managed-State-Transition Doctrine: its own `### Remaining
+Work` tracks the pending cohort full-suite sign-off.
+
+---
+
+## Sprint 5.12: Shared Readiness Contract [Planned]
+
+**Status**: Planned
+**Code-side closure**: `cabal build all`, `cabal test infernix-unit`, `cabal test
+infernix-haskell-style`, `infernix lint docs`, and `poetry run check-code` for the
+Playwright-executor change.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Web/Contracts.hs`, `web/playwright/inference.spec.js`
+**Blocked by**: Sprint 4.28
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: single-source the
+model-bootstrap deadline through the shared Haskell browser contract so a client deadline below the
+server ceiling is not expressible, and have the Playwright executor await the real
+`ModelBootstrapReadyEvent` instead of a kubectl rollout proxy. Readiness is encoded as typed
+evidence rather than a hopeful timeout, generalizing the results-side realness contract to state
+transitions per [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- the model-bootstrap deadline is single-sourced through the shared Haskell browser contract in
+  `src/Infernix/Web/Contracts.hs`, so a client deadline below the server ceiling cannot be
+  constructed
+- the Playwright executor in `web/playwright/inference.spec.js` awaits the real
+  `ModelBootstrapReadyEvent` as typed readiness evidence
+- the prior kubectl rollout proxy for readiness is removed from the executor path
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
+  `infernix lint docs` exit zero on both the apple-silicon and linux-cpu lanes
+- `poetry run check-code` exits zero for the Playwright-executor change on both lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off is pending: apple-silicon plus linux-cpu full-suite in an owning
+  wave TBD is the residual before closure
+
 ---
 
 ## Documentation Requirements
@@ -667,6 +713,7 @@ on the recorded validation.
 - `documents/development/purescript_policy.md` - PureScript project structure and supported toolchain usage
 - `documents/development/testing_strategy.md` - frontend unit and Playwright coverage model
 - `documents/engineering/implementation_boundaries.md` - browser-contract ownership and generated-output boundaries
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) - typed state-transition evidence doctrine now referenced by Sprint 5.12
 
 **Product or reference docs to create/update:**
 - `documents/reference/web_portal_surface.md` - manual inference SPA behavior, route inventory, and active-substrate catalog rules

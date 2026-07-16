@@ -38,6 +38,7 @@ library
         Infernix.Cluster.Discover
         Infernix.Cluster.ImageFingerprint
         Infernix.Cluster.PublishImages
+        Infernix.Cluster.Subprocess
         Infernix.Config
         Infernix.Conversation.Event
         Infernix.Conversation.Hash
@@ -56,6 +57,8 @@ library
         Infernix.Engines.AppleSilicon
         Infernix.Engines.LinuxNative
         Infernix.Error
+        Infernix.Evidence.Lease
+        Infernix.Evidence.Readiness
         Infernix.HostConfig
         Infernix.HostPrereqs
         Infernix.HostTools

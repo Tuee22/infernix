@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -769,9 +769,62 @@ None.
 
 ---
 
+## Sprint 1.16: Evidence and Command Kernels [Active]
+
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (the readiness / lease / subprocess kernel assertions pass), and
+`cabal test infernix-haskell-style` (ormolu + hlint + cabal-format clean) all green on the
+apple-silicon lane; `infernix lint docs` unaffected. No Python/native change in this sprint, so
+`poetry run check-code` does not apply
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Evidence/Readiness.hs`, `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Cluster/Subprocess.hs`
+**Blocked by**: Sprint 0.13
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase — introduce the
+foundation kernel modules `Infernix.Evidence.Readiness`, `Infernix.Evidence.Lease`, and
+`Infernix.Cluster.Subprocess` (`SubprocessEnv` with required `HOME`/`TMPDIR`, the `CommandOutcome`
+ADT, and a bounded child-reaping `runBoundedCommand`); establish the
+opaque-newtype-via-export-list discipline and enable `RankNTypes` plus surgical `LinearTypes`. The
+kernels encode evidence, not hope: for every system state there is a transition and typed evidence,
+and every operation that acts on that state requires the evidence. See the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- `Infernix.Evidence.Readiness` and `Infernix.Evidence.Lease` foundation kernels whose evidence
+  types are opaque newtypes constructed only through their own module, exported via export-list
+  discipline
+- `Infernix.Cluster.Subprocess` with `SubprocessEnv` requiring `HOME` and `TMPDIR`, the
+  `CommandOutcome` ADT, and a bounded child-reaping `runBoundedCommand`
+- the `RankNTypes` extension plus surgical `LinearTypes` enabled where the kernel discipline needs
+  them
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, and `cabal test infernix-haskell-style` clean
+- `infernix lint docs` clean, and `poetry run check-code` for any Python/native change
+- the code-side gates above exercised on both the apple-silicon and linux-cpu lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: the apple-silicon plus linux-cpu full-suite
+  cohort gate is pending, with its owning wave still to be assigned
+- the kernels use `RankNTypes` region leases (zero-dependency, enabled and in use); surgical
+  `LinearTypes` (`%1 ->`) is applied at the spend-once consumer sites in the dependent sprints (the
+  lease-gated scrub in Sprint 2.14, the sentinel commit in Sprint 4.28, and the token leases in
+  Sprint 9.10), where a spent capability must not be reused — region-scoping already suffices for the
+  kernel itself
+
+---
+
 ## Remaining Work
 
-None.
+Pending: see [Sprint 1.16](#sprint-116-evidence-and-command-kernels-active) for the open
+Managed-State-Transition Doctrine reopen work and its pending cohort full-suite sign-off.
 
 ## Documentation Requirements
 
@@ -784,6 +837,7 @@ None.
 - `documents/engineering/implementation_boundaries.md` - ownership boundaries across Haskell, Python, chart assets, and generated outputs
 - `documents/engineering/portability.md` - portable platform rules versus substrate-specific behavior, including the Apple headless materialization lane
 - `documents/architecture/configuration_doctrine.md` - typed engine-artifact materialization records and the no-env rule
+- `documents/architecture/managed_state_transitions.md` - Managed State Transitions doctrine this phase now references, generalizing the results-side realness contract to typed evidence for every state transition
 - `documents/operations/apple_silicon_runbook.md` - Apple host workflow, headless materialization expectations, and Tart-free validation gate
 - `documents/development/haskell_style.md` - formatter, linter, hard-gate, and review-guidance doctrine
 - `documents/development/local_dev.md` - canonical local operator workflows

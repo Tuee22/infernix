@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Done — all sprints (8.1-8.6) closed. Machine-independent gates pass, and the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
+**Status**: Active — all sprints (8.1-8.6) closed. Machine-independent gates pass, and the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -267,11 +267,57 @@ Make the test harness own the runtime config for the duration of a run.
 
 None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
+## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Planned]
+
+**Status**: Planned
+**Code-side closure**: the machine-independent gates that prove it — `cabal build all`,
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and (for the
+native/Python change, if any) `poetry run check-code`.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD.
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
+**Blocked by**: Sprint 3.14
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: make the
+warm-model-cache barrier return typed readiness evidence — generalizing the existing progress-based
+wait so the readiness wait yields evidence rather than a bare success — and adopt the fail-closed
+versioned persistence on the config-side state files, encoding evidence, not hope. It applies the
+doctrine in
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+to this phase's `warm-model-cache` barrier and config-side persisted state.
+
+### Deliverables
+
+- the `warm-model-cache` barrier's readiness wait in `src/Infernix/Runtime/Pulsar.hs` returns typed
+  readiness evidence `E(S)` for the cache-ready state, generalizing the existing progress-based poll
+  rather than returning a bare boolean
+- `src/Infernix/Cluster.hs` consumes that typed evidence at the `warm-model-cache` lifecycle phase so
+  the barrier's transition is gated on evidence of the observed sentinels
+- the config-side state files adopt fail-closed versioned persistence — an unknown or unversioned
+  on-disk state fails closed rather than being silently reinterpreted
+
+### Validation
+
+- code-side gates exercised on both the apple-silicon and linux-cpu lanes: `cabal build all`,
+  `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and (for any
+  native/Python change) `poetry run check-code`
+- the readiness wait is asserted to surface typed evidence, and the versioned persistence is asserted
+  to fail closed on an unknown version
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: pending apple-silicon plus linux-cpu full-suite,
+  owning wave TBD
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
 - [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md) — the authoritative doctrine (zero-tracked-Dhall, binary-generated, init/test-init, fail-fast, harness lifecycle, model SSoT, eager staging).
 - [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md) and [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md) — reflected-schema + binary-rendered ConfigMap/Secret contract.
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) — Managed State Transitions doctrine this phase now references for the `warm-model-cache` readiness evidence and fail-closed config-side persistence (Sprint 8.7).
 
 **Product or reference docs to create/update:**
 - [../documents/reference/cli_reference.md](../documents/reference/cli_reference.md) and [../documents/reference/cli_surface.md](../documents/reference/cli_surface.md) — gain `infernix init` and `infernix test init` alongside their `CommandRegistry.hs` entries (Sprint 8.2).

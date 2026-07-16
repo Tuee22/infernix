@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Done — reopened and re-closed
+**Status**: Active — reopened and re-closed
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -725,12 +725,66 @@ by [Wave M](cohort-validation-waves.md).
 
 ---
 
+## Sprint 3.14: Readiness Kernel and Subprocess-Env Seam [Planned]
+
+**Status**: Planned
+**Code-side closure**: the machine-independent gates that will prove it — `cabal build all`,
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and (for any
+Python/native change) `poetry run check-code`
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Cluster.hs`
+**Blocked by**: Sprint 1.16
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: generalize
+`HarborBootstrapOutcome` into the shared Readiness kernel (a wait that returns typed evidence with a
+required deadline) and route the subprocess base-env seam (`clusterSubprocessBaseEnvFor`) through the
+typed `SubprocessEnv`. The point is to encode evidence, not hope — every readiness wait and every
+subprocess-env derivation returns a typed value that proves the transition happened, rather than a
+bare boolean or an untyped environment map. It applies the
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+doctrine to this phase's cluster-lifecycle surface.
+
+### Deliverables
+
+- generalize `HarborBootstrapOutcome` into a shared Readiness kernel: a wait primitive that takes a
+  required deadline and returns typed evidence of readiness rather than a boolean
+- migrate existing readiness waits in `src/Infernix/Cluster.hs` onto that kernel so each wait carries
+  its own typed evidence value
+- route the subprocess base-env seam `clusterSubprocessBaseEnvFor` through the typed `SubprocessEnv`
+  so subprocess environments are constructed as typed values, not ad-hoc maps
+- keep the change fail-closed: a wait that cannot produce evidence surfaces a typed failure instead
+  of a defaulted success
+
+### Validation
+
+- `cabal build all` clean on both the apple-silicon and linux-cpu lanes
+- `cabal test infernix-unit` and `cabal test infernix-haskell-style` pass on both lanes
+- `infernix lint docs` passes through the active execution context on both lanes
+- `poetry run check-code` passes if the change touches any Python/native surface
+- readiness-kernel and `SubprocessEnv` unit coverage exercised on both the apple-silicon and
+  linux-cpu lanes
+
+### Remaining Work
+
+- cohort full-suite sign-off is the residual: the apple-silicon plus linux-cpu full-suite cohort gate
+  is pending, with the owning wave still to be assigned
+
+---
+
 ## Remaining Work
 
 None. Sprints 3.1-3.13 are `Done`; Sprint 3.13 closed in
 [Wave M](cohort-validation-waves.md) with the selected `linux-gpu` accelerator plus `linux-cpu`.
 Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Linux cohort validation
 closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
+
+The phase is Active again for [Sprint 3.14](#sprint-314-readiness-kernel-and-subprocess-env-seam-planned),
+the Managed-State-Transition Doctrine reopen work, whose own `### Remaining Work` tracks the pending
+cohort full-suite sign-off.
 
 ---
 
@@ -751,6 +805,9 @@ closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
   Sprint 3.12
 - `documents/architecture/overview.md` - substrate-matched container architecture cross-link and
   native Linux CPU architecture support
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) -
+  Managed State Transitions doctrine this phase now references for the Sprint 3.14 Readiness kernel
+  and typed subprocess-env seam
 - no monitoring engineering doc is created while monitoring remains unsupported; Monitoring is not
   a supported first-class surface.
 

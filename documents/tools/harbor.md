@@ -14,6 +14,9 @@
   public container repositories while Harbor is not yet available
 - bootstrap shell scripts never pull or publish Harbor images directly; the `infernix` binary owns
   Harbor readiness, mirroring, runtime-image publication, and final rollout sequencing
+- the Harbor readiness and bootstrap sequencing is an instance of the readiness-returns-evidence
+  pattern (a `HarborBootstrapOutcome` generalization) whose canonical home is
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - Harbor uses a dedicated Patroni cluster managed by the Percona Kubernetes operator for its
   PostgreSQL backend instead of a chart-managed standalone PostgreSQL deployment
 - Harbor's PostgreSQL claims follow the same `infernix-manual` plus explicit PV-binding doctrine
@@ -67,3 +70,4 @@ The patch is part of the supported Kind config contract; see
 - [postgresql.md](postgresql.md)
 - [../engineering/object_storage.md](../engineering/object_storage.md)
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

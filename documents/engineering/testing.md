@@ -53,6 +53,10 @@
 
 ## Lifecycle Failure Classification
 
+- this classification is the evidence-vs-hope discipline of the managed-state-transition doctrine
+  applied to lifecycle: each supported state carries typed evidence rather than an assumed pass, and
+  the canonical home for that doctrine is
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - the legacy-tracking ledger at
   [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
   records obsolete-surface receipts; current validation evidence lives in the active phase files
@@ -172,6 +176,7 @@
 - [storage_and_state.md](storage_and_state.md)
 - [../development/haskell_style.md](../development/haskell_style.md)
 - [../development/testing_strategy.md](../development/testing_strategy.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)
 
 ## Validation
 

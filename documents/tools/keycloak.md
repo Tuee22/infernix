@@ -134,3 +134,4 @@ reconstitution sequence.
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

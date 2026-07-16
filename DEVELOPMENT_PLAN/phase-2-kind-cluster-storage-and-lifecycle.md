@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -597,6 +597,61 @@ cluster command helpers resolve known tools through the staged host manifest, an
 `HarborPublishOptions`. Apple cohort validation closed in Wave A, and CUDA Linux cohort
 validation closed in Wave C.
 
+Sprint 2.14 (Typed ClusterLifecycle and Lease-Gated Teardown) reopens this phase as the
+Managed-State-Transition Doctrine work; its cohort full-suite sign-off is the residual item.
+
+---
+
+## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Active]
+
+**Status**: Active — slice 1 (fail-closed recorded-state decode) code-side closed 2026-07-16; the typed `ClusterLifecycle` machine, versioned aeson persistence, and lease-gated teardown remain
+**Code-side closure**: cabal build all, cabal test infernix-unit, cabal test
+infernix-haskell-style, infernix lint docs, and poetry run check-code for any Python/native change
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
+**Blocked by**: Sprint 1.16
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: replace the
+`clusterPresent::Bool` + `lifecyclePhase::String` state machine with a typed `ClusterLifecycle`
+closed sum carrying a consumed, resumable phase; move persistence to a fail-closed versioned aeson
+codec (retiring `Show`/`Read`); and lease-gate the retained-state teardown so the scrub consumes a
+`WriterQuiesced` lease (quiesce then scrub then delete). The goal is to encode evidence, not hope —
+every operation acting on a system state requires typed evidence for that state, per the doctrine
+at [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- a typed `ClusterLifecycle` closed sum replaces `clusterPresent::Bool` +
+  `lifecyclePhase::String`, with each phase consumed and resumable rather than a free-form string
+- lifecycle persistence moves to a fail-closed versioned aeson codec, retiring the `Show`/`Read`
+  serialization path so an unrecognized or malformed on-disk version fails closed
+- retained-state teardown is lease-gated: the scrub consumes a `WriterQuiesced` lease and runs the
+  quiesce-then-scrub-then-delete ordering rather than deleting against a live writer
+- the raw destructive teardown primitive is reachable only through the lease-consuming transition
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass with
+  the typed `ClusterLifecycle`, versioned persistence codec, and lease-gated teardown changes
+- `infernix lint docs` stays clean, and `poetry run check-code` passes for any Python/native change
+- the above code-side gates are exercised on both the apple-silicon and linux-cpu lanes
+
+### Remaining Work
+
+- slice 1 landed 2026-07-16: `loadClusterState` (`src/Infernix/Cluster.hs`) fails closed via the new
+  `ClusterStateDecodeFailure` (`src/Infernix/Error.hs`) — a present-but-undecodable
+  `cluster-state.state` is a loud error instead of a silent "no cluster" that skipped retained-state
+  replay. Validated with `cabal build all`, `cabal test infernix-unit`, and
+  `cabal test infernix-haskell-style`
+- remaining slices: the typed `ClusterLifecycle` closed sum replacing `clusterPresent::Bool` +
+  `lifecyclePhase::String`, the versioned aeson persistence replacing `Show`/`Read`, and the
+  lease-gated teardown (quiesce → scrub → delete) consuming a `WriterQuiesced` lease
+- the apple-silicon plus linux-cpu cohort full-suite sign-off is pending; the owning wave is TBD
+
 ---
 
 ## Documentation Requirements
@@ -606,6 +661,7 @@ validation closed in Wave C.
 - `documents/engineering/k8s_storage.md` - manual PV policy, PVC ownership, and `infernix-manual`
 - `documents/engineering/build_artifacts.md` - generated demo-config staging and generated input material policy
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory for cluster assets
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) - managed state-transition doctrine this phase now references for Sprint 2.14
 - `documents/tools/harbor.md` - local registry contract
 
 **Product or reference docs to create/update:**

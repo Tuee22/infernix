@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — Sprint 6.38 is closed for typed resource memory-admission validation across
+**Status**: Active — Sprint 6.38 is closed for typed resource memory-admission validation across
 Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Wave T closed on 2026-07-12 with
 `linux-cpu` plus the selected `linux-gpu` accelerator. Sprints 6.36 and 6.37 remain closed for their
 original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed by Wave P
@@ -2260,8 +2260,59 @@ None.
 
 ---
 
+## Sprint 6.39: Capability-Gating Lint and Managed-Transition Coverage [Planned]
+
+**Status**: Planned
+**Code-side closure**: cabal build all, cabal test infernix-unit, cabal test
+infernix-haskell-style, infernix lint docs, and — for the routed Playwright change —
+poetry run check-code, all exercised machine-independently before any cohort run
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `web/playwright/inference.spec.js`
+**Blocked by**: Sprint 1.16, 5.12
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase — add the
+capability-gating lint rules to `src/Infernix/Lint/HaskellStyle.hs` (no raw `rm` / `docker exec rm`;
+require `SubprocessEnv` / `CommandOutcome`) and add routed-Playwright managed-transition coverage
+that exercises the evidence-gated readiness paths — encoding evidence, not hope. It generalizes the
+results-side realness contract to state transitions: every operation that acts on a system state
+requires typed evidence for that state, so the tests must observe the returned evidence rather than
+assume a raw primitive succeeded. Reference the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- capability-gating lint rules in `src/Infernix/Lint/HaskellStyle.hs` that reject raw `rm` and
+  `docker exec rm` destructive primitives and require the `SubprocessEnv` / `CommandOutcome`
+  capability-carrying wrappers
+- routed-Playwright managed-transition coverage in `web/playwright/inference.spec.js` that exercises
+  the evidence-gated readiness paths rather than assuming readiness from an unguarded wait
+- the coverage asserts on the typed evidence returned by each managed transition, so a non-evidence
+  readiness path fails closed
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
+  `infernix lint docs` pass; `poetry run check-code` passes for the routed-Playwright surface
+- the capability-gating lint fails when a raw `rm` / `docker exec rm` or a non-capability subprocess
+  invocation is introduced
+- the routed managed-transition Playwright coverage fails when a readiness path returns no evidence
+- all gates are exercised on both the apple-silicon and linux-cpu lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite evidence
+  (owning wave TBD) is pending and is the only outstanding closure for this sprint
+
+---
+
 ## Remaining Work
 
+Sprint 6.39 (capability-gating lint plus managed-transition coverage) is the open reopen work for
+this phase; its residual is the pending apple-silicon plus linux-cpu full-suite cohort sign-off.
 Sprint 6.38 is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU
 by Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-validation reopen (Sprint
 6.35) is **closed** — proven by [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36**
@@ -2290,6 +2341,7 @@ and [Wave S](cohort-validation-waves.md) for their original scopes.
 - `documents/architecture/engine_pool_routing.md` - invalid-state validation, shared-pool
   backpressure, pinned-route exclusivity, and production-shape expectations
 - `documents/engineering/model_lifecycle.md` - batch ownership, request handoff, and result-publication runtime contract
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) - managed state-transition doctrine (typed evidence per state, unexported destructive primitives, evidence-returning readiness waits) referenced by Sprint 6.39
 - no `documents/engineering/monitoring.md` exists while monitoring remains unsupported; create it
   only if monitoring becomes a supported first-class surface in a later change
 - `documents/operations/cluster_bootstrap_runbook.md` - lifecycle warning classification, test

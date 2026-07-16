@@ -1,6 +1,6 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation
+**Status**: Active — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -3230,9 +3230,52 @@ None. The generated-artifact legacy row has moved to Completed in
 
 ---
 
+## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Planned]
+
+**Status**: Planned
+**Code-side closure**: machine-independent gates — `cabal build all`, `cabal test infernix-unit`,
+`cabal test infernix-haskell-style`, `infernix lint docs`, and `poetry run check-code` for the
+Python/native change surface
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
+**Blocked by**: Sprint 2.14, 4.28
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: retire the
+`clusterPresent::Bool` and `lifecyclePhase`/`lifecycleAction`/`lifecycleDetail`::`String` fields from
+`ClusterState`/`LifecycleProgress`; gate the object-proxy routes on a `DemoBucketsProvisioned`
+readiness value; and require a proven `.ready` sentinel for bootstrap — so each operation that acts on
+a system state carries typed evidence for that state rather than an untyped flag, encoding evidence,
+not hope. It generalizes the results-side realness contract to state transitions per the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- retire `clusterPresent::Bool` and the `lifecyclePhase`/`lifecycleAction`/`lifecycleDetail`::`String`
+  fields from `ClusterState` and `LifecycleProgress` in favor of typed transition evidence
+- gate the `Demo/Api.hs` object-proxy routes on a `DemoBucketsProvisioned` readiness value returned by
+  the provisioning transition rather than an ambient boolean
+- require a proven `.ready` sentinel in `Runtime/Pulsar.hs` before bootstrap-dependent work proceeds
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
+  `infernix lint docs` exit zero, exercised on both the apple-silicon and linux-cpu lanes
+- `poetry run check-code` exits zero for any Python/native change surface, on both lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off (apple-silicon plus linux-cpu) is pending and is the residual
+  gate for closing this sprint
+
+---
+
 ## Remaining Work
 
-None.
+None. Active reopen work is tracked by Sprint 7.29 above.
 
 ## Closure Notes
 
@@ -3261,6 +3304,7 @@ None.
 - [../documents/architecture/web_ui_architecture.md](../documents/architecture/web_ui_architecture.md) — durable-context surface delta and new view modules
 - [../documents/architecture/runtime_modes.md](../documents/architecture/runtime_modes.md) — Service Placement rewritten in 3-role daemon vocabulary
 - [../documents/architecture/overview.md](../documents/architecture/overview.md) — pointer to the new designs
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) — Managed State Transitions doctrine this phase now references for Sprint 7.29's typed transition-evidence work
 
 **Development docs to create/update:**
 - [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — new authoritative test plan

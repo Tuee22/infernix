@@ -369,6 +369,10 @@ three roles share access to:
 - **Projection-layer dedup** in the reducer on `(contextId,
   clientIdempotencyKey)` for browser-driven retries
 
+Per-role readiness gating and failure recovery follow the managed-state-transition doctrine: every
+readiness wait returns typed evidence for the state it gates rather than a bare boolean, and
+[Managed State Transitions](managed_state_transitions.md) is the canonical home for that rule.
+
 | Failure | What happens | What recovers |
 |---|---|---|
 | Frontend pod crash | WS connections drop | Client reconnects to any replica; new pod re-derives Readers from the JWT; state replays from Pulsar. Pending submits replay via `clientIdempotencyKey`; reducer dedup catches duplicates. The WS pod acks a client submit only after Pulsar confirms the publish, so "acked then crashed" implies "already on the log." |
@@ -491,3 +495,4 @@ resolution of this doc.
 - [../tools/pulsar.md](../tools/pulsar.md) — Pulsar topic contract
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md) — phase plan for the supported three-role pod split
 - [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md) — authoritative component inventory
+- [Managed State Transitions](managed_state_transitions.md) — typed transitions and readiness evidence for every system state

@@ -470,3 +470,5 @@ resolution.
 - [../tools/minio.md](../tools/minio.md) — MinIO bucket and presigned URL contract
 - [../development/frontend_contracts.md](../development/frontend_contracts.md) — Haskell-owned contract generation
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md) — execution-ordered build out
+- [Managed State Transitions](managed_state_transitions.md) — typed evidence per
+  system state generalizes the realness contract to state transitions

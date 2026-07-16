@@ -15,6 +15,7 @@ Read first:
 - [documents/development/local_dev.md](documents/development/local_dev.md)
 - [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 - [documents/development/no_env_vars.md](documents/development/no_env_vars.md)
+- [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
 
 ## Non-Negotiable Rules
@@ -36,6 +37,12 @@ Read first:
   `check-code` AST pass), owned by Phase 0 Sprint 0.12 with its per-runner scope extended by Phases 1/4,
   enforces this. Canonical doctrine:
   [documents/architecture/realness_contract.md](documents/architecture/realness_contract.md)
+- evidence-gated state transitions: every operation that acts on a system state consumes typed
+  evidence that its transition completed. The raw destructive, commit, and spawn primitives — the
+  retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
+  `readCreateProcessWithExitCode` — are unexported, so acting on an unmanaged state (a race or flake)
+  does not typecheck; enforcement is GHC export lists plus `-Wall -Werror`. Canonical doctrine:
+  [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution

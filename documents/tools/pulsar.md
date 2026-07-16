@@ -228,3 +228,4 @@ event model, reducer, dispatcher rule, and failure semantics.
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

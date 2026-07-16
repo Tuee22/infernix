@@ -94,6 +94,10 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   can reject a request even when the weights are cache-resident on disk.
 - Build roots and frontend bundles are disposable because the supported build and web workflows
   regenerate them from source.
+- Durable cluster-lifecycle `state` persistence replaces its `Show`/`Read` encoding with a
+  fail-closed versioned aeson codec and adds phase-resume, per the managed-state-transition
+  doctrine ([Managed State Transitions](../architecture/managed_state_transitions.md) is the
+  canonical home).
 
 ## Cleanup Rules
 
@@ -127,3 +131,4 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
 - [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
 - [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
 - [../tools/postgresql.md](../tools/postgresql.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

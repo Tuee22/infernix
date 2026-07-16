@@ -145,6 +145,11 @@ clean `status=failed` `InferenceResult` whose payload is a typed `InferenceError
 inline output. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
 the model footprint and available memory in MiB.
 
+The per-substrate `InferenceMemoryBudget` / `ModelMemoryLimitExceeded` typed ADT — a typed
+evidence value rather than integer sentinels — is the in-repo precedent that the managed
+state-transition doctrine generalizes; its canonical home is
+[Managed State Transitions](managed_state_transitions.md).
+
 ## Generated Demo Config Contract
 
 The generated demo catalog is the source of truth for the active runtime mode.
@@ -227,3 +232,4 @@ target shape is the three-role daemon model codified in
 - [daemon_topology.md](daemon_topology.md)
 - [model_catalog.md](model_catalog.md)
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md)
+- [Managed State Transitions](managed_state_transitions.md)

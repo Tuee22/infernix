@@ -98,3 +98,4 @@ object-proxy evidence; Wave N closed Phase 7 Sprint 7.28 generated artifact obje
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
 - [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

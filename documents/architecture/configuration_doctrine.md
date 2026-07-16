@@ -41,7 +41,10 @@ The codebase previously accumulated 87 distinct env var names across dozens of H
 call sites, chart-template `env:` injections, and bootstrap-shell references — plus pervasive
 implicit reliance on `PATH` / `HOME` / `KUBECONFIG` / `DOCKER_HOST`. The configuration doctrine
 collapses that to one substrate (typed Dhall) and one tool-discovery surface (absolute paths in the
-host manifest).
+host manifest). The typed `SubprocessEnv` (with required `HOME` and `TMPDIR` fields) and the
+`CommandOutcome` ADT (no unbounded exec) are the positive process-execution counterpart to these
+banned environment reads, whose canonical home is the
+[Managed State Transitions](managed_state_transitions.md) doctrine.
 
 A second source of drift was **hand-maintained `.dhall` schema files** committed alongside the
 Haskell renderers that generate them, plus `.dhall` *values* rendered by Helm templating from
@@ -192,3 +195,5 @@ The lint gates carry an explicit exception list naming this and any future upstr
 - [../development/no_env_vars.md](../development/no_env_vars.md) — developer-facing rules and lint gates.
 - [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md) Sections T and U.
 - [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md) for the retirement ledger.
+- [Managed State Transitions](managed_state_transitions.md) — typed `SubprocessEnv` / `CommandOutcome`
+  process-execution counterpart to the banned environment reads.

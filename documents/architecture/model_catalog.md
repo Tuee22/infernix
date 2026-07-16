@@ -171,3 +171,4 @@ catalog does not overstate GPU acceleration:
 - [runtime_modes.md](runtime_modes.md)
 - [../reference/api_surface.md](../reference/api_surface.md)
 - [../development/frontend_contracts.md](../development/frontend_contracts.md)
+- [Managed State Transitions](managed_state_transitions.md)

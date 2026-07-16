@@ -186,3 +186,7 @@ A project conforms to this contract when all hold:
 > (`daemon_topology.md`, `engine_pool_routing.md`, `configuration_doctrine.md`,
 > `web_ui_architecture.md`, `../tools/pulsar.md`) cross-reference it as the
 > convergence work lands; the `documents/` suite map lists it for discovery.
+
+## Cross-References
+
+- [Managed State Transitions](managed_state_transitions.md)

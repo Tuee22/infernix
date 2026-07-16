@@ -18,6 +18,7 @@ data InfernixError
         processCwd :: Maybe FilePath
       }
   | ProtobufDecodeFailure FilePath String
+  | ClusterStateDecodeFailure FilePath String
   | InvalidControlPlaneOverride String
   deriving (Eq)
 
@@ -41,6 +42,11 @@ humanReadable = \case
       <> stderr
   ProtobufDecodeFailure filePath detail ->
     "failed to decode protobuf file " <> filePath <> ": " <> detail
+  ClusterStateDecodeFailure filePath detail ->
+    "recorded cluster state at "
+      <> filePath
+      <> " exists but could not be decoded; refusing to treat it as absent (which would skip retained-state replay during teardown and risk losing durable data). Inspect or remove the file, then retry. Detail: "
+      <> detail
   InvalidControlPlaneOverride rawOverride ->
     "Unsupported INFERNIX_CONTROL_PLANE_CONTEXT override: "
       <> rawOverride

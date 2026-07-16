@@ -37,3 +37,4 @@
 - [harbor.md](harbor.md)
 - [../engineering/k8s_storage.md](../engineering/k8s_storage.md)
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

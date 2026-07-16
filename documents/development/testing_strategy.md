@@ -154,6 +154,9 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - `infernix test all` may perform multiple internal cluster bring-up or teardown cycles before the
   outer Apple bootstrap `test` command returns; apply the same progress interpretation to those
   managed internal rounds
+- a typed `ClusterLifecycle` machine with phase-resume is the target shape of the
+  lifecycle-interpretation surface this section describes, and its canonical home is
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 
 ## Active-Mode Coverage Rules
 
@@ -388,3 +391,4 @@ relationship to the existing entrypoints.
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/durable_context_design.md](../architecture/durable_context_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

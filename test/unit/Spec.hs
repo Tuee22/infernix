@@ -4,7 +4,7 @@
 
 module Main (main) where
 
-import Control.Exception (toException, try)
+import Control.Exception (SomeException, toException, try)
 import Crypto.Hash.Algorithms qualified
 import Crypto.PubKey.RSA qualified
 import Crypto.PubKey.RSA.PKCS15 qualified
@@ -12,6 +12,7 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Lazy qualified as Lazy
+import Data.IORef qualified as IORef
 import Data.List (find, isInfixOf, isPrefixOf, nub)
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
@@ -25,7 +26,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (writeGeneratedPursContracts)
-import Infernix.Cluster (HelmDeployPhase (..), clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
+import Infernix.Cluster (HelmDeployPhase (..), clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, loadClusterState, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
 import Infernix.Cluster.PublishImages
@@ -40,6 +41,7 @@ import Infernix.Cluster.PublishImages
     skopeoTargetRefForHarborApiHost,
     writeHarborOverridesFile,
   )
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
@@ -103,6 +105,8 @@ import Infernix.Engines.LinuxNative
     manifestForLinuxNativeEngineArtifact,
     materializeLinuxNativeEnginesAt,
   )
+import Infernix.Evidence.Lease qualified as Lease
+import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
@@ -1912,6 +1916,129 @@ main = do
     assert
       (not (linuxGpuNvkindConfigMapBug ""))
       "nvkind detector ignores an empty error"
+  -- Phase 1 Sprint 1.16: managed-state-transition evidence + command kernels.
+  readinessStepRef <- IORef.newIORef (0 :: Int)
+  let scriptedReadinessStep target = do
+        observed <- IORef.readIORef readinessStepRef
+        IORef.writeIORef readinessStepRef (observed + 1)
+        pure
+          ( if observed >= target
+              then Right observed
+              else Left (Readiness.Progress observed target "staging")
+          )
+  readyOutcome <-
+    Readiness.awaitReadiness (Readiness.Deadline 0 30 30) (scriptedReadinessStep 3)
+  assert
+    (Readiness.foldReadiness (const True) (const False) (const False) readyOutcome)
+    "awaitReadiness yields Ready once the step reports evidence"
+  stalledOutcome <-
+    Readiness.awaitReadiness
+      (Readiness.Deadline 0 1 100)
+      (pure (Left (Readiness.Progress 1 3 "stuck")) :: IO (Either Readiness.Progress Int))
+  assert
+    (Readiness.foldReadiness (const False) (const False) (const True) stalledOutcome)
+    "awaitReadiness with no new progress resolves as Expired past the stall window"
+  leaseLog <- IORef.newIORef ([] :: [String])
+  let leaseAcquire =
+        Lease.Acquire
+          { Lease.acquireEstablish =
+              IORef.modifyIORef' leaseLog (<> ["establish"]) >> pure "resource-42",
+            Lease.acquireRelease =
+              \payload -> IORef.modifyIORef' leaseLog (<> ["release:" <> payload])
+          }
+  leasedPayload <-
+    Lease.withLease leaseAcquire $ \lease -> do
+      IORef.modifyIORef' leaseLog (<> ["use:" <> Lease.leasePayload lease])
+      pure (Lease.leasePayload lease)
+  leaseEvents <- IORef.readIORef leaseLog
+  assert
+    (leaseEvents == ["establish", "use:resource-42", "release:resource-42"])
+    "withLease establishes, runs the body, then releases in order"
+  assert (leasedPayload == "resource-42") "leasePayload reads the held payload"
+  let pathsWithoutManifest =
+        Paths
+          { repoRoot = "/tmp/infernix-mst",
+            buildRoot = "/tmp/infernix-mst/.build",
+            dataRoot = "/tmp/infernix-mst/.data",
+            runtimeRoot = "/tmp/infernix-mst/.data/runtime",
+            kindRoot = "/tmp/infernix-mst/.data/kind",
+            helmConfigRoot = "/tmp/infernix-mst/.data/helm/config",
+            helmCacheRoot = "/tmp/infernix-mst/.data/helm/cache",
+            helmDataRoot = "/tmp/infernix-mst/.data/helm/data",
+            resultsRoot = "/tmp/infernix-mst/.data/results",
+            modelCacheRoot = "/tmp/infernix-mst/.data/model-cache",
+            pathsHostConfig = Nothing
+          }
+  failClosedResult <-
+    try (Subprocess.clusterSubprocessEnv pathsWithoutManifest) ::
+      IO (Either IOError Subprocess.SubprocessEnv)
+  assert
+    (case failClosedResult of Left _ -> True; Right _ -> False)
+    "clusterSubprocessEnv fails closed when the host manifest is absent"
+  subprocessRoot <- testRootPath "mst-subprocess"
+  let subprocessPaths =
+        pathsWithoutManifest
+          { dataRoot = subprocessRoot,
+            pathsHostConfig =
+              Just
+                ( HostConfig.defaultAppleHostNativeHostConfig
+                    (Text.pack subprocessRoot)
+                    (Text.pack subprocessRoot)
+                )
+          }
+  subprocessEnv <- Subprocess.clusterSubprocessEnv subprocessPaths
+  assert
+    (lookup "HOME" (Subprocess.renderSubprocessEnv subprocessEnv) == Just subprocessRoot)
+    "rendered subprocess env carries HOME from the host manifest"
+  assert
+    (isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv subprocessEnv)))
+    "rendered subprocess env carries TMPDIR"
+  echoOutcome <-
+    Subprocess.runBoundedCommand
+      (Subprocess.Timeout 30000000)
+      subprocessEnv
+      Nothing
+      "/bin/echo"
+      ["managed-transitions"]
+      ""
+  assert
+    (echoOutcome == Subprocess.CommandSucceeded "managed-transitions\n")
+    "runBoundedCommand returns real stdout on success"
+  exitOutcome <-
+    Subprocess.runBoundedCommand
+      (Subprocess.Timeout 30000000)
+      subprocessEnv
+      Nothing
+      "/bin/sh"
+      ["-c", "exit 7"]
+      ""
+  assert
+    (case exitOutcome of Subprocess.CommandFailedFatal _ -> True; _ -> False)
+    "runBoundedCommand maps a non-zero exit to CommandFailedFatal"
+  timeoutOutcome <-
+    Subprocess.runBoundedCommand
+      (Subprocess.Timeout 200000)
+      subprocessEnv
+      Nothing
+      "/bin/sleep"
+      ["5"]
+      ""
+  assert
+    (case timeoutOutcome of Subprocess.CommandTimedOut _ -> True; _ -> False)
+    "runBoundedCommand reaps and reports CommandTimedOut past its budget"
+  -- Phase 2 Sprint 2.14: fail-closed recorded-state decode.
+  clusterStateRoot <- testRootPath "mst-clusterstate"
+  createDirectoryIfMissing True clusterStateRoot
+  let clusterStatePaths = pathsWithoutManifest {runtimeRoot = clusterStateRoot}
+      clusterStateFile = clusterStateRoot </> "cluster-state.state"
+  removePathForcibly clusterStateFile
+  absentState <- loadClusterState clusterStatePaths
+  assert (isNothing absentState) "loadClusterState treats an absent state file as no cluster"
+  writeFile clusterStateFile "this file exists but is not a decodable ClusterState"
+  corruptResult <- try @SomeException (loadClusterState clusterStatePaths)
+  assert
+    (case corruptResult of Left _ -> True; Right _ -> False)
+    "loadClusterState fails closed on a present but undecodable state file"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The

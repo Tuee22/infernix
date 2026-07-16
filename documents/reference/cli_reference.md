@@ -149,9 +149,12 @@
   action as still progressing while the current `lifecycleHeartbeatAt` continues to refresh, and
   treat it as stalled only when the command exits non-zero or the heartbeat stops moving across
   multiple monitor intervals
+- the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine, whose
+  canonical home is [Managed State Transitions](../architecture/managed_state_transitions.md)
 
 ## Cross-References
 
 - [cli_surface.md](cli_surface.md)
 - [api_surface.md](api_surface.md)
 - [../development/local_dev.md](../development/local_dev.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

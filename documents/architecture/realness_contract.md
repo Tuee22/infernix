@@ -22,6 +22,9 @@
   `check-code` AST pass) is a mechanical regression tripwire on a fixed set of named fabrication
   tokens and AST shapes. It catches the known fabrication patterns rather than proving the absence of
   every conceivable one; the invariant ultimately rests on the fail-closed engine code plus review.
+- The [Managed State Transitions](managed_state_transitions.md) doctrine is the canonical home for
+  generalizing this "real output or a visible failure" contract from inference results to system
+  state transitions.
 
 ## The invariant
 
@@ -109,3 +112,5 @@ realness-by-construction.
 - [../development/testing_strategy.md](../development/testing_strategy.md) — the test contract.
 - [../development/python_policy.md](../development/python_policy.md) — the shared adapter quality gate.
 - [../engineering/testing.md](../engineering/testing.md) — the canonical validation doctrine.
+- [Managed State Transitions](managed_state_transitions.md) — the sibling doctrine that generalizes
+  this contract from inference results to system state transitions.

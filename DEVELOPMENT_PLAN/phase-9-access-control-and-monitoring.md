@@ -1,6 +1,6 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+**Status**: Active — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
 `apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
 on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
 loopback data-plane split, per-user isolation, the default-on per-user STS scoped-credential object
@@ -103,8 +103,11 @@ The two repo-root `notes.txt` items are now resolved code-side:
    denied at both the edge `SecurityPolicy` and the backend `withAdminRequest` gate — no ordinary
    user can reach the admin portal.
 
-**Remaining Work:** None. Sprint 9.9 is re-validated through routed Playwright on `linux-cpu` plus
-the selected `linux-gpu` accelerator.
+**Remaining Work:** None for the UAT auth residual. Sprint 9.9 is re-validated through routed
+Playwright on `linux-cpu` plus the selected `linux-gpu` accelerator. The phase is reopened `Active`
+for the Managed-State-Transition Doctrine work in **Sprint 9.10** (admin-token and object-storage
+session leases), whose cohort full-suite sign-off is the current residual — see
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 ## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
 
@@ -462,6 +465,48 @@ can intentionally switch from a regular self-registered account to the separate 
 ### Remaining Work
 None.
 
+## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Planned]
+
+**Status**: Planned
+**Code-side closure**: `cabal build all`, `cabal test infernix-unit`, `cabal test
+infernix-haskell-style`, `infernix lint docs`, and — for any Python/native change — `poetry run
+check-code`, all green host-native.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`
+**Blocked by**: Sprint 4.28, 7.29
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase: model the Keycloak
+admin credential as a `withValidAdminToken` region lease that re-derives the bearer at each admin
+call, and model the per-user MinIO STS session as a leased `StsSession` value; capability-gate the
+admin and object-proxy surfaces on these leases. For every state `S` the operation requires the
+typed evidence `E(S)` produced by its transition — encoding evidence, not hope — generalizing the
+results-side realness contract to state transitions. See the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- `withValidAdminToken` region lease that re-derives the Keycloak bearer at each admin call, so the
+  raw credential is never held past its validity window.
+- Leased `StsSession` value modelling the per-user MinIO STS session, carrying the scoped credential
+  as typed evidence rather than a bare mutable token.
+- Capability-gate on the admin surface and the object-proxy surface: each operation requires the
+  corresponding lease evidence to be constructed before it can act.
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint
+  docs`, and (for any Python/native change) `poetry run check-code`, exercised on both the
+  apple-silicon and linux-cpu lanes.
+
+### Remaining Work
+
+- Cohort full-suite sign-off is pending: the apple-silicon plus linux-cpu full-suite run (owning
+  wave TBD) is the residual before this sprint can close.
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -473,6 +518,8 @@ None.
 - `documents/architecture/web_ui_architecture.md` — operator ribbon admin-gated; admin panel + personal dashboard surfaces
 - `documents/architecture/daemon_topology.md` — Apple host-worker loopback data-plane path
 - `documents/architecture/demo_app_design.md` — admin/personal dashboard bindings
+- `../documents/architecture/managed_state_transitions.md` — the Managed-State-Transition Doctrine
+  this phase now references for the Sprint 9.10 admin-token and object-storage session leases
 
 **Cross-references to add:**
 - register Phase 9 in `development_plan_standards.md` Section E, `DEVELOPMENT_PLAN/README.md`, `00-overview.md`, `system-components.md`, and root `README.md`

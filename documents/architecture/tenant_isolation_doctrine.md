@@ -86,3 +86,7 @@ result bridge reject raw or cross-user generated object refs. Wave N closed the 
 - Phase 7 Sprint 7.28 unit and integration-build validation proves generated artifact output-prefix
   derivation and cross-user result-bridge rejection; Wave N closes the full selected `linux-gpu` plus
   `linux-cpu` routed real-output gate.
+
+## Cross-References
+
+- [Managed State Transitions](managed_state_transitions.md)

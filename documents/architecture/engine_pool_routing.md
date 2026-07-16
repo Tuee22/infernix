@@ -214,3 +214,4 @@ The pool contract is valid only when:
 - [../tools/pulsar.md](../tools/pulsar.md)
 - [../engineering/storage_and_state.md](../engineering/storage_and_state.md)
 - [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md)
+- [Managed State Transitions](managed_state_transitions.md)

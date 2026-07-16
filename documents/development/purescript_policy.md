@@ -146,3 +146,4 @@ Frontend types are generated from Haskell-owned DTO and catalog records.
 - [testing_strategy.md](testing_strategy.md)
 - [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md)
 - [../reference/web_portal_surface.md](../reference/web_portal_surface.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

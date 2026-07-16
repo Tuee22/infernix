@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done
+**Status**: Active
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -513,7 +513,59 @@ None.
 
 ---
 
+## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Planned]
+
+**Status**: Planned
+**Code-side closure**: `cabal build all`, `cabal test infernix-unit`,
+`cabal test infernix-haskell-style`, `infernix lint docs`, and — for the native/Python surface if
+touched — `poetry run check-code`; all machine-independent.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `documents/architecture/managed_state_transitions.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase — author the
+`managed_state_transitions.md` doctrine doc, register it (`requiredDocs` in
+`src/Infernix/Lint/Docs.hs` plus `documents/README.md`), and add an `unsafeCoerce` /
+`unsafePerformIO` escape-token check to `src/Infernix/Lint/HaskellStyle.hs` (the two escapes the
+type system cannot close) — encoding evidence, not hope. For every system state S there is a
+transition T and typed evidence E(S); every operation acting on S requires E(S). The doctrine
+generalizes the results-side realness contract to state transitions and is canonical at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- `documents/architecture/managed_state_transitions.md` authored as the canonical doctrine home,
+  declaring typed evidence `E(S)` for every state `S`, unexported raw destructive/commit/spawn
+  primitives, evidence-returning readiness waits, and the typed `ClusterLifecycle` machine plus
+  fail-closed versioned persistence that replace `clusterPresent::Bool` + `lifecyclePhase::String`
+  + `Show`/`Read`
+- the doctrine doc registered as a required doc in `requiredDocs` (`src/Infernix/Lint/Docs.hs`) and
+  indexed in `documents/README.md`
+- an `unsafeCoerce` / `unsafePerformIO` escape-token check added to
+  `src/Infernix/Lint/HaskellStyle.hs`, covering the two escapes the type system cannot close
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass on
+  both the apple-silicon and linux-cpu lanes, with the new escape-token check failing on a
+  reintroduced `unsafeCoerce` / `unsafePerformIO`
+- `infernix lint docs` passes on both lanes, confirming the doctrine doc's metadata, links, and
+  `requiredDocs` registration
+- `poetry run check-code` passes on both lanes if the native/Python surface is touched
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite
+  validation is pending, owning wave TBD
+
+---
+
 ## Remaining Work
+
+Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Planned; its
+apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
 machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by
@@ -536,6 +588,9 @@ per-runner scope is extended by the reopened Phases 1 (Apple) and 4 (Linux) as e
 - `documents/engineering/k8s_storage.md` - manual-storage doctrine and deterministic PV
   inventory rules
 - `documents/engineering/storage_and_state.md` - durable-versus-derived state inventory
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) -
+  managed-state-transition doctrine (typed evidence `E(S)` per state, unexported raw primitives,
+  evidence-returning readiness waits, typed `ClusterLifecycle` machine) this phase now references
 
 **Product or reference docs to create/update:**
 - `README.md` - orientation layer aligned with the governed docs

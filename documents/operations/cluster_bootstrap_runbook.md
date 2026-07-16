@@ -72,6 +72,9 @@
 - the supported progress surface reports `lifecycleStatus`, the active `lifecyclePhase`, the
   current `lifecycleDetail`, and heartbeat timestamps while `cluster up` or `cluster down` is
   still running
+- the `lifecycleStatus`/`lifecyclePhase` field surface is moving under a typed `ClusterLifecycle`
+  machine per [Managed State Transitions](../architecture/managed_state_transitions.md), which is
+  the canonical home for that transition doctrine
 - treat elapsed wall time alone as insufficient evidence of failure; during the monitored
   subprocess phases, a heartbeat that continues to refresh roughly every 30 seconds indicates the
   supported path is still progressing
@@ -270,3 +273,4 @@ expected, and whether the phase's chosen accelerator plus `linux-cpu` evidence i
 - [../architecture/demo_app_design.md](../architecture/demo_app_design.md)
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

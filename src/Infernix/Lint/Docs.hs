@@ -45,6 +45,7 @@ requiredDocs =
     "documents/architecture/access_control_doctrine.md",
     "documents/architecture/overview.md",
     "documents/architecture/model_catalog.md",
+    "documents/architecture/managed_state_transitions.md",
     "documents/architecture/pulsar_ml_workflow.md",
     "documents/architecture/realness_contract.md",
     "documents/architecture/runtime_modes.md",

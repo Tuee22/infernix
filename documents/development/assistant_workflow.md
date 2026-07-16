@@ -59,6 +59,12 @@ this canonical list.
   commands fail fast if config is missing, while `./bootstrap/apple-silicon.sh up` explicitly runs
   `./.build/infernix init --if-missing` before `cluster up`.
   Canonical: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
+- evidence-gated state transitions: every operation that acts on a system state consumes typed
+  evidence that its transition completed; the raw destructive, commit, and spawn primitives (the
+  retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
+  `readCreateProcessWithExitCode`) are unexported, so acting on an unmanaged state does not
+  typecheck. Enforcement is GHC export lists plus `-Wall -Werror`. Canonical:
+  [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 
 ## Supported Build And Operator Workflows
 

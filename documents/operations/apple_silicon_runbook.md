@@ -96,6 +96,8 @@ Direct reference path:
 - when `cluster status` reports `lifecycleStatus: in-progress`, the supported surface also reports
   `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`, `lifecycleHeartbeatAt`, and
   `lifecycleHeartbeatAgeSeconds`
+- these operator lifecycle fields are moving under a typed `ClusterLifecycle` machine per the
+  canonical [Managed State Transitions](../architecture/managed_state_transitions.md) doctrine
 - the supported Apple doctrine is inactivity-aware: wall-clock duration alone is not failure
 - during the monitored long-running subprocess phases, the lifecycle heartbeat refreshes roughly
   every 30 seconds; treat that as active progress, and treat the action as stalled only when the
@@ -330,3 +332,4 @@ batches into the counterpart CUDA Linux pass.
 - [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 - [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

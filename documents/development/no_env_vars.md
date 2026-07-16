@@ -65,6 +65,10 @@ bootstrap-adjacent helpers may check only the fixed absolute candidates from
 enum has one constructor per tool listed in
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
 
+The typed `SubprocessEnv` requiring `HOME` and `TMPDIR` and the `CommandOutcome` ADT extend these
+process-execution rules, whose canonical home is the
+[Managed State Transitions](../architecture/managed_state_transitions.md) doctrine.
+
 ### Test fixtures
 
 ```haskell
@@ -234,3 +238,5 @@ Run locally: `infernix test lint`.
   the `InfernixCluster.dhall` schema and ConfigMap+Secret contract.
 - [../../DEVELOPMENT_PLAN/development_plan_standards.md](../../DEVELOPMENT_PLAN/development_plan_standards.md)
   Sections T and U.
+- [Managed State Transitions](../architecture/managed_state_transitions.md) — canonical home for the
+  typed `SubprocessEnv` and `CommandOutcome` process-execution rules.

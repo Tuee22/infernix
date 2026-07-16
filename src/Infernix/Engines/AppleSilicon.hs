@@ -276,7 +276,13 @@ materializeMetalEngineArtifact paths artifact = do
         <> ". The materialized payload and smoke command are recorded in engine-artifact.json.\n"
     )
   validateMaterializedManifest tempRoot
-  validateMaterializedPayloadSmoke tempRoot artifact
+
+  -- Venv-backed native runners cannot execute their payload smoke until the
+  -- engine venv is hydrated (which happens after install), so the pre-install
+  -- payload smoke is skipped for them here; the post-hydration installed smoke
+  -- runs the same command against the created venv and stays authoritative.
+  unless (appleNativeAdapterRequiresVenv artifact) $
+    validateMaterializedPayloadSmoke tempRoot artifact
   installEngineArtifactRoot installRoot tempRoot
   pure installRoot
 
@@ -451,6 +457,14 @@ appleNativePythonRequirements adapterId =
         "git+https://github.com/apple/ml-stable-diffusion.git"
       ]
     _ -> []
+
+-- | A native runner is venv-backed exactly when it declares Python
+-- requirements: `hydrateAppleNativeEngineArtifact` creates the engine venv only
+-- for those adapters. Their payload smoke resolves `venv/bin/python`, so it can
+-- only run after hydration; the pre-install smoke is skipped for them.
+appleNativeAdapterRequiresVenv :: MetalEngineArtifact -> Bool
+appleNativeAdapterRequiresVenv artifact =
+  not (null (appleNativePythonRequirements (metalEngineAdapterId artifact)))
 
 resolveAppleNativePython :: Paths -> Text -> IO FilePath
 resolveAppleNativePython paths adapterId = do

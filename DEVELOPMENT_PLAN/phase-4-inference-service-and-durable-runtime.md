@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done — Sprint 4.27 is closed for typed resource memory admission and typed inference
+**Status**: Active — Sprint 4.27 is closed for typed resource memory admission and typed inference
 errors. The Apple-only integer budget, config-time over-budget fail-fast, hardcoded floor, and
 stringly runtime failure payload are replaced by pure `InferenceMemoryBudget` / `InferenceError`
 types. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu` accelerator.
@@ -1914,6 +1914,51 @@ None.
 
 ---
 
+## Sprint 4.28: Evidence in Runtime and Engines [Planned]
+
+**Status**: Planned
+**Code-side closure**: pending — the machine-independent gate set (`cabal build all`,
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
+`poetry run check-code` for the native-runner change) proves the typed evidence, capability gates,
+and native-runner environment; producing real bounded-probe output still requires cohort hardware
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `python/native-runners/apple_native_runner.py`
+**Blocked by**: Sprint 1.16, 3.14
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Managed-State-Transition Doctrine reopen work for this phase — gate the
+readiness-sentinel commit on a `PayloadVerified` witness minted by a real bounded probe (closing the
+unconditional package-backed `.ready` path); return typed evidence from `awaitModelBootstrapReady`;
+capability-gate the raw commit and spawn primitives; and give native runners a real environment
+carrying `HOME` and `TMPDIR` — encoding evidence, not hope. The doctrine generalizes the
+results-side realness contract to state transitions: for every state there is a transition and typed
+evidence, and every operation acting on that state requires the evidence. See the canonical doctrine
+at [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- the readiness-sentinel commit is gated on a `PayloadVerified` witness minted by a real bounded
+  probe, closing the unconditional package-backed `.ready` path
+- `awaitModelBootstrapReady` returns typed evidence rather than a bare success signal
+- the raw commit and spawn primitives are capability-gated so callers cannot invoke them without the
+  corresponding evidence
+- native runners receive a real environment carrying `HOME` and `TMPDIR`
+
+### Validation
+
+- the code-side gate set (`cabal build all`, `cabal test infernix-unit`,
+  `cabal test infernix-haskell-style`, `infernix lint docs`, and `poetry run check-code` for the
+  native-runner change) is exercised on both the apple-silicon and linux-cpu lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite proof of
+  the bounded-probe witness and native-runner environment, owning wave TBD, is still pending
+
+---
+
 ## Remaining Work
 
 Sprint 4.27 is closed for typed resource memory admission and typed inference error payloads by
@@ -1922,6 +1967,8 @@ Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-replace
 **Sprint 4.25** (matrix substrate-accuracy closure) and **Sprint 4.26** (apple-silicon inference
 RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md) and
 [Wave S](cohort-validation-waves.md) for their original scopes.
+**Sprint 4.28** (Evidence in Runtime and Engines) is the active Managed-State-Transition Doctrine
+reopen for this phase; its cohort full-suite sign-off is pending.
 
 ---
 
@@ -1943,6 +1990,7 @@ RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md)
 - `documents/development/python_policy.md` - shared Python project, `poetry run` contract, and `check-code` gate
 - `documents/development/testing_strategy.md` - per-substrate integration coverage and engine-binding parity
 - `documents/operations/apple_silicon_runbook.md` - ghcup prerequisites and daemon-driven Apple engine setup
+- [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) - managed state transition doctrine (typed evidence per state, capability-gated primitives) this phase now references for Sprint 4.28
 
 **Product or reference docs to create/update:**
 - `documents/reference/api_surface.md` - browser and operator API contract

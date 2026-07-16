@@ -976,6 +976,8 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - `DEVELOPMENT_PLAN/` contains the execution-ordered buildout plan and phase closure criteria
 - start with [documents/README.md](documents/README.md) for the suite index
 - use [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md) for phase order and closure rules
+- read [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+  for the "evidence, not hope" state-transition doctrine that makes races and flakes unrepresentable
 
 ## Contributing
 

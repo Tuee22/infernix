@@ -303,3 +303,4 @@ The routed Linux GPU E2E flow validates the server-side
 - [../architecture/daemon_topology.md](../architecture/daemon_topology.md)
 - [../tools/minio.md](../tools/minio.md)
 - [../tools/pulsar.md](../tools/pulsar.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

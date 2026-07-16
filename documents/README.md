@@ -19,6 +19,10 @@
 - [architecture/realness_contract.md](architecture/realness_contract.md) defines the code-level
   realness-by-construction invariant (real model output or a visible failure, never a fabricated
   value) and the lint that enforces it
+- [architecture/managed_state_transitions.md](architecture/managed_state_transitions.md) defines the
+  code-level "evidence, not hope" invariant — every operation that acts on a system state consumes
+  typed evidence that the state's transition completed, so races and flakes (unmanaged state
+  transitions) are structurally unrepresentable
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the
@@ -151,6 +155,9 @@
   `documents/` to match the plan rather than treating the governed docs as the status authority.
 - `documents/development/assistant_workflow.md` owns the canonical assistant-facing repository
   workflow rules.
+- `documents/architecture/managed_state_transitions.md` owns the state-transition and evidence
+  discipline — the "evidence, not hope" invariant that every state-acting operation consumes typed
+  evidence — generalizing the results-side `documents/architecture/realness_contract.md`.
 - Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
   canonical `documents/engineering/monitoring.md` until the supported platform contract changes.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep

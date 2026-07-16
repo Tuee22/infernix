@@ -45,7 +45,11 @@
 - `Effect boundaries:` keep `IO`, process execution, filesystem mutation, and environment probing
   near the edge so the inner domain logic stays testable and easy to reason about.
 - `Typed control flow:` prefer ADTs, records, and pattern matching over stringly mode switches,
-  sentinel values, or silently ignored cases.
+  sentinel values, or silently ignored cases. The type-driven enforcement mechanisms of the managed
+  state transitions doctrine — hidden-constructor newtypes via GHC export lists, one honest mint,
+  rank-2 region leases (`withLease`), and surgical `LinearTypes` — are the complement to these
+  ADT-over-sentinel and `-Werror` rules; see [Managed State Transitions](../architecture/managed_state_transitions.md)
+  for the canonical home.
 - `Case shape:` avoid hanging `case` expressions such as `foo <- case ...`, `bar -> case ...`, or
   `pure (case ...)`; make the `case` the outer expression or move the branch logic into a named
   helper.
@@ -86,3 +90,4 @@
 - [../engineering/testing.md](../engineering/testing.md)
 - [../engineering/build_artifacts.md](../engineering/build_artifacts.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)
+- [Managed State Transitions](../architecture/managed_state_transitions.md)

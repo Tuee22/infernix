@@ -76,3 +76,7 @@ raw or cross-user generated object refs. Wave N closed the full selected `linux-
 - Phase 7 Sprint 7.28 unit and integration-build validation covers generated-artifact output-prefix
   derivation plus result-bridge rejection of raw and cross-user generated refs; Wave N closes the full
   `linux-gpu` plus `linux-cpu` routed real-output gate.
+
+## Cross-References
+
+- [Managed State Transitions](managed_state_transitions.md)
