@@ -11,7 +11,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, fromException, try)
-import Control.Monad (forM, unless, when)
+import Control.Monad (forM, unless)
 import Data.Aeson
   ( FromJSON (parseJSON),
     ToJSON,
@@ -131,6 +131,7 @@ import Network.Wai
   ( Application,
     Request,
     Response,
+    ResponseReceived,
     pathInfo,
     queryString,
     requestHeaders,
@@ -202,23 +203,56 @@ runDemoApiServer options = do
   -- mounted; host-native + unit-test flows that don't mount the
   -- manifest fall back to 'defaultInfernixRealmConfig'.
   maybeClusterConfig <- tryLoadClusterConfig
-  when (demoUiEnabled demoConfig) (repairDemoBucketsAtStartup maybeClusterConfig)
+  maybeBucketsProvisioned <-
+    if demoUiEnabled demoConfig
+      then repairDemoBucketsAtStartup maybeClusterConfig
+      else pure Nothing
   let realmConfig = loadRealmConfigFromCluster maybeClusterConfig
       settings =
         setHost (fromStringHost (demoBindHost options)) $
           setPort (demoPort options) defaultSettings
-  runSettings settings (application options jwksCache realmConfig maybeClusterConfig)
+  runSettings settings (application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisioned)
+
+-- | Sprint 7.29 (managed-state-transition doctrine) — evidence that the demo
+-- object buckets have been provisioned. The constructor is not exported; the
+-- only mint is 'ensureDemoBucketsWithRetry', so a 'DemoBucketsProvisioned' value
+-- witnesses that the real provisioning transition completed. The object-proxy
+-- routes require this evidence before serving object requests.
+newtype DemoBucketsProvisioned = DemoBucketsProvisioned ()
 
 -- | Sprint 7.9 runtime repair path. Chart-time MinIO provisioning is the
 -- supported normal path, but the demo backend also reconciles its buckets
 -- at startup when it is running in a cluster with mounted config/secrets.
 -- Host-native test runs without the cluster mounts skip this edge repair.
-repairDemoBucketsAtStartup :: Maybe ClusterConfig.ClusterConfig -> IO ()
-repairDemoBucketsAtStartup Nothing =
+-- Sprint 7.29: returns typed 'DemoBucketsProvisioned' evidence when the buckets
+-- were reconciled, or 'Nothing' when the cluster mounts are absent (host-native).
+repairDemoBucketsAtStartup :: Maybe ClusterConfig.ClusterConfig -> IO (Maybe DemoBucketsProvisioned)
+repairDemoBucketsAtStartup Nothing = do
   hPutStrLn stderr "demo bucket reconcile skipped: cluster ConfigMap is not mounted"
+  pure Nothing
 repairDemoBucketsAtStartup (Just clusterConfig) = do
   repairConfig <- loadBucketRepairConfig clusterConfig
-  ensureDemoBucketsWithRetry repairConfig requiredDemoBuckets
+  Just <$> ensureDemoBucketsWithRetry repairConfig requiredDemoBuckets
+
+-- | Sprint 7.29: run an object-proxy handler only with proof that the demo
+-- object buckets are provisioned. Forcing the 'DemoBucketsProvisioned' evidence
+-- makes an @undefined@-forge a loud crash; when the evidence is absent the
+-- routes respond 503, so the object-proxy cannot serve object requests before
+-- the buckets exist.
+withDemoBucketsProvisioned ::
+  Maybe DemoBucketsProvisioned ->
+  (Response -> IO ResponseReceived) ->
+  IO ResponseReceived ->
+  IO ResponseReceived
+withDemoBucketsProvisioned maybeProvisioned respond action =
+  case maybeProvisioned of
+    Just (DemoBucketsProvisioned ()) -> action
+    Nothing ->
+      respond
+        ( jsonResponse
+            status503
+            (object ["error" .= ("demo object buckets are not provisioned" :: Text)])
+        )
 
 loadBucketRepairConfig :: ClusterConfig.ClusterConfig -> IO PresignedUrlConfig
 loadBucketRepairConfig clusterConfig = do
@@ -246,14 +280,18 @@ loadBucketRepairConfig clusterConfig = do
         presignedSessionToken = Nothing
       }
 
-ensureDemoBucketsWithRetry :: PresignedUrlConfig -> [Text] -> IO ()
+-- | Sprint 7.29: mint 'DemoBucketsProvisioned' evidence only after every
+-- required bucket is reconciled; a retry exhaustion fails loud rather than
+-- returning a witness on hope.
+ensureDemoBucketsWithRetry :: PresignedUrlConfig -> [Text] -> IO DemoBucketsProvisioned
 ensureDemoBucketsWithRetry config bucketNames = go (12 :: Int)
   where
     go attemptsRemaining = do
       result <- try @SomeException (mapM_ (ensureDemoBucket config) bucketNames)
       case result of
-        Right () ->
+        Right () -> do
           hPutStrLn stderr "demo bucket reconcile complete"
+          pure (DemoBucketsProvisioned ())
         Left err
           | attemptsRemaining <= 1 ->
               ioError
@@ -317,8 +355,8 @@ tryLoadClusterConfig = do
     else pure Nothing
 
 -- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived
-application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Maybe ClusterConfig.ClusterConfig -> Application
-application options jwksCache realmConfig maybeClusterConfig request respond = do
+application :: DemoApiOptions -> JwksCache -> KeycloakRealmConfig -> Maybe ClusterConfig.ClusterConfig -> Maybe DemoBucketsProvisioned -> Application
+application options jwksCache realmConfig maybeClusterConfig maybeBucketsProvisioned request respond = do
   demoEnabled <- demoUiEnabled <$> decodeDemoConfigFile (demoConfigPath options)
   case pathInfo request of
     ["healthz"]
@@ -356,19 +394,34 @@ application options jwksCache realmConfig maybeClusterConfig request respond = d
           handleAccountDeletion options jwksCache realmConfig maybeClusterConfig request respond
     ["api", "objects", "upload"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsUpload jwksCache realmConfig request respond
+          withDemoBucketsProvisioned
+            maybeBucketsProvisioned
+            respond
+            (handleObjectsUpload jwksCache realmConfig request respond)
     ["api", "objects", "download"]
       | requestMethod request == methodPost && demoEnabled ->
-          handleObjectsDownloadGrant jwksCache realmConfig request respond
+          withDemoBucketsProvisioned
+            maybeBucketsProvisioned
+            respond
+            (handleObjectsDownloadGrant jwksCache realmConfig request respond)
     ["api", "objects", "download"]
       | requestMethod request == methodGet && demoEnabled ->
-          handleObjectsDownloadBytes jwksCache realmConfig request respond
+          withDemoBucketsProvisioned
+            maybeBucketsProvisioned
+            respond
+            (handleObjectsDownloadBytes jwksCache realmConfig request respond)
     ["api", "objects", "list"]
       | requestMethod request == methodGet && demoEnabled ->
-          handleObjectsList jwksCache realmConfig request respond
+          withDemoBucketsProvisioned
+            maybeBucketsProvisioned
+            respond
+            (handleObjectsList jwksCache realmConfig request respond)
     ["api", "objects"]
       | requestMethod request == methodDelete && demoEnabled ->
-          handleObjectsDelete jwksCache realmConfig request respond
+          withDemoBucketsProvisioned
+            maybeBucketsProvisioned
+            respond
+            (handleObjectsDelete jwksCache realmConfig request respond)
     ["ws"]
       | demoEnabled ->
           DemoWebSocket.wsApplication
@@ -708,7 +761,8 @@ handleObjectsUpload jwksCache realmConfig request respond = do
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
-                Right presigned -> do
+                Right stsSession -> do
+                  let presigned = stsSessionPresignedConfig stsSession
                   bodyBytes <- strictRequestBody request
                   now <- getCurrentTime
                   putResult <- putMinioObjectBytes presigned objectReference bodyBytes
@@ -798,7 +852,8 @@ handleObjectsDownloadBytes jwksCache realmConfig request respond = do
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
-                Right presigned -> do
+                Right stsSession -> do
+                  let presigned = stsSessionPresignedConfig stsSession
                   let DemoObjectsBucket bucket = defaultDemoObjectsBucket
                       objectReference = ObjectRef {objectBucket = bucket, objectKey = keyValue}
                       mimeType = fromMaybe "application/octet-stream" (lookupQueryText "mimeType" query)
@@ -833,7 +888,8 @@ handleObjectsList jwksCache realmConfig request respond = do
       case presignedResult of
         Left configError ->
           respond (textResponse status503 ("object storage config missing: " <> configError))
-        Right presigned -> do
+        Right stsSession -> do
+          let presigned = stsSessionPresignedConfig stsSession
           listResult <- try @SomeException (listMinioUserObjectKeys presigned userId)
           case listResult of
             Left err ->
@@ -870,7 +926,8 @@ handleObjectsDelete jwksCache realmConfig request respond = do
               case presignedResult of
                 Left configError ->
                   respond (textResponse status503 ("object storage config missing: " <> configError))
-                Right presigned -> do
+                Right stsSession -> do
+                  let presigned = stsSessionPresignedConfig stsSession
                   deleteResult <- try @SomeException (deleteMinioObject presigned keyValue)
                   case deleteResult of
                     Left err ->
@@ -1222,7 +1279,20 @@ loadInternalMinioPresignedConfig =
 -- returns the shared root-credential config unchanged, preserving the validated
 -- Phase 7 object path; Wave Q validated the default-on scoped path and its live
 -- cross-user IAM denial.
-loadUserScopedMinioPresignedConfig :: UserId -> IO (Either String PresignedUrlConfig)
+-- | Sprint 9.10 (managed-state-transition doctrine) — the per-user MinIO STS
+-- session as typed evidence. The constructor is not exported; the only mint is
+-- 'loadUserScopedMinioPresignedConfig', so an 'StsSession' value witnesses that
+-- the per-user scoped credential was really established (an IAM-scoped STS
+-- credential when STS is on, or the root config when it is opted out). The
+-- scoped credential is carried inside the evidence rather than as a bare mutable
+-- token, and object-proxy operations read it through 'stsSessionPresignedConfig'.
+newtype StsSession = StsSession PresignedUrlConfig
+
+-- | Read the scoped presigned config held by the STS session evidence.
+stsSessionPresignedConfig :: StsSession -> PresignedUrlConfig
+stsSessionPresignedConfig (StsSession config) = config
+
+loadUserScopedMinioPresignedConfig :: UserId -> IO (Either String StsSession)
 loadUserScopedMinioPresignedConfig userId = do
   rootResult <- loadInternalMinioPresignedConfig
   case rootResult of
@@ -1235,8 +1305,8 @@ loadUserScopedMinioPresignedConfig userId = do
               (ClusterConfig.minioStsPerUser . ClusterConfig.clusterMinio)
               maybeClusterConfig
       if not stsEnabled
-        then pure (Right rootConfig)
-        else mintScopedPresignedConfig rootConfig userId
+        then pure (Right (StsSession rootConfig))
+        else fmap (fmap StsSession) (mintScopedPresignedConfig rootConfig userId)
 
 -- | The lifetime of a per-user scoped MinIO credential. Comfortably longer
 -- than a single object operation, short enough that a leaked scoped credential

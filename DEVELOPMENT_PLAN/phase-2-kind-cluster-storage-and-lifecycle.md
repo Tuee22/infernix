@@ -604,9 +604,12 @@ Managed-State-Transition Doctrine work; its cohort full-suite sign-off is the re
 
 ## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Active]
 
-**Status**: Active — slice 1 (fail-closed recorded-state decode) code-side closed 2026-07-16; the typed `ClusterLifecycle` machine, versioned aeson persistence, and lease-gated teardown remain
-**Code-side closure**: cabal build all, cabal test infernix-unit, cabal test
-infernix-haskell-style, infernix lint docs, and poetry run check-code for any Python/native change
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (typed `ClusterLifecycle` aeson round-trip, unknown-version fail-closed,
+and the Apple host-worker state round-trip through the new codec all pass), and
+`cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
+No Python/native change, so `poetry run check-code` does not apply.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 1.16
@@ -642,14 +645,25 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Remaining Work
 
-- slice 1 landed 2026-07-16: `loadClusterState` (`src/Infernix/Cluster.hs`) fails closed via the new
-  `ClusterStateDecodeFailure` (`src/Infernix/Error.hs`) — a present-but-undecodable
-  `cluster-state.state` is a loud error instead of a silent "no cluster" that skipped retained-state
-  replay. Validated with `cabal build all`, `cabal test infernix-unit`, and
-  `cabal test infernix-haskell-style`
-- remaining slices: the typed `ClusterLifecycle` closed sum replacing `clusterPresent::Bool` +
-  `lifecyclePhase::String`, the versioned aeson persistence replacing `Show`/`Read`, and the
-  lease-gated teardown (quiesce → scrub → delete) consuming a `WriterQuiesced` lease
+- code-side closed 2026-07-16. Landed this sprint:
+  - the typed `ClusterLifecycle` closed sum in `src/Infernix/Types.hs`
+    (`ClusterAbsent` / `ClusterProvisioning` / `ClusterActivating` / `ClusterReady` /
+    `ClusterTearingDown`) carrying a consumed, resumable `LifecyclePhase` tagged by a closed
+    `LifecycleTransition`; it replaces the `clusterPresent::Bool` field, with `clusterPresent` and
+    `lifecycleProgress` retained as backward-compatible projection functions so readers are unchanged
+    (the vestigial `LifecycleProgress` type and the projection accessors are retired by
+    [Sprint 7.29](phase-7-demo-app-durable-context.md))
+  - fail-closed versioned aeson persistence: `writeClusterStateFile` / `readClusterStateFile` plus a
+    `VersionedClusterState` version gate in `src/Infernix/Storage.hs` retire the `Show`/`Read`
+    serialization path (`writeStateFile` / `readStateFileMaybe` removed); `loadClusterState`
+    (`src/Infernix/Cluster.hs`) and `loadWorkerClusterState` (`src/Infernix/Runtime/Worker.hs`) both
+    read through it, and an unknown on-disk version fails closed with `ClusterStateDecodeFailure`
+  - lease-gated teardown: `WriterQuiesced` (built on the Sprint 1.16 `Infernix.Evidence.Lease`
+    kernel) witnesses that the Kind cluster is deleted before the retained-state scrub runs;
+    `scrubRetainedStateUnderLease` requires the lease, so the teardown scrub against a live writer is
+    not a constructible term, and `clusterDown` runs the quiesce → scrub → settle ordering
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  and `infernix lint docs`
 - the apple-silicon plus linux-cpu cohort full-suite sign-off is pending; the owning wave is TBD
 
 ---

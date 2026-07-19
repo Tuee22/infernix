@@ -513,12 +513,14 @@ None.
 
 ---
 
-## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Planned]
+## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Active]
 
-**Status**: Planned
-**Code-side closure**: `cabal build all`, `cabal test infernix-unit`,
-`cabal test infernix-haskell-style`, `infernix lint docs`, and — for the native/Python surface if
-touched — `poetry run check-code`; all machine-independent.
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new escape-token check is
+clean on the tree and was verified to fail on a reintroduced `unsafeCoerce` / `unsafePerformIO` in
+an evidence module), `infernix lint docs`, and `infernix docs check` all green on the apple-silicon
+lane. No native/Python change in this sprint, so `poetry run check-code` does not apply.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
@@ -548,12 +550,17 @@ generalizes the results-side realness contract to state transitions and is canon
 
 ### Validation
 
-- `cabal build all`, `cabal test infernix-unit`, and `cabal test infernix-haskell-style` pass on
-  both the apple-silicon and linux-cpu lanes, with the new escape-token check failing on a
-  reintroduced `unsafeCoerce` / `unsafePerformIO`
-- `infernix lint docs` passes on both lanes, confirming the doctrine doc's metadata, links, and
-  `requiredDocs` registration
-- `poetry run check-code` passes on both lanes if the native/Python surface is touched
+- code-side closed 2026-07-16 (apple-silicon lane): `cabal build all` (`-Wall -Werror`),
+  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` all pass. The new
+  `escapeTokenViolations` check in `src/Infernix/Lint/HaskellStyle.hs` is clean on the tree and was
+  verified to fail with the doctrine diagnostic on a reintroduced `unsafeCoerce` / `unsafePerformIO`
+  token injected into an evidence-kernel module (reverted after the negative-test confirmation)
+- `infernix lint docs` and `infernix docs check` pass, confirming the doctrine doc's metadata,
+  links, and `requiredDocs` registration (the doc was authored and registered in
+  `src/Infernix/Lint/Docs.hs` `requiredDocs` and `documents/README.md` on 2026-07-15; the
+  escape-token lint is the code delta that lands this sprint)
+- `poetry run check-code` is not applicable — no native/Python surface changed
+- the linux-cpu lane rerun of the code-side gates rides the pending cohort wave
 
 ### Remaining Work
 
@@ -564,7 +571,9 @@ generalizes the results-side realness contract to state transitions and is canon
 
 ## Remaining Work
 
-Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Planned; its
+Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Active — code-side closed
+2026-07-16 (doctrine doc + `requiredDocs`/`documents/README.md` registration authored 2026-07-15;
+the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16). Its
 apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the

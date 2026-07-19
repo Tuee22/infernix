@@ -1914,13 +1914,14 @@ None.
 
 ---
 
-## Sprint 4.28: Evidence in Runtime and Engines [Planned]
+## Sprint 4.28: Evidence in Runtime and Engines [Active]
 
-**Status**: Planned
-**Code-side closure**: pending — the machine-independent gate set (`cabal build all`,
-`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
-`poetry run check-code` for the native-runner change) proves the typed evidence, capability gates,
-and native-runner environment; producing real bounded-probe output still requires cohort hardware
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style` (realness lint clean on the touched
+`Engines/AppleSilicon.hs`), `infernix lint docs`, and `poetry run check-code` (`native-runners`
+realness guard + `adapters` black/ruff/mypy) all green on the apple-silicon lane. Producing real
+bounded-probe output against a live MinIO still requires cohort hardware.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `python/native-runners/apple_native_runner.py`
 **Blocked by**: Sprint 1.16, 3.14
@@ -1954,8 +1955,31 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Remaining Work
 
+- code-side closed 2026-07-16. Landed this sprint (in `src/Infernix/Runtime/Pulsar.hs`,
+  `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/AppleSilicon.hs`,
+  `python/native-runners/apple_native_runner.py`):
+  - the `.ready` sentinel commit is capability-gated on a `PayloadVerified` witness. The opaque
+    witness (constructor unexported) is minted only by a real bounded MinIO HEAD probe
+    (`verifyUploadedPayload`) for downloaded payloads or the package-backed recognition probe
+    (`packageBackedPayloadVerified`); `commitReadySentinel` requires it, closing the previously
+    unconditional package-backed sentinel write
+  - `awaitModelBootstrapReady` returns typed `ModelBootstrapReady` evidence minted from a real
+    matching ready event; `waitForModelBootstrapReady` is now the derived boolean wrapper
+  - native runners receive a real environment carrying `HOME`/`TMPDIR`: `workerProcessEnvironment`
+    is built from the typed `Infernix.Cluster.Subprocess.SubprocessEnv` (the previous empty
+    `env = Just []`); the Apple setup spawn routes through the same typed env; the Apple payload
+    smoke and the Python native-runner child spawns (`_native_runner_child_env`) carry `HOME`/`TMPDIR`
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `poetry run check-code`. Apple cohort validation
+  (2026-07-18) additionally caught that the `_native_runner_child_env` docstring contained the literal
+  `os.environ`, which the `infernix lint files` text scanner rejects; the docstring was reworded to
+  "the process environment" (the helper itself never reads it). The native-runner `HOME`/`TMPDIR`
+  change is proven live: real Apple inference on the native-engine models (`llm-tinyllama-gguf`
+  llama.cpp, `llm-qwen15-mlx` MLX, `speech-whisper-small` whisper.cpp, `speech-faster-whisper-ct2`
+  CTranslate2) completes end-to-end
 - the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite proof of
-  the bounded-probe witness and native-runner environment, owning wave TBD, is still pending
+  the bounded-probe witness and native-runner environment against live MinIO, owning wave TBD, is
+  still pending
 
 ---
 

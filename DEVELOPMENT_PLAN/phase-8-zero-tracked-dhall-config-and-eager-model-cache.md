@@ -267,12 +267,13 @@ Make the test harness own the runtime config for the duration of a run.
 
 None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
-## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Planned]
+## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Active]
 
-**Status**: Planned
-**Code-side closure**: the machine-independent gates that prove it — `cabal build all`,
-`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and (for the
-native/Python change, if any) `poetry run check-code`.
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (typed warm-cache outcome consumption and the port-file fail-closed
+assertions pass), `cabal test infernix-haskell-style`, and `infernix lint docs` all green on the
+apple-silicon lane. No native/Python change, so `poetry run check-code` does not apply.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 3.14
@@ -309,6 +310,21 @@ to this phase's `warm-model-cache` barrier and config-side persisted state.
 
 ### Remaining Work
 
+- code-side closed 2026-07-16. Landed this sprint:
+  - `waitForEagerModelCacheReady` (`src/Infernix/Runtime/Pulsar.hs`) returns a typed
+    `WarmModelCacheOutcome` — `WarmModelCacheAllStaged` carries an opaque `WarmModelCacheReady`
+    witness minted only when every configured model's `.ready` sentinel was observed, while
+    `WarmModelCacheStillPending` carries the still-unstaged ids — generalizing the previous bare
+    pending list
+  - `src/Infernix/Cluster.hs` (`runWarmModelCacheBarrier`) consumes the typed evidence: the
+    "all staged" declaration is gated on the `WarmModelCacheAllStaged` witness, and a pending outcome
+    logs the non-blocking warning
+  - the config-side port state files (`readPortFileMaybe` in `src/Infernix/Storage.hs`) read
+    fail-closed — absent/blank is `Nothing`, but a present-but-undecodable file is a loud error rather
+    than a silent `Nothing` that would re-choose a port; the authoritative config-side cluster-state
+    file already uses the Sprint 2.14 fail-closed versioned aeson codec
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  and `infernix lint docs`
 - the cohort full-suite sign-off is the residual: pending apple-silicon plus linux-cpu full-suite,
   owning wave TBD
 

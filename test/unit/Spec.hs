@@ -163,6 +163,7 @@ import Infernix.Runtime.Worker
     workerRequestModelCacheConfig,
   )
 import Infernix.Service (serviceDemoConfigPath)
+import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -1495,7 +1496,7 @@ main = do
         "worker hydration treats package-backed Audiveris as installed state, not a payload download"
       let hostWorkerState =
             ClusterState
-              True
+              ClusterReady
               19090
               30002
               []
@@ -1507,11 +1508,10 @@ main = do
               (Config.publishedConfigMapCatalogPath paths)
               (Config.publishedConfigMapManifestPath paths)
               "/opt/build/infernix-substrate.dhall"
-              Nothing
               resultNow
           hostClusterStatePath = runtimeRoot paths </> "cluster-state.state"
           hostSecretsManifestPath = runtimeRoot paths </> "secrets" </> "InfernixSecrets.dhall"
-      writeFile hostClusterStatePath (show hostWorkerState)
+      writeClusterStateFile hostClusterStatePath hostWorkerState
       -- Phase 8 Sprint 8.3: host secrets are created explicitly by
       -- `infernix init` (`materializeHostSecrets`), not lazily by the worker.
       _ <- materializeHostSecrets paths
@@ -1611,7 +1611,7 @@ main = do
     linuxCpuFinalNow <- getCurrentTime
     let linuxCpuFinalState =
           ClusterState
-            { clusterPresent = True,
+            { clusterLifecycle = ClusterReady,
               edgePort = 30090,
               harborPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
@@ -1623,7 +1623,6 @@ main = do
               publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxCpuOuterPaths,
               publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath linuxCpuOuterPaths,
               mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
-              lifecycleProgress = Nothing,
               updatedAt = linuxCpuFinalNow
             }
         linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" FinalPhase []
@@ -1707,7 +1706,7 @@ main = do
     linuxGpuFinalNow <- getCurrentTime
     let linuxGpuFinalState =
           ClusterState
-            { clusterPresent = True,
+            { clusterLifecycle = ClusterReady,
               edgePort = 30090,
               harborPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
@@ -1719,7 +1718,6 @@ main = do
               publishedDemoConfigPath = Config.publishedConfigMapCatalogPath linuxGpuOuterPaths,
               publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath linuxGpuOuterPaths,
               mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
-              lifecycleProgress = Nothing,
               updatedAt = linuxGpuFinalNow
             }
         linuxGpuFinalValues =
@@ -1993,6 +1991,17 @@ main = do
   assert
     (isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv subprocessEnv)))
     "rendered subprocess env carries TMPDIR"
+  -- Sprint 3.14: the caller-supplied-search-path builder keeps the typed
+  -- HOME/TMPDIR invariant while routing an explicit cluster tool PATH.
+  seamEnv <- Subprocess.clusterSubprocessEnvWithSearchPath subprocessPaths "/opt/homebrew/bin:/usr/bin"
+  assert
+    (lookup "PATH" (Subprocess.renderSubprocessEnv seamEnv) == Just "/opt/homebrew/bin:/usr/bin")
+    "clusterSubprocessEnvWithSearchPath uses the caller-supplied search path"
+  assert
+    ( lookup "HOME" (Subprocess.renderSubprocessEnv seamEnv) == Just subprocessRoot
+        && isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv seamEnv))
+    )
+    "clusterSubprocessEnvWithSearchPath still carries HOME/TMPDIR from the host manifest"
   echoOutcome <-
     Subprocess.runBoundedCommand
       (Subprocess.Timeout 30000000)
@@ -2039,6 +2048,75 @@ main = do
   assert
     (case corruptResult of Left _ -> True; Right _ -> False)
     "loadClusterState fails closed on a present but undecodable state file"
+  -- Sprint 2.14: the typed ClusterLifecycle round-trips through the versioned
+  -- aeson codec, and an unknown on-disk format version fails closed.
+  mstNow <- getCurrentTime
+  let mstState =
+        ClusterState
+          { clusterLifecycle =
+              ClusterActivating
+                LifecyclePhase
+                  { lifecyclePhaseTransition = LifecycleBringUp,
+                    lifecyclePhaseName = "prepare-kind-cluster",
+                    lifecyclePhaseDetail = "creating or reusing the Kind cluster",
+                    lifecyclePhaseHeartbeatAt = mstNow
+                  },
+            edgePort = 30090,
+            harborPort = 30002,
+            routes = [RouteInfo "/" "demo web UI"],
+            storageClass = "infernix-manual",
+            claims = [],
+            clusterRuntimeMode = LinuxCpu,
+            kubeconfigPath = "/tmp/kube",
+            generatedDemoConfigPath = "/tmp/gen",
+            publishedDemoConfigPath = "/tmp/pub",
+            publishedConfigMapManifestPath = "/tmp/manifest",
+            mountedDemoConfigPath = "/opt/build/infernix-substrate.dhall",
+            updatedAt = mstNow
+          }
+  writeClusterStateFile clusterStateFile mstState
+  roundTripState <- loadClusterState clusterStatePaths
+  assert
+    (fmap clusterPresent roundTripState == Just True)
+    "clusterPresent projects True for a present activating lifecycle round-tripped through aeson"
+  assert
+    ((lifecyclePhaseTransition <$> (roundTripState >>= lifecyclePhaseOf)) == Just LifecycleBringUp)
+    "lifecyclePhaseOf projects the typed cluster-up transition after an aeson round-trip"
+  assert
+    ((lifecyclePhaseName <$> (roundTripState >>= lifecyclePhaseOf)) == Just "prepare-kind-cluster")
+    "lifecyclePhaseOf projects the typed phase name after an aeson round-trip"
+  writeFile clusterStateFile "{\"version\":999,\"clusterState\":{}}"
+  unknownVersionResult <- try @SomeException (loadClusterState clusterStatePaths)
+  assert
+    (case unknownVersionResult of Left _ -> True; Right _ -> False)
+    "loadClusterState fails closed on an unknown cluster-state format version"
+  -- Sprint 5.12: the client model-bootstrap deadline is single-sourced from the
+  -- server ceiling and can never be shorter than it (a negative margin clamps).
+  assert
+    (Contracts.clientModelBootstrapDeadlineSeconds 0 == Contracts.modelBootstrapReadyServerCeilingSeconds)
+    "clientModelBootstrapDeadlineSeconds with no margin equals the server ceiling"
+  assert
+    (Contracts.clientModelBootstrapDeadlineSeconds (-1000) >= Contracts.modelBootstrapReadyServerCeilingSeconds)
+    "a negative margin cannot make the client model-bootstrap deadline shorter than the server ceiling"
+  assert
+    ( Contracts.clientModelBootstrapDeadlineSeconds Contracts.clientModelBootstrapDeadlineMarginSeconds
+        > Contracts.modelBootstrapReadyServerCeilingSeconds
+    )
+    "the client model-bootstrap deadline includes a positive margin over the server ceiling"
+  -- Sprint 8.7: the config-side port state files read fail-closed — absent is
+  -- Nothing, valid decodes, and a present-but-undecodable file is a loud error.
+  let edgePortFile = edgePortPath clusterStatePaths
+  removePathForcibly edgePortFile
+  absentPort <- readEdgePortMaybe clusterStatePaths
+  assert (isNothing absentPort) "readEdgePortMaybe treats an absent port file as Nothing"
+  writeFile edgePortFile "9137"
+  validPort <- readEdgePortMaybe clusterStatePaths
+  assert (validPort == Just 9137) "readEdgePortMaybe decodes a valid recorded port"
+  writeFile edgePortFile "not-a-port"
+  corruptPort <- try @SomeException (readEdgePortMaybe clusterStatePaths)
+  assert
+    (case corruptPort of Left _ -> True; Right _ -> False)
+    "readEdgePortMaybe fails closed on a present but undecodable port file"
   putStrLn "unit tests passed"
 
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The

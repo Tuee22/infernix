@@ -54,6 +54,10 @@ module Infernix.Web.Contracts
     renderPursContractFooter,
     taggedSumOptions,
     inferenceErrorFromRuntime,
+    -- Sprint 5.12 shared model-bootstrap readiness deadline
+    modelBootstrapReadyServerCeilingSeconds,
+    clientModelBootstrapDeadlineSeconds,
+    clientModelBootstrapDeadlineMarginSeconds,
   )
 where
 
@@ -645,6 +649,28 @@ contractSumTypes =
     let proxy = Proxy :: Proxy ArtifactDownloadGrant in equal proxy (mkSumType proxy)
   ]
 
+-- | Sprint 5.12 (managed-state-transition doctrine) — the single source of the
+-- model-bootstrap readiness deadline, shared by the server-side wait
+-- ('Infernix.Runtime.Pulsar.modelBootstrapReadyWaitMaxSeconds') and the
+-- generated browser contract (via 'renderPursContractFooter'). The server
+-- ceiling is canonical; a client deadline is derived from it plus a
+-- non-negative margin, so a client that waits less than the server can take is
+-- not expressible.
+modelBootstrapReadyServerCeilingSeconds :: Int
+modelBootstrapReadyServerCeilingSeconds = 3600
+
+-- | The client-side model-bootstrap deadline: the server ceiling plus a
+-- non-negative margin. The @max 0@ makes a below-ceiling client deadline
+-- unconstructible.
+clientModelBootstrapDeadlineSeconds :: Int -> Int
+clientModelBootstrapDeadlineSeconds marginSeconds =
+  modelBootstrapReadyServerCeilingSeconds + max 0 marginSeconds
+
+-- | The margin the browser and the Playwright executor add over the server
+-- ceiling when deriving their client deadline.
+clientModelBootstrapDeadlineMarginSeconds :: Int
+clientModelBootstrapDeadlineMarginSeconds = 900
+
 renderPursContractFooter :: Types.RuntimeMode -> String
 renderPursContractFooter activeRuntimeMode =
   let contractEngines = map engineBindingFromInternal (Models.engineBindingsForMode activeRuntimeMode)
@@ -659,6 +685,12 @@ renderPursContractFooter activeRuntimeMode =
             "",
             "maxInlineOutputLength :: Int",
             "maxInlineOutputLength = 80",
+            "",
+            "modelBootstrapReadyServerCeilingSeconds :: Int",
+            "modelBootstrapReadyServerCeilingSeconds = " <> show modelBootstrapReadyServerCeilingSeconds,
+            "",
+            "clientModelBootstrapDeadlineSeconds :: Int",
+            "clientModelBootstrapDeadlineSeconds = " <> show (clientModelBootstrapDeadlineSeconds clientModelBootstrapDeadlineMarginSeconds),
             "",
             "requestTopics :: Array String",
             "requestTopics = " <> renderPursStringArray (map Text.unpack (Models.requestTopicsForMode activeRuntimeMode)),

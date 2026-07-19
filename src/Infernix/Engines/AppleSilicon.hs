@@ -30,6 +30,7 @@ import Data.List (isInfixOf, nubBy)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models (engineBindingsForMode)
@@ -90,11 +91,12 @@ runAppleSetupStep paths step =
                 "--install-root",
                 engineInstallRoot
               ]
+        appleSetupEnv <- Subprocess.renderSubprocessEnv <$> Subprocess.clusterSubprocessEnv paths
         (exitCode, _, stderrOutput) <-
           readCreateProcessWithExitCode
             ( (proc poetryExecutable setupArgs)
                 { cwd = Just projectDirectory,
-                  env = Just appleSetupProcessEnvironment
+                  env = Just appleSetupEnv
                 }
             )
             ""
@@ -114,8 +116,18 @@ runAppleSetupStep paths step =
 -- inherits the operator process environment. Poetry virtualenv
 -- placement is owned by @python/poetry.toml@, while the adapter
 -- install root is passed as @--install-root@.
-appleSetupProcessEnvironment :: [(String, String)]
-appleSetupProcessEnvironment = []
+-- | Sprint 4.28 (managed-state-transition doctrine): the payload smoke command
+-- runs with a real environment carrying @HOME@ and @TMPDIR@ (rooted at the
+-- writable artifact directory) plus a minimal absolute @PATH@, rather than the
+-- previous empty @env = Just []@.
+appleSmokeProcessEnvironment :: FilePath -> [(String, String)]
+appleSmokeProcessEnvironment root =
+  [ ("HOME", root),
+    ("TMPDIR", root </> "tmp"),
+    ("PATH", "/usr/local/bin:/usr/bin:/bin"),
+    ("LANG", "C.UTF-8"),
+    ("LC_ALL", "C.UTF-8")
+  ]
 
 -- | Phase 1 Sprint 1.14 — one allowlisted Apple host engine artifact
 -- described by a typed manifest. The materialization lane is explicitly
@@ -453,7 +465,14 @@ appleNativePythonRequirements adapterId =
         "soundfile>=0.12"
       ]
     "coreml-native" ->
-      [ "basic-pitch>=0.4.0",
+      -- Pin setuptools < 81: setuptools 81 removed the legacy `pkg_resources`
+      -- module, which `basic-pitch`'s transitive dependency `resampy` (0.4.2)
+      -- imports at load time (`resampy/filters.py`). Without this pin a fresh
+      -- resolve pulls setuptools >= 81 and every basic-pitch invocation crashes
+      -- with `ModuleNotFoundError: No module named 'pkg_resources'`. resampy's own
+      -- deprecation warning recommends exactly this bound ("pin to Setuptools<81").
+      [ "setuptools<81",
+        "basic-pitch>=0.4.0",
         "git+https://github.com/apple/ml-stable-diffusion.git"
       ]
     _ -> []
@@ -572,11 +591,12 @@ runPayloadSmokeCommand root artifact (smokeExecutable, smokeArgs) = do
   smokeExists <- doesFileExist smokePath
   unless smokeExists $
     ioError (userError ("engine artifact smoke command was not written: " <> smokePath))
+  createDirectoryIfMissing True (root </> "tmp")
   (exitCode, stdoutOutput, stderrOutput) <-
     readCreateProcessWithExitCode
       ( (proc smokePath smokeArgs)
           { cwd = Just root,
-            env = Just []
+            env = Just (appleSmokeProcessEnvironment root)
           }
       )
       ""

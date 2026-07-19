@@ -725,12 +725,14 @@ by [Wave M](cohort-validation-waves.md).
 
 ---
 
-## Sprint 3.14: Readiness Kernel and Subprocess-Env Seam [Planned]
+## Sprint 3.14: Readiness Kernel and Subprocess-Env Seam [Active]
 
-**Status**: Planned
-**Code-side closure**: the machine-independent gates that will prove it — `cabal build all`,
-`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and (for any
-Python/native change) `poetry run check-code`
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (the migrated Harbor readiness wait plus the
+`clusterSubprocessEnvWithSearchPath` HOME/TMPDIR + caller-PATH assertions pass), and
+`cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
+No Python/native change, so `poetry run check-code` does not apply.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 1.16
@@ -770,8 +772,22 @@ doctrine to this phase's cluster-lifecycle surface.
 
 ### Remaining Work
 
-- cohort full-suite sign-off is the residual: the apple-silicon plus linux-cpu full-suite cohort gate
-  is pending, with the owning wave still to be assigned
+- code-side closed 2026-07-16. Landed this sprint:
+  - `waitForHarborRegistryOrDirty` (`src/Infernix/Cluster.hs`) is migrated onto the shared
+    `Infernix.Evidence.Readiness` kernel: `awaitReadiness` takes a required `Deadline` (the explicit
+    ~120s bound that was a bare recursion counter) and returns the typed `HarborBootstrapOutcome`
+    projected from the kernel's `Readiness` value via `foldReadiness`, so readiness is evidence a real
+    probe minted rather than a boolean
+  - the subprocess base-env seam is routed through the typed
+    `Infernix.Cluster.Subprocess.SubprocessEnv`: the new `clusterSubprocessEnvWithSearchPath` builder
+    (caller-supplied cluster PATH, required `HOME`/`TMPDIR` from the host manifest) backs
+    `clusterSubprocessBaseEnvIO`, which `runCommandWithInput` and `tryCommand` consume; the ad-hoc
+    `[(String, String)]` base env is retired and the seam now fails closed when the host manifest is
+    absent instead of falling back to an ambient minimal environment
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  and `infernix lint docs`
+- the apple-silicon plus linux-cpu full-suite cohort gate is pending, with the owning wave still to be
+  assigned
 
 ---
 

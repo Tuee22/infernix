@@ -2260,12 +2260,14 @@ None.
 
 ---
 
-## Sprint 6.39: Capability-Gating Lint and Managed-Transition Coverage [Planned]
+## Sprint 6.39: Capability-Gating Lint and Managed-Transition Coverage [Active]
 
-**Status**: Planned
-**Code-side closure**: cabal build all, cabal test infernix-unit, cabal test
-infernix-haskell-style, infernix lint docs, and — for the routed Playwright change —
-poetry run check-code, all exercised machine-independently before any cohort run
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new capability-gating rules are
+clean on the tree and were negative-tested: an injected `rm -rf` and `env = Just []` both fail),
+`infernix lint docs`, and `node --check web/playwright/inference.spec.js` all green on the
+apple-silicon lane. No Python surface changed, so `poetry run check-code` is not applicable.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `web/playwright/inference.spec.js`
 **Blocked by**: Sprint 1.16, 5.12
@@ -2304,6 +2306,20 @@ assume a raw primitive succeeded. Reference the doctrine at
 
 ### Remaining Work
 
+- code-side closed 2026-07-16. Landed this sprint:
+  - capability-gating lint rules in `src/Infernix/Lint/HaskellStyle.hs`: `rawDestructiveViolations`
+    rejects raw `rm -rf` / `rm -fr` and `docker exec ... rm` outside the cluster-lifecycle module
+    (grandfathered for its container-scoped retained-state scrub), and `emptySubprocessEnvViolations`
+    rejects `env = Just []`, requiring a typed `Infernix.Cluster.Subprocess.SubprocessEnv` (which
+    always carries `HOME`/`TMPDIR`). Both were negative-tested (an injected `rm -rf` and
+    `env = Just []` each fail) and are clean on the current tree
+  - routed-Playwright managed-transition coverage in `web/playwright/inference.spec.js`:
+    `waitForTerminalConversationPatchAfter` awaits the real terminal result evidence (the Sprint 5.12
+    readiness path, no rollout proxy) and now explicitly asserts the typed terminal-evidence shape
+    (a decoded result with one of the two typed terminal statuses), so a non-evidence readiness path
+    fails closed
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
 - the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite evidence
   (owning wave TBD) is pending and is the only outstanding closure for this sprint
 

@@ -218,6 +218,24 @@ def _require_output_dir(args: RunnerArgs) -> pathlib.Path:
     return args.output_dir
 
 
+def _native_runner_child_env() -> dict[str, str]:
+    """Sprint 4.28 (managed-state-transition doctrine): give child subprocesses a
+    real environment carrying HOME and TMPDIR, rather than an empty ``env={}``.
+
+    Adapters must not read the process environment (the no-env-vars doctrine), so
+    HOME is a fresh writable temp directory and TMPDIR is the system temp
+    directory that ``tempfile`` already resolves. A minimal absolute PATH lets the
+    child locate standard system tools without inheriting the operator's ambient
+    PATH.
+    """
+    home_dir = tempfile.mkdtemp(prefix="infernix-native-home-")
+    return {
+        "HOME": home_dir,
+        "TMPDIR": tempfile.gettempdir(),
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+    }
+
+
 def _run_subprocess(
     command: list[str],
     *,
@@ -229,7 +247,7 @@ def _run_subprocess(
         result = subprocess.run(
             command,
             cwd=str(cwd) if cwd is not None else None,
-            env={},
+            env=_native_runner_child_env(),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -338,7 +356,7 @@ def _run_basic_pitch_coreml(args: RunnerArgs) -> str:
     _require_executable(basic_pitch_cli)
     result = subprocess.run(
         [str(basic_pitch_cli), str(output_dir), str(input_file)],
-        env={},
+        env=_native_runner_child_env(),
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -606,7 +624,7 @@ def _run_audiveris(args: RunnerArgs) -> str:
                 str(output_dir),
                 str(input_file),
             ],
-            env={"HOME": home},
+            env={"HOME": home, "TMPDIR": home, "PATH": "/usr/local/bin:/usr/bin:/bin"},
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,

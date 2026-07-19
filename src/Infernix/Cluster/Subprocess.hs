@@ -14,6 +14,7 @@ module Infernix.Cluster.Subprocess
     subprocessEnvHome,
     subprocessEnvTmpdir,
     clusterSubprocessEnv,
+    clusterSubprocessEnvWithSearchPath,
     renderSubprocessEnv,
     Timeout (..),
     CommandOutcome (..),
@@ -59,14 +60,19 @@ data SubprocessEnv = SubprocessEnv
 clusterSubprocessEnv :: Paths -> IO SubprocessEnv
 clusterSubprocessEnv paths =
   case pathsHostConfig paths of
-    Nothing ->
-      ioError
-        ( userError
-            ( "clusterSubprocessEnv: host manifest is unavailable; run "
-                <> "`infernix init` to stage ./infernix-host.dhall before "
-                <> "invoking external commands"
-            )
-        )
+    Nothing -> missingManifestError "clusterSubprocessEnv"
+    Just config -> clusterSubprocessEnvWithSearchPath paths (searchPathForHost config)
+
+-- | Build the subprocess environment with a caller-supplied @PATH@ (for callers
+-- that assemble their own tool-directory search path) while still requiring
+-- @HOME@ and @TMPDIR@ from the typed host manifest and the repo-local data root.
+-- Fails closed when the manifest is absent rather than falling back to an
+-- ambient environment, so a subprocess spawned without @HOME@/@TMPDIR@ is
+-- unrepresentable.
+clusterSubprocessEnvWithSearchPath :: Paths -> FilePath -> IO SubprocessEnv
+clusterSubprocessEnvWithSearchPath paths searchPath =
+  case pathsHostConfig paths of
+    Nothing -> missingManifestError "clusterSubprocessEnvWithSearchPath"
     Just config -> do
       let home =
             Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem config))
@@ -74,12 +80,22 @@ clusterSubprocessEnv paths =
       createDirectoryIfMissing True tmpdir
       pure
         SubprocessEnv
-          { subprocessEnvSearchPath = searchPathForHost config,
+          { subprocessEnvSearchPath = searchPath,
             subprocessEnvHome = home,
             subprocessEnvTmpdir = tmpdir,
             subprocessEnvLang = "C.UTF-8",
             subprocessEnvExtra = []
           }
+
+missingManifestError :: String -> IO a
+missingManifestError caller =
+  ioError
+    ( userError
+        ( caller
+            <> ": host manifest is unavailable; run `infernix init` to stage "
+            <> "./infernix-host.dhall before invoking external commands"
+        )
+    )
 
 -- | Compose @PATH@ from the parent directories of the manifest's tool paths
 -- plus the fixed fallback system directories, deduplicated in order.

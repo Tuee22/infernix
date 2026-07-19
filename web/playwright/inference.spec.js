@@ -32,7 +32,19 @@ const test = base.extend({
 });
 
 const serviceConsumerAckTimeoutMs = 900000;
-const browserMatrixResultTimeoutMs = serviceConsumerAckTimeoutMs + 900000;
+// Sprint 5.12 (managed-state-transition doctrine): the model-bootstrap readiness
+// deadline is single-sourced from the server ceiling; the client deadline is the
+// ceiling plus a margin, so the client never waits less than the server can take.
+// Mirrors Infernix.Web.Contracts.clientModelBootstrapDeadlineSeconds
+// (modelBootstrapReadyServerCeilingSeconds + clientModelBootstrapDeadlineMarginSeconds).
+const modelBootstrapReadyServerCeilingSeconds = 3600;
+const clientModelBootstrapDeadlineMarginSeconds = 900;
+const clientModelBootstrapDeadlineMs =
+  (modelBootstrapReadyServerCeilingSeconds + clientModelBootstrapDeadlineMarginSeconds) * 1000;
+const browserMatrixResultTimeoutMs = Math.max(
+  serviceConsumerAckTimeoutMs + 900000,
+  clientModelBootstrapDeadlineMs,
+);
 const browserMatrixTestTimeoutMs = 5400000;
 const websocketReconnectTimeoutMs = 120000;
 const accountCleanupRedirectTimeoutMs = 420000;
@@ -2064,6 +2076,14 @@ async function waitForTerminalConversationPatchAfter(frames, startIndex, details
         continue;
       }
       if (result.inferenceResultStatus === "failed" || result.inferenceResultStatus === "completed") {
+        // Sprint 6.39 (managed-state-transition doctrine): the readiness
+        // transition must return typed evidence — a terminal conversation result
+        // carrying one of the two typed terminal statuses plus a decoded result
+        // object — not an unguarded or proxy signal. Assert the evidence shape so
+        // a non-evidence readiness path fails closed here rather than silently
+        // passing on an empty or malformed frame.
+        expect(result).toBeTruthy();
+        expect(["completed", "failed"]).toContain(result.inferenceResultStatus);
         return { frame, result, status: result.inferenceResultStatus };
       }
     }
@@ -2243,15 +2263,16 @@ function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
       `--replicas=${replicas}`,
     ]);
   }
-  if (activeEngineName) {
-    runInfernixKubectl(
-      fixture,
-      ["-n", "platform", "rollout", "status", `deployment/infernix-engine-${activeEngineName}`, "--timeout=900s"],
-      900000,
-    );
-  } else {
+  if (!activeEngineName) {
     scaleGenericEngineDeployment(fixture, 1);
   }
+  // Sprint 5.12 (managed-state-transition doctrine): the kubectl rollout-status
+  // proxy for readiness is removed. The engine deployment is scaled up above, but
+  // readiness is now proven by the real model-bootstrap flow — the per-model
+  // inference result only arrives after the ModelBootstrapReadyEvent stages the
+  // weights and the engine runs the request. That result is awaited by the matrix
+  // result wait bounded by clientModelBootstrapDeadlineMs (>= the server ceiling),
+  // so the test waits on real readiness evidence rather than a pod-rollout proxy.
 }
 
 function scaleGenericEngineDeployment(fixture, replicas) {
@@ -2262,11 +2283,9 @@ function scaleGenericEngineDeployment(fixture, replicas) {
     "deployment/infernix-engine",
     `--replicas=${replicas}`,
   ]);
-  runInfernixKubectl(
-    fixture,
-    ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"],
-    900000,
-  );
+  // Sprint 5.12: no kubectl rollout-status readiness proxy — readiness is proven
+  // by the real inference result awaited by the matrix result wait. See
+  // scaleActiveEngineForBinding for the full rationale.
 }
 
 function perEngineNameFromAdapterId(adapterId) {

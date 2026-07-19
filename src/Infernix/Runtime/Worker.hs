@@ -33,14 +33,17 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (defaultTimeLocale, formatTime, getCurrentTime)
 import Data.Word (Word64)
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths (..))
+import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
 import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
+import Infernix.Storage (readClusterStateFile)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
@@ -62,7 +65,6 @@ import System.Process
     shell,
     waitForProcess,
   )
-import Text.Read (readMaybe)
 
 -- | Phase 4 Sprint 4.13 — engine-command override lookup keyed by the
 -- engine binding's adapter id. The supported source is the
@@ -1012,8 +1014,17 @@ workerInvocationCwd invocation =
 -- Phase 7 Sprint 7.17: Poetry virtualenv placement is owned by
 -- @python/poetry.toml@. The worker no longer injects Poetry or
 -- adapter configuration through the process environment.
+
+-- | Sprint 4.28 (managed-state-transition doctrine): build the native-runner /
+-- adapter process environment as a typed 'Subprocess.SubprocessEnv' so it always
+-- carries @HOME@ and @TMPDIR@ (and a real @PATH@), rather than the previous empty
+-- @env = Just []@ that spawned native runners with no environment. Caller
+-- @overrides@ are appended so they take precedence. Fails closed when the host
+-- manifest is absent instead of spawning with a minimal/empty environment.
 workerProcessEnvironment :: Paths -> [(String, String)] -> IO [(String, String)]
-workerProcessEnvironment _paths = pure
+workerProcessEnvironment paths overrides = do
+  baseEnv <- Subprocess.clusterSubprocessEnv paths
+  pure (Subprocess.renderSubprocessEnv baseEnv <> overrides)
 
 describeInvocation :: WorkerInvocation -> String
 describeInvocation invocation =
@@ -1157,19 +1168,20 @@ loadHostWorkerModelCacheConfig paths runtimeMode = do
               }
         )
 
+-- | Sprint 2.14: read the recorded cluster state through the fail-closed
+-- versioned aeson codec. A present-but-undecodable state file is a loud
+-- 'ClusterStateDecodeFailure' rather than a silent "no cluster"; an absent,
+-- blank, mismatched-mode, or not-yet-present state resolves to 'Nothing'.
 loadWorkerClusterState :: Paths -> RuntimeMode -> IO (Maybe ClusterState)
 loadWorkerClusterState paths runtimeMode = do
   let statePath = runtimeRoot paths </> "cluster-state.state"
-  stateExists <- doesFileExist statePath
-  if not stateExists
-    then pure Nothing
-    else do
-      rawState <- readFile statePath
-      case readMaybe rawState of
-        Just state
-          | clusterPresent state && clusterRuntimeMode state == runtimeMode ->
-              pure (Just state)
-        _ -> pure Nothing
+  result <- readClusterStateFile statePath
+  case result of
+    Left detail -> throwIO (ClusterStateDecodeFailure statePath detail)
+    Right (Just state)
+      | clusterPresent state && clusterRuntimeMode state == runtimeMode ->
+          pure (Just state)
+    Right _ -> pure Nothing
 
 -- | Phase 8 Sprint 8.3: load the host worker secrets, failing fast when the
 -- manifest is absent. Creation is owned by `infernix init`

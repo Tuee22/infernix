@@ -579,27 +579,30 @@ inferenceDispatchModeFor state
 
 lifecycleStatusFor :: ClusterState -> String
 lifecycleStatusFor state =
-  case lifecycleProgress state of
+  case lifecyclePhaseOf state of
     Just _ -> "in-progress"
     Nothing -> "idle"
 
+-- | Sprint 7.29: the status JSON is projected from the typed 'LifecyclePhase'
+-- (the retired stringly 'LifecycleProgress' is gone); the emitted field names and
+-- shape are unchanged for the browser/status surface.
 lifecycleProgressJsonFields :: ClusterState -> String
 lifecycleProgressJsonFields state =
-  case lifecycleProgress state of
+  case lifecyclePhaseOf state of
     Nothing -> ""
-    Just progress ->
+    Just phase ->
       ",\n"
         <> "  \"lifecycleAction\": "
-        <> show (lifecycleAction progress)
+        <> show (lifecycleTransitionAction (lifecyclePhaseTransition phase))
         <> ",\n"
         <> "  \"lifecyclePhase\": "
-        <> show (lifecyclePhase progress)
+        <> show (lifecyclePhaseName phase)
         <> ",\n"
         <> "  \"lifecycleDetail\": "
-        <> show (lifecycleDetail progress)
+        <> show (lifecyclePhaseDetail phase)
         <> ",\n"
         <> "  \"lifecycleHeartbeatAt\": "
-        <> show (show (lifecycleHeartbeatAt progress))
+        <> show (show (lifecyclePhaseHeartbeatAt phase))
 
 disabledApiUpstream :: ApiUpstream
 disabledApiUpstream =

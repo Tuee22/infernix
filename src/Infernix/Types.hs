@@ -4,6 +4,7 @@ module Infernix.Types
   ( ApiUpstream (..),
     ApiUpstreamMode (..),
     CacheManifest (..),
+    ClusterLifecycle (..),
     ClusterState (..),
     ConsumerSubscriptionType (..),
     DaemonConfig (..),
@@ -18,7 +19,8 @@ module Infernix.Types
     InferenceMemoryResource (..),
     InferenceRequest (..),
     InferenceResult (..),
-    LifecycleProgress (..),
+    LifecyclePhase (..),
+    LifecycleTransition (..),
     ModelDescriptor (..),
     PersistentClaim (..),
     PublicationUpstream (..),
@@ -33,7 +35,12 @@ module Infernix.Types
     allRuntimeModes,
     apiUpstreamModeId,
     admitModelMemory,
+    clusterLifecyclePresent,
+    clusterPresent,
     daemonRoleId,
+    lifecyclePhaseOf,
+    lifecycleTransitionAction,
+    parseLifecycleTransition,
     defaultModelBootstrapTopic,
     defaultModelsBucket,
     inferenceMemoryBudgetAvailableMib,
@@ -204,16 +211,114 @@ data PersistentClaim = PersistentClaim
   }
   deriving (Eq, Read, Show)
 
-data LifecycleProgress = LifecycleProgress
-  { lifecycleAction :: String,
-    lifecyclePhase :: String,
-    lifecycleDetail :: String,
-    lifecycleHeartbeatAt :: UTCTime
+-- | Sprint 2.14 (managed-state-transition doctrine) — which transition owns an
+-- in-progress lifecycle phase. Replaces the free-form @lifecycleAction :: String@
+-- ("cluster-up" / "cluster-down") with a closed tag.
+data LifecycleTransition
+  = LifecycleBringUp
+  | LifecycleTearDown
+  deriving (Eq, Read, Show)
+
+lifecycleTransitionAction :: LifecycleTransition -> String
+lifecycleTransitionAction LifecycleBringUp = "cluster-up"
+lifecycleTransitionAction LifecycleTearDown = "cluster-down"
+
+parseLifecycleTransition :: String -> Maybe LifecycleTransition
+parseLifecycleTransition rawValue = case rawValue of
+  "cluster-up" -> Just LifecycleBringUp
+  "cluster-down" -> Just LifecycleTearDown
+  _ -> Nothing
+
+instance ToJSON LifecycleTransition where
+  toJSON = String . Text.pack . lifecycleTransitionAction
+
+instance FromJSON LifecycleTransition where
+  parseJSON = withText "LifecycleTransition" $ \rawValue ->
+    case parseLifecycleTransition (Text.unpack rawValue) of
+      Just transition -> pure transition
+      Nothing -> fail ("Unsupported lifecycle transition: " <> Text.unpack rawValue)
+
+-- | Sprint 2.14 — a typed, resumable lifecycle phase. The phase name and detail
+-- remain data, but they are reachable only inside an in-progress constructor of
+-- 'ClusterLifecycle', tagged by the owning 'LifecycleTransition'.
+data LifecyclePhase = LifecyclePhase
+  { lifecyclePhaseTransition :: LifecycleTransition,
+    lifecyclePhaseName :: String,
+    lifecyclePhaseDetail :: String,
+    lifecyclePhaseHeartbeatAt :: UTCTime
   }
   deriving (Eq, Read, Show)
 
+instance ToJSON LifecyclePhase where
+  toJSON phaseValue =
+    object
+      [ "transition" .= lifecyclePhaseTransition phaseValue,
+        "name" .= lifecyclePhaseName phaseValue,
+        "detail" .= lifecyclePhaseDetail phaseValue,
+        "heartbeatAt" .= lifecyclePhaseHeartbeatAt phaseValue
+      ]
+
+instance FromJSON LifecyclePhase where
+  parseJSON = withObject "LifecyclePhase" $ \value ->
+    LifecyclePhase
+      <$> value .: "transition"
+      <*> value .: "name"
+      <*> value .: "detail"
+      <*> value .: "heartbeatAt"
+
+-- | Sprint 2.14 — the typed cluster lifecycle machine. A closed sum over the
+-- mutually exclusive lifecycle positions; the in-progress positions carry a
+-- consumed, resumable 'LifecyclePhase'. It replaces the
+-- (@clusterPresent :: Bool@, @lifecyclePhase :: String@) pair, which could
+-- encode contradictory ambient states.
+data ClusterLifecycle
+  = -- | no cluster is recorded (never provisioned, or teardown complete).
+    ClusterAbsent
+  | -- | bringing a cluster up before the Kind API is confirmed reachable.
+    ClusterProvisioning LifecyclePhase
+  | -- | the Kind cluster is present; bring-up phases are still finishing.
+    ClusterActivating LifecyclePhase
+  | -- | the cluster is present and idle.
+    ClusterReady
+  | -- | the cluster is present and being torn down.
+    ClusterTearingDown LifecyclePhase
+  deriving (Eq, Read, Show)
+
+instance ToJSON ClusterLifecycle where
+  toJSON lifecycle = case lifecycle of
+    ClusterAbsent -> object ["position" .= ("absent" :: Text)]
+    ClusterReady -> object ["position" .= ("ready" :: Text)]
+    ClusterProvisioning phaseValue ->
+      object ["position" .= ("provisioning" :: Text), "phase" .= phaseValue]
+    ClusterActivating phaseValue ->
+      object ["position" .= ("activating" :: Text), "phase" .= phaseValue]
+    ClusterTearingDown phaseValue ->
+      object ["position" .= ("tearing-down" :: Text), "phase" .= phaseValue]
+
+instance FromJSON ClusterLifecycle where
+  parseJSON = withObject "ClusterLifecycle" $ \value -> do
+    position <- value .: "position" :: Parser Text
+    case position of
+      "absent" -> pure ClusterAbsent
+      "ready" -> pure ClusterReady
+      "provisioning" -> ClusterProvisioning <$> value .: "phase"
+      "activating" -> ClusterActivating <$> value .: "phase"
+      "tearing-down" -> ClusterTearingDown <$> value .: "phase"
+      _ -> fail ("Unsupported cluster lifecycle position: " <> Text.unpack position)
+
+-- | Whether the recorded lifecycle means the Kind cluster is present. True from
+-- 'ClusterActivating' onward and during teardown; False while still
+-- provisioning or when absent.
+clusterLifecyclePresent :: ClusterLifecycle -> Bool
+clusterLifecyclePresent lifecycle = case lifecycle of
+  ClusterAbsent -> False
+  ClusterProvisioning _ -> False
+  ClusterActivating _ -> True
+  ClusterReady -> True
+  ClusterTearingDown _ -> True
+
 data ClusterState = ClusterState
-  { clusterPresent :: Bool,
+  { clusterLifecycle :: ClusterLifecycle,
     edgePort :: Int,
     harborPort :: Int,
     routes :: [RouteInfo],
@@ -225,10 +330,94 @@ data ClusterState = ClusterState
     publishedDemoConfigPath :: FilePath,
     publishedConfigMapManifestPath :: FilePath,
     mountedDemoConfigPath :: FilePath,
-    lifecycleProgress :: Maybe LifecycleProgress,
     updatedAt :: UTCTime
   }
   deriving (Eq, Read, Show)
+
+-- | Sprint 2.14 — the legacy @clusterPresent@ projection. Readers keep calling
+-- @clusterPresent state@ unchanged; the value is now derived from the single
+-- authoritative 'clusterLifecycle' rather than an independent ambient boolean.
+clusterPresent :: ClusterState -> Bool
+clusterPresent = clusterLifecyclePresent . clusterLifecycle
+
+-- | Sprint 7.29 — the in-progress lifecycle phase, if any. Replaces the retired
+-- @lifecycleProgress :: ClusterState -> Maybe LifecycleProgress@ projection and
+-- its stringly 'LifecycleProgress' shape: readers now consume the typed
+-- 'LifecyclePhase' (with its closed 'LifecycleTransition') directly from the
+-- authoritative 'clusterLifecycle'.
+lifecyclePhaseOf :: ClusterState -> Maybe LifecyclePhase
+lifecyclePhaseOf state = case clusterLifecycle state of
+  ClusterProvisioning phaseValue -> Just phaseValue
+  ClusterActivating phaseValue -> Just phaseValue
+  ClusterTearingDown phaseValue -> Just phaseValue
+  ClusterAbsent -> Nothing
+  ClusterReady -> Nothing
+
+instance ToJSON RouteInfo where
+  toJSON routeValue =
+    object ["path" .= path routeValue, "purpose" .= purpose routeValue]
+
+instance FromJSON RouteInfo where
+  parseJSON = withObject "RouteInfo" $ \value ->
+    RouteInfo <$> value .: "path" <*> value .: "purpose"
+
+instance ToJSON PersistentClaim where
+  toJSON claimValue =
+    object
+      [ "namespace" .= namespace claimValue,
+        "release" .= release claimValue,
+        "workload" .= workload claimValue,
+        "ordinal" .= ordinal claimValue,
+        "claim" .= claim claimValue,
+        "pvcName" .= pvcName claimValue,
+        "requestedStorage" .= requestedStorage claimValue
+      ]
+
+instance FromJSON PersistentClaim where
+  parseJSON = withObject "PersistentClaim" $ \value ->
+    PersistentClaim
+      <$> value .: "namespace"
+      <*> value .: "release"
+      <*> value .: "workload"
+      <*> value .: "ordinal"
+      <*> value .: "claim"
+      <*> value .: "pvcName"
+      <*> value .: "requestedStorage"
+
+instance ToJSON ClusterState where
+  toJSON state =
+    object
+      [ "clusterLifecycle" .= clusterLifecycle state,
+        "edgePort" .= edgePort state,
+        "harborPort" .= harborPort state,
+        "routes" .= routes state,
+        "storageClass" .= storageClass state,
+        "claims" .= claims state,
+        "clusterRuntimeMode" .= clusterRuntimeMode state,
+        "kubeconfigPath" .= kubeconfigPath state,
+        "generatedDemoConfigPath" .= generatedDemoConfigPath state,
+        "publishedDemoConfigPath" .= publishedDemoConfigPath state,
+        "publishedConfigMapManifestPath" .= publishedConfigMapManifestPath state,
+        "mountedDemoConfigPath" .= mountedDemoConfigPath state,
+        "updatedAt" .= updatedAt state
+      ]
+
+instance FromJSON ClusterState where
+  parseJSON = withObject "ClusterState" $ \value ->
+    ClusterState
+      <$> value .: "clusterLifecycle"
+      <*> value .: "edgePort"
+      <*> value .: "harborPort"
+      <*> value .: "routes"
+      <*> value .: "storageClass"
+      <*> value .: "claims"
+      <*> value .: "clusterRuntimeMode"
+      <*> value .: "kubeconfigPath"
+      <*> value .: "generatedDemoConfigPath"
+      <*> value .: "publishedDemoConfigPath"
+      <*> value .: "publishedConfigMapManifestPath"
+      <*> value .: "mountedDemoConfigPath"
+      <*> value .: "updatedAt"
 
 data ApiUpstreamMode
   = ClusterDemoUpstream

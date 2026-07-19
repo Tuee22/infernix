@@ -159,7 +159,108 @@ checkSourceReadability repoRoot sourceFile = do
         <> engineRuntimeBoundaryViolations sourceFile numberedLines
         <> sharedPhase7BoundaryViolations sourceFile numberedLines
         <> realnessFabricationViolations sourceFile numberedLines
+        <> escapeTokenViolations sourceFile numberedLines
+        <> capabilityGatingViolations sourceFile numberedLines
     )
+
+-- | Sprint 6.39 (managed-state-transition doctrine) — capability-gating lint.
+-- Reject raw destructive shell primitives (@rm -rf@ / @docker exec ... rm@) and
+-- empty subprocess environments (@env = Just []@). Retained-state deletion must
+-- go through the lease-gated teardown (Sprint 2.14), and every subprocess must
+-- carry a typed 'Infernix.Cluster.Subprocess.SubprocessEnv' (which always
+-- carries @HOME@/@TMPDIR@) rather than an empty environment. The
+-- cluster-lifecycle module owns the grandfathered container-scoped scrub surface
+-- and is exempt from the raw-@rm@ rule; every other module is guarded. Canonical
+-- doctrine: documents/architecture/managed_state_transitions.md.
+capabilityGatingViolations :: FilePath -> [(Int, String)] -> [String]
+capabilityGatingViolations sourceFile numberedLines =
+  rawDestructiveViolations sourceFile numberedLines
+    <> emptySubprocessEnvViolations sourceFile numberedLines
+
+rawDestructiveViolations :: FilePath -> [(Int, String)] -> [String]
+rawDestructiveViolations sourceFile numberedLines
+  | sourceFile `elem` rawDestructiveExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": " <> reason
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        reason <- rawDestructiveReasons lineValue
+      ]
+
+rawDestructiveReasons :: String -> [String]
+rawDestructiveReasons lineValue =
+  [ "forbidden raw `rm -rf` scrub; route retained-state deletion through the lease-gated teardown (Sprint 2.14; see documents/architecture/managed_state_transitions.md)"
+  | any (`isInfixOf` lineValue) ["rm -rf", "rm -fr"]
+  ]
+    <> [ "forbidden `docker exec ... rm` destructive primitive; route through the lease-gated teardown (see documents/architecture/managed_state_transitions.md)"
+       | "docker exec" `isInfixOf` lineValue,
+         " rm " `isInfixOf` lineValue
+       ]
+
+rawDestructiveExemptedFiles :: [FilePath]
+rawDestructiveExemptedFiles =
+  [ -- The cluster-lifecycle module owns the container-scoped retained-state
+    -- scrub surface (the `docker exec ... rm -rf` Harbor-registry-storage
+    -- cleanup) and the lease-gated teardown of Sprint 2.14.
+    "src/Infernix/Cluster.hs",
+    -- This lint module names the forbidden tokens as literals; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
+
+emptySubprocessEnvViolations :: FilePath -> [(Int, String)] -> [String]
+emptySubprocessEnvViolations sourceFile numberedLines
+  | sourceFile `elem` emptySubprocessEnvExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden empty subprocess environment `env = Just []`; build a typed Infernix.Cluster.Subprocess.SubprocessEnv (which always carries HOME/TMPDIR) instead (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        "env = Just []" `isInfixOf` lineValue
+      ]
+
+emptySubprocessEnvExemptedFiles :: [FilePath]
+emptySubprocessEnvExemptedFiles =
+  [ -- This lint module names the forbidden token as a literal; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
+
+-- | Phase 0 Sprint 0.13 (managed-state-transition doctrine) — the escape-token
+-- gate. Inside the evidence-kernel modules the type system is the enforcement:
+-- opaque newtypes with hidden constructors, rank-2 region leases, and total
+-- 'Infernix.Cluster.Subprocess.CommandOutcome' values. The only two escapes GHC
+-- cannot close from inside those modules are @unsafeCoerce@ (forge an opaque
+-- evidence value past its hidden constructor) and @unsafePerformIO@ (let a
+-- probe fabricate evidence purely, the same masked-failure the realness
+-- contract rejects). Both are forbidden in the evidence modules; the type
+-- system closes everything else, so the gate is deliberately scoped to that
+-- small audit surface. Canonical doctrine:
+-- documents/architecture/managed_state_transitions.md.
+escapeTokenViolations :: FilePath -> [(Int, String)] -> [String]
+escapeTokenViolations sourceFile numberedLines
+  | sourceFile `notElem` escapeTokenScopedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden escape token `" <> needle <> "` in an evidence module; the managed-state-transition doctrine closes evidence with the type system and these two escapes would forge it (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenEscapeTokens,
+        containsToken needle lineValue
+      ]
+
+-- | The evidence-kernel modules whose guarantees rest on the type system. The
+-- list grows as later sprints add evidence-minting modules (the lease-gated
+-- scrub, the sentinel commit, the token leases), so their escape surface is
+-- gated the moment they land.
+escapeTokenScopedFiles :: [FilePath]
+escapeTokenScopedFiles =
+  [ "src/Infernix/Evidence/Readiness.hs",
+    "src/Infernix/Evidence/Lease.hs",
+    "src/Infernix/Cluster/Subprocess.hs"
+  ]
+
+forbiddenEscapeTokens :: [String]
+forbiddenEscapeTokens =
+  [ "unsafeCoerce",
+    "unsafePerformIO"
+  ]
 
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject new
 -- occurrences of @lookupEnv@ / @getEnv@ / @getEnvironment@ /

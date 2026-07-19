@@ -3230,12 +3230,12 @@ None. The generated-artifact legacy row has moved to Completed in
 
 ---
 
-## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Planned]
+## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Active]
 
-**Status**: Planned
-**Code-side closure**: machine-independent gates — `cabal build all`, `cabal test infernix-unit`,
-`cabal test infernix-haskell-style`, `infernix lint docs`, and `poetry run check-code` for the
-Python/native change surface
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
+`poetry run check-code` all green on the apple-silicon lane.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 2.14, 4.28
@@ -3268,8 +3268,33 @@ not hope. It generalizes the results-side realness contract to state transitions
 
 ### Remaining Work
 
-- the cohort full-suite sign-off (apple-silicon plus linux-cpu) is pending and is the residual
-  gate for closing this sprint
+- code-side closed 2026-07-16. Landed this sprint:
+  - the stringly `LifecycleProgress` type and its `lifecycleAction` / `lifecyclePhase` /
+    `lifecycleDetail` / `lifecycleHeartbeatAt` fields are retired from `src/Infernix/Types.hs`;
+    readers (Models.hs status JSON, Cluster.hs monitor/status/resume) now consume the typed
+    `LifecyclePhase` (with its closed `LifecycleTransition`) via the new `lifecyclePhaseOf` accessor.
+    The `clusterPresent :: Bool` field was already retired in [Sprint 2.14](phase-2-kind-cluster-storage-and-lifecycle.md)
+    (replaced by the authoritative `clusterLifecycle`), completing the `ClusterState`/`LifecycleProgress`
+    field retirement this sprint owns
+  - the `Demo/Api.hs` object-proxy routes (`/api/objects` upload/download/list/delete) are gated on a
+    `DemoBucketsProvisioned` witness (opaque, minted only by `ensureDemoBucketsWithRetry`) via
+    `withDemoBucketsProvisioned`, which forces the evidence and responds 503 when the buckets are not
+    provisioned rather than serving object requests on an ambient boolean
+  - `Runtime/Pulsar.hs` requires a proven `.ready` sentinel before bootstrap-dependent work: the
+    inference bootstrap retry now awaits the typed `awaitModelBootstrapReady` evidence and then
+    `proveModelReadySentinel` (a bounded MinIO HEAD of the sentinel) before retrying, closing the
+    event-without-durable-sentinel race with a typed `model_cache_bootstrap_sentinel_unproven` failure.
+    Apple cohort validation (2026-07-18) then caught that `loadBootstrapPresignedConfig` is
+    coordinator-only (it requires the cluster ConfigMap/Secret mounts, absent on the Apple **host**
+    engine daemon), so `proveModelReadySentinel` now defers on the host — where the config is
+    unavailable it lets the retry proceed and relies on the host's own sentinel-gated hydration
+    (`ensureNativeRunnerContractCacheReady` → `nativeModelReadySentinelExists`), while
+    coordinator / Linux engine pods still run the real HEAD probe
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `poetry run check-code`, plus the Apple cohort live-path
+  proof below (real inference on `llm-tinyllama-gguf` and the other native-engine models now completes)
+- the cohort full-suite sign-off (apple-silicon plus linux-cpu) is pending and is the residual gate
+  for closing this sprint
 
 ---
 

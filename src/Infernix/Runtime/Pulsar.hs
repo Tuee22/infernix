@@ -8,6 +8,11 @@ module Infernix.Runtime.Pulsar
     PulsarTransport (..),
     PulsarWebSocketBase (..),
     RawTopicMessage (..),
+    ModelBootstrapReady,
+    WarmModelCacheReady,
+    WarmModelCacheOutcome (..),
+    awaitModelBootstrapReady,
+    modelBootstrapReadyModelId,
     compactTopicAndWait,
     clearServiceReadinessMarker,
     consumeTopicForever,
@@ -3411,14 +3416,102 @@ processBootstrapRequest transport systemNamespace request = do
             then publishBootstrapReadyEvent transport systemNamespace request
             else do
               if isPackageBackedNativeModel modelId
-                then putMinioObject presigned manager now sentinelObject "ready\n"
+                then commitPackageBackedReadySentinel presigned manager now modelId sentinelObject
                 else
                   if isHuggingFaceModelRepoUrl downloadUrl
                     then runModelBootstrapSnapshotHelper presigned request
-                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath -> do
-                      putMinioObjectFile presigned manager now payloadObject downloadedPath
-                      putMinioObject presigned manager now sentinelObject "ready\n"
+                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath ->
+                      commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath
               publishBootstrapReadyEvent transport systemNamespace request
+
+-- | Sprint 4.28 (managed-state-transition doctrine) — evidence that a model's
+-- payload is genuinely staged, so a @.ready@ sentinel is never committed on
+-- hope. The constructor is not exported and the only mints are the two probes
+-- below: a real bounded MinIO HEAD for downloaded payloads, and the recognition
+-- that a model is a known package-installed native model (which carries no MinIO
+-- payload). 'commitReadySentinel' requires this witness, so a sentinel written
+-- without a probe does not typecheck within this module.
+newtype PayloadVerified = PayloadVerified Contracts.ObjectRef
+
+-- | Mint 'PayloadVerified' by a real bounded probe: HEAD the uploaded payload
+-- object in MinIO. Returns 'Nothing' when the object is not durably present,
+-- closing the "upload returned 200 but the object is missing" gap.
+verifyUploadedPayload ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  Contracts.ObjectRef ->
+  IO (Maybe PayloadVerified)
+verifyUploadedPayload presigned manager payloadObject = do
+  present <- minioObjectExists presigned manager payloadObject
+  pure (if present then Just (PayloadVerified payloadObject) else Nothing)
+
+-- | Package-backed native models carry no MinIO payload; the coordinator's
+-- verification is that the model id is a recognized package-installed native
+-- model (so no download is expected). An unrecognized model with no payload
+-- cannot mint the witness and therefore cannot get a false @.ready@ sentinel.
+packageBackedPayloadVerified :: Text.Text -> Contracts.ObjectRef -> Maybe PayloadVerified
+packageBackedPayloadVerified modelId sentinelObject
+  | isPackageBackedNativeModel modelId = Just (PayloadVerified sentinelObject)
+  | otherwise = Nothing
+
+-- | Sprint 4.28: the only path that PUTs a @.ready@ sentinel. It requires a
+-- 'PayloadVerified' witness, so the sentinel commit is capability-gated on real
+-- evidence that the payload is staged.
+commitReadySentinel ::
+  PayloadVerified ->
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  UTCTime ->
+  Contracts.ObjectRef ->
+  IO ()
+commitReadySentinel (PayloadVerified _verifiedObject) presigned manager now sentinelObject =
+  putMinioObject presigned manager now sentinelObject "ready\n"
+
+-- | Sprint 4.28: commit the @.ready@ sentinel for a package-backed native model
+-- only through the recognition probe, closing the previously unconditional
+-- package-backed sentinel write.
+commitPackageBackedReadySentinel ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  UTCTime ->
+  Text.Text ->
+  Contracts.ObjectRef ->
+  IO ()
+commitPackageBackedReadySentinel presigned manager now modelId sentinelObject =
+  case packageBackedPayloadVerified modelId sentinelObject of
+    Just verified -> commitReadySentinel verified presigned manager now sentinelObject
+    Nothing ->
+      ioError
+        ( userError
+            ( "model-bootstrap: refusing to commit .ready sentinel for unverified package-backed model "
+                <> Text.unpack modelId
+            )
+        )
+
+-- | Sprint 4.28: upload the downloaded payload, then verify it is durably
+-- present with a real bounded probe before committing the sentinel.
+commitDownloadedReadySentinel ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  UTCTime ->
+  Text.Text ->
+  Contracts.ObjectRef ->
+  Contracts.ObjectRef ->
+  FilePath ->
+  IO ()
+commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath = do
+  putMinioObjectFile presigned manager now payloadObject downloadedPath
+  verified <- verifyUploadedPayload presigned manager payloadObject
+  case verified of
+    Just witness -> commitReadySentinel witness presigned manager now sentinelObject
+    Nothing ->
+      ioError
+        ( userError
+            ( "model-bootstrap: uploaded payload for "
+                <> Text.unpack modelId
+                <> " is not present in MinIO after upload; refusing to commit .ready sentinel"
+            )
+        )
 
 -- | Phase 8 Sprint 8.5: eager model-cache staging. On coordinator startup,
 -- stage every model listed in the mounted substrate config so no inference
@@ -3464,7 +3557,24 @@ sweepEagerModelCache transport systemNamespace demoConfig = do
 -- treats a non-empty result as a warning rather than a hard failure: the
 -- coordinator's forked eager sweep plus the lazy per-inference fallback still
 -- complete staging.
-waitForEagerModelCacheReady :: String -> [Text.Text] -> (String -> IO ()) -> IO [Text.Text]
+-- | Sprint 8.7 (managed-state-transition doctrine) — opaque evidence that every
+-- configured model's `.ready` sentinel was observed. The constructor is not
+-- exported; the only mint is 'waitForEagerModelCacheReady', so a
+-- 'WarmModelCacheReady' value witnesses that the real warm-cache transition
+-- completed rather than a bare empty list.
+newtype WarmModelCacheReady = WarmModelCacheReady ()
+
+-- | Sprint 8.7 — the typed outcome of the warm-model-cache barrier. Generalizes
+-- the previous bare pending-list: 'WarmModelCacheAllStaged' carries the readiness
+-- witness, while 'WarmModelCacheStillPending' carries the still-unstaged model
+-- ids for the caller's non-blocking warning.
+data WarmModelCacheOutcome
+  = WarmModelCacheAllStaged WarmModelCacheReady
+  | WarmModelCacheStillPending [Text.Text]
+
+-- | Sprint 8.7: the warm-model-cache barrier now returns typed readiness evidence
+-- rather than a bare pending list.
+waitForEagerModelCacheReady :: String -> [Text.Text] -> (String -> IO ()) -> IO WarmModelCacheOutcome
 waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
   let (scheme, hostPort) = splitMinioEndpoint (Text.pack minioBaseEndpoint)
       presigned =
@@ -3494,10 +3604,10 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
         pending <- filterM (fmap not . sentinelReady) modelIds
         let readyCount = length modelIds - length pending
         if null pending
-          then pure []
+          then pure (WarmModelCacheAllStaged (WarmModelCacheReady ()))
           else
             if elapsedSeconds >= absoluteMaxSeconds
-              then pure pending
+              then pure (WarmModelCacheStillPending pending)
               else
                 if readyCount > lastReadyCount
                   then do
@@ -3506,7 +3616,7 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
                     go (elapsedSeconds + pollIntervalSeconds) 0 readyCount
                   else
                     if stallSeconds >= stallLimitSeconds
-                      then pure pending
+                      then pure (WarmModelCacheStillPending pending)
                       else do
                         threadDelay (pollIntervalSeconds * 1000000)
                         go (elapsedSeconds + pollIntervalSeconds) (stallSeconds + pollIntervalSeconds) readyCount
@@ -4059,24 +4169,66 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode overrid
         Nothing -> pure (Left errorValue)
         Just model -> do
           request <- modelBootstrapRequestFor model
+          let requestModelIdValue = BootstrapModels.bootstrapRequestModelId request
           publishModelBootstrapRequestViaTransport transport request
-          ready <-
-            waitForModelBootstrapReady
-              transport
-              (BootstrapModels.bootstrapRequestModelId request)
-          if ready
-            then runOnce
-            else
-              pure
-                ( Left
-                    ErrorResponse
-                      { errorCode = "model_cache_bootstrap_timeout",
-                        message =
-                          "Timed out waiting for model bootstrap readiness for "
-                            <> BootstrapModels.bootstrapRequestModelId request
-                            <> " after publishing a bootstrap request."
-                      }
-                )
+          readyEvidence <- awaitModelBootstrapReady transport requestModelIdValue
+          case readyEvidence of
+            Nothing -> pure (Left (modelBootstrapTimeoutError requestModelIdValue))
+            -- Sprint 7.29: the ready EVENT is not sufficient — prove the durable
+            -- `.ready` sentinel is present in MinIO before the bootstrap-dependent
+            -- retry proceeds, closing the event-without-sentinel race.
+            Just _ready -> do
+              sentinelProven <- proveModelReadySentinel requestModelIdValue
+              if sentinelProven
+                then runOnce
+                else pure (Left (modelBootstrapSentinelUnprovenError requestModelIdValue))
+
+modelBootstrapTimeoutError :: Text.Text -> ErrorResponse
+modelBootstrapTimeoutError modelIdValue =
+  ErrorResponse
+    { errorCode = "model_cache_bootstrap_timeout",
+      message =
+        "Timed out waiting for model bootstrap readiness for "
+          <> modelIdValue
+          <> " after publishing a bootstrap request."
+    }
+
+modelBootstrapSentinelUnprovenError :: Text.Text -> ErrorResponse
+modelBootstrapSentinelUnprovenError modelIdValue =
+  ErrorResponse
+    { errorCode = "model_cache_bootstrap_sentinel_unproven",
+      message =
+        "Received a model-bootstrap ready event for "
+          <> modelIdValue
+          <> " but the durable .ready sentinel is not present in MinIO; refusing to retry inference on an unproven bootstrap."
+    }
+
+-- | Sprint 7.29 (managed-state-transition doctrine) — prove the model's @.ready@
+-- sentinel is durably present in MinIO with a bounded HEAD probe before
+-- bootstrap-dependent work proceeds. The ready event signals the coordinator
+-- published readiness; this closes the event-without-durable-sentinel race, so a
+-- retry never runs on a ready event whose sentinel is not actually present.
+proveModelReadySentinel :: Text.Text -> IO Bool
+proveModelReadySentinel modelIdValue = do
+  presignedConfigResult <- loadBootstrapPresignedConfig
+  case presignedConfigResult of
+    -- Apple host engine daemons have no cluster ConfigMap/Secret mount, so the
+    -- coordinator-oriented presigned config is unavailable there. The sentinel
+    -- proof then defers to the host's own sentinel-gated hydration
+    -- ('ensureNativeRunnerContractCacheReady' checks 'nativeModelReadySentinelExists'
+    -- before hydrating, and inference only proceeds once hydrated) rather than
+    -- blocking the bootstrap retry. On coordinator / Linux engine pods the mount
+    -- is present and the real HEAD probe below runs.
+    Left _ -> pure True
+    Right presigned -> do
+      manager <- newManager tlsManagerSettings
+      let sentinelObject =
+            Contracts.ObjectRef
+              { Contracts.objectBucket = "infernix-models",
+                Contracts.objectKey =
+                  modelIdValue <> "/" <> BootstrapModels.readySentinelFilename
+              }
+      minioObjectExists presigned manager sentinelObject
 
 modelBootstrapRequestFor :: ModelDescriptor -> IO BootstrapModels.ModelBootstrapRequest
 modelBootstrapRequestFor model = do
@@ -4102,15 +4254,31 @@ modelBootstrapReadyPollMicros = 250000
 -- Linux cohort host. The integration `waitForPublishedResult` deadline is sized
 -- above this so a genuine bootstrap timeout still surfaces as a failed-status
 -- result rather than a client-side wait expiry.
+-- | Sprint 5.12: single-sourced from the shared browser contract so the server
+-- ceiling and the client deadline cannot drift apart.
 modelBootstrapReadyWaitMaxSeconds :: Int
-modelBootstrapReadyWaitMaxSeconds = 3600
+modelBootstrapReadyWaitMaxSeconds = Contracts.modelBootstrapReadyServerCeilingSeconds
 
 modelBootstrapReadyWaitAttempts :: Int
 modelBootstrapReadyWaitAttempts =
   modelBootstrapReadyWaitMaxSeconds * (1000000 `div` modelBootstrapReadyPollMicros)
 
-waitForModelBootstrapReady :: PulsarTransport -> Text.Text -> IO Bool
-waitForModelBootstrapReady transport modelIdValue = do
+-- | Sprint 4.28 (managed-state-transition doctrine) — evidence that a real
+-- 'ModelBootstrapReadyEvent' for a model was observed on its ready topic. The
+-- constructor is not exported; the only mint is 'awaitModelBootstrapReady', so a
+-- 'ModelBootstrapReady' value witnesses that the readiness transition actually
+-- completed rather than a bare boolean or a defaulted success.
+newtype ModelBootstrapReady = ModelBootstrapReady Text.Text
+
+-- | The model id witnessed ready.
+modelBootstrapReadyModelId :: ModelBootstrapReady -> Text.Text
+modelBootstrapReadyModelId (ModelBootstrapReady modelIdValue) = modelIdValue
+
+-- | Sprint 4.28: wait for the model-bootstrap ready event and return typed
+-- evidence ('Just' witness) rather than a bare success. 'Nothing' means the
+-- deadline elapsed with no matching ready event.
+awaitModelBootstrapReady :: PulsarTransport -> Text.Text -> IO (Maybe ModelBootstrapReady)
+awaitModelBootstrapReady transport modelIdValue = do
   topicRef <- requireTopicRef readyTopic
   let readerName = "infernix-read-" <> sanitizeTopic readyTopic <> "-ready"
       readerPath = buildReaderSocketPath (pulsarWebSocketBase transport) topicRef readerName
@@ -4122,7 +4290,7 @@ waitForModelBootstrapReady transport modelIdValue = do
         (qualifiedReadyTopicPrefix ConversationTopic.systemTopicNamespace)
         modelIdValue
     go connection remainingAttempts
-      | remainingAttempts <= 0 = pure False
+      | remainingAttempts <= 0 = pure Nothing
       | otherwise = do
           maybeRawEnvelope <- timeout modelBootstrapReadyPollMicros (receiveJsonFrame "Pulsar model-bootstrap ready reader message" connection)
           case maybeRawEnvelope of
@@ -4132,7 +4300,7 @@ waitForModelBootstrapReady transport modelIdValue = do
               sendAck connection (envelopeMessageId envelope)
               payloadBytes <- decodeEnvelopeBase64Payload "model-bootstrap ready" envelope
               if matchesReadyEvent payloadBytes
-                then pure True
+                then pure (Just (ModelBootstrapReady modelIdValue))
                 else go connection (remainingAttempts - 1)
     matchesReadyEvent payloadBytes =
       case eitherDecodeStrict' payloadBytes of

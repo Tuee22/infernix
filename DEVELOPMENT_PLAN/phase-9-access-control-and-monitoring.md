@@ -465,12 +465,12 @@ can intentionally switch from a regular self-registered account to the separate 
 ### Remaining Work
 None.
 
-## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Planned]
+## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Active]
 
-**Status**: Planned
-**Code-side closure**: `cabal build all`, `cabal test infernix-unit`, `cabal test
-infernix-haskell-style`, `infernix lint docs`, and — for any Python/native change — `poetry run
-check-code`, all green host-native.
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `infernix lint docs` all green
+on the apple-silicon lane. No Python/native change, so `poetry run check-code` does not apply.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`
 **Blocked by**: Sprint 4.28, 7.29
@@ -504,6 +504,19 @@ results-side realness contract to state transitions. See the doctrine at
 
 ### Remaining Work
 
+- code-side closed 2026-07-16. Landed this sprint:
+  - `withValidAdminToken` (`src/Infernix/Cluster.hs`) is a rank-2 region lease (on the Sprint 1.16
+    `Infernix.Evidence.Lease` kernel) that re-derives the Keycloak admin bearer at entry and confines
+    the `KeycloakAdminToken` to the continuation scope; the realm reconcile now runs inside the lease
+    and reads the bearer via `leasePayload`, so the raw credential is never returned, stashed, or held
+    past the admin operation's window, and each reconcile re-derives a fresh bearer
+  - the per-user MinIO STS session is modelled as a typed leased `StsSession` value
+    (`src/Infernix/Demo/Api.hs`): the constructor is unexported and the only mint is
+    `loadUserScopedMinioPresignedConfig`, so the scoped credential is carried as typed evidence rather
+    than a bare mutable token; the object-proxy handlers read the scoped presigned config through
+    `stsSessionPresignedConfig`, so an object operation acts only on an established session
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  and `infernix lint docs`
 - Cohort full-suite sign-off is pending: the apple-silicon plus linux-cpu full-suite run (owning
   wave TBD) is the residual before this sprint can close.
 

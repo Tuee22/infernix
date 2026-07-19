@@ -662,12 +662,14 @@ Work` tracks the pending cohort full-suite sign-off.
 
 ---
 
-## Sprint 5.12: Shared Readiness Contract [Planned]
+## Sprint 5.12: Shared Readiness Contract [Active]
 
-**Status**: Planned
-**Code-side closure**: `cabal build all`, `cabal test infernix-unit`, `cabal test
-infernix-haskell-style`, `infernix lint docs`, and `poetry run check-code` for the
-Playwright-executor change.
+**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (client-deadline >= server-ceiling assertions), `cabal test
+infernix-haskell-style`, `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
+all green on the apple-silicon lane. No Python surface changed, so `poetry run check-code` is not
+applicable.
 **Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
 **Implementation**: `src/Infernix/Web/Contracts.hs`, `web/playwright/inference.spec.js`
 **Blocked by**: Sprint 4.28
@@ -700,6 +702,21 @@ transitions per [../documents/architecture/managed_state_transitions.md](../docu
 
 ### Remaining Work
 
+- code-side closed 2026-07-16. Landed this sprint:
+  - the model-bootstrap deadline is single-sourced in `src/Infernix/Web/Contracts.hs`
+    (`modelBootstrapReadyServerCeilingSeconds` is canonical; `clientModelBootstrapDeadlineSeconds`
+    derives the client deadline as the ceiling plus a `max 0` margin, so a below-ceiling client
+    deadline is unconstructible). `Infernix.Runtime.Pulsar.modelBootstrapReadyWaitMaxSeconds` now
+    references the shared value, and `renderPursContractFooter` emits both constants into the
+    generated browser contract
+  - the Playwright executor (`web/playwright/inference.spec.js`) drops the `kubectl rollout status`
+    readiness proxy (the engine deployment is still scaled up) and proves readiness with the real
+    model-bootstrap flow — the per-model inference result only arrives after the
+    `ModelBootstrapReadyEvent` — bounded by `clientModelBootstrapDeadlineMs`, which now mirrors the
+    single-sourced client deadline and is `>=` the server ceiling (fixing the prior below-ceiling
+    `browserMatrixResultTimeoutMs`)
+- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
 - the cohort full-suite sign-off is pending: apple-silicon plus linux-cpu full-suite in an owning
   wave TBD is the residual before closure
 

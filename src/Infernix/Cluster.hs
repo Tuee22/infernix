@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 
 module Infernix.Cluster
   ( clusterWorkloadArchitectureForHostArchitecture,
@@ -37,6 +38,7 @@ import Data.Vector qualified as Vector
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint
 import Infernix.Cluster.PublishImages qualified as PublishImages
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig
   ( EngineCommandOverride (EngineCommandOverride),
     KeycloakWiring (keycloakBaseUrl, keycloakClientId, keycloakJwksUrl),
@@ -49,13 +51,15 @@ import Infernix.Config qualified as Config
 import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
 import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
+import Infernix.Evidence.Lease (Acquire (..), Lease, leasePayload, withLease)
+import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
 import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Infernix.Routes (routeHelmValues)
-import Infernix.Runtime.Pulsar (waitForEagerModelCacheReady)
+import Infernix.Runtime.Pulsar (WarmModelCacheOutcome (..), waitForEagerModelCacheReady)
 import Infernix.Storage
 import Infernix.Types
 import Infernix.Workflow (platformCommandsAvailable)
@@ -339,22 +343,35 @@ persistClusterState :: Paths -> ClusterState -> IO ()
 persistClusterState paths state = do
   let publicationPath = Config.publicationStatePath paths
   createDirectoryIfMissing True (takeDirectory publicationPath)
-  writeStateFile (clusterStatePath paths) state
+  writeClusterStateFile (clusterStatePath paths) state
   writeFile publicationPath (renderPublicationState (Config.controlPlaneContext paths) state)
 
+-- | Sprint 2.14: record an in-progress lifecycle phase on the typed
+-- 'clusterLifecycle' machine. The free-form @action@ string is parsed into a
+-- closed 'LifecycleTransition' (a typo fails loud rather than persisting an
+-- unresumable phase), and the resulting in-progress position preserves whether
+-- the Kind cluster is already present: a bring-up phase before the API is
+-- reachable is 'ClusterProvisioning', afterward 'ClusterActivating', and a
+-- teardown phase is 'ClusterTearingDown'.
 setLifecycleProgress :: Paths -> ClusterState -> String -> String -> String -> Bool -> IO ClusterState
 setLifecycleProgress paths state action phase detail emitMarker = do
   now <- getCurrentTime
-  let updatedState =
+  transition <- requireLifecycleTransition action
+  let phaseValue =
+        LifecyclePhase
+          { lifecyclePhaseTransition = transition,
+            lifecyclePhaseName = phase,
+            lifecyclePhaseDetail = detail,
+            lifecyclePhaseHeartbeatAt = now
+          }
+      lifecycle = case transition of
+        LifecycleBringUp
+          | clusterPresent state -> ClusterActivating phaseValue
+          | otherwise -> ClusterProvisioning phaseValue
+        LifecycleTearDown -> ClusterTearingDown phaseValue
+      updatedState =
         state
-          { lifecycleProgress =
-              Just
-                LifecycleProgress
-                  { lifecycleAction = action,
-                    lifecyclePhase = phase,
-                    lifecycleDetail = detail,
-                    lifecycleHeartbeatAt = now
-                  },
+          { clusterLifecycle = lifecycle,
             updatedAt = now
           }
   persistClusterState paths updatedState
@@ -362,31 +379,48 @@ setLifecycleProgress paths state action phase detail emitMarker = do
     putStrLn (action <> " phase: " <> phase <> " - " <> detail)
   pure updatedState
 
+-- | Sprint 2.14: parse a lifecycle action string into the closed
+-- 'LifecycleTransition', failing loud on an unknown action rather than
+-- persisting an unresumable phase.
+requireLifecycleTransition :: String -> IO LifecycleTransition
+requireLifecycleTransition action = case parseLifecycleTransition action of
+  Just parsedTransition -> pure parsedTransition
+  Nothing ->
+    ioError
+      ( userError
+          ("setLifecycleProgress: unknown lifecycle transition action `" <> action <> "`")
+      )
+
 startLifecyclePhase :: Paths -> ClusterState -> String -> String -> String -> IO ClusterState
 startLifecyclePhase paths state action phase detail =
   setLifecycleProgress paths state action phase detail True
 
 touchLifecycleProgress :: Paths -> ClusterState -> IO ()
 touchLifecycleProgress paths state =
-  case lifecycleProgress state of
+  case lifecyclePhaseOf state of
     Nothing -> pure ()
-    Just progress -> do
+    Just phase -> do
       _ <-
         setLifecycleProgress
           paths
           state
-          (lifecycleAction progress)
-          (lifecyclePhase progress)
-          (lifecycleDetail progress)
+          (lifecycleTransitionAction (lifecyclePhaseTransition phase))
+          (lifecyclePhaseName phase)
+          (lifecyclePhaseDetail phase)
           False
       pure ()
 
-clearLifecycleProgress :: Paths -> ClusterState -> IO ClusterState
-clearLifecycleProgress paths state = do
+-- | Sprint 2.14: settle the lifecycle machine onto a terminal (non-in-progress)
+-- position — 'ClusterReady' when bring-up completes, 'ClusterAbsent' when
+-- teardown completes. This replaces the previous @clearLifecycleProgress@, which
+-- cleared the ambient @lifecycleProgress@ and separately mutated the
+-- @clusterPresent@ boolean; the terminal position is now a single typed value.
+settleLifecycle :: Paths -> ClusterState -> ClusterLifecycle -> IO ClusterState
+settleLifecycle paths state lifecycle = do
   now <- getCurrentTime
   let updatedState =
         state
-          { lifecycleProgress = Nothing,
+          { clusterLifecycle = lifecycle,
             updatedAt = now
           }
   persistClusterState paths updatedState
@@ -394,9 +428,13 @@ clearLifecycleProgress paths state = do
 
 lifecycleMonitorLabel :: ClusterState -> String
 lifecycleMonitorLabel state =
-  case lifecycleProgress state of
-    Just progress ->
-      lifecycleAction progress <> " phase " <> lifecyclePhase progress <> ": " <> lifecycleDetail progress
+  case lifecyclePhaseOf state of
+    Just phase ->
+      lifecycleTransitionAction (lifecyclePhaseTransition phase)
+        <> " phase "
+        <> lifecyclePhaseName phase
+        <> ": "
+        <> lifecyclePhaseDetail phase
     Nothing -> "long-running lifecycle command"
 
 lifecycleCommandMonitor :: Paths -> ClusterState -> ProcessMonitor.CommandMonitor
@@ -466,9 +504,9 @@ clusterUpWithPulsarBootstrapRepair paths runtimeMode = go 0
               go (repairAttempts' + 1)
     repairInterruptedDirtyPulsarBootstrapState = do
       maybeState <- loadClusterState paths
-      case matchingClusterState runtimeMode maybeState >>= lifecycleProgress of
-        Just progress
-          | lifecycleAction progress == "cluster-up" -> do
+      case matchingClusterState runtimeMode maybeState >>= lifecyclePhaseOf of
+        Just phase
+          | lifecyclePhaseTransition phase == LifecycleBringUp -> do
               maybeRepairReason <- detectDirtyPulsarBootstrapState paths runtimeMode
               case maybeRepairReason of
                 Nothing -> pure False
@@ -679,7 +717,8 @@ clusterUpWithPlatform paths runtimeMode = do
       "warm-model-cache"
       "eagerly staging the configured model set into infernix-models before declaring success"
   warmModelCache paths runtimeMode inputs
-  _ <- refreshPersistentClaims warmModelCacheState >>= clearLifecycleProgress paths
+  refreshedState <- refreshPersistentClaims warmModelCacheState
+  _ <- settleLifecycle paths refreshedState ClusterReady
   putStrLn "cluster up complete"
   putStrLn ("controlPlaneContext: " <> controlPlaneContextId (clusterUpControlPlane inputs))
   putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
@@ -734,14 +773,20 @@ runWarmModelCacheBarrier configuredModelIds (Right minioHost) = do
         <> " configured model(s) to stage into infernix-models via "
         <> minioBaseEndpoint
     )
-  pending <-
+  -- Sprint 8.7 (managed-state-transition doctrine): the warm-model-cache barrier
+  -- returns typed readiness evidence. The "all staged" declaration is gated on
+  -- the 'WarmModelCacheAllStaged' witness minted only when every sentinel was
+  -- observed; a pending outcome carries the still-unstaged ids for a non-blocking
+  -- warning.
+  outcome <-
     waitForEagerModelCacheReady
       minioBaseEndpoint
       configuredModelIds
       (\message -> putStrLn ("warm-model-cache: " <> message))
-  if null pending
-    then putStrLn ("warm-model-cache: all " <> show (length configuredModelIds) <> " configured models staged")
-    else
+  case outcome of
+    WarmModelCacheAllStaged _ready ->
+      putStrLn ("warm-model-cache: all " <> show (length configuredModelIds) <> " configured models staged")
+    WarmModelCacheStillPending pending ->
       putStrLn
         ( "warm-model-cache: WARNING "
             <> show (length pending)
@@ -788,7 +833,7 @@ prepareClusterUpInputs paths runtimeMode = do
 clusterUpState :: ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
 clusterUpState inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
   ClusterState
-    { clusterPresent = clusterPresentValue,
+    { clusterLifecycle = if clusterPresentValue then ClusterReady else ClusterAbsent,
       edgePort = edgePortValue,
       harborPort = harborPortValue,
       routes = routesValue,
@@ -800,7 +845,6 @@ clusterUpState inputs runtimeMode clusterPresentValue edgePortValue harborPortVa
       publishedDemoConfigPath = clusterUpPublishedCatalogPath inputs,
       publishedConfigMapManifestPath = clusterUpConfigMapManifestPath inputs,
       mountedDemoConfigPath = clusterUpMountedCatalogPath inputs,
-      lifecycleProgress = Nothing,
       updatedAt = updatedAtValue
     }
 
@@ -891,20 +935,14 @@ clusterDown maybeRuntimeMode = do
             "deleting the Kind cluster after retained runtime data handling is complete"
         deleteKindCluster paths (clusterRuntimeMode deleteState)
       Nothing -> deleteKindCluster paths runtimeMode
-  scrubNonRetainedClusterDirectories paths runtimeMode
+  withWriterQuiesced paths runtimeMode $ \quiesced ->
+    scrubRetainedStateUnderLease quiesced paths
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
       | clusterRuntimeMode state /= runtimeMode -> putStrLn "cluster down complete"
       | otherwise -> do
-          now <- getCurrentTime
-          _ <-
-            clearLifecycleProgress
-              paths
-              state
-                { clusterPresent = False,
-                  updatedAt = now
-                }
+          _ <- settleLifecycle paths state ClusterAbsent
           putStrLn "cluster down complete"
 
 clusterStatus :: Maybe RuntimeMode -> IO ()
@@ -959,20 +997,20 @@ clusterStatus maybeRuntimeMode = do
 
 lifecycleStatusLines :: UTCTime -> Bool -> ClusterState -> [String]
 lifecycleStatusLines now actualPresent state =
-  case lifecycleProgress state of
+  case lifecyclePhaseOf state of
     Nothing ->
       [ "lifecycleStatus: idle",
         "lifecyclePhase: " <> idleLifecyclePhase actualPresent
       ]
-    Just progress ->
+    Just phase ->
       let heartbeatAgeSeconds :: Integer
           heartbeatAgeSeconds =
-            max 0 (round (diffUTCTime now (lifecycleHeartbeatAt progress)))
+            max 0 (round (diffUTCTime now (lifecyclePhaseHeartbeatAt phase)))
        in [ "lifecycleStatus: in-progress",
-            "lifecycleAction: " <> lifecycleAction progress,
-            "lifecyclePhase: " <> lifecyclePhase progress,
-            "lifecycleDetail: " <> lifecycleDetail progress,
-            "lifecycleHeartbeatAt: " <> show (lifecycleHeartbeatAt progress),
+            "lifecycleAction: " <> lifecycleTransitionAction (lifecyclePhaseTransition phase),
+            "lifecyclePhase: " <> lifecyclePhaseName phase,
+            "lifecycleDetail: " <> lifecyclePhaseDetail phase,
+            "lifecycleHeartbeatAt: " <> show (lifecyclePhaseHeartbeatAt phase),
             "lifecycleHeartbeatAgeSeconds: " <> show heartbeatAgeSeconds
           ]
 
@@ -991,17 +1029,10 @@ idleLifecyclePhase actualPresent =
 loadClusterState :: Paths -> IO (Maybe ClusterState)
 loadClusterState paths = do
   let statePath = clusterStatePath paths
-  stateExists <- doesFileExist statePath
-  if not stateExists
-    then pure Nothing
-    else do
-      contents <- readFile statePath
-      case readMaybe contents of
-        Just state -> pure (Just (normalizeClusterStatePaths paths state))
-        Nothing
-          | all isSpace contents -> pure Nothing
-          | otherwise ->
-              throwIO (ClusterStateDecodeFailure statePath (take 200 (trim contents)))
+  result <- readClusterStateFile statePath
+  case result of
+    Right maybeState -> pure (fmap (normalizeClusterStatePaths paths) maybeState)
+    Left detail -> throwIO (ClusterStateDecodeFailure statePath (take 300 detail))
 
 runKubectlCompat :: [String] -> IO ()
 runKubectlCompat args = do
@@ -1844,7 +1875,7 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
   now <- getCurrentTime
   let state =
         ClusterState
-          { clusterPresent = True,
+          { clusterLifecycle = ClusterReady,
             edgePort = 0,
             harborPort = 0,
             routes = routeInventory demoUiEnabledValue,
@@ -1856,7 +1887,6 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
             publishedDemoConfigPath = Config.publishedConfigMapCatalogPath paths,
             publishedConfigMapManifestPath = Config.publishedConfigMapManifestPath paths,
             mountedDemoConfigPath = Config.watchedDemoConfigPath,
-            lifecycleProgress = Nothing,
             updatedAt = now
           }
   applyNamespace state "platform"
@@ -2447,23 +2477,49 @@ cleanupHarborMigrationJob state = do
       )
   pure ()
 
+-- | Sprint 3.14 (managed-state-transition doctrine): a terminal Harbor probe
+-- outcome. The registry being up and the migration state being dirty are both
+-- terminal conditions a real probe can observe, so both are 'Right' evidence for
+-- the readiness kernel; a still-unavailable registry is 'Left' progress that
+-- keeps the wait polling until the deadline.
+data HarborRegistryProbe
+  = HarborRegistryUp
+  | HarborRegistryDirty
+
+-- | Sprint 3.14: the required deadline for the Harbor registry readiness wait,
+-- preserving the previous 24-attempt × 5s (~120s) budget as an explicit,
+-- data-carried bound instead of a bare recursion counter.
+harborRegistryReadinessDeadline :: Readiness.Deadline
+harborRegistryReadinessDeadline =
+  Readiness.Deadline
+    { Readiness.deadlinePollMicros = 5000000,
+      Readiness.deadlineStallSeconds = 120,
+      Readiness.deadlineCeilingSeconds = 120
+    }
+
+-- | Sprint 3.14: migrated onto the shared 'Infernix.Evidence.Readiness' kernel.
+-- The wait returns the typed 'HarborBootstrapOutcome' evidence projected from
+-- the kernel's 'Readiness' value: a ready/dirty terminal witness, or a
+-- deadline-exhausted timeout carrying the last probe detail. Readiness is now
+-- evidence a real probe minted, not a bare boolean or a defaulted success.
 waitForHarborRegistryOrDirty :: Paths -> ClusterState -> IO HarborBootstrapOutcome
-waitForHarborRegistryOrDirty paths state = go (24 :: Int) ""
+waitForHarborRegistryOrDirty paths state = do
+  outcome <- Readiness.awaitReadiness harborRegistryReadinessDeadline probeHarborRegistry
+  pure (Readiness.foldReadiness onReady onTimedOut onTimedOut outcome)
   where
-    go remainingAttempts lastError = do
+    probeHarborRegistry = do
       registryResult <- waitForHarborRegistryResult paths (clusterRuntimeMode state) (harborPort state) 1 0
       case registryResult of
-        Right _ -> pure HarborRegistryReady
+        Right _ -> pure (Right HarborRegistryUp)
         Left err -> do
           dirty <- harborRegistryMigrationDirty state
           if dirty
-            then pure HarborMigrationDirty
-            else
-              if remainingAttempts <= 1
-                then pure (HarborBootstrapTimedOut (if null err then lastError else err))
-                else do
-                  threadDelay 5000000
-                  go (remainingAttempts - 1) (if null err then lastError else err)
+            then pure (Right HarborRegistryDirty)
+            else pure (Left (Readiness.Progress 0 1 (Text.pack err)))
+    onReady HarborRegistryUp = HarborRegistryReady
+    onReady HarborRegistryDirty = HarborMigrationDirty
+    onTimedOut progress =
+      HarborBootstrapTimedOut (Text.unpack (Readiness.progressDetail progress))
 
 harborRegistryMigrationDirty :: ClusterState -> IO Bool
 harborRegistryMigrationDirty state = do
@@ -3055,26 +3111,46 @@ reconcileKeycloakRealmConfiguration paths state =
       | null current = previous
       | otherwise = current
 
+-- | Sprint 9.10 (managed-state-transition doctrine): hold the Keycloak admin
+-- bearer only inside a region lease. 'withValidAdminToken' re-derives the token
+-- at entry and confines it to the continuation's scope (the rank-2 region tag
+-- keeps the 'KeycloakAdminToken' out of the result), so the raw credential is
+-- never returned, stashed, or held past the admin operation's window. Each admin
+-- reconcile re-derives a fresh bearer.
+withValidAdminToken ::
+  Manager ->
+  String ->
+  KeycloakAdminCredentials ->
+  (forall s. Lease s KeycloakAdminToken -> IO r) ->
+  IO r
+withValidAdminToken manager edgeBaseUrl credentials =
+  withLease
+    Acquire
+      { acquireEstablish = requestKeycloakAdminToken manager edgeBaseUrl credentials,
+        acquireRelease = \_ -> pure ()
+      }
+
 reconcileKeycloakRealmConfigurationOnce :: Paths -> ClusterState -> Manager -> IO ()
 reconcileKeycloakRealmConfigurationOnce paths state manager = do
   credentials <- readKeycloakAdminCredentials state
-  token <- requestKeycloakAdminToken manager (clusterEdgeBaseUrl paths state) credentials
-  putKeycloakJson
-    manager
-    token
-    (keycloakAdminRealmUrl paths state)
-    keycloakRealmReconcilePayload
-  clientValue <- fetchKeycloakSpaClient paths state manager token
-  clientIdValue <- requireKeycloakClientInternalId clientValue
-  clientPayload <-
-    case keycloakSpaClientReconcilePayload paths state clientValue of
-      Right value -> pure value
-      Left err -> ioError (userError err)
-  putKeycloakJson
-    manager
-    token
-    (keycloakAdminRealmUrl paths state <> "/clients/" <> urlEncodedString clientIdValue)
-    clientPayload
+  withValidAdminToken manager (clusterEdgeBaseUrl paths state) credentials $ \tokenLease -> do
+    let token = leasePayload tokenLease
+    putKeycloakJson
+      manager
+      token
+      (keycloakAdminRealmUrl paths state)
+      keycloakRealmReconcilePayload
+    clientValue <- fetchKeycloakSpaClient paths state manager token
+    clientIdValue <- requireKeycloakClientInternalId clientValue
+    clientPayload <-
+      case keycloakSpaClientReconcilePayload paths state clientValue of
+        Right value -> pure value
+        Left err -> ioError (userError err)
+    putKeycloakJson
+      manager
+      token
+      (keycloakAdminRealmUrl paths state <> "/clients/" <> urlEncodedString clientIdValue)
+      clientPayload
 
 readKeycloakAdminCredentials :: ClusterState -> IO KeycloakAdminCredentials
 readKeycloakAdminCredentials state = do
@@ -4395,6 +4471,48 @@ scrubNonRetainedClusterDirectories paths runtimeMode = do
   scrubStalePatroniDirectories paths runtimeMode
   scrubRetainedHarborRegistryCache paths runtimeMode
   scrubRetainedHarborRegistryStorage paths runtimeMode
+
+-- | Sprint 2.14 (managed-state-transition doctrine) — evidence that the Kind
+-- cluster (the live writer over the repo-local retained-state directories) has
+-- been torn down, so a retained-state scrub cannot race a live workload. The
+-- payload records which runtime mode was quiesced.
+newtype WriterQuiesced = WriterQuiesced RuntimeMode
+
+-- | Establish a 'WriterQuiesced' lease by proving the Kind cluster for
+-- @runtimeMode@ is gone. If it is still live, acquisition fails loud rather than
+-- letting the scrub run against a live writer — so a scrub against a live writer
+-- is not a constructible term. The quiesce → scrub → delete ordering is: the
+-- caller deletes the cluster (quiesce), this lease witnesses the deletion, and
+-- 'scrubRetainedStateUnderLease' then deletes the retained directories.
+withWriterQuiesced :: Paths -> RuntimeMode -> (forall s. Lease s WriterQuiesced -> IO r) -> IO r
+withWriterQuiesced paths runtimeMode =
+  withLease
+    Acquire
+      { acquireEstablish = do
+          stillLive <- kindClusterExists paths runtimeMode
+          if stillLive
+            then
+              ioError
+                ( userError
+                    ( "retained-state scrub refused: the Kind cluster for "
+                        <> Text.unpack (runtimeModeId runtimeMode)
+                        <> " is still live; the retained-state writer must be quiesced"
+                        <> " (cluster deleted) before scrubbing"
+                    )
+                )
+            else pure (WriterQuiesced runtimeMode),
+        acquireRelease = \_ -> pure ()
+      }
+
+-- | Sprint 2.14 — the retained-state teardown scrub. It requires a
+-- 'WriterQuiesced' lease as evidence that no live cluster writer remains and
+-- scrubs the directories for exactly the quiesced runtime mode. The raw scrub
+-- stays available only for the bring-up preparation path; the teardown scrub is
+-- reachable only through this lease-consuming entry.
+scrubRetainedStateUnderLease :: Lease s WriterQuiesced -> Paths -> IO ()
+scrubRetainedStateUnderLease lease paths =
+  case leasePayload lease of
+    WriterQuiesced runtimeMode -> scrubNonRetainedClusterDirectories paths runtimeMode
 
 -- Harbor's registry Redis claim is rebuildable cache state. Retaining it
 -- while the registry bucket and Harbor database are reset can leave blob
@@ -5740,8 +5858,9 @@ runCommand maybeWorkingDirectory envOverrides command args = do
 runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
 runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
   paths <- Config.discoverPaths
+  baseEnv <- clusterSubprocessBaseEnvIO paths
   let resolvedCommand = resolveClusterCommandWithPaths paths command
-      mergedEnv = mergeEnvironment (clusterSubprocessBaseEnvFor paths) envOverrides
+      mergedEnv = mergeEnvironment baseEnv envOverrides
   (exitCode, _, stderrOutput) <-
     readCreateProcessWithExitCode
       (proc resolvedCommand args)
@@ -5758,8 +5877,9 @@ runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload
 tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
 tryCommand maybeWorkingDirectory envOverrides command args = do
   paths <- Config.discoverPaths
+  baseEnv <- clusterSubprocessBaseEnvIO paths
   let resolvedCommand = resolveClusterCommandWithPaths paths command
-      mergedEnv = mergeEnvironment (clusterSubprocessBaseEnvFor paths) envOverrides
+      mergedEnv = mergeEnvironment baseEnv envOverrides
   processResult <-
     try
       ( readCreateProcessWithExitCode
@@ -5786,12 +5906,18 @@ tryCommand maybeWorkingDirectory envOverrides command args = do
 -- Apple Silicon Homebrew's @\/opt\/homebrew\/bin@ prefix. When the
 -- manifest is absent (unit-test fixture without a 'HostConfig'), the
 -- helper falls back to the minimal POSIX PATH.
-clusterSubprocessBaseEnvFor :: Paths -> [(String, String)]
-clusterSubprocessBaseEnvFor paths =
-  [ ("PATH", subprocessSearchPath paths),
-    ("LANG", "C.UTF-8"),
-    ("LC_ALL", "C.UTF-8")
-  ]
+-- | Sprint 3.14 (managed-state-transition doctrine): the supported base env for
+-- every cluster lifecycle subprocess, constructed as a typed
+-- 'Subprocess.SubprocessEnv' rather than an ad-hoc @[(String, String)]@. The
+-- typed value always carries @HOME@ and @TMPDIR@ (the constructor cannot be
+-- built without them) and is derived from the host manifest, so it fails closed
+-- when the manifest is absent instead of falling back to an ambient environment.
+-- The caller-supplied search path preserves the cluster tool-directory @PATH@
+-- (skopeo / nvkind / crictl and the rest) assembled by 'subprocessSearchPath'.
+clusterSubprocessBaseEnvIO :: Paths -> IO [(String, String)]
+clusterSubprocessBaseEnvIO paths =
+  Subprocess.renderSubprocessEnv
+    <$> Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
 
 subprocessSearchPath :: Paths -> String
 subprocessSearchPath paths =

@@ -76,20 +76,23 @@ contract](realness_contract.md) rejects), and **bottom** (every operation forces
 
 ## Current Status
 
-This is the governing target contract. The current tree still encodes the state machine as
-`clusterPresent :: Bool` plus `lifecyclePhase :: String`, persists it through `Show`/`Read`, and reaches
-the raw scrub / sentinel / exec primitives directly; delivery is in flight under the reopened phases
-tracked in
+This is the governing contract, and its code-side implementation has landed across the ten reopened
+phases tracked in
 [../../DEVELOPMENT_PLAN/README.md](../../DEVELOPMENT_PLAN/README.md) (Managed-State-Transition Doctrine
-Reopen). The doctrine and the escape-token lint are **Phase 0** (Sprint 0.13); the evidence and command
-kernels are **Phase 1** (Sprint 1.16); the typed lifecycle machine plus fail-closed persistence plus the
-lease-gated teardown are **Phase 2** (Sprint 2.14); the readiness kernel and subprocess-env seam are
-**Phase 3** (Sprint 3.14); the runtime and engine evidence is **Phase 4** (Sprint 4.28); the shared
-client-side readiness contract is **Phase 5** (Sprint 5.12); the capability-gating lint plus routed
-coverage is **Phase 6** (Sprint 6.39); the `ClusterState` field retirement plus object-proxy and
-sentinel evidence is **Phase 7** (Sprint 7.29); the warm-model-cache readiness is **Phase 8**
-(Sprint 8.7); and the admin-token and object-storage session leases are **Phase 9** (Sprint 9.10). The
-superseded surfaces are recorded in
+Reopen), each code-side closed 2026-07-16 on the machine-independent gate set with its
+single-accelerator cohort full-suite the remaining wave residual. The doctrine and the escape-token
+lint are **Phase 0** (Sprint 0.13); the evidence and command kernels are **Phase 1** (Sprint 1.16);
+the typed `ClusterLifecycle` machine plus fail-closed versioned aeson persistence plus the
+`WriterQuiesced` lease-gated teardown are **Phase 2** (Sprint 2.14); the readiness kernel and typed
+subprocess-env seam are **Phase 3** (Sprint 3.14); the `PayloadVerified` sentinel gating, typed
+`awaitModelBootstrapReady`, and native-runner `HOME`/`TMPDIR` are **Phase 4** (Sprint 4.28); the
+single-sourced client-side readiness contract is **Phase 5** (Sprint 5.12); the capability-gating lint
+plus routed managed-transition coverage is **Phase 6** (Sprint 6.39); the `ClusterState` /
+`LifecycleProgress` field retirement plus the `DemoBucketsProvisioned` object-proxy gate and proven
+`.ready` sentinel are **Phase 7** (Sprint 7.29); the typed `WarmModelCacheOutcome` readiness plus
+fail-closed config-side reads are **Phase 8** (Sprint 8.7); and the `withValidAdminToken` region lease
+and typed `StsSession` leased value are **Phase 9** (Sprint 9.10). The superseded surfaces are recorded
+in
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 
 ## Validation

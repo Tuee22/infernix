@@ -11,19 +11,23 @@ module Infernix.Storage
     readCacheManifestProtoMaybe,
     readEdgePortMaybe,
     readHarborPortMaybe,
+    readClusterStateFile,
     readInferenceResultProtoMaybe,
     readPulsarHttpPortMaybe,
-    readStateFileMaybe,
     writeCacheManifestProto,
+    writeClusterStateFile,
     writeInferenceResultProto,
-    writeStateFile,
     writeTextFile,
   )
 where
 
 import Control.Applicative ((<|>))
-import Control.Exception (throwIO)
+import Control.Exception (evaluate, throwIO)
+import Data.Aeson (FromJSON (parseJSON), eitherDecode, encode, object, withObject, (.:), (.=))
+import Data.Aeson.Types (Parser)
 import Data.ByteString qualified as ByteString
+import Data.ByteString.Lazy qualified as LazyByteString
+import Data.Char (isSpace)
 import Data.Int (Int32)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (Message, decodeMessage, defMessage, encodeMessage)
@@ -33,6 +37,7 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
+import Data.Word (Word8)
 import Infernix.Config (Paths (..))
 import Infernix.Error (InfernixError (ProtobufDecodeFailure))
 import Infernix.Types
@@ -80,24 +85,100 @@ pulsarHttpPortPath paths = runtimeRoot paths </> "pulsar-http-port.json"
 readPulsarHttpPortMaybe :: Paths -> IO (Maybe Int)
 readPulsarHttpPortMaybe paths = readPortFileMaybe (pulsarHttpPortPath paths)
 
+-- | Sprint 8.7 (managed-state-transition doctrine): the config-side port state
+-- files read fail-closed. An absent or blank file is 'Nothing' (choose a fresh
+-- port), but a present, non-blank, undecodable file is a loud error rather than
+-- a silent 'Nothing' that would re-choose a port and risk misrouting the still
+-- reachable cluster. The read is forced so the handle closes before any rewrite.
 readPortFileMaybe :: FilePath -> IO (Maybe Int)
 readPortFileMaybe filePath = do
   fileExists <- doesFileExist filePath
-  if fileExists
-    then do
+  if not fileExists
+    then pure Nothing
+    else do
       contents <- readFile filePath
-      pure (readMaybe contents)
-    else pure Nothing
+      _ <- evaluate (length contents)
+      decodePortFileContents filePath contents
 
-writeStateFile :: (Show a) => FilePath -> a -> IO ()
-writeStateFile filePath value = do
+decodePortFileContents :: FilePath -> String -> IO (Maybe Int)
+decodePortFileContents filePath contents
+  | all isSpace contents = pure Nothing
+  | otherwise = case readMaybe contents of
+      Just port -> pure (Just port)
+      Nothing ->
+        ioError
+          ( userError
+              ( "config-side port file at "
+                  <> filePath
+                  <> " exists but is not a decodable integer; refusing to silently re-choose a port (inspect or remove it, then retry)"
+              )
+          )
+
+-- | Sprint 2.14 (managed-state-transition doctrine) — the on-disk format
+-- version for the recorded cluster state. Bump when the envelope shape changes;
+-- an on-disk document tagged with any other version fails closed on read.
+clusterStatePersistenceVersion :: Int
+clusterStatePersistenceVersion = 1
+
+-- | Sprint 2.14 — a version-tagged envelope for the persisted 'ClusterState'.
+-- The 'FromJSON' instance is the fail-closed gate: an unrecognized version is a
+-- parse failure, not a silently-reinterpreted state.
+newtype VersionedClusterState = VersionedClusterState ClusterState
+
+instance FromJSON VersionedClusterState where
+  parseJSON = withObject "VersionedClusterState" $ \value -> do
+    version <- value .: "version" :: Parser Int
+    if version /= clusterStatePersistenceVersion
+      then
+        fail
+          ( "unsupported cluster-state format version "
+              <> show version
+              <> " (this binary reads version "
+              <> show clusterStatePersistenceVersion
+              <> ")"
+          )
+      else VersionedClusterState <$> value .: "clusterState"
+
+-- | Sprint 2.14 — fail-closed versioned aeson persistence for the recorded
+-- cluster state, retiring the previous @Show@/@Read@ serialization path. The
+-- envelope carries a format version so an unrecognized or malformed on-disk
+-- document fails closed on read instead of silently decoding to "no cluster".
+writeClusterStateFile :: FilePath -> ClusterState -> IO ()
+writeClusterStateFile filePath state = do
   createDirectoryIfMissing True (takeDirectory filePath)
-  writeFile filePath (show value)
+  LazyByteString.writeFile filePath (encode envelope)
+  where
+    envelope =
+      object
+        [ "version" .= clusterStatePersistenceVersion,
+          "clusterState" .= state
+        ]
 
-readStateFileMaybe :: (Read a) => FilePath -> IO (Maybe a)
-readStateFileMaybe filePath = do
-  contents <- readFile filePath
-  pure (readMaybe contents)
+-- | Sprint 2.14 — read the recorded cluster state fail-closed. @Right Nothing@
+-- means the file is absent or blank; @Right (Just state)@ is a decoded state;
+-- @Left detail@ is a present-but-undecodable document (unknown version or
+-- malformed JSON), which callers surface as a loud error rather than treating
+-- as "no cluster" (which would skip retained-state replay during teardown).
+readClusterStateFile :: FilePath -> IO (Either String (Maybe ClusterState))
+readClusterStateFile filePath = do
+  fileExists <- doesFileExist filePath
+  if not fileExists
+    then pure (Right Nothing)
+    else do
+      -- Read strictly so the file handle closes before the caller may rewrite
+      -- the same path (a lazy read leaves the handle open until fully forced).
+      encoded <- ByteString.readFile filePath
+      pure (decodeClusterStateContents encoded)
+
+decodeClusterStateContents :: ByteString.ByteString -> Either String (Maybe ClusterState)
+decodeClusterStateContents encoded
+  | ByteString.all isWhitespaceByte encoded = Right Nothing
+  | otherwise = case eitherDecode (LazyByteString.fromStrict encoded) of
+      Left err -> Left ("not a decodable cluster-state document: " <> err)
+      Right (VersionedClusterState state) -> Right (Just state)
+
+isWhitespaceByte :: Word8 -> Bool
+isWhitespaceByte byte = byte == 32 || byte == 9 || byte == 10 || byte == 13
 
 writeTextFile :: FilePath -> Text -> IO ()
 writeTextFile filePath contents = do
