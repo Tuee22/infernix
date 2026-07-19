@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active
+**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 0.13) and Sprints 0.1-0.12 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -21,6 +21,19 @@ lint rules established here.
 > `README.md` / `AGENTS.md` / `CLAUDE.md` together, then **re-closed**. This was machine-independent
 > (Axis-1 only: `infernix lint docs` / `docs check`); it had no accelerator gate and blocked no
 > accelerator phase.
+
+> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
+> single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
+> (403 + `Retry-After`) upstream model download that the Sprint 1.16/3.14/4.28 managed-state kernels
+> shipped but did not yet guard at those sites. Phase 0 reopens under
+> [Sprint 0.14](#sprint-014-bounded-commandbounded-http-doctrine-documentation-active) to record the
+> governance surface of the follow-on: extend `managed_state_transitions.md` (The law / Enforcement /
+> Current Status) with the bounded-HTTP download-outcome kernel, the `BlobServable` witness, and the
+> two new capability-gating lints; update the three-way `README.md` / `AGENTS.md` / `CLAUDE.md`
+> non-negotiable mirror plus `assistant_workflow.md`; and enter the superseded surfaces into the
+> deletion ledger. This is machine-independent (Axis-1 only: `infernix lint docs` / `docs check`),
+> code-side closed 2026-07-19, with the single-accelerator plus `linux-cpu` cohort full-suite the
+> pending residual (owning wave TBD).
 
 ## Current Repo Assessment
 
@@ -569,11 +582,80 @@ generalizes the results-side realness contract to state transitions and is canon
 
 ---
 
+## Sprint 0.14: Bounded-Command/Bounded-HTTP Doctrine Documentation [Active]
+
+**Status**: Active — code-side closed 2026-07-19 (machine-independent; docs updated); cohort gate pending
+**Code-side closure**: closed 2026-07-19 — this is a docs-and-governance sprint, so the applicable
+machine-independent gates are `infernix lint docs` and `infernix docs check`, both green on the
+apple-silicon lane; `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, and
+`cabal test infernix-haskell-style` are unaffected by the Markdown-only change. No Python/native
+change, so `poetry run check-code` does not apply.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`, `AGENTS.md`,
+`CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/tools/harbor.md`,
+`documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
+`documents/development/no_env_vars.md`, `documents/development/haskell_style.md`,
+`DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Blocked by**: Sprint 0.13
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, the three-way non-negotiable
+mirror (`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`),
+and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — record the
+governance surface of the follow-on that applies the Sprint 1.16/3.14/4.28 managed-state kernels at
+the two flake sites the 2026-07-18 cohort run surfaced (the Harbor `docker pull` verify hang and the
+rate-limited upstream model download). Governance is current-state and honest: the doctrine doc, the
+non-negotiable mirror, and the deletion ledger record what the code does now (bounded publish exec,
+`BlobServable` evidence, the classified download outcome, the integrity-witnessed sentinel, and the
+two new capability-gating lints), while the deferred readiness-wait migration and ProcessMonitor
+retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrine is canonical at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- `documents/architecture/managed_state_transitions.md` extended: the bounded-HTTP download-outcome
+  kernel added to `## The law` beside the `SubprocessEnv` / `CommandOutcome` bullet, `BlobServable`
+  added to the readiness-returns-evidence paragraph, the two new lints (`unboundedExecViolations`,
+  `unboundedHttpViolations`) reflected in the TL;DR and `## Enforcement`, and the 2026-07-19
+  sprint→phase mapping in `## Current Status`
+- the three-way non-negotiable mirror updated: the `evidence-gated state transitions` bullet extended
+  with the raw-unbounded-spawn / `runBoundedCommand` clause (enforced by `unboundedExecViolations`)
+  and a new peer hard-stop for raw unbounded upstream-model-download HTTP (enforced by
+  `unboundedHttpViolations`) in `documents/development/assistant_workflow.md` (canonical) mirrored
+  byte-identically into `AGENTS.md` and `CLAUDE.md`, with `README.md` carrying the prose form
+- the current-state operator-doc touch-ups (`documents/tools/harbor.md`,
+  `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
+  `documents/development/no_env_vars.md`, `documents/development/haskell_style.md`) and the
+  `legacy-tracking-for-deletion.md` ledger rows
+
+### Validation
+
+- `infernix lint docs` and `infernix docs check` pass, confirming metadata, the broad-doctrine-doc
+  structure for `managed_state_transitions.md`, root-doc metadata, link resolution, and the
+  monitoring-stance alignment (ProcessMonitor is not yet retired, so the "no monitoring doc" stance
+  still holds)
+- the `AGENTS.md` / `CLAUDE.md` non-negotiable blocks stay byte-identical to each other and a faithful
+  subset of `assistant_workflow.md`
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
+  is pending, owning wave TBD
+
+---
+
 ## Remaining Work
 
 Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Active — code-side closed
 2026-07-16 (doctrine doc + `requiredDocs`/`documents/README.md` registration authored 2026-07-15;
 the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16). Its
+apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
+
+Sprint 0.14 (Bounded-Command/Bounded-HTTP Doctrine Documentation) is Active — code-side closed
+2026-07-19 (the `managed_state_transitions.md` extension, the three-way non-negotiable mirror, and the
+`legacy-tracking-for-deletion.md` ledger rows landed; `infernix lint docs` / `docs check` green). Its
 apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the

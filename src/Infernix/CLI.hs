@@ -152,7 +152,7 @@ dispatch command =
       mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
     InternalPublishChartImagesCommand renderedChartPath outputPath -> do
       paths <- discoverPaths
-      PublishImages.publishChartImagesFile (harborPublishOptionsForPaths paths) (\_ -> pure Nothing) renderedChartPath outputPath
+      PublishImages.publishChartImagesFile (harborPublishOptionsForPaths paths) (\_ -> pure ()) renderedChartPath outputPath
     InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue emptyModels -> do
       paths <- discoverPaths
       ensureRepoLayout paths

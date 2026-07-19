@@ -32,6 +32,10 @@ module Infernix.Runtime.Pulsar
     ensureRegisteredSchemasWithRetry,
     ensureSchemaMarkers,
     modelCacheBootstrapRetryableError,
+    classifyDownloadStatus,
+    DownloadOutcome (..),
+    RetryAfterSeconds,
+    retryAfterSeconds,
     modelBootstrapReadyWaitMaxSeconds,
     reconcileStartupTopicsWithRetry,
     reconcileSupportedNamespacesWithRetry,
@@ -133,6 +137,7 @@ import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
+import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models
   ( enginePoolForModel,
@@ -165,12 +170,14 @@ import Network.HTTP.Client
     requestBody,
     requestHeaders,
     responseBody,
+    responseHeaders,
     responseStatus,
     responseTimeout,
     responseTimeoutMicro,
     withResponse,
   )
 import Network.HTTP.Client.TLS (tlsManagerSettings)
+import Network.HTTP.Types.Header (Header, hContentLength, hRetryAfter, hUserAgent)
 import Network.HTTP.Types.Status (statusCode)
 import Network.WebSockets qualified as WebSockets
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
@@ -189,6 +196,7 @@ import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hPutStrLn, openB
 import System.Posix.Process (getProcessID)
 import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
+import Text.Read (readMaybe)
 
 data PulsarTransport = PulsarTransport
   { pulsarAdminBaseUrl :: Maybe String,
@@ -3358,13 +3366,41 @@ handleBootstrapMessage transport systemNamespace connection = do
       )
   case handled of
     Right _ -> sendAck connection (envelopeMessageId envelope)
-    Left err -> do
-      sendNegativeAck connection (envelopeMessageId envelope)
+    Left err -> handleBootstrapFailure connection (envelopeMessageId envelope) err
+
+-- | Sprint 4.29 (managed-state-transition doctrine): decide redelivery from the
+-- typed download outcome rather than blindly negative-acking every failure. A
+-- rate-limit or transient failure backs off (honoring a clamped @Retry-After@)
+-- before redelivery; a permanent failure is acked to STOP the
+-- redeliver-immediately-forever loop that only wastes work and worsens a rate
+-- limit; any other error keeps the prior negative-ack behavior.
+handleBootstrapFailure :: WebSockets.Connection -> Text.Text -> SomeException -> IO ()
+handleBootstrapFailure connection messageId err =
+  case fromException err of
+    Just (DownloadRateLimited backoff) ->
+      backoffThenRedeliver "rate-limited" (retryAfterSeconds backoff)
+    Just (DownloadTransient reason) -> do
+      hPutStrLn stderr ("model-bootstrap transient download failure: " <> reason)
+      backoffThenRedeliver "transient" defaultModelDownloadBackoffSeconds
+    Just (DownloadPermanent reason) -> do
+      hPutStrLn stderr ("model-bootstrap permanent download failure; acking to stop redelivery: " <> reason)
+      sendAck connection messageId
+    Just DownloadSucceeded -> sendNegativeAck connection messageId
+    Nothing -> do
+      sendNegativeAck connection messageId
+      hPutStrLn stderr ("model-bootstrap message handling failed:\n" <> displayException err)
+  where
+    backoffThenRedeliver label seconds = do
       hPutStrLn
         stderr
-        ( "model-bootstrap message handling failed:\n"
-            <> displayException err
+        ( "model-bootstrap "
+            <> label
+            <> " download; backing off "
+            <> show seconds
+            <> "s before redelivery"
         )
+      threadDelay (seconds * 1000000)
+      sendNegativeAck connection messageId
 
 bootstrapPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
 bootstrapPayloadBytes envelope =
@@ -3420,8 +3456,8 @@ processBootstrapRequest transport systemNamespace request = do
                 else
                   if isHuggingFaceModelRepoUrl downloadUrl
                     then runModelBootstrapSnapshotHelper presigned request
-                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath ->
-                      commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath
+                    else withDownloadedUpstreamModel manager downloadUrl $ \downloadedPath downloadedBytes ->
+                      commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath downloadedBytes
               publishBootstrapReadyEvent transport systemNamespace request
 
 -- | Sprint 4.28 (managed-state-transition doctrine) — evidence that a model's
@@ -3433,17 +3469,21 @@ processBootstrapRequest transport systemNamespace request = do
 -- without a probe does not typecheck within this module.
 newtype PayloadVerified = PayloadVerified Contracts.ObjectRef
 
--- | Mint 'PayloadVerified' by a real bounded probe: HEAD the uploaded payload
--- object in MinIO. Returns 'Nothing' when the object is not durably present,
--- closing the "upload returned 200 but the object is missing" gap.
+-- | Sprint 4.29: mint 'PayloadVerified' only when the uploaded object's byte
+-- length matches the number of bytes actually downloaded. This is an integrity
+-- witness, not an existence witness: a silently truncated upload has a shorter
+-- Content-Length and cannot mint the witness, so it cannot get a lying @.ready@
+-- sentinel. Returns 'Nothing' when the object is absent, exposes no
+-- Content-Length, or the length disagrees with @expectedBytes@.
 verifyUploadedPayload ::
   Presigned.PresignedUrlConfig ->
   Manager ->
   Contracts.ObjectRef ->
+  Integer ->
   IO (Maybe PayloadVerified)
-verifyUploadedPayload presigned manager payloadObject = do
-  present <- minioObjectExists presigned manager payloadObject
-  pure (if present then Just (PayloadVerified payloadObject) else Nothing)
+verifyUploadedPayload presigned manager payloadObject expectedBytes = do
+  actualBytes <- minioObjectContentLength presigned manager payloadObject
+  pure (if actualBytes == Just expectedBytes then Just (PayloadVerified payloadObject) else Nothing)
 
 -- | Package-backed native models carry no MinIO payload; the coordinator's
 -- verification is that the model id is a recognized package-installed native
@@ -3498,10 +3538,11 @@ commitDownloadedReadySentinel ::
   Contracts.ObjectRef ->
   Contracts.ObjectRef ->
   FilePath ->
+  Integer ->
   IO ()
-commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath = do
+commitDownloadedReadySentinel presigned manager now modelId payloadObject sentinelObject downloadedPath downloadedBytes = do
   putMinioObjectFile presigned manager now payloadObject downloadedPath
-  verified <- verifyUploadedPayload presigned manager payloadObject
+  verified <- verifyUploadedPayload presigned manager payloadObject downloadedBytes
   case verified of
     Just witness -> commitReadySentinel witness presigned manager now sentinelObject
     Nothing ->
@@ -3509,7 +3550,9 @@ commitDownloadedReadySentinel presigned manager now modelId payloadObject sentin
         ( userError
             ( "model-bootstrap: uploaded payload for "
                 <> Text.unpack modelId
-                <> " is not present in MinIO after upload; refusing to commit .ready sentinel"
+                <> " is absent or truncated in MinIO after upload (expected "
+                <> show downloadedBytes
+                <> " bytes); refusing to commit .ready sentinel"
             )
         )
 
@@ -3572,8 +3615,31 @@ data WarmModelCacheOutcome
   = WarmModelCacheAllStaged WarmModelCacheReady
   | WarmModelCacheStillPending [Text.Text]
 
--- | Sprint 8.7: the warm-model-cache barrier now returns typed readiness evidence
--- rather than a bare pending list.
+-- | The warm-model-cache readiness budget: poll every 5 s, give up as expired
+-- after 600 s of no newly-staged model, absolute ceiling at the server wait max.
+-- (Sprint 6.41: previously hand-rolled inline.) The stall field is 605 so the
+-- kernel's @stall + pollSeconds >= stallSeconds@ guard first fires at exactly
+-- 600 s of no progress, matching the legacy give-up point. Note the kernel
+-- resets the stall timer on progress versus the running maximum ready-count
+-- (not versus the immediately previous poll), so a flapping sentinel — a
+-- transient MinIO HEAD error making an already-ready model briefly re-count as
+-- pending — cannot indefinitely extend the wait; the barrier is non-fatal
+-- (a still-pending result only warns), so this is a deliberate, more robust
+-- give-up semantic.
+eagerModelCacheDeadline :: Readiness.Deadline
+eagerModelCacheDeadline =
+  Readiness.Deadline
+    { Readiness.deadlinePollMicros = 5000000,
+      Readiness.deadlineStallSeconds = 605,
+      Readiness.deadlineCeilingSeconds = modelBootstrapReadyWaitMaxSeconds
+    }
+
+-- | Sprint 8.7: the warm-model-cache barrier returns typed readiness evidence
+-- rather than a bare pending list. Sprint 6.41: the hand-rolled poll/stall/ceiling
+-- loop is replaced by 'Infernix.Evidence.Readiness.awaitReadiness' (which mints
+-- the 'WarmModelCacheReady' witness from a real observation); the still-pending
+-- model ids are captured in an 'IORef' the probe writes, since the kernel's
+-- 'Progress' carries only counts.
 waitForEagerModelCacheReady :: String -> [Text.Text] -> (String -> IO ()) -> IO WarmModelCacheOutcome
 waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
   let (scheme, hostPort) = splitMinioEndpoint (Text.pack minioBaseEndpoint)
@@ -3589,9 +3655,8 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
             Presigned.presignedSessionToken = Nothing
           }
   manager <- newManager tlsManagerSettings
-  let pollIntervalSeconds = 5
-      stallLimitSeconds = 600
-      absoluteMaxSeconds = modelBootstrapReadyWaitMaxSeconds
+  pendingRef <- newIORef modelIds
+  let totalCount = length modelIds
       sentinelReady modelIdValue = do
         let sentinelObject =
               Contracts.ObjectRef
@@ -3600,27 +3665,22 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
                 }
         try @SomeException (minioObjectExists presigned manager sentinelObject)
           >>= either (const (pure False)) pure
-      go elapsedSeconds stallSeconds lastReadyCount = do
+      probe = do
         pending <- filterM (fmap not . sentinelReady) modelIds
-        let readyCount = length modelIds - length pending
+        writeIORef pendingRef pending
+        let readyCount = totalCount - length pending
+            detail = show readyCount <> "/" <> show totalCount <> " models staged"
         if null pending
-          then pure (WarmModelCacheAllStaged (WarmModelCacheReady ()))
-          else
-            if elapsedSeconds >= absoluteMaxSeconds
-              then pure (WarmModelCacheStillPending pending)
-              else
-                if readyCount > lastReadyCount
-                  then do
-                    logProgress (show readyCount <> "/" <> show (length modelIds) <> " models staged")
-                    threadDelay (pollIntervalSeconds * 1000000)
-                    go (elapsedSeconds + pollIntervalSeconds) 0 readyCount
-                  else
-                    if stallSeconds >= stallLimitSeconds
-                      then pure (WarmModelCacheStillPending pending)
-                      else do
-                        threadDelay (pollIntervalSeconds * 1000000)
-                        go (elapsedSeconds + pollIntervalSeconds) (stallSeconds + pollIntervalSeconds) readyCount
-  go 0 0 (-1)
+          then pure (Right (WarmModelCacheReady ()))
+          else do
+            logProgress detail
+            pure (Left (Readiness.Progress readyCount totalCount (Text.pack detail)))
+  outcome <- Readiness.awaitReadiness eagerModelCacheDeadline probe
+  Readiness.foldReadiness
+    (pure . WarmModelCacheAllStaged)
+    (const (WarmModelCacheStillPending <$> readIORef pendingRef))
+    (const (WarmModelCacheStillPending <$> readIORef pendingRef))
+    outcome
 
 -- | Multi-file model sources (e.g. Open-Unmix `umxhq`, which is four per-target
 -- Zenodo state dicts, not one file or a HuggingFace repo) are staged through the
@@ -3723,7 +3783,77 @@ qualifiedReadyTopicPrefix ns =
       ConversationTopic.topicNamespaceName ns
     ]
 
-withDownloadedUpstreamModel :: Manager -> Text.Text -> (FilePath -> IO a) -> IO a
+-- | Sprint 4.29 (managed-state-transition doctrine): a bounded, non-negative
+-- backoff in seconds. The constructor is hidden; 'classifyDownloadStatus' is the
+-- sole minter and it always clamps, so a hostile or absent @Retry-After@ can
+-- neither stall the coordinator nor let it hammer a rate-limited origin.
+newtype RetryAfterSeconds = RetryAfterSeconds Int
+  deriving (Eq, Show)
+
+retryAfterSeconds :: RetryAfterSeconds -> Int
+retryAfterSeconds (RetryAfterSeconds seconds) = seconds
+
+-- | Sprint 4.29: the total, typed outcome of a model-weight download. It
+-- replaces the former collapse-every-non-200-into-one-@userError@, so a
+-- transient rate-limit (which carries a machine-readable @Retry-After@) is
+-- distinguishable from a permanent failure and the bootstrap redelivery decision
+-- can honor it instead of hammering the origin forever. Thrown by
+-- 'downloadUpstreamModelToFile' and consumed by 'handleBootstrapMessage'.
+data DownloadOutcome
+  = DownloadSucceeded
+  | DownloadRateLimited !RetryAfterSeconds
+  | DownloadTransient !String
+  | DownloadPermanent !String
+  deriving (Eq, Show)
+
+instance Exception DownloadOutcome
+
+minModelDownloadBackoffSeconds :: Int
+minModelDownloadBackoffSeconds = 5
+
+maxModelDownloadBackoffSeconds :: Int
+maxModelDownloadBackoffSeconds = 120
+
+defaultModelDownloadBackoffSeconds :: Int
+defaultModelDownloadBackoffSeconds = 30
+
+clampModelDownloadBackoffSeconds :: Int -> Int
+clampModelDownloadBackoffSeconds seconds =
+  max minModelDownloadBackoffSeconds (min maxModelDownloadBackoffSeconds seconds)
+
+-- | Sprint 4.29: pure classification of a model-download HTTP status. A 429, or
+-- a 403 that carries a @Retry-After@ (the shape a WAF/rate-limiter returns), is
+-- a transient rate-limit to be retried after the clamped backoff; a 5xx is a
+-- generic transient; every other non-200 is permanent (redelivering it forever
+-- only wastes work and worsens a rate limit). @maybeRetryAfter@ is the parsed
+-- @Retry-After@ header (delta-seconds), if present.
+classifyDownloadStatus :: Int -> Maybe Int -> DownloadOutcome
+classifyDownloadStatus code maybeRetryAfter
+  | code == 200 = DownloadSucceeded
+  | code == 429 =
+      DownloadRateLimited
+        (RetryAfterSeconds (clampModelDownloadBackoffSeconds (fromMaybe defaultModelDownloadBackoffSeconds maybeRetryAfter)))
+  | code == 403,
+    Just seconds <- maybeRetryAfter =
+      DownloadRateLimited (RetryAfterSeconds (clampModelDownloadBackoffSeconds seconds))
+  | code >= 500 = DownloadTransient ("upstream returned HTTP " <> show code)
+  | otherwise = DownloadPermanent ("upstream returned HTTP " <> show code)
+
+parseRetryAfterHeader :: [Header] -> Maybe Int
+parseRetryAfterHeader headers =
+  lookup hRetryAfter headers >>= readMaybe . ByteString8.unpack
+
+-- | A descriptive User-Agent. An absent UA is exactly what zenodo's WAF 403s;
+-- sending one is the fix for the pod-side 403.
+modelDownloadUserAgent :: ByteString.ByteString
+modelDownloadUserAgent = ByteString8.pack "infernix-model-bootstrap/1.0"
+
+-- | Idle-transfer bound for the model download so a stalled connection does not
+-- hang the bootstrap loop.
+modelDownloadResponseTimeout :: ResponseTimeout
+modelDownloadResponseTimeout = responseTimeoutMicro (300 * 1000000)
+
+withDownloadedUpstreamModel :: Manager -> Text.Text -> (FilePath -> Integer -> IO a) -> IO a
 withDownloadedUpstreamModel manager urlText action = do
   temporaryDirectory <- getTemporaryDirectory
   (temporaryPath, temporaryHandle) <- openBinaryTempFile temporaryDirectory "infernix-model-payload.tmp"
@@ -3731,40 +3861,45 @@ withDownloadedUpstreamModel manager urlText action = do
         ignoreCleanupError (hClose temporaryHandle)
         ignoreCleanupError (removeFile temporaryPath)
   ( do
-      downloadUpstreamModelToFile manager urlText temporaryHandle
+      downloadedBytes <- downloadUpstreamModelToFile manager urlText temporaryHandle
       hClose temporaryHandle
-      action temporaryPath
+      action temporaryPath downloadedBytes
     )
     `finally` cleanup
 
-downloadUpstreamModelToFile :: Manager -> Text.Text -> Handle -> IO ()
+-- | Sprint 4.29 (managed-state-transition doctrine): download a single-file
+-- model weight to @outputHandle@, returning the number of bytes written. Sends a
+-- descriptive User-Agent (an absent UA is what the upstream WAF 403s), bounds the
+-- transfer with an idle timeout, and classifies a non-200 into a total
+-- 'DownloadOutcome' which it throws, so the redelivery decision can honor a
+-- @Retry-After@ instead of hammering the origin forever.
+downloadUpstreamModelToFile :: Manager -> Text.Text -> Handle -> IO Integer
 downloadUpstreamModelToFile manager urlText outputHandle = do
-  request <- parseRequest (Text.unpack urlText)
+  baseRequest <- parseRequest (Text.unpack urlText)
+  let request =
+        baseRequest
+          { requestHeaders = (hUserAgent, modelDownloadUserAgent) : requestHeaders baseRequest,
+            responseTimeout = modelDownloadResponseTimeout
+          }
   firstNonSpaceByteRef <- newIORef Nothing
-  withResponse request manager $ \response -> do
+  totalBytes <- withResponse request manager $ \response -> do
     let code = statusCode (responseStatus response)
-    unless (code == 200) $
-      ioError
-        ( userError
-            ( "upstream model download "
-                <> Text.unpack urlText
-                <> " returned HTTP "
-                <> show code
-            )
-        )
-    let loop = do
+    case classifyDownloadStatus code (parseRetryAfterHeader (responseHeaders response)) of
+      DownloadSucceeded -> pure ()
+      failure -> throwIO failure
+    let loop acc = do
           chunk <- brRead (responseBody response)
           if ByteString.null chunk
-            then pure ()
+            then pure acc
             else do
               recordFirstNonSpaceByte firstNonSpaceByteRef chunk
               ByteString.hPut outputHandle chunk
-              loop
-    loop
+              loop (acc + fromIntegral (ByteString.length chunk))
+    loop (0 :: Integer)
   firstNonSpaceByte <- readIORef firstNonSpaceByteRef
   when (firstNonSpaceByteLooksLikeHtml firstNonSpaceByte) $
-    ioError
-      ( userError
+    throwIO
+      ( DownloadPermanent
           ( "upstream model download "
               <> Text.unpack urlText
               <> " returned non-weight content: the response body begins with markup or is "
@@ -3772,6 +3907,7 @@ downloadUpstreamModelToFile manager urlText outputHandle = do
               <> "points at a repository landing page rather than a direct weight artifact"
           )
       )
+  pure totalBytes
 
 recordFirstNonSpaceByte :: IORef (Maybe Word8) -> ByteString.ByteString -> IO ()
 recordFirstNonSpaceByte firstNonSpaceByteRef chunk = do
@@ -3816,6 +3952,31 @@ minioObjectExists presigned manager objectRef = do
           }
   response <- httpLbs headRequest manager
   pure (statusCode (responseStatus response) == 200)
+
+-- | Sprint 4.29: the byte length of an uploaded object via a bounded HEAD, used
+-- to witness upload integrity (truncation-detecting), or 'Nothing' if the object
+-- is absent or exposes no @Content-Length@.
+minioObjectContentLength ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  Contracts.ObjectRef ->
+  IO (Maybe Integer)
+minioObjectContentLength presigned manager objectRef = do
+  now <- getCurrentTime
+  let signedUrl =
+        Presigned.unPresignedUrl
+          (Presigned.presignedHeadUrl presigned now objectRef)
+  request <- parseRequest (Text.unpack signedUrl)
+  let headRequest =
+        request
+          { method = "HEAD",
+            responseTimeout = minioObjectExistsTimeout
+          }
+  response <- httpLbs headRequest manager
+  pure $
+    if statusCode (responseStatus response) == 200
+      then lookup hContentLength (responseHeaders response) >>= readMaybe . ByteString8.unpack
+      else Nothing
 
 minioObjectExistsTimeout :: ResponseTimeout
 minioObjectExistsTimeout =

@@ -75,6 +75,15 @@
 - the style gate enforces the engine-runtime import boundary and the Phase 7 shared-library
   import boundary described in
   [implementation_boundaries.md](../engineering/implementation_boundaries.md)
+- the style gate carries the managed-state capability-gating rules that back the raw primitives the
+  type system cannot chokepoint: `escapeTokenViolations` (`unsafeCoerce` / `unsafePerformIO` in the
+  evidence modules), `rawDestructiveViolations` (raw `rm -rf` / `docker exec … rm`),
+  `emptySubprocessEnvViolations` (`env = Just []`), `unboundedExecViolations` (raw unbounded process
+  spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` and peers — in
+  production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`), and
+  `unboundedHttpViolations` (raw `withResponse` for the upstream model download outside the
+  bounded-HTTP wrapper). Their canonical doctrine is
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
   proto, docs, Python, and build-warning checks
 

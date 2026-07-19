@@ -87,7 +87,10 @@ init`; commands fail fast with a "run init" reminder when it is absent.
   gated by the active `.dhall` `demo_ui` flag, sharing the same typed service domain as the
   production path
 - resolves logical models against durable manifest and artifact metadata
-- acquires missing artifacts into MinIO idempotently when upstream acquisition policy allows it
+- acquires missing artifacts into MinIO idempotently when upstream acquisition policy allows it; the
+  coordinator's upstream model fetch is UA-bearing and time-bounded and classifies the HTTP status
+  (honoring `Retry-After` rather than re-hammering a rate-limited origin), and the `.ready` sentinel is
+  gated on a byte-length integrity check so a truncated upload cannot mark a model ready
 - materializes runtime-local cache state from durable sources
 - launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
   vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/*.py`
@@ -830,6 +833,10 @@ this section is an orientation summary.
   RAM limit, and Linux GPU compares against GPU VRAM. A model whose requirement exceeds that budget
   produces a typed `ModelMemoryLimitExceeded` error result with `requiredMib` and `availableMib`
   quantities instead of exhausting the daemon
+- every cluster subprocess runs bounded: lifecycle and image-publication commands invoke docker,
+  skopeo, `kubectl`, and `helm` through a required per-operation timeout, so a hung external command
+  (for example a Harbor `docker pull` verify that stalls) times out and advances the retry path instead
+  of stalling `cluster up` indefinitely
 
 ## Messaging and Lane Model
 

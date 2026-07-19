@@ -33,6 +33,17 @@
   substrate
 - after Harbor reaches its final rollout shape, `cluster up` preloads the Harbor-backed final
   image refs onto the Kind worker before the remaining non-Harbor workloads are scaled
+- Harbor image publication runs every docker/skopeo login, upstream pull, push, and `docker pull`
+  verify through the bounded-command kernel (`Infernix.Cluster.Subprocess.runBoundedCommand`) under
+  named per-operation `Timeout` budgets, so a hung publish exec times out and advances the retry
+  counter instead of stalling `cluster up` indefinitely
+- publication treats a tag's presence in the Harbor API as metadata (`harborTagMetadataPresent`) that
+  may shortcut a push, never as proof the blob is servable; the terminal "published" state is a
+  `BlobServable` witness minted only by a real bounded pull of the specific ref, so a retained-state
+  second `cluster up` re-pushes when the rebuildable `harbor-registry` MinIO backing has not finished
+  rehydrating instead of trusting stale tag metadata. This ties into the stale-cached-blob-existence
+  note above and the readiness-returns-evidence pattern whose canonical home is
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 
 ## Host Port
 

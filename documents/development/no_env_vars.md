@@ -67,7 +67,11 @@ enum has one constructor per tool listed in
 
 The typed `SubprocessEnv` requiring `HOME` and `TMPDIR` and the `CommandOutcome` ADT extend these
 process-execution rules, whose canonical home is the
-[Managed State Transitions](../architecture/managed_state_transitions.md) doctrine.
+[Managed State Transitions](../architecture/managed_state_transitions.md) doctrine. Cluster
+subprocesses — including every Harbor publish docker/skopeo login, upstream pull, push, and
+`docker pull` verify — run through `Infernix.Cluster.Subprocess.runBoundedCommand` under a required
+`Timeout`, so an unbounded exec cannot hang the control plane; the `unboundedExecViolations` style-lint
+rule rejects a raw process spawn outside that wrapper.
 
 ### Test fixtures
 

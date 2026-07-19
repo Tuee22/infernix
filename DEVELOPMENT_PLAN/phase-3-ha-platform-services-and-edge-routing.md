@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active — reopened and re-closed
+**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 3.14); reopened and re-closed for Sprints 3.1-3.13 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -9,6 +9,20 @@
 > duplication across Haskell, Helm, route-oriented docs, and route-aware validation.
 
 ## Phase Status
+
+> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
+> single-accelerator cohort run surfaced a Harbor `docker pull` verify hang during
+> `publish-harbor-images` (the retained-state second `cluster up` of the Postgres lifecycle-rebinding
+> step) that the Sprint 1.16/3.14 kernels shipped but did not yet guard at the publish/verify site.
+> This phase reopens under
+> [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-active) to route every
+> Harbor docker/skopeo exec through `Infernix.Cluster.Subprocess.runBoundedCommand` under named
+> `Timeout` budgets (killing the ~23-min hang) and to mint blob-servability evidence: the opaque
+> `BlobServable` witness from a real bounded pull, `harborTagExists` demoted to the non-terminal
+> `harborTagMetadataPresent` and `registryReady` to the weaker `registryApiReachable`, so a
+> retained-state push-skip against an unrehydrated MinIO backing is no longer a terminal "done".
+> Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon); the
+> single-accelerator plus `linux-cpu` cohort full-suite is the pending residual (owning wave TBD).
 
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
 Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after
@@ -791,6 +805,68 @@ doctrine to this phase's cluster-lifecycle surface.
 
 ---
 
+## Sprint 3.15: Harbor Blob-Servable Evidence & Bounded Publish [Active]
+
+**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
+and `infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint,
+so `poetry run check-code` does not apply.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Cluster/PublishImages.hs`
+**Blocked by**: Sprint 1.16, 3.14
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/tools/harbor.md`,
+`documents/development/no_env_vars.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — apply the
+Sprint 1.16 bounded-command kernel and the Sprint 3.14 readiness kernel at the Harbor publish/verify
+site the 2026-07-18 cohort run hung on. Two representable-invalid states are made unbuildable:
+(1) an unbounded `docker pull` verify that never returns, and (2) tag metadata read from the Harbor
+API being trusted as blob-servability on a retained-state second `cluster up` against an unrehydrated
+~40 GB MinIO backing. It applies the
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+doctrine — evidence, not hope — to the publication surface.
+
+### Deliverables
+
+- every docker/skopeo exec in `src/Infernix/Cluster/PublishImages.hs` runs through
+  `Infernix.Cluster.Subprocess.runBoundedCommand` under named `Timeout` budgets
+  (`harborQuickCommandBudget`, `harborLoginBudget`, `harborUpstreamPullBudget`,
+  `harborPullVerifyBudget`, `harborPushBudget`): the `CommandMonitorFactory`/`ProcessMonitor`
+  heartbeat hook is replaced by a `PublishPhaseHook = String -> IO ()`, `tryRunCommand` routes
+  through `runBoundedCommand`, and a `CommandTimedOut` surfaces as a `Left` so the retry counter
+  advances instead of hanging (~23-min hang killed)
+- an opaque `newtype BlobServable` (hidden constructor) minted only by `probeRegistryPull` (a bounded
+  pull); `verifyRegistryPull` now returns `BlobServable` or fails, and `publishIfNeeded` falls through
+  to a real push when the blob is not servable instead of terminally trusting tag metadata
+- `harborTagExists` demoted to the non-terminal `harborTagMetadataPresent` (metadata-only, may only
+  shortcut the push) and `registryReady` weakened to `registryApiReachable` (may only gate polling,
+  never "done"); `PublishImages.hs` added to `escapeTokenScopedFiles` so `BlobServable` cannot be
+  forged
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `infernix docs check` are exercised on both the
+  apple-silicon and linux-cpu lanes
+- the end-to-end proof is the retained-state second `cluster up` of the Postgres lifecycle-rebinding
+  integration step: with the bounded exec plus `BlobServable` witness it must pull a servable blob or
+  fail bounded, never hang — this rides the pending cohort full-suite
+
+### Remaining Work
+
+- the general readiness-wait migration onto `awaitReadiness` for the remaining Harbor/cluster waits
+  (`waitForRegistry`, `loginHarborWithRetries`, `pushImageWithRetries`, and peers) and the
+  `ProcessMonitor.hs` retirement are the broader hardening tracked by
+  [Sprint 6.41](phase-6-validation-e2e-and-ha-hardening.md); this sprint bounds the publish exec and
+  mints blob-servability evidence at the flake site
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
+  of the bounded publish plus `BlobServable` witness is pending, owning wave TBD
+
+---
+
 ## Remaining Work
 
 None. Sprints 3.1-3.13 are `Done`; Sprint 3.13 closed in
@@ -799,8 +875,10 @@ Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Lin
 closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
 
 The phase is Active again for [Sprint 3.14](#sprint-314-readiness-kernel-and-subprocess-env-seam-planned),
-the Managed-State-Transition Doctrine reopen work, whose own `### Remaining Work` tracks the pending
-cohort full-suite sign-off.
+the Managed-State-Transition Doctrine reopen work, and
+[Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-active), the Bounded-Command
+Application & Bounded-HTTP reopen work that bounds the Harbor publish exec and mints `BlobServable`
+evidence; each carries its own `### Remaining Work` tracking the pending cohort full-suite sign-off.
 
 ---
 

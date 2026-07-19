@@ -1,6 +1,8 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.27 is closed for typed resource memory admission and typed inference
+**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 4.29 code-side closed
+2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 4.28). Sprint
+4.27 is closed for typed resource memory admission and typed inference
 errors. The Apple-only integer budget, config-time over-budget fail-fast, hardcoded floor, and
 stringly runtime failure payload are replaced by pure `InferenceMemoryBudget` / `InferenceError`
 types. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu` accelerator.
@@ -16,6 +18,19 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > make the runtime model honest and durable.
 
 ## Phase Status
+
+> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
+> single-accelerator cohort run surfaced a rate-limited upstream model download — the coordinator's
+> in-pod fetch of `music-omnizart` returned HTTP 403 (a UA-less request tripping the origin WAF, which
+> also carried `Retry-After`), and the Sprint 4.28 kernels shipped but did not yet classify that
+> outcome or bound the fetch. This phase reopens under
+> [Sprint 4.29](#sprint-429-classified-model-download--integrity-witnessed-sentinel-active) to send a
+> descriptive `User-Agent`, consume the Sprint 1.17 `DownloadOutcome` with a `Retry-After`-honoring
+> bounded redelivery (permanent failures ack to stop the redeliver-forever loop instead of hammering
+> the origin), and strengthen the `.ready` sentinel: `PayloadVerified` is now minted only when the
+> uploaded object's byte length matches the download, so a truncated upload can no longer mint a lying
+> sentinel. Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon); the
+> single-accelerator plus `linux-cpu` cohort full-suite is the pending residual (owning wave TBD).
 
 > **Realness reopen (real per-family inference).** A multi-agent audit established that the prior
 > "real per-family output" closure was, for several catalog rows, satisfied by silent fabrication
@@ -1983,6 +1998,62 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ---
 
+## Sprint 4.29: Classified Model Download & Integrity-Witnessed Sentinel [Active]
+
+**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (the `classifyDownloadStatus` classification assertions pass),
+`cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
+`infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint, so
+`poetry run check-code` does not apply. Producing a real classified download and an integrity-matched
+upload against a live upstream and MinIO still requires cohort hardware.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`
+**Blocked by**: Sprint 1.17, 4.28
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`, and the phase's
+existing engineering/reference docs
+
+### Objective
+
+This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — consume the
+Sprint 1.17 bounded-HTTP download kernel at the coordinator model-bootstrap site the 2026-07-18 cohort
+run hit (a rate-limited 403 on `music-omnizart`), and make the `.ready` sentinel witness integrity,
+not existence. It encodes evidence, not hope: "retried forever with no backoff" and "a sentinel that
+lies about a truncated upload" become terms that do not typecheck. It applies the
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+doctrine to the durable-runtime download and sentinel surface.
+
+### Deliverables
+
+- `handleBootstrapMessage`'s failure path (`handleBootstrapFailure`) folds on the typed
+  `DownloadOutcome`: `DownloadRateLimited` / `DownloadTransient` → a bounded backoff (honoring
+  `Retry-After`) then a negative-ack that redelivers; `DownloadPermanent` → an ack that STOPS the
+  redeliver-immediately-forever loop, so Pulsar can no longer re-hammer a rate-limited origin
+- `downloadUpstreamModelToFile` returns the downloaded byte count; `verifyUploadedPayload` takes the
+  expected byte count and mints `PayloadVerified` only when the uploaded object's Content-Length
+  matches (new `minioObjectContentLength`), replacing the HEAD-existence-only check — a truncated
+  upload can no longer mint a lying `.ready` sentinel
+- unit coverage for the `classifyDownloadStatus` fold and the integrity-witnessed mint
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `infernix docs check` are exercised on both the
+  apple-silicon and linux-cpu lanes
+- the end-to-end proof is a model-bootstrap wave including `music-omnizart`: the UA-bearing request
+  succeeds, and a fault-injected 403 + `Retry-After` backs off per the header and fails as
+  `status=failed` on a permanent classification rather than redelivering forever — this rides the
+  pending cohort full-suite
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
+  of the classified download fold and the integrity-witnessed sentinel against a live upstream and
+  MinIO is pending, owning wave TBD
+
+---
+
 ## Remaining Work
 
 Sprint 4.27 is closed for typed resource memory admission and typed inference error payloads by
@@ -1993,6 +2064,9 @@ RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md)
 [Wave S](cohort-validation-waves.md) for their original scopes.
 **Sprint 4.28** (Evidence in Runtime and Engines) is the active Managed-State-Transition Doctrine
 reopen for this phase; its cohort full-suite sign-off is pending.
+**Sprint 4.29** (Classified Model Download & Integrity-Witnessed Sentinel) is the active
+Bounded-Command Application & Bounded-HTTP reopen for this phase — the UA-bearing, `Retry-After`-honoring
+download fold and the integrity-witnessed `PayloadVerified`; its cohort full-suite sign-off is pending.
 
 ---
 

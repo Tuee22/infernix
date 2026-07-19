@@ -127,9 +127,11 @@ import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
     DemoClientMessagePublication (..),
+    DownloadOutcome (..),
     PulsarWebSocketBase (..),
     authorizedGeneratedResultObjectRefs,
     buildServiceConsumerSocketPath,
+    classifyDownloadStatus,
     domainResultToProto,
     drainTopic,
     inferenceRequestProducerNameForFields,
@@ -144,6 +146,7 @@ import Infernix.Runtime.Pulsar
     protoResultToDomain,
     publishInferenceRequest,
     requireTopicRef,
+    retryAfterSeconds,
     serviceConsumerAckTimeoutMillis,
     serviceConsumerName,
     serviceConsumerSubscriptionType,
@@ -190,6 +193,18 @@ import Test.QuickCheck
     quickCheckWithResult,
     stdArgs,
   )
+
+-- Sprint 4.29: testable projections of a 'DownloadOutcome' (equation-based, not
+-- a hanging @case@) for the Flake 2 classification assertions.
+downloadOutcomeTag :: DownloadOutcome -> String
+downloadOutcomeTag DownloadSucceeded = "succeeded"
+downloadOutcomeTag (DownloadRateLimited _) = "rate-limited"
+downloadOutcomeTag (DownloadTransient _) = "transient"
+downloadOutcomeTag (DownloadPermanent _) = "permanent"
+
+downloadOutcomeBackoff :: DownloadOutcome -> Maybe Int
+downloadOutcomeBackoff (DownloadRateLimited backoff) = Just (retryAfterSeconds backoff)
+downloadOutcomeBackoff _ = Nothing
 
 main :: IO ()
 main = do
@@ -1477,6 +1492,28 @@ main = do
       assert
         (modelBootstrapReadyWaitMaxSeconds >= 900)
         "model-bootstrap ready wait supports cold Hugging Face snapshot downloads"
+      -- Sprint 4.29: the model-download HTTP status classification (Flake 2).
+      assert
+        (downloadOutcomeTag (classifyDownloadStatus 200 Nothing) == "succeeded")
+        "a 200 model-download status classifies as succeeded"
+      assert
+        (downloadOutcomeBackoff (classifyDownloadStatus 403 (Just 40)) == Just 40)
+        "a 403 carrying Retry-After classifies as a rate-limit honoring the header"
+      assert
+        (maybe False (>= 5) (downloadOutcomeBackoff (classifyDownloadStatus 429 Nothing)))
+        "a 429 with no Retry-After classifies as a rate-limit with a bounded default backoff"
+      assert
+        (downloadOutcomeTag (classifyDownloadStatus 503 Nothing) == "transient")
+        "a 5xx model-download status classifies as transient"
+      assert
+        (downloadOutcomeTag (classifyDownloadStatus 403 Nothing) == "permanent")
+        "a bare 403 with no rate-limit header classifies as permanent, not retried forever"
+      assert
+        (downloadOutcomeTag (classifyDownloadStatus 404 Nothing) == "permanent")
+        "a 404 model-download status classifies as permanent"
+      assert
+        (maybe False (<= 120) (downloadOutcomeBackoff (classifyDownloadStatus 403 (Just 100000))))
+        "a hostile oversized Retry-After is clamped to a bounded backoff"
       assert
         ( isPackageBackedNativeModel "audio-basic-pitch-coreml"
             && isPackageBackedNativeModel "tool-audiveris"

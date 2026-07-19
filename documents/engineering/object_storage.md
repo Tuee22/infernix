@@ -190,7 +190,12 @@ single-flight dispatcher and the result-bridge) when an engine hits an unstaged 
    mounted `infernix.dhall` catalog.
 4. HTTP `GET` the upstream URL (this is the only point in the
    supported daemon topology that reaches the public internet — Hugging
-   Face, GitHub releases, etc.).
+   Face, GitHub releases, etc.) through the bounded-HTTP download wrapper:
+   a descriptive `User-Agent` and a bounded `responseTimeout`, with the
+   HTTP status classified into a total `DownloadOutcome`. A rate-limited
+   (429 / 403 + `Retry-After`) or transient (5xx) outcome backs off per
+   `Retry-After` and redelivers; a permanent outcome is acked so the
+   request is not redelivered forever.
 5. `PUT` each file under `infernix-models/<modelId>/<filename>`.
 6. `PUT infernix-models/<modelId>/.ready` last; this sentinel marks
    the upload as atomically visible.
@@ -206,8 +211,11 @@ single-flight dispatcher and the result-bridge) when an engine hits an unstaged 
   `modelId@requestedAt` sequence id while the Pulsar message key stays
   `modelId` — exact request replays collapse, but later retry attempts
   can enqueue work if readiness never appears.
-- The `.ready` sentinel written last — partial uploads are not
-  visible to engines because the sentinel is the gate.
+- The `.ready` sentinel written last, and gated on an integrity witness:
+  `PayloadVerified` is minted only when the uploaded object's
+  Content-Length matches the downloaded byte count, so a partial or
+  truncated upload cannot write the sentinel and is not visible to
+  engines because the sentinel is the gate.
 
 **Failure mode**: if the active coordinator dies mid-upload, Pulsar
 redelivers the unacked request to a surviving coordinator replica.

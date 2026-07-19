@@ -41,7 +41,15 @@ Read first:
   evidence that its transition completed. The raw destructive, commit, and spawn primitives — the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode` — are unexported, so acting on an unmanaged state (a race or flake)
-  does not typecheck; enforcement is GHC export lists plus `-Wall -Werror`. Canonical doctrine:
+  does not typecheck; enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process
+  spawn is forbidden in production `src/Infernix/` outside
+  `Infernix.Cluster.Subprocess.runBoundedCommand` (every cluster subprocess runs under a required
+  `Timeout`), enforced by the `unboundedExecViolations` lint. Canonical doctrine:
+  [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
+  through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
+  classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
+  outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
@@ -84,10 +92,10 @@ Read first:
   decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
   manifest) and `infernix test init` (`./infernix.test.dhall`); ordinary `infernix` commands fail
   fast if config is missing, naming the init to run, while `./bootstrap/apple-silicon.sh up`
-  explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The test
-  harness generates `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model
-  set is whatever the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a
-  demo-only generator); the coordinator eager-stages that set at startup. Canonical doctrine:
+  explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The test harness generates
+  `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
+  the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
+  generator); the coordinator eager-stages that set at startup. Canonical doctrine:
   [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 
 ## Scope

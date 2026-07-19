@@ -63,7 +63,15 @@ this canonical list.
   evidence that its transition completed; the raw destructive, commit, and spawn primitives (the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode`) are unexported, so acting on an unmanaged state does not
-  typecheck. Enforcement is GHC export lists plus `-Wall -Werror`. Canonical:
+  typecheck. Enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process spawn is
+  forbidden in production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`
+  (every cluster subprocess runs under a required `Timeout`), enforced by the `unboundedExecViolations`
+  lint. Canonical:
+  [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
+- no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
+  through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
+  classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
+  outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 
 ## Supported Build And Operator Workflows

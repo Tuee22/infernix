@@ -29,6 +29,7 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
+import Data.IORef (atomicModifyIORef', newIORef)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe, maybeToList)
@@ -57,7 +58,6 @@ import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
-import Infernix.ProcessMonitor qualified as ProcessMonitor
 import Infernix.Routes (routeHelmValues)
 import Infernix.Runtime.Pulsar (WarmModelCacheOutcome (..), waitForEagerModelCacheReady)
 import Infernix.Storage
@@ -426,39 +426,59 @@ settleLifecycle paths state lifecycle = do
   persistClusterState paths updatedState
   pure updatedState
 
-lifecycleMonitorLabel :: ClusterState -> String
-lifecycleMonitorLabel state =
-  case lifecyclePhaseOf state of
-    Just phase ->
-      lifecycleTransitionAction (lifecyclePhaseTransition phase)
-        <> " phase "
-        <> lifecyclePhaseName phase
-        <> ": "
-        <> lifecyclePhaseDetail phase
-    Nothing -> "long-running lifecycle command"
+-- Sprint 6.41 (managed-state-transition doctrine): long-running lifecycle
+-- commands (docker build/pull/tag/cp, crictl pull, save|import streams) run
+-- under a required, large-but-finite 'Subprocess.Timeout' via the bounded
+-- command kernel. This retires the @ProcessMonitor@ heartbeat, whose only
+-- observable effect was to keep re-freshening the lifecycle-progress marker
+-- every 30 s so a wedged command read as healthy progress (a hang mask no
+-- control-flow consumed). A 'Subprocess.CommandTimedOut' now surfaces as a loud
+-- bounded failure -> status=failed, rather than an unbounded "still running"
+-- drip. Budgets sit comfortably above the largest legitimate duration yet below
+-- the pathological hang class.
 
-lifecycleCommandMonitor :: Paths -> ClusterState -> ProcessMonitor.CommandMonitor
-lifecycleCommandMonitor paths state =
-  ProcessMonitor.CommandMonitor
-    { ProcessMonitor.monitorLabel = lifecycleMonitorLabel state,
-      ProcessMonitor.monitorIntervalMicros = 30000000,
-      ProcessMonitor.monitorHeartbeat = \_elapsedSeconds -> touchLifecycleProgress paths state
-    }
+dockerBuildTimeout :: Subprocess.Timeout
+dockerBuildTimeout = Subprocess.Timeout (45 * 60 * 1000000)
 
-runCommandMonitored :: Paths -> ClusterState -> Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
-runCommandMonitored paths state maybeWorkingDirectory envOverrides command args = do
-  let resolvedCommand = resolveClusterCommandWithPaths paths command
-  result <-
-    ProcessMonitor.tryCommandMonitored
-      maybeWorkingDirectory
-      envOverrides
-      resolvedCommand
-      args
-      (Just (lifecycleCommandMonitor paths state))
+dockerPullTimeout :: Subprocess.Timeout
+dockerPullTimeout = Subprocess.Timeout (20 * 60 * 1000000)
+
+dockerTagTimeout :: Subprocess.Timeout
+dockerTagTimeout = Subprocess.Timeout (2 * 60 * 1000000)
+
+crictlPullTimeout :: Subprocess.Timeout
+crictlPullTimeout = Subprocess.Timeout (15 * 60 * 1000000)
+
+dockerStreamImportTimeout :: Subprocess.Timeout
+dockerStreamImportTimeout = Subprocess.Timeout (20 * 60 * 1000000)
+
+dockerCpTimeout :: Subprocess.Timeout
+dockerCpTimeout = Subprocess.Timeout (15 * 60 * 1000000)
+
+-- | Sprint 6.41: run a lifecycle command bounded, failing loudly (including on
+-- timeout) instead of hanging. Replaces the former ProcessMonitor-heartbeat
+-- @runCommandMonitored@.
+runCommandBounded :: Paths -> Subprocess.Timeout -> Maybe FilePath -> FilePath -> [String] -> IO ()
+runCommandBounded paths budget maybeWorkingDirectory command args = do
+  result <- tryCommandBounded paths budget maybeWorkingDirectory command args
   case result of
     Right _ -> pure ()
     Left err ->
       ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
+
+-- | Sprint 6.41: bounded lifecycle command returning captured output, for
+-- callers (the crictl-pull retry loop) that branch on the result.
+tryCommandBounded :: Paths -> Subprocess.Timeout -> Maybe FilePath -> FilePath -> [String] -> IO (Either String String)
+tryCommandBounded paths budget maybeWorkingDirectory command args = do
+  let resolvedCommand = resolveClusterCommandWithPaths paths command
+  environment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
+  outcome <- Subprocess.runBoundedCommand budget environment maybeWorkingDirectory resolvedCommand args ""
+  pure $ case outcome of
+    Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
+    Subprocess.CommandFailedTransient err -> Left err
+    Subprocess.CommandFailedFatal err -> Left err
+    Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
+      Left ("command timed out after " <> show (micros `div` 1000000) <> "s")
 
 clusterUp :: Maybe RuntimeMode -> IO ()
 clusterUp maybeRuntimeMode = do
@@ -1980,11 +2000,10 @@ buildClusterImages paths state runtimeMode = do
       putStrLn ("building cluster images for " <> runtimeModeName)
       ensureDockerBuildBaseImage paths state goImage
       ensureDockerBuildBaseImage paths state baseImage
-      runCommandMonitored
+      runCommandBounded
         paths
-        state
+        dockerBuildTimeout
         (Just (repoRoot paths))
-        []
         "docker"
         (dockerBuildArgs imageRef sourceFingerprint)
   buildPerEngineImages
@@ -2017,11 +2036,10 @@ buildClusterImages paths state runtimeMode = do
                 else do
                   ensureDockerBuildBaseImage paths state controlPlaneBaseImage
                   ensureDockerBuildBaseImage paths state engineBaseImage
-                  runCommandMonitored
+                  runCommandBounded
                     paths
-                    state
+                    dockerBuildTimeout
                     (Just (repoRoot paths))
-                    []
                     "docker"
                     [ "build",
                       "-f",
@@ -2109,15 +2127,15 @@ ensureDockerBuildBaseImage paths state imageRef = do
     case dockerHubMirrorRef imageRef of
       Nothing -> pure ()
       Just mirrorRef -> do
-        mirrorState <-
+        _ <-
           startLifecyclePhase
             paths
             state
             "cluster-up"
             "build-cluster-images"
             ("pulling Docker build base image " <> imageRef <> " via " <> mirrorRef)
-        runCommandMonitored paths mirrorState Nothing [] "docker" ["pull", mirrorRef]
-        runCommandMonitored paths mirrorState Nothing [] "docker" ["tag", mirrorRef, imageRef]
+        runCommandBounded paths dockerPullTimeout Nothing "docker" ["pull", mirrorRef]
+        runCommandBounded paths dockerTagTimeout Nothing "docker" ["tag", mirrorRef, imageRef]
         requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
 
 requireDockerImagePresent :: String -> String -> IO ()
@@ -2172,8 +2190,12 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
         PublishImages.harborTargetArchitecture = targetArchitecture
       }
     ( \detail -> do
-        detailState <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
-        pure (Just (lifecycleCommandMonitor paths detailState))
+        -- Sprint 3.15: record the publish sub-phase for progress. The former
+        -- ProcessMonitor heartbeat is retired here; liveness is now the
+        -- bounded 'Subprocess.Timeout' on each publish command, not a
+        -- heartbeat that could mask a hung pull.
+        _ <- startLifecyclePhase paths state "cluster-up" "publish-harbor-images" detail
+        pure ()
     )
     renderedChartPath
     outputPath
@@ -2243,7 +2265,7 @@ hydrateMissingHostWarmupImage paths state imageRef =
   case dockerHubMirrorRef imageRef of
     Nothing -> pure False
     Just mirrorRef -> do
-      hydrateState <-
+      _ <-
         startLifecyclePhase
           paths
           state
@@ -2260,8 +2282,8 @@ hydrateMissingHostWarmupImage paths state imageRef =
       hydrateResult <-
         ( try
             ( do
-                runCommandMonitored paths hydrateState Nothing [] "docker" ["pull", "--platform", platformFlagValue, mirrorRef]
-                runCommandMonitored paths hydrateState Nothing [] "docker" ["tag", mirrorRef, imageRef]
+                runCommandBounded paths dockerPullTimeout Nothing "docker" ["pull", "--platform", platformFlagValue, mirrorRef]
+                runCommandBounded paths dockerTagTimeout Nothing "docker" ["tag", mirrorRef, imageRef]
                 requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             ) ::
             IO (Either IOException ())
@@ -2322,12 +2344,12 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
       ]
     go remainingAttempts lastFailure = do
       result <-
-        ProcessMonitor.tryCommandMonitored
+        tryCommandBounded
+          paths
+          crictlPullTimeout
           Nothing
-          []
           "docker"
           commandArgs
-          (Just (lifecycleCommandMonitor paths state))
       case result of
         Right _ -> pure ()
         Left err
@@ -2371,15 +2393,14 @@ preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
       | otherwise = current
 
 streamImportImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
-streamImportImageOnNode paths state nodeContainer imageRef = do
+streamImportImageOnNode paths _state nodeContainer imageRef = do
   let dockerCommand = resolveClusterCommandWithPaths paths "docker"
       streamImportScript =
         "set -euo pipefail; \"$1\" image save \"$2\" | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
-  runCommandMonitored
+  runCommandBounded
     paths
-    state
+    dockerStreamImportTimeout
     Nothing
-    []
     "bash"
     ["-lc", streamImportScript, "infernix-image-stream", dockerCommand, imageRef, nodeContainer]
 
@@ -4721,12 +4742,11 @@ copyDirectoryContentsToContainer paths maybeState localDirectory nodeName contai
   hasEntries <- directoryHasEntries localDirectory
   when hasEntries $
     case maybeState of
-      Just state ->
-        runCommandMonitored
+      Just _ ->
+        runCommandBounded
           paths
-          state
+          dockerCpTimeout
           Nothing
-          []
           "docker"
           ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
       Nothing ->
@@ -4741,12 +4761,11 @@ copyDirectoryContentsFromContainer paths maybeState nodeName containerDirectory 
   hasEntries <- containerDirectoryHasEntries paths nodeName containerDirectory
   when hasEntries $
     case maybeState of
-      Just state ->
-        runCommandMonitored
+      Just _ ->
+        runCommandBounded
           paths
-          state
+          dockerCpTimeout
           Nothing
-          []
           "docker"
           ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
       Nothing ->
@@ -6081,20 +6100,49 @@ splitTabs value =
   where
     (prefix, suffix) = break (== '\t') value
 
+-- | Sprint 6.41 (managed-state-transition doctrine): the shared retry primitive
+-- behind the cluster readiness waits (kind kubeconfig, kubernetes API, Harbor
+-- registry, Gateway CRDs, routed/direct Pulsar surfaces). It now polls through
+-- the 'Infernix.Evidence.Readiness' kernel under a required 'Deadline' derived
+-- from the legacy @attempts x delayMicros@ budget, so an unbounded wait is
+-- unrepresentable. The single-attempt form stays a plain one-shot (no poll).
 retryCommandOutput :: Int -> Int -> String -> IO (Either String String) -> IO (Either String String)
-retryCommandOutput attempts delayMicros commandLabel action = go attempts ""
+retryCommandOutput attempts delayMicros commandLabel action
+  | attempts <= 1 =
+      fmap (either (\err -> Left (commandLabel <> "\n" <> err)) Right) action
+  | otherwise = do
+      -- Retain the last non-empty error across polls (the legacy @chooseError@
+      -- semantics), so the timeout message keeps the useful diagnostic even when
+      -- the final failing poll produced empty output.
+      lastErrorRef <- newIORef ""
+      let step = do
+            result <- action
+            case result of
+              Right stdoutOutput -> pure (Right stdoutOutput)
+              Left err -> do
+                retained <-
+                  atomicModifyIORef'
+                    lastErrorRef
+                    (\previous -> let kept = if null err then previous else err in (kept, kept))
+                pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+      outcome <- Readiness.awaitReadiness (retryDeadline attempts delayMicros) step
+      pure (Readiness.foldReadiness Right onTimedOut onTimedOut outcome)
   where
-    go remainingAttempts lastError = do
-      result <- action
-      case result of
-        Right stdoutOutput -> pure (Right stdoutOutput)
-        Left err
-          | remainingAttempts <= 1 ->
-              pure (Left (commandLabel <> "\n" <> chooseError err lastError))
-          | otherwise -> do
-              threadDelay delayMicros
-              go (remainingAttempts - 1) (chooseError err lastError)
+    onTimedOut progress =
+      Left (commandLabel <> "\n" <> Text.unpack (Readiness.progressDetail progress))
 
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
+-- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'. The
+-- poll interval is preserved exactly; the stall and ceiling are
+-- @(attempts - 1) x pollSeconds@ so a probe that never signals progress runs
+-- exactly @attempts@ polls at the real @delayMicros@ cadence — matching the
+-- legacy count for both second and sub-second intervals (the kernel floors
+-- per-poll accounting to >=1 s).
+retryDeadline :: Int -> Int -> Readiness.Deadline
+retryDeadline attempts delayMicros =
+  let pollSeconds = max 1 (delayMicros `div` 1000000)
+      budgetSeconds = max 1 ((attempts - 1) * pollSeconds)
+   in Readiness.Deadline
+        { Readiness.deadlinePollMicros = delayMicros,
+          Readiness.deadlineStallSeconds = budgetSeconds,
+          Readiness.deadlineCeilingSeconds = budgetSeconds
+        }

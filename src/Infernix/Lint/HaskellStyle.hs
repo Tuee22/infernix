@@ -176,6 +176,8 @@ capabilityGatingViolations :: FilePath -> [(Int, String)] -> [String]
 capabilityGatingViolations sourceFile numberedLines =
   rawDestructiveViolations sourceFile numberedLines
     <> emptySubprocessEnvViolations sourceFile numberedLines
+    <> unboundedExecViolations sourceFile numberedLines
+    <> unboundedHttpViolations sourceFile numberedLines
 
 rawDestructiveViolations :: FilePath -> [(Int, String)] -> [String]
 rawDestructiveViolations sourceFile numberedLines
@@ -223,6 +225,101 @@ emptySubprocessEnvExemptedFiles =
     "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
+-- | Sprint 3.15 (managed-state-transition doctrine) — reject raw unbounded
+-- process spawns outside the bounded-command kernel. Every cluster-lifecycle
+-- subprocess must go through
+-- 'Infernix.Cluster.Subprocess.runBoundedCommand', which carries a required
+-- 'Infernix.Cluster.Subprocess.Timeout' and returns a total
+-- 'Infernix.Cluster.Subprocess.CommandOutcome', so an unbounded exec — the
+-- class that produced the ~23-minute Harbor @docker pull@ hang — is
+-- unrepresentable. The exemption list is deliberately shrinking: 'ProcessMonitor.hs'
+-- was retired onto the kernel by Sprint 6.41; 'Cluster.hs' still holds the general
+-- cluster subprocess helpers whose raw-exec migration is deferred; the
+-- engine/runtime/host-tool spawn surface (long-lived inference runners, host
+-- prerequisite probes, Python tooling) is a different domain not owned by the
+-- cluster kernel. The kernel module and this lint module (which names the
+-- tokens as literals) are permanently exempt. Canonical doctrine:
+-- documents/architecture/managed_state_transitions.md.
+unboundedExecViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedExecViolations sourceFile numberedLines
+  -- The bounded-command doctrine governs the production cluster surface, not the
+  -- test harness (which orchestrates real clusters) or the cabal @Setup.hs@.
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedExecExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw unbounded process spawn `" <> needle <> "`; route it through Infernix.Cluster.Subprocess.runBoundedCommand (a required Timeout + total CommandOutcome) so an unbounded exec is unrepresentable (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenUnboundedExecTokens,
+        containsToken needle lineValue
+      ]
+
+forbiddenUnboundedExecTokens :: [String]
+forbiddenUnboundedExecTokens =
+  [ "readCreateProcessWithExitCode",
+    "readProcessWithExitCode",
+    "readProcess",
+    "createProcess",
+    "waitForProcess",
+    "spawnProcess",
+    "callProcess",
+    "callCommand"
+  ]
+
+-- | Sprint 4.29 (managed-state-transition doctrine) — reject raw streaming HTTP
+-- reads of an upstream body outside the bounded model-download wrapper. The
+-- model-weight download from an untrusted third-party origin must go through
+-- 'Infernix.Runtime.Pulsar.downloadUpstreamModelToFile', which sends a
+-- User-Agent, bounds the transfer, and classifies the status into a total
+-- @DownloadOutcome@ (so a rate-limit is retried with a bounded backoff, not
+-- hammered forever). @withResponse@ — the streaming-body reader that pattern
+-- powers — is therefore forbidden elsewhere in production code; trusted
+-- in-cluster MinIO/Harbor calls use @httpLbs@ and are unaffected. Canonical
+-- doctrine: documents/architecture/managed_state_transitions.md.
+unboundedHttpViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedHttpViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedHttpExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw streaming HTTP read `withResponse`; route an upstream download through Infernix.Runtime.Pulsar.downloadUpstreamModelToFile (User-Agent + bounded transfer + total DownloadOutcome) so a rate-limited fetch is retried with backoff, not hammered forever (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        containsToken "withResponse" lineValue
+      ]
+
+unboundedHttpExemptedFiles :: [FilePath]
+unboundedHttpExemptedFiles =
+  [ -- Owns the single bounded upstream-download wrapper
+    -- ('downloadUpstreamModelToFile'), the sole legitimate 'withResponse'.
+    "src/Infernix/Runtime/Pulsar.hs",
+    -- Names the forbidden token as a literal; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
+
+unboundedExecExemptedFiles :: [FilePath]
+unboundedExecExemptedFiles =
+  [ -- Owns the bounded-command kernel (the one legitimate raw spawn surface).
+    "src/Infernix/Cluster/Subprocess.hs",
+    -- Names the forbidden tokens as literals; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs",
+    -- Cluster lifecycle surface: the general cluster subprocess helpers'
+    -- raw-exec migration is deferred (ProcessMonitor.hs was retired, Sprint 6.41).
+    "src/Infernix/Cluster.hs",
+    -- Engine / runtime / host-tool spawn surface: a different domain (long-lived
+    -- inference runners, host prerequisite probes, Python tooling) not owned by
+    -- the cluster bounded-command kernel.
+    "src/Infernix/CLI.hs",
+    "src/Infernix/Engines/AppleSilicon.hs",
+    "src/Infernix/Engines/LinuxNative.hs",
+    "src/Infernix/HostPrereqs.hs",
+    "src/Infernix/HostTools.hs",
+    "src/Infernix/Lint/Files.hs",
+    "src/Infernix/Python.hs",
+    "src/Infernix/Runtime/Pulsar.hs",
+    "src/Infernix/Runtime/Worker.hs",
+    "src/Infernix/Workflow.hs"
+  ]
+
 -- | Phase 0 Sprint 0.13 (managed-state-transition doctrine) — the escape-token
 -- gate. Inside the evidence-kernel modules the type system is the enforcement:
 -- opaque newtypes with hidden constructors, rank-2 region leases, and total
@@ -253,7 +350,10 @@ escapeTokenScopedFiles :: [FilePath]
 escapeTokenScopedFiles =
   [ "src/Infernix/Evidence/Readiness.hs",
     "src/Infernix/Evidence/Lease.hs",
-    "src/Infernix/Cluster/Subprocess.hs"
+    "src/Infernix/Cluster/Subprocess.hs",
+    -- Sprint 3.15: mints the opaque 'BlobServable' evidence (hidden ctor);
+    -- forbid the two escapes that could forge it.
+    "src/Infernix/Cluster/PublishImages.hs"
   ]
 
 forbiddenEscapeTokens :: [String]
@@ -561,8 +661,7 @@ aliasedTypeComments =
   [ ("Application", "-- type Application = Request -> (Response -> IO ResponseReceived) -> IO ResponseReceived"),
     ("HostPreference", "-- type HostPreference = String"),
     ("InferenceResponse", "-- type InferenceResponse = Either (Status, ErrorResponse) InferenceResult"),
-    ("PublishedImage", "-- type PublishedImage = (String, String)"),
-    ("CommandMonitorFactory", "-- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)")
+    ("PublishedImage", "-- type PublishedImage = (String, String)")
   ]
 
 signatureBlocks :: [(Int, String)] -> [(Int, [String])]

@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active
+**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 1.16) and Sprints 1.1-1.15 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -9,6 +9,18 @@
 > generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
+
+> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
+> single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
+> (403 + `Retry-After`) upstream model download that the Sprint 1.16/3.14/4.28 managed-state kernels
+> shipped but did not yet guard at those sites. This phase reopens under
+> [Sprint 1.17](#sprint-117-bounded-http-download-kernel-active) to add the bounded-HTTP download
+> kernel — the total, typed `DownloadOutcome` ADT, the opaque `RetryAfterSeconds` newtype, and the
+> pure `classifyDownloadStatus` — plus the descriptive `User-Agent` and bounded `responseTimeout` on
+> the upstream fetch, the substrate the Sprint 4.29 consumer fold and the Sprint 6.40
+> `unboundedHttpViolations` lint build on. Code-side closed 2026-07-19 on the machine-independent gate
+> set (apple-silicon); the single-accelerator plus `linux-cpu` cohort full-suite is the pending
+> residual (owning wave TBD).
 
 > **Real Apple native engines (Sprint 1.15 reopen).** Sprint 1.14 established the headless Apple
 > Metal/Core ML materialization lane but populated it with deterministic validation-wrapper runners
@@ -821,10 +833,66 @@ and every operation that acts on that state requires the evidence. See the doctr
 
 ---
 
+## Sprint 1.17: Bounded-HTTP Download Kernel [Active]
+
+**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit` (the `classifyDownloadStatus` classification table passes),
+`cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
+`infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint, so
+`poetry run check-code` does not apply.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`
+**Blocked by**: Sprint 1.16
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
+engineering/reference docs
+
+### Objective
+
+This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — introduce
+the bounded-HTTP download kernel that the coordinator model-bootstrap path consumes. The 2026-07-18
+cohort run proved the Sprint 1.16 kernels exist but are not applied at the upstream download site:
+`downloadUpstreamModelToFile` sent no `User-Agent` (tripping the upstream WAF's 403), set no total
+`responseTimeout`, and collapsed every non-200 into one opaque failure retried forever. The kernel
+half of the fix is a total, typed outcome ADT with a required classification, encoding evidence, not
+hope: "retried forever with no backoff" and "an unbounded transfer" become terms that do not
+typecheck. It applies the bounded-outcome shape of
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+(the `CommandOutcome` sibling) to the upstream HTTP surface.
+
+### Deliverables
+
+- the total `DownloadOutcome` ADT
+  (`DownloadSucceeded | DownloadRateLimited RetryAfterSeconds | DownloadTransient String |
+  DownloadPermanent String`) and the opaque `RetryAfterSeconds` newtype in
+  `src/Infernix/Runtime/Pulsar.hs`
+- the pure, exported `classifyDownloadStatus :: Int -> Maybe Int -> DownloadOutcome` mapping an HTTP
+  status plus optional `Retry-After` into that outcome: 429 or 403-with-`Retry-After` →
+  `DownloadRateLimited` with a clamped backoff, 5xx → `DownloadTransient`, other non-200 →
+  `DownloadPermanent`, 200 → `DownloadSucceeded`
+- a descriptive `User-Agent` (`infernix-model-bootstrap/1.0`) and a bounded `responseTimeout` on the
+  `downloadUpstreamModelToFile` request, so a UA-less request can no longer trip the upstream WAF and
+  no transfer runs unbounded
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit` (the `classifyDownloadStatus` classification table),
+  `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
+  `infernix docs check` are exercised on both the apple-silicon and linux-cpu lanes
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
+  of the bounded-HTTP download kernel is pending, with the owning wave still to be assigned
+
+---
+
 ## Remaining Work
 
 Pending: see [Sprint 1.16](#sprint-116-evidence-and-command-kernels-active) for the open
-Managed-State-Transition Doctrine reopen work and its pending cohort full-suite sign-off.
+Managed-State-Transition Doctrine reopen work, and
+[Sprint 1.17](#sprint-117-bounded-http-download-kernel-active) for the Bounded-Command Application &
+Bounded-HTTP reopen work; both carry a pending cohort full-suite sign-off.
 
 ## Documentation Requirements
 

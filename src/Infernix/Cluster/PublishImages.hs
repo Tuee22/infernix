@@ -44,7 +44,8 @@ import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Data.Yaml qualified as Yaml
 import Infernix.Cluster.Discover (discoverChartImagesFile)
-import Infernix.ProcessMonitor qualified as ProcessMonitor
+import Infernix.Cluster.Subprocess qualified as Subprocess
+import Infernix.Config qualified as Config
 import Network.HTTP.Client
   ( Manager,
     Request,
@@ -59,8 +60,6 @@ import Network.HTTP.Client
 import Network.HTTP.Client.TLS (tlsManagerSettings)
 import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (urlEncode)
-import System.Exit (ExitCode (ExitSuccess))
-import System.Process (proc, readCreateProcessWithExitCode)
 
 data HarborPublishOptions = HarborPublishOptions
   { harborHost :: String,
@@ -85,7 +84,25 @@ data HarborPublishOptions = HarborPublishOptions
 
 type PublishedImage = (String, String)
 
-type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+-- | Sprint 3.15 (managed-state-transition doctrine): a publish-phase progress
+-- hook. Given a human-readable command description it records the lifecycle
+-- sub-phase. It no longer returns a heartbeat monitor: liveness is now the
+-- required 'Subprocess.Timeout' carried by every command via the bounded
+-- command kernel, not an unbounded 30 s "still running" heartbeat that could
+-- mask a hung pull.
+type PublishPhaseHook = String -> IO ()
+
+-- | Sprint 3.15 (managed-state-transition doctrine): opaque evidence that a
+-- specific image reference is actually /servable/ — that a bounded @docker
+-- pull@ of it from the local Harbor registry returned real blob bytes. This is
+-- strictly stronger than @registryApiReachable@ (Harbor's @/v2/@ answered) and
+-- than @harborTagMetadataPresent@ (a tag row exists in Harbor's
+-- retained-state-replayed Postgres). The constructor is hidden and
+-- 'probeRegistryPull' is the sole minter, so "the tag metadata exists ⇒ the
+-- blob is servable" is not a constructible term — this closes the
+-- retained-state second-cluster-up race where the ~40 GB MinIO backing has not
+-- finished rehydrating.
+newtype BlobServable = BlobServable String
 
 data PushAttemptResult
   = PushSucceeded
@@ -128,8 +145,8 @@ postgresPgBouncerImage = "docker.io/percona/percona-pgbouncer:1.25.1-1"
 postgresPgBackRestImage :: String
 postgresPgBackRestImage = "docker.io/percona/percona-pgbackrest:2.58.0-1"
 
-registryReadyAttempts :: Int
-registryReadyAttempts = 24
+registryApiReachableAttempts :: Int
+registryApiReachableAttempts = 24
 
 loginAttempts :: Int
 loginAttempts = 6
@@ -154,21 +171,51 @@ pushRetryBaseDelayMicros = 5000000
 pushRetryMaxDelayMicros :: Int
 pushRetryMaxDelayMicros = 90000000
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
+-- Sprint 3.15 (managed-state-transition doctrine): every publish subprocess
+-- runs under a required, large-but-finite 'Subprocess.Timeout'. These are the
+-- per-operation budgets. They are wide (minutes) because a blob transfer of the
+-- ~20 GB CUDA layer is legitimately slow; the point is that the exec is bounded,
+-- so a hung @docker pull@ is reaped into 'Subprocess.CommandTimedOut' (which the
+-- retry loops treat as a failed attempt) instead of stalling forever.
+-- @runBoundedCommand@ reaps the child on timeout, so the effective push bound is
+-- per attempt (× 'pushAttempts'), not an unbounded total.
+
+-- | Quick control-plane commands (@docker tag@ / @image inspect@ /
+-- @manifest inspect@ / @image rm@).
+harborQuickCommandBudget :: Subprocess.Timeout
+harborQuickCommandBudget = Subprocess.Timeout 120000000
+
+-- | @docker login@ against the Harbor registry.
+harborLoginBudget :: Subprocess.Timeout
+harborLoginBudget = Subprocess.Timeout 120000000
+
+-- | A pull of an upstream (Docker Hub / mirror) image, which may be large.
+harborUpstreamPullBudget :: Subprocess.Timeout
+harborUpstreamPullBudget = Subprocess.Timeout 1200000000
+
+-- | A verify pull of a just-published blob from the local Harbor registry.
+harborPullVerifyBudget :: Subprocess.Timeout
+harborPullVerifyBudget = Subprocess.Timeout 900000000
+
+-- | A push (or skopeo copy) of a repo-owned image into Harbor; sized to outlast
+-- the ~20 GB CUDA-layer upload contending with the retained-state MinIO replay.
+harborPushBudget :: Subprocess.Timeout
+harborPushBudget = Subprocess.Timeout 2400000000
+
 publishChartImagesFile ::
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   FilePath ->
   FilePath ->
   IO ()
-publishChartImagesFile options commandMonitorFactory renderedChartPath outputPath = do
+publishChartImagesFile options startPublishPhase renderedChartPath outputPath = do
   manager <- newManager tlsManagerSettings
   images <- discoverChartImagesFile renderedChartPath
   let chartPublishableImages = filter (not . isHarborImage) images
       publishableImages = prioritizePublishableImages (nub (alwaysPublishedImages <> chartPublishableImages))
   mapM_ (requireOnePresent chartPublishableImages) requiredRenderedChartImageAlternatives
   loginHarborWithRetries manager options
-  publishedImages <- mapM (publishImage manager options commandMonitorFactory) publishableImages
+  publishedImages <- mapM (publishImage manager options startPublishPhase) publishableImages
   writeHarborOverridesFile (Map.fromList publishedImages) outputPath
   where
     requireOnePresent imageSet imageRefs
@@ -179,16 +226,15 @@ publishChartImagesFile options commandMonitorFactory renderedChartPath outputPat
                 <> show imageRefs
             )
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 -- type PublishedImage = (String, String)
 publishImage ::
   Manager ->
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   String ->
   IO (String, PublishedImage)
-publishImage manager options commandMonitorFactory sourceImage = do
-  (maybeSourceDigest, fallbackSourceImage) <- ensureLocalImageAvailable options commandMonitorFactory sourceImage
+publishImage manager options startPublishPhase sourceImage = do
+  (maybeSourceDigest, fallbackSourceImage) <- ensureLocalImageAvailable options startPublishPhase sourceImage
   targetTag <-
     case maybeSourceDigest of
       Just sourceDigest -> pure (replaceColon sourceDigest)
@@ -196,13 +242,12 @@ publishImage manager options commandMonitorFactory sourceImage = do
   let repositoryPath = normalizeRepositoryPath sourceImage
       publishedRepository = harborHost options <> "/" <> harborProject options <> "/" <> repositoryPath
       clientRepository = harborClientHost options <> "/" <> harborProject options <> "/" <> repositoryPath
-  publishIfNeeded manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag
+  publishIfNeeded manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag
   pure (sourceImage, (publishedRepository, targetTag))
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-ensureLocalImageAvailable :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO (Maybe String, String)
-ensureLocalImageAvailable options commandMonitorFactory imageRef = do
-  maybePresent <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
+ensureLocalImageAvailable :: HarborPublishOptions -> PublishPhaseHook -> String -> IO (Maybe String, String)
+ensureLocalImageAvailable options startPublishPhase imageRef = do
+  maybePresent <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["image", "inspect", imageRef] ""
   manifestSourceImage <-
     case maybePresent of
       Right _ -> pure imageRef
@@ -223,9 +268,9 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
         -- keep the strict requireLocalImagePresent gate because their
         -- pull-then-inspect cycle is the supported readiness signal.
         if isUpstreamMultiArchImage imageRef
-          then pullUpstreamMultiArchImage options commandMonitorFactory imageRef
+          then pullUpstreamMultiArchImage options startPublishPhase imageRef
           else do
-            pullImageWithFallback options commandMonitorFactory imageRef
+            pullImageWithFallback options startPublishPhase imageRef
             pure imageRef
   -- Phase 7 Sprint 7.7 follow-on: with Docker 29.x + the containerd
   -- snapshotter image store, @docker push@ of a multi-arch upstream
@@ -240,7 +285,7 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
   -- subsequent @docker push@ sees a single-platform local image.
   if isUpstreamMultiArchImage imageRef
     then do
-      maybePinnedSource <- pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef manifestSourceImage
+      maybePinnedSource <- pinLocalImageToTargetArchitecture options startPublishPhase imageRef manifestSourceImage
       case maybePinnedSource of
         Just (amd64Digest, digestSourceImage) -> pure (Just amd64Digest, digestSourceImage)
         Nothing -> pure (Nothing, manifestSourceImage)
@@ -253,11 +298,10 @@ ensureLocalImageAvailable options commandMonitorFactory imageRef = do
 -- downstream code ('pinLocalImageToTargetArchitecture' +
 -- 'pushUpstreamMultiArchViaImagetools') should keep using so a Docker
 -- Hub rate limit does not force a later registry roundtrip.
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pullUpstreamMultiArchImage :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO String
-pullUpstreamMultiArchImage options commandMonitorFactory imageRef = do
-  pullMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
-  pullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", imageRef] "" pullMonitor
+pullUpstreamMultiArchImage :: HarborPublishOptions -> PublishPhaseHook -> String -> IO String
+pullUpstreamMultiArchImage options startPublishPhase imageRef = do
+  startPublishPhase ("docker pull " <> imageRef)
+  pullResult <- tryRunCommand harborUpstreamPullBudget (harborDockerCommand options) ["pull", imageRef] ""
   case pullResult of
     Right _ -> pure imageRef
     Left pullFailure ->
@@ -265,8 +309,8 @@ pullUpstreamMultiArchImage options commandMonitorFactory imageRef = do
         Nothing ->
           failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
         Just mirrorRef -> do
-          mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
-          mirrorPullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", mirrorRef] "" mirrorMonitor
+          startPublishPhase ("docker pull " <> mirrorRef)
+          mirrorPullResult <- tryRunCommand harborUpstreamPullBudget (harborDockerCommand options) ["pull", mirrorRef] ""
           case mirrorPullResult of
             Right _ -> pure mirrorRef
             Left mirrorFailure ->
@@ -281,11 +325,10 @@ pullUpstreamMultiArchImage options commandMonitorFactory imageRef = do
                     <> mirrorFailure
                 )
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pullImageWithFallback :: HarborPublishOptions -> CommandMonitorFactory -> String -> IO ()
-pullImageWithFallback options commandMonitorFactory imageRef = do
-  initialMonitor <- commandMonitorFactory ("docker pull " <> imageRef)
-  pullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", imageRef] "" initialMonitor
+pullImageWithFallback :: HarborPublishOptions -> PublishPhaseHook -> String -> IO ()
+pullImageWithFallback options startPublishPhase imageRef = do
+  startPublishPhase ("docker pull " <> imageRef)
+  pullResult <- tryRunCommand harborUpstreamPullBudget (harborDockerCommand options) ["pull", imageRef] ""
   case pullResult of
     Right _ -> requireLocalImagePresent options imageRef ("docker pull completed for " <> imageRef <> ", but the image is still not inspectable locally")
     Left pullFailure ->
@@ -293,11 +336,11 @@ pullImageWithFallback options commandMonitorFactory imageRef = do
         Nothing ->
           failWith ("docker pull failed for " <> imageRef <> "\n" <> pullFailure)
         Just mirrorRef -> do
-          mirrorMonitor <- commandMonitorFactory ("docker pull " <> mirrorRef)
-          mirrorPullResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", mirrorRef] "" mirrorMonitor
+          startPublishPhase ("docker pull " <> mirrorRef)
+          mirrorPullResult <- tryRunCommand harborUpstreamPullBudget (harborDockerCommand options) ["pull", mirrorRef] ""
           case mirrorPullResult of
             Right _ -> do
-              runCommand (harborDockerCommand options) ["tag", mirrorRef, imageRef] ""
+              runCommand harborQuickCommandBudget (harborDockerCommand options) ["tag", mirrorRef, imageRef] ""
               requireLocalImagePresent options imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             Left mirrorFailure ->
               failWith
@@ -313,7 +356,7 @@ pullImageWithFallback options commandMonitorFactory imageRef = do
 
 requireLocalImagePresent :: HarborPublishOptions -> String -> String -> IO ()
 requireLocalImagePresent options imageRef message = do
-  imagePresent <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
+  imagePresent <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["image", "inspect", imageRef] ""
   case imagePresent of
     Right _ -> pure ()
     Left inspectFailure -> failWith (message <> "\n" <> inspectFailure)
@@ -348,11 +391,10 @@ dockerHubMirrorRef imageRef =
         (_, []) -> "library/" <> pathValue
         _ -> pathValue
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 publishIfNeeded ::
   Manager ->
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   Maybe String ->
   String ->
   String ->
@@ -360,26 +402,36 @@ publishIfNeeded ::
   String ->
   String ->
   IO ()
-publishIfNeeded manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag = do
+publishIfNeeded manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage clientRepository repositoryPath targetTag = do
   let targetRef = clientRepository <> ":" <> targetTag
-  tagPresent <- harborTagExists manager options repositoryPath targetTag
-  if tagPresent
-    then verifyRegistryPull manager options commandMonitorFactory targetRef
-    else do
-      pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage targetRef
-      verifyRegistryPull manager options commandMonitorFactory targetRef
+  -- Sprint 3.15: tag metadata presence (Harbor Postgres/Redis, part of the
+  -- replayed retained state) may only shortcut the push via a real servability
+  -- probe; it is not itself terminal. If the blob is not yet servable (e.g. the
+  -- retained-state MinIO replay has not rehydrated it on a second cluster-up)
+  -- the probe returns Nothing and we fall through to a real push. "Publish
+  -- done" is reached only holding a 'BlobServable'.
+  metadataPresent <- harborTagMetadataPresent manager options repositoryPath targetTag
+  fastPath <-
+    if metadataPresent
+      then probeRegistryPull manager options startPublishPhase targetRef
+      else pure Nothing
+  case fastPath of
+    Just _servable -> pure ()
+    Nothing -> do
+      pushImageWithRetries manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage targetRef
+      _servable <- verifyRegistryPull manager options startPublishPhase targetRef
+      pure ()
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pushImageWithRetries ::
   Manager ->
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   Maybe String ->
   String ->
   String ->
   String ->
   IO ()
-pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fallbackSourceImage sourceImage targetRef = go pushAttempts ""
+pushImageWithRetries manager options startPublishPhase maybeSourceDigest fallbackSourceImage sourceImage targetRef = go pushAttempts ""
   where
     (targetRepository, _, targetTag) = breakRepositoryAndTag targetRef
     repositoryPath = normalizeRepositoryPath targetRepository
@@ -396,14 +448,14 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
               retryPush remainingAttempts failureMessage
 
     pushImageOnce = do
-      retagResult <- tryRunCommand (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
+      retagResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["tag", sourceImage, targetRef] ""
       case retagResult of
         Left tagFailure
           | isUpstreamMultiArchImage sourceImage -> do
               imagetoolsResult <-
                 pushUpstreamMultiArchViaImagetools
                   options
-                  commandMonitorFactory
+                  startPublishPhase
                   maybeSourceDigest
                   fallbackSourceImage
                   targetRef
@@ -438,8 +490,8 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
           -- Harbor via @skopeo copy@, which bypasses the local
           -- docker store entirely and operates on the registry API. See
           -- 'pushUpstreamMultiArchViaImagetools' for the helper.
-          monitor <- commandMonitorFactory ("docker push " <> targetRef)
-          pushResult <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["push", targetRef] "" monitor
+          startPublishPhase ("docker push " <> targetRef)
+          pushResult <- tryRunCommand harborPushBudget (harborDockerCommand options) ["push", targetRef] ""
           case pushResult of
             Right _ -> pure PushSucceeded
             Left failureMessage
@@ -447,7 +499,7 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
                   imagetoolsResult <-
                     pushUpstreamMultiArchViaImagetools
                       options
-                      commandMonitorFactory
+                      startPublishPhase
                       maybeSourceDigest
                       fallbackSourceImage
                       targetRef
@@ -457,7 +509,7 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
               | otherwise -> recoverCompletedPush failureMessage
 
     recoverCompletedPush failureMessage = do
-      tagPresent <- harborTagExists manager options repositoryPath targetTag
+      tagPresent <- harborTagMetadataPresent manager options repositoryPath targetTag
       registryPullable <- registryPullSucceeds options targetRef
       pure $
         if tagPresent || registryPullable
@@ -477,7 +529,7 @@ pushImageWithRetries manager options commandMonitorFactory maybeSourceDigest fal
                 <> show pushAttempts
                 <> " failed"
             )
-          ready <- registryReady manager (harborApiHost options)
+          ready <- registryApiReachable manager (harborApiHost options)
           unless ready (waitForRegistry manager options)
           threadDelay (pushRetryDelayMicros attemptsUsed)
           go (remainingAttempts - 1) failureMessage
@@ -496,36 +548,58 @@ pushRetryDelayMicros attemptsUsed =
 
 registryPullSucceeds :: HarborPublishOptions -> String -> IO Bool
 registryPullSucceeds options imageRef =
-  either (const False) (const True) <$> tryRunCommand (harborDockerCommand options) ["pull", imageRef] ""
+  either (const False) (const True) <$> tryRunCommand harborPullVerifyBudget (harborDockerCommand options) ["pull", imageRef] ""
 
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-verifyRegistryPull ::
+-- | Sprint 3.15: probe whether @targetRef@'s blob is servable from the local
+-- Harbor registry, minting 'BlobServable' evidence on a successful bounded pull
+-- or 'Nothing' if it never became servable within the retry budget. This is the
+-- sole minter of 'BlobServable'.
+probeRegistryPull ::
   Manager ->
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   String ->
-  IO ()
-verifyRegistryPull manager options commandMonitorFactory targetRef = do
+  IO (Maybe BlobServable)
+probeRegistryPull manager options startPublishPhase targetRef = do
   waitForRegistry manager options
-  go pullVerifyAttempts ""
+  go pullVerifyAttempts
   where
-    go remainingAttempts lastFailure
-      | remainingAttempts <= 0 =
-          failWith ("docker pull verification failed for " <> targetRef <> "\n" <> lastFailure)
+    go remainingAttempts
+      | remainingAttempts <= 0 = pure Nothing
       | otherwise = do
-          monitor <- commandMonitorFactory ("docker pull verify " <> targetRef)
-          result <- tryRunCommandMaybeMonitored (harborDockerCommand options) ["pull", targetRef] "" monitor
+          startPublishPhase ("docker pull verify " <> targetRef)
+          result <- tryRunCommand harborPullVerifyBudget (harborDockerCommand options) ["pull", targetRef] ""
           case result of
-            Right _ -> pure ()
-            Left failureMessage ->
+            Right _ -> pure (Just (BlobServable targetRef))
+            Left _ ->
               if remainingAttempts > 1
                 then do
-                  ready <- registryReady manager (harborApiHost options)
+                  ready <- registryApiReachable manager (harborApiHost options)
                   if ready
                     then threadDelay ((pullVerifyAttempts - remainingAttempts + 1) * 2000000)
                     else waitForRegistry manager options
-                  go (remainingAttempts - 1) failureMessage
-                else go 0 failureMessage
+                  go (remainingAttempts - 1)
+                else pure Nothing
+
+-- | Sprint 3.15: require servability evidence for @targetRef@ or abort the
+-- publish. Reached only after a push, so a publish cannot be declared done
+-- without a real bounded pull of the just-pushed blob succeeding.
+verifyRegistryPull ::
+  Manager ->
+  HarborPublishOptions ->
+  PublishPhaseHook ->
+  String ->
+  IO BlobServable
+verifyRegistryPull manager options startPublishPhase targetRef = do
+  outcome <- probeRegistryPull manager options startPublishPhase targetRef
+  case outcome of
+    Just servable -> pure servable
+    Nothing ->
+      failWith
+        ( "docker pull verification failed for "
+            <> targetRef
+            <> ": the blob is not servable from the local Harbor registry"
+        )
 
 loginHarborWithRetries :: Manager -> HarborPublishOptions -> IO ()
 loginHarborWithRetries manager options = do
@@ -538,6 +612,7 @@ loginHarborWithRetries manager options = do
       | otherwise = do
           result <-
             tryRunCommand
+              harborLoginBudget
               (harborDockerCommand options)
               ["login", harborClientHost options, "--username", harborUser options, "--password-stdin"]
               (harborPassword options <> "\n")
@@ -546,7 +621,7 @@ loginHarborWithRetries manager options = do
             Left failureMessage ->
               if remainingAttempts > 1
                 then do
-                  ready <- registryReady manager (harborApiHost options)
+                  ready <- registryApiReachable manager (harborApiHost options)
                   if ready
                     then threadDelay ((loginAttempts - remainingAttempts + 1) * 2000000)
                     else waitForRegistry manager options
@@ -554,30 +629,39 @@ loginHarborWithRetries manager options = do
                 else go 0 failureMessage
 
 waitForRegistry :: Manager -> HarborPublishOptions -> IO ()
-waitForRegistry manager options = go registryReadyAttempts
+waitForRegistry manager options = go registryApiReachableAttempts
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
           failWith ("Harbor registry at " <> harborApiHost options <> " never became ready for docker login")
       | otherwise = do
-          ready <- registryReady manager (harborApiHost options)
+          ready <- registryApiReachable manager (harborApiHost options)
           if ready
             then pure ()
             else do
-              let attemptsUsed = registryReadyAttempts - remainingAttempts + 1
+              let attemptsUsed = registryApiReachableAttempts - remainingAttempts + 1
               threadDelay (min attemptsUsed 5 * 1000000)
               go (remainingAttempts - 1)
 
-registryReady :: Manager -> String -> IO Bool
-registryReady manager apiHost = do
+-- | Sprint 3.15: Harbor's @/v2/@ registry API answered (200/401/403). This is
+-- strictly weaker than 'BlobServable' — it proves only that the registry
+-- endpoint is up, not that any specific blob is servable — so it may gate
+-- /whether to keep polling/, never "publish done".
+registryApiReachable :: Manager -> String -> IO Bool
+registryApiReachable manager apiHost = do
   request <- parseRequest ("http://" <> apiHost <> "/v2/")
   responseResult <- try (httpLbs request manager) :: IO (Either SomeException (Response LazyChar8.ByteString))
   case responseResult of
     Left _ -> pure False
     Right response -> pure (statusCode (responseStatus response) `elem` [200, 401, 403])
 
-harborTagExists :: Manager -> HarborPublishOptions -> String -> String -> IO Bool
-harborTagExists manager options repositoryPath targetTag = do
+-- | Sprint 3.15: a tag /metadata/ row for @targetTag@ exists in Harbor's
+-- artifact API (backed by Postgres/Redis, which the retained-state replay
+-- rehydrates). This is metadata presence only — NOT evidence the underlying
+-- blob is servable — so it may shortcut the push (via a real 'probeRegistryPull'
+-- servability check) but is never itself a terminal "published" state.
+harborTagMetadataPresent :: Manager -> HarborPublishOptions -> String -> String -> IO Bool
+harborTagMetadataPresent manager options repositoryPath targetTag = do
   let requestUrl = harborRepositoryUrl (harborApiHost options) (harborProject options) repositoryPath
   request <- authenticatedHarborRequest options requestUrl
   responseResult <- try (httpLbs request manager) :: IO (Either SomeException (Response LazyChar8.ByteString))
@@ -626,7 +710,7 @@ harborRepositoryUrl apiHost project repositoryPath =
 
 contentAddressTag :: HarborPublishOptions -> String -> IO String
 contentAddressTag options imageRef = do
-  inspectResult <- tryRunCommand (harborDockerCommand options) ["image", "inspect", imageRef] ""
+  inspectResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["image", "inspect", imageRef] ""
   case inspectResult of
     Right payload ->
       case contentAddressTagFromInspectPayload payload of
@@ -634,7 +718,7 @@ contentAddressTag options imageRef = do
         Left err -> failWith err
     Left inspectFailure
       | isUpstreamMultiArchImage imageRef -> do
-          manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
+          manifestResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["manifest", "inspect", imageRef] ""
           case manifestResult of
             Right manifestPayload ->
               case contentAddressTagFromManifestPayload (harborTargetArchitecture options) manifestPayload of
@@ -708,9 +792,8 @@ contentAddressTagFromManifestPayload targetArchitecture manifestPayload =
 -- from @options.harborTargetArchitecture@ instead of hardcoded amd64,
 -- so Apple Silicon substrates publish arm64 sub-images natively
 -- without Rosetta emulation.
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-pinLocalImageToTargetArchitecture :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO (Maybe (String, String))
-pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferredManifestSource =
+pinLocalImageToTargetArchitecture :: HarborPublishOptions -> PublishPhaseHook -> String -> String -> IO (Maybe (String, String))
+pinLocalImageToTargetArchitecture options startPublishPhase imageRef preferredManifestSource =
   tryManifestSources manifestSources
   where
     targetArchitecture = harborTargetArchitecture options
@@ -726,7 +809,7 @@ pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferr
 
     tryManifestSources [] = pure Nothing
     tryManifestSources (manifestSource : rest) = do
-      inspectResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", manifestSource] ""
+      inspectResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["manifest", "inspect", manifestSource] ""
       case inspectResult of
         Left _ -> tryManifestSources rest
         Right manifestJson ->
@@ -735,13 +818,13 @@ pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferr
             Just archDigest -> do
               let imageWithoutTag = takeBefore ':' manifestSource
                   imageByDigest = imageWithoutTag <> "@" <> archDigest
-              digestMonitor <- commandMonitorFactory ("docker pull --platform " <> platformFlagValue <> " " <> imageByDigest)
+              startPublishPhase ("docker pull --platform " <> platformFlagValue <> " " <> imageByDigest)
               digestPullResult <-
-                tryRunCommandMaybeMonitored
+                tryRunCommand
+                  harborUpstreamPullBudget
                   (harborDockerCommand options)
                   ["pull", "--platform", platformFlagValue, imageByDigest]
                   ""
-                  digestMonitor
               case digestPullResult of
                 Left _ -> tryManifestSources rest
                 Right _ -> do
@@ -749,7 +832,7 @@ pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferr
                   -- single-platform reference rather than overlaying the
                   -- multi-arch manifest list still attached to the tag.
                   -- The @rm@ may fail benignly (the tag wasn't present).
-                  _ <- tryRunCommand (harborDockerCommand options) ["image", "rm", "--no-prune", imageRef] ""
+                  _ <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["image", "rm", "--no-prune", imageRef] ""
                   -- @docker tag <image>\@<digest> <image>:<tag>@ fails
                   -- under the Docker 29.x containerd snapshotter
                   -- because the digest reference is not directly
@@ -758,15 +841,15 @@ pinLocalImageToTargetArchitecture options commandMonitorFactory imageRef preferr
                   -- @docker inspect <image>\@<digest> --format '{{.Id}}'@
                   -- (which DOES work after the digest pull) and tag the
                   -- resolved ID under the original ref.
-                  idResult <- tryRunCommand (harborDockerCommand options) ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
+                  idResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["inspect", imageByDigest, "--format", "{{.Id}}"] ""
                   case idResult of
                     Right rawId -> do
                       let imageId = trimNewlines rawId
-                      tagResult <- tryRunCommand (harborDockerCommand options) ["tag", imageId, imageRef] ""
+                      tagResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["tag", imageId, imageRef] ""
                       case tagResult of
                         Right _ -> pure ()
-                        Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
-                    Left _ -> recoverOriginalTag options commandMonitorFactory imageRef manifestSource
+                        Left _ -> recoverOriginalTag options startPublishPhase imageRef manifestSource
+                    Left _ -> recoverOriginalTag options startPublishPhase imageRef manifestSource
                   pure (Just (archDigest, manifestSource))
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): parse the JSON output of
@@ -827,19 +910,18 @@ instance FromJSON ManifestEntry where
 -- digest from the upstream manifest list, then copies
 -- @docker://SRC\@DIGEST@ to @docker://DEST@.
 -- Returns 'Left' with the captured stderr on any step that fails.
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
 pushUpstreamMultiArchViaImagetools ::
   HarborPublishOptions ->
-  CommandMonitorFactory ->
+  PublishPhaseHook ->
   Maybe String ->
   String ->
   String ->
   IO (Either String ())
-pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourceDigest sourceImage targetRef =
+pushUpstreamMultiArchViaImagetools options startPublishPhase maybeKnownSourceDigest sourceImage targetRef =
   case maybeKnownSourceDigest of
     Just archDigest -> copyDigest archDigest
     Nothing -> do
-      manifestResult <- tryRunCommand (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
+      manifestResult <- tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["manifest", "inspect", sourceImage] ""
       case manifestResult of
         Left manifestFailure ->
           pure (Left ("docker manifest inspect failed for " <> sourceImage <> "\n" <> manifestFailure))
@@ -892,18 +974,18 @@ pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourc
       -- @~/.config/containers/auth.json@ (XDG-style) rather than
       -- @~/.docker/config.json@, so the @docker login@ credentials
       -- the binary already established do not transfer.
-      skopeoMonitor <-
-        commandMonitorFactory
-          ( "skopeo --insecure-policy copy --src-tls-verify=false --dest-tls-verify=false "
-              <> "--override-os=linux "
-              <> archOverrideArg
-              <> " --dest-creds=<redacted> "
-              <> skopeoSource
-              <> " "
-              <> skopeoTarget
-          )
+      startPublishPhase
+        ( "skopeo --insecure-policy copy --src-tls-verify=false --dest-tls-verify=false "
+            <> "--override-os=linux "
+            <> archOverrideArg
+            <> " --dest-creds=<redacted> "
+            <> skopeoSource
+            <> " "
+            <> skopeoTarget
+        )
       skopeoResult <-
-        tryRunCommandMaybeMonitored
+        tryRunCommand
+          harborPushBudget
           (harborSkopeoCommand options)
           [ "--insecure-policy",
             "copy",
@@ -916,7 +998,6 @@ pushUpstreamMultiArchViaImagetools options commandMonitorFactory maybeKnownSourc
             skopeoTarget
           ]
           ""
-          skopeoMonitor
       case skopeoResult of
         Right _ -> pure (Right ())
         Left skopeoFailure ->
@@ -1113,29 +1194,45 @@ requireDiscoveredImage =
 renderRepositoryAndTag :: PublishedImage -> String
 renderRepositoryAndTag (repository, tagValue) = repository <> ":" <> tagValue
 
-runCommand :: FilePath -> [String] -> String -> IO ()
-runCommand command args inputPayload = do
-  result <- tryRunCommand command args inputPayload
+runCommand :: Subprocess.Timeout -> FilePath -> [String] -> String -> IO ()
+runCommand budget command args inputPayload = do
+  result <- tryRunCommand budget command args inputPayload
   case result of
     Right _ -> pure ()
     Left err -> failWith ("command failed: " <> command <> " " <> unwords args <> "\n" <> err)
 
-tryRunCommand :: FilePath -> [String] -> String -> IO (Either String String)
-tryRunCommand command args inputPayload = do
-  processResult <- try (readCreateProcessWithExitCode (proc command args) inputPayload) :: IO (Either SomeException (ExitCode, String, String))
-  case processResult of
-    Left err -> pure (Left (show err))
-    Right (exitCode, stdoutOutput, stderrOutput) ->
-      case exitCode of
-        ExitSuccess -> pure (Right stdoutOutput)
-        _ -> pure (Left (stdoutOutput <> stderrOutput))
+-- | Sprint 3.15 (managed-state-transition doctrine): run a publish subprocess
+-- under a required 'Subprocess.Timeout' through the bounded-command kernel. A
+-- hung @docker pull@/@push@ is reaped into 'Subprocess.CommandTimedOut' and
+-- surfaced here as a 'Left', so the caller's retry counter advances instead of
+-- the loop stalling forever. The typed 'Subprocess.SubprocessEnv' always
+-- carries @HOME@/@TMPDIR@, so the raw unbounded @readCreateProcessWithExitCode@
+-- and its ambient environment are both gone.
+tryRunCommand :: Subprocess.Timeout -> FilePath -> [String] -> String -> IO (Either String String)
+tryRunCommand budget command args inputPayload = do
+  environment <- harborSubprocessEnv
+  outcome <- Subprocess.runBoundedCommand budget environment Nothing command args inputPayload
+  pure (commandOutcomeToEither outcome)
 
-tryRunCommandMaybeMonitored :: FilePath -> [String] -> String -> Maybe ProcessMonitor.CommandMonitor -> IO (Either String String)
-tryRunCommandMaybeMonitored command args inputPayload maybeMonitor
-  | null inputPayload =
-      ProcessMonitor.tryCommandMonitored Nothing [] command args maybeMonitor
-  | otherwise =
-      tryRunCommand command args inputPayload
+-- | Collapse a total 'Subprocess.CommandOutcome' onto the @Either@-based retry
+-- policy the publish loops use. A timeout is a failed attempt (a 'Left'), so a
+-- hung command exhausts the retry budget rather than hanging.
+commandOutcomeToEither :: Subprocess.CommandOutcome -> Either String String
+commandOutcomeToEither outcome =
+  case outcome of
+    Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
+    Subprocess.CommandFailedTransient message -> Left message
+    Subprocess.CommandFailedFatal message -> Left message
+    Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
+      Left ("command timed out after " <> show (micros `div` 1000000) <> "s")
+
+-- | The typed subprocess environment for host publish commands. Fails closed
+-- when the host manifest is absent (the kernel builder requires it), so a
+-- publish exec without @HOME@/@TMPDIR@ is unrepresentable.
+harborSubprocessEnv :: IO Subprocess.SubprocessEnv
+harborSubprocessEnv = do
+  paths <- Config.discoverPaths
+  Subprocess.clusterSubprocessEnv paths
 
 urlEncodeString :: String -> String
 urlEncodeString = ByteString8.unpack . urlEncode True . ByteString8.pack
@@ -1190,21 +1287,20 @@ trailingWhitespaceCharacters = " \n\r\t"
 -- list back) so the downstream @pushUpstreamMultiArchViaImagetools@
 -- fallback can do the work. Failure here is silent because the
 -- caller already failed to pin and is doing best-effort recovery.
--- type CommandMonitorFactory = String -> IO (Maybe ProcessMonitor.CommandMonitor)
-recoverOriginalTag :: HarborPublishOptions -> CommandMonitorFactory -> String -> String -> IO ()
-recoverOriginalTag options commandMonitorFactory imageRef manifestSource = do
+recoverOriginalTag :: HarborPublishOptions -> PublishPhaseHook -> String -> String -> IO ()
+recoverOriginalTag options startPublishPhase imageRef manifestSource = do
   let platformFlagValue = "linux/" <> harborTargetArchitecture options
-  recoverMonitor <- commandMonitorFactory ("docker pull --platform " <> platformFlagValue <> " " <> manifestSource)
+  startPublishPhase ("docker pull --platform " <> platformFlagValue <> " " <> manifestSource)
   _ <-
-    tryRunCommandMaybeMonitored
+    tryRunCommand
+      harborUpstreamPullBudget
       (harborDockerCommand options)
       ["pull", "--platform", platformFlagValue, manifestSource]
       ""
-      recoverMonitor
   _ <-
     if manifestSource == imageRef
       then pure (Right "")
-      else tryRunCommand (harborDockerCommand options) ["tag", manifestSource, imageRef] ""
+      else tryRunCommand harborQuickCommandBudget (harborDockerCommand options) ["tag", manifestSource, imageRef] ""
   pure ()
 
 breakTagSuffix :: String -> Maybe String

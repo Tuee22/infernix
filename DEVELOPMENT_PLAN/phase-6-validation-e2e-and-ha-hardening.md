@@ -1,6 +1,12 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — Sprint 6.38 is closed for typed resource memory-admission validation across
+**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 6.40 code-side closed
+2026-07-19, cohort gate pending; Sprint 6.41 Active — ProcessMonitor retirement + shared
+retryCommandOutput primitive + eager-cache barrier code-side closed 2026-07-19 (machine-independent,
+adversarially reviewed), individual bounded-wait tail + `threadDelay` lint gate outstanding, cohort
+gate pending); prior
+Managed-State-Transition Doctrine reopen (Sprint 6.39). Sprint 6.38 is closed for typed resource
+memory-admission validation across
 Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Wave T closed on 2026-07-12 with
 `linux-cpu` plus the selected `linux-gpu` accelerator. Sprints 6.36 and 6.37 remain closed for their
 original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed by Wave P
@@ -18,6 +24,25 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+
+> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
+> single-accelerator cohort run surfaced two flakes the Sprint 1.16/3.14/4.28 kernels shipped but did
+> not yet guard — a Harbor `docker pull` verify hang and a rate-limited upstream model download —
+> together with the missing enforcement that let raw unbounded exec and raw upstream HTTP reach those
+> sites. This phase reopens under
+> [Sprint 6.40](#sprint-640-unbounded-exechttp-capability-gating-lints-active) to add the
+> `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lint rules to
+> `src/Infernix/Lint/HaskellStyle.hs` (raw process spawn and raw `withResponse` become build errors
+> outside their bounded wrappers), and under
+> [Sprint 6.41](#sprint-641-processmonitor-retirement--readiness-wait-kernel-migration-active) for
+> the deferred hardening — migrating the ~18 hand-rolled readiness waits onto `awaitReadiness`,
+> retiring `src/Infernix/ProcessMonitor.hs`, and adding a `threadDelay`-outside-kernel lint gate.
+> Sprint 6.40 is code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon) with
+> the single-accelerator plus `linux-cpu` cohort full-suite the pending residual (owning wave TBD);
+> Sprint 6.41 is Active — the `ProcessMonitor` retirement, the shared `retryCommandOutput` primitive,
+> and the eager-model-cache barrier are code-side closed 2026-07-19 (machine-independent, adversarially
+> reviewed); the individual bounded-wait tail and the `threadDelay` lint gate are outstanding, cohort
+> gate pending.
 
 > **Realness reopen (fail-closed real-only validation).** The audit behind the Phase 4 realness
 > reopen also established that this phase's suites accept fabricated results: `assertResultFamilyContract`
@@ -2325,10 +2350,147 @@ assume a raw primitive succeeded. Reference the doctrine at
 
 ---
 
+## Sprint 6.40: Unbounded-Exec/HTTP Capability-Gating Lints [Active]
+
+**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+`cabal test infernix-unit`, `cabal test infernix-haskell-style` (both new rules negative-tested: an
+injected raw `createProcess` in a guarded file fails `unboundedExecViolations`, and an injected raw
+`withResponse` in the download surface fails `unboundedHttpViolations`), `infernix lint files/docs/proto/chart`,
+and `infernix docs check` all green on the apple-silicon lane. No Python surface changed, so
+`poetry run check-code` does not apply.
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
+**Blocked by**: Sprint 1.16, 1.17, 6.39
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/development/haskell_style.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — close the
+enforcement gap that let raw unbounded exec and raw upstream HTTP reach the two flake sites. It adds
+two capability-gating sub-rules to `src/Infernix/Lint/HaskellStyle.hs`, mirroring the existing
+`rawDestructiveViolations` / `escapeTokenViolations` per-rule exemption pattern, so a new call site
+off the bounded kernels fails the build. It applies the
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+doctrine's line-based enforcement layer to the process-spawn and upstream-HTTP surfaces.
+
+### Deliverables
+
+- `unboundedExecViolations`: forbids raw `readCreateProcessWithExitCode` / `createProcess` /
+  `waitForProcess` and peers in production `src/Infernix/` files outside a shrinking
+  `unboundedExecExemptedFiles` list (kernel `Subprocess.hs`, `HaskellStyle.hs`, plus the deferred
+  cluster surface `Cluster.hs` / `ProcessMonitor.hs` and the engine/runtime/host spawn surface)
+- `unboundedHttpViolations`: forbids raw `withResponse` in production `src/Infernix/` outside the
+  bounded download wrapper's module (`Runtime/Pulsar.hs`) and the lint module, scoped narrowly to the
+  untrusted upstream-model-download surface and leaving trusted in-cluster MinIO calls untouched
+- both rules wired into `checkSourceReadability` and negative-tested via the style gate
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `infernix docs check` are exercised on both the
+  apple-silicon and linux-cpu lanes
+- `unboundedExecViolations` fires on an injected raw `createProcess` in a guarded file, and
+  `unboundedHttpViolations` on an injected raw `withResponse` in the download surface; both pass on
+  the migrated tree
+
+### Remaining Work
+
+- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
+  of the two lint rules is pending, owning wave TBD
+
+---
+
+## Sprint 6.41: ProcessMonitor Retirement & Readiness-Wait Kernel Migration [Active]
+
+**Status**: Active — the lying-heartbeat retirement and the high-leverage wait migrations are code-side
+closed 2026-07-19 (machine-independent, adversarially reviewed); the individual bounded-wait tail and
+the `threadDelay` lint gate are outstanding; cohort gate pending
+**Code-side closure**: closed 2026-07-19 for the landed slice — `cabal build all` (`-Wall -Werror`,
+clean), `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint
+files/docs/proto/chart`, and `infernix docs check` all green on the apple-silicon lane
+**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`,
+`src/Infernix/Lint/HaskellStyle.hs`, `infernix.cabal` (`src/Infernix/ProcessMonitor.hs` deleted)
+**Blocked by**: Sprint 1.16, 6.40
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/development/haskell_style.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`, and the
+phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the deferred hardening half of the Bounded-Command Application & Bounded-HTTP reopen —
+the broad readiness-wait migration and the retirement of the lying heartbeat that the flake sites
+depended on. Sprints 3.15/4.29/6.40 killed both observed flakes; this sprint removes the surrounding
+hand-rolled poll loops and the `ProcessMonitor` heartbeat whose `touchLifecycleProgress` rewrite could
+mask a stall, following the `waitForHarborRegistryOrDirty` precedent from Sprint 3.14. It generalizes
+the [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+readiness-returns-evidence kernel across the cluster surface.
+
+### Deliverables
+
+Landed 2026-07-19 (code-side closed, machine-independent gates green, adversarially reviewed):
+
+- retired `src/Infernix/ProcessMonitor.hs` entirely: its sole importer (`Cluster.hs`) now runs the ten
+  monitored lifecycle commands (docker build/pull/tag/cp, crictl pull, save|import stream) through new
+  bounded `runCommandBounded`/`tryCommandBounded` helpers over
+  `Infernix.Cluster.Subprocess.runBoundedCommand` under named `Timeout` budgets, so a `CommandTimedOut`
+  is a loud bounded failure instead of an unbounded "still running" heartbeat; deleted the module, its
+  `infernix.cabal` `other-modules` entry, and its `unboundedExecExemptedFiles` row. The removed
+  `touchLifecycleProgress` heartbeat had no control-flow consumer (only `cluster status` display), so
+  no behavior is lost except the hang-mask
+- migrated the shared `retryCommandOutput` retry primitive onto `awaitReadiness` under a `Deadline`
+  derived exactly from the legacy `attempts x delayMicros` budget, bounding all six of its consumers
+  (kind kubeconfig, kubernetes API, Harbor registry, Gateway CRDs, routed/direct Pulsar surfaces) at
+  once; the last-non-empty error is retained in the timeout diagnostic
+- migrated `waitForEagerModelCacheReady` (which re-implemented the kernel's poll/stall/ceiling inline)
+  onto `awaitReadiness`, minting the `WarmModelCacheReady` witness from a real null-pending observation
+
+### Validation
+
+- code-side closed 2026-07-19 for the landed slice on the apple-silicon machine-independent gate set:
+  `cabal build all` (`-Wall -Werror`, clean), `cabal test infernix-unit`, `cabal test
+  infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and `infernix docs check` all green,
+  and the slice was adversarially reviewed. No Python surface changed, so `poetry run check-code` does
+  not apply
+- the single chosen accelerator plus `linux-cpu` full-suite cohort sign-off is pending (owning wave
+  TBD); the outstanding individual bounded-wait migrations and the `threadDelay`-outside-kernel lint
+  gate remain before the sprint can move to `Done`
+
+### Remaining Work
+
+Code-side closed 2026-07-19 for the slice above. Outstanding tail (the reason the sprint stays
+`Active`):
+
+- migrate the remaining individually hand-rolled bounded waits onto `awaitReadiness` /
+  `foldReadiness`: in `Cluster.hs` `waitForLinuxGpuResources`, `waitForHarborPostgresPodsReady` (carries
+  mid-loop repair state), `waitForHarborPostgresPrimaryPod`, `waitForOperatorManagedPersistentClaims`,
+  `waitForPersistentClaimBound`, `waitForKindClusterAbsence`, `waitForPulsarStatefulSetRollout`,
+  `reconcileKeycloakRealmConfiguration`; in `Runtime/Pulsar.hs`
+  `waitForTopicCompactionCompleteViaPulsar` and `resolveContextModelIdForDispatch`; in `CLI.hs`
+  `waitForInternalPulsarResult` and `waitForPlaywrightSurface`. (These are already finite/bounded, so
+  not flake-risk; the migration is doctrine cleanliness — typed readiness evidence.)
+- add the `threadDelay`-outside-the-readiness-kernel lint gate with its shrinking exemption list
+  (the kernel, the lint module, and the genuine backoff/heartbeat/park sites that legitimately retain
+  `threadDelay`); once CLI's two waits migrate, `CLI.hs` stays out of the exemption list so the gate
+  keeps it clean
+- the single chosen accelerator plus `linux-cpu` full-suite is the `Done` gate
+
+---
+
 ## Remaining Work
 
 Sprint 6.39 (capability-gating lint plus managed-transition coverage) is the open reopen work for
 this phase; its residual is the pending apple-silicon plus linux-cpu full-suite cohort sign-off.
+Sprint 6.40 (Unbounded-Exec/HTTP Capability-Gating Lints) is the active Bounded-Command Application &
+Bounded-HTTP reopen work — the `unboundedExecViolations` and `unboundedHttpViolations` lint rules,
+code-side closed 2026-07-19 with a pending cohort full-suite sign-off. Sprint 6.41 (ProcessMonitor
+Retirement & Readiness-Wait Kernel Migration) is Active — the `ProcessMonitor` retirement, the shared
+`retryCommandOutput` primitive (bounding its six consumers), and the eager-model-cache barrier are
+code-side closed 2026-07-19 (machine-independent, adversarially reviewed); the remaining individual
+bounded-wait tail and the `threadDelay`-outside-kernel lint gate are outstanding, and the cohort
+full-suite sign-off is pending.
 Sprint 6.38 is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU
 by Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-validation reopen (Sprint
 6.35) is **closed** — proven by [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36**

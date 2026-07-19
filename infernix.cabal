@@ -93,7 +93,6 @@ library
 
     hs-source-dirs:   src
     other-modules:
-        Infernix.ProcessMonitor
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference

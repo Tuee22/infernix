@@ -123,6 +123,15 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   all are staged. The engine then streams already-staged weights through
   `adapters.model_cache.get_model_path`. See [object_storage.md](object_storage.md) for the bucket
   contract and the coordinator staging workflow.
+- the coordinator's upstream fetch is bounded and classified: `downloadUpstreamModelToFile` sends a
+  descriptive `User-Agent` (`infernix-model-bootstrap/1.0`) and a bounded `responseTimeout`, and
+  classifies the HTTP status into a total `DownloadOutcome` (`DownloadSucceeded` / `DownloadRateLimited`
+  / `DownloadTransient` / `DownloadPermanent`). A rate-limited (429 or 403 + `Retry-After`) or transient
+  (5xx) outcome honors `Retry-After` with a bounded backoff before redelivery; a permanent outcome is
+  acked so the request is not redelivered forever. The `<modelId>/.ready` sentinel is gated on an
+  integrity witness — `PayloadVerified` is minted only when the uploaded object's Content-Length
+  matches the downloaded byte count — so a truncated upload cannot mark a model ready. Canonical
+  doctrine: [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
   Apple host path and the cluster or worker path both treat that bootstrap manifest as the
   idempotent setup-ready marker

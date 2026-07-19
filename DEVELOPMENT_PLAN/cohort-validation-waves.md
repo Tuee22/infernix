@@ -24,6 +24,24 @@
 > accelerator plus `linux-cpu` full-suite evidence for each phase. No phase waits on both
 > accelerators as one must-pass-together gate.
 
+## Queued Reopen Waves (owning wave TBD)
+
+Two doctrine-reopen waves are code-side closed on the machine-independent gate set on the
+apple-silicon lane and are awaiting their single-accelerator plus `linux-cpu` full-suite sign-off.
+Neither has been assigned a wave letter yet, and neither triggers an ad hoc machine switch before its
+wave is intentionally scheduled:
+
+- the **2026-07-15 Managed-State-Transition Doctrine reopen** (Sprints 0.13, 1.16, 2.14, 3.14, 4.28,
+  5.12, 6.39, 7.29, 8.7, 9.10); and
+- the **2026-07-19 Bounded-Command Application & Bounded-HTTP reopen** (Sprints 0.14, 1.17, 3.15,
+  4.29, and 6.40; plus the `Planned` Sprint 6.41, whose `Done` gate is likewise its own
+  single-accelerator plus `linux-cpu` full-suite).
+
+See [README.md](README.md) (the Managed-State-Transition Doctrine Reopen and Bounded-Command
+Application & Bounded-HTTP Reopen narrative sections) for the per-sprint code-side closure evidence.
+When either wave is scheduled, add its row to the Wave Table below and record the Stage 2 evidence
+there.
+
 ## Wave Table
 
 | Wave | Machine | Scope | Status | Closed |
