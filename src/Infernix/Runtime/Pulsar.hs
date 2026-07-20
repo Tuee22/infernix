@@ -1938,27 +1938,31 @@ triggerTopicCompactionViaPulsar transport topicValue = do
           )
       )
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 60-attempt × 1 s budget. Compaction success
+-- is the kernel's readiness evidence; a broker-reported @ERROR@ is a terminal
+-- failure the probe throws (an exception the kernel propagates), and a
+-- deadline-exhausted wait raises the timeout diagnostic.
 waitForTopicCompactionCompleteViaPulsar :: PulsarTransport -> Text.Text -> IO ()
-waitForTopicCompactionCompleteViaPulsar transport topicValue = go (60 :: Int)
+waitForTopicCompactionCompleteViaPulsar transport topicValue = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 60 1000000) probe
+  Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
-    go attemptsRemaining
-      | attemptsRemaining <= 0 =
-          ioError (userError ("timed out waiting for Pulsar topic compaction for " <> Text.unpack topicValue))
-      | otherwise = do
-          statusValue <- readTopicCompactionStatusViaPulsar transport topicValue
-          case Text.toUpper (longRunningProcessStatus statusValue) of
-            "SUCCESS" -> pure ()
-            "ERROR" ->
-              ioError
-                ( userError
-                    ( "Pulsar topic compaction failed for "
-                        <> Text.unpack topicValue
-                        <> maybe "" ((": " <>) . Text.unpack) (longRunningProcessLastError statusValue)
-                    )
+    probe = do
+      statusValue <- readTopicCompactionStatusViaPulsar transport topicValue
+      case Text.toUpper (longRunningProcessStatus statusValue) of
+        "SUCCESS" -> pure (Right ())
+        "ERROR" ->
+          ioError
+            ( userError
+                ( "Pulsar topic compaction failed for "
+                    <> Text.unpack topicValue
+                    <> maybe "" ((": " <>) . Text.unpack) (longRunningProcessLastError statusValue)
                 )
-            _ -> do
-              threadDelay 1000000
-              go (attemptsRemaining - 1)
+            )
+        _ -> pure (Left (Readiness.Progress 0 1 "topic compaction not yet complete"))
+    onTimedOut _ =
+      ioError (userError ("timed out waiting for Pulsar topic compaction for " <> Text.unpack topicValue))
 
 readTopicCompactionStatusViaPulsar :: PulsarTransport -> Text.Text -> IO LongRunningProcessStatus
 readTopicCompactionStatusViaPulsar transport topicValue = do
@@ -3174,27 +3178,30 @@ handleDispatcherMessage transport runtimeMode requestTopic userIdValue contextId
             <> displayException err
         )
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 120-attempt × 0.5 s budget. A resolved
+-- non-empty model id is the kernel's readiness evidence; a deadline-exhausted
+-- wait logs the unresolved context and returns the typed empty-model rejection
+-- exactly as before (this is a non-fatal path, not an error).
 resolveContextModelIdForDispatch :: ContextModelMap -> Contracts.ContextId -> IO Text.Text
-resolveContextModelIdForDispatch contextModelMap contextIdValue@(Contracts.ContextId contextIdText) =
-  go (120 :: Int)
+resolveContextModelIdForDispatch contextModelMap contextIdValue@(Contracts.ContextId contextIdText) = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 120 500000) probe
+  Readiness.foldReadiness pure onTimedOut onTimedOut outcome
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 = do
-          hPutStrLn
-            stderr
-            ( "dispatcher model id unresolved for context "
-                <> Text.unpack contextIdText
-                <> " after waiting for contexts metadata; publishing typed empty-model rejection"
-            )
-          pure Text.empty
-      | otherwise = do
-          maybeModelId <- ContextModelMap.lookupModelId contextModelMap contextIdValue
-          case maybeModelId of
-            Just modelIdValue
-              | not (Text.null modelIdValue) -> pure modelIdValue
-            _ -> do
-              threadDelay 500000
-              go (remainingAttempts - 1)
+    probe = do
+      maybeModelId <- ContextModelMap.lookupModelId contextModelMap contextIdValue
+      case maybeModelId of
+        Just modelIdValue
+          | not (Text.null modelIdValue) -> pure (Right modelIdValue)
+        _ -> pure (Left (Readiness.Progress 0 1 "context model id not yet resolved"))
+    onTimedOut _ = do
+      hPutStrLn
+        stderr
+        ( "dispatcher model id unresolved for context "
+            <> Text.unpack contextIdText
+            <> " after waiting for contexts metadata; publishing typed empty-model rejection"
+        )
+      pure Text.empty
 
 conversationPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
 conversationPayloadBytes envelope =

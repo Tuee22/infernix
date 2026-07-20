@@ -178,6 +178,7 @@ capabilityGatingViolations sourceFile numberedLines =
     <> emptySubprocessEnvViolations sourceFile numberedLines
     <> unboundedExecViolations sourceFile numberedLines
     <> unboundedHttpViolations sourceFile numberedLines
+    <> threadDelayViolations sourceFile numberedLines
 
 rawDestructiveViolations :: FilePath -> [(Int, String)] -> [String]
 rawDestructiveViolations sourceFile numberedLines
@@ -294,6 +295,53 @@ unboundedHttpExemptedFiles =
     "src/Infernix/Runtime/Pulsar.hs",
     -- Names the forbidden token as a literal; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs"
+  ]
+
+-- | Sprint 6.41 (managed-state-transition doctrine) — reject raw 'threadDelay'
+-- readiness/poll loops outside the readiness kernel. A hand-rolled
+-- @threadDelay@-in-a-recursion is exactly the bare-recursion readiness wait the
+-- kernel replaces: 'Infernix.Evidence.Readiness.awaitReadiness' owns the one
+-- legitimate inter-poll delay and is the sole minter of a positive 'Readiness',
+-- so an unbounded or fabricated-ready wait is unrepresentable. The exemption list
+-- is deliberately shrinking: the kernel (owns the delay) and this lint module
+-- (names the token as a literal) are permanent; the remaining files retain
+-- genuine backoff / heartbeat / runtime-loop-park delays whose migration is
+-- deferred. 'CLI.hs' is intentionally kept OUT of the list — Sprint 6.41 migrated
+-- its two readiness waits onto the kernel, so the gate now keeps it clean.
+-- Canonical doctrine: documents/architecture/managed_state_transitions.md.
+threadDelayViolations :: FilePath -> [(Int, String)] -> [String]
+threadDelayViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` threadDelayExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw `threadDelay` outside the readiness kernel; route a poll/readiness wait through Infernix.Evidence.Readiness.awaitReadiness (a required Deadline + typed Readiness evidence) so an unbounded or fabricated-ready wait is unrepresentable (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        containsToken "threadDelay" lineValue
+      ]
+
+threadDelayExemptedFiles :: [FilePath]
+threadDelayExemptedFiles =
+  [ -- The readiness kernel owns the one legitimate inter-poll delay.
+    "src/Infernix/Evidence/Readiness.hs",
+    -- Names the forbidden token as a literal; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs",
+    -- Cluster lifecycle: retains genuine backoff sites (claim chmod retry, probe
+    -- backoff, teardown-absence backoff) after the Sprint 6.41 wait migration.
+    "src/Infernix/Cluster.hs",
+    -- Harbor image publish: push/pull-verify/login retry backoff.
+    "src/Infernix/Cluster/PublishImages.hs",
+    -- Runtime transport / service loop: producer + WebSocket connect retry backoff,
+    -- dispatcher topic poll, and the idle runtime-loop park / heartbeat.
+    "src/Infernix/Runtime/Pulsar.hs",
+    -- Engine worker: inference retry backoff.
+    "src/Infernix/Runtime/Worker.hs",
+    -- Daemon: startup settle + idle park / heartbeat.
+    "src/Infernix/Runtime/Daemon.hs",
+    -- Adapter setup: Poetry/venv provisioning backoff.
+    "src/Infernix/Python.hs",
+    -- Demo API: bounded object-readiness backoff.
+    "src/Infernix/Demo/Api.hs"
   ]
 
 unboundedExecExemptedFiles :: [FilePath]

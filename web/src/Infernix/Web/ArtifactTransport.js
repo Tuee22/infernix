@@ -200,6 +200,27 @@ function objectBytesUrl(objectKey, mimeType) {
   );
 }
 
+function currentArtifactCards(card, objectKey) {
+  const documentValue = card?.ownerDocument || document;
+  const cards = Array.from(documentValue.querySelectorAll(".artifact-entry")).filter(
+    (entry) => entry.dataset.objectKey === objectKey,
+  );
+  if (cards.length > 0) {
+    return cards;
+  }
+  return card ? [card] : [];
+}
+
+function markDownloadReady(cards, bytesUrl, disposition) {
+  for (const card of cards) {
+    card.dataset.renderDisposition = disposition || "";
+    for (const download of card.querySelectorAll("[data-role='artifact-download']")) {
+      download.dataset.downloadStatus = "ready";
+      download.dataset.downloadUrl = bytesUrl;
+    }
+  }
+}
+
 async function handleUpload(form, onUploaded) {
   const token = requireToken();
   const contextId = form.dataset.contextId;
@@ -263,7 +284,7 @@ async function handleDownload(button) {
   const objectKey = button.dataset.objectKey || "";
   const displayName = button.dataset.displayName || displayNameFromKey(objectKey);
   const card = button.closest(".artifact-entry");
-  if (!contextId || !displayName) {
+  if (!contextId || !displayName || !objectKey) {
     throw new Error("Artifact download metadata is incomplete");
   }
 
@@ -278,69 +299,83 @@ async function handleDownload(button) {
   // The bytes are streamed from the webapp object-proxy keyed by the card's
   // own object key, so both `uploads/` and `generated/` artifacts resolve.
   const bytesUrl = objectBytesUrl(objectKey, mimeType);
-  button.dataset.downloadStatus = "ready";
-  button.dataset.downloadUrl = bytesUrl;
-  if (card) {
-    card.dataset.renderDisposition = disposition || "";
-  }
 
   if (disposition === "BoundedTextPreview") {
-    const preview = card?.querySelector(".artifact-preview-text");
-    if (preview) {
-      const textResponse = await fetch(bytesUrl, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!textResponse.ok) {
-        throw new Error(`object download failed with HTTP ${textResponse.status}: ${await textResponse.text()}`);
+    const text = await authedText(bytesUrl, token);
+    const cards = currentArtifactCards(card, objectKey);
+    for (const currentCard of cards) {
+      const preview = currentCard.querySelector(".artifact-preview-text");
+      if (preview) {
+        preview.textContent = text;
+        preview.dataset.previewStatus = "ready";
       }
-      preview.textContent = await textResponse.text();
-      preview.dataset.previewStatus = "ready";
     }
+    markDownloadReady(cards, bytesUrl, disposition);
     return;
   }
 
   if (disposition === "RenderInline" || disposition === "BrowserNativePdf") {
-    const media = card?.querySelector(
-      ".artifact-preview-image, .artifact-preview-audio, .artifact-preview-video, .artifact-preview-pdf",
-    );
-    if (media) {
-      // Browser-issued media src GET authenticates via the operator cookie
-      // (Path=/; set at login) since img/audio/video/iframe cannot set headers.
-      media.setAttribute("src", bytesUrl);
-      media.dataset.previewStatus = "ready";
+    const cards = currentArtifactCards(card, objectKey);
+    for (const currentCard of cards) {
+      const media = currentCard.querySelector(
+        ".artifact-preview-image, .artifact-preview-audio, .artifact-preview-video, .artifact-preview-pdf",
+      );
+      if (media) {
+        // Browser-issued media src GET authenticates via the operator cookie
+        // (Path=/; set at login) since img/audio/video/iframe cannot set headers.
+        media.setAttribute("src", bytesUrl);
+        media.dataset.previewStatus = "ready";
+      }
     }
+    markDownloadReady(cards, bytesUrl, disposition);
     return;
   }
 
   if (disposition === "RenderMidi") {
-    const mount = card?.querySelector(".artifact-preview-midi");
-    if (mount) {
-      await renderMidiInto(mount, token, bytesUrl);
+    const cards = currentArtifactCards(card, objectKey);
+    for (const currentCard of cards) {
+      const mount = currentCard.querySelector(".artifact-preview-midi");
+      if (mount) {
+        await renderMidiInto(mount, token, bytesUrl);
+      }
     }
+    markDownloadReady(cards, bytesUrl, disposition);
     return;
   }
 
   if (disposition === "RenderMusicXml") {
-    const mount = card?.querySelector(".artifact-preview-musicxml");
-    if (mount) {
-      await renderMusicXmlInto(mount, token, bytesUrl);
+    const cards = currentArtifactCards(card, objectKey);
+    for (const currentCard of cards) {
+      const mount = currentCard.querySelector(".artifact-preview-musicxml");
+      if (mount) {
+        await renderMusicXmlInto(mount, token, bytesUrl);
+      }
     }
+    markDownloadReady(cards, bytesUrl, disposition);
     return;
   }
 
   if (disposition === "RenderZipStems") {
-    const mount = card?.querySelector(".artifact-preview-zip");
-    if (mount) {
-      await renderZipStemsInto(mount, token, bytesUrl);
+    const cards = currentArtifactCards(card, objectKey);
+    for (const currentCard of cards) {
+      const mount = currentCard.querySelector(".artifact-preview-zip");
+      if (mount) {
+        await renderZipStemsInto(mount, token, bytesUrl);
+      }
     }
+    markDownloadReady(cards, bytesUrl, disposition);
     return;
   }
 
-  const placeholder = card?.querySelector(".artifact-preview-download-only");
-  if (placeholder) {
-    placeholder.textContent = "Download ready.";
-    placeholder.dataset.previewStatus = "ready";
+  const cards = currentArtifactCards(card, objectKey);
+  for (const currentCard of cards) {
+    const placeholder = currentCard.querySelector(".artifact-preview-download-only");
+    if (placeholder) {
+      placeholder.textContent = "Download ready.";
+      placeholder.dataset.previewStatus = "ready";
+    }
   }
+  markDownloadReady(cards, bytesUrl, disposition);
 }
 
 export const bindArtifactTransportImpl = (root) => (onUploaded) => (onError) => () => {

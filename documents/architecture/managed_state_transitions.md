@@ -121,11 +121,16 @@ Harbor publish exec plus the `BlobServable` witness and the `harborTagMetadataPr
 `registryApiReachable` demotion are **Phase 3** (Sprint 3.15); the classified-download consumer fold
 plus the integrity-witnessed `PayloadVerified` are **Phase 4** (Sprint 4.29); and the
 `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lints are **Phase 6**
-(Sprint 6.40). The `ProcessMonitor` retirement, the shared `retryCommandOutput` primitive, and the
-eager-model-cache barrier are migrated onto the bounded-command / `awaitReadiness` kernels
-(**Phase 6** Sprint 6.41, code-side closed 2026-07-19, machine-independent and adversarially
-reviewed); the remaining individual bounded-wait migrations and the `threadDelay`-outside-kernel lint
-gate are the outstanding tail.
+(Sprint 6.40). The `ProcessMonitor` retirement, the shared `retryCommandOutput` primitive, the
+eager-model-cache barrier, the full individual bounded-wait migration (the twelve remaining
+hand-rolled `go n` readiness loops across `Cluster.hs`, `Runtime/Pulsar.hs`, and `CLI.hs` — every one
+now folded onto `awaitReadiness` under a `budgetDeadline`-derived `Deadline`), and the
+`threadDelayViolations` lint gate (raw `threadDelay` is a build error outside the readiness kernel and
+a deliberately shrinking backoff/heartbeat exemption list, keeping `CLI.hs` clean) are all migrated
+onto the bounded-command / `awaitReadiness` kernels (**Phase 6** Sprint 6.41, code-side closed
+2026-07-19, machine-independent and adversarially reviewed). The shared `budgetDeadline :: Int -> Int
+-> Deadline` bridge encodes a legacy `attempts × delayMicros` retry budget as a required `Deadline`, so
+an unbounded or bare-recursion readiness wait is unrepresentable.
 
 ## Validation
 

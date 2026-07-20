@@ -29,7 +29,7 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isSpace, toLower)
-import Data.IORef (atomicModifyIORef', newIORef)
+import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as List
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe, maybeToList)
@@ -1855,19 +1855,22 @@ linuxGpuDevicePluginValues =
       "                - \"true\""
     ]
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the exact legacy 30-attempt × 1 s budget. Readiness is
+-- now the kernel's positive outcome from a real allocatable-resource observation
+-- rather than a bare-recursion fall-through.
 waitForLinuxGpuResources :: Paths -> IO ()
-waitForLinuxGpuResources paths = go (30 :: Int)
+waitForLinuxGpuResources paths = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 30 1000000) probe
+  Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          ioError (userError "linux-gpu nodes never reported allocatable nvidia.com/gpu resources")
-      | otherwise = do
-          allocatableValues <- linuxGpuAllocatableValues paths
-          if any isPositiveGpuCount allocatableValues
-            then pure ()
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
+    probe = do
+      allocatableValues <- linuxGpuAllocatableValues paths
+      if any isPositiveGpuCount allocatableValues
+        then pure (Right ())
+        else pure (Left (Readiness.Progress 0 1 "no node reported allocatable nvidia.com/gpu"))
+    onTimedOut _ =
+      ioError (userError "linux-gpu nodes never reported allocatable nvidia.com/gpu resources")
     isPositiveGpuCount value =
       case readMaybe value of
         Just parsedCount -> parsedCount > (0 :: Int)
@@ -2614,59 +2617,69 @@ waitForHarborDatabaseReadyWithRepair state = do
            ]
     )
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 72-attempt × 5 s budget. The mid-loop
+-- repair state (whether a startup restart or a replica reinit has already been
+-- issued), the attempt counter the repair grace windows key on, and the retained
+-- last non-empty error are carried in 'IORef's the probe threads, since the
+-- kernel's 'Progress' carries only counts. Readiness is now the kernel's positive
+-- outcome from a real all-pods-ready observation; the retained error is projected
+-- into the timeout diagnostic.
 waitForHarborPostgresPodsReady :: ClusterState -> IO ()
-waitForHarborPostgresPodsReady state = go totalAttempts False False ""
-  where
-    totalAttempts = 72 :: Int
-
-    go remainingAttempts restartIssued reinitIssued lastError = do
-      startupPods <- harborPostgresStartupPods state
-      let dataPodCount =
-            length
-              [ ()
-              | startupPod <- startupPods,
-                "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
-              ]
-          repoHostCount =
-            length
-              [ ()
-              | startupPod <- startupPods,
-                "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
-              ]
-          allStartupPodsPresent =
-            dataPodCount >= harborPostgresExpectedDataClaims
-              && repoHostCount >= 1
-          attemptsElapsed = totalAttempts - remainingAttempts
-          currentError
-            | dataPodCount < harborPostgresExpectedDataClaims =
-                "expected "
-                  <> show harborPostgresExpectedDataClaims
-                  <> " Harbor PostgreSQL data pods but found "
-                  <> show dataPodCount
-            | repoHostCount < 1 = "expected Harbor PostgreSQL pgBackRest repo host pod but found none"
-            | all harborPostgresStartupPodReady startupPods = ""
-            | otherwise =
-                "Harbor PostgreSQL startup pods are not ready: "
-                  <> List.intercalate
-                    ", "
-                    [ harborPostgresStartupPodName startupPod
-                        <> " ["
-                        <> harborPostgresStartupPodStatus startupPod
-                        <> "]"
-                    | startupPod <- startupPods,
-                      not (harborPostgresStartupPodReady startupPod)
-                    ]
-      case currentError of
-        "" -> pure ()
-        _
-          | remainingAttempts <= 1 ->
-              ioError
-                ( userError
-                    ( "Harbor PostgreSQL pods never became ready:\n"
-                        <> chooseError currentError lastError
-                    )
-                )
-          | otherwise -> do
+waitForHarborPostgresPodsReady state = do
+  restartIssuedRef <- newIORef False
+  reinitIssuedRef <- newIORef False
+  attemptRef <- newIORef (0 :: Int)
+  lastErrorRef <- newIORef ""
+  let totalAttempts = 72 :: Int
+      probe = do
+        attemptsElapsed <- readIORef attemptRef
+        modifyIORef' attemptRef (+ 1)
+        startupPods <- harborPostgresStartupPods state
+        let dataPodCount =
+              length
+                [ ()
+                | startupPod <- startupPods,
+                  "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                ]
+            repoHostCount =
+              length
+                [ ()
+                | startupPod <- startupPods,
+                  "harbor-postgresql-repo-host-" `List.isPrefixOf` harborPostgresStartupPodName startupPod
+                ]
+            allStartupPodsPresent =
+              dataPodCount >= harborPostgresExpectedDataClaims
+                && repoHostCount >= 1
+            currentError
+              | dataPodCount < harborPostgresExpectedDataClaims =
+                  "expected "
+                    <> show harborPostgresExpectedDataClaims
+                    <> " Harbor PostgreSQL data pods but found "
+                    <> show dataPodCount
+              | repoHostCount < 1 = "expected Harbor PostgreSQL pgBackRest repo host pod but found none"
+              | all harborPostgresStartupPodReady startupPods = ""
+              | otherwise =
+                  "Harbor PostgreSQL startup pods are not ready: "
+                    <> List.intercalate
+                      ", "
+                      [ harborPostgresStartupPodName startupPod
+                          <> " ["
+                          <> harborPostgresStartupPodStatus startupPod
+                          <> "]"
+                      | startupPod <- startupPods,
+                        not (harborPostgresStartupPodReady startupPod)
+                      ]
+        case currentError of
+          "" -> pure (Right ())
+          _ -> do
+            -- Match the original's "no repair on the final attempt": it checks its
+            -- @remainingAttempts <= 1@ give-up guard BEFORE the repair branch, so the
+            -- last poll (which will Expire) must not issue the destructive startup
+            -- restart / replica reinit right as the wait gives up.
+            when (attemptsElapsed < totalAttempts - 1) $ do
+              restartIssued <- readIORef restartIssuedRef
+              reinitIssued <- readIORef reinitIssuedRef
               (restarted, reinitialized) <-
                 repairHarborPostgresStartup
                   allStartupPodsPresent
@@ -2674,12 +2687,23 @@ waitForHarborPostgresPodsReady state = go totalAttempts False False ""
                   restartIssued
                   reinitIssued
                   startupPods
-              threadDelay 5000000
-              go
-                (remainingAttempts - 1)
-                (restartIssued || restarted)
-                (reinitIssued || reinitialized)
-                (chooseError currentError lastError)
+              when restarted (writeIORef restartIssuedRef True)
+              when reinitialized (writeIORef reinitIssuedRef True)
+            retained <-
+              atomicModifyIORef'
+                lastErrorRef
+                (\previous -> let kept = if null currentError then previous else currentError in (kept, kept))
+            pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline totalAttempts 5000000) probe
+  Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
+  where
+    onTimedOut progress =
+      ioError
+        ( userError
+            ( "Harbor PostgreSQL pods never became ready:\n"
+                <> Text.unpack (Readiness.progressDetail progress)
+            )
+        )
 
     repairHarborPostgresStartup allStartupPodsPresent attemptsElapsed restartIssued reinitIssued startupPods = do
       restarted <-
@@ -2701,10 +2725,6 @@ waitForHarborPostgresPodsReady state = go totalAttempts False False ""
               (restartIssued || restarted)
               startupPods
       pure (restarted, reinitialized)
-
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
 
 data HarborPostgresStartupPod = HarborPostgresStartupPod
   { harborPostgresStartupPodName :: String,
@@ -2887,19 +2907,21 @@ harborPostgresReplicationRoleSql =
       "$$;"
     ]
 
+-- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
+-- 72-attempt × 5 s budget. The resolved primary pod name is the kernel's readiness
+-- evidence, minted only from a real non-empty pod observation.
 waitForHarborPostgresPrimaryPod :: ClusterState -> IO String
-waitForHarborPostgresPrimaryPod state = go (72 :: Int)
+waitForHarborPostgresPrimaryPod state = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 72 5000000) probe
+  Readiness.foldReadiness pure onTimedOut onTimedOut outcome
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          ioError (userError "Harbor PostgreSQL primary pod never appeared")
-      | otherwise = do
-          podName <- harborPostgresPrimaryPodNameMaybe state
-          if null podName
-            then do
-              threadDelay 5000000
-              go (remainingAttempts - 1)
-            else pure podName
+    probe = do
+      podName <- harborPostgresPrimaryPodNameMaybe state
+      if null podName
+        then pure (Left (Readiness.Progress 0 1 "Harbor PostgreSQL primary pod not yet present"))
+        else pure (Right podName)
+    onTimedOut _ =
+      ioError (userError "Harbor PostgreSQL primary pod never appeared")
 
 harborPostgresPrimaryPodNameMaybe :: ClusterState -> IO String
 harborPostgresPrimaryPodNameMaybe state = do
@@ -3102,35 +3124,42 @@ waitForFinalPhaseStatefulSetRollout paths state timeoutSeconds workload
       waitForPulsarStatefulSetRollout paths state timeoutSeconds workload
   | otherwise = waitForWorkloadRollout state timeoutSeconds workload
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 30-attempt × 2 s budget. The retained last
+-- non-empty reconcile error is carried in an 'IORef' the probe threads and
+-- projected into the timeout diagnostic; readiness is the kernel's positive
+-- outcome from a real successful reconcile.
 reconcileKeycloakRealmConfiguration :: Paths -> ClusterState -> IO ()
 reconcileKeycloakRealmConfiguration paths state =
   when (clusterStateHasDemoUi state) $ do
     putStrLn "reconciling Keycloak demo realm"
     manager <- newManager defaultManagerSettings
-    go manager (30 :: Int) ""
+    lastErrorRef <- newIORef ""
+    let probe = do
+          result <-
+            ( try
+                (reconcileKeycloakRealmConfigurationOnce paths state manager) ::
+                IO (Either SomeException ())
+            )
+          case result of
+            Right _ -> pure (Right ())
+            Left err -> do
+              let message = displayException err
+              retained <-
+                atomicModifyIORef'
+                  lastErrorRef
+                  (\previous -> let kept = if null message then previous else message in (kept, kept))
+              pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+    outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 30 2000000) probe
+    Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
-    go manager remainingAttempts lastError = do
-      result <-
-        ( try
-            (reconcileKeycloakRealmConfigurationOnce paths state manager) ::
-            IO (Either SomeException ())
+    onTimedOut progress =
+      ioError
+        ( userError
+            ( "Keycloak realm reconcile failed:\n"
+                <> Text.unpack (Readiness.progressDetail progress)
+            )
         )
-      case result of
-        Right _ -> pure ()
-        Left err
-          | remainingAttempts > 1 -> do
-              threadDelay 2000000
-              go manager (remainingAttempts - 1) (displayException err)
-          | otherwise ->
-              ioError
-                ( userError
-                    ( "Keycloak realm reconcile failed:\n"
-                        <> chooseError (displayException err) lastError
-                    )
-                )
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
 
 -- | Sprint 9.10 (managed-state-transition doctrine): hold the Keycloak admin
 -- bearer only inside a region lease. 'withValidAdminToken' re-derives the token
@@ -3685,57 +3714,69 @@ waitForWorkloadRollout state timeoutSeconds workload =
            ]
     )
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel. Here the poll's wait is the blocking
+-- @kubectl rollout status --timeout@ subcommand itself, so the kernel is driven
+-- as a bounded poll-counter — a 1 µs inter-poll delay with a stall/ceiling of
+-- @timeoutSeconds `div` probeSeconds@ polls — rather than a poll-and-sleep. The
+-- terminal dirty-retained-state condition throws from inside the probe (an
+-- exception the kernel propagates), and the retained last non-empty rollout error
+-- is projected into the timeout diagnostic. Each poll still touches the lifecycle
+-- progress heartbeat.
 waitForPulsarStatefulSetRollout :: Paths -> ClusterState -> Int -> String -> IO ()
-waitForPulsarStatefulSetRollout paths state timeoutSeconds workload =
-  go timeoutSeconds ""
+waitForPulsarStatefulSetRollout paths state timeoutSeconds workload = do
+  lastErrorRef <- newIORef ""
+  let probe = do
+        touchLifecycleProgress paths state
+        result <-
+          tryCommand
+            Nothing
+            []
+            "kubectl"
+            ( kubeconfigArgs state
+                <> [ "-n",
+                     "platform",
+                     "rollout",
+                     "status",
+                     workload,
+                     "--timeout",
+                     show probeSeconds <> "s"
+                   ]
+            )
+        case result of
+          Right _ -> pure (Right ())
+          Left err -> do
+            maybeRepairReason <- detectDirtyPulsarBootstrapState paths (clusterRuntimeMode state)
+            case maybeRepairReason of
+              Just repairReason ->
+                ioError
+                  ( userError
+                      ( "Pulsar retained state is inconsistent while waiting for "
+                          <> workload
+                          <> ": "
+                          <> repairReason
+                      )
+                  )
+              Nothing -> do
+                retained <-
+                  atomicModifyIORef'
+                    lastErrorRef
+                    (\previous -> let kept = if null err then previous else err in (kept, kept))
+                pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline maxPolls 1) probe
+  Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
     probeSeconds = 30
-    go remainingSeconds previousError
-      | remainingSeconds <= 0 =
-          ioError
-            ( userError
-                ( "Pulsar rollout did not become ready for "
-                    <> workload
-                    <> ":\n"
-                    <> previousError
-                )
+    maxPolls = max 1 ((timeoutSeconds + probeSeconds - 1) `div` probeSeconds)
+    onTimedOut progress =
+      ioError
+        ( userError
+            ( "Pulsar rollout did not become ready for "
+                <> workload
+                <> ":\n"
+                <> Text.unpack (Readiness.progressDetail progress)
             )
-      | otherwise = do
-          touchLifecycleProgress paths state
-          result <-
-            tryCommand
-              Nothing
-              []
-              "kubectl"
-              ( kubeconfigArgs state
-                  <> [ "-n",
-                       "platform",
-                       "rollout",
-                       "status",
-                       workload,
-                       "--timeout",
-                       show (min probeSeconds remainingSeconds) <> "s"
-                     ]
-              )
-          case result of
-            Right _ -> pure ()
-            Left err -> do
-              maybeRepairReason <- detectDirtyPulsarBootstrapState paths (clusterRuntimeMode state)
-              case maybeRepairReason of
-                Just repairReason ->
-                  ioError
-                    ( userError
-                        ( "Pulsar retained state is inconsistent while waiting for "
-                            <> workload
-                            <> ": "
-                            <> repairReason
-                        )
-                    )
-                Nothing ->
-                  go (remainingSeconds - probeSeconds) (chooseError err previousError)
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
+        )
 
 ensureHelmDependencies :: Paths -> IO ()
 ensureHelmDependencies paths = do
@@ -3893,28 +3934,40 @@ refreshPersistentClaims state = do
   operatorClaims <- discoverOperatorManagedPersistentClaims state
   pure (state {claims = mergePersistentClaims (claims state) operatorClaims})
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 72-attempt × 5 s budget. The discovered
+-- claim list is the kernel's readiness evidence, minted only when at least
+-- @expectedCount@ operator-managed claims are actually observed; the last
+-- observed count rides in the kernel 'Progress' and is projected into the timeout
+-- diagnostic.
 waitForOperatorManagedPersistentClaims :: ClusterState -> Int -> IO [PersistentClaim]
-waitForOperatorManagedPersistentClaims state expectedCount = go (72 :: Int) []
+waitForOperatorManagedPersistentClaims state expectedCount = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 72 5000000) probe
+  Readiness.foldReadiness pure onTimedOut onTimedOut outcome
   where
-    go remainingAttempts previousClaims = do
+    probe = do
       currentClaims <- discoverOperatorManagedPersistentClaims state
-      case () of
-        _
-          | length currentClaims >= expectedCount ->
-              pure currentClaims
-          | remainingAttempts <= 1 ->
-              ioError
-                ( userError
-                    ( "operator-managed PostgreSQL claims never appeared; expected at least "
-                        <> show expectedCount
-                        <> " but found "
-                        <> show (length currentClaims)
-                        <> " after retries"
-                    )
+      if length currentClaims >= expectedCount
+        then pure (Right currentClaims)
+        else
+          pure
+            ( Left
+                ( Readiness.Progress
+                    (length currentClaims)
+                    expectedCount
+                    "operator-managed PostgreSQL claims not yet present"
                 )
-          | otherwise -> do
-              threadDelay 5000000
-              go (remainingAttempts - 1) (if null currentClaims then previousClaims else currentClaims)
+            )
+    onTimedOut progress =
+      ioError
+        ( userError
+            ( "operator-managed PostgreSQL claims never appeared; expected at least "
+                <> show expectedCount
+                <> " but found "
+                <> show (Readiness.progressObserved progress)
+                <> " after retries"
+            )
+        )
 
 discoverOperatorManagedPersistentClaims :: ClusterState -> IO [PersistentClaim]
 discoverOperatorManagedPersistentClaims state = do
@@ -4105,45 +4158,51 @@ parseCurlBodyAndStatus payload =
       Just (unlines (reverse reversedBodyLines), trim statusCode)
     [] -> Nothing
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 72-attempt × 5 s budget per claim. The
+-- Bound phase is the kernel's readiness evidence; the retained last non-empty
+-- phase rides in an 'IORef' the probe threads and is projected into the timeout
+-- diagnostic.
 waitForPersistentClaimsBound :: ClusterState -> [PersistentClaim] -> IO ()
 waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
   where
-    waitForPersistentClaimBound persistentClaim = go (72 :: Int) ""
+    waitForPersistentClaimBound persistentClaim = do
+      lastPhaseRef <- newIORef ""
+      let probe = do
+            phaseValue <-
+              trim
+                <$> kubectlOutput
+                  state
+                  [ "-n",
+                    claimNamespace,
+                    "get",
+                    "pvc",
+                    pvcNameValue,
+                    "-o",
+                    "jsonpath={.status.phase}"
+                  ]
+            if phaseValue == "Bound"
+              then pure (Right ())
+              else do
+                retained <-
+                  atomicModifyIORef'
+                    lastPhaseRef
+                    (\previous -> let kept = if null phaseValue then previous else phaseValue in (kept, kept))
+                pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+      outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 72 5000000) probe
+      Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
       where
         claimNamespace = Text.unpack (namespace persistentClaim)
         pvcNameValue = persistentVolumeClaimName persistentClaim
-        go remainingAttempts lastPhase = do
-          phaseValue <-
-            trim
-              <$> kubectlOutput
-                state
-                [ "-n",
-                  claimNamespace,
-                  "get",
-                  "pvc",
-                  pvcNameValue,
-                  "-o",
-                  "jsonpath={.status.phase}"
-                ]
-          case () of
-            _
-              | phaseValue == "Bound" ->
-                  pure ()
-              | remainingAttempts <= 1 ->
-                  ioError
-                    ( userError
-                        ( "persistent claim "
-                            <> pvcNameValue
-                            <> " never reached Bound phase; last phase was "
-                            <> choosePhase phaseValue lastPhase
-                        )
-                    )
-              | otherwise -> do
-                  threadDelay 5000000
-                  go (remainingAttempts - 1) (choosePhase phaseValue lastPhase)
-        choosePhase current previous
-          | null current = previous
-          | otherwise = current
+        onTimedOut progress =
+          ioError
+            ( userError
+                ( "persistent claim "
+                    <> pvcNameValue
+                    <> " never reached Bound phase; last phase was "
+                    <> Text.unpack (Readiness.progressDetail progress)
+                )
+            )
 
 reconcilePersistentVolumes :: ClusterState -> IO ()
 reconcilePersistentVolumes state =
@@ -5792,18 +5851,20 @@ deleteKindCluster paths runtimeMode = go (3 :: Int) ""
       | null current = previous
       | otherwise = current
 
+-- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
+-- 30-attempt × 1 s budget. Absence observed is the kernel's readiness evidence;
+-- a deadline-exhausted wait resolves to @False@ (still present) exactly as the
+-- previous bare-recursion fall-through did.
 waitForKindClusterAbsence :: Paths -> RuntimeMode -> IO Bool
-waitForKindClusterAbsence paths runtimeMode = go (30 :: Int)
+waitForKindClusterAbsence paths runtimeMode = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 30 1000000) probe
+  pure (Readiness.foldReadiness (const True) (const False) (const False) outcome)
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 = pure False
-      | otherwise = do
-          clusterStillExists <- kindClusterExists paths runtimeMode
-          if clusterStillExists
-            then do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-            else pure True
+    probe = do
+      clusterStillExists <- kindClusterExists paths runtimeMode
+      if clusterStillExists
+        then pure (Left (Readiness.Progress 0 1 "kind cluster still present"))
+        else pure (Right ())
 
 -- | Phase 2 Sprint 2.13 — resolve an external tool's absolute path via
 -- the staged host manifest when 'pathsHostConfig' is present. When the
@@ -6131,18 +6192,8 @@ retryCommandOutput attempts delayMicros commandLabel action
     onTimedOut progress =
       Left (commandLabel <> "\n" <> Text.unpack (Readiness.progressDetail progress))
 
--- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'. The
--- poll interval is preserved exactly; the stall and ceiling are
--- @(attempts - 1) x pollSeconds@ so a probe that never signals progress runs
--- exactly @attempts@ polls at the real @delayMicros@ cadence — matching the
--- legacy count for both second and sub-second intervals (the kernel floors
--- per-poll accounting to >=1 s).
+-- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'.
+-- Sprint 6.41 folded this into the shared 'Readiness.budgetDeadline' bridge so
+-- every migrated @go n@ readiness loop derives its bound the same way.
 retryDeadline :: Int -> Int -> Readiness.Deadline
-retryDeadline attempts delayMicros =
-  let pollSeconds = max 1 (delayMicros `div` 1000000)
-      budgetSeconds = max 1 ((attempts - 1) * pollSeconds)
-   in Readiness.Deadline
-        { Readiness.deadlinePollMicros = delayMicros,
-          Readiness.deadlineStallSeconds = budgetSeconds,
-          Readiness.deadlineCeilingSeconds = budgetSeconds
-        }
+retryDeadline = Readiness.budgetDeadline

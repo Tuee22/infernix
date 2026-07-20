@@ -1,6 +1,6 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Active — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+**Status**: Done — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
 `apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
 on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
 loopback data-plane split, per-user isolation, the default-on per-user STS scoped-credential object
@@ -13,7 +13,10 @@ admin surfaces. The SPA now performs Keycloak OIDC logout (`id_token_hint`, `cli
 `post_logout_redirect_uri`) after local cleanup, and routed Playwright has a regression for
 user-to-admin switching. **Wave U closed on 2026-07-12**: the `linux-cpu` routed gate and selected
 `linux-gpu` routed gate both passed full Playwright `16/16`, including login-prompt-after-sign-out
-and non-admin-to-admin switching.
+and non-admin-to-admin switching. **The Managed-State-Transition Doctrine reopen (Sprint 9.10 —
+`withValidAdminToken` region lease and leased per-user `StsSession`) is closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20)**: apple-silicon `test all` and linux-cpu
+`test` full-suite sign-off both green, so the phase carries no open work.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —
@@ -84,8 +87,10 @@ browser rendering is substrate-independent (identical baked SPA) and is covered 
 Both the chosen accelerator cohort (`apple-silicon`) and `linux-cpu` passed the phase's
 full RBAC/STS/dashboard gates against the same frozen phase state, so the RBAC/STS/dashboard
 *surface* is validated. A **later UAT pass** then surfaced the logout/session-switching issue
-closed code-side in Sprint 9.9. Wave U has now revalidated that residual on `linux-cpu` plus the
-selected `linux-gpu` accelerator, so Phase 9 is `Done`.
+closed code-side in Sprint 9.9. Wave U revalidated that residual on `linux-cpu` plus the
+selected `linux-gpu` accelerator, and the Managed-State-Transition Doctrine reopen (Sprint 9.10) is
+closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu
+full-suite sign-off both green — so Phase 9 is `Done`.
 
 ## Remaining Work — UAT auth residual [Done]
 
@@ -103,10 +108,11 @@ The two repo-root `notes.txt` items are now resolved code-side:
    denied at both the edge `SecurityPolicy` and the backend `withAdminRequest` gate — no ordinary
    user can reach the admin portal.
 
-**Remaining Work:** None for the UAT auth residual. Sprint 9.9 is re-validated through routed
-Playwright on `linux-cpu` plus the selected `linux-gpu` accelerator. The phase is reopened `Active`
-for the Managed-State-Transition Doctrine work in **Sprint 9.10** (admin-token and object-storage
-session leases), whose cohort full-suite sign-off is the current residual — see
+**Remaining Work:** None. Sprint 9.9 is re-validated through routed Playwright on `linux-cpu` plus
+the selected `linux-gpu` accelerator, and the Managed-State-Transition Doctrine work in **Sprint
+9.10** (admin-token and object-storage session leases) is closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite
+sign-off both green — see
 [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 ## Sprint 9.1: Keycloak admin realm role, mapper, and hardcoded admin user [Done]
@@ -465,13 +471,17 @@ can intentionally switch from a regular self-registered account to the separate 
 ### Remaining Work
 None.
 
-## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Active]
+## Sprint 9.10: Admin-Token and Object-Storage Session Leases [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the `withValidAdminToken` region lease and leased per-user `StsSession`
+(Managed-State-Transition Doctrine reopen) are code-side closed (machine-independent gates) and the
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `infernix lint docs` all green
 on the apple-silicon lane. No Python/native change, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`
 **Blocked by**: Sprint 4.28, 7.29
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -517,8 +527,9 @@ results-side realness contract to state transitions. See the doctrine at
     `stsSessionPresignedConfig`, so an object operation acts only on an established session
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   and `infernix lint docs`
-- Cohort full-suite sign-off is pending: the apple-silicon plus linux-cpu full-suite run (owning
-  wave TBD) is the residual before this sprint can close.
+- Cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
+  apple-silicon `./.build/infernix test all` and linux-cpu `./bootstrap/linux-cpu.sh test` both
+  green. No remaining work.
 
 ## Documentation Requirements
 

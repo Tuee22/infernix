@@ -80,9 +80,11 @@
   evidence modules), `rawDestructiveViolations` (raw `rm -rf` / `docker exec … rm`),
   `emptySubprocessEnvViolations` (`env = Just []`), `unboundedExecViolations` (raw unbounded process
   spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` and peers — in
-  production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`), and
+  production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`),
   `unboundedHttpViolations` (raw `withResponse` for the upstream model download outside the
-  bounded-HTTP wrapper). Their canonical doctrine is
+  bounded-HTTP wrapper), and `threadDelayViolations` (raw `threadDelay` readiness/poll loops in
+  production `src/Infernix/` outside the `Infernix.Evidence.Readiness.awaitReadiness` kernel and a
+  deliberately shrinking backoff/heartbeat exemption list). Their canonical doctrine is
   [Managed State Transitions](../architecture/managed_state_transitions.md)
 - `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
   proto, docs, Python, and build-warning checks

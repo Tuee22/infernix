@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 1.16) and Sprints 1.1-1.15 as recorded below
+**Status**: Done — the Managed-State-Transition Doctrine reopen (Sprint 1.16) and the Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 1.1-1.15 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -13,14 +13,15 @@
 > **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
 > single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
 > (403 + `Retry-After`) upstream model download that the Sprint 1.16/3.14/4.28 managed-state kernels
-> shipped but did not yet guard at those sites. This phase reopens under
-> [Sprint 1.17](#sprint-117-bounded-http-download-kernel-active) to add the bounded-HTTP download
+> shipped but did not yet guard at those sites. This phase reopened under
+> [Sprint 1.17](#sprint-117-bounded-http-download-kernel-done) to add the bounded-HTTP download
 > kernel — the total, typed `DownloadOutcome` ADT, the opaque `RetryAfterSeconds` newtype, and the
 > pure `classifyDownloadStatus` — plus the descriptive `User-Agent` and bounded `responseTimeout` on
 > the upstream fetch, the substrate the Sprint 4.29 consumer fold and the Sprint 6.40
-> `unboundedHttpViolations` lint build on. Code-side closed 2026-07-19 on the machine-independent gate
-> set (apple-silicon); the single-accelerator plus `linux-cpu` cohort full-suite is the pending
-> residual (owning wave TBD).
+> `unboundedHttpViolations` lint build on. Both the Managed-State-Transition kernels (Sprint 1.16) and
+> this bounded-HTTP application (Sprint 1.17) are closed by
+> [Wave V](cohort-validation-waves.md) (2026-07-20): apple-silicon plus `linux-cpu` full-suite
+> `test all` green.
 
 > **Real Apple native engines (Sprint 1.15 reopen).** Sprint 1.14 established the headless Apple
 > Metal/Core ML materialization lane but populated it with deterministic validation-wrapper runners
@@ -781,15 +782,19 @@ None.
 
 ---
 
-## Sprint 1.16: Evidence and Command Kernels [Active]
+## Sprint 1.16: Evidence and Command Kernels [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the Managed-State-Transition Doctrine reopen kernels (`Infernix.Evidence.Readiness`,
+`Infernix.Evidence.Lease`, `Infernix.Cluster.Subprocess`) are code-side closed (machine-independent
+gates) plus the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (the readiness / lease / subprocess kernel assertions pass), and
 `cabal test infernix-haskell-style` (ormolu + hlint + cabal-format clean) all green on the
 apple-silicon lane; `infernix lint docs` unaffected. No Python/native change in this sprint, so
 `poetry run check-code` does not apply
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Evidence/Readiness.hs`, `src/Infernix/Evidence/Lease.hs`, `src/Infernix/Cluster/Subprocess.hs`
 **Blocked by**: Sprint 0.13
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
@@ -823,8 +828,8 @@ and every operation that acts on that state requires the evidence. See the doctr
 
 ### Remaining Work
 
-- the cohort full-suite sign-off is the residual: the apple-silicon plus linux-cpu full-suite
-  cohort gate is pending, with its owning wave still to be assigned
+- none — the apple-silicon plus linux-cpu full-suite cohort sign-off closed under
+  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
 - the kernels use `RankNTypes` region leases (zero-dependency, enabled and in use); surgical
   `LinearTypes` (`%1 ->`) is applied at the spend-once consumer sites in the dependent sprints (the
   lease-gated scrub in Sprint 2.14, the sentinel commit in Sprint 4.28, and the token leases in
@@ -833,15 +838,20 @@ and every operation that acts on that state requires the evidence. See the doctr
 
 ---
 
-## Sprint 1.17: Bounded-HTTP Download Kernel [Active]
+## Sprint 1.17: Bounded-HTTP Download Kernel [Done]
 
-**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Status**: Done — the bounded-HTTP download kernel (the total `DownloadOutcome` ADT, the opaque
+`RetryAfterSeconds` newtype, the pure `classifyDownloadStatus`, and the `User-Agent` + bounded
+`responseTimeout` on the upstream fetch) is code-side closed (machine-independent gates) plus the
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (the `classifyDownloadStatus` classification table passes),
 `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
 `infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint, so
 `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 1.16
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -882,17 +892,18 @@ typecheck. It applies the bounded-outcome shape of
 
 ### Remaining Work
 
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
-  of the bounded-HTTP download kernel is pending, with the owning wave still to be assigned
+- none — apple-silicon plus linux-cpu full-suite validation of the bounded-HTTP download kernel
+  closed under [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
 
 ---
 
 ## Remaining Work
 
-Pending: see [Sprint 1.16](#sprint-116-evidence-and-command-kernels-active) for the open
-Managed-State-Transition Doctrine reopen work, and
-[Sprint 1.17](#sprint-117-bounded-http-download-kernel-active) for the Bounded-Command Application &
-Bounded-HTTP reopen work; both carry a pending cohort full-suite sign-off.
+None. [Sprint 1.16](#sprint-116-evidence-and-command-kernels-done) (the Managed-State-Transition
+Doctrine reopen work) and [Sprint 1.17](#sprint-117-bounded-http-download-kernel-done) (the
+Bounded-Command Application & Bounded-HTTP reopen work) are both closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite
+`test all` green.
 
 ## Documentation Requirements
 

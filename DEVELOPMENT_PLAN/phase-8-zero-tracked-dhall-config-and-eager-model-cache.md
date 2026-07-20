@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — all sprints (8.1-8.6) closed. Machine-independent gates pass, and the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
+**Status**: Done — all sprints (8.1-8.7) closed. Machine-independent gates pass; the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). The Managed-State-Transition reopen (Sprint 8.7) is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green. One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -267,14 +267,17 @@ Make the test harness own the runtime config for the duration of a run.
 
 None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
-## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Active]
+## Sprint 8.7: Warm-Model-Cache Readiness Evidence [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the warm-model-cache barrier returns typed readiness evidence and the config-side
+state files persist fail-closed; code-side closure (machine-independent gates) plus the
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (typed warm-cache outcome consumption and the port-file fail-closed
 assertions pass), `cabal test infernix-haskell-style`, and `infernix lint docs` all green on the
 apple-silicon lane. No native/Python change, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD.
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -325,8 +328,8 @@ to this phase's `warm-model-cache` barrier and config-side persisted state.
     file already uses the Sprint 2.14 fail-closed versioned aeson codec
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   and `infernix lint docs`
-- the cohort full-suite sign-off is the residual: pending apple-silicon plus linux-cpu full-suite,
-  owning wave TBD
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
+  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
 
 ## Documentation Requirements
 

@@ -13,6 +13,7 @@ module Infernix.Evidence.Readiness
     Progress (..),
     foldReadiness,
     awaitReadiness,
+    budgetDeadline,
   )
 where
 
@@ -89,3 +90,23 @@ awaitReadiness deadline step = go 0 0 minBound
               delayThen
                 (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved)
     delayThen continue = threadDelay (deadlinePollMicros deadline) >> continue
+
+-- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'. The
+-- poll interval is preserved exactly; the stall and ceiling are both
+-- @(attempts - 1) x pollSeconds@ so a probe that never signals progress (always
+-- @Left ('Progress' 0 1 _)@) runs exactly @max 1 attempts@ polls at the real
+-- @delayMicros@ cadence — matching the legacy bare-recursion count for both
+-- second and sub-second intervals (the kernel floors per-poll accounting to
+-- >=1 s). The @max 0@ (rather than @max 1@) budget makes the @attempts <= 1@
+-- edge exact: a single-attempt budget resolves to a 0 s ceiling, so the kernel
+-- runs one poll and stops, instead of rounding up to two. This is the shared
+-- bridge every hand-rolled @go n@ readiness loop migrates onto (Sprint 6.41).
+budgetDeadline :: Int -> Int -> Deadline
+budgetDeadline attempts delayMicros =
+  let pollSeconds = max 1 (delayMicros `div` 1000000)
+      budgetSeconds = max 0 ((attempts - 1) * pollSeconds)
+   in Deadline
+        { deadlinePollMicros = delayMicros,
+          deadlineStallSeconds = budgetSeconds,
+          deadlineCeilingSeconds = budgetSeconds
+        }

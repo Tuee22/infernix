@@ -303,14 +303,14 @@ RUN mkdir -p /workspace/tools/generated_proto \
     && infernix test init --runtime-mode ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
     && infernix internal materialize-linux-native-engines \
     && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
-         poetry install --directory python/engines/transformers --with linux-cpu --no-interaction; \
-         printf '%s\n' \
+         poetry install --directory python/engines/transformers --with linux-cpu --no-interaction \
+         && printf '%s\n' \
            'runtimeMode=linux-cpu' \
            'adapterId=transformers-python' \
            'groups=linux-cpu' \
-           > python/engines/transformers/.venv/.infernix-framework-groups-linux-cpu-linux-cpu; \
-         poetry install --directory python/engines/pytorch --with linux-cpu --no-interaction; \
-         printf '%s\n' \
+           > python/engines/transformers/.venv/.infernix-framework-groups-linux-cpu-linux-cpu \
+         && poetry install --directory python/engines/pytorch --with linux-cpu --no-interaction \
+         && printf '%s\n' \
            'runtimeMode=linux-cpu' \
            'adapterId=pytorch-python' \
            'groups=linux-cpu' \

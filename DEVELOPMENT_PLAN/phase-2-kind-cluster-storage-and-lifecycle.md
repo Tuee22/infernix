@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Active
+**Status**: Done — Sprints 2.1–2.13 closed on their earlier waves, and the Sprint 2.14 Managed-State-Transition reopen is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus linux-cpu full-suite sign-off.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -597,20 +597,25 @@ cluster command helpers resolve known tools through the staged host manifest, an
 `HarborPublishOptions`. Apple cohort validation closed in Wave A, and CUDA Linux cohort
 validation closed in Wave C.
 
-Sprint 2.14 (Typed ClusterLifecycle and Lease-Gated Teardown) reopens this phase as the
-Managed-State-Transition Doctrine work; its cohort full-suite sign-off is the residual item.
+Sprint 2.14 (Typed ClusterLifecycle and Lease-Gated Teardown) was the Managed-State-Transition
+Doctrine reopen for this phase; it is closed by [Wave V](cohort-validation-waves.md) (2026-07-20)
+with apple-silicon plus linux-cpu full-suite `test all` green. No remaining work exists.
 
 ---
 
-## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Active]
+## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the typed `ClusterLifecycle` closed sum, fail-closed versioned aeson persistence
+codec, and lease-gated retained-state teardown are code-side closed (machine-independent gates), and
+the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (typed `ClusterLifecycle` aeson round-trip, unknown-version fail-closed,
 and the Apple host-worker state round-trip through the new codec all pass), and
 `cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
 No Python/native change, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 1.16
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -664,7 +669,8 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
     not a constructible term, and `clusterDown` runs the quiesce → scrub → settle ordering
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   and `infernix lint docs`
-- the apple-silicon plus linux-cpu cohort full-suite sign-off is pending; the owning wave is TBD
+- the apple-silicon plus linux-cpu cohort full-suite sign-off closed under
+  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
 
 ---
 

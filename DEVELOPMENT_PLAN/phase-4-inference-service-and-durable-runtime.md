@@ -1,7 +1,8 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 4.29 code-side closed
-2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 4.28). Sprint
+**Status**: Done — the Managed-State-Transition Doctrine reopen (Sprint 4.28) and the Bounded-Command
+Application & Bounded-HTTP reopen (Sprint 4.29) are closed by [Wave V](cohort-validation-waves.md)
+(2026-07-20, apple-silicon plus linux-cpu full-suite). Sprint
 4.27 is closed for typed resource memory admission and typed inference
 errors. The Apple-only integer budget, config-time over-budget fail-fast, hardcoded floor, and
 stringly runtime failure payload are replaced by pure `InferenceMemoryBudget` / `InferenceError`
@@ -23,14 +24,15 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > single-accelerator cohort run surfaced a rate-limited upstream model download — the coordinator's
 > in-pod fetch of `music-omnizart` returned HTTP 403 (a UA-less request tripping the origin WAF, which
 > also carried `Retry-After`), and the Sprint 4.28 kernels shipped but did not yet classify that
-> outcome or bound the fetch. This phase reopens under
-> [Sprint 4.29](#sprint-429-classified-model-download--integrity-witnessed-sentinel-active) to send a
+> outcome or bound the fetch. This phase addressed the gap under
+> [Sprint 4.29](#sprint-429-classified-model-download--integrity-witnessed-sentinel-done) to send a
 > descriptive `User-Agent`, consume the Sprint 1.17 `DownloadOutcome` with a `Retry-After`-honoring
 > bounded redelivery (permanent failures ack to stop the redeliver-forever loop instead of hammering
 > the origin), and strengthen the `.ready` sentinel: `PayloadVerified` is now minted only when the
 > uploaded object's byte length matches the download, so a truncated upload can no longer mint a lying
-> sentinel. Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon); the
-> single-accelerator plus `linux-cpu` cohort full-suite is the pending residual (owning wave TBD).
+> sentinel. Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon), and the
+> single-accelerator (apple-silicon) plus `linux-cpu` cohort full-suite closed under
+> [Wave V](cohort-validation-waves.md) (2026-07-20).
 
 > **Realness reopen (real per-family inference).** A multi-agent audit established that the prior
 > "real per-family output" closure was, for several catalog rows, satisfied by silent fabrication
@@ -1929,15 +1931,19 @@ None.
 
 ---
 
-## Sprint 4.28: Evidence in Runtime and Engines [Active]
+## Sprint 4.28: Evidence in Runtime and Engines [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the Managed-State-Transition Doctrine reopen (gate the readiness-sentinel commit on
+a `PayloadVerified` witness, typed `awaitModelBootstrapReady` evidence, capability-gated commit/spawn
+primitives, and a real native-runner environment) is code-side closed (machine-independent gates) plus
+the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (realness lint clean on the touched
 `Engines/AppleSilicon.hs`), `infernix lint docs`, and `poetry run check-code` (`native-runners`
-realness guard + `adapters` black/ruff/mypy) all green on the apple-silicon lane. Producing real
-bounded-probe output against a live MinIO still requires cohort hardware.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+realness guard + `adapters` black/ruff/mypy) all green on the apple-silicon lane.
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Engines/AppleSilicon.hs`, `python/native-runners/apple_native_runner.py`
 **Blocked by**: Sprint 1.16, 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
@@ -1992,22 +1998,26 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
   change is proven live: real Apple inference on the native-engine models (`llm-tinyllama-gguf`
   llama.cpp, `llm-qwen15-mlx` MLX, `speech-whisper-small` whisper.cpp, `speech-faster-whisper-ct2`
   CTranslate2) completes end-to-end
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite proof of
-  the bounded-probe witness and native-runner environment against live MinIO, owning wave TBD, is
-  still pending
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
+  apple-silicon plus linux-cpu full-suite proof of the bounded-probe witness and native-runner
+  environment against live MinIO is complete, and no remaining work exists
 
 ---
 
-## Sprint 4.29: Classified Model Download & Integrity-Witnessed Sentinel [Active]
+## Sprint 4.29: Classified Model Download & Integrity-Witnessed Sentinel [Done]
 
-**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (the UA-bearing,
+`Retry-After`-honoring classified `DownloadOutcome` download fold and the integrity-witnessed
+`PayloadVerified` sentinel) is code-side closed (machine-independent gates) plus the single-accelerator
+(apple-silicon) plus linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md) on
+2026-07-20.
 **Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (the `classifyDownloadStatus` classification assertions pass),
 `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
 `infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint, so
-`poetry run check-code` does not apply. Producing a real classified download and an integrity-matched
-upload against a live upstream and MinIO still requires cohort hardware.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+`poetry run check-code` does not apply.
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 1.17, 4.28
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
@@ -2043,14 +2053,15 @@ doctrine to the durable-runtime download and sentinel surface.
   apple-silicon and linux-cpu lanes
 - the end-to-end proof is a model-bootstrap wave including `music-omnizart`: the UA-bearing request
   succeeds, and a fault-injected 403 + `Retry-After` backs off per the header and fails as
-  `status=failed` on a permanent classification rather than redelivering forever — this rides the
-  pending cohort full-suite
+  `status=failed` on a permanent classification rather than redelivering forever — closed under
+  [Wave V](cohort-validation-waves.md) (2026-07-20)
 
 ### Remaining Work
 
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
-  of the classified download fold and the integrity-witnessed sentinel against a live upstream and
-  MinIO is pending, owning wave TBD
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
+  apple-silicon plus linux-cpu full-suite validation of the classified download fold and the
+  integrity-witnessed sentinel against a live upstream and MinIO is complete, and no remaining work
+  exists
 
 ---
 
@@ -2062,11 +2073,12 @@ Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-replace
 **Sprint 4.25** (matrix substrate-accuracy closure) and **Sprint 4.26** (apple-silicon inference
 RAM admission + bounded peak) are closed by [Wave R](cohort-validation-waves.md) and
 [Wave S](cohort-validation-waves.md) for their original scopes.
-**Sprint 4.28** (Evidence in Runtime and Engines) is the active Managed-State-Transition Doctrine
-reopen for this phase; its cohort full-suite sign-off is pending.
-**Sprint 4.29** (Classified Model Download & Integrity-Witnessed Sentinel) is the active
-Bounded-Command Application & Bounded-HTTP reopen for this phase — the UA-bearing, `Retry-After`-honoring
-download fold and the integrity-witnessed `PayloadVerified`; its cohort full-suite sign-off is pending.
+**Sprint 4.28** (Evidence in Runtime and Engines) — the Managed-State-Transition Doctrine reopen for
+this phase — is closed by [Wave V](cohort-validation-waves.md) (2026-07-20).
+**Sprint 4.29** (Classified Model Download & Integrity-Witnessed Sentinel) — the Bounded-Command
+Application & Bounded-HTTP reopen for this phase, the UA-bearing, `Retry-After`-honoring download fold
+and the integrity-witnessed `PayloadVerified` — is closed by [Wave V](cohort-validation-waves.md)
+(2026-07-20). No Phase 4 reopen work remains.
 
 ---
 

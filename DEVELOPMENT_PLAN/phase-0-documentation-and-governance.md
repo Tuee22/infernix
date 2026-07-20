@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 0.13) and Sprints 0.1-0.12 as recorded below
+**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -26,14 +26,14 @@ lint rules established here.
 > single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
 > (403 + `Retry-After`) upstream model download that the Sprint 1.16/3.14/4.28 managed-state kernels
 > shipped but did not yet guard at those sites. Phase 0 reopens under
-> [Sprint 0.14](#sprint-014-bounded-commandbounded-http-doctrine-documentation-active) to record the
+> [Sprint 0.14](#sprint-014-bounded-commandbounded-http-doctrine-documentation-done) to record the
 > governance surface of the follow-on: extend `managed_state_transitions.md` (The law / Enforcement /
 > Current Status) with the bounded-HTTP download-outcome kernel, the `BlobServable` witness, and the
 > two new capability-gating lints; update the three-way `README.md` / `AGENTS.md` / `CLAUDE.md`
 > non-negotiable mirror plus `assistant_workflow.md`; and enter the superseded surfaces into the
 > deletion ledger. This is machine-independent (Axis-1 only: `infernix lint docs` / `docs check`),
-> code-side closed 2026-07-19, with the single-accelerator plus `linux-cpu` cohort full-suite the
-> pending residual (owning wave TBD).
+> code-side closed 2026-07-19, and closed by [Wave V](cohort-validation-waves.md) (2026-07-20) —
+> apple-silicon plus linux-cpu full-suite `test all` green.
 
 ## Current Repo Assessment
 
@@ -526,15 +526,19 @@ None.
 
 ---
 
-## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Active]
+## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the Managed-State-Transition Doctrine doc and the `unsafeCoerce` /
+`unsafePerformIO` escape-token lint were code-side closed (machine-independent gates) 2026-07-16,
+and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new escape-token check is
 clean on the tree and was verified to fail on a reintroduced `unsafeCoerce` / `unsafePerformIO` in
 an evidence module), `infernix lint docs`, and `infernix docs check` all green on the apple-silicon
 lane. No native/Python change in this sprint, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
 
@@ -573,24 +577,28 @@ generalizes the results-side realness contract to state transitions and is canon
   `src/Infernix/Lint/Docs.hs` `requiredDocs` and `documents/README.md` on 2026-07-15; the
   escape-token lint is the code delta that lands this sprint)
 - `poetry run check-code` is not applicable — no native/Python surface changed
-- the linux-cpu lane rerun of the code-side gates rides the pending cohort wave
+- the linux-cpu lane rerun of the code-side gates closed under [Wave V](cohort-validation-waves.md)
 
 ### Remaining Work
 
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite
-  validation is pending, owning wave TBD
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
+  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
 
 ---
 
-## Sprint 0.14: Bounded-Command/Bounded-HTTP Doctrine Documentation [Active]
+## Sprint 0.14: Bounded-Command/Bounded-HTTP Doctrine Documentation [Done]
 
-**Status**: Active — code-side closed 2026-07-19 (machine-independent; docs updated); cohort gate pending
+**Status**: Done — the `managed_state_transitions.md` bounded-command/bounded-HTTP governance
+extension and the three-way non-negotiable mirror were code-side closed (machine-independent gates)
+2026-07-19, and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-19 — this is a docs-and-governance sprint, so the applicable
 machine-independent gates are `infernix lint docs` and `infernix docs check`, both green on the
 apple-silicon lane; `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, and
 `cabal test infernix-haskell-style` are unaffected by the Markdown-only change. No Python/native
 change, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`, `AGENTS.md`,
 `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/tools/harbor.md`,
 `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
@@ -641,22 +649,24 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 
 ### Remaining Work
 
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
-  is pending, owning wave TBD
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
+  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
 
 ---
 
 ## Remaining Work
 
-Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Active — code-side closed
+Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Done — code-side closed
 2026-07-16 (doctrine doc + `requiredDocs`/`documents/README.md` registration authored 2026-07-15;
-the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16). Its
-apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
+the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16), and
+its apple-silicon plus linux-cpu full-suite cohort sign-off closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20).
 
-Sprint 0.14 (Bounded-Command/Bounded-HTTP Doctrine Documentation) is Active — code-side closed
+Sprint 0.14 (Bounded-Command/Bounded-HTTP Doctrine Documentation) is Done — code-side closed
 2026-07-19 (the `managed_state_transitions.md` extension, the three-way non-negotiable mirror, and the
-`legacy-tracking-for-deletion.md` ledger rows landed; `infernix lint docs` / `docs check` green). Its
-apple-silicon plus linux-cpu full-suite cohort sign-off is the outstanding residual.
+`legacy-tracking-for-deletion.md` ledger rows landed; `infernix lint docs` / `docs check` green), and
+its apple-silicon plus linux-cpu full-suite cohort sign-off closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20).
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
 machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by

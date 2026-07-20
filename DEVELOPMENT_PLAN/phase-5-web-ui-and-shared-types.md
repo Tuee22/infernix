@@ -1,9 +1,10 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Active — Sprint 5.11 is closed for typed inference errors in browser contracts and the
+**Status**: Done — Sprint 5.11 is closed for typed inference errors in browser contracts and the
 demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
 no-env scopes. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu`
-accelerator.
+accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the PureScript demo UI built with spago, the Haskell-owned frontend contract
@@ -15,7 +16,9 @@ accelerator.
 Phase 5's original PureScript demo UI, Haskell-owned browser-contract source, generated contract
 path under `web/src/Generated/`, clustered demo hosting rule, container-owned routed Playwright
 executor, and Phase 5.9 process-environment retirement are closed for Sprints 5.1-5.10. Sprint
-5.11 is active for typed inference errors in the browser contract and demo UI.
+5.11 is closed for typed inference errors in the browser contract and demo UI. Sprint 5.12's
+Managed-State-Transition Doctrine readiness-contract reopen is closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20).
 Phase 7 extends the PureScript demo surface with the durable-context Chat, Artifacts, and Model
 Picker views; the supported manual-inference path moves from a direct HTTP request/poll cycle to
 WebSocket-delivered `ConversationStatePatch` deltas owned by Phase 7.
@@ -657,20 +660,26 @@ Sprint 5.11 is closed for typed inference errors in the browser contracts and de
 cohort validation closed in Waves A/A.2 and the CUDA Linux `linux-cpu` and `linux-gpu` gates passed
 on the recorded validation.
 
-Sprint 5.12 reopens this phase for the Managed-State-Transition Doctrine: its own `### Remaining
-Work` tracks the pending cohort full-suite sign-off.
+Sprint 5.12's Managed-State-Transition Doctrine readiness-contract reopen is closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite
+`test all` green. No remaining work exists for this phase.
 
 ---
 
-## Sprint 5.12: Shared Readiness Contract [Active]
+## Sprint 5.12: Shared Readiness Contract [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the model-bootstrap deadline is single-sourced through the shared Haskell browser
+contract (a below-ceiling client deadline is unconstructible) and the Playwright executor awaits the
+real `ModelBootstrapReadyEvent`; code-side closure (machine-independent gates) plus the
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
+[Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (client-deadline >= server-ceiling assertions), `cabal test
 infernix-haskell-style`, `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
 all green on the apple-silicon lane. No Python surface changed, so `poetry run check-code` is not
 applicable.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Web/Contracts.hs`, `web/playwright/inference.spec.js`
 **Blocked by**: Sprint 4.28
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -717,8 +726,8 @@ transitions per [../documents/architecture/managed_state_transitions.md](../docu
     `browserMatrixResultTimeoutMs`)
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
-- the cohort full-suite sign-off is pending: apple-silicon plus linux-cpu full-suite in an owning
-  wave TBD is the residual before closure
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
+  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
 
 ---
 

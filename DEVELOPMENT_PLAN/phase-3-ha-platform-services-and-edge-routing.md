@@ -1,6 +1,6 @@
 # Phase 3: HA Platform Services and Edge Routing
 
-**Status**: Active — Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15 code-side closed 2026-07-19, cohort gate pending); prior Managed-State-Transition Doctrine reopen (Sprint 3.14); reopened and re-closed for Sprints 3.1-3.13 as recorded below
+**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen (Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 3.1-3.13 reopened and re-closed as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
@@ -10,19 +10,20 @@
 
 ## Phase Status
 
-> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
-> single-accelerator cohort run surfaced a Harbor `docker pull` verify hang during
+> **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md) (2026-07-20).**
+> The 2026-07-18 single-accelerator cohort run surfaced a Harbor `docker pull` verify hang during
 > `publish-harbor-images` (the retained-state second `cluster up` of the Postgres lifecycle-rebinding
 > step) that the Sprint 1.16/3.14 kernels shipped but did not yet guard at the publish/verify site.
-> This phase reopens under
-> [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-active) to route every
+> This phase reopened under
+> [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-done) to route every
 > Harbor docker/skopeo exec through `Infernix.Cluster.Subprocess.runBoundedCommand` under named
 > `Timeout` budgets (killing the ~23-min hang) and to mint blob-servability evidence: the opaque
 > `BlobServable` witness from a real bounded pull, `harborTagExists` demoted to the non-terminal
 > `harborTagMetadataPresent` and `registryReady` to the weaker `registryApiReachable`, so a
 > retained-state push-skip against an unrehydrated MinIO backing is no longer a terminal "done".
 > Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon); the
-> single-accelerator plus `linux-cpu` cohort full-suite is the pending residual (owning wave TBD).
+> single-accelerator (apple-silicon) plus `linux-cpu` cohort full-suite sign-off closed under
+> [Wave V](cohort-validation-waves.md) on 2026-07-20.
 
 Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
 Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after
@@ -739,15 +740,18 @@ by [Wave M](cohort-validation-waves.md).
 
 ---
 
-## Sprint 3.14: Readiness Kernel and Subprocess-Env Seam [Active]
+## Sprint 3.14: Readiness Kernel and Subprocess-Env Seam [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — the Managed-State-Transition readiness kernel plus typed subprocess-env seam:
+code-side closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus
+linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (the migrated Harbor readiness wait plus the
 `clusterSubprocessEnvWithSearchPath` HOME/TMPDIR + caller-PATH assertions pass), and
 `cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
 No Python/native change, so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 1.16
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -800,19 +804,22 @@ doctrine to this phase's cluster-lifecycle surface.
     absent instead of falling back to an ambient minimal environment
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   and `infernix lint docs`
-- the apple-silicon plus linux-cpu full-suite cohort gate is pending, with the owning wave still to be
-  assigned
+- the apple-silicon plus linux-cpu full-suite cohort sign-off closed under
+  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
 
 ---
 
-## Sprint 3.15: Harbor Blob-Servable Evidence & Bounded Publish [Active]
+## Sprint 3.15: Harbor Blob-Servable Evidence & Bounded Publish [Done]
 
-**Status**: Active — code-side closed 2026-07-19 (machine-independent); cohort gate pending
+**Status**: Done — the bounded Harbor publish exec plus opaque `BlobServable` witness: code-side
+closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus linux-cpu
+full-suite sign-off closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
 **Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
 and `infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint,
 so `poetry run check-code` does not apply.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`
 **Blocked by**: Sprint 1.16, 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/tools/harbor.md`,
@@ -862,8 +869,9 @@ doctrine — evidence, not hope — to the publication surface.
   `ProcessMonitor.hs` retirement are the broader hardening tracked by
   [Sprint 6.41](phase-6-validation-e2e-and-ha-hardening.md); this sprint bounds the publish exec and
   mints blob-servability evidence at the flake site
-- the cohort full-suite sign-off is the residual: apple-silicon plus linux-cpu full-suite validation
-  of the bounded publish plus `BlobServable` witness is pending, owning wave TBD
+- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
+  apple-silicon plus linux-cpu full-suite validation of the bounded publish plus `BlobServable`
+  witness passed; no remaining work exists
 
 ---
 
@@ -874,11 +882,12 @@ None. Sprints 3.1-3.13 are `Done`; Sprint 3.13 closed in
 Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Linux cohort validation
 closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
 
-The phase is Active again for [Sprint 3.14](#sprint-314-readiness-kernel-and-subprocess-env-seam-planned),
+[Sprint 3.14](#sprint-314-readiness-kernel-and-subprocess-env-seam-done),
 the Managed-State-Transition Doctrine reopen work, and
-[Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-active), the Bounded-Command
+[Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-done), the Bounded-Command
 Application & Bounded-HTTP reopen work that bounds the Harbor publish exec and mints `BlobServable`
-evidence; each carries its own `### Remaining Work` tracking the pending cohort full-suite sign-off.
+evidence, are both closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus
+linux-cpu full-suite `test all` green; no remaining work exists.
 
 ---
 

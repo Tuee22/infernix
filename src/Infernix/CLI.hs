@@ -8,7 +8,6 @@ module Infernix.CLI
 where
 
 import Control.Applicative ((<|>))
-import Control.Concurrent (threadDelay)
 import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
 import Control.Monad (unless, when)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
@@ -36,6 +35,7 @@ import Infernix.DhallSchema (renderDhallSchema)
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
 import Infernix.Error (InfernixError (EdgePortNotPublished))
+import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.HostTools (HostTool (..))
@@ -405,18 +405,20 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
         )
     Just resultValue -> printInternalPulsarResult resultValue
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 120-attempt × 0.25 s budget. A published
+-- result is the kernel's readiness evidence; a deadline-exhausted wait resolves to
+-- @Nothing@ exactly as the previous bare-recursion fall-through did.
 waitForInternalPulsarResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForInternalPulsarResult paths runtimeMode resultTopicValue requestIdValue = go (120 :: Int)
+waitForInternalPulsarResult paths runtimeMode resultTopicValue requestIdValue = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 120 250000) probe
+  pure (Readiness.foldReadiness Just (const Nothing) (const Nothing) outcome)
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 = pure Nothing
-      | otherwise = do
-          maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopicValue requestIdValue
-          case maybeResult of
-            Just resultValue -> pure (Just resultValue)
-            Nothing -> do
-              threadDelay 250000
-              go (remainingAttempts - 1)
+    probe = do
+      maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopicValue requestIdValue
+      case maybeResult of
+        Just resultValue -> pure (Right resultValue)
+        Nothing -> pure (Left (Readiness.Progress 0 1 "inference result not yet published"))
 
 printInternalPulsarResult :: InferenceResult -> IO ()
 printInternalPulsarResult resultValue = do
@@ -496,27 +498,30 @@ runPlaywrightWithFixture paths runtimeMode playwrightHost playwrightPort expecte
   LazyChar8.writeFile fixturePath fixturePayload
   runWebNpmCommand (Just runtimeMode) ["--prefix", "web", "exec", "--", "playwright", "test", "--config", "web/playwright.config.js"]
 
+-- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
+-- 'Readiness' kernel under the legacy 60-attempt × 1 s budget. A routed surface
+-- serving the expected publication + demo-config payloads is the kernel's
+-- readiness evidence; a deadline-exhausted wait raises the timeout diagnostic.
 waitForPlaywrightSurface :: Paths -> String -> Int -> String -> String -> String -> String -> IO ()
-waitForPlaywrightSurface paths host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = go (60 :: Int)
+waitForPlaywrightSurface paths host edgePort expectedDaemonLocation expectedInferenceExecutorLocation expectedInferenceDispatchMode expectedApiUpstreamMode = do
+  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 60 1000000) probe
+  Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          ioError
-            ( userError
-                ( "timed out waiting for routed surface at "
-                    <> host
-                    <> ":"
-                    <> show edgePort
-                    <> " to serve publication and demo-config traffic"
-                )
+    probe = do
+      ready <- surfaceReady
+      if ready
+        then pure (Right ())
+        else pure (Left (Readiness.Progress 0 1 "routed surface not yet serving publication/demo-config"))
+    onTimedOut _ =
+      ioError
+        ( userError
+            ( "timed out waiting for routed surface at "
+                <> host
+                <> ":"
+                <> show edgePort
+                <> " to serve publication and demo-config traffic"
             )
-      | otherwise = do
-          ready <- surfaceReady
-          if ready
-            then pure ()
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
+        )
     surfaceReady = do
       let baseUrl = "http://" <> host <> ":" <> show edgePort
       maybePublication <- loadJsonUrl paths (baseUrl <> "/api/publication")

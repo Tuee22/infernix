@@ -1,6 +1,9 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation
+**Status**: Done — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation, and the
+Sprint 7.29 Managed-State-Transition plus Bounded-Command/Bounded-HTTP reopen closed by
+[Wave V](cohort-validation-waves.md) (2026-07-20) on the apple-silicon plus linux-cpu full-suite
+`test all` green
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -3230,13 +3233,18 @@ None. The generated-artifact legacy row has moved to Completed in
 
 ---
 
-## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Active]
+## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Done]
 
-**Status**: Active — code-side closed 2026-07-16 (machine-independent); cohort gate pending
+**Status**: Done — typed transition-evidence retirement of the `ClusterState`/`LifecycleProgress`
+stringly fields, the `DemoBucketsProvisioned`-gated object-proxy routes, and the proven `.ready`
+sentinel gate; code-side closure (machine-independent gates) plus the single-accelerator
+(apple-silicon) plus linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md)
+on 2026-07-20.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
 `poetry run check-code` all green on the apple-silicon lane.
-**Cohort gate**: pending — apple-silicon plus linux-cpu full-suite, owning wave TBD
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 2.14, 4.28
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -3293,14 +3301,24 @@ not hope. It generalizes the results-side realness contract to state transitions
 - validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `infernix lint files/docs/proto/chart`, and `poetry run check-code`, plus the Apple cohort live-path
   proof below (real inference on `llm-tinyllama-gguf` and the other native-engine models now completes)
-- the cohort full-suite sign-off (apple-silicon plus linux-cpu) is pending and is the residual gate
-  for closing this sprint
+- the cohort full-suite sign-off (apple-silicon plus linux-cpu) closed under
+  [Wave V](cohort-validation-waves.md) on 2026-07-20 — apple-silicon `./.build/infernix test all` green
+  (integration 16/16 real inference + e2e routed Playwright 16/16) and linux-cpu
+  `./bootstrap/linux-cpu.sh test` green (integration with 6 real inference + 6 typed over-budget
+  admission rejections + full HA/throughput/lifecycle + e2e routed Playwright 16/16). No remaining work
+  exists
+- post-closure current-source validation on 2026-07-20 caught one routed artifact UI timing race: a
+  fresh Apple aggregate rerun passed lint/unit/integration and failed only the artifact
+  upload/preview/download Playwright spec because the download grant became ready before the text
+  preview DOM update. `web/src/Infernix/Web/ArtifactTransport.js` now updates every current artifact
+  card matching the object key and stamps download readiness only after preview/render state is ready;
+  `npm run test:unit` (`83/83`) and Apple `./.build/infernix test e2e` (`16/16`) passed after the fix.
 
 ---
 
 ## Remaining Work
 
-None. Active reopen work is tracked by Sprint 7.29 above.
+None. The Sprint 7.29 reopen work closed by [Wave V](cohort-validation-waves.md) (2026-07-20).
 
 ## Closure Notes
 

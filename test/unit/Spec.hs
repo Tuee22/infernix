@@ -1289,7 +1289,7 @@ main = do
                 "scipy = \">=1.13\"",
                 "soundfile = \">=0.12\"",
                 "librosa = \">=0.10\"",
-                "mt3-infer = \">=0.1.3\"",
+                "mt3-infer = \">=0.1.3,<0.2\"",
                 "piano-transcription-inference = \">=0.0.6\""
               ]
       assert
