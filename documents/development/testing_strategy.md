@@ -47,7 +47,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   [../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md](../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md)
   Sprint 5.11, and
   [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-  Sprint 6.38
+  Sprint 6.38. Canonical home for this grant-gated capped-engine execution invariant (a host OOM is
+  unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 
 ## Validation Layers
 
@@ -329,7 +330,8 @@ A full per-model run therefore has exactly two per-row outcomes and no third:
 The validation classifier must distinguish a typed memory-capacity failure from the two disallowed
 outcomes: a **stall** (a genuinely missing result, including the historical OS-OOM-kill symptom) and
 a **fabricated pass**. This is owned by Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6 Sprint
-6.38.
+6.38. Canonical doctrine for the grant-gated capped-engine execution invariant (a host OOM is
+unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 ## Durable-Context Demo Validation
 

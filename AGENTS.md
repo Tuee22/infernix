@@ -16,6 +16,7 @@ Read first:
 - [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 - [documents/development/no_env_vars.md](documents/development/no_env_vars.md)
 - [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
 - [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md)
 
 ## Non-Negotiable Rules
@@ -51,6 +52,19 @@ Read first:
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
+  minted by the `admitModelMemory` admission policy, and the capped-engine kernel bounds its actual
+  resident memory to the admitted `MemoryCeiling`. The raw engine spawn
+  (`readCreateProcessWithExitCode` / `createProcess`) is unexported, so launching an engine without an
+  admission proof does not typecheck; a ceiling breach is a clean `status=failed`
+  `ModelMemoryLimitExceeded` rather than a host OOM-kill (`apple-silicon` enforces the ceiling with a
+  `proc_pid_rusage` physical-footprint watchdog plus process-group kill, `linux-cpu`/`linux-gpu` by the
+  pod cgroup / VRAM limit). Physical host RAM is a checked `HostMemoryPartition` (no oversubscription;
+  headroom covers the OS and the routed-E2E browser), every model declares a required positive
+  `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer. Raw engine spawn outside
+  the capped-engine kernel is forbidden, enforced by the `unboundedEngineSpawnViolations` lint.
+  Canonical doctrine:
+  [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution

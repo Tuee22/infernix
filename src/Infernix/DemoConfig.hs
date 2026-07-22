@@ -261,47 +261,59 @@ defaultDaemonRoleForMaterializedFile paths runtimeMode =
 resolveInferenceMemoryBudget :: Paths -> RuntimeMode -> IO InferenceMemoryBudget
 resolveInferenceMemoryBudget paths runtimeMode =
   case runtimeMode of
-    AppleSilicon -> resolveAppleInferenceRamBudgetMib paths
+    AppleSilicon -> resolveAppleHostMemoryPartitionBudget paths
     LinuxCpu ->
       pure
-        EnforcedMemoryBudget
-          { memoryBudgetResource = PodRam,
-            memoryBudgetSource = "cluster-engine-pod-memory-limit",
-            memoryBudgetAvailableMib = linuxEngineInferenceRamBudgetMib
-          }
+        ( SubstrateEnforcedBudget
+            PodMemoryLimit
+              { podMemoryLimitResource = PodRam,
+                podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+                podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
+              }
+        )
     LinuxGpu ->
       pure
-        EnforcedMemoryBudget
-          { memoryBudgetResource = GpuVram,
-            memoryBudgetSource = "linux-gpu-vram-budget",
-            memoryBudgetAvailableMib = linuxEngineInferenceRamBudgetMib
-          }
+        ( SubstrateEnforcedBudget
+            PodMemoryLimit
+              { podMemoryLimitResource = GpuVram,
+                podMemoryLimitSource = "linux-gpu-vram-budget",
+                podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
+              }
+        )
 
--- | Host reserve (MiB) held back from the Apple inference budget for the OS,
--- the host-native control-plane binary, and the Node/Playwright surface that
--- runs during routed E2E.
-appleHostReserveMib :: Int
-appleHostReserveMib = 3072
-
-resolveAppleInferenceRamBudgetMib :: Paths -> IO InferenceMemoryBudget
-resolveAppleInferenceRamBudgetMib paths = do
+-- | Phase 4 Sprint 4.31 — resolve the @apple-silicon@ host-enforced budget as a
+-- checked 'HostMemoryPartition'. Physical host RAM is partitioned into the colima
+-- VM pledge (@vmReserve@), a fixed 'minHostHeadroomMib' held back for the OS +
+-- control-plane binary + routed-E2E browser, and the remaining inference
+-- capacity. The @minHostHeadroomMib@ floor supersedes the fixed
+-- @appleHostReserveMib = 3072@ that did not cover the routed browser and allowed
+-- a host OOM. If the colima pledge plus headroom oversubscribe physical RAM the
+-- partition fails construction and inference capacity fail-closes to zero
+-- (reject every model cleanly); if host discovery fails entirely, a conservative
+-- fallback capacity keeps bring-up validatable.
+resolveAppleHostMemoryPartitionBudget :: Paths -> IO InferenceMemoryBudget
+resolveAppleHostMemoryPartitionBudget paths = do
   resolved <-
     try
       ( do
           hostConfig <- HostConfig.decodeHostConfigFile (Config.hostConfigPath paths)
           physicalMib <- appleHostPhysicalRamMib hostConfig
           colimaMib <- appleColimaPledgeMib
-          pure (max 0 (physicalMib - colimaMib - appleHostReserveMib))
+          pure (physicalMib, colimaMib)
       )
-  pure
-    EnforcedMemoryBudget
-      { memoryBudgetResource = UnifiedHostRam,
-        memoryBudgetSource = "host-physical-minus-colima-reserve",
-        memoryBudgetAvailableMib =
-          case resolved :: Either SomeException Int of
-            Right budgetMib -> budgetMib
-            Left _ -> appleFallbackInferenceRamBudgetMib
-      }
+  let partition =
+        case resolved :: Either SomeException (Int, Int) of
+          Right (physicalMib, colimaMib) ->
+            case mkHostMemoryPartition physicalMib colimaMib minHostHeadroomMib of
+              Right resolvedPartition -> resolvedPartition
+              -- Discovery worked but the colima pledge plus headroom oversubscribe
+              -- physical RAM: fail closed with zero inference capacity rather than
+              -- racing the watchdog.
+              Left _ -> hostPartitionForCapacity 0
+          -- Host discovery failed: keep bring-up validatable with the conservative
+          -- fallback capacity (the real partition replaces it whenever discovery works).
+          Left _ -> hostPartitionForCapacity appleFallbackInferenceRamBudgetMib
+  pure (HostEnforcedBudget partition)
 
 appleHostPhysicalRamMib :: HostConfig -> IO Int
 appleHostPhysicalRamMib hostConfig = do

@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — the Managed-State-Transition Doctrine reopen (Sprint 1.16) and the Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 1.1-1.15 as recorded below
+**Status**: Active — the Observable-Readiness reopen (Sprint 1.18, the tri-state `PollOutcome` readiness kernel) is **code-side closed (2026-07-22)** on the machine-independent gate set, with the behavioral single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off pending [Wave W](cohort-validation-waves.md); the Managed-State-Transition Doctrine reopen (Sprint 1.16) and the Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 1.1-1.15 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -897,13 +897,82 @@ typecheck. It applies the bounded-outcome shape of
 
 ---
 
+## Sprint 1.18: Observable Readiness — Tri-State Poll Outcome [Active — code-side closed]
+
+**Status**: Active — code-side closed (2026-07-22). The readiness kernel gains an observable-poll
+channel so a probe that could not observe a remote system can no longer launder that fault into a
+definite not-ready measurement; the behavioral single-accelerator (apple-silicon) plus `linux-cpu`
+cohort sign-off is the one residual, pending [Wave W](cohort-validation-waves.md).
+**Supersession note**: this sprint supersedes the two-channel Sprint 1.16 kernel step contract
+(`awaitReadiness :: Deadline -> IO (Either Progress e) -> IO (Readiness e)`, whose only poll outcomes
+were `Right` ready and `Left` a concrete not-ready count). That type forced a probe I/O fault to
+launder itself into a fabricated count fed into the kernel's stall/ceiling accounting as ground truth —
+the representable invalid state behind the retained-second-`cluster up` warm-model-cache "11/16" stall.
+**Code-side closure**: complete (2026-07-22). Landed: `PollOutcome e = Measured (Either Progress e) |
+Unobservable Text` and `awaitReadinessObservable :: Deadline -> IO (PollOutcome e) -> IO (Readiness e)`
+in `src/Infernix/Evidence/Readiness.hs`; an `Unobservable` poll accrues stall like a non-advancing poll
+and cannot advance the running maximum, so it can neither mint a `Ready` nor deflate the observed count
+— it only buys another poll within the same bounded `Deadline`. `awaitReadiness` is retained as a
+behaviour-identical lift (`awaitReadinessObservable deadline (Measured <$> step)`), so the sixteen
+existing count-based callers and the `budgetDeadline` poll-count exactness (hardened under
+[Wave V](cohort-validation-waves.md)) are unchanged. Gate set (GREEN 2026-07-22): `cabal build all`
+(`-Wall -Werror`), `cabal test infernix-unit` (a scripted `Unobservable`-then-`Measured` stream
+resolves `Ready`; an all-`Unobservable` stream gives up bounded `Expired`), and
+`cabal test infernix-haskell-style`. No Python/native change in this sprint.
+**Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
+that the retained-second-`cluster up` warm-model-cache barrier no longer stalls at "11/16".
+**Implementation**: `src/Infernix/Evidence/Readiness.hs`, `test/unit/Spec.hs`
+**Blocked by**: Sprint 1.16
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and this plan
+
+### Objective
+
+Close the last representable invalid state in the readiness kernel: a readiness probe that reads a
+remote system does not always get to observe it, and the Sprint 1.16 step contract had no channel for
+"I could not measure." A transport fault was forced to become a definite `Left progress` count that the
+kernel fed into stall/ceiling accounting as ground truth. Make "unobservable" a first-class poll
+outcome routed to retry-within-budget, so a transient fault can never masquerade as a measurement. This
+is the kernel half of the Observable-Readiness reopen; the warm-model-cache observation surface that
+consumes it is [Sprint 8.8](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md).
+
+### Deliverables
+
+- `PollOutcome e = Measured (Either Progress e) | Unobservable Text` and `awaitReadinessObservable`
+- `awaitReadiness` preserved as a `Measured`-lift of `awaitReadinessObservable`, so every existing
+  caller and the `budgetDeadline` poll-count exactness are byte-identical
+- `Unobservable` handling: accrue stall, never advance the running maximum, retry within the deadline;
+  a budget expiry while every recent poll was unobservable rides the last real `Progress`
+- unit coverage: a bounded transient-fault stream still resolves `Ready`; a persistent-unobservable
+  stream gives up bounded (`Expired`)
+
+### Validation
+
+- `cabal build all` (`-Wall -Werror`) compiles the observable kernel with `awaitReadiness` as a lift
+- `cabal test infernix-unit` covers the transient-fault-then-ready and persistent-unobservable cases
+- `cabal test infernix-haskell-style` passes
+- `infernix test all` on apple-silicon plus `linux-cpu` proves the warm-model-cache barrier no longer
+  stalls on a retained second `cluster up` — closed under [Wave W](cohort-validation-waves.md)
+
+### Remaining Work
+
+The implementation is complete and code-side closed (2026-07-22): the observable-poll channel and the
+behaviour-identical `awaitReadiness` lift are landed with unit coverage. The one residual is the Wave W
+behavioral proof, paired with [Sprint 8.8](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md).
+The superseded two-channel-only step-contract framing is recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+---
+
 ## Remaining Work
 
-None. [Sprint 1.16](#sprint-116-evidence-and-command-kernels-done) (the Managed-State-Transition
+[Sprint 1.16](#sprint-116-evidence-and-command-kernels-done) (the Managed-State-Transition
 Doctrine reopen work) and [Sprint 1.17](#sprint-117-bounded-http-download-kernel-done) (the
 Bounded-Command Application & Bounded-HTTP reopen work) are both closed by
 [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite
-`test all` green.
+`test all` green. [Sprint 1.18](#sprint-118-observable-readiness--tri-state-poll-outcome-active--code-side-closed)
+(the Observable-Readiness reopen) is **code-side closed (2026-07-22)** on the machine-independent gate
+set, with its apple-silicon plus `linux-cpu` behavioral cohort sign-off pending
+[Wave W](cohort-validation-waves.md).
 
 ## Documentation Requirements
 

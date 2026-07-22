@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Done — all sprints (8.1-8.7) closed. Machine-independent gates pass; the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). The Managed-State-Transition reopen (Sprint 8.7) is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green. One documented non-blocking residual remains: the `warm-model-cache` barrier's host-side MinIO poll observability (Sprint 8.5).
+**Status**: Active — the Observable-Readiness reopen (Sprint 8.8, the fault-vs-absence fix in the warm-model-cache barrier: tri-state `SentinelObservation` probe + `SentinelCensus` + Python `CacheValidity`) is **code-side closed (2026-07-22)** on the machine-independent gate set, with the behavioral single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off pending [Wave W](cohort-validation-waves.md). Sprints 8.1-8.7 are closed: machine-independent gates pass; the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). The Managed-State-Transition reopen (Sprint 8.7) is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green. Sprint 8.8 supersedes the earlier documented non-blocking residual (the `warm-model-cache` barrier's host-side MinIO poll observability, Sprint 8.5): that poll's fault-vs-absence collapse is now the diagnosed root cause of the retained-second-`cluster up` "11/16" stall and is fixed by construction.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -330,6 +330,81 @@ to this phase's `warm-model-cache` barrier and config-side persisted state.
   and `infernix lint docs`
 - the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
   apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
+
+---
+
+## Sprint 8.8: Fault-vs-Absence in the Warm-Model-Cache Barrier [Active — code-side closed]
+
+**Status**: Active — code-side closed (2026-07-22). The warm-model-cache observation surface is now
+three-valued end to end (Haskell sentinel probe + Python cache revalidation), so a transport fault can
+no longer masquerade as a definitive absence and stall the retained-second-`cluster up` barrier; the
+behavioral single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off is the one residual,
+pending [Wave W](cohort-validation-waves.md).
+**Supersession note**: this sprint supersedes Sprint 8.7's `IO Bool` sentinel observation
+(`sentinelReady = try @SomeException (minioObjectExists ...) >>= either (const (pure False)) pure`,
+coercing any transport fault into the same `False` as a genuine 404) and the Python
+`_mt3_pytorch_objects_are_valid :: … -> bool` fail-open revalidation (an `except Exception: return
+False` that deleted a valid retained `.ready` sentinel on a fallible read). Sprint 8.7's typed
+`WarmModelCacheOutcome` witness stands; this sprint fixes the observation feeding it.
+**Code-side closure**: complete (2026-07-22). Landed: (a) `SentinelObservation = SentinelPresent |
+SentinelAbsent | SentinelUnobservable Text` with a pure, exported `classifyHeadOutcome :: Either
+SomeException Int -> SentinelObservation` (only a genuine 404 mints `SentinelAbsent`; a transport
+exception, a `5xx` "server not ready", or a `403` "IAM not ready" are `SentinelUnobservable`) and
+`observeMinioObject` in `src/Infernix/Runtime/Pulsar.hs`; (b) a `SentinelCensus` and the barrier probe
+rewritten onto Sprint 1.18's `awaitReadinessObservable` — a census with any unobservable sentinel
+yields a kernel `Readiness.Unobservable` poll (retried within budget), never a fabricated `Progress`
+count, so a present-but-momentarily-faulting cache is observed present on a later poll instead of
+stalling at "11/16"; (c) the Python `CacheValidity = VALID | CORRUPT | UNVERIFIABLE` verdict in
+`python/adapters/model_bootstrap.py` — `_delete_model_prefix` is reachable only through the `CORRUPT`
+arm (a deterministic HEAD-size mismatch), so a fallible MinIO read is `UNVERIFIABLE` and the retained
+sentinel is kept. The barrier stays non-fatal. Gate set (GREEN 2026-07-22): `cabal build all`
+(`-Wall -Werror`), `cabal test infernix-unit` (`classifyHeadOutcome` table + `tallyCensus` partition +
+the kernel transient-fault/persistent-unobservable cases), `cabal test infernix-haskell-style`,
+`infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code`.
+**Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
+that a retained second `cluster up` warms the cache without the "11/16" stall.
+**Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_bootstrap.py`,
+`test/unit/Spec.hs`
+**Blocked by**: Sprint 1.18, Sprint 8.7
+**Docs to update**: `documents/architecture/managed_state_transitions.md`, and this plan
+
+### Objective
+
+Close the representable invalid state that stalled `infernix test all`: the warm-model-cache barrier
+observed each model's `.ready` sentinel through an `IO Bool` HEAD that collapsed three distinct facts —
+present (200), absent (404), and unobservable (a reset idle NodePort connection, a HEAD timeout, a
+not-yet-ready `5xx`/`403`) — into one `False`. On the retained-state second `cluster up`, idle-NodePort
+faults made present, retained sentinels read as absent, deflating the census and stalling the
+already-warm cache to its give-up deadline ("11/16"). The Python cache revalidation had the mirror
+defect: a fallible read deleted a valid retained sentinel. Make the observation three-valued end to end
+so a fault can never masquerade as absence. This consumes the Sprint 1.18 observable-readiness kernel.
+
+### Deliverables
+
+- `SentinelObservation` tri-state + pure exported `classifyHeadOutcome` + `observeMinioObject`
+- `SentinelCensus` + a barrier probe on `awaitReadinessObservable` that reports `Unobservable` (retry)
+  when any sentinel is unobservable, `Ready` only when every sentinel is present, and an honest
+  `Progress` count only over a fully-observed census with genuine absences
+- Python `CacheValidity = VALID | CORRUPT | UNVERIFIABLE`; `_delete_model_prefix` gated on `CORRUPT`
+- unit coverage for the classifier table, the census partition, and (with Sprint 1.18) the kernel
+  retry/give-up behavior
+
+### Validation
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code` — all
+  green on the apple-silicon lane (2026-07-22)
+- `infernix test all` on apple-silicon plus `linux-cpu` proves a retained second `cluster up` warms the
+  cache without the "11/16" stall — closed under [Wave W](cohort-validation-waves.md)
+
+### Remaining Work
+
+The implementation is complete and code-side closed (2026-07-22): the tri-state Haskell probe + census,
+the observable-poll barrier, and the Python `CacheValidity` gate are landed with unit coverage. The one
+residual is the Wave W behavioral proof, paired with
+[Sprint 1.18](phase-1-repository-and-control-plane-foundation.md). The superseded `IO Bool` sentinel
+probe, the `sentinelReady` error-to-`False` coercion, and the Python fail-open delete are recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ## Documentation Requirements
 

@@ -641,7 +641,7 @@ descriptorForMode runtimeMode row = do
         runtimeLane = laneFor runtimeMode (bindingRequiresGpu binding),
         requiresGpu = bindingRequiresGpu binding,
         notes = rowNotes row,
-        modelRamFootprintMib = conservativeRamFootprintMibForRow row binding
+        modelRamFootprint = conservativeModelMemoryFootprint row binding
       }
 
 -- | Phase 4 Sprint 4.26 — conservative peak host-resident memory
@@ -655,6 +655,17 @@ descriptorForMode runtimeMode row = do
 -- 'apple-silicon' admission control rejects any model whose footprint
 -- exceeds the active 'InferenceMemoryBudget', so an under-estimate is the
 -- only unsafe direction.
+-- | Phase 4 Sprint 4.31 — the catalog footprint as a required
+-- 'ModelMemoryFootprint'. Every 'conservativeRamFootprintMibForRow' branch is a
+-- positive constant, so the smart-constructor rejection is statically
+-- unreachable; the @error@ guards the invariant if a branch ever regresses to a
+-- non-positive value.
+conservativeModelMemoryFootprint :: MatrixRow -> ModeBinding -> ModelMemoryFootprint
+conservativeModelMemoryFootprint row binding =
+  case mkModelMemoryFootprint (conservativeRamFootprintMibForRow row binding) of
+    Right footprint -> footprint
+    Left footprintError -> error ("internal: catalog RAM footprint must be positive: " <> footprintError)
+
 conservativeRamFootprintMibForRow :: MatrixRow -> ModeBinding -> Int
 conservativeRamFootprintMibForRow row binding =
   case rowFamily row of

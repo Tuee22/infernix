@@ -1,5 +1,6 @@
 module Infernix.Lint.HaskellStyle
   ( runHaskellStyleLint,
+    unboundedEngineSpawnViolations,
   )
 where
 
@@ -177,6 +178,7 @@ capabilityGatingViolations sourceFile numberedLines =
   rawDestructiveViolations sourceFile numberedLines
     <> emptySubprocessEnvViolations sourceFile numberedLines
     <> unboundedExecViolations sourceFile numberedLines
+    <> unboundedEngineSpawnViolations sourceFile numberedLines
     <> unboundedHttpViolations sourceFile numberedLines
     <> threadDelayViolations sourceFile numberedLines
 
@@ -267,6 +269,55 @@ forbiddenUnboundedExecTokens =
     "callCommand"
   ]
 
+-- | Phase 6 Sprint 6.42 (memory-safety-by-construction doctrine) — reject a raw
+-- engine subprocess spawn outside the capped-engine kernel. An inference engine
+-- subprocess must run only through
+-- 'Infernix.Runtime.CappedEngine.withCappedEngine', which requires a
+-- 'MemoryGrant' and bounds the subprocess's resident memory to the admitted
+-- 'MemoryCeiling'. The raw spawn primitives are the ones with no type-level
+-- chokepoint, so this line-based gate keeps a new engine-spawn call site off them
+-- and on the grant-gated kernel, mirroring the 'unboundedExecViolations' /
+-- 'threadDelayViolations' per-rule exemption pattern. The exemption list is
+-- deliberately shrinking: the capped-engine kernel (owns the sole engine spawn)
+-- and this lint module (names the tokens as literals) are permanent; the
+-- remaining engine-adjacent files retain genuine non-inference spawns
+-- (Poetry/venv setup, native-runner materialization, engine smoke). Canonical
+-- doctrine: documents/architecture/bounded_inference_memory.md.
+unboundedEngineSpawnViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedEngineSpawnViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedEngineSpawnExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw engine subprocess spawn `" <> needle <> "`; route an inference engine spawn through Infernix.Runtime.CappedEngine.withCappedEngine (a required MemoryGrant + resident-memory ceiling) so an engine that runs without an admission proof, or unbounded by its admitted ceiling, is unrepresentable (see documents/architecture/bounded_inference_memory.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        needle <- forbiddenEngineSpawnTokens,
+        containsToken needle lineValue
+      ]
+
+-- | The raw engine-spawn primitives the capped-engine kernel encapsulates.
+forbiddenEngineSpawnTokens :: [String]
+forbiddenEngineSpawnTokens =
+  [ "readCreateProcessWithExitCode",
+    "createProcess",
+    "waitForProcess"
+  ]
+
+-- | The capped-engine kernel: the single legitimate engine-spawn surface.
+cappedEngineKernelFile :: FilePath
+cappedEngineKernelFile = "src/Infernix/Runtime/CappedEngine.hs"
+
+-- | The engine-spawn rule exempts the capped-engine kernel (the sole legitimate
+-- engine spawn) plus every non-engine raw-spawn surface the bounded-command rule
+-- already tracks (cluster commands, host prereqs/tools, Poetry/venv setup,
+-- workflow tooling, engine materialization/smoke). Reusing the bounded-command
+-- exemption set keeps the two gates shrinking in lockstep: a migration that
+-- removes a raw spawn from one list removes it from both, and only a brand-new
+-- raw engine spawn — which must carry a 'MemoryGrant' — is left with nowhere to
+-- hide but the capped-engine kernel.
+unboundedEngineSpawnExemptedFiles :: [FilePath]
+unboundedEngineSpawnExemptedFiles = cappedEngineKernelFile : unboundedExecExemptedFiles
+
 -- | Sprint 4.29 (managed-state-transition doctrine) — reject raw streaming HTTP
 -- reads of an upstream body outside the bounded model-download wrapper. The
 -- model-weight download from an untrusted third-party origin must go through
@@ -326,6 +377,9 @@ threadDelayExemptedFiles =
     "src/Infernix/Evidence/Readiness.hs",
     -- Names the forbidden token as a literal; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs",
+    -- The capped-engine kernel's resident-memory watchdog samples the child's
+    -- footprint on a fixed inter-poll delay (Phase 4 Sprint 4.30).
+    "src/Infernix/Runtime/CappedEngine.hs",
     -- Cluster lifecycle: retains genuine backoff sites (claim chmod retry, probe
     -- backoff, teardown-absence backoff) after the Sprint 6.41 wait migration.
     "src/Infernix/Cluster.hs",
@@ -348,6 +402,9 @@ unboundedExecExemptedFiles :: [FilePath]
 unboundedExecExemptedFiles =
   [ -- Owns the bounded-command kernel (the one legitimate raw spawn surface).
     "src/Infernix/Cluster/Subprocess.hs",
+    -- Owns the capped-engine kernel (the one legitimate raw engine-spawn surface,
+    -- Phase 4 Sprint 4.30); every engine spawn there runs under a MemoryGrant.
+    "src/Infernix/Runtime/CappedEngine.hs",
     -- Names the forbidden tokens as literals; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs",
     -- Cluster lifecycle surface: the general cluster subprocess helpers'

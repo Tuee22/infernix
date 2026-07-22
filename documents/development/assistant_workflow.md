@@ -73,6 +73,15 @@ this canonical list.
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
+- memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
+  minted by `admitModelMemory`, and the capped-engine kernel OS-bounds its actual resident memory to
+  the admitted `MemoryCeiling` (the raw engine spawn is unexported, so launching an engine without an
+  admission proof does not typecheck); a ceiling breach is a clean `status=failed`
+  `ModelMemoryLimitExceeded`, never a host OOM. Physical RAM is a checked `HostMemoryPartition`, every
+  model declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its
+  enforcer; raw engine spawn outside the capped-engine kernel is forbidden, enforced by the
+  `unboundedEngineSpawnViolations` lint. Canonical:
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 
 ## Supported Build And Operator Workflows
 

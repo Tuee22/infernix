@@ -172,7 +172,8 @@ Direct reference path:
   quantities instead of launching, so peak resident memory is bounded to one admitted model.
   This disk cache (LRU in `python/adapters/model_cache.py`) remains a separate bounded host-daemon
   resource and is purgeable; disk-cache purging is independent of the RAM budget, which is resolved
-  from host physical RAM minus the colima VM pledge minus a host reserve
+  from a checked `HostMemoryPartition` splitting host physical RAM into the colima VM pledge, the
+  `minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`
 - the Apple host bootstrap uses Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, and related
   operator tools rather than a broader manual prerequisite list
 - Docker-backed lifecycle or validation work on Apple requires an already selected native arm64
@@ -255,38 +256,57 @@ must be reconciled before an Apple cohort validation pass can be claimed.
 
 Host-daemon inference RAM is a separate concern and must not be conflated with the Docker VM
 envelope. The on-host `infernix service` daemon serializes inference under a single execution lock
-and admits each model against the Apple `InferenceMemoryBudget` — host physical RAM minus the
-Colima VM pledge minus a host reserve (see the "Inference Memory Budget and Host-Memory Admission"
-section). A full per-model `infernix test integration` run over the current catalog either completes
-or fails cleanly per model: an over-budget model publishes typed `ModelMemoryLimitExceeded` with
-`requiredMib` and `availableMib`. That clean failure is a product-contract outcome, not a
-VM-envelope reconcile — growing the Docker VM memory envelope does not change host-RAM admission. To
-admit a larger model, raise the resolved budget by freeing host headroom (for example, lowering the
-Colima memory pledge, which increases host RAM minus Colima pledge), then re-run `infernix init` /
-`cluster up` to re-resolve it.
+and admits each model against the Apple `InferenceMemoryBudget` — a `HostEnforcedBudget` over a
+checked `HostMemoryPartition` (host physical RAM split into the Colima VM pledge, the
+`minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`; see the "Inference Memory Budget
+and Host-Memory Admission" section). A full per-model `infernix test integration` run over the current
+catalog either completes or fails cleanly per model: an over-budget model publishes typed
+`ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`. That clean failure is a
+product-contract outcome, not a VM-envelope reconcile — growing the Docker VM memory envelope does not
+change host-RAM admission. To admit a larger model, raise the resolved `inferenceCapacity` by freeing
+host headroom (for example, lowering the Colima memory pledge, which shrinks `vmReserve`), then re-run
+`infernix init` / `cluster up` to re-resolve it.
 
 ## Inference Memory Budget and Host-Memory Admission
 
 On `apple-silicon`, model weights load into host physical RAM (the unified-memory / CPU path),
 so the on-host `infernix service` daemon admits inference against a resolved memory budget.
-`infernix init` and `cluster up` compute that budget from live host measurements: host physical RAM
-(`sysctl -n hw.memsize`) minus the Colima VM's pledged memory (`colima list --json`) minus a fixed
-host reserve. The budget is represented as an explicit `InferenceMemoryBudget`; an over-pledged host
-computes an enforced `0 MiB` budget rather than relying on a hardcoded floor or treating
-non-positive values as unenforced.
+`infernix init` and `cluster up` compute that budget from live host measurements: the
+`resolveAppleHostMemoryPartitionBudget` resolver (`src/Infernix/DemoConfig.hs`) builds a
+`HostEnforcedBudget` over a checked `HostMemoryPartition` minted by
+`mkHostMemoryPartition physicalMib vmReserveMib headroomMib`. Physical RAM (`sysctl -n hw.memsize`) is
+split into `vmReserve` (the Colima VM's pledged memory, `colima list --json`), a `hostHeadroom` fixed
+at `minHostHeadroomMib` = 6144 MiB (covering the OS, the control-plane binary, the routed end-to-end
+Playwright browser, and worst-case watchdog overshoot), and the remaining `inferenceCapacity` =
+physical − vmReserve − headroom. The smart constructor **rejects** oversubscription (capacity < 0) and
+a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom (the
+exact gap a routed-E2E run OOMed on) is not constructible. This replaced the fixed
+`appleHostReserveMib = 3072` reserve, which did not cover the routed browser and allowed a host OOM. On
+a 64 GiB host with a 48 GiB Colima pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB, so
+the heavy diffusion rows (`image-*` footprint 12288, `video-*` footprint 28672) fail-close cleanly at
+admission rather than racing the watchdog.
 
 - `validateDemoConfig` may report capacity diagnostics, but it must not fail the daemon solely
-  because one catalog model's `modelRamFootprintMib` exceeds the resolved Apple budget. Smaller
-  configured models must still serve.
+  because one catalog model's declared `ModelMemoryFootprint` (wire field `modelRamFootprintMib`, now
+  required and positive) exceeds the resolved Apple `inferenceCapacity`. Smaller configured models
+  must still serve.
 - At runtime the daemon serializes inference under a single execution lock and admits each model at
-  that critical section. An over-budget model publishes a clean `status=failed` real
-  `InferenceResult` with `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib,
-  resource, source }`, instead of launching the engine subprocess. Because execution is serialized
-  to one admitted model, peak resident memory is bounded.
+  that critical section. `admitModelMemory` either mints a `MemoryGrant` or, for an over-budget model,
+  returns `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`
+  and publishes a clean `status=failed` real `InferenceResult` instead of launching the engine
+  subprocess. Serialization bounds the host to *one* admitted footprint at a time, but admission
+  compares a *declared* footprint; the admitted engine therefore runs under the capped-engine kernel
+  `withCappedEngine`, which OS-bounds the request's *actual* resident memory to its `MemoryCeiling` — a
+  physical-footprint (`proc_pid_rusage`) watchdog that SIGKILLs the child's process group on a breach —
+  so a footprint under-estimate is a clean typed `status=failed ModelMemoryLimitExceeded` rather than a
+  host OOM-kill. Canonical home:
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 - To run a larger model whose footprint exceeds the current budget, free host headroom so the
-  resolved budget rises. The most direct lever is lowering the Colima VM memory pledge, which raises
-  host physical RAM minus Colima pledge; re-run `infernix init` / `cluster up` afterward to
-  re-resolve the budget from the new measurements.
+  resolved `inferenceCapacity` rises. The most direct lever is lowering the Colima VM memory pledge,
+  which raises host physical RAM minus Colima pledge; re-run `infernix init` / `cluster up` afterward
+  to re-resolve the partition from the new measurements. The partition makes this the *explicit*
+  choice: a host cannot both pledge most of its RAM to the VM and admit a model larger than the
+  remaining capacity — it fails that model closed rather than over-committing physical RAM.
 
 Linux uses the same typed admission policy with different budget sources: `linux-cpu` admits
 against the cluster engine pod memory limit, and `linux-gpu` admits against GPU VRAM.

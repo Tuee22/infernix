@@ -23,6 +23,10 @@
   code-level "evidence, not hope" invariant — every operation that acts on a system state consumes
   typed evidence that the state's transition completed, so races and flakes (unmanaged state
   transitions) are structurally unrepresentable
+- [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
+  code-level "memory-safety by construction" invariant — an inference engine subprocess runs only
+  under a typed `MemoryGrant` minted by admission and is OS-bounded to the admitted ceiling, so an
+  over-budget model is a clean `status=failed` and a host out-of-memory kill is unrepresentable
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the
@@ -158,6 +162,11 @@
 - `documents/architecture/managed_state_transitions.md` owns the state-transition and evidence
   discipline — the "evidence, not hope" invariant that every state-acting operation consumes typed
   evidence — generalizing the results-side `documents/architecture/realness_contract.md`.
+- `documents/architecture/bounded_inference_memory.md` owns the inference-memory-safety discipline —
+  the "memory-safety by construction" invariant that an engine subprocess runs only under a typed
+  `MemoryGrant` and is OS-bounded to the admitted ceiling — the memory analog of the bounded-command
+  kernel in `documents/architecture/managed_state_transitions.md`; `realness_contract.md` and
+  `runtime_modes.md` reference it as the home for the runtime-memory chokepoint.
 - Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
   canonical `documents/engineering/monitoring.md` until the supported platform contract changes.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep

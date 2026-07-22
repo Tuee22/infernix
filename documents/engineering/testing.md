@@ -92,7 +92,9 @@
 - the integration classifier must identify memory-capacity failure by the typed error constructor
   and MiB fields, distinct from a stall (a genuinely missing result, including the historical
   OS-OOM-kill symptom) and from a fabricated pass. This is reopened as Phase 4 Sprint 4.27, Phase 5
-  Sprint 5.11, and Phase 6 Sprint 6.38
+  Sprint 5.11, and Phase 6 Sprint 6.38. Canonical doctrine for the grant-gated capped-engine
+  execution invariant (a host OOM is unrepresentable):
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 
 ## Canonical Entry Points
 

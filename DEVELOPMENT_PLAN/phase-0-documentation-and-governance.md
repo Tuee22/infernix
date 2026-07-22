@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
+**Status**: Done — the memory-safety-by-construction reopen (Sprint 0.15, doc + governance mirror landed 2026-07-21) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code is code-side closed 2026-07-21 (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, machine-independent gates GREEN), [Wave W](cohort-validation-waves.md) Stage 2 pending); the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -654,6 +654,73 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 
 ---
 
+## Sprint 0.15: Bounded-Inference-Memory Doctrine and Non-Negotiable Mirror [Done]
+
+**Status**: Done — the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc, its
+docs-lint registration, and the three-way non-negotiable mirror are doc-only and machine-independent;
+closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the apple-silicon lane
+(2026-07-21). The enforcing code is code-side closed 2026-07-21 — Phase 4 (Sprints 4.30/4.31) and
+Phase 6 (Sprint 6.42), machine-independent gates GREEN — with the behavioral [Wave W](cohort-validation-waves.md)
+sign-off pending, tracked there.
+**Code-side closure**: closed 2026-07-21 — this is a docs-and-governance sprint, so the applicable
+machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the new
+doctrine doc's metadata, links, broad-doctrine-doc structure, and `requiredDocs` / `DocumentStructureRule`
+registration validate), plus `cabal build all` (`-Wall -Werror`, unaffected by the Markdown-only
+change). No Python/native change, so `poetry run check-code` does not apply.
+**Implementation**: `documents/architecture/bounded_inference_memory.md`, `src/Infernix/Lint/Docs.hs`,
+`README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/development/assistant_workflow.md`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`, the three-way non-negotiable
+mirror (`README.md` / `AGENTS.md` / `CLAUDE.md` plus `documents/development/assistant_workflow.md`),
+and `documents/README.md`
+
+### Objective
+
+This sprint records the governance surface of the memory-safety-by-construction doctrine — author the
+`bounded_inference_memory.md` doctrine doc, register it (`requiredDocs` plus a `DocumentStructureRule`
+in `src/Infernix/Lint/Docs.hs`, and `documents/README.md`), and add the new non-negotiable rule to the
+three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror plus `assistant_workflow.md` — encoding
+evidence, not hope. An inference engine subprocess runs only under a typed `MemoryGrant` minted by
+`admitModelMemory`, the capped-engine kernel bounds its resident memory to the admitted `MemoryCeiling`,
+and an over-budget model is a clean `status=failed` `ModelMemoryLimitExceeded`, never a host OOM.
+Governance is honest current-state: the doc and mirror record the target while naming the enforcing code
+as `Planned` Phase 4/6 work. The doctrine is canonical at
+[../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md).
+
+### Deliverables
+
+- `documents/architecture/bounded_inference_memory.md` authored as the canonical doctrine home,
+  declaring the typed `MemoryGrant` minted by `admitModelMemory`, the capped-engine kernel bounding
+  resident memory to the admitted `MemoryCeiling`, the required `ModelMemoryFootprint` newtype (no
+  bare-`Int` default-0), the budget that names its enforcer
+  (`HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit`, dropping
+  `UnenforcedMemoryBudget`), the checked `HostMemoryPartition` (physical = vmReserve + hostHeadroom +
+  inferenceCapacity, rejecting oversubscription; headroom covering OS + routed-E2E browser), the macOS
+  `proc_pid_rusage` physical-footprint watchdog + process-group SIGKILL and the Linux
+  pod-cgroup/VRAM-OOM exit classifier, and the `unboundedEngineSpawnViolations` lint
+- the doctrine doc registered as a required doc in `requiredDocs` with a `DocumentStructureRule`
+  (`src/Infernix/Lint/Docs.hs`) and indexed in `documents/README.md`
+- the new non-negotiable rule added to `documents/development/assistant_workflow.md` (canonical),
+  mirrored byte-identically into `AGENTS.md` and `CLAUDE.md`, with `README.md` carrying the prose form
+
+### Validation
+
+- `infernix lint docs` and `infernix docs check` pass, confirming the doctrine doc's metadata, links,
+  broad-doctrine-doc structure, and `requiredDocs` / `DocumentStructureRule` registration
+- the `AGENTS.md` / `CLAUDE.md` non-negotiable blocks stay byte-identical to each other and a faithful
+  subset of `assistant_workflow.md`
+- `cabal build all` (`-Wall -Werror`) is unaffected by the Markdown-only change; `poetry run check-code`
+  is not applicable — no native/Python surface changed
+
+### Remaining Work
+
+None. The doc and governance surface are landed and machine-independent-closed. The enforcing code — the
+`MemoryGrant`-gated capped-engine kernel, the checked `HostMemoryPartition`, the required
+`ModelMemoryFootprint`, the budget-enforcer split, and the `unboundedEngineSpawnViolations` lint — is
+code-side closed 2026-07-21 (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42), with the behavioral
+[Wave W](cohort-validation-waves.md) sign-off pending, tracked there.
+
+---
+
 ## Remaining Work
 
 Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Done — code-side closed
@@ -667,6 +734,15 @@ Sprint 0.14 (Bounded-Command/Bounded-HTTP Doctrine Documentation) is Done — co
 `legacy-tracking-for-deletion.md` ledger rows landed; `infernix lint docs` / `docs check` green), and
 its apple-silicon plus linux-cpu full-suite cohort sign-off closed by
 [Wave V](cohort-validation-waves.md) (2026-07-20).
+
+Sprint 0.15 (Bounded-Inference-Memory Doctrine and Non-Negotiable Mirror) is Done — closed 2026-07-21
+on `infernix lint docs` + `infernix docs check` + `cabal build all`. It is doc-only and
+machine-independent: the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc, its
+`requiredDocs` + `DocumentStructureRule` registration in `src/Infernix/Lint/Docs.hs` + `documents/README.md`
+index, and the new non-negotiable rule in the three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror
+plus `assistant_workflow.md` all landed. It has no cohort gate — the enforcing code is `Planned` Phase 4
+(Sprints 4.30/4.31) and Phase 6 (Sprint 6.42) work, whose single-accelerator (apple-silicon) plus
+`linux-cpu` sign-off is [Wave W](cohort-validation-waves.md), tracked there.
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
 machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by

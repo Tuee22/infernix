@@ -155,12 +155,20 @@ data DhallModelDescriptor = DhallModelDescriptor
 instance Dhall.FromDhall DhallModelDescriptor where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
+-- | Phase 4 Sprint 4.31 — the flat Dhall wire shape for the enforcer-named
+-- budget. @kind@ selects the arm: @host-enforced@ records the checked
+-- 'HostMemoryPartition' split (physical / vmReserve / headroom; inference
+-- capacity is derived on decode); @substrate-enforced@ records the descriptive
+-- 'PodMemoryLimit' (@resource@, @source@, @podLimitMib@). Fields for the other
+-- arm are zeroed.
 data DhallInferenceMemoryBudget = DhallInferenceMemoryBudget
   { dhallBudgetKind :: Text,
     dhallBudgetResource :: Text,
     dhallBudgetSource :: Text,
-    dhallBudgetAvailableMib :: Int,
-    dhallBudgetReason :: Text
+    dhallBudgetPhysicalMib :: Int,
+    dhallBudgetVmReserveMib :: Int,
+    dhallBudgetHeadroomMib :: Int,
+    dhallBudgetPodLimitMib :: Int
   }
   deriving (Generic)
 
@@ -210,8 +218,10 @@ dhallFieldSuffixName suffix =
     "BudgetKind" -> "kind"
     "BudgetResource" -> "resource"
     "BudgetSource" -> "source"
-    "BudgetAvailableMib" -> "availableMib"
-    "BudgetReason" -> "reason"
+    "BudgetPhysicalMib" -> "physicalMib"
+    "BudgetVmReserveMib" -> "vmReserveMib"
+    "BudgetHeadroomMib" -> "headroomMib"
+    "BudgetPodLimitMib" -> "podLimitMib"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
@@ -273,19 +283,22 @@ demoConfigFromDhall rawConfig = do
 inferenceMemoryBudgetFromDhall :: DhallInferenceMemoryBudget -> Either String InferenceMemoryBudget
 inferenceMemoryBudgetFromDhall rawBudget =
   case Text.toLower (dhallBudgetKind rawBudget) of
-    "enforced" -> do
+    "host-enforced" ->
+      HostEnforcedBudget
+        <$> mkHostMemoryPartition
+          (dhallBudgetPhysicalMib rawBudget)
+          (dhallBudgetVmReserveMib rawBudget)
+          (dhallBudgetHeadroomMib rawBudget)
+    "substrate-enforced" -> do
       resource <- parseEnum "inferenceMemoryBudget.resource" parseInferenceMemoryResource (dhallBudgetResource rawBudget)
       pure
-        EnforcedMemoryBudget
-          { memoryBudgetResource = resource,
-            memoryBudgetSource = dhallBudgetSource rawBudget,
-            memoryBudgetAvailableMib = max 0 (dhallBudgetAvailableMib rawBudget)
-          }
-    "unenforced" ->
-      pure
-        UnenforcedMemoryBudget
-          { memoryBudgetReason = dhallBudgetReason rawBudget
-          }
+        ( SubstrateEnforcedBudget
+            PodMemoryLimit
+              { podMemoryLimitResource = resource,
+                podMemoryLimitSource = dhallBudgetSource rawBudget,
+                podMemoryLimitMib = max 0 (dhallBudgetPodLimitMib rawBudget)
+              }
+        )
     other -> Left ("unsupported inferenceMemoryBudget.kind: " <> Text.unpack other)
 
 deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
@@ -408,6 +421,9 @@ modelDescriptorFromDhall rawModel = do
   runtimeModeValue <- parseEnum "model runtimeMode" parseRuntimeMode (dhallModelRuntimeMode rawModel)
   runtimeLaneValue <- parseEnum "runtimeLane" parseRuntimeLane (dhallRuntimeLane rawModel)
   requestShapeValue <- traverse requestFieldFromDhall (dhallRequestShape rawModel)
+  -- Phase 4 Sprint 4.31: the footprint is required and positive; a model whose
+  -- Dhall row carries an absent/zero footprint fails the decode closed.
+  footprintValue <- mkModelMemoryFootprint (dhallModelRamFootprintMib rawModel)
   pure
     ModelDescriptor
       { matrixRowId = dhallMatrixRowId rawModel,
@@ -424,7 +440,7 @@ modelDescriptorFromDhall rawModel = do
         runtimeLane = runtimeLaneValue,
         requiresGpu = dhallRequiresGpu rawModel,
         notes = dhallNotes rawModel,
-        modelRamFootprintMib = dhallModelRamFootprintMib rawModel
+        modelRamFootprint = footprintValue
       }
 
 requestFieldFromDhall :: DhallRequestField -> Either String RequestField
@@ -471,29 +487,37 @@ renderSubstrateConfig demoConfig =
 renderInferenceMemoryBudget :: InferenceMemoryBudget -> String
 renderInferenceMemoryBudget budget =
   case budget of
-    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} ->
+    HostEnforcedBudget partition ->
       "{ kind = "
-        <> dhallText "enforced"
+        <> dhallText "host-enforced"
         <> ", resource = "
-        <> dhallText (inferenceMemoryBudgetResourceText memoryBudgetResource)
+        <> dhallText (inferenceMemoryBudgetResourceText (inferenceMemoryBudgetResource budget))
         <> ", source = "
-        <> dhallText memoryBudgetSource
-        <> ", availableMib = "
-        <> dhallInteger memoryBudgetAvailableMib
-        <> ", reason = "
-        <> dhallText ""
-        <> " }"
-    UnenforcedMemoryBudget {memoryBudgetReason} ->
-      "{ kind = "
-        <> dhallText "unenforced"
-        <> ", resource = "
-        <> dhallText ""
-        <> ", source = "
-        <> dhallText ""
-        <> ", availableMib = "
+        <> dhallText (inferenceMemoryBudgetSource budget)
+        <> ", physicalMib = "
+        <> dhallInteger (hostPartitionPhysicalMib partition)
+        <> ", vmReserveMib = "
+        <> dhallInteger (hostPartitionVmReserveMib partition)
+        <> ", headroomMib = "
+        <> dhallInteger (hostPartitionHeadroomMib partition)
+        <> ", podLimitMib = "
         <> dhallInteger 0
-        <> ", reason = "
-        <> dhallText memoryBudgetReason
+        <> " }"
+    SubstrateEnforcedBudget podLimit ->
+      "{ kind = "
+        <> dhallText "substrate-enforced"
+        <> ", resource = "
+        <> dhallText (inferenceMemoryBudgetResourceText (podMemoryLimitResource podLimit))
+        <> ", source = "
+        <> dhallText (podMemoryLimitSource podLimit)
+        <> ", physicalMib = "
+        <> dhallInteger 0
+        <> ", vmReserveMib = "
+        <> dhallInteger 0
+        <> ", headroomMib = "
+        <> dhallInteger 0
+        <> ", podLimitMib = "
+        <> dhallInteger (podMemoryLimitMib podLimit)
         <> " }"
 
 renderDaemonConfig :: DaemonConfig -> String
@@ -591,7 +615,7 @@ renderModelDescriptor model =
     <> ", notes = "
     <> dhallText (notes model)
     <> ", modelRamFootprintMib = "
-    <> dhallInteger (modelRamFootprintMib model)
+    <> dhallInteger (modelMemoryFootprintMib (modelRamFootprint model))
     <> " }"
 
 renderRequestField :: RequestField -> String

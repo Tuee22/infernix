@@ -29,7 +29,9 @@
   cache; model memory is governed separately by runtime admission. Each model's
   `modelRamFootprintMib` is compared with the active `InferenceMemoryBudget` before launch: Apple
   unified host RAM, Linux CPU engine pod RAM, or Linux GPU VRAM. An over-budget request returns
-  typed `ModelMemoryLimitExceeded` with explicit MiB quantities instead of launching the engine.
+  typed `ModelMemoryLimitExceeded` with explicit MiB quantities instead of launching the engine
+  (grant-gated capped-engine execution; a host OOM is unrepresentable — canonical home
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)).
   Model weights themselves live in the `infernix-models` MinIO
   bucket on the four `64Gi` MinIO data claims and are streamed into the engine pod's `emptyDir` from
   the eagerly pre-staged bucket (the coordinator stages every mounted-config model at startup via the

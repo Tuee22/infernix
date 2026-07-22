@@ -21,7 +21,9 @@
   failure" — generalized from inference **results** to state **transitions**. The typed
   [per-substrate memory admission](runtime_modes.md) (`EnforcedMemoryBudget` /
   `ModelMemoryLimitExceeded`, a closed ADT rather than integer sentinels) is the in-repo precedent this
-  doctrine generalizes.
+  doctrine generalizes; [bounded inference memory](bounded_inference_memory.md) carries the same
+  bounded-primitive shape to the inference subprocess itself — a required `MemoryGrant` and an
+  OS-enforced `MemoryCeiling`, the memory analog of `runBoundedCommand` under a `Timeout`.
 - Enforcement rides on **GHC module export lists plus `-Wall -Werror`** — the sound, compile-checked
   lever. The governed lints are line-based and cannot see scope; the type system does. Line-based
   capability-gating lints back the raw primitives that have no type-level chokepoint: `unboundedExecViolations`
@@ -75,6 +77,24 @@ less than the server can take is not expressible. Cluster lifecycle is a typed `
 machine — a closed sum with a consumed, resumable phase — replacing the `clusterPresent :: Bool` plus
 `lifecyclePhase :: String` pair; its persistence is a **fail-closed** versioned codec, so an
 unrecognized on-disk document blocks a destructive action instead of decoding to a silent "absent".
+
+Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
+always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a
+`5xx` "server not initialized", a `403` before the object layer is ready — is neither "ready" nor "a
+concrete not-ready count"; it is a failure *to measure at all*. Collapsing that third fact into a
+`Bool` (or a fabricated progress count) is a representable invalid state: a present-but-momentarily-
+unreachable `.ready` sentinel counted as "absent" is exactly what stalled an already-warm model cache
+to its give-up deadline (the "11/16" second-`cluster up` symptom). The readiness kernel's poll outcome
+is therefore `PollOutcome e = Measured (Either Progress e) | Unobservable Text`, and the
+warm-model-cache sentinel probe is
+`SentinelObservation = SentinelPresent | SentinelAbsent | SentinelUnobservable Text` whose only
+producer of `SentinelAbsent` is a genuine `404`. An `Unobservable` poll is routed to
+*retry-within-budget* — it can neither mint a `Ready` nor deflate the observed census count — so a
+transient fault can never masquerade as a definitive absence. The Python model-cache revalidation
+mirrors this with a `CacheValidity = VALID | CORRUPT | UNVERIFIABLE` verdict: the
+retained-sentinel-destroying `_delete_model_prefix` is reachable only through a `CORRUPT` witness (a
+deterministic size mismatch), never a fallible read, so a MinIO blip can no longer delete a valid
+retained cache.
 
 ## Enforcement
 
@@ -132,6 +152,20 @@ onto the bounded-command / `awaitReadiness` kernels (**Phase 6** Sprint 6.41, co
 -> Deadline` bridge encodes a legacy `attempts × delayMicros` retry budget as a required `Deadline`, so
 an unbounded or bare-recursion readiness wait is unrepresentable.
 
+A second **flake-driven follow-on reopen** (2026-07-22, the Observable-Readiness wave) closes the last
+representable invalid state the readiness surface still permitted: a probe that could not *observe* a
+remote system was forced to launder that fault into a definite not-ready count (or, at the observation
+layer, a definite absence), which stalled the retained-second-`cluster up` warm-model-cache barrier at
+"11/16" and, on the Python side, let a fallible cache-revalidation read *delete* a valid retained
+`.ready` sentinel. It is code-side closed 2026-07-22 on the machine-independent gate set
+(apple-silicon): the `PollOutcome` observable-poll channel on `awaitReadinessObservable` (with
+`awaitReadiness` preserved as a behaviour-identical `Measured`-lift, so the sixteen existing waits are
+unchanged) is **Phase 1** (Sprint 1.18); the tri-state `SentinelObservation` warm-model-cache probe,
+the `SentinelCensus` that refuses to emit a readiness count while any sentinel is unobservable, and the
+Python `CacheValidity` evidence-gated cache deletion are **Phase 8** (Sprint 8.8). The
+single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof is the
+[Wave W](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+
 ## Validation
 
 - `cabal build all` under `-Wall -Werror` is the primary proof: an operation reachable without its
@@ -144,6 +178,8 @@ an unbounded or bare-recursion readiness wait is unrepresentable.
 ## Cross-References
 
 - [realness_contract.md](realness_contract.md) — the results-side sibling this doctrine generalizes.
+- [bounded_inference_memory.md](bounded_inference_memory.md) — the memory analog of the bounded-command
+  kernel: a required `MemoryGrant` gates the inference subprocess and bounds it to an OS-enforced ceiling.
 - [runtime_modes.md](runtime_modes.md) — the typed budget ADT precedent.
 - [daemon_topology.md](daemon_topology.md) — role failure semantics and readiness gating.
 - [../development/haskell_style.md](../development/haskell_style.md) — the export-list, opaque-newtype,

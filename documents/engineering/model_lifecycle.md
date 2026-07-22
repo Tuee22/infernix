@@ -98,7 +98,8 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   `modelRamFootprintMib` is compared against an explicit `InferenceMemoryBudget` before launch:
   Apple unified host RAM, Linux CPU pod RAM, or Linux GPU VRAM. An over-budget request returns typed
   `ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`, while smaller configured models
-  continue to run.
+  continue to run. Canonical home for this grant-gated capped-engine execution invariant (a host OOM
+  is unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 - the runtime worker invokes the engine for the selected binding — the Python adapter
   transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
   resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`

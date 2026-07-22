@@ -35,7 +35,10 @@ The disk model cache (`python/adapters/model_cache.py` LRU) never substitutes fo
 `InferenceMemoryBudget`: Apple uses unified host RAM after the Colima pledge and reserve, Linux CPU
 uses the engine pod memory limit, and Linux GPU uses GPU VRAM. An over-budget request fails with
 typed `ModelMemoryLimitExceeded` and explicit MiB quantities before the engine launches, while
-smaller configured models continue to run.
+smaller configured models continue to run. The grant-gated capped-engine execution contract behind
+this — an engine runs only under a typed OS-bounded `MemoryGrant`, so a host OOM is unrepresentable —
+is owned canonically by
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 The durability split is unchanged by the object-access target, but how
 the browser reaches the user-visible `infernix-demo-objects` bytes is
@@ -91,7 +94,8 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   MinIO on the next adapter call via
   `python/adapters/model_cache.get_model_path`. This disposability is a
   **disk**-state property only. Model memory is handled by the typed runtime admission policy and
-  can reject a request even when the weights are cache-resident on disk.
+  can reject a request even when the weights are cache-resident on disk (canonical home:
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)).
 - Build roots and frontend bundles are disposable because the supported build and web workflows
   regenerate them from source.
 - Durable cluster-lifecycle `state` persistence replaces its `Show`/`Read` encoding with a

@@ -11,14 +11,17 @@ module Infernix.Evidence.Readiness
   ( Readiness,
     Deadline (..),
     Progress (..),
+    PollOutcome (..),
     foldReadiness,
     awaitReadiness,
+    awaitReadinessObservable,
     budgetDeadline,
   )
 where
 
 import Control.Concurrent (threadDelay)
 import Data.Text (Text)
+import Data.Text qualified as Text
 
 -- | A bounded wait budget. Every field is required, so a wait with no
 -- ceiling and a poll with no interval are both unrepresentable.
@@ -61,34 +64,78 @@ foldReadiness onReady _ _ (Ready evidence) = onReady evidence
 foldReadiness _ onNotReady _ (NotReady progress) = onNotReady progress
 foldReadiness _ _ onExpired (Expired progress) = onExpired progress
 
+-- | The outcome of one poll of an /observable/ probe. A probe that reads a
+-- remote system does not always get to observe it: a transport fault (a reset
+-- idle connection, a HEAD timeout, a not-yet-ready @5xx@) is neither "ready"
+-- nor "a concrete not-ready count" — it is a failure /to measure at all/.
+-- Collapsing that third fact into a fabricated 'Progress' count is the
+-- representable-invalid-state the warm-model-cache stall was built from: a
+-- present-but-momentarily-unreachable sentinel was counted as "absent",
+-- deflating the readiness census and stalling an already-warm cache to the
+-- give-up deadline. 'PollOutcome' makes "I could not observe" a first-class
+-- term the kernel routes to /retry-within-budget/, so it can never masquerade
+-- as ground truth.
+data PollOutcome e
+  = -- | the probe observed the system: ready (@Right@) or a real not-ready
+    -- count (@Left progress@).
+    Measured !(Either Progress e)
+  | -- | the probe could not observe the system this poll (carries a reason for
+    -- diagnostics only — never a fact about the observed state).
+    Unobservable !Text
+
 -- | Poll @step@ until it yields evidence (@Right@) or the 'Deadline' is
 -- reached. @step@ reports @Left progress@ when not yet ready. Progress that
 -- advances resets the stall timer; a stall past 'deadlineStallSeconds'
 -- resolves as 'Expired'; reaching 'deadlineCeilingSeconds' while still
 -- advancing resolves as 'NotReady'. The only constructor of a positive
--- 'Ready' is here, from a real @Right@ the step returned.
+-- 'Ready' is here, from a real @Right@ the step returned. This is the
+-- non-observable-fault special case of 'awaitReadinessObservable': every
+-- poll is a 'Measured' outcome.
 awaitReadiness :: Deadline -> IO (Either Progress e) -> IO (Readiness e)
-awaitReadiness deadline step = go 0 0 minBound
+awaitReadiness deadline step =
+  awaitReadinessObservable deadline (Measured <$> step)
+
+-- | Poll an /observable/ @step@ until it yields evidence or the 'Deadline' is
+-- reached. Identical to 'awaitReadiness' on 'Measured' outcomes (so it is a
+-- behaviour-preserving generalization: 'awaitReadiness' is exactly this fed
+-- @Measured <$> step@, and every existing count-based caller is unchanged). An
+-- 'Unobservable' poll is /not/ a measurement: it accrues stall like a
+-- non-advancing poll and cannot advance the running maximum, so a transient
+-- fault can never mint a 'Ready' nor deflate the observed count — it only ever
+-- buys another poll within the same bounded budget. If the budget expires while
+-- every recent poll was unobservable, the last real 'Progress' (or a zero
+-- baseline) rides the 'Expired' / 'NotReady' outcome.
+awaitReadinessObservable :: Deadline -> IO (PollOutcome e) -> IO (Readiness e)
+awaitReadinessObservable deadline step = go 0 0 minBound baselineProgress
   where
     pollSeconds = max 1 (deadlinePollMicros deadline `div` 1000000)
-    go elapsed stall lastObserved = do
+    baselineProgress = Progress 0 0 (Text.pack "no readiness measurement observed yet")
+    go elapsed stall lastObserved lastProgress = do
       outcome <- step
       case outcome of
-        Right evidence -> pure (Ready evidence)
-        Left progress
+        Measured (Right evidence) -> pure (Ready evidence)
+        Measured (Left progress)
           | progressObserved progress > lastObserved ->
               if elapsed >= deadlineCeilingSeconds deadline
                 then pure (NotReady progress)
                 else
                   delayThen
-                    (go (elapsed + pollSeconds) 0 (progressObserved progress))
+                    (go (elapsed + pollSeconds) 0 (progressObserved progress) progress)
           | stall + pollSeconds >= deadlineStallSeconds deadline ->
               pure (Expired progress)
           | elapsed >= deadlineCeilingSeconds deadline ->
               pure (NotReady progress)
           | otherwise ->
               delayThen
-                (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved)
+                (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved progress)
+        Unobservable _reason
+          | stall + pollSeconds >= deadlineStallSeconds deadline ->
+              pure (Expired lastProgress)
+          | elapsed >= deadlineCeilingSeconds deadline ->
+              pure (NotReady lastProgress)
+          | otherwise ->
+              delayThen
+                (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved lastProgress)
     delayThen continue = threadDelay (deadlinePollMicros deadline) >> continue
 
 -- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'. The

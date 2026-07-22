@@ -1030,15 +1030,21 @@ assertTypedMemoryAdmissionError budget model payloadValue errorValue =
       assert (isNothing (inlineOutput payloadValue)) "memory admission failure does not masquerade as inline output"
       assert (isNothing (objectRef payloadValue)) "memory admission failure does not carry an object reference"
       assert (inferenceErrorModelId == modelId model) "memory admission error reports the selected model id"
-      assert (inferenceErrorRequiredMib == modelRamFootprintMib model) "memory admission error reports the model footprint"
-      assert (inferenceErrorRequiredMib > inferenceErrorAvailableMib) "memory admission error reports an exceeded budget"
-      case budget of
-        EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} -> do
-          assert (inferenceErrorAvailableMib == memoryBudgetAvailableMib) "memory admission error reports the active budget"
-          assert (inferenceErrorResource == memoryBudgetResource) "memory admission error reports the active resource"
-          assert (inferenceErrorSource == memoryBudgetSource) "memory admission error reports the budget source"
-        UnenforcedMemoryBudget {} ->
-          fail "memory admission error was published while the active budget is explicitly unenforced"
+      assert (inferenceErrorRequiredMib == modelMemoryFootprintMib (modelRamFootprint model)) "memory admission error reports the model footprint"
+      -- Two distinct fail-closed paths carry ModelMemoryLimitExceeded and are
+      -- distinguished by the source: a pre-admission over-budget rejection
+      -- reports the budget capacity/resource/source (required > available), while
+      -- a runtime resident-ceiling breach (an admitted model whose actual RSS
+      -- exceeded its ceiling) reports the ceiling (required == available).
+      if inferenceErrorSource == cappedEngineResidentCeilingSource
+        then do
+          assert (inferenceErrorAvailableMib == inferenceErrorRequiredMib) "resident-ceiling breach reports the admitted ceiling as required == available"
+          assert (inferenceErrorResource == inferenceMemoryBudgetResource budget) "resident-ceiling breach reports the active resource"
+        else do
+          assert (inferenceErrorRequiredMib > inferenceErrorAvailableMib) "memory admission error reports an exceeded budget"
+          assert (inferenceErrorAvailableMib == inferenceMemoryBudgetCapacityMib budget) "memory admission error reports the active budget capacity"
+          assert (inferenceErrorResource == inferenceMemoryBudgetResource budget) "memory admission error reports the active resource"
+          assert (inferenceErrorSource == inferenceMemoryBudgetSource budget) "memory admission error reports the budget source"
 
 assertResultFamilyContract :: ResultFamily -> String -> ResultPayload -> IO ()
 assertResultFamilyContract resultFamily modelIdValue payloadValue

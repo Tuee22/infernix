@@ -36,6 +36,7 @@ requiredDocs :: [FilePath]
 requiredDocs =
   [ "documents/README.md",
     "documents/documentation_standards.md",
+    "documents/architecture/bounded_inference_memory.md",
     "documents/architecture/configuration_doctrine.md",
     "documents/architecture/daemon_topology.md",
     "documents/architecture/demo_app_design.md",
@@ -277,6 +278,16 @@ documentStructureRules =
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
             RequireSection "## Broad Doctrine Structure",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/architecture/bounded_inference_memory.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## The invariant",
+            RequireSection "## Enforcement",
+            RequireSection "## Current Status",
             RequireSection "## Validation"
           ]
       },

@@ -1,6 +1,19 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (Sprint 6.40 `unboundedExec`/
+**Status**: Active — the memory-safety-by-construction reopen (2026-07-21) is **code-side closed**:
+Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) is implemented on the Phase 4
+Sprint 4.30 capped-engine kernel and the machine-independent gate set is GREEN (2026-07-21). The
+**apple-silicon Stage 2 behavioral evidence is GREEN**: the per-model integration lane ran with zero
+host OOM (13 real completions, 2 pre-admission typed-rejections, 1 live watchdog resident-ceiling
+breach) and routed Playwright passed 16/16 (the browser matrix rendering all three capacity rejections)
+— see [Wave W](cohort-validation-waves.md). Two Playwright cohort fixes landed here (the budget-schema
+migration in `expectedModelMemoryLimitExceeded` and the browser matrix's runtime-ceiling-breach
+tolerance). The residuals are a clean single-invocation `infernix test all` and the `linux-cpu`
+full-suite lane; the lifecycle-rebinding warm-cache flake that blocked the clean run was diagnosed as a
+representable invalid state (a fault-vs-absence collapse in the readiness observation) and **fixed by
+construction** in the Observable-Readiness reopen (Phase 1 Sprint 1.18 + Phase 8 Sprint 8.8, code-side
+closed 2026-07-22), so the Wave W residual is now a behavioral re-run rather than a race workaround. Prior Done — the
+Bounded-Command Application & Bounded-HTTP reopen (Sprint 6.40 `unboundedExec`/
 `unboundedHttp` lint rules; Sprint 6.41 ProcessMonitor retirement + shared retryCommandOutput
 primitive + eager-cache barrier + the full twelve-wait individual bounded-wait migration onto
 `awaitReadiness`/`budgetDeadline` + the `threadDelayViolations` lint gate) and the prior
@@ -25,6 +38,20 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+
+> **Memory-safety-by-construction reopen (2026-07-21).** The memory-safety-by-construction doctrine
+> (Phase 0 Sprint 0.15) makes an over-budget inference engine a clean typed `ModelMemoryLimitExceeded`
+> rather than a host OOM, gated by a `MemoryGrant` and a capped-engine kernel (Phase 4 Sprints
+> 4.30/4.31). This phase reopens under
+> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-planned) to add the
+> `unboundedEngineSpawnViolations` capability-gating lint to `src/Infernix/Lint/HaskellStyle.hs` — raw
+> `readCreateProcessWithExitCode` / `createProcess` engine spawn becomes a build error outside the
+> Phase 4 Sprint 4.30 grant-gated capped-engine kernel, mirroring the existing `unboundedExecViolations`
+> (Sprint 6.40) per-rule exemption pattern. Sprint 6.42 is **code-side closed** (2026-07-21): the rule is
+> wired into `checkSourceReadability`, reuses the bounded-command exemption set (the capped-engine kernel
+> `Infernix.Runtime.CappedEngine` is the sole legitimate engine-spawn surface), and is negative-tested in
+> `cabal test infernix-unit`. Single-accelerator (apple-silicon) plus `linux-cpu` behavioral sign-off is
+> pending [Wave W](cohort-validation-waves.md).
 
 > **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md)
 > (2026-07-20).** The 2026-07-18
@@ -2502,6 +2529,71 @@ single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off c
 
 ---
 
+## Sprint 6.42: Unbounded-Engine-Spawn Capability-Gating Lint [Active — code-side closed]
+
+**Status**: Active — code-side closed (2026-07-21). The `unboundedEngineSpawnViolations` capability-gating
+lint keeps new engine-spawn call sites off the raw process primitives and on the Phase 4 Sprint 4.30
+grant-gated capped-engine kernel; implemented with the machine-independent gate set GREEN, cohort
+sign-off pending Wave W.
+**Code-side closure**: complete (2026-07-21). Added the `unboundedEngineSpawnViolations` sub-rule to
+`src/Infernix/Lint/HaskellStyle.hs` (wired into `checkSourceReadability`), mirroring the existing
+`unboundedExecViolations` / `threadDelayViolations` per-rule exemption pattern (Sprint 6.40/6.41): raw
+`readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` on the engine-spawn surface in
+production `src/Infernix/` is a style-gate error outside the Sprint 4.30 capped-engine kernel module
+(`Infernix.Runtime.CappedEngine`) and a shrinking `unboundedEngineSpawnExemptedFiles` list (which reuses
+the bounded-command exemption set so both gates shrink in lockstep), so a new engine subprocess that does
+not consume a `MemoryGrant` fails the style gate. The kernel is added to `unboundedExecExemptedFiles`
+(the legitimate raw engine-spawn surface) and `threadDelayExemptedFiles` (the watchdog poll). Gate set
+(GREEN 2026-07-21): `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (the new rule
+negative-tested — fires on an injected raw `createProcess` in a guarded file, exempts the kernel, passes
+a clean line), `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
+`infernix docs check`.
+**Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the lint travels
+with the Phase 4 Sprint 4.30/4.31 behavioral proof (no host OOM; over-capacity rows cleanly
+typed-rejected as `ModelMemoryLimitExceeded`).
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
+**Blocked by**: Sprint 4.30, 6.40
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`,
+`documents/development/haskell_style.md`, and the phase's existing engineering/reference docs
+
+### Objective
+
+This sprint is the enforcement half of the memory-safety-by-construction reopen for this phase — close
+the gap that would let a raw unbounded engine spawn reach a production call site off the grant-gated
+capped-engine kernel. It adds one capability-gating sub-rule to `src/Infernix/Lint/HaskellStyle.hs`,
+applying the
+[../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md)
+doctrine's line-based enforcement layer to the engine-spawn surface, exactly as Sprint 6.40's
+`unboundedExecViolations` did for the cluster-subprocess surface.
+
+### Deliverables
+
+- `unboundedEngineSpawnViolations`: forbids raw `readCreateProcessWithExitCode` / `createProcess` and
+  peers on the engine-spawn surface in production `src/Infernix/` outside the Phase 4 Sprint 4.30
+  capped-engine kernel module and a shrinking `unboundedEngineSpawnExemptedFiles` list
+- the rule wired into `checkSourceReadability` and negative-tested via the style gate
+
+### Validation
+
+Future gates (unstarted):
+
+- `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
+  `infernix lint files/docs/proto/chart`, and `infernix docs check` on both the apple-silicon and
+  linux-cpu lanes
+- `unboundedEngineSpawnViolations` fires on an injected raw `createProcess` in a guarded engine file
+  and passes on the migrated tree
+- the apple-silicon plus linux-cpu full-suite behavioral sign-off closes under
+  [Wave W](cohort-validation-waves.md)
+
+### Remaining Work
+
+The implementation is complete and code-side closed (2026-07-21): the `unboundedEngineSpawnViolations`
+sub-rule, its `checkSourceReadability` wiring, and the negative test are landed, built on the Phase 4
+Sprint 4.30 capped-engine kernel as the single exempted engine-spawn path. The one residual is the
+Wave W behavioral sign-off (shared with Phase 4 Sprints 4.30/4.31).
+
+---
+
 ## Remaining Work
 
 Sprint 6.39 (capability-gating lint plus managed-transition coverage), Sprint 6.40
@@ -2519,6 +2611,12 @@ by Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-vali
 (real-output + matrix validation hardening) and **Sprint 6.37**
 (apple-silicon memory-bounded validation lane) are closed by [Wave R](cohort-validation-waves.md)
 and [Wave S](cohort-validation-waves.md) for their original scopes.
+**Sprint 6.42** (Unbounded-Engine-Spawn Capability-Gating Lint) — the enforcement half of the
+memory-safety-by-construction reopen (2026-07-21), the `unboundedEngineSpawnViolations` lint that keeps
+new engine-spawn call sites off the raw process primitives and on the Phase 4 Sprint 4.30 grant-gated
+capped-engine kernel — is **code-side closed** (2026-07-21, machine-independent gate set GREEN,
+negative-tested), with single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort sign-off
+pending [Wave W](cohort-validation-waves.md).
 
 ## Documentation Requirements
 

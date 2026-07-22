@@ -113,42 +113,67 @@ on 2026-06-30.
 ## Per-Substrate Inference Memory Budget
 
 The generated substrate config carries a resource-specific inference memory budget used by a shared
-pure admission policy. Each `ModelDescriptor` records a conservative footprint
-(`modelRamFootprintMib`, MiB), and `DemoConfig` records an `InferenceMemoryBudget` value instead of
-using integer sentinels. The target shape is explicit:
+pure admission policy. Each `ModelDescriptor` records a required, positive `ModelMemoryFootprint`
+(the wire field stays `modelRamFootprintMib`, MiB, but decode fails closed if it is absent or
+non-positive), and `DemoConfig` records an `InferenceMemoryBudget` value instead of using integer
+sentinels. The shape names its enforcer:
 
-- `EnforcedMemoryBudget { resource, source, availableMib }` means admission always compares a
-  model footprint against the available quantity, including `0 MiB`
-- `UnenforcedMemoryBudget { reason }` means there is intentionally no comparable runtime limit
-- `ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }` is the
-  typed `InferenceError` constructor published when admission rejects a request
+- `HostEnforcedBudget HostMemoryPartition` means the host itself owns the ceiling: admission draws
+  from the partition's `inferenceCapacity` and the on-host capped-engine kernel enforces the admitted
+  ceiling at runtime (the `apple-silicon` lane)
+- `SubstrateEnforcedBudget PodMemoryLimit` means the container substrate owns the ceiling — the pod
+  cgroup memory limit (`linux-cpu`) or the CUDA/VRAM allocation (`linux-gpu`) that
+  `PodMemoryLimit { podMemoryLimitResource, podMemoryLimitSource, podMemoryLimitMib }` records. There
+  is no "enforced by nobody" arm
+- `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Either InferenceError MemoryGrant`
+  mints an opaque `MemoryGrant` (carrying a `MemoryCeiling` equal to the model footprint) on success,
+  and returns `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource,
+  source }` when the footprint does not fit
 
-This removes the old need for hardcoded floors such as `max 1024 ...`: an over-pledged Apple host
-computes an enforced `0 MiB` budget, not a non-positive integer that accidentally disables the
-guard. Validation may report capacity diagnostics, but it must not reject the entire daemon solely
-because one configured model exceeds the current budget. The smaller configured models still serve.
+This removes the old need for hardcoded floors such as `max 1024 ...` and the "enforced by nobody"
+arm: an over-pledged Apple host is rejected when the `HostMemoryPartition` smart constructor refuses
+the oversubscription, and a model whose footprint exceeds the resolved `inferenceCapacity` fail-closes
+cleanly at admission. Validation may report capacity diagnostics, but it must not reject the entire
+daemon solely because one configured model exceeds the current budget. The smaller configured models
+still serve.
 
 Budget sources are substrate-specific while admission and error construction stay DRY:
 
-- on `apple-silicon`, the budget source is host physical RAM (`sysctl -n hw.memsize`, via the
-  manifest `HostSysctl` tool) minus the Colima VM pledge (read-only `colima list --json`, read but
-  never managed) minus a host reserve, with resource `UnifiedHostRam`
-- on `linux-cpu`, the budget source is the Kubernetes engine pod memory limit for the active
-  cluster workload, with resource `PodRam`; this is the real cluster cap and must participate in
-  runtime admission
-- on `linux-gpu`, the budget source is the selected GPU VRAM quantity, with resource `GpuVram`,
-  because the supported GPU model allocations live in VRAM rather than CPU RAM
+- on `apple-silicon`, the budget is a `HostEnforcedBudget` over a checked `HostMemoryPartition`: host
+  physical RAM (`sysctl -n hw.memsize`, via the manifest `HostSysctl` tool) split into the Colima VM
+  pledge (`vmReserve`, read-only `colima list --json`, read but never managed), a `minHostHeadroomMib`
+  headroom that covers the OS, the control-plane binary, and the routed end-to-end browser, and the
+  remaining `inferenceCapacity`, with resource `UnifiedHostRam`
+- on `linux-cpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
+  Kubernetes engine pod memory limit for the active cluster workload, with resource `PodRam`; this is
+  the real cluster cap and must participate in runtime admission
+- on `linux-gpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
+  selected GPU VRAM quantity, with resource `GpuVram`, because the supported GPU model allocations
+  live in VRAM rather than CPU RAM
 
 At runtime, each substrate calls the same pure admission function before launching the engine
-subprocess or worker. When the model footprint exceeds the enforced budget, the daemon publishes a
-clean `status=failed` `InferenceResult` whose payload is a typed `InferenceError`, not successful
-inline output. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
-the model footprint and available memory in MiB.
+subprocess or worker. When the model footprint exceeds the enforced budget, admission returns the
+typed `InferenceError` and the daemon publishes a clean `status=failed` `InferenceResult`, not
+successful inline output. On success admission mints the `MemoryGrant`, which the capped-engine kernel
+(`withCappedEngine`, the sole engine spawn) requires and OS-bounds to its `MemoryCeiling`; on
+`apple-silicon` a `proc_pid_rusage` physical-footprint watchdog SIGKILLs the child's process group on
+a ceiling breach, so an under-estimated footprint is a typed `status=failed ModelMemoryLimitExceeded`,
+never a host OOM-kill. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error
+naming the model footprint and available memory in MiB.
 
 The per-substrate `InferenceMemoryBudget` / `ModelMemoryLimitExceeded` typed ADT — a typed
 evidence value rather than integer sentinels — is the in-repo precedent that the managed
 state-transition doctrine generalizes; its canonical home is
 [Managed State Transitions](managed_state_transitions.md).
+
+**Memory-safety by construction.** The admission above proves a request *fits* before launch; the
+capped-engine kernel additionally bounds the engine subprocess's *actual* resident memory to that
+decision, closing a gap a full-suite run once exercised as a host OOM-kill. Admission mints a
+`MemoryGrant` that the capped-engine kernel requires and OS-bounds to its `MemoryCeiling`, over a
+checked `HostMemoryPartition` (physical minus the co-tenant pledge minus a headroom that covers the OS
+and the routed end-to-end browser, rejecting oversubscription) with a required `ModelMemoryFootprint`
+and an enforcer-typed budget (`HostEnforcedBudget` / `SubstrateEnforcedBudget`, with no unenforced
+arm). Its canonical home is [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Generated Demo Config Contract
 
@@ -220,8 +245,9 @@ target shape is the three-role daemon model codified in
   topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
 - direct host runs and cluster-resident placements both launch the same process-isolated
   engine-worker contract and honor the same adapter-specific command overrides; runtime admission
-  applies the active `InferenceMemoryBudget` before launch and returns typed
-  `ModelMemoryLimitExceeded` when the model does not fit
+  applies the active `InferenceMemoryBudget` before launch, mints the `MemoryGrant` the capped-engine
+  kernel (`withCappedEngine`) requires, and returns typed `ModelMemoryLimitExceeded` when the model
+  does not fit
 - switching runtime modes changes generated catalog content and engine bindings, not the service
   placement contract
 

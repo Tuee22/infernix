@@ -55,7 +55,11 @@ enforced `InferenceMemoryBudget`: Apple uses unified host RAM after the Colima p
 Linux CPU uses the engine pod memory limit, and Linux GPU uses GPU VRAM. Admission failures are
 per-request `status=failed` results carrying a typed `ModelMemoryLimitExceeded` `InferenceError`
 with `requiredMib` and `availableMib`; a too-large catalog entry must not invalidate the whole
-daemon or prevent smaller models from running.
+daemon or prevent smaller models from running. The reopened memory-safety-by-construction target
+additionally bounds the admitted request's actual footprint by making admission mint a `MemoryGrant`
+the capped-engine kernel requires and OS-bounds to its ceiling, so a runtime breach is the same clean
+typed failure rather than a host OOM; canonical home
+[bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Routing Model
 

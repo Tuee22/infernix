@@ -8,6 +8,7 @@ import time
 import urllib.parse
 import urllib.request
 import zipfile
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -117,6 +118,26 @@ def _sentinel_exists(client: Any, bucket: str, model_id: str) -> bool:
         return False
 
 
+class CacheValidity(Enum):
+    """Three-valued verdict on a retained model cache.
+
+    The warm-model-cache stall had a sibling on this side: ``_delete_model_prefix``
+    (which removes the ``.ready`` sentinel) was reachable whenever revalidation
+    returned ``False`` — and revalidation returned ``False`` on both genuine
+    corruption *and* a fallible MinIO read. On the retained-state second
+    ``cluster up``, a transient read fault (MinIO/Harbor contending for the same
+    backing store) would therefore destroy a valid retained sentinel, leaving the
+    barrier polling forever for a model it just deleted. Making the verdict
+    three-valued keeps "I could not verify it" (``UNVERIFIABLE``) distinct from
+    "it is definitely broken" (``CORRUPT``), so deletion is reachable only through
+    a confirmed-corrupt witness a caught exception cannot produce.
+    """
+
+    VALID = "valid"
+    CORRUPT = "corrupt"
+    UNVERIFIABLE = "unverifiable"
+
+
 def _existing_model_cache_ready(
     client: Any, bucket: str, model_id: str, download_url: str
 ) -> bool:
@@ -124,13 +145,21 @@ def _existing_model_cache_ready(
         return False
     if not _is_mt3_pytorch_pretrained(download_url):
         return True
-    if _mt3_pytorch_objects_are_valid(client, bucket, model_id):
-        return True
-    _delete_model_prefix(client, bucket, model_id)
-    return False
+    validity = _mt3_pytorch_cache_validity(client, bucket, model_id)
+    if validity is CacheValidity.CORRUPT:
+        # Only a confirmed-corrupt cache is destroyed and re-staged. VALID and
+        # UNVERIFIABLE both keep the retained sentinel: a transient read fault
+        # must never delete a good cache, and a cache that is genuinely broken
+        # but unverifiable fails closed at inference (realness contract) rather
+        # than being silently deleted on a blip.
+        _delete_model_prefix(client, bucket, model_id)
+        return False
+    return True
 
 
-def _mt3_pytorch_objects_are_valid(client: Any, bucket: str, model_id: str) -> bool:
+def _mt3_pytorch_cache_validity(
+    client: Any, bucket: str, model_id: str
+) -> CacheValidity:
     try:
         config_size = _object_size(client, bucket, f"{model_id}/config.json")
         checkpoint_size = _object_size(client, bucket, f"{model_id}/mt3.pth")
@@ -138,14 +167,17 @@ def _mt3_pytorch_objects_are_valid(client: Any, bucket: str, model_id: str) -> b
             client, bucket, f"{model_id}/{NATIVE_SNAPSHOT_INDEX_NAME}"
         )
     except Exception:
-        return False
+        # A fallible HEAD is not evidence of corruption.
+        return CacheValidity.UNVERIFIABLE
     expected_shape = (
         100 <= config_size <= 1024 * 1024
         and checkpoint_size == _MT3_PYTORCH_MT3_PTH_BYTES
         and index_size > 0
     )
     if not expected_shape:
-        return False
+        # Deterministic HEAD-size mismatch: the only confirmed-corrupt signal,
+        # and it never touches the network payload.
+        return CacheValidity.CORRUPT
     try:
         with tempfile.TemporaryDirectory(prefix="infernix-mt3-cache-check-") as root:
             snapshot_root = Path(root)
@@ -157,8 +189,10 @@ def _mt3_pytorch_objects_are_valid(client: Any, bucket: str, model_id: str) -> b
             )
             _validate_mt3_pytorch_snapshot(snapshot_root)
     except Exception:
-        return False
-    return True
+        # A read/validation fault during the deep check is treated as
+        # unverifiable, not corrupt, so a MinIO blip cannot delete the sentinel.
+        return CacheValidity.UNVERIFIABLE
+    return CacheValidity.VALID
 
 
 def _object_size(client: Any, bucket: str, key: str) -> int:

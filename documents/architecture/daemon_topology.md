@@ -439,6 +439,15 @@ publishes a `status=failed` `InferenceResult` whose payload is
 `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`. The
 failure payload is a closed typed error, not successful inline output and not a parsed string.
 
+This pre-launch admission proves a request *fits*, but the reopened memory-safety-by-construction
+target additionally bounds the admitted request's *actual* resident memory: admission mints a
+`MemoryGrant` that the capped-engine kernel requires (the raw engine spawn is unexported) and OS-bounds
+to its `MemoryCeiling` — on `apple-silicon` a physical-footprint watchdog plus process-group kill, on
+`linux-cpu`/`linux-gpu` the pod cgroup / VRAM limit — so a ceiling breach is the same clean typed
+`status=failed` rather than a host OOM. The budget becomes enforcer-typed
+(`HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit`) over a checked
+`HostMemoryPartition`. Canonical home: [bounded_inference_memory.md](bounded_inference_memory.md).
+
 ## Production Shape
 
 When `demo_ui = false`:

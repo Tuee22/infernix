@@ -55,7 +55,13 @@ Each generated entry includes:
   runtime admission input for Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. A model
   whose footprint exceeds the active enforced budget is rejected per request with a typed
   `ModelMemoryLimitExceeded` `InferenceError` that carries `requiredMib` and `availableMib`; it must
-  not make the entire generated daemon config invalid.
+  not make the entire generated daemon config invalid. The field is now a required, positive
+  `ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
+  `modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
+  decoder fail closed when it is absent or non-positive — the old bare-`Int` that defaulted to `0` and
+  silently disabled admission is gone. Once admitted, this footprint is the `MemoryCeiling` the
+  capped-engine kernel OS-bounds the engine subprocess's resident memory to; canonical home
+  [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Rules
 

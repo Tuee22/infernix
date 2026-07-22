@@ -510,7 +510,11 @@ warning classification. In short:
   the daemon's typed budget fails cleanly as a `ModelMemoryLimitExceeded` inference error, carrying
   both the model requirement and available limit as explicit MiB quantities, rather than
   OOM-killing the daemon; a host `SystemOOM` outside that budgeted path is environment contention and
-  should be addressed before rerunning heavy lifecycle work
+  should be addressed before rerunning heavy lifecycle work. Under the memory-safety-by-construction
+  doctrine ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
+  the admitted request's *actual* resident memory is OS-bounded to its ceiling by the capped-engine
+  kernel, so a footprint under-estimate is the same clean typed `status=failed` rather than a host
+  OOM-kill
 - buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
   shell-profile warnings are eliminated on the current supported image and web toolchain; if they
   return, treat them as regressions unless the canonical policy doc names a new upstream constraint
@@ -832,7 +836,12 @@ this section is an orientation summary.
   control: Apple compares models against unified host RAM, Linux CPU compares against the engine pod
   RAM limit, and Linux GPU compares against GPU VRAM. A model whose requirement exceeds that budget
   produces a typed `ModelMemoryLimitExceeded` error result with `requiredMib` and `availableMib`
-  quantities instead of exhausting the daemon
+  quantities instead of exhausting the daemon. Under memory-safety by construction
+  ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
+  admission mints a typed `MemoryGrant` that the capped-engine kernel requires and OS-bounds to its
+  ceiling — a checked `HostMemoryPartition`, a required `ModelMemoryFootprint`, and an enforcer-typed
+  budget — so an engine cannot run without an admission proof and a host out-of-memory kill is
+  structurally unrepresentable
 - every cluster subprocess runs bounded: lifecycle and image-publication commands invoke docker,
   skopeo, `kubectl`, and `helm` through a required per-operation timeout, so a hung external command
   (for example a Harbor `docker pull` verify that stalls) times out and advances the retry path instead
@@ -968,7 +977,10 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   [documents/architecture/model_catalog.md](documents/architecture/model_catalog.md). The integration
   and Playwright suites assert the success surface and fail closed on `status=failed` while checking
   typed errors such as `ModelMemoryLimitExceeded` by constructor and explicit MiB quantities rather
-  than parsing human-readable text. Realness is guaranteed by construction — the engine code cannot
+  than parsing human-readable text, and — under memory-safety by construction
+  ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)) —
+  the full per-model real-inference lane completes with zero host out-of-memory kill, an over-capacity
+  model surfacing that same typed rejection rather than a `SIGKILL`. Realness is guaranteed by construction — the engine code cannot
   fabricate a result (enforced by the realness lint); delivery across substrates is owned by the
   reopened Phases 1/4/6, and rows whose real engine is not yet landed are explicit residuals. The
   union-coverage invariant ("every row real on at least one substrate") is mechanically checked under
@@ -985,6 +997,9 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - use [DEVELOPMENT_PLAN/README.md](DEVELOPMENT_PLAN/README.md) for phase order and closure rules
 - read [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
   for the "evidence, not hope" state-transition doctrine that makes races and flakes unrepresentable
+- read [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
+  for the "memory-safety by construction" doctrine that makes a host out-of-memory kill from inference
+  unrepresentable — a grant-gated, OS-bounded capped-engine subprocess
 
 ## Contributing
 

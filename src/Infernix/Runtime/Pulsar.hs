@@ -65,6 +65,10 @@ module Infernix.Runtime.Pulsar
     runResultBridgeLoop,
     sweepEagerModelCache,
     waitForEagerModelCacheReady,
+    SentinelObservation (..),
+    SentinelCensus (..),
+    classifyHeadOutcome,
+    tallyCensus,
     schemaMarkerPath,
     serviceConsumerSubscriptionType,
     serviceConsumerSubscriptionTypeForTopic,
@@ -80,7 +84,7 @@ import Control.Applicative ((<|>))
 import Control.Concurrent (forkIO, killThread, threadDelay)
 import Control.Concurrent.MVar (MVar, modifyMVar_, newMVar)
 import Control.Exception (Exception, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, try)
-import Control.Monad (filterM, forM_, forever, unless, void, when)
+import Control.Monad (forM_, forever, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.Random (getRandomBytes)
 import Data.Aeson
@@ -133,7 +137,7 @@ import Infernix.Conversation.Reducer
     stepReducer,
   )
 import Infernix.Conversation.Topic qualified as ConversationTopic
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DemoConfig (decodeDemoConfigFile, resolveInferenceMemoryBudget)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
@@ -1356,7 +1360,10 @@ drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache resultTopicVa
       Left err ->
         ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
       Right protoRequest -> do
-        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode overrides maybeEngineKVCache protoRequest
+        -- Harness-only repo-local spool path: resolve the same typed budget the
+        -- coordinator uses so admission mints the capped-engine grant identically.
+        budget <- resolveInferenceMemoryBudget paths runtimeMode
+        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode budget overrides maybeEngineKVCache protoRequest
         createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
         writeInferenceResultFile
           (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -2323,7 +2330,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
                     else memoryAdmissionRejection runtimeMode demoConfig modelIdValue decodedRequest
             publishedResult <-
               maybe
-                (publishedResultFromRequest (Just transport) paths runtimeMode overrides maybeEngineKVCache decodedRequest)
+                (publishedResultFromRequest (Just transport) paths runtimeMode (inferenceMemoryBudget demoConfig) overrides maybeEngineKVCache decodedRequest)
                 pure
                 maybeRejection
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
@@ -3641,12 +3648,91 @@ eagerModelCacheDeadline =
       Readiness.deadlineCeilingSeconds = modelBootstrapReadyWaitMaxSeconds
     }
 
+-- | The three-valued result of observing one model's `.ready` sentinel in
+-- MinIO. The warm-model-cache stall was built on collapsing this into `IO Bool`:
+-- a transport fault against a just-restarted MinIO NodePort (a reset idle
+-- keep-alive, a HEAD timeout, a @5xx@ "server not initialized", a @403@ before
+-- the object layer is ready) was coerced to the SAME @False@ as a genuine 404,
+-- so an already-staged, retained sentinel read as "absent", deflated the
+-- readiness census, and stalled an already-warm cache to the give-up deadline
+-- (the "11/16" symptom). Keeping "I could not observe it" separate from "it is
+-- absent" makes that invalid state non-constructible: no code path can turn a
+-- fault into 'SentinelAbsent'.
+data SentinelObservation
+  = SentinelPresent
+  | SentinelAbsent
+  | SentinelUnobservable !Text.Text
+
+-- | Pure classifier of a HEAD outcome into a 'SentinelObservation'. The ONLY
+-- producer of 'SentinelAbsent' is a genuine 404 (a real "object not here");
+-- an exception or a retryable server/auth status (@5xx@, @403@) is
+-- 'SentinelUnobservable', never absence. Total and network-free, so the
+-- fault-is-not-absence invariant is unit-testable without MinIO.
+classifyHeadOutcome :: Either SomeException Int -> SentinelObservation
+classifyHeadOutcome (Left ex) = SentinelUnobservable (Text.pack (displayException ex))
+classifyHeadOutcome (Right status)
+  | status == 200 = SentinelPresent
+  | status == 404 = SentinelAbsent
+  | status == 403 = SentinelUnobservable (Text.pack "MinIO HTTP 403 (object layer / IAM not ready)")
+  | status >= 500 = SentinelUnobservable (Text.pack ("MinIO HTTP " <> show status <> " (server not ready)"))
+  | otherwise = SentinelAbsent
+
+-- | Observe one object's presence three-valued (HEAD, bounded by
+-- 'minioObjectExistsTimeout'). This is the tri-state sibling of
+-- 'minioObjectExists'; the barrier below uses it so a failed observation is
+-- never laundered into a definite absence.
+observeMinioObject ::
+  Presigned.PresignedUrlConfig ->
+  Manager ->
+  Contracts.ObjectRef ->
+  IO SentinelObservation
+observeMinioObject presigned manager objectRef = do
+  now <- getCurrentTime
+  let signedUrl =
+        Presigned.unPresignedUrl
+          (Presigned.presignedHeadUrl presigned now objectRef)
+  request <- parseRequest (Text.unpack signedUrl)
+  let headRequest =
+        request
+          { method = "HEAD",
+            responseTimeout = minioObjectExistsTimeout
+          }
+  classifyHeadOutcome . fmap (statusCode . responseStatus)
+    <$> try @SomeException (httpLbs headRequest manager)
+
+-- | A census of every configured model's sentinel this poll, partitioned by the
+-- three observation outcomes. The load-bearing rule (below): a census with any
+-- 'censusUnobservable' entry is NOT a measurement, so its 'censusPresent' count
+-- is never emitted as readiness 'Progress' — a present-but-momentarily-faulting
+-- sentinel can neither mint a false 'WarmModelCacheReady' nor deflate the count.
+data SentinelCensus = SentinelCensus
+  { censusPresent :: ![Text.Text],
+    censusAbsent :: ![Text.Text],
+    censusUnobservable :: ![(Text.Text, Text.Text)]
+  }
+
+tallyCensus :: [(Text.Text, SentinelObservation)] -> SentinelCensus
+tallyCensus = foldr step (SentinelCensus [] [] [])
+  where
+    step (modelIdValue, SentinelPresent) census =
+      census {censusPresent = modelIdValue : censusPresent census}
+    step (modelIdValue, SentinelAbsent) census =
+      census {censusAbsent = modelIdValue : censusAbsent census}
+    step (modelIdValue, SentinelUnobservable reason) census =
+      census {censusUnobservable = (modelIdValue, reason) : censusUnobservable census}
+
 -- | Sprint 8.7: the warm-model-cache barrier returns typed readiness evidence
 -- rather than a bare pending list. Sprint 6.41: the hand-rolled poll/stall/ceiling
 -- loop is replaced by 'Infernix.Evidence.Readiness.awaitReadiness' (which mints
 -- the 'WarmModelCacheReady' witness from a real observation); the still-pending
 -- model ids are captured in an 'IORef' the probe writes, since the kernel's
--- 'Progress' carries only counts.
+-- 'Progress' carries only counts. Managed-state-transition hardening: the probe
+-- observes each sentinel three-valued and, when any HEAD is 'SentinelUnobservable'
+-- (the retained-second-`cluster up` idle-NodePort fault class), reports a kernel
+-- 'Readiness.Unobservable' poll — retried within the same bounded budget —
+-- instead of a fabricated pending count. So a warm-but-flaky cache is observed
+-- present on a later poll and passes, rather than stalling at "11/16" because a
+-- transient fault was mistaken for absence.
 waitForEagerModelCacheReady :: String -> [Text.Text] -> (String -> IO ()) -> IO WarmModelCacheOutcome
 waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
   let (scheme, hostPort) = splitMinioEndpoint (Text.pack minioBaseEndpoint)
@@ -3664,25 +3750,41 @@ waitForEagerModelCacheReady minioBaseEndpoint modelIds logProgress = do
   manager <- newManager tlsManagerSettings
   pendingRef <- newIORef modelIds
   let totalCount = length modelIds
-      sentinelReady modelIdValue = do
-        let sentinelObject =
-              Contracts.ObjectRef
-                { Contracts.objectBucket = "infernix-models",
-                  Contracts.objectKey = modelIdValue <> "/" <> BootstrapModels.readySentinelFilename
-                }
-        try @SomeException (minioObjectExists presigned manager sentinelObject)
-          >>= either (const (pure False)) pure
+      sentinelObjectFor modelIdValue =
+        Contracts.ObjectRef
+          { Contracts.objectBucket = "infernix-models",
+            Contracts.objectKey = modelIdValue <> "/" <> BootstrapModels.readySentinelFilename
+          }
       probe = do
-        pending <- filterM (fmap not . sentinelReady) modelIds
-        writeIORef pendingRef pending
-        let readyCount = totalCount - length pending
+        census <-
+          tallyCensus
+            <$> mapM
+              (\modelIdValue -> (,) modelIdValue <$> observeMinioObject presigned manager (sentinelObjectFor modelIdValue))
+              modelIds
+        let readyCount = length (censusPresent census)
+            -- Not-yet-confirmed-present: genuine absences plus this poll's
+            -- unobservable ids. Reported only for the caller's non-blocking
+            -- warning, never used as kernel control flow.
+            notPresent = censusAbsent census <> map fst (censusUnobservable census)
             detail = show readyCount <> "/" <> show totalCount <> " models staged"
-        if null pending
-          then pure (Right (WarmModelCacheReady ()))
-          else do
-            logProgress detail
-            pure (Left (Readiness.Progress readyCount totalCount (Text.pack detail)))
-  outcome <- Readiness.awaitReadiness eagerModelCacheDeadline probe
+        writeIORef pendingRef notPresent
+        case censusUnobservable census of
+          [] ->
+            if null (censusAbsent census)
+              then pure (Readiness.Measured (Right (WarmModelCacheReady ())))
+              else do
+                logProgress detail
+                pure (Readiness.Measured (Left (Readiness.Progress readyCount totalCount (Text.pack detail))))
+          unobservable -> do
+            let summary =
+                  detail
+                    <> "; "
+                    <> show (length unobservable)
+                    <> " sentinel HEAD(s) unobservable this poll (retrying within budget): "
+                    <> intercalate ", " (map (\(modelIdValue, reason) -> Text.unpack modelIdValue <> " (" <> Text.unpack reason <> ")") unobservable)
+            logProgress summary
+            pure (Readiness.Unobservable (Text.pack summary))
+  outcome <- Readiness.awaitReadinessObservable eagerModelCacheDeadline probe
   Readiness.foldReadiness
     (pure . WarmModelCacheAllStaged)
     (const (WarmModelCacheStillPending <$> readIORef pendingRef))
@@ -4216,8 +4318,14 @@ memoryAdmissionRejection ::
 memoryAdmissionRejection runtimeMode demoConfig modelIdValue protoRequest =
   case find ((== modelIdValue) . modelId) (models demoConfig) of
     Just model ->
-      flip (memoryAdmissionRejectionResult runtimeMode model) protoRequest
-        <$> admitModelMemory (inferenceMemoryBudget demoConfig) model
+      -- Phase 4 Sprint 4.30: admission now mints an 'Either InferenceError
+      -- MemoryGrant'. An over-budget model produces the deterministic typed
+      -- rejection result here (before the bootstrap-retry loop, so duplicate
+      -- redeliveries collapse); an admitted model returns 'Nothing' and the
+      -- execution path re-mints the grant the capped-engine kernel requires.
+      case admitModelMemory (inferenceMemoryBudget demoConfig) model of
+        Left admissionError -> Just (memoryAdmissionRejectionResult runtimeMode model admissionError protoRequest)
+        Right _grant -> Nothing
     Nothing -> Nothing
 
 memoryAdmissionRejectionResult ::
@@ -4253,16 +4361,18 @@ publishedResultFromRequest ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
+  InferenceMemoryBudget ->
   EngineCommandOverrideMap ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest maybeTransport paths runtimeMode overrides maybeEngineKVCache protoRequest = do
+publishedResultFromRequest maybeTransport paths runtimeMode budget overrides maybeEngineKVCache protoRequest = do
   domainResult <-
     executeInferenceWithModelBootstrapRetry
       maybeTransport
       paths
       runtimeMode
+      budget
       overrides
       maybeEngineKVCache
       (kvCacheRequestFromProto protoRequest)
@@ -4309,12 +4419,13 @@ executeInferenceWithModelBootstrapRetry ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
+  InferenceMemoryBudget ->
   EngineCommandOverrideMap ->
   Maybe KVCache.EngineKVCache ->
   Maybe KVCache.KVCacheRequest ->
   InferenceRequest ->
   IO (Either ErrorResponse InferenceResult)
-executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
+executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode budget overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
   firstResult <- runOnce
   case firstResult of
     Left errorValue
@@ -4328,6 +4439,7 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode overrid
       executeInferenceWithKVCache
         paths
         runtimeMode
+        budget
         overrides
         maybeEngineKVCache
         maybeKVCacheRequest

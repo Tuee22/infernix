@@ -12,6 +12,7 @@ import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Lazy qualified as Lazy
+import Data.Either (isLeft, isRight)
 import Data.IORef qualified as IORef
 import Data.List (find, isInfixOf, isPrefixOf, nub)
 import Data.Map.Strict qualified as Map
@@ -110,6 +111,7 @@ import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
+import Infernix.Lint.HaskellStyle (unboundedEngineSpawnViolations)
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
@@ -129,9 +131,12 @@ import Infernix.Runtime.Pulsar
     DemoClientMessagePublication (..),
     DownloadOutcome (..),
     PulsarWebSocketBase (..),
+    SentinelCensus (..),
+    SentinelObservation (..),
     authorizedGeneratedResultObjectRefs,
     buildServiceConsumerSocketPath,
     classifyDownloadStatus,
+    classifyHeadOutcome,
     domainResultToProto,
     drainTopic,
     inferenceRequestProducerNameForFields,
@@ -152,6 +157,7 @@ import Infernix.Runtime.Pulsar
     serviceConsumerSubscriptionType,
     serviceConsumerSubscriptionTypeForTopic,
     startupTopicsForDemoConfig,
+    tallyCensus,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
   )
@@ -981,7 +987,7 @@ main = do
         (inferenceMemoryBudget decodedAppleConfig == appleUnitInferenceMemoryBudget)
         "apple host demo-config preserves the typed inference memory budget"
       assert
-        (all ((> 0) . modelRamFootprintMib) (models decodedAppleConfig))
+        (all ((> 0) . modelMemoryFootprintMib . modelRamFootprint) (models decodedAppleConfig))
         "every apple catalog model declares a positive RAM footprint"
       assert
         (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = appleUnitInferenceMemoryBudget})))
@@ -995,24 +1001,62 @@ main = do
       case listToMaybe (models decodedAppleConfig) of
         Nothing -> fail "expected apple catalog model for admission tests"
         Just sampleModel -> do
-          assert
-            (isNothing (admitModelMemory appleUnitInferenceMemoryBudget sampleModel))
-            "admitModelMemory admits an in-budget model"
-          case admitModelMemory smallAppleUnitInferenceMemoryBudget sampleModel of
-            Just ModelMemoryLimitExceeded {inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
+          -- Phase 4 Sprint 4.30 — admission mints a typed 'MemoryGrant' whose
+          -- ceiling equals the admitted model footprint; over-budget is a typed
+          -- 'Left', not a proof-free 'Nothing'.
+          case admitModelMemory appleUnitInferenceMemoryBudget sampleModel of
+            Right grant ->
               assert
-                (inferenceErrorRequiredMib == modelRamFootprintMib sampleModel && inferenceErrorAvailableMib == 512)
+                (memoryCeilingMib (grantMemoryCeiling grant) == modelMemoryFootprintMib (modelRamFootprint sampleModel))
+                "admitModelMemory mints a grant whose ceiling equals the model footprint"
+            Left _ -> fail "admitModelMemory should admit an in-budget model"
+          case admitModelMemory smallAppleUnitInferenceMemoryBudget sampleModel of
+            Left ModelMemoryLimitExceeded {inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
+              assert
+                (inferenceErrorRequiredMib == modelMemoryFootprintMib (modelRamFootprint sampleModel) && inferenceErrorAvailableMib == 512)
                 "admitModelMemory reports explicit required and available MiB"
               assert
-                (inferenceErrorResource == UnifiedHostRam && inferenceErrorSource == "unit-test")
+                (inferenceErrorResource == UnifiedHostRam && inferenceErrorSource == "host-memory-partition-inference-capacity")
                 "admitModelMemory reports the budget resource and source"
             _ -> fail "admitModelMemory should reject an over-budget model"
           assert
-            (isJust (admitModelMemory zeroAppleUnitInferenceMemoryBudget sampleModel))
+            (isLeft (admitModelMemory zeroAppleUnitInferenceMemoryBudget sampleModel))
             "admitModelMemory keeps enforced zero budgets active"
           assert
-            (isNothing (admitModelMemory (UnenforcedMemoryBudget "unit-test") sampleModel))
-            "admitModelMemory admits when the budget is explicitly unenforced"
+            (isRight (admitModelMemory (SubstrateEnforcedBudget (PodMemoryLimit PodRam "unit-test" 65536)) sampleModel))
+            "admitModelMemory admits an in-budget model on a substrate-enforced budget"
+      -- Phase 4 Sprint 4.31 — the checked partition rejects oversubscription and
+      -- an undersized headroom; the required footprint rejects a non-positive value.
+      assert
+        (isRight (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
+        "mkHostMemoryPartition accepts a fitting physical/vmReserve/headroom split"
+      assert
+        (isLeft (mkHostMemoryPartition 8192 8192 minHostHeadroomMib))
+        "mkHostMemoryPartition rejects a vmReserve + headroom split that oversubscribes physical RAM"
+      assert
+        (isLeft (mkHostMemoryPartition 65536 0 (minHostHeadroomMib - 1)))
+        "mkHostMemoryPartition rejects a headroom below the co-tenant floor"
+      assert
+        (either (const False) ((== 65536 - 49152 - minHostHeadroomMib) . hostPartitionInferenceCapacityMib) (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
+        "mkHostMemoryPartition derives inference capacity as physical - vmReserve - headroom"
+      assert
+        (isLeft (mkModelMemoryFootprint 0) && isLeft (mkModelMemoryFootprint (-1)))
+        "mkModelMemoryFootprint rejects a non-positive footprint"
+      assert
+        (isRight (mkModelMemoryFootprint 4096))
+        "mkModelMemoryFootprint accepts a positive footprint"
+      -- Phase 6 Sprint 6.42 — the engine-spawn capability-gating lint fires on a
+      -- raw engine spawn in a guarded production file, exempts the capped-engine
+      -- kernel (the sole legitimate engine-spawn surface), and passes a clean line.
+      assert
+        (not (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  (_, _, _, ph) <- createProcess spec")])))
+        "unboundedEngineSpawnViolations fires on an injected raw createProcess in a guarded file"
+      assert
+        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine.hs" [(1, "  (_, _, _, ph) <- createProcess spec")]))
+        "unboundedEngineSpawnViolations exempts the capped-engine kernel module"
+      assert
+        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  result <- awaitEngineOutcome handle")]))
+        "unboundedEngineSpawnViolations passes a line without a raw engine spawn"
       assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
       assert
@@ -1973,6 +2017,71 @@ main = do
   assert
     (Readiness.foldReadiness (const False) (const False) (const True) stalledOutcome)
     "awaitReadiness with no new progress resolves as Expired past the stall window"
+  -- Managed-state-transition hardening (warm-model-cache "11/16" stall): an
+  -- Unobservable poll (a transient MinIO HEAD fault) must not be mistaken for a
+  -- not-ready measurement. It is retried within budget, so a present-but-
+  -- momentarily-faulting cache still resolves Ready rather than plateauing at a
+  -- fabricated count until the give-up deadline.
+  observableStepRef <- IORef.newIORef (0 :: Int)
+  let scriptedObservableStep faults = do
+        n <- IORef.readIORef observableStepRef
+        IORef.writeIORef observableStepRef (n + 1)
+        pure
+          ( if n < faults
+              then Readiness.Unobservable (Text.pack "transient MinIO HEAD fault")
+              else Readiness.Measured (Right n)
+          )
+  transientFaultOutcome <-
+    Readiness.awaitReadinessObservable (Readiness.Deadline 0 30 30) (scriptedObservableStep 5)
+  assert
+    (Readiness.foldReadiness (const True) (const False) (const False) transientFaultOutcome)
+    "awaitReadinessObservable retries Unobservable polls and still yields Ready once the cache is observed present (warm-cache 11/16 stall regression)"
+  persistentUnobservableOutcome <-
+    Readiness.awaitReadinessObservable
+      (Readiness.Deadline 0 3 100)
+      (pure (Readiness.Unobservable (Text.pack "MinIO unreachable")) :: IO (Readiness.PollOutcome Int))
+  assert
+    (Readiness.foldReadiness (const False) (const False) (const True) persistentUnobservableOutcome)
+    "awaitReadinessObservable gives up bounded (Expired) when every poll is Unobservable past the stall window"
+  -- Sentinel observation is three-valued, so a transport fault or a
+  -- not-yet-ready server status can never be laundered into a definite absence
+  -- (the root invalid state behind the warm-cache stall).
+  let observationTag :: SentinelObservation -> String
+      observationTag obs = case obs of
+        SentinelPresent -> "present"
+        SentinelAbsent -> "absent"
+        SentinelUnobservable _ -> "unobservable"
+  assert
+    (observationTag (classifyHeadOutcome (Right 200)) == "present")
+    "classifyHeadOutcome: HTTP 200 is SentinelPresent"
+  assert
+    (observationTag (classifyHeadOutcome (Right 404)) == "absent")
+    "classifyHeadOutcome: HTTP 404 is the ONLY absence"
+  assert
+    (observationTag (classifyHeadOutcome (Right 503)) == "unobservable")
+    "classifyHeadOutcome: HTTP 503 (server not ready) is Unobservable, never absent"
+  assert
+    (observationTag (classifyHeadOutcome (Right 403)) == "unobservable")
+    "classifyHeadOutcome: HTTP 403 (IAM not ready) is Unobservable, never absent"
+  assert
+    (observationTag (classifyHeadOutcome (Left (toException (userError "connection reset by peer")))) == "unobservable")
+    "classifyHeadOutcome: a transport exception is Unobservable, never absent (the warm-cache root invalid state)"
+  let sampleCensus =
+        tallyCensus
+          [ (Text.pack "a", SentinelPresent),
+            (Text.pack "b", SentinelAbsent),
+            (Text.pack "c", SentinelUnobservable (Text.pack "reset")),
+            (Text.pack "d", SentinelPresent)
+          ]
+  assert
+    (length (censusPresent sampleCensus) == 2)
+    "tallyCensus partitions present sentinels"
+  assert
+    (censusAbsent sampleCensus == [Text.pack "b"])
+    "tallyCensus partitions genuinely-absent sentinels apart from unobservable ones"
+  assert
+    (map fst (censusUnobservable sampleCensus) == [Text.pack "c"])
+    "tallyCensus keeps unobservable sentinels distinct from absence"
   leaseLog <- IORef.newIORef ([] :: [String])
   let leaseAcquire =
         Lease.Acquire
@@ -3664,37 +3773,29 @@ assertLinuxHostBatchForwarding paths = do
 appleUnitInferenceRamBudgetMib :: Int
 appleUnitInferenceRamBudgetMib = 65536
 
+-- | Phase 4 Sprint 4.31 — a host-enforced budget whose checked partition holds a
+-- given inference capacity (synthesized with the headroom floor and no VM
+-- reserve so it round-trips through the Dhall codec).
+hostEnforcedUnitBudget :: Int -> InferenceMemoryBudget
+hostEnforcedUnitBudget capacityMib = HostEnforcedBudget (hostPartitionForCapacity capacityMib)
+
 appleUnitInferenceMemoryBudget :: InferenceMemoryBudget
-appleUnitInferenceMemoryBudget =
-  EnforcedMemoryBudget
-    { memoryBudgetResource = UnifiedHostRam,
-      memoryBudgetSource = "unit-test",
-      memoryBudgetAvailableMib = appleUnitInferenceRamBudgetMib
-    }
+appleUnitInferenceMemoryBudget = hostEnforcedUnitBudget appleUnitInferenceRamBudgetMib
 
 smallAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
-smallAppleUnitInferenceMemoryBudget =
-  EnforcedMemoryBudget
-    { memoryBudgetResource = UnifiedHostRam,
-      memoryBudgetSource = "unit-test",
-      memoryBudgetAvailableMib = 512
-    }
+smallAppleUnitInferenceMemoryBudget = hostEnforcedUnitBudget 512
 
 zeroAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
-zeroAppleUnitInferenceMemoryBudget =
-  EnforcedMemoryBudget
-    { memoryBudgetResource = UnifiedHostRam,
-      memoryBudgetSource = "unit-test",
-      memoryBudgetAvailableMib = 0
-    }
+zeroAppleUnitInferenceMemoryBudget = hostEnforcedUnitBudget 0
 
 linuxCpuUnitInferenceMemoryBudget :: InferenceMemoryBudget
 linuxCpuUnitInferenceMemoryBudget =
-  EnforcedMemoryBudget
-    { memoryBudgetResource = PodRam,
-      memoryBudgetSource = "cluster-engine-pod-memory-limit",
-      memoryBudgetAvailableMib = linuxEngineInferenceRamBudgetMib
-    }
+  SubstrateEnforcedBudget
+    PodMemoryLimit
+      { podMemoryLimitResource = PodRam,
+        podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+        podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
+      }
 
 unitWebappDaemonConfig :: RuntimeMode -> [Text.Text] -> Text.Text -> DaemonConfig
 unitWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =

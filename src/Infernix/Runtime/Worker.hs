@@ -41,6 +41,11 @@ import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescripto
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
 import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
+import Infernix.Runtime.CappedEngine
+  ( EngineOutcome (EngineExceededCeiling, EngineExited),
+    runCappedProcess,
+    runCappedStdioEngine,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (readClusterStateFile)
@@ -57,11 +62,10 @@ import System.IO (hClose, openTempFile)
 import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
 import System.Process
-  ( CreateProcess (cwd, env, std_err, std_in, std_out),
+  ( CreateProcess (cwd, env, std_err),
     StdStream (CreatePipe),
     createProcess,
     proc,
-    readCreateProcessWithExitCode,
     shell,
     waitForProcess,
   )
@@ -96,25 +100,46 @@ data WorkerModelCacheConfig = WorkerModelCacheConfig
   }
   deriving (Eq, Show)
 
+-- | Phase 4 Sprint 4.30 — the engine dispatch requires a 'MemoryGrant'. The
+-- grant is minted by 'admitModelMemory' in the runtime layer and threaded to the
+-- capped-engine kernel, so an inference subprocess launched without an admission
+-- proof is not a constructible term.
 runInferenceWorker ::
   Paths ->
   RuntimeMode ->
   EngineCommandOverrideMap ->
+  MemoryGrant ->
   ModelDescriptor ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runInferenceWorker paths runtimeMode overrides model request cacheObservation =
+runInferenceWorker paths runtimeMode overrides grant model request cacheObservation =
   case engineBindingAdapterType engineBinding of
     "python-stdio" ->
       ensurePythonEngineSetupReady paths runtimeMode engineBinding
-        >> runPythonWorker paths runtimeMode overrides model engineBinding request cacheObservation
+        >> runPythonWorker paths runtimeMode overrides grant model engineBinding request cacheObservation
     "native-process-runner" ->
-      runNativeWorker paths runtimeMode model engineBinding request cacheObservation
+      runNativeWorker paths runtimeMode grant model engineBinding request cacheObservation
     adapterType ->
       pure (unsupportedEngineRunner engineBinding adapterType)
   where
     engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
+
+-- | Phase 4 Sprint 4.30 — the 'ErrorResponse' the capped-engine kernel raises on
+-- a runtime ceiling breach. The runtime rebuilds this into a typed
+-- 'ModelMemoryLimitExceeded' result; the resident footprint that breached the
+-- ceiling is named for the operator log.
+modelCeilingBreachError :: ModelDescriptor -> MemoryCeiling -> ErrorResponse
+modelCeilingBreachError model ceilingValue =
+  ErrorResponse
+    { errorCode = modelMemoryLimitExceededErrorCode,
+      message =
+        "inference for "
+          <> modelId model
+          <> " breached its admitted resident-memory ceiling of "
+          <> Text.pack (show (memoryCeilingMib ceilingValue))
+          <> " MiB and was terminated by the capped-engine kernel"
+    }
 
 unsupportedEngineRunner :: EngineBinding -> Text -> Either ErrorResponse Text
 unsupportedEngineRunner engineBinding adapterType =
@@ -132,30 +157,30 @@ runPythonWorker ::
   Paths ->
   RuntimeMode ->
   EngineCommandOverrideMap ->
+  MemoryGrant ->
   ModelDescriptor ->
   EngineBinding ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runPythonWorker paths runtimeMode overrides model engineBinding request _cacheObservation = do
+runPythonWorker paths runtimeMode overrides grant model engineBinding request _cacheObservation = do
   let maybeOverride = lookupEngineCommandOverride overrides engineBinding
   invocation <- resolvePythonInvocation paths engineBinding maybeOverride
   maybeModelCacheConfig <- loadWorkerModelCacheConfig paths runtimeMode
   let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request)
-  workerResult <- runWorkerInvocation paths invocation workerRequest
+  workerResult <- runWorkerInvocation paths grant model invocation workerRequest
   pure (workerResultToOutput workerResult)
 
-workerResultToOutput :: Either String ByteString8.ByteString -> Either ErrorResponse Text
+workerResultToOutput :: Either ErrorResponse ByteString8.ByteString -> Either ErrorResponse Text
 workerResultToOutput workerResult =
   case workerResult of
     Right encodedResponse ->
       decodedWorkerOutput encodedResponse
-    Left message ->
-      Left
-        ErrorResponse
-          { errorCode = "worker_failed",
-            message = Text.pack message
-          }
+    -- The typed `ErrorResponse` (a ceiling breach carrying
+    -- `modelMemoryLimitExceededErrorCode`, or a plain `worker_failed`) passes
+    -- through unchanged so the runtime can discriminate on `errorCode`.
+    Left errResponse ->
+      Left errResponse
 
 decodedWorkerOutput :: ByteString8.ByteString -> Either ErrorResponse Text
 decodedWorkerOutput encodedResponse =
@@ -434,8 +459,8 @@ perEngineAdapterModule engineBinding =
 -- output is exercised on cohort hardware (Wave I Stage 2); here the
 -- dispatch wiring and the binary-by-absolute-path contract compile and
 -- unit-check.
-runNativeWorker :: Paths -> RuntimeMode -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
-runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation =
+runNativeWorker :: Paths -> RuntimeMode -> MemoryGrant -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
+runNativeWorker paths _runtimeMode grant model engineBinding request _cacheObservation =
   case nativeRunnerBinaryRelPath (engineBindingAdapterId engineBinding) of
     Nothing ->
       pure
@@ -477,15 +502,23 @@ runNativeWorker paths _runtimeMode model engineBinding request _cacheObservation
             Right maybeInputFile -> do
               maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
               processEnvironment <- workerProcessEnvironment paths []
-              (exitCode, stdoutOutput, stderrOutput) <-
-                readCreateProcessWithExitCode
+              -- Phase 4 Sprint 4.30: the native engine subprocess runs only
+              -- through the capped-engine kernel under the admitted grant, so its
+              -- resident memory is bounded to the admitted ceiling. A ceiling
+              -- breach is a clean typed terminal failure, never a host OOM.
+              (outcome, exitCode, stdoutOutput, stderrOutput) <-
+                runCappedProcess
+                  grant
                   ( (proc binaryPath (nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir maybeInputFile))
                       { cwd = Just installRoot,
                         env = Just processEnvironment
                       }
                   )
                   ""
-              nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
+              case outcome of
+                EngineExceededCeiling ceilingValue -> pure (Left (modelCeilingBreachError model ceilingValue))
+                EngineExited _ ->
+                  nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
 
 -- | Native runners participate in the model-bootstrap protocol: the first
 -- invocation reports a cache miss, the coordinator populates MinIO, and the
@@ -964,40 +997,42 @@ safeSegmentChar character =
     || character == '_'
     || character == '.'
 
-runWorkerInvocation :: Paths -> WorkerInvocation -> ByteString.ByteString -> IO (Either String ByteString.ByteString)
-runWorkerInvocation paths invocation inputPayload = do
+-- | Phase 4 Sprint 4.30 — the Python stdio engine subprocess runs only through
+-- the capped-engine kernel under the admitted grant. A ceiling breach surfaces
+-- with the reserved 'modelMemoryLimitExceededErrorCode' marker so the runtime
+-- rebuilds a typed 'ModelMemoryLimitExceeded' result rather than a generic
+-- worker failure.
+runWorkerInvocation :: Paths -> MemoryGrant -> ModelDescriptor -> WorkerInvocation -> ByteString.ByteString -> IO (Either ErrorResponse ByteString.ByteString)
+runWorkerInvocation paths grant model invocation inputPayload = do
   processEnvironment <- workerProcessEnvironment paths []
   let processValue =
         (processFor invocation)
           { cwd = Just (workerInvocationCwd invocation),
             env = Just processEnvironment
           }
-  (maybeWorkerInput, maybeWorkerOutput, maybeWorkerError, workerHandle) <-
-    createProcess
-      processValue
-        { std_in = CreatePipe,
-          std_out = CreatePipe,
-          std_err = CreatePipe
-        }
-  case (maybeWorkerInput, maybeWorkerOutput, maybeWorkerError) of
-    (Just workerInput, Just workerOutput, Just workerError) -> do
-      ByteString.hPut workerInput inputPayload
-      hClose workerInput
-      stdoutOutput <- ByteString.hGetContents workerOutput
-      stderrOutput <- ByteString.hGetContents workerError
-      exitCode <- waitForProcess workerHandle
-      pure $
-        case exitCode of
-          ExitSuccess ->
-            Right stdoutOutput
-          _ ->
-            Left
-              ( "engine worker failed: "
-                  <> describeInvocation invocation
-                  <> stderrSuffix stderrOutput
-              )
-    _ ->
-      pure (Left ("engine worker failed: " <> describeInvocation invocation <> "\nfailed to create worker stdio pipes"))
+  (outcome, _exitCode, stdoutOutput, stderrOutput) <-
+    runCappedStdioEngine grant processValue inputPayload
+  pure $
+    case outcome of
+      -- A ceiling breach carries the reserved `modelMemoryLimitExceededErrorCode`
+      -- in the `ErrorResponse` (via `modelCeilingBreachError`), exactly like the
+      -- native path, so the runtime rebuilds the typed `ModelMemoryLimitExceeded`
+      -- result rather than a generic worker failure.
+      EngineExceededCeiling ceilingValue ->
+        Left (modelCeilingBreachError model ceilingValue)
+      EngineExited ExitSuccess ->
+        Right stdoutOutput
+      EngineExited _ ->
+        Left
+          ErrorResponse
+            { errorCode = "worker_failed",
+              message =
+                Text.pack
+                  ( "engine worker failed: "
+                      <> describeInvocation invocation
+                      <> stderrSuffix stderrOutput
+                  )
+            }
 
 processFor :: WorkerInvocation -> CreateProcess
 processFor invocation =

@@ -1565,6 +1565,33 @@ test("browser per-model smoke matrix exercises every catalog model", async ({ pa
     }
 
     if (terminalResult.status === "failed") {
+      // Phase 4 Sprint 4.30: a runtime resident-ceiling breach — an admitted
+      // model (footprint <= inference capacity) whose actual RSS exceeded its
+      // footprint, terminated by the capped-engine watchdog — is a valid typed
+      // fail-closed that the static footprint-vs-budget prediction above cannot
+      // foresee (source "capped-engine-resident-ceiling", distinct from the
+      // pre-admission "host-memory-partition-inference-capacity"). Accept the
+      // rendered capacity message rather than treating it as an unexpected failure.
+      const runtimeError = terminalResult.result?.inferenceResultError;
+      if (
+        runtimeError &&
+        runtimeError.modelMemoryLimitExceededSource === "capped-engine-resident-ceiling" &&
+        runtimeError.modelMemoryLimitExceededModelId === modelId
+      ) {
+        const observedMemoryError = {
+          modelId,
+          requiredMib: runtimeError.modelMemoryLimitExceededRequiredMib,
+          availableMib: runtimeError.modelMemoryLimitExceededAvailableMib,
+          resource: runtimeError.modelMemoryLimitExceededResource,
+          source: runtimeError.modelMemoryLimitExceededSource,
+        };
+        await expect(
+          page.locator(`.chat-context-item.active[data-context-id="${contextId}"]`),
+          `context ${contextId} should remain selected before rendering ${modelId}'s runtime capacity result`,
+        ).toBeVisible({ timeout: 10000 });
+        await expectCapacityResultRendered(page, wsFrames, contextId, modelId, observedMemoryError, userPromptMessageId);
+        continue;
+      }
       throw new Error(
         `Model ${modelId} returned an unexpected failed inference result for prompt ${promptText}: ${JSON.stringify(
           terminalResult.frame,
@@ -1636,19 +1663,43 @@ function expectedResultRenderKind(model) {
   return "text";
 }
 
+// Phase 4 Sprint 4.31: the enforcer-named budget. A host-enforced budget draws
+// its admission capacity from the checked HostMemoryPartition's inference
+// capacity (resource unified-host-ram); a substrate-enforced budget draws from
+// the descriptive PodMemoryLimit. (The pre-4.31 flat { kind: "enforced",
+// availableMib } shape is gone.)
+function inferenceMemoryBudgetAdmission(budget) {
+  if (!budget) return null;
+  if (budget.kind === "host-enforced") {
+    return {
+      availableMib: Number(budget.partition?.inferenceCapacityMib),
+      resource: "unified-host-ram",
+      source: "host-memory-partition-inference-capacity",
+    };
+  }
+  if (budget.kind === "substrate-enforced") {
+    return {
+      availableMib: Number(budget.podLimit?.limitMib),
+      resource: budget.podLimit?.resource,
+      source: budget.podLimit?.source,
+    };
+  }
+  return null;
+}
+
 function expectedModelMemoryLimitExceeded(model, demoConfig) {
-  const budget = demoConfig?.inferenceMemoryBudget;
-  if (!budget || budget.kind !== "enforced") return null;
+  const admission = inferenceMemoryBudgetAdmission(demoConfig?.inferenceMemoryBudget);
+  if (!admission) return null;
   const requiredMib = Number(model?.modelRamFootprintMib);
-  const availableMib = Number(budget.availableMib);
+  const availableMib = admission.availableMib;
   if (!Number.isFinite(requiredMib) || !Number.isFinite(availableMib)) return null;
   if (requiredMib <= availableMib) return null;
   return {
     modelId: model.modelId,
     requiredMib,
     availableMib,
-    resource: budget.resource,
-    source: budget.source,
+    resource: admission.resource,
+    source: admission.source,
   };
 }
 

@@ -84,6 +84,129 @@ retained-state teardown.
 | T | Apple Silicon + Linux CPU/GPU | **Typed resource memory admission and inference errors (Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, Phase 6 Sprint 6.38).** Stage 1 code-side closure is complete on 2026-07-09: pure `InferenceMemoryBudget` and `InferenceError` ADTs, typed `ResultPayload`/protobuf/storage/result-bridge/browser-contract error branch, no catalog-wide over-budget startup failure, Apple enforced-zero budget semantics without hardcoded floors, Linux CPU pod-limit admission, Linux GPU VRAM admission, browser rendering of `ModelMemoryLimitExceeded` from explicit MiB fields, and integration classification by constructor/quantity rather than parsed text. Machine-independent validation on the Linux outer-container lane: `./bootstrap/linux-cpu.sh build` passed; `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test lint` passed; `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit` passed Haskell unit plus web `74/74`; `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`, and `infernix docs check` passed on the rebuilt image; a source-bound `cabal build test:infernix-integration` compile preflight passed. Later CPU reruns repeatedly passed the full integration lane and proved typed over-budget payloads in the browser matrix, while surfacing browser render races around active-context snapshots/patches. The 2026-07-12 rebuilt image `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` fixed the tagged `InferenceError` WebSocket envelope and passed build, unit (Haskell plus web `83/83`), and full routed `linux-cpu` E2E `16/16`, including the per-model browser matrix and typed capacity-message path. The selected `linux-gpu` closure then passed on rebuilt image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` (created `2026-07-12T03:52:10.703037529-04:00`) through `./bootstrap/linux-gpu.sh test`: Haskell style, Python checks, Haskell unit, web `83/83`, full live integration, HA/recovery, and routed Playwright `16/16` in 17.1 minutes. Integration and browser matrix rows exercised typed GPU VRAM admission (`availableMib = 4096`) for over-budget rows while smaller rows continued; warm-cache warnings remained non-blocking (`music-omnizart` upstream 403, plus large lazy-fallback rows). Engine images used by the run: vLLM `sha256:a104965a23de389f8da6a86da9fe20c15fdf20c8cfb0c2c85c245d601bdae6f4`, PyTorch `sha256:c00fa185f82644efa9270e528a4f5b82b02746160709dbea6365b29393432769`, Diffusers `sha256:a4a5064a2937a155ef881bc9410cb3c2340cec2d8a32fca598a5016cfe0d6fd0`. | Closed | 2026-07-12 |
 | U | Apple Silicon + Linux CPU/GPU | **Phase 9 UAT auth residual — Keycloak SSO logout and admin account switching (Sprint 9.9).** Stage 1 code-side closure is complete on 2026-07-09: the UAT issue is diagnosed as local-only Sign out leaving the Keycloak SSO browser session alive, which could silently re-enter a prior self-registered non-admin session when the user tried the separate admin credentials. `web/src/Infernix/Web/Auth.js` now keeps Keycloak's `id_token`, clears local token/PKCE/refresh/operator-cookie state, and starts the Keycloak OIDC logout endpoint with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`; `web/src/Main.purs` routes the Sign out button through that logout redirect after closing local app state; `web/playwright/inference.spec.js` now requires the login prompt after Sign out and adds a regression that switches from non-admin to the hardcoded admin account and sees the admin marker/ribbon. The 2026-07-12 `linux-cpu` routed run on image `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` passed full Playwright `16/16`, including the Sprint 9.9 logout/account-switching specs on the live edge. The selected `linux-gpu` rerun on image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` then passed full routed Playwright `16/16`, including login-prompt-after-sign-out, non-admin-to-admin account switching, RBAC/admin-surface denial, personal-dashboard isolation, artifact coverage, and the per-model browser matrix. | Closed | 2026-07-12 |
 | V | Apple Silicon + Linux CPU | **Managed-State-Transition Doctrine reopen (2026-07-15) + Bounded-Command Application & Bounded-HTTP reopen (2026-07-19) — single-accelerator + `linux-cpu` cohort sign-off.** Closes both queued reopen waves over one frozen worktree. Sprints: MST (0.13, 1.16, 2.14, 3.14, 4.28, 5.12, 6.39, 7.29, 8.7, 9.10) + BC/HTTP (0.14, 1.17, 3.15, 4.29, 6.40, 6.41). Sprint 6.41's readiness-wait migration was completed here — the twelve remaining hand-rolled `go n` waits across `Cluster.hs` / `Runtime/Pulsar.hs` / `CLI.hs` folded onto `Infernix.Evidence.Readiness.awaitReadiness` under the shared `budgetDeadline` bridge, plus the `threadDelayViolations` lint gate — and was adversarially reviewed (two behavior-divergence findings resolved: `waitForHarborPostgresPodsReady` skips its destructive repair on the final poll exactly as the original did, and `budgetDeadline` is exact for all `attempts >= 0`). All 16 sprints' claimed implementation paths were verified present in the worktree. **Stage 1 machine-independent (apple-silicon):** `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, `cabal test infernix-haskell-style` (incl. the new `threadDelayViolations` readability rule + cabal-format), `infernix lint files/docs/proto/chart`, `infernix docs check`, `poetry run check-code`, and web `83/83` — all green. **Stage 2 apple-silicon (host-native `./.build/infernix test all`):** haskell-style/unit/web `83/83`; integration PASS — the full 16-model per-model real-inference lane with zero OS OOM-kill (transformers `llm-smollm2-safetensors`, llama.cpp Metal `llm-tinyllama-gguf`, MLX `llm-qwen15-mlx`, whisper.cpp + CTranslate2 speech, Core ML + ONNX basic-pitch, PyTorch demucs/open-unmix/bark, `music-mt3-infer`/`music-mr-mt3`/`music-omnizart`, Core ML + SDXL-Turbo diffusion, Audiveris) plus `Exclusive`/`Shared` subscription enforcement, backlog/backpressure, cache/service/durable topics, and the HA/lifecycle cycles; e2e routed Playwright **16/16** (per-model browser matrix 9.9 m + Phase 9 RBAC + Sprint 9.9 SSO logout/account-switching + artifact upload/preview/download). Clean teardown, harness config restored. **Stage 2 linux-cpu (`./bootstrap/linux-cpu.sh build && test` in-container on the native-arm64 colima daemon):** haskell-style/unit (Haskell + web) PASS; integration PASS — 6 real-inference rows (LLMs, whisper.cpp/CT2 speech, ONNX basic-pitch) plus the 6 over-budget rows (demucs/open-unmix `requiredMib = 8192`, MT3×2/omnizart `6144`, bark `5120`) cleanly typed-admission-rejected as `InferenceError.ModelMemoryLimitExceeded { availableMib = 4096, resource = PodRam, source = "cluster-engine-pod-memory-limit" }` (Sprint 4.27/5.11/6.38), cache/service/durable topics, full HA/chaos (pool placement, backlog/backpressure, frontend/coordinator/engine pod replacement, node drain, bootstrap failover/dedup), throughput (`totalPrompts = 12`, `p95Seconds = 287.58`), platform recovery (Harbor/MinIO/Pulsar/PostgreSQL), lifecycle rebinding, anti-affinity, and demo-off; e2e routed Playwright **16/16** (per-model browser matrix 5.7 m + the same auth/RBAC/artifact suite). **Cohort-surfaced fixes recorded here:** (1) the Apple native-engine `infernix internal materialize-metal-engines` step is a required pre-`test all` prerequisite — the run correctly fail-closed on the absent `llama-cli` before the engines were materialized (realness contract holding); (2) the pytorch-engine `mt3-infer` pin was uncapped (`>=0.1.3`) and had drifted to 0.2.0 (a tensor-shape regression in MT3 transcription), capped to `>=0.1.3,<0.2` — the Wave O/P/R/S-validated 0.1.3, torch/transformers unchanged, the stale `test/unit/Spec.hs` golden assertion updated in lockstep; (3) the pytorch-engine `demucs` pin was uncapped and had drifted to 4.1.0, which pulls `sphn` (no linux-aarch64 wheel → its from-source `audiopus_sys`/CMake build fails on the arm64 Linux CPU lane) — the linux-cpu group is marker-scoped to `demucs >=4.0,<4.1` (demucs 4.0.1, sphn-free; poetry collapsed the universal lock to 4.0.1; apple's demucs row validated with 4.1.0, which ships a macOS-arm64 wheel, and 4.0.1 is the conservative adapter-unchanged predecessor); (4) the `docker/Dockerfile` engine-venv install block silently masked a `poetry install` failure via a trailing `;`-chained `printf` — changed to `&&` so a venv-install failure fails the build (fail-closed). | Closed | 2026-07-20 |
+| W | Apple Silicon + Linux CPU | **Memory-safety-by-construction reopen (2026-07-21) — code-side closure of Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, then the Stage-2 behavioral proof. Apple Stage 2 behavioral evidence GREEN (2026-07-21); a clean single `test all` and the `linux-cpu` lane remain.** Sprint 4.30 grant-gated capped-engine kernel (`admitModelMemory :: … -> Either InferenceError MemoryGrant`; the only engine-spawn path requires the grant and bounds resident memory to the admitted `MemoryCeiling`; macOS `proc_pid_rusage` watchdog + process-group SIGKILL; Linux pod-cgroup/VRAM-OOM exit classifier), Sprint 4.31 checked `HostMemoryPartition` (physical = vmReserve + hostHeadroom + inferenceCapacity, rejecting oversubscription; headroom covering OS + routed-E2E browser) + required `ModelMemoryFootprint` newtype + budget-enforcer split (`HostEnforcedBudget HostMemoryPartition` \| `SubstrateEnforcedBudget PodMemoryLimit`, dropping `UnenforcedMemoryBudget`), and Phase 6 Sprint 6.42 `unboundedEngineSpawnViolations` lint. Phase 0 Sprint 0.15 (doctrine doc + governance mirror) is doc-only and already `Done`; the Phase 4/6 code is now **implemented and Stage 1 (the machine-independent gate set) is GREEN (2026-07-21)**: `cabal build all` `-Wall -Werror`, `cabal test infernix-unit` (grant-mint + partition-oversubscription/headroom-floor + footprint-non-positive + lint negative-test), `cabal test infernix-haskell-style` (incl. `unboundedEngineSpawnViolations`), `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code` all pass on this Apple host. Stage 2 is the single-accelerator (apple-silicon) plus `linux-cpu` full-suite `infernix test all` behavioral proof: an over-capacity catalog completes with **zero host OOM-kill** and every over-budget row is cleanly typed-rejected as `InferenceError.ModelMemoryLimitExceeded` by the capped-engine kernel (macOS `proc_pid_rusage` watchdog on the Apple lane, pod-cgroup OOM-exit classifier on `linux-cpu`). | Open — memory-safety Stage 1 GREEN (2026-07-21) + apple Stage 2 behavioral GREEN; the clean-single-`test all` residual's flake diagnosed as a representable invalid state and fixed by construction (Observable-Readiness Sprints 1.18/8.8, code-side closed 2026-07-22); behavioral re-run pending | — |
+
+**Wave W status 2026-07-21 (Open — Stage 1 GREEN; Stage 2 pending).** The memory-safety-by-construction
+reopen opened with the Phase 0 Sprint 0.15 doctrine doc + governance mirror landed (doc-only,
+machine-independent, `Done`). The enforcing code is now **implemented and code-side closed**: the Phase 4
+Sprint 4.30 `MemoryGrant`-gated capped-engine kernel (`Infernix.Runtime.CappedEngine.withCappedEngine`
++ the `proc_pid_rusage` watchdog / OOM-exit classifier, raw engine spawns retired from
+`runNativeWorker` / `runWorkerInvocation`), the Phase 4 Sprint 4.31 checked `HostMemoryPartition` /
+required `ModelMemoryFootprint` / budget-enforcer split (`UnenforcedMemoryBudget` dropped), and the
+Phase 6 Sprint 6.42 `unboundedEngineSpawnViolations` lint all landed. **Stage 1 (the machine-independent
+gate set) is GREEN on this Apple host (2026-07-21)**: `cabal build all` `-Wall -Werror`,
+`cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
+`infernix docs check`, and `poetry run check-code` all pass. Stage 2 is the single-accelerator
+(apple-silicon) plus `linux-cpu` full-suite `infernix test all` behavioral proof: an over-capacity
+catalog completes with zero host OOM-kill and every over-budget row is cleanly typed-rejected as
+`InferenceError.ModelMemoryLimitExceeded` by the capped-engine kernel (the macOS `proc_pid_rusage`
+watchdog on the Apple lane, the pod-cgroup OOM-exit classifier on `linux-cpu`). With the honest
+`minHostHeadroomMib` = 6144 partition, on a 64 GiB / 48 GiB-colima host the resolved inference capacity
+is 10240 MiB, so the heavy diffusion rows (`image-*`, `video-*`) now fail-close cleanly at admission on
+apple-silicon — the expected Stage 2 behavior. This wave stays **Open** until both stages close.
+
+**Stage 2 apple-silicon behavioral evidence GREEN (2026-07-21).** `infernix init` emitted the
+`host-enforced` partition budget (physical 65536, colima vmReserve 49152, headroom 6144 → inference
+capacity 10240 MiB) and `demo-config validate` round-tripped it. A host-native `cluster up` staged 16/16
+models, and `infernix test integration` drove the full per-model lane with **zero host OOM-kill**: the
+13 in-budget models completed with real output, `image-sdxl-turbo` and
+`image-apple-stable-diffusion-coreml` were **pre-admission typed-rejected** (`ModelMemoryLimitExceeded {
+requiredMib = 12288, availableMib = 10240, resource = UnifiedHostRam, source =
+"host-memory-partition-inference-capacity" }`), and `audio-bark-small` was a **runtime resident-ceiling
+breach** — its actual RSS exceeded its admitted 5120 MiB ceiling, the `proc_pid_rusage` watchdog
+SIGKILLed its process group, and it published a clean typed `ModelMemoryLimitExceeded { requiredMib =
+availableMib = 5120, source = "capped-engine-resident-ceiling" }` rather than a host OOM (proving the
+watchdog fires and the python-stdio breach classification holds). `infernix test e2e` then ran routed
+Playwright **16/16**, including the browser per-model matrix (3.9 m) rendering all three capacity
+rejections plus the 13 real completions. **Cohort-surfaced fixes recorded here** (mirroring the Wave V
+cohort-fix pattern): (1) the Playwright `expectedModelMemoryLimitExceeded` helper still read the pre-4.31
+flat `{ kind: "enforced", availableMib }` budget shape — migrated to the enforcer-named `host-enforced`
+(partition `inferenceCapacityMib`) / `substrate-enforced` (`podLimit`) shapes; (2) the browser matrix
+now accepts a runtime `capped-engine-resident-ceiling` breach for an admitted model (bark) as a valid
+rendered capacity result the static footprint-vs-budget prediction cannot foresee; (3) **follow-up:**
+`audio-bark-small`'s conservative 5120 MiB footprint under-estimates its real peak RSS — the mechanism
+correctly fail-closes it (no OOM), but the footprint should be recalibrated in a future measured-RSS
+pass.
+
+**Stage 2 linux-cpu cross-platform + `SubstrateEnforcedBudget` evidence (2026-07-21).**
+`./bootstrap/linux-cpu.sh build` rebuilt the launcher image cleanly — **all 70 Haskell modules compiled
+on `aarch64-linux` under `-Wall -Werror`** (validating the `CappedEngine` CPP `#else` FFI-free Linux
+path that the darwin host builds never exercised), the PureScript web built 561 modules 0 warnings/0
+errors, and `poetry run check-code` passed; the rebuilt-image `infernix test unit` passed (Haskell +
+web `83/83`, including the typed-`ModelMemoryLimitExceeded` roundtrip/render tests). `./bootstrap/linux-cpu.sh test`
+then drove the per-model lane with the **six over-budget rows cleanly `SubstrateEnforcedBudget`
+pre-admission typed-rejected** — `audio-demucs-htdemucs` + `audio-open-unmix`
+(`requiredMib = 8192`), `music-mt3-infer` + `music-mr-mt3` + `music-omnizart` (`6144`), and
+`audio-bark-small` (`5120`), each `ModelMemoryLimitExceeded { availableMib = 4096, resource = PodRam,
+source = "cluster-engine-pod-memory-limit" }` (matching the Wave V record) — the smaller rows completing;
+it then ran the full HA/chaos tail (pool placement, backpressure, frontend/coordinator/engine failover,
+node drain, model-bootstrap dedup, throughput `totalPrompts = 12` / `p95Seconds = 320.17`, Harbor/MinIO/
+Pulsar/PostgreSQL recovery, **postgres lifecycle rebinding**, anti-affinity) and stalled only at the
+final `demo_ui = false` lifecycle step — the same late cluster-management flake class as the apple stall
+above (a `cluster up`/`down` lifecycle wait, orthogonal to memory-safety), before the routed e2e.
+**Residuals:** a single-invocation clean `infernix test all` on each accelerator (both stall in a late
+HA-tail lifecycle `cluster up` — apple's lifecycle-rebinding `warm-model-cache` at 11/16, linux's
+`demo_ui = false` step — a known Harbor/MinIO re-publish/lifecycle flake orthogonal to the memory-safety
+changes; the memory-safety behavioral evidence above was captured from the per-model lanes, the full HA
+tails, and a standalone clean apple `test e2e` 16/16); and the `linux-cpu` routed e2e browser matrix
+(the Playwright helper's `substrate-enforced` branch is symmetric to the apple `host-enforced` branch
+proven by the apple `test e2e` 16/16).
+
+**Wave W root-cause fix 2026-07-22 (Observable Readiness).** Per the operator directive, the
+clean-single-`infernix test all` residual's "orthogonal flake" was treated as evidence that an invalid
+state is still representable and investigated as such (an adversarial multi-agent readiness/lifecycle
+audit — 18 confirmed representable-invalid-states, 3 stall-capable). **Root cause:** the warm-model-cache
+barrier observed each model's `.ready` sentinel through an `IO Bool` HEAD that collapsed present (200) /
+absent (404) / unobservable (a reset idle MinIO NodePort keep-alive, a HEAD timeout, a not-yet-ready
+`5xx`/`403`) into one `False` — so on the retained-state second `cluster up`, transient idle-NodePort
+faults made present, retained sentinels read as absent, deflating the readiness census and stalling the
+already-warm cache to its give-up deadline ("11/16"); the readiness kernel's two-channel step type
+(`Right` ready / `Left` count) had no channel for "could not observe," forcing the fault to launder into
+a count (amplified because the kernel books stall in poll-units, not wall-clock, so serial 15 s HEAD
+timeouts inflate the nominal give-up). A pure-functional refactor makes the invalid state
+unrepresentable: **Phase 1 Sprint 1.18** adds the kernel `PollOutcome = Measured (Either Progress e) |
+Unobservable Text` channel on `awaitReadinessObservable` (with `awaitReadiness` preserved as a
+behaviour-identical `Measured`-lift, so the sixteen existing waits and `budgetDeadline` exactness are
+unchanged), and **Phase 8 Sprint 8.8** makes the observation three-valued end to end — a
+`SentinelObservation = SentinelPresent | SentinelAbsent | SentinelUnobservable` probe whose only mint of
+`SentinelAbsent` is a genuine 404, a `SentinelCensus` that refuses to emit a readiness count while any
+sentinel is unobservable (a fault buys another poll, never a fabricated pending count), and a Python
+`CacheValidity = VALID | CORRUPT | UNVERIFIABLE` verdict gating the retained-sentinel-destroying
+`_delete_model_prefix` on confirmed corruption only (never a fallible read). Both sprints are **code-side
+closed 2026-07-22** on the machine-independent gate set (apple-silicon): `cabal build all`
+(`-Wall -Werror`), `cabal test infernix-unit` (new: the `classifyHeadOutcome` table, the `tallyCensus`
+partition, a transient-`Unobservable`-then-`Measured` stream resolving `Ready`, and a
+persistent-`Unobservable` stream giving up bounded `Expired`), `cabal test infernix-haskell-style`,
+`infernix lint files/docs/proto/chart`, `infernix docs check`, `poetry run check-code`, and web unit
+`83/83`. The Wave W residual is now a behavioral re-run — an apple-silicon plus `linux-cpu`
+`infernix test all` confirming a retained second `cluster up` warms the cache without the "11/16" stall —
+rather than an unfixed flake.
+
+**Wave W apple behavioral evidence 2026-07-22 (Observable-Readiness + memory-safety).** The rebuilt
+arm64 cluster image (`infernix-linux-cpu:local`, carrying the tri-state census barrier + the Python
+`CacheValidity` fix) was validated on the apple-silicon host across targeted runs. (1) A fresh
+host-native `cluster up` staged the warm-model-cache **13/16 → 14/16 → "all 16 configured models staged"**
+cleanly through the new census/barrier code (`edgePort 9090`). (2) `infernix test e2e` passed routed
+Playwright **16/16 (4.3 m)**, including the per-model browser matrix (2.6 m) rendering all three capacity
+rejections (`image-sdxl-turbo`, `image-apple-stable-diffusion-coreml`, `audio-bark-small` → `status=failed`),
+the Phase 9 RBAC/logout/account-switching specs, and artifact upload/preview/download — with the migrated
+`expectedModelMemoryLimitExceeded` helper and the runtime-ceiling-breach matrix tolerance. (3) `test e2e`
+tore the cluster down with retained-state replay, after which a **retained-state second `cluster up`** —
+the exact "11/16" scenario (16 sentinels retained in `./.data`, observed through a freshly-restarted MinIO
+NodePort/coordinator) — staged **"all 16 configured models staged"** with **no stall and no regression**.
+(4) The `infernix test all` run's front gates passed in-suite (`infernix-haskell-style: PASS`, unit
+property suite `50/50`, "All checks passed!"), and its integration lane re-proved the memory-safety
+admission (`image-sdxl-turbo`/`image-apple-stable-diffusion-coreml` fail-closed at
+`required 12288 > available 10240` `host-memory-partition-inference-capacity`; `audio-bark-small` at the
+`capped-engine-resident-ceiling`; **zero host OOM**) and advanced green through cache lifecycle, service
+loop, durable topics, and the Apple host-engine `Exclusive`/`Shared` subscription + backpressure
+scenarios. That single `infernix test all` invocation was **stopped mid-integration by the session's
+long-background-task limit** at the subscription-backpressure step (no jetsam/memory-pressure kill in the
+macOS log, no `Traceback`/OOM in the output, cluster left healthy `steady-state`) — an environmental
+interruption of the ~2–3 h background job, not a code failure. Net: the Observable-Readiness fix is
+behaviorally confirmed on apple (both fresh and retained-second `cluster up` warm-cache clean + e2e
+`16/16`) and the memory-safety admission re-confirmed; the **remaining residual is a single uninterrupted
+end-to-end `infernix test all` (foreground) plus the `linux-cpu` lane**.
 
 **Wave T update 2026-07-10**: The next `linux-cpu` full-suite attempt on rebuilt image
 `sha256:b66163c25722868c02d7cce4f6f56ad0a32f13c6c673268df337e81705d9690c` again passed full

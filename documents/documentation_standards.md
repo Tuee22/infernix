@@ -168,6 +168,12 @@ Rules:
   are admin-gated versus per-user), update `documents/architecture/access_control_doctrine.md`,
   `documents/engineering/edge_routing.md`, `documents/architecture/web_ui_architecture.md`, and the
   relevant phase document in the same change
+- when the inference-memory-safety contract changes (the `MemoryGrant` / capped-engine chokepoint, the
+  `HostMemoryPartition`, the required `ModelMemoryFootprint`, the enforcer-typed `InferenceMemoryBudget`,
+  or the admission policy), update `documents/architecture/bounded_inference_memory.md`,
+  `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
+  `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`
+  admission cross-reference, and the relevant phase document in the same change
 - when assistant-facing repository workflow rules change, update
   `documents/development/assistant_workflow.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
 - when the root workflow changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change

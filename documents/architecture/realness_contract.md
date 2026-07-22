@@ -15,7 +15,9 @@
   This is an *engine-logic* guarantee for in-band failures the adapter/runner can raise or exit on,
   and it also covers model-memory capacity through typed runtime admission: an over-budget request
   is rejected as a clean `status=failed` with `InferenceError.ModelMemoryLimitExceeded` before its
-  subprocess or worker is launched. See Current Status for the memory-admission contract.
+  subprocess or worker is launched. That pre-execution rejection is the realness half of the
+  memory contract; the enforcement half — bounding the admitted request's *actual* resident memory so
+  a host OOM is unrepresentable — is owned by [bounded_inference_memory.md](bounded_inference_memory.md).
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
@@ -71,30 +73,24 @@ real engine is not yet landed is an explicit residual in `residualMatrixRowIdsFo
 fabricated pass.
 
 **Reopened: realness-by-construction extends to typed resource admission.** Phase 4 Sprint 4.27,
-Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38 generalize the earlier Apple host-RAM guard into a DRY
-admission doctrine across substrates. The mechanisms are:
+Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38 generalized the earlier Apple host-RAM guard into a DRY
+admission doctrine across substrates: each substrate resolves a typed `InferenceMemoryBudget`, and
+admission is now the grant-minting `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor ->
+Either InferenceError MemoryGrant`. On success it mints an opaque `MemoryGrant` that the capped-engine
+kernel requires and whose `MemoryCeiling` it enforces; a request whose model footprint does not fit
+returns `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource,
+source }` — a closed ADT branch in `ResultPayload`, not successful inline output and not a parsed
+string — published as `status=failed` **before** its subprocess is launched, while smaller configured
+models continue to run (no catalog-wide capacity fail-fast). A runtime breach of the admitted ceiling
+is the same fail-clean `status=failed` shape. That pre-execution rejection is the realness half of the
+memory contract: an over-budget model fails clean, the same guarantee the engine-logic invariant gives.
 
-- **Per-model footprint.** `ModelDescriptor` (`src/Infernix/Types.hs`) carries
-  `modelRamFootprintMib`, a conservative model memory footprint (MiB) for one inference;
-  `src/Infernix/Models.hs` `conservativeRamFootprintMibForRow` assigns it per family/engine, biased
-  high until measured RSS / VRAM passes refine it.
-- **Typed budget.** `DemoConfig` carries an `InferenceMemoryBudget` value rather than integer
-  sentinel semantics. `EnforcedMemoryBudget { resource, source, availableMib }` is always enforced,
-  including `0 MiB`; `UnenforcedMemoryBudget { reason }` is explicit.
-- **Substrate budget sources.** `apple-silicon` uses unified host RAM after the Colima pledge and
-  host reserve; `linux-cpu` uses the active Kubernetes engine pod memory limit; `linux-gpu` uses the
-  selected GPU VRAM quantity.
-- **No catalog-wide capacity fail-fast.** Validation may report capacity diagnostics, but a single
-  over-budget catalog entry must not make the entire daemon config invalid. Smaller configured models
-  must continue to run.
-- **Typed failure payload.** Runtime admission publishes `status=failed` with
-  `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`
-  before launch. The error is a closed ADT branch in `ResultPayload`, not successful inline output
-  and not a parsed string.
-
-Together these make an over-budget model a clean, mapped `status=failed` — the same fail-clean
-guarantee the engine-logic invariant gives, now extended to model-memory capacity as
-realness-by-construction.
+The **enforcement half** — that the admitted request's *actual* resident memory is bounded to what
+admitted it, so a host OOM-kill is structurally unrepresentable — is owned by
+[bounded_inference_memory.md](bounded_inference_memory.md): admission mints a `MemoryGrant` that the
+capped-engine kernel requires and OS-bounds to its `MemoryCeiling`, over a checked `HostMemoryPartition`
+with a required `ModelMemoryFootprint` and an enforcer-typed budget. See that doctrine for the full
+contract.
 
 ## Validation
 
@@ -114,3 +110,6 @@ realness-by-construction.
 - [../engineering/testing.md](../engineering/testing.md) — the canonical validation doctrine.
 - [Managed State Transitions](managed_state_transitions.md) — the sibling doctrine that generalizes
   this contract from inference results to system state transitions.
+- [bounded_inference_memory.md](bounded_inference_memory.md) — the enforcement half of the memory
+  contract: a required `MemoryGrant` bounds the admitted request's actual footprint, making a host OOM
+  unrepresentable.

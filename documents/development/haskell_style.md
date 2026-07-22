@@ -82,10 +82,15 @@
   spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` and peers — in
   production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`),
   `unboundedHttpViolations` (raw `withResponse` for the upstream model download outside the
-  bounded-HTTP wrapper), and `threadDelayViolations` (raw `threadDelay` readiness/poll loops in
+  bounded-HTTP wrapper), `threadDelayViolations` (raw `threadDelay` readiness/poll loops in
   production `src/Infernix/` outside the `Infernix.Evidence.Readiness.awaitReadiness` kernel and a
-  deliberately shrinking backoff/heartbeat exemption list). Their canonical doctrine is
-  [Managed State Transitions](../architecture/managed_state_transitions.md)
+  deliberately shrinking backoff/heartbeat exemption list), and `unboundedEngineSpawnViolations` (raw
+  engine subprocess spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` —
+  outside the capped-engine kernel `Infernix.Runtime.CappedEngine` and a shrinking exemption list,
+  routing a new engine spawn through `withCappedEngine` under a required `MemoryGrant` and
+  resident-memory ceiling). Their canonical doctrine is
+  [Managed State Transitions](../architecture/managed_state_transitions.md); the engine-spawn rule's
+  canonical home is [Bounded Inference Memory](../architecture/bounded_inference_memory.md)
 - `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
   proto, docs, Python, and build-warning checks
 
@@ -102,3 +107,4 @@
 - [../engineering/build_artifacts.md](../engineering/build_artifacts.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)
 - [Managed State Transitions](../architecture/managed_state_transitions.md)
+- [Bounded Inference Memory](../architecture/bounded_inference_memory.md)

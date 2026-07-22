@@ -19,6 +19,11 @@ module Infernix.Types
     InferenceMemoryResource (..),
     InferenceRequest (..),
     InferenceResult (..),
+    HostMemoryPartition,
+    MemoryCeiling,
+    MemoryGrant,
+    ModelMemoryFootprint,
+    PodMemoryLimit (..),
     LifecyclePhase (..),
     LifecycleTransition (..),
     ModelDescriptor (..),
@@ -43,8 +48,23 @@ module Infernix.Types
     parseLifecycleTransition,
     defaultModelBootstrapTopic,
     defaultModelsBucket,
-    inferenceMemoryBudgetAvailableMib,
+    grantMemoryCeiling,
+    hostPartitionForCapacity,
+    hostPartitionHeadroomMib,
+    hostPartitionInferenceCapacityMib,
+    hostPartitionPhysicalMib,
+    hostPartitionVmReserveMib,
+    inferenceMemoryBudgetCapacityMib,
+    inferenceMemoryBudgetResource,
     inferenceMemoryBudgetResourceText,
+    inferenceMemoryBudgetSource,
+    cappedEngineResidentCeilingSource,
+    memoryCeilingMib,
+    minHostHeadroomMib,
+    modelMemoryLimitExceededErrorCode,
+    mkHostMemoryPartition,
+    mkModelMemoryFootprint,
+    modelMemoryFootprintMib,
     parseApiUpstreamMode,
     parseConsumerSubscriptionType,
     parseDaemonRole,
@@ -543,49 +563,225 @@ instance FromJSON InferenceMemoryResource where
       Just resource -> pure resource
       Nothing -> fail ("Unsupported inference memory resource: " <> Text.unpack rawValue)
 
-data InferenceMemoryBudget
-  = EnforcedMemoryBudget
-      { memoryBudgetResource :: InferenceMemoryResource,
-        memoryBudgetSource :: Text,
-        memoryBudgetAvailableMib :: Int
-      }
-  | UnenforcedMemoryBudget
-      { memoryBudgetReason :: Text
-      }
+-- | Phase 4 Sprint 4.31 — a checked partition of physical host RAM. The
+-- constructor is hidden; 'mkHostMemoryPartition' is the only mint, and it
+-- rejects a split that oversubscribes physical RAM or whose headroom is too
+-- small to cover the co-tenants that share the host with inference (the OS, the
+-- control-plane binary, and the routed end-to-end browser). A partition whose
+-- pieces exceed physical, or whose headroom cannot cover its co-tenants, is not
+-- a constructible term. See
+-- 'documents/architecture/bounded_inference_memory.md'.
+data HostMemoryPartition = HostMemoryPartition
+  { hostPartitionPhysicalMib :: Int,
+    hostPartitionVmReserveMib :: Int,
+    hostPartitionHeadroomMib :: Int,
+    hostPartitionInferenceCapacityMib :: Int
+  }
   deriving (Eq, Read, Show)
+
+-- | The minimum host headroom (MiB) a 'HostMemoryPartition' must hold back for
+-- the host's inference co-tenants: the OS (~2 GiB), the host-native
+-- control-plane binary (~256 MiB), the routed-E2E Chromium + Node surface
+-- (~3 GiB), and the worst-case inter-poll watchdog overshoot (~768 MiB). The
+-- superseded fixed @appleHostReserveMib = 3072@ did not cover the routed
+-- end-to-end browser and allowed a host OOM.
+minHostHeadroomMib :: Int
+minHostHeadroomMib = 6144
+
+-- | The only 'HostMemoryPartition' mint. @physical = vmReserve + headroom +
+-- inferenceCapacity@; a negative inference capacity means the VM pledge plus
+-- headroom oversubscribe physical RAM (rejected), and a headroom below
+-- 'minHostHeadroomMib' cannot cover the co-tenants (rejected). The resulting
+-- @inferenceCapacity@ is the admission budget the on-host engine draws from.
+mkHostMemoryPartition :: Int -> Int -> Int -> Either String HostMemoryPartition
+mkHostMemoryPartition physicalMib vmReserveMib headroomMib
+  | physicalMib <= 0 =
+      Left ("host memory partition requires positive physical RAM, got " <> show physicalMib <> " MiB")
+  | vmReserveMib < 0 || headroomMib < 0 =
+      Left "host memory partition vmReserve and headroom must be non-negative"
+  | headroomMib < minHostHeadroomMib =
+      Left
+        ( "host memory partition headroom "
+            <> show headroomMib
+            <> " MiB cannot cover the OS + control-plane + routed-E2E browser co-tenants (minimum "
+            <> show minHostHeadroomMib
+            <> " MiB)"
+        )
+  | inferenceCapacityMib < 0 =
+      Left
+        ( "host memory partition oversubscribes physical RAM: vmReserve "
+            <> show vmReserveMib
+            <> " MiB + headroom "
+            <> show headroomMib
+            <> " MiB exceed physical "
+            <> show physicalMib
+            <> " MiB"
+        )
+  | otherwise =
+      Right
+        HostMemoryPartition
+          { hostPartitionPhysicalMib = physicalMib,
+            hostPartitionVmReserveMib = vmReserveMib,
+            hostPartitionHeadroomMib = headroomMib,
+            hostPartitionInferenceCapacityMib = inferenceCapacityMib
+          }
+  where
+    inferenceCapacityMib = physicalMib - vmReserveMib - headroomMib
+
+instance ToJSON HostMemoryPartition where
+  toJSON partition =
+    object
+      [ "physicalMib" .= hostPartitionPhysicalMib partition,
+        "vmReserveMib" .= hostPartitionVmReserveMib partition,
+        "headroomMib" .= hostPartitionHeadroomMib partition,
+        "inferenceCapacityMib" .= hostPartitionInferenceCapacityMib partition
+      ]
+
+instance FromJSON HostMemoryPartition where
+  parseJSON = withObject "HostMemoryPartition" $ \value -> do
+    physicalMib <- value .: "physicalMib"
+    vmReserveMib <- value .: "vmReserveMib"
+    headroomMib <- value .: "headroomMib"
+    case mkHostMemoryPartition physicalMib vmReserveMib headroomMib of
+      Right partition -> pure partition
+      Left partitionError -> fail partitionError
+
+-- | Phase 4 Sprint 4.31 — the descriptive substrate-enforced limit. On
+-- @linux-cpu@ / @linux-gpu@ the pod cgroup memory limit / CUDA allocator bound
+-- the engine subprocess inside its own container, so host death is already
+-- impossible; this record names that already-enforced limit for admission and
+-- observability.
+data PodMemoryLimit = PodMemoryLimit
+  { podMemoryLimitResource :: InferenceMemoryResource,
+    podMemoryLimitSource :: Text,
+    podMemoryLimitMib :: Int
+  }
+  deriving (Eq, Read, Show)
+
+instance ToJSON PodMemoryLimit where
+  toJSON podLimit =
+    object
+      [ "resource" .= podMemoryLimitResource podLimit,
+        "source" .= podMemoryLimitSource podLimit,
+        "limitMib" .= podMemoryLimitMib podLimit
+      ]
+
+instance FromJSON PodMemoryLimit where
+  parseJSON = withObject "PodMemoryLimit" $ \value ->
+    PodMemoryLimit
+      <$> value .: "resource"
+      <*> value .: "source"
+      <*> value .: "limitMib"
+
+-- | Phase 4 Sprint 4.31 — the typed per-substrate memory budget that names its
+-- enforcer. There is no "enforced by nobody" arm: @apple-silicon@ is
+-- host-enforced by the grant plus the 'proc_pid_rusage' watchdog against a
+-- checked 'HostMemoryPartition'; @linux-cpu@ / @linux-gpu@ are substrate-enforced
+-- by the pod cgroup / VRAM limit the descriptive 'PodMemoryLimit' records.
+data InferenceMemoryBudget
+  = HostEnforcedBudget HostMemoryPartition
+  | SubstrateEnforcedBudget PodMemoryLimit
+  deriving (Eq, Read, Show)
+
+-- | The stable source string recorded for a host-enforced admission decision.
+hostMemoryPartitionSource :: Text
+hostMemoryPartitionSource = "host-memory-partition-inference-capacity"
 
 instance ToJSON InferenceMemoryBudget where
   toJSON budget = case budget of
-    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib} ->
+    HostEnforcedBudget partition ->
       object
-        [ "kind" .= ("enforced" :: Text),
-          "resource" .= memoryBudgetResource,
-          "source" .= memoryBudgetSource,
-          "availableMib" .= memoryBudgetAvailableMib
+        [ "kind" .= ("host-enforced" :: Text),
+          "partition" .= partition
         ]
-    UnenforcedMemoryBudget {memoryBudgetReason} ->
+    SubstrateEnforcedBudget podLimit ->
       object
-        [ "kind" .= ("unenforced" :: Text),
-          "reason" .= memoryBudgetReason
+        [ "kind" .= ("substrate-enforced" :: Text),
+          "podLimit" .= podLimit
         ]
 
 instance FromJSON InferenceMemoryBudget where
   parseJSON = withObject "InferenceMemoryBudget" $ \value -> do
     kind <- value .: "kind"
     case Text.toLower kind of
-      "enforced" ->
-        EnforcedMemoryBudget
-          <$> value .: "resource"
-          <*> value .: "source"
-          <*> value .: "availableMib"
-      "unenforced" ->
-        UnenforcedMemoryBudget <$> value .:? "reason" .!= "explicitly unenforced"
+      "host-enforced" ->
+        HostEnforcedBudget <$> value .: "partition"
+      "substrate-enforced" ->
+        SubstrateEnforcedBudget <$> value .: "podLimit"
       _ -> fail ("Unsupported inference memory budget kind: " <> Text.unpack kind)
 
-inferenceMemoryBudgetAvailableMib :: InferenceMemoryBudget -> Maybe Int
-inferenceMemoryBudgetAvailableMib budget = case budget of
-  EnforcedMemoryBudget {memoryBudgetAvailableMib} -> Just memoryBudgetAvailableMib
-  UnenforcedMemoryBudget {} -> Nothing
+-- | The admission capacity (MiB) a budget draws from: the partition's inference
+-- capacity for a host-enforced budget, or the pod/VRAM limit for a
+-- substrate-enforced one.
+inferenceMemoryBudgetCapacityMib :: InferenceMemoryBudget -> Int
+inferenceMemoryBudgetCapacityMib budget = case budget of
+  HostEnforcedBudget partition -> hostPartitionInferenceCapacityMib partition
+  SubstrateEnforcedBudget podLimit -> podMemoryLimitMib podLimit
+
+inferenceMemoryBudgetResource :: InferenceMemoryBudget -> InferenceMemoryResource
+inferenceMemoryBudgetResource budget = case budget of
+  HostEnforcedBudget _ -> UnifiedHostRam
+  SubstrateEnforcedBudget podLimit -> podMemoryLimitResource podLimit
+
+inferenceMemoryBudgetSource :: InferenceMemoryBudget -> Text
+inferenceMemoryBudgetSource budget = case budget of
+  HostEnforcedBudget _ -> hostMemoryPartitionSource
+  SubstrateEnforcedBudget podLimit -> podMemoryLimitSource podLimit
+
+-- | Phase 4 Sprint 4.31 — a required per-model peak-resident memory footprint
+-- (MiB). The constructor is hidden; 'mkModelMemoryFootprint' rejects a
+-- non-positive value, so a model admitted on an absent or zero footprint (the
+-- superseded bare-@Int@ that decoded to @0@ and silently disabled admission) is
+-- unrepresentable.
+newtype ModelMemoryFootprint = ModelMemoryFootprint Int
+  deriving (Eq, Ord, Read, Show)
+
+mkModelMemoryFootprint :: Int -> Either String ModelMemoryFootprint
+mkModelMemoryFootprint mib
+  | mib > 0 = Right (ModelMemoryFootprint mib)
+  | otherwise = Left ("model RAM footprint must be a positive MiB value, got " <> show mib)
+
+modelMemoryFootprintMib :: ModelMemoryFootprint -> Int
+modelMemoryFootprintMib (ModelMemoryFootprint mib) = mib
+
+-- | Phase 4 Sprint 4.30 — the admitted resident-memory ceiling (MiB) an engine
+-- subprocess is bounded to. Equal to the admitted model's declared footprint.
+-- The constructor is hidden; a ceiling exists only inside a 'MemoryGrant'.
+newtype MemoryCeiling = MemoryCeiling Int
+  deriving (Eq, Ord, Read, Show)
+
+memoryCeilingMib :: MemoryCeiling -> Int
+memoryCeilingMib (MemoryCeiling mib) = mib
+
+-- | Phase 4 Sprint 4.30 — the typed proof that a model's footprint fit its
+-- budget. The constructor is hidden and 'admitModelMemory' is the sole mint, so
+-- an engine subprocess launched without an admission grant is not a
+-- constructible term. The capped-engine kernel
+-- ('Infernix.Runtime.CappedEngine.withCappedEngine') is the sole consumer and
+-- bounds the subprocess's resident memory to the carried 'MemoryCeiling'.
+newtype MemoryGrant = MemoryGrant MemoryCeiling
+  deriving (Eq, Read, Show)
+
+grantMemoryCeiling :: MemoryGrant -> MemoryCeiling
+grantMemoryCeiling (MemoryGrant ceilingValue) = ceilingValue
+
+-- | Phase 4 Sprint 4.30 — the internal 'ErrorResponse' code the capped-engine
+-- kernel raises when a running engine subprocess breaches its admitted
+-- 'MemoryCeiling' (the @apple-silicon@ watchdog killed its process group, or the
+-- Linux pod cgroup OOM-killed it). The runtime recognizes this code and rebuilds
+-- it into a typed @status=failed@ 'ModelMemoryLimitExceeded' result rather than a
+-- generic worker failure, so a ceiling breach is a clean typed terminal outcome,
+-- never a host OOM.
+modelMemoryLimitExceededErrorCode :: Text
+modelMemoryLimitExceededErrorCode = "model_memory_limit_exceeded"
+
+-- | Phase 4 Sprint 4.30 — the @inferenceErrorSource@ a runtime resident-memory
+-- ceiling breach reports (the model was admitted but its actual footprint
+-- exceeded its admitted ceiling and the capped-engine kernel terminated it),
+-- distinct from the pre-admission budget source a genuinely over-budget model
+-- reports. Consumers distinguish the two fail-closed paths by this source.
+cappedEngineResidentCeilingSource :: Text
+cappedEngineResidentCeilingSource = "capped-engine-resident-ceiling"
 
 data InferenceError
   = ModelMemoryLimitExceeded
@@ -622,21 +818,29 @@ instance FromJSON InferenceError where
           <*> value .: "source"
       _ -> fail ("Unsupported inference error: " <> Text.unpack tag)
 
-admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Maybe InferenceError
-admitModelMemory budget model =
-  case budget of
-    UnenforcedMemoryBudget {} -> Nothing
-    EnforcedMemoryBudget {memoryBudgetResource, memoryBudgetSource, memoryBudgetAvailableMib}
-      | modelRamFootprintMib model > memoryBudgetAvailableMib ->
-          Just
-            ModelMemoryLimitExceeded
-              { inferenceErrorModelId = modelId model,
-                inferenceErrorRequiredMib = modelRamFootprintMib model,
-                inferenceErrorAvailableMib = memoryBudgetAvailableMib,
-                inferenceErrorResource = memoryBudgetResource,
-                inferenceErrorSource = memoryBudgetSource
-              }
-      | otherwise -> Nothing
+-- | Phase 4 Sprint 4.30 — the single honest admission mint. Admission compares
+-- the model's required footprint against the budget's capacity and, on success,
+-- mints a 'MemoryGrant' carrying a 'MemoryCeiling' equal to that footprint.
+-- "Admitted" is no longer a proof-free @Nothing@ but a value that could only
+-- exist if the footprint fit the budget; over-budget is a typed
+-- 'ModelMemoryLimitExceeded' naming the required and available MiB, the resource,
+-- and the enforcing source. This is the only producer of 'MemoryGrant'; the
+-- capped-engine kernel is the only consumer.
+admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Either InferenceError MemoryGrant
+admitModelMemory budget model
+  | requiredMib > availableMib =
+      Left
+        ModelMemoryLimitExceeded
+          { inferenceErrorModelId = modelId model,
+            inferenceErrorRequiredMib = requiredMib,
+            inferenceErrorAvailableMib = availableMib,
+            inferenceErrorResource = inferenceMemoryBudgetResource budget,
+            inferenceErrorSource = inferenceMemoryBudgetSource budget
+          }
+  | otherwise = Right (MemoryGrant (MemoryCeiling requiredMib))
+  where
+    requiredMib = modelMemoryFootprintMib (modelRamFootprint model)
+    availableMib = inferenceMemoryBudgetCapacityMib budget
 
 data PulsarConnectionMode
   = ConfiguredTransport
@@ -877,16 +1081,17 @@ data ModelDescriptor = ModelDescriptor
     runtimeLane :: RuntimeLane,
     requiresGpu :: Bool,
     notes :: Text,
-    -- | Phase 4 Sprint 4.26 — conservative peak host-resident memory
-    -- footprint (MiB) for one serialized inference of this model on the
-    -- unified-memory / CPU execution path. This is the binding constraint
-    -- on @apple-silicon@, where model memory is host RAM; the on-host
-    -- engine's admission control ('Infernix.Runtime' critical section)
-    -- and 'Infernix.DemoConfig.validateDemoConfig' reject a model whose
-    -- footprint exceeds the active 'InferenceMemoryBudget'. Values are
-    -- conservative per-engine defaults until measured peak-RSS / VRAM passes
-    -- refine them.
-    modelRamFootprintMib :: Int
+    -- | Phase 4 Sprint 4.31 — the required peak host-resident memory
+    -- footprint for one serialized inference of this model on the
+    -- unified-memory / CPU execution path, a 'ModelMemoryFootprint' whose
+    -- hidden constructor rejects a non-positive value (superseding the
+    -- bare-@Int@ that decoded to @0@ and silently disabled admission). This is
+    -- the binding constraint on @apple-silicon@, where model memory is host
+    -- RAM; 'admitModelMemory' rejects a model whose footprint exceeds the active
+    -- 'InferenceMemoryBudget', and the admitted footprint becomes the
+    -- capped-engine kernel's 'MemoryCeiling'. Values are conservative per-engine
+    -- defaults until measured peak-RSS / VRAM passes refine them.
+    modelRamFootprint :: ModelMemoryFootprint
   }
   deriving (Eq, Read, Show)
 
@@ -907,7 +1112,7 @@ instance ToJSON ModelDescriptor where
         "runtimeLane" .= runtimeLane modelDescriptor,
         "requiresGpu" .= requiresGpu modelDescriptor,
         "notes" .= notes modelDescriptor,
-        "modelRamFootprintMib" .= modelRamFootprintMib modelDescriptor
+        "modelRamFootprintMib" .= modelMemoryFootprintMib (modelRamFootprint modelDescriptor)
       ]
 
 instance FromJSON ModelDescriptor where
@@ -927,7 +1132,7 @@ instance FromJSON ModelDescriptor where
       <*> value .: "runtimeLane"
       <*> value .: "requiresGpu"
       <*> value .: "notes"
-      <*> value .:? "modelRamFootprintMib" .!= 0
+      <*> (value .: "modelRamFootprintMib" >>= either fail pure . mkModelMemoryFootprint)
 
 -- | Phase 4 Sprint 4.15 — the closed set of per-family result contracts.
 -- Each README matrix row resolves to exactly one 'ResultFamily' (via
@@ -1185,18 +1390,27 @@ instance FromJSON DemoConfig where
       <*> value .: "models"
       <*> pure inferenceMemoryBudgetValue
 
+-- | Decode a pre-Sprint-4.31 config that still carries a bare
+-- @inferenceRamBudgetMib@ integer into the enforcer-named budget. On
+-- @apple-silicon@ the integer becomes the inference capacity of a synthesized
+-- 'HostMemoryPartition' (headroom held back at 'minHostHeadroomMib'); on Linux it
+-- becomes the substrate-enforced pod / VRAM limit.
 legacyInferenceMemoryBudget :: RuntimeMode -> Int -> InferenceMemoryBudget
-legacyInferenceMemoryBudget runtimeMode availableMib =
-  EnforcedMemoryBudget
-    { memoryBudgetResource = legacyResource runtimeMode,
-      memoryBudgetSource = "legacy-inferenceRamBudgetMib",
-      memoryBudgetAvailableMib = max 0 availableMib
-    }
-  where
-    legacyResource mode = case mode of
-      AppleSilicon -> UnifiedHostRam
-      LinuxCpu -> PodRam
-      LinuxGpu -> GpuVram
+legacyInferenceMemoryBudget runtimeMode availableMib = case runtimeMode of
+  AppleSilicon -> HostEnforcedBudget (hostPartitionForCapacity (max 0 availableMib))
+  LinuxCpu -> SubstrateEnforcedBudget (PodMemoryLimit PodRam "legacy-inferenceRamBudgetMib" (max 0 availableMib))
+  LinuxGpu -> SubstrateEnforcedBudget (PodMemoryLimit GpuVram "legacy-inferenceRamBudgetMib" (max 0 availableMib))
+
+-- | Synthesize a valid 'HostMemoryPartition' whose inference capacity is a given
+-- MiB value, holding back exactly 'minHostHeadroomMib' of headroom and no VM
+-- reserve. Used by the legacy-config and discovery-failure fallback paths where
+-- the real physical / VM-pledge split is unknown; the result is always
+-- constructible (@physical = capacity + minHostHeadroomMib@, no oversubscription).
+hostPartitionForCapacity :: Int -> HostMemoryPartition
+hostPartitionForCapacity capacityMib =
+  case mkHostMemoryPartition (max 0 capacityMib + minHostHeadroomMib) 0 minHostHeadroomMib of
+    Right partition -> partition
+    Left partitionError -> error ("internal: synthesized host memory partition must be constructible: " <> partitionError)
 
 -- | Supported always-on MinIO bucket name holding platform model weights.
 -- The coordinator's bootstrap Failover subscription is the only writer; engines

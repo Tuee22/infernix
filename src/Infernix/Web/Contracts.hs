@@ -865,7 +865,7 @@ modelDescriptorFromInternal internalModel =
       runtimeLane = Types.runtimeLaneId (Types.runtimeLane internalModel),
       requiresGpu = Types.requiresGpu internalModel,
       notes = Types.notes internalModel,
-      modelRamFootprintMib = Types.modelRamFootprintMib internalModel,
+      modelRamFootprintMib = Types.modelMemoryFootprintMib (Types.modelRamFootprint internalModel),
       requestShape = map requestFieldFromInternal (Types.requestShape internalModel)
     }
 

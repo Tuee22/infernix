@@ -107,7 +107,9 @@ the supported surface. Model-memory capacity is also part of the browser contrac
 model exceeds the active runtime budget, the result stream carries typed
 `InferenceError.ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`, and the demo app
 renders a helpful capacity error for that row while leaving smaller models usable. The browser must
-not identify this case by parsing successful inline output text.
+not identify this case by parsing successful inline output text. Canonical home for the grant-gated
+capped-engine execution invariant behind this capacity failure (a host OOM is unrepresentable):
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 ## Unit Layer
 
@@ -158,7 +160,8 @@ Coverage:
   from the rebuilt CUDA launcher image. Linux GPU runs inference on in-cluster engine pods; the
   `apple-silicon` on-host `infernix service` daemon serializes every model and applies the shared
   typed memory-admission policy before launch. Capacity failures are terminal per-row
-  `ModelMemoryLimitExceeded` results, not daemon-death signals.
+  `ModelMemoryLimitExceeded` results, not daemon-death signals (see
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)).
 - **Durable Pulsar topic-family round-trip.** The integration suite
   publishes `ClientCreateContext`, `ClientUpdateDraft`, `ClientCancelPrompt`, and a raw
   `ModelBootstrapReadyEvent`, reads them back with Pulsar Readers, asserts the compacted
@@ -449,7 +452,8 @@ MIDI/MusicXML download) and never by golden strings. Inline-text rows render dir
 infernix-demo-objects bucket. Realness is guaranteed by construction — the engine code cannot
 fabricate a result (enforced by the realness lint) — so the browser trusts the result and fails closed
 on `status=failed` whenever the engine surfaces a terminal status. Capacity failures surface through
-typed `InferenceError.ModelMemoryLimitExceeded`, not through successful inline output. The reopened
+typed `InferenceError.ModelMemoryLimitExceeded`, not through successful inline output (canonical home:
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)). The reopened
 Phases 1/4/6 deliver real output per accelerator. A wave proves the
 catalog that existed when it ran; rows added later require the current active wave before the browser
 workflow is claimed proven. The union across the three substrate catalogs covers every README matrix

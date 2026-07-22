@@ -89,7 +89,9 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   whole daemon solely because one catalog model is too large; smaller models must continue to run.
   Tests classify this constructor as clean capacity failure, distinct from a missing result/stall or
   fabricated pass. This is owned by reopened Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6
-  Sprint 6.38.
+  Sprint 6.38. The target invariant — a grant-gated capped engine (admitted `MemoryGrant`, OS-bounded
+  ceiling) makes a host OOM structurally unrepresentable — is owned canonically by
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
 deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the

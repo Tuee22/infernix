@@ -136,7 +136,11 @@ requiredMib, availableMib, resource, source }` before launch, while the
 disk quota governs LRU EVICTION of staged weights. The two are
 orthogonal: a model can be cache-resident on disk yet refused admission
 on memory, or admitted on memory while its weights were just evicted
-from disk and must be re-pulled.
+from disk and must be re-pulled. The grant-gated capped-engine execution
+contract behind this RAM admission — an engine runs only under a typed
+OS-bounded `MemoryGrant`, so a host OOM is unrepresentable — is owned
+canonically by
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 For real per-family artifact inference outputs (source-separation
 stems, audio-to-MIDI and music-transcription MIDI / MusicXML,
