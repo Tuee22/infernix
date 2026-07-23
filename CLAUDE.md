@@ -52,6 +52,16 @@ Read first:
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- cluster ownership and mutation-position by construction: the persisted cluster state names its owner
+  (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
+  ownership evidence, so tearing down an `OperatorOwned` cluster does not typecheck — `infernix test all`
+  fails closed on an operator's running cluster instead of destroying it. The `ClusterLifecycle` machine
+  carries a first-class `ClusterMutating` position, so a killed `infernix test all` leaves a persisted,
+  detectable, reconcilable dirty cluster (`cluster status` reports the mutation-incomplete phase and the
+  next `cluster up` uncordons drained nodes and scales deployments back) rather than a false
+  `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
+  entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
+  [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
   minted by the `admitModelMemory` admission policy, and the capped-engine kernel bounds its actual
   resident memory to the admitted `MemoryCeiling`. The raw engine spawn

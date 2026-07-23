@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done — Sprints 2.1–2.13 closed on their earlier waves, and the Sprint 2.14 Managed-State-Transition reopen is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus linux-cpu full-suite sign-off.
+**Status**: Active — the Cluster-Ownership & Mutation-Position reopen (Sprint 2.15 — the typed `ClusterOwner`, the `ClusterMutating` lifecycle position, its fail-closed persistence, and reconcile-on-next-`cluster up`) is **documentation-first**: the doctrine + governance landed (Phase 0 Sprint 0.16), and the enforcing code is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. Sprints 2.1–2.13 closed on their earlier waves, and the Sprint 2.14 Managed-State-Transition reopen is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus linux-cpu full-suite sign-off.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -50,7 +50,10 @@ values overlay path, in-image `nvkind` path, shared substrate-publication filena
 responsibility boundary are implemented on the supported Kind substrate. `cluster up`, `cluster
 down`, and `cluster status` expose the active lifecycle action, phase, child-operation detail, and
 heartbeat during the monitored Docker build, Harbor publication, Harbor-backed Kind-worker
-preload, and Apple retained-state replay windows. Bootstrap shells build or enter the active
+preload, and Apple retained-state replay windows. Sprint 2.15 (`Planned`, documentation-first)
+extends this surface with the persisted `ClusterOwner` and a `ClusterMutating` (mutation-incomplete)
+lifecycle position, so a killed test's cluster is reported dirty and reconciled on the next
+`cluster up` rather than read as a false `steady-state`. Bootstrap shells build or enter the active
 launcher only and then delegate lifecycle, validation, image preparation, and teardown to
 `infernix`; the shared
 lifecycle skips broad pre-Harbor support-image preloads, may hydrate and stream only the narrow
@@ -599,7 +602,15 @@ validation closed in Wave C.
 
 Sprint 2.14 (Typed ClusterLifecycle and Lease-Gated Teardown) was the Managed-State-Transition
 Doctrine reopen for this phase; it is closed by [Wave V](cohort-validation-waves.md) (2026-07-20)
-with apple-silicon plus linux-cpu full-suite `test all` green. No remaining work exists.
+with apple-silicon plus linux-cpu full-suite `test all` green.
+
+Sprint 2.15 (Cluster Ownership and Mutation-Position) is the model half of the Cluster-Ownership &
+Mutation-Position reopen (2026-07-23). It is **documentation-first**: the doctrine + governance are
+landed (Phase 0 Sprint 0.16, `Done`), and its enforcing code — the `ClusterOwner` field, the
+`ClusterMutating` lifecycle position, its fail-closed persistence, and reconcile-on-next-`cluster up`
+— is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. Phase 6 Sprint 6.43 is
+the harness half. The superseded ownerless `ClusterReady`-as-idle surface is recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 
@@ -671,6 +682,70 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
   and `infernix lint docs`
 - the apple-silicon plus linux-cpu cohort full-suite sign-off closed under
   [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
+
+---
+
+## Sprint 2.15: Cluster Ownership and Mutation-Position [Planned]
+
+**Status**: Planned — **documentation-first**. The doctrine + governance are landed (Phase 0 Sprint
+0.16, `Done`); this sprint's enforcing code — the typed `ClusterOwner`, the `ClusterMutating` lifecycle
+position, its fail-closed persistence, and reconcile-on-next-`cluster up` — is not yet implemented. It
+is the model half of the Cluster-Ownership & Mutation-Position reopen; [Phase 6 Sprint
+6.43](phase-6-validation-e2e-and-ha-hardening.md) is the harness half.
+**Cohort gate**: apple-silicon + linux-cpu, [Wave X](cohort-validation-waves.md) — the behavioral proof
+that a killed test's cluster reports mutation-incomplete and reconciles on the next `cluster up`, and
+that an operator's cluster is never destroyed.
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
+**Blocked by**: Sprint 2.14 (typed `ClusterLifecycle` + fail-closed persistence), Sprint 1.16 (the
+`Infernix.Evidence.Lease` / evidence kernel)
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`,
+`documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`,
+`documents/operations/cluster_bootstrap_runbook.md`, and this plan
+
+### Objective
+
+Make cluster ownership and in-progress mutation representable so a killed `infernix test all` cannot
+leave an illegal state indistinguishable from a healthy operator cluster. Today `ClusterState` has no
+owner and `ClusterLifecycle` has no mutating position, so a test-mutated cluster (a drained node, an
+over-scaled deployment) is the same term as an operator's idle `ClusterReady`, and a SIGKILLed run
+persists a false `steady-state`. See the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- `ClusterOwner = OperatorOwned | HarnessOwned` (+ JSON) and a `clusterOwner` field on `ClusterState`,
+  threaded through construction; `infernix cluster up` mints `OperatorOwned`, the test harness mints
+  `HarnessOwned`
+- a first-class `ClusterMutating LifecyclePhase` position on `ClusterLifecycle` (+ JSON codec +
+  `clusterLifecyclePresent` / `lifecyclePhaseOf`), so a test-mid-mutation cluster is distinguishable
+  from operator-idle `ClusterReady`
+- the fail-closed versioned persistence codec (`VersionedClusterState`) carries the owner + mutation
+  position; a pre-migration document missing `clusterOwner` decodes to the safe default `OperatorOwned`
+  (so the harness seizure fails closed rather than destroying an unowned-but-present cluster)
+- `cluster status` renders a persisted `ClusterMutating` as a mutation-incomplete (dirty) phase and
+  reports the owner, never `steady-state`
+- reconcile-on-next-`cluster up`: a persisted `ClusterMutating` is detected and reconciled (uncordon
+  drained nodes, scale deployments back to their chart replicas) through the
+  `repairInterruptedDirtyPulsarBootstrapState` idiom before proceeding
+
+### Validation
+
+- `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (a `ClusterMutating` round-trips the
+  versioned codec and renders dirty, not steady-state; a pre-migration document decodes `OperatorOwned`;
+  the reconcile path drives uncordon / scale-back), and `cabal test infernix-haskell-style`, on both the
+  apple-silicon and linux-cpu lanes
+- `infernix lint docs` stays clean
+- `infernix test all` on apple-silicon plus linux-cpu proves the behavioral contract — closed under
+  [Wave X](cohort-validation-waves.md)
+
+### Remaining Work
+
+The doctrine and governance are documented (Phase 0 Sprint 0.16). The enforcing code is unimplemented:
+the `ClusterOwner` field, the `ClusterMutating` position, the persistence migration, the status
+rendering, and the reconcile-on-next-start are all `Planned`. The superseded ownerless
+`ClusterReady`-as-idle surface is recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 

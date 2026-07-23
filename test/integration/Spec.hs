@@ -146,7 +146,7 @@ integrationRuntimeModes =
 withClusterLifecycle :: RuntimeMode -> IO a -> IO a
 withClusterLifecycle runtimeMode action =
   ( do
-      clusterUp (Just runtimeMode)
+      clusterUp HarnessOwned (Just runtimeMode)
       action
   )
     `finally` clusterDown (Just runtimeMode)
@@ -3368,7 +3368,7 @@ validatePostgresLifecycleRebinding paths runtimeMode state = do
   boundVolumesBefore <- postgresBoundVolumeNames state
   assert (boundVolumesBefore == Map.keysSet inventoryBefore) "operator-managed PostgreSQL PVCs bind to the full deterministic Harbor PV inventory before cluster lifecycle rebind validation"
   clusterDown (Just runtimeMode)
-  clusterUp (Just runtimeMode)
+  clusterUp HarnessOwned (Just runtimeMode)
   reboundState <- maybe (fail "cluster state was not available after lifecycle rebind validation") pure =<< loadClusterState paths
   waitForRollout reboundState "deployment/harbor-postgresql-pgbouncer"
   inventoryAfter <- postgresPersistentVolumeInventory reboundState

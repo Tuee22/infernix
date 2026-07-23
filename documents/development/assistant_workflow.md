@@ -73,6 +73,14 @@ this canonical list.
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
   outside that wrapper, enforced by the `unboundedHttpViolations` lint. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
+- cluster ownership and mutation-position by construction: the persisted cluster state names its
+  `ClusterOwner` (`OperatorOwned | HarnessOwned`) and `clusterDown` consumes typed ownership evidence, so
+  tearing down an `OperatorOwned` cluster does not typecheck (`infernix test all` fails closed on an
+  operator cluster instead of destroying it); the `ClusterLifecycle` machine carries a first-class
+  `ClusterMutating` position, so a killed `infernix test all` leaves a detectable, reconcilable dirty
+  cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
+  leftover `.harness-backup` on entry. Canonical:
+  [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
   minted by `admitModelMemory`, and the capped-engine kernel OS-bounds its actual resident memory to
   the admitted `MemoryCeiling` (the raw engine spawn is unexported, so launching an engine without an

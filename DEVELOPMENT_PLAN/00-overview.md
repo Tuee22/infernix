@@ -84,7 +84,15 @@ three-valued — the kernel `PollOutcome = Measured | Unobservable` channel and 
 `SentinelObservation` (present / absent / unobservable) plus a Python `CacheValidity` verdict — so a
 transient MinIO fault can no longer masquerade as a definitive absence and stall the warm-model-cache
 barrier at "11/16". Phases 1 and 8 are correspondingly `Active` (code-side closed, Wave W behavioral
-re-run pending).
+re-run pending). On 2026-07-23 a further reopen closed a related DSL smell an externally-killed
+`infernix test all` exposed — because `ClusterState` had no owner and `ClusterLifecycle` had no mutating
+position, a test-mutated cluster read as a clean `steady-state`, and the unconditional test-harness
+`clusterDown` could destroy an operator's cluster: the **Cluster-Ownership & Mutation-Position reopen**
+adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`, evidence-gated seizure) and a first-class
+`ClusterMutating` position (a killed test leaves a detectable + reconcilable dirty cluster). It is
+**documentation-first** — the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`) and the
+enforcing code is `Planned` (Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43), so Phases 2 and 6 are
+correspondingly `Active` with the [Wave X](cohort-validation-waves.md) behavioral proof pending.
 The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct

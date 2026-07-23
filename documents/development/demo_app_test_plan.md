@@ -186,7 +186,10 @@ Coverage:
   coordinator pod replacement, engine pod replacement, engine node drain, model-bootstrap
   request/ready-event deduplication across coordinator replacement, and engine anti-affinity.
   Each prompt-oriented case asserts completed conversation writeback plus exactly-one
-  request/batch/result/conversation-result broker counts.
+  request/batch/result/conversation-result broker counts. The node-drain and pool over-scale cases
+  are mutation-position exemplars: a harness run killed mid-mutation leaves a persisted
+  `ClusterMutating` dirty phase reconciled on the next `cluster up` (Planned; canonical home
+  [Managed State Transitions](../architecture/managed_state_transitions.md)).
 - **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix`
   (3 users x 2 contexts x 2 prompts) through the durable prompt path, asserts exact per-context
   prompt/result counts with no extras, and reports p95 completion latency for the full-suite
@@ -466,7 +469,11 @@ row even though no single substrate carries all 19 rows.
   the chaos tests and the throughput test.
 - `infernix test e2e` runs the Playwright suite including the per-model smoke matrix.
 - `infernix test all` aggregates lint, unit, integration, and E2E. Phase 7 closure requires
-  `infernix test all` green on at least one substrate with `demo_ui = true`.
+  `infernix test all` green on at least one substrate with `demo_ui = true`. A `HarnessOwned`
+  `infernix test all` seizes the single cluster slot under typed `ClusterOwner` evidence and fails
+  closed on an `OperatorOwned` running cluster instead of tearing it down (Planned — Phase 6
+  Sprint 6.43; canonical home
+  [Managed State Transitions](../architecture/managed_state_transitions.md)).
 - `infernix lint docs` must remain clean as new suites and fixtures are added.
 
 ## Cross-References

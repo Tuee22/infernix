@@ -57,7 +57,13 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `infernix test init`), backs up any existing `./infernix.dhall` (an operator config or the
   image-baked empty-models config), generates `./infernix.dhall` from the test config's substrate +
   demo-ui selection, runs the suites, and restores the backup (or removes the generated file when
-  there was none). The Linux launcher image bakes both `./infernix.dhall` and `./infernix.test.dhall`
+  there was none). The swap is crash-safe by construction: the backup lives at
+  `./infernix.dhall.harness-backup` and `withTestHarnessConfig` reconciles a leftover backup on
+  **entry** (a SIGKILL bypasses the `finally` restore), so a killed run cannot leave the operator's
+  runtime config clobbered by the test config. That crash-safe entry reconcile is documentation-first
+  — Planned (Phase 6 Sprint 6.43); its canonical contract home is
+  [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes
+  both `./infernix.dhall` and `./infernix.test.dhall`
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.
   The integration suite's per-variant `internal materialize-substrate` keeps rewriting that same
   harness-owned path across substrate variants. `infernix test lint` and `infernix test unit` remain
@@ -155,6 +161,15 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - `infernix test all` may perform multiple internal cluster bring-up or teardown cycles before the
   outer Apple bootstrap `test` command returns; apply the same progress interpretation to those
   managed internal rounds
+- those internal rounds run against the operator's single cluster slot: the harness resolves the
+  operator's cluster name, `./.data`, and `infernix.dhall` through the same `findRepoRoot`, so it
+  must not silently destroy an operator's cluster. The target shape gives the persisted cluster a
+  typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) and gates teardown on typed ownership
+  evidence: a `HarnessOwned` `infernix test all` seizes the slot and **fails closed** on an
+  `OperatorOwned` running cluster instead of tearing it down. Documentation-first; the evidence-gated
+  seizure is Planned (Phase 6 Sprint 6.43) and the `ClusterOwner` field plus fail-closed persistence
+  Phase 2 Sprint 2.15. Canonical home:
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - a typed `ClusterLifecycle` machine with phase-resume is the target shape of the
   lifecycle-interpretation surface this section describes, and its canonical home is
   [Managed State Transitions](../architecture/managed_state_transitions.md)

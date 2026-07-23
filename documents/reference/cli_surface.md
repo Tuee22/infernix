@@ -35,6 +35,11 @@ workload runs the Webapp role.
 - when a lifecycle action is active, the status surface reports the current phase, the current
   child operation, and a heartbeat timestamp instead of leaving Apple bring-up or teardown in an
   opaque wait state
+- when no lifecycle action is running, the reported cluster state also names its `clusterOwner`
+  (`OperatorOwned` or `HarnessOwned`) and can report a `mutation-incomplete` (dirty) phase — a
+  SIGKILLed `infernix test all` left the cluster mid-mutation — rather than a false `steady-state`,
+  and the next `cluster up` reconciles it; canonical home:
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 
 ## Cross-References
 

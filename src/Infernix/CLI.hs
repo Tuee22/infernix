@@ -113,7 +113,7 @@ dispatch command =
     InitCommand maybeRuntimeMode maybeDemoUi force ifMissing -> runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing
     TestInitCommand maybeRuntimeMode maybeDemoUi -> runTestInit maybeRuntimeMode maybeDemoUi
     ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
-    ClusterUpCommand -> clusterUp Nothing
+    ClusterUpCommand -> clusterUp OperatorOwned Nothing
     ClusterDownCommand -> clusterDown Nothing
     ClusterStatusCommand -> clusterStatus Nothing
     CacheStatusCommand -> runCacheStatus Nothing
@@ -276,9 +276,15 @@ runLint maybeRuntimeMode = do
   runPythonQualityIfPresent maybeRuntimeMode
   runCabalCommand maybeRuntimeMode ["build", "all"]
 
+-- | Sprint 6.43 — run a cluster-owned validation step under an evidence-gated
+-- seizure of the single cluster slot. 'seizeHarnessClusterSlot' reads the
+-- persisted owner and fails closed loud on an 'OperatorOwned' cluster (never
+-- destroying it — the do-block throws before the @finally@ teardown is
+-- installed), tearing down only a 'HarnessOwned' or absent one. The suite then
+-- brings up its own 'HarnessOwned' cluster, which the @finally@ cleans up.
 runClusterOwnedValidation :: Maybe RuntimeMode -> IO a -> IO a
 runClusterOwnedValidation maybeRuntimeMode action = do
-  clusterDown maybeRuntimeMode
+  seizeHarnessClusterSlot maybeRuntimeMode
   action
     `finally` clusterDown maybeRuntimeMode
 
@@ -302,6 +308,12 @@ withTestHarnessConfig action = do
   let testConfig = testConfigPath paths
       runtimeConfig = runtimeConfigPath paths
       backupConfig = runtimeConfig <> ".harness-backup"
+  -- Sprint 6.43: a leftover @.harness-backup@ at entry means a prior run was
+  -- SIGKILLed after moving the operator config aside but before restoring it,
+  -- leaving the operator's runtime config clobbered by the test config. Restore
+  -- it before taking ownership, so the `finally` restore is no longer the only
+  -- recovery path.
+  reconcileLeftoverHarnessBackup runtimeConfig backupConfig
   testConfigExists <- doesFileExist testConfig
   unless testConfigExists $
     ioError
@@ -332,6 +344,24 @@ restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig = do
     backupPresent <- doesFileExist backupConfig
     when backupPresent (renameFile backupConfig runtimeConfig)
 
+-- | Sprint 6.43 — reconcile a leftover @.harness-backup@ from a prior killed
+-- run before the harness takes ownership. A backup present at entry can only be
+-- the operator's original config, stranded by an interrupted run; restore it
+-- (remove any harness leftover at the runtime path, then move the backup back)
+-- so a crash cannot leave the operator's runtime config clobbered by the test
+-- config.
+reconcileLeftoverHarnessBackup :: FilePath -> FilePath -> IO ()
+reconcileLeftoverHarnessBackup runtimeConfig backupConfig = do
+  backupPresent <- doesFileExist backupConfig
+  when backupPresent $ do
+    putStrLn
+      ( "reconciling a leftover harness config backup from a prior interrupted run: restoring "
+          <> runtimeConfig
+      )
+    present <- doesFileExist runtimeConfig
+    when present (removeFile runtimeConfig)
+    renameFile backupConfig runtimeConfig
+
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
   paths <- discoverPaths
@@ -344,7 +374,7 @@ runEndToEnd maybeRuntimeMode = do
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
   ( do
-      clusterUp (Just runtimeMode)
+      clusterUp HarnessOwned (Just runtimeMode)
       let expectedInferenceDispatchMode = Text.unpack (expectedInferenceDispatchModeForRuntime runtimeMode)
       maybePort <- readEdgePortMaybe paths
       edgePort <-

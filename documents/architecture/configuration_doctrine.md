@@ -28,7 +28,10 @@
   entered through that Apple bootstrap wrapper.
 - **The test harness owns the runtime config during a run**: driven by `./infernix.test.dhall`, it
   generates `./infernix.dhall`, runs the suites, and deletes it (self-created-only guard); it fails
-  fast if `./infernix.dhall` already exists.
+  fast if `./infernix.dhall` already exists. The swap is **crash-safe**: any existing
+  `./infernix.dhall` is backed up to `./infernix.dhall.harness-backup`, and `withTestHarnessConfig`
+  reconciles a leftover backup on entry, so a killed run cannot leave the operator's config clobbered
+  by the test config (see [Why](#why)).
 - The `dhall` Haskell library is the only Dhall reader. There is no `dhall-to-json` bridge.
 - Every external command the project ever invokes is named in the host manifest by absolute path;
   no `proc "<bare-name>"` / `findExecutable` discovery in Haskell, no bare-name invocations in shell.
@@ -44,7 +47,12 @@ collapses that to one substrate (typed Dhall) and one tool-discovery surface (ab
 host manifest). The typed `SubprocessEnv` (with required `HOME` and `TMPDIR` fields) and the
 `CommandOutcome` ADT (no unbounded exec) are the positive process-execution counterpart to these
 banned environment reads, whose canonical home is the
-[Managed State Transitions](managed_state_transitions.md) doctrine.
+[Managed State Transitions](managed_state_transitions.md) doctrine. That same doctrine makes the
+harness config swap crash-safe: `withTestHarnessConfig` restores the operator's config through a
+`./infernix.dhall.harness-backup` that it reconciles on **entry**, not only through a `finally`
+restore a SIGKILL would bypass — so an externally-killed run cannot leave the operator's runtime
+config replaced by the test config. This is documentation-first; the crash-safe entry reconcile is
+Planned (Phase 6 Sprint 6.43).
 
 A second source of drift was **hand-maintained `.dhall` schema files** committed alongside the
 Haskell renderers that generate them, plus `.dhall` *values* rendered by Helm templating from

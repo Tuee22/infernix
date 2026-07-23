@@ -78,6 +78,15 @@
   internal cluster bring-up or teardown rounds inside `infernix test all`
 - treat the supported path as stalled only when the command exits non-zero or the heartbeat stops
   refreshing across multiple monitor intervals during one of those monitored phases
+- a SIGKILLed `infernix test all` is a distinct dirty / mutation-incomplete state class, not a stall
+  and not a clean failure: the target `ClusterLifecycle` carries a first-class `ClusterMutating`
+  position, so a run killed while it was actively mutating the cluster (a drained node, an
+  over-scaled deployment) leaves `ClusterMutating` persisted. `cluster status` then reports a
+  mutation-incomplete (dirty) phase rather than a false `steady-state`, and the next `cluster up`
+  reconciles it (uncordon drained nodes, scale deployments back). Documentation-first; enforcing code
+  Planned — the `ClusterMutating` position and reconcile are Phase 2 Sprint 2.15, the evidence-gated
+  seizure and crash-safe config swap Phase 6 Sprint 6.43. Canonical home:
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - resource exhaustion is a distinct third class from stall and clean failure: every active model
   carries `ModelDescriptor.modelRamFootprintMib`, and each substrate resolves an explicit
   `InferenceMemoryBudget` before launch

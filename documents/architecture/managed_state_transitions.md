@@ -50,6 +50,11 @@ evidence:
 
 - the retained-state scrub takes a `WriterQuiesced` lease, so a scrub against a live writer is not a
   constructible term;
+- cluster teardown takes typed `ClusterOwner` evidence: the persisted cluster names its owner
+  (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes it, so
+  tearing down an `OperatorOwned` cluster is not a constructible term — the test harness's seizure of
+  the single cluster slot fails closed on an operator's running cluster instead of silently destroying
+  it;
 - the readiness-sentinel commit takes a `PayloadVerified`, so a sentinel written without proof does not
   typecheck;
 - process execution takes a total `SubprocessEnv` — `HOME` and `TMPDIR` are required fields behind a
@@ -77,6 +82,15 @@ less than the server can take is not expressible. Cluster lifecycle is a typed `
 machine — a closed sum with a consumed, resumable phase — replacing the `clusterPresent :: Bool` plus
 `lifecyclePhase :: String` pair; its persistence is a **fail-closed** versioned codec, so an
 unrecognized on-disk document blocks a destructive action instead of decoding to a silent "absent".
+The machine also carries a first-class `ClusterMutating LifecyclePhase` position, so a cluster a test
+suite is actively mutating (a drained node, an over-scaled deployment) is not the same term as an
+operator's idle `ClusterReady`: an interrupted (SIGKILLed) `infernix test all` leaves `ClusterMutating`
+persisted, so `cluster status` reports a mutation-incomplete (dirty) phase rather than a false
+`steady-state`, and the next `cluster up` reconciles it — uncordoning drained nodes and scaling
+deployments back — through the same reconcile-on-next-start repair the interrupted-bring-up path uses.
+The test-harness `./infernix.dhall` swap is crash-safe in the same spirit: a leftover `.harness-backup`
+from a killed run is reconciled on entry, so a crash cannot leave the operator's runtime config
+clobbered by the test config.
 
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a
@@ -166,6 +180,23 @@ Python `CacheValidity` evidence-gated cache deletion are **Phase 8** (Sprint 8.8
 single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof is the
 [Wave W](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
+A third **follow-on reopen** (2026-07-23, the Cluster-Ownership & Mutation-Position wave) closes a DSL
+smell an externally-killed `infernix test all` exposed: because `ClusterState` had no owner and
+`ClusterLifecycle` had no mutating position, a test-mutated cluster (a drained node, an over-scaled
+deployment) was the same term as an operator's idle `ClusterReady`, so a killed run left a dirty cluster
+reading as a clean `steady-state`; and `runClusterOwnedValidation`'s unconditional `clusterDown` plus
+the shared operator cluster identity (the test resolves the operator's `infernix.dhall`/`.data`/cluster
+name via `findRepoRoot`) meant even a clean `infernix test all` destroyed an operator's running cluster.
+The doctrine adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) with an evidence-gated
+seizure that fails closed on an operator cluster, the first-class `ClusterMutating` position with
+reconcile-on-next-`cluster up`, and the crash-safe `withTestHarnessConfig` backup reconcile.
+Documentation-first: the doctrine doc + governance mirror land now — **Phase 0** (Sprint 0.16, doc-only,
+`Done`) — while the enforcing code is `Planned`: the `ClusterOwner` field, `ClusterMutating` position,
+fail-closed persistence, and reconcile are **Phase 2** (Sprint 2.15), and the evidence-gated seizure,
+chaos-mutation transitions, and crash-safe config swap are **Phase 6** (Sprint 6.43). The
+single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof is the
+[Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+
 ## Validation
 
 - `cabal build all` under `-Wall -Werror` is the primary proof: an operation reachable without its
@@ -188,3 +219,5 @@ single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof is t
   and the fail-closed versioned persistence.
 - [../engineering/testing.md](../engineering/testing.md) — the canonical lifecycle failure
   classification.
+- [../development/chaos_testing.md](../development/chaos_testing.md) — the SIGKILL-mid-mutation chaos
+  case the `ClusterMutating` position and reconcile-on-next-`cluster up` cover.

@@ -6,6 +6,10 @@ module Infernix.Cluster
     clusterDown,
     clusterStatus,
     clusterUp,
+    seizeHarnessClusterSlot,
+    authorizeHarnessSeizure,
+    ClusterSeizureRefusal (..),
+    ClusterTeardownAuthority,
     HelmDeployPhase (..),
     kindControlPlaneNodeName,
     linuxGpuNvkindConfigMapBug,
@@ -480,8 +484,12 @@ tryCommandBounded paths budget maybeWorkingDirectory command args = do
     Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
       Left ("command timed out after " <> show (micros `div` 1000000) <> "s")
 
-clusterUp :: Maybe RuntimeMode -> IO ()
-clusterUp maybeRuntimeMode = do
+-- | Sprint 2.15 — bring up the cluster under a declared 'ClusterOwner'. The
+-- operator's @infernix cluster up@ mints 'OperatorOwned'; the test harness mints
+-- 'HarnessOwned'. The owner is persisted on the recorded 'ClusterState' so the
+-- harness seizure of the single slot can fail closed on an operator cluster.
+clusterUp :: ClusterOwner -> Maybe RuntimeMode -> IO ()
+clusterUp owner maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
   Config.ensureRepoLayout paths
   runtimeMode <- resolveClusterRuntimeMode paths maybeRuntimeMode
@@ -493,20 +501,25 @@ clusterUp maybeRuntimeMode = do
       ( userError
           "cluster up requires Docker, Helm, Kind, and kubectl on the supported path; simulation is no longer available."
       )
-  clusterUpWithPulsarBootstrapRepair paths runtimeMode
+  clusterUpWithPulsarBootstrapRepair owner paths runtimeMode
 
-clusterUpWithPulsarBootstrapRepair :: Paths -> RuntimeMode -> IO ()
-clusterUpWithPulsarBootstrapRepair paths runtimeMode = go 0
+clusterUpWithPulsarBootstrapRepair :: ClusterOwner -> Paths -> RuntimeMode -> IO ()
+clusterUpWithPulsarBootstrapRepair owner paths runtimeMode = go 0
   where
     maxRepairAttempts = 3 :: Int
     go repairAttempts = do
+      -- Sprint 2.15: reconcile a persisted 'ClusterMutating' left by a SIGKILLed
+      -- @infernix test all@ before proceeding — uncordon drained nodes and clear
+      -- the dirty marker; the normal bring-up below re-applies the chart, which
+      -- scales any over-scaled deployment back to its chart replica count.
+      reconcileInterruptedClusterMutation paths runtimeMode
       repairAttempts' <-
         if repairAttempts >= maxRepairAttempts
           then pure repairAttempts
           else do
             repaired <- repairInterruptedDirtyPulsarBootstrapState
             pure (if repaired then repairAttempts + 1 else repairAttempts)
-      result <- try (clusterUpWithPlatform paths runtimeMode)
+      result <- try (clusterUpWithPlatform owner paths runtimeMode)
       case result of
         Right _ -> pure ()
         Left err -> do
@@ -538,12 +551,74 @@ clusterUpWithPulsarBootstrapRepair paths runtimeMode = go 0
                   pure True
         _ -> pure False
 
-clusterUpWithPlatform :: Paths -> RuntimeMode -> IO ()
-clusterUpWithPlatform paths runtimeMode = do
+-- | Sprint 2.15 — reconcile a persisted 'ClusterMutating' position (left by a
+-- SIGKILLed @infernix test all@ mid node-drain / over-scale) on the next
+-- @cluster up@: uncordon any cordoned nodes (which the chart re-apply cannot do)
+-- and clear the dirty marker. Deployment replicas are reconciled by the chart
+-- re-apply that follows in the same bring-up. Best-effort and idempotent: an
+-- already-uncordoned node or an unreachable API does not abort the bring-up.
+reconcileInterruptedClusterMutation :: Paths -> RuntimeMode -> IO ()
+reconcileInterruptedClusterMutation paths runtimeMode = do
+  maybeState <- loadClusterState paths
+  case matchingClusterState runtimeMode maybeState of
+    Just state
+      | clusterLifecycleMutating (clusterLifecycle state) -> do
+          clusterExists <- kindClusterExists paths runtimeMode
+          if clusterExists
+            then do
+              putStrLn
+                ( "cluster up reconciling interrupted cluster mutation: "
+                    <> maybe "unknown-phase" lifecyclePhaseName (lifecyclePhaseOf state)
+                )
+              uncordonAllNodes state
+              _ <- settleLifecycle paths state ClusterReady
+              pure ()
+            else do
+              putStrLn "cluster up clearing stale ClusterMutating marker for an absent cluster"
+              _ <- settleLifecycle paths state ClusterAbsent
+              pure ()
+    _ -> pure ()
+
+clusterLifecycleMutating :: ClusterLifecycle -> Bool
+clusterLifecycleMutating lifecycle = case lifecycle of
+  ClusterMutating _ -> True
+  ClusterAbsent -> False
+  ClusterProvisioning _ -> False
+  ClusterActivating _ -> False
+  ClusterReady -> False
+  ClusterTearingDown _ -> False
+
+-- | Sprint 2.15 — uncordon every node best-effort so a node cordoned by an
+-- interrupted drain can schedule pods again. A failure (already uncordoned,
+-- transient API error) is logged and does not abort the reconcile.
+uncordonAllNodes :: ClusterState -> IO ()
+uncordonAllNodes state = do
+  nodesResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["get", "nodes", "-o", "name"])
+  case nodesResult of
+    Left _ -> pure ()
+    Right output ->
+      forM_ (nodeNamesFromOutput output) $ \nodeName -> do
+        uncordonResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["uncordon", nodeName])
+        case uncordonResult of
+          Right _ -> pure ()
+          Left err ->
+            putStrLn ("cluster up uncordon " <> nodeName <> " skipped: " <> takeWhile (/= '\n') err)
+
+nodeNamesFromOutput :: String -> [String]
+nodeNamesFromOutput output =
+  [ fromMaybe trimmed (List.stripPrefix "node/" trimmed)
+    | rawLine <- lines output,
+      let trimmed = filter (not . isSpace) rawLine,
+      not (null trimmed)
+  ]
+
+clusterUpWithPlatform :: ClusterOwner -> Paths -> RuntimeMode -> IO ()
+clusterUpWithPlatform owner paths runtimeMode = do
   inputs <- prepareClusterUpInputs paths runtimeMode
   claimDiscoveryTime <- getCurrentTime
   let provisionalState0 =
         clusterUpState
+          owner
           inputs
           runtimeMode
           False
@@ -588,6 +663,7 @@ clusterUpWithPlatform paths runtimeMode = do
   activeStateTime <- getCurrentTime
   let activeState0 =
         clusterUpState
+          owner
           inputs
           runtimeMode
           True
@@ -850,10 +926,11 @@ prepareClusterUpInputs paths runtimeMode = do
         clusterUpPayload = payload
       }
 
-clusterUpState :: ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
-clusterUpState inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
+clusterUpState :: ClusterOwner -> ClusterUpInputs -> RuntimeMode -> Bool -> Int -> Int -> [RouteInfo] -> [PersistentClaim] -> UTCTime -> ClusterState
+clusterUpState owner inputs runtimeMode clusterPresentValue edgePortValue harborPortValue routesValue claimsValue updatedAtValue =
   ClusterState
     { clusterLifecycle = if clusterPresentValue then ClusterReady else ClusterAbsent,
+      clusterOwner = owner,
       edgePort = edgePortValue,
       harborPort = harborPortValue,
       routes = routesValue,
@@ -921,8 +998,77 @@ matchingClusterState runtimeMode maybeState =
       | clusterRuntimeMode state == runtimeMode -> Just state
     _ -> Nothing
 
+-- | Sprint 2.15 (cluster-ownership doctrine) — typed authorization to tear down
+-- the persisted cluster slot. The constructor is hidden (unexported), so the
+-- only ways to obtain one are the two honest mints below; a teardown that skips
+-- the authority is not a constructible term outside this module. Mirrors the
+-- 'MemoryGrant' / 'withCappedEngine' precedent
+-- (documents/architecture/bounded_inference_memory.md).
+data ClusterTeardownAuthority = ClusterTeardownAuthority
+
+-- | The operator's explicit @infernix cluster down@ is authorized to tear down
+-- its own cluster regardless of owner. Reached only through the exported
+-- 'clusterDown' command, never the harness path (this mint is unexported).
+operatorTeardownAuthority :: ClusterTeardownAuthority
+operatorTeardownAuthority = ClusterTeardownAuthority
+
+-- | Why a harness seizure was refused: the present cluster is 'OperatorOwned'.
+newtype ClusterSeizureRefusal = ClusterSeizureRefusal ClusterOwner
+  deriving (Eq, Show)
+
+-- | Sprint 2.15/6.43 — the single honest mint for the test harness. The harness
+-- may seize (tear down) the cluster slot only when it is absent or
+-- 'HarnessOwned'; an 'OperatorOwned' present cluster fails closed, so a clean
+-- @infernix test all@ can never destroy an operator's running cluster.
+authorizeHarnessSeizure :: Maybe ClusterState -> Either ClusterSeizureRefusal ClusterTeardownAuthority
+authorizeHarnessSeizure maybeState = case maybeState of
+  Nothing -> Right ClusterTeardownAuthority
+  Just state
+    | not (clusterPresent state) -> Right ClusterTeardownAuthority
+    | otherwise -> case clusterOwner state of
+        HarnessOwned -> Right ClusterTeardownAuthority
+        OperatorOwned -> Left (ClusterSeizureRefusal OperatorOwned)
+
+clusterOwnerLabel :: ClusterOwner -> String
+clusterOwnerLabel OperatorOwned = "operator"
+clusterOwnerLabel HarnessOwned = "harness"
+
+-- | The operator's @infernix cluster down@ command — always authorized on the
+-- operator's own cluster.
 clusterDown :: Maybe RuntimeMode -> IO ()
-clusterDown maybeRuntimeMode = do
+clusterDown = clusterDownWithAuthority operatorTeardownAuthority
+
+-- | Sprint 6.43 — the test harness's evidence-gated seizure of the single
+-- cluster slot. Reads the persisted owner and fails closed loud on an
+-- 'OperatorOwned' cluster; tears down only a 'HarnessOwned' or absent one.
+seizeHarnessClusterSlot :: Maybe RuntimeMode -> IO ()
+seizeHarnessClusterSlot maybeRuntimeMode = do
+  paths <- discoverClusterCommandPaths
+  recordedState <- loadClusterState paths
+  runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  let maybeState = matchingClusterState runtimeMode recordedState
+  case authorizeHarnessSeizure maybeState of
+    Right authority -> clusterDownWithAuthority authority maybeRuntimeMode
+    Left (ClusterSeizureRefusal owner) ->
+      ioError
+        ( userError
+            ( "refusing to seize the cluster slot: an operator cluster is up (owner="
+                <> clusterOwnerLabel owner
+                <> ") for "
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> " at "
+                <> dataRoot paths
+                <> "; run `infernix cluster down` before running tests"
+            )
+        )
+
+-- | The raw ownership-gated teardown. Forces its 'ClusterTeardownAuthority' (a
+-- data-constructor match is strict to WHNF), so an @undefined@-forged authority
+-- is a loud crash rather than a silent unmanaged teardown. Unexported: the only
+-- public paths are 'clusterDown' (operator) and 'seizeHarnessClusterSlot'
+-- (harness), each supplying a minted authority.
+clusterDownWithAuthority :: ClusterTeardownAuthority -> Maybe RuntimeMode -> IO ()
+clusterDownWithAuthority ClusterTeardownAuthority maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
   recordedState <- loadClusterState paths
   runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
@@ -990,6 +1136,7 @@ clusterStatus maybeRuntimeMode = do
       nodeCount <- kubectlLineCountIfReachable state ["get", "nodes", "--no-headers"]
       podCount <- kubectlLineCountIfReachable state ["get", "pods", "-A", "--no-headers"]
       putStrLn ("clusterPresent: " <> show actualPresent)
+      putStrLn ("clusterOwner: " <> clusterOwnerLabel (clusterOwner state))
       putStrLn ("controlPlaneContext: " <> controlPlaneContextId (Config.controlPlaneContext paths))
       putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)))
       putStrLn ("edgePort: " <> show (edgePort state))
@@ -1899,6 +2046,9 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
   let state =
         ClusterState
           { clusterLifecycle = ClusterReady,
+            -- Transient state used only to apply namespace/storage; never
+            -- persisted as the authoritative owner record.
+            clusterOwner = OperatorOwned,
             edgePort = 0,
             harborPort = 0,
             routes = routeInventory demoUiEnabledValue,

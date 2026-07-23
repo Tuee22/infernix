@@ -75,6 +75,10 @@
 - the `lifecycleStatus`/`lifecyclePhase` field surface is moving under a typed `ClusterLifecycle`
   machine per [Managed State Transitions](../architecture/managed_state_transitions.md), which is
   the canonical home for that transition doctrine
+- when no lifecycle action is running, the surface also reports the persisted `clusterOwner`
+  (`OperatorOwned` or `HarnessOwned`) and can report a `mutation-incomplete` (dirty) `lifecyclePhase`
+  instead of `steady-state`; a dirty phase means a killed `infernix test all` left its `HarnessOwned`
+  cluster mid-mutation, and the next `cluster up` reconciles it
 - treat elapsed wall time alone as insufficient evidence of failure; during the monitored
   subprocess phases, a heartbeat that continues to refresh roughly every 30 seconds indicates the
   supported path is still progressing
@@ -223,6 +227,10 @@ constraints, or normal Kubernetes convergence.
   cluster disappears when durable state exists
 - when teardown looks quiet, use `infernix cluster status` to confirm whether the active phase is
   still `replay-retained-state` or has advanced to `delete-kind-cluster`
+- a run killed mid-teardown or mid-mutation is detectable rather than silent: `cluster status`
+  reports the `mutation-incomplete` (dirty) phase and the persisted `clusterOwner`, and the next
+  `cluster up` reconciles the leftover state — see
+  [Managed State Transitions](../architecture/managed_state_transitions.md)
 - expect durable state under `./.data/` to remain intact
 
 ## Durable-Context Demo Bring-Up

@@ -1,6 +1,10 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — the memory-safety-by-construction reopen (2026-07-21) is **code-side closed**:
+**Status**: Active — the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
+harness seizure, chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig`
+swap) is **documentation-first**: the doctrine + governance landed (Phase 0 Sprint 0.16), and its
+enforcing code is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. The
+memory-safety-by-construction reopen (2026-07-21) is **code-side closed**:
 Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) is implemented on the Phase 4
 Sprint 4.30 capped-engine kernel and the machine-independent gate set is GREEN (2026-07-21). The
 **apple-silicon Stage 2 behavioral evidence is GREEN**: the per-model integration lane ran with zero
@@ -38,6 +42,19 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+
+> **Cluster-Ownership & Mutation-Position reopen (2026-07-23).** An externally-killed `infernix test all`
+> exposed a DSL smell: because `ClusterState` had no owner and `ClusterLifecycle` had no mutating
+> position, a test-mutated cluster (a drained node, an over-scaled deployment) read as a clean
+> `steady-state`, and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator
+> cluster identity let even a clean run destroy an operator's cluster. This phase reopens under
+> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-planned) — the harness
+> half — for the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the chaos-mutation
+> `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile;
+> [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half. It is
+> **documentation-first**: the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`), and the
+> enforcing code is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. Canonical
+> doctrine: [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 > **Memory-safety-by-construction reopen (2026-07-21).** The memory-safety-by-construction doctrine
 > (Phase 0 Sprint 0.15) makes an over-budget inference engine a clean typed `ModelMemoryLimitExceeded`
@@ -2594,6 +2611,68 @@ Wave W behavioral sign-off (shared with Phase 4 Sprints 4.30/4.31).
 
 ---
 
+## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Planned]
+
+**Status**: Planned — **documentation-first**. The doctrine + governance are landed (Phase 0 Sprint 0.16,
+`Done`); this sprint's enforcing code — the evidence-gated harness cluster seizure, the chaos-mutation
+`ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile — is not yet
+implemented. It is the harness half of the Cluster-Ownership & Mutation-Position reopen; [Phase 2 Sprint
+2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
+`ClusterOwner` / `ClusterMutating` types this sprint consumes.
+**Cohort gate**: apple-silicon + linux-cpu, [Wave X](cohort-validation-waves.md) — the behavioral proof
+that `infernix test all` fails closed on a running operator cluster, that a killed run leaves a
+mutation-incomplete cluster the next `cluster up` reconciles, and that a leftover `.harness-backup` is
+restored on the next `test`.
+**Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`
+**Blocked by**: Sprint 2.15 (the `ClusterOwner` + `ClusterMutating` types), Sprint 6.42
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`,
+`documents/engineering/testing.md`, `documents/architecture/configuration_doctrine.md`,
+`documents/operations/cluster_bootstrap_runbook.md`, and this plan
+
+### Objective
+
+Make the test harness's ownership of the single cluster slot and its cluster mutations evidence-gated and
+crash-safe, so a killed `infernix test all` cannot strand illegal state and a clean run cannot destroy an
+operator's cluster. Today `runClusterOwnedValidation` (`src/Infernix/CLI.hs`) `clusterDown`s
+unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycle at `ClusterReady`, and
+`withTestHarnessConfig`'s config restore is `finally`-only (bypassed by SIGKILL). See the doctrine at
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
+
+### Deliverables
+
+- evidence-gated seizure: `runClusterOwnedValidation` reads the persisted state and **fails closed loud**
+  when a present cluster is `OperatorOwned` ("an operator cluster is up at `<identity>`; `infernix cluster
+  down` it before running tests"), tearing down only a `HarnessOwned` cluster; the harness brings up its
+  cluster as `HarnessOwned`
+- chaos-mutation `ClusterMutating` transitions: each mutation in `test/integration/Spec.hs` (node drain,
+  deployment over-scale, cordon) persists `ClusterMutating <phase>` before the `kubectl` mutation and
+  restores `ClusterReady` after, so a kill leaves `ClusterMutating` for the Sprint 2.15 status/reconcile
+  to catch
+- crash-safe `withTestHarnessConfig`: at entry, a leftover `./infernix.dhall.harness-backup` from a prior
+  killed run is reconciled (the operator config restored) before the harness takes ownership, so the
+  `finally` restore is no longer the only recovery path
+
+### Validation
+
+- `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (a persisted `OperatorOwned`
+  `ClusterReady` makes the harness seizure a loud failure; a `HarnessOwned` one proceeds;
+  `withTestHarnessConfig` restores the operator config from a planted leftover `.harness-backup`), and
+  `cabal test infernix-haskell-style`, on both the apple-silicon and linux-cpu lanes
+- `infernix lint docs` stays clean
+- `infernix test all` on apple-silicon plus linux-cpu proves the behavioral contract — closed under
+  [Wave X](cohort-validation-waves.md)
+
+### Remaining Work
+
+The doctrine and governance are documented (Phase 0 Sprint 0.16). The enforcing code is unimplemented:
+the evidence-gated seizure, the chaos-mutation `ClusterMutating` transitions, and the crash-safe config
+reconcile are all `Planned`, blocked on the Sprint 2.15 types. The superseded unconditional `clusterDown`
+seizure and the `finally`-only config swap are recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+---
+
 ## Remaining Work
 
 Sprint 6.39 (capability-gating lint plus managed-transition coverage), Sprint 6.40
@@ -2617,6 +2696,13 @@ new engine-spawn call sites off the raw process primitives and on the Phase 4 Sp
 capped-engine kernel — is **code-side closed** (2026-07-21, machine-independent gate set GREEN,
 negative-tested), with single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort sign-off
 pending [Wave W](cohort-validation-waves.md).
+**Sprint 6.43** (Cluster-Ownership Harness Seizure and Crash-Safe Config) — the harness half of the
+Cluster-Ownership & Mutation-Position reopen (2026-07-23): the evidence-gated cluster seizure (fail
+closed on an `OperatorOwned` cluster), the chaos-mutation `ClusterMutating` transitions, and the
+crash-safe `withTestHarnessConfig` backup reconcile — is **documentation-first** (`Planned`): the
+doctrine + governance landed (Phase 0 Sprint 0.16, `Done`), and the enforcing code is not yet
+implemented, blocked on the [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) types
+and tracked as the [Wave X](cohort-validation-waves.md) residual.
 
 ## Documentation Requirements
 

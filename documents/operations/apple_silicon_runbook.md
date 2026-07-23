@@ -98,6 +98,12 @@ Direct reference path:
   `lifecycleHeartbeatAgeSeconds`
 - these operator lifecycle fields are moving under a typed `ClusterLifecycle` machine per the
   canonical [Managed State Transitions](../architecture/managed_state_transitions.md) doctrine
+- if a `./bootstrap/apple-silicon.sh test` run is externally killed (SIGKILL) mid-mutation, the next
+  `cluster status` reports a `mutation-incomplete` (dirty) `lifecyclePhase` — not `steady-state` —
+  because the harness left its `HarnessOwned` cluster mid-mutation (a drained node, an over-scaled
+  deployment); the next `cluster up` reconciles it (uncordons the drained node, scales deployments
+  back) through the same reconcile-on-next-start repair, so treat a dirty read as a repairable
+  leftover rather than a corrupt cluster
 - the supported Apple doctrine is inactivity-aware: wall-clock duration alone is not failure
 - during the monitored long-running subprocess phases, the lifecycle heartbeat refreshes roughly
   every 30 seconds; treat that as active progress, and treat the action as stalled only when the

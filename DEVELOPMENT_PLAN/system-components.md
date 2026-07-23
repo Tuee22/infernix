@@ -146,7 +146,10 @@
   preload, and Apple retained-state replay work; staged substrate materialization is atomic for
   concurrent readers; and retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL
   replicas from the current Patroni leader when timeline drift leaves replicas unready after
-  promotion
+  promotion. Sprint 2.15 (`Planned`, documentation-first) adds the persisted `ClusterOwner`
+  (`OperatorOwned` / `HarnessOwned`) and a `ClusterMutating` (mutation-incomplete) `lifecyclePhase`, so a
+  killed test's cluster is reported dirty and reconciled on the next `cluster up` rather than read as a
+  false `steady-state`
 - the shared lifecycle skips broad pre-Harbor support-image preloads; shell scripts never pull or
   publish images, supported lanes hydrate and stream only the narrow Harbor warmup dependency set
   into Kind before Helm warmup, only Harbor-required services may pull upstream before Harbor is
@@ -235,7 +238,7 @@
 | Component | Entry point | Purpose |
 |-----------|-------------|---------|
 | Cluster reconcile | `infernix cluster up` | reconcile Kind, storage, Harbor-first bootstrap, image publication, staged substrate-file publication, publication state, edge port, and repo-local kubeconfig publication while recording the active lifecycle phase, child operation, and heartbeat for supported status observers; uses scratch kubeconfig state under system temp for Kind or `nvkind` create or delete so transient lock files stay off the durable repo-local paths; retained-state Apple reruns may automatically repair stopped Harbor PostgreSQL replicas from the current Patroni leader when timeline drift leaves replicas unready, and unready startup-pod recycling uses non-waiting Kubernetes deletes so StatefulSet recreation does not become the gate |
-| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state including `publicationInferenceDispatchMode` and derived engine-pool routing metadata instead of a single host batch topic, plus upstream mode, build or data roots, route inventory, and the active in-progress lifecycle action, phase, detail, and heartbeat fields without mutating Kubernetes resources, publication state, or authoritative repo-local state; on Linux outer-container paths it may idempotently attach the fresh launcher container to Docker's private `kind` network for observation |
+| Cluster status | `infernix cluster status` | report cluster presence, the active substrate through its current `runtimeMode` line, publication state including `publicationInferenceDispatchMode` and derived engine-pool routing metadata instead of a single host batch topic, plus upstream mode, build or data roots, route inventory, and the active in-progress lifecycle action, phase, detail, and heartbeat fields — plus, once Sprint 2.15 (`Planned`, documentation-first) lands, the cluster `ClusterOwner` and a `ClusterMutating` mutation-incomplete phase after a killed test — without mutating Kubernetes resources, publication state, or authoritative repo-local state; on Linux outer-container paths it may idempotently attach the fresh launcher container to Docker's private `kind` network for observation |
 | Kubernetes wrapper | `infernix kubectl ...` | scoped wrapper around upstream `kubectl` against the repo-local kubeconfig |
 | Cache lifecycle | `infernix cache status`, `infernix cache evict`, `infernix cache rebuild` | inspect or reconcile derived runtime cache state without mutating authoritative sources |
 | Focused lint | `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart` | run the repo-owned focused lint entrypoints for files, docs, `.proto`, and chart assets. File lint uses the baked source snapshot inside git-less images and invokes Git with a scoped `safe.directory=<repo>` override for mounted-source runs so validation does not depend on global Git config |

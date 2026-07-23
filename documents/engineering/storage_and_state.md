@@ -101,7 +101,12 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
 - Durable cluster-lifecycle `state` persistence replaces its `Show`/`Read` encoding with a
   fail-closed versioned aeson codec and adds phase-resume, per the managed-state-transition
   doctrine ([Managed State Transitions](../architecture/managed_state_transitions.md) is the
-  canonical home).
+  canonical home). That same persisted document also names its `ClusterOwner`
+  (`OperatorOwned | HarnessOwned`) and carries a first-class `ClusterMutating` position, so a
+  SIGKILLed `HarnessOwned` `infernix test all` leaves `ClusterMutating` on disk as the fail-closed
+  evidence the next `cluster up` reads to reconcile the interrupted mutation (uncordon drained nodes,
+  scale deployments back). This is documentation-first; the owner field, mutating position,
+  fail-closed persistence, and reconcile are Planned (Phase 2 Sprint 2.15).
 
 ## Cleanup Rules
 

@@ -82,7 +82,8 @@
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` is the
   long-running daemon entrypoint for the Coordinator, Engine, and Webapp roles
 - `cluster status` does not mutate Kubernetes resources, publication state, or authoritative
-  repo-local state; on the Linux outer-container path it may idempotently run
+  repo-local state; reporting the persisted `clusterOwner` or a `mutation-incomplete` phase is an
+  owner/state read, not a mutation; on the Linux outer-container path it may idempotently run
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
   control plane over Docker's private `kind` network
 - `infernix internal materialize-substrate ...` remains the explicit restaging and inspection
@@ -137,7 +138,10 @@
 ## Lifecycle Progress Surface
 
 - `infernix cluster status` reports `lifecycleStatus: idle` together with `lifecyclePhase:
-  not-yet-reconciled`, `steady-state`, or `cluster-absent` when no lifecycle action is running
+  not-yet-reconciled`, `steady-state`, `mutation-incomplete` (dirty), or `cluster-absent`, plus a
+  `clusterOwner` (`OperatorOwned` or `HarnessOwned`) field, when no lifecycle action is running; a
+  `mutation-incomplete` (dirty) phase means a SIGKILLed `infernix test all` left its `HarnessOwned`
+  cluster mid-mutation and is not `steady-state`, and the next `cluster up` reconciles it
 - while `cluster up` or `cluster down` is active, `cluster status` reports `lifecycleStatus:
   in-progress` plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
   `lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`
@@ -149,8 +153,13 @@
   action as still progressing while the current `lifecycleHeartbeatAt` continues to refresh, and
   treat it as stalled only when the command exits non-zero or the heartbeat stops moving across
   multiple monitor intervals
-- the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine, whose
-  canonical home is [Managed State Transitions](../architecture/managed_state_transitions.md)
+- the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a
+  first-class `ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty
+  reading) alongside the persisted `ClusterOwner` — whose canonical home is
+  [Managed State Transitions](../architecture/managed_state_transitions.md). Documentation-first: this
+  status prose lands now (doctrine doc Phase 0 Sprint 0.16, `Done`), while the enforcing
+  `ClusterMutating` / `ClusterOwner` code is `Planned` (Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43);
+  the cohort gate is [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 
 ## Cross-References
 

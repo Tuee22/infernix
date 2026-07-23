@@ -5,6 +5,7 @@ module Infernix.Types
     ApiUpstreamMode (..),
     CacheManifest (..),
     ClusterLifecycle (..),
+    ClusterOwner (..),
     ClusterState (..),
     ConsumerSubscriptionType (..),
     DaemonConfig (..),
@@ -300,6 +301,13 @@ data ClusterLifecycle
     ClusterActivating LifecyclePhase
   | -- | the cluster is present and idle.
     ClusterReady
+  | -- | Sprint 2.15 — the cluster is present but a test suite is actively
+    -- mutating it (a drained node, an over-scaled deployment). A distinct term
+    -- from the operator's idle 'ClusterReady', so a SIGKILLed @infernix test all@
+    -- leaves a persisted, detectable dirty position rather than a false
+    -- steady-state; the consumed 'LifecyclePhase' names the in-flight mutation
+    -- for reconcile-on-next-@cluster up@.
+    ClusterMutating LifecyclePhase
   | -- | the cluster is present and being torn down.
     ClusterTearingDown LifecyclePhase
   deriving (Eq, Read, Show)
@@ -312,6 +320,8 @@ instance ToJSON ClusterLifecycle where
       object ["position" .= ("provisioning" :: Text), "phase" .= phaseValue]
     ClusterActivating phaseValue ->
       object ["position" .= ("activating" :: Text), "phase" .= phaseValue]
+    ClusterMutating phaseValue ->
+      object ["position" .= ("mutating" :: Text), "phase" .= phaseValue]
     ClusterTearingDown phaseValue ->
       object ["position" .= ("tearing-down" :: Text), "phase" .= phaseValue]
 
@@ -323,6 +333,7 @@ instance FromJSON ClusterLifecycle where
       "ready" -> pure ClusterReady
       "provisioning" -> ClusterProvisioning <$> value .: "phase"
       "activating" -> ClusterActivating <$> value .: "phase"
+      "mutating" -> ClusterMutating <$> value .: "phase"
       "tearing-down" -> ClusterTearingDown <$> value .: "phase"
       _ -> fail ("Unsupported cluster lifecycle position: " <> Text.unpack position)
 
@@ -335,10 +346,40 @@ clusterLifecyclePresent lifecycle = case lifecycle of
   ClusterProvisioning _ -> False
   ClusterActivating _ -> True
   ClusterReady -> True
+  ClusterMutating _ -> True
   ClusterTearingDown _ -> True
+
+-- | Sprint 2.15 (cluster-ownership doctrine) — who owns the single persisted
+-- cluster slot. The operator's @infernix cluster up@ mints 'OperatorOwned'; the
+-- test harness mints 'HarnessOwned'. The teardown surface consumes this owner as
+-- typed evidence (see @Infernix.Cluster.ClusterTeardownAuthority@), so the
+-- harness's seizure of the slot fails closed on an operator's running cluster
+-- instead of destroying it. Canonical doctrine:
+-- documents/architecture/managed_state_transitions.md.
+data ClusterOwner
+  = -- | brought up by an operator's @infernix cluster up@; the safe default a
+    -- pre-migration (ownerless) persisted document decodes to, so an unowned
+    -- but present cluster is protected rather than destroyed.
+    OperatorOwned
+  | -- | brought up by the test harness for a validation run; the only owner the
+    -- harness seizure is permitted to tear down.
+    HarnessOwned
+  deriving (Eq, Read, Show)
+
+instance ToJSON ClusterOwner where
+  toJSON OperatorOwned = String "operator"
+  toJSON HarnessOwned = String "harness"
+
+instance FromJSON ClusterOwner where
+  parseJSON = withText "ClusterOwner" $ \rawValue ->
+    case rawValue of
+      "operator" -> pure OperatorOwned
+      "harness" -> pure HarnessOwned
+      _ -> fail ("Unsupported cluster owner: " <> Text.unpack rawValue)
 
 data ClusterState = ClusterState
   { clusterLifecycle :: ClusterLifecycle,
+    clusterOwner :: ClusterOwner,
     edgePort :: Int,
     harborPort :: Int,
     routes :: [RouteInfo],
@@ -369,6 +410,7 @@ lifecyclePhaseOf :: ClusterState -> Maybe LifecyclePhase
 lifecyclePhaseOf state = case clusterLifecycle state of
   ClusterProvisioning phaseValue -> Just phaseValue
   ClusterActivating phaseValue -> Just phaseValue
+  ClusterMutating phaseValue -> Just phaseValue
   ClusterTearingDown phaseValue -> Just phaseValue
   ClusterAbsent -> Nothing
   ClusterReady -> Nothing
@@ -408,6 +450,7 @@ instance ToJSON ClusterState where
   toJSON state =
     object
       [ "clusterLifecycle" .= clusterLifecycle state,
+        "clusterOwner" .= clusterOwner state,
         "edgePort" .= edgePort state,
         "harborPort" .= harborPort state,
         "routes" .= routes state,
@@ -426,6 +469,10 @@ instance FromJSON ClusterState where
   parseJSON = withObject "ClusterState" $ \value ->
     ClusterState
       <$> value .: "clusterLifecycle"
+      -- Sprint 2.15 — a pre-migration (ownerless) document decodes to the safe
+      -- default 'OperatorOwned' so the harness seizure fails closed on it rather
+      -- than destroying an unowned-but-present cluster.
+      <*> value .:? "clusterOwner" .!= OperatorOwned
       <*> value .: "edgePort"
       <*> value .: "harborPort"
       <*> value .: "routes"

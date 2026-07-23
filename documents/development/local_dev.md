@@ -77,8 +77,12 @@ explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The t
 owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2e|all` reads
 `./infernix.test.dhall` (fail fast → `infernix test init`), backs up any existing `./infernix.dhall`,
 generates the harness config from the test config, runs the suites, and restores the backup (or
-removes the generated file when there was none). The Linux launcher image bakes both files at build
-time so the containerized `infernix test all` runs without a manual init step.
+removes the generated file when there was none). That backup is held at
+`./infernix.dhall.harness-backup` and reconciled on entry, so a killed run cannot leave your
+`./infernix.dhall` clobbered by the test config (documentation-first; Planned — Phase 6 Sprint 6.43;
+canonical home [Configuration Doctrine](../architecture/configuration_doctrine.md)). The Linux
+launcher image bakes both files at build time so the containerized `infernix test all` runs without a
+manual init step.
 
 ## Containerized Linux Flow
 

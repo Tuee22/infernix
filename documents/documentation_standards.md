@@ -174,6 +174,14 @@ Rules:
   `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
   `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`
   admission cross-reference, and the relevant phase document in the same change
+- when the cluster-ownership / lifecycle-state contract changes (the `ClusterOwner`, the
+  `ClusterMutating` lifecycle position, the evidence-gated `clusterDown` seizure, the fail-closed
+  lifecycle persistence, or the `cluster status` owner / mutation-incomplete output fields), update
+  `documents/architecture/managed_state_transitions.md`, `documents/reference/cli_reference.md`,
+  `documents/reference/cli_surface.md` (with their generated command-registry sections),
+  `documents/development/testing_strategy.md`, `documents/engineering/storage_and_state.md`,
+  `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`,
+  and the relevant phase document in the same change
 - when assistant-facing repository workflow rules change, update
   `documents/development/assistant_workflow.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
 - when the root workflow changes, review `README.md`, `AGENTS.md`, and `CLAUDE.md` in the same change
