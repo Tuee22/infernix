@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 0.16, doctrine + governance mirror landed 2026-07-23) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code is `Planned` — Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43 — with [Wave X](cohort-validation-waves.md) pending); the memory-safety-by-construction reopen (Sprint 0.15, doc + governance mirror landed 2026-07-21) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code is code-side closed 2026-07-21 (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, machine-independent gates GREEN), [Wave W](cohort-validation-waves.md) Stage 2 pending); the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
+**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 0.16, doctrine + governance mirror landed 2026-07-23) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code (Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43) closed under [Wave X](cohort-validation-waves.md) on 2026-07-24); the memory-safety-by-construction reopen (Sprint 0.15, doc + governance mirror landed 2026-07-21) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42) closed under [Wave W](cohort-validation-waves.md) on 2026-07-24); the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -727,8 +727,9 @@ code-side closed 2026-07-21 (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42), w
 `managed_state_transitions.md`), the three-way non-negotiable mirror, the new `documentation_standards.md`
 Update Rule, and the operator / test-harness / persistence doc reconciliation are doc-only and
 machine-independent; closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the
-apple-silicon lane (2026-07-23). The enforcing code is `Planned` — Phase 2 (Sprint 2.15) and Phase 6
-(Sprint 6.43) — with the behavioral [Wave X](cohort-validation-waves.md) sign-off pending, tracked there.
+apple-silicon lane (2026-07-23). The enforcing code is code-side closed (2026-07-23) — Phase 2
+(Sprint 2.15) and Phase 6 (Sprint 6.43) — with the behavioral [Wave X](cohort-validation-waves.md)
+sign-off pending, tracked there.
 **Code-side closure**: closed 2026-07-23 — this is a docs-and-governance sprint, so the applicable
 machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the extended
 doctrine doc's links and structure, the new `documentation_standards.md` Update Rule, and the reconciled
@@ -789,8 +790,8 @@ canonical at
 None. The doc and governance surface are landed and machine-independent-closed. The enforcing code — the
 `ClusterOwner` field + `ClusterMutating` position + fail-closed persistence + reconcile (Phase 2 Sprint
 2.15) and the evidence-gated seizure + chaos-mutation transitions + crash-safe config swap (Phase 6 Sprint
-6.43) — is `Planned`, with the behavioral [Wave X](cohort-validation-waves.md) sign-off pending, tracked
-there.
+6.43) — is implemented and closed under [Wave X](cohort-validation-waves.md) (2026-07-24, apple-silicon
+plus linux-cpu behavioral sign-off), tracked there.
 
 ---
 
@@ -823,9 +824,9 @@ the Cluster-Ownership & Mutation-Position doctrine extends the already-registere
 `managed_state_transitions.md` (no new required doc), the new non-negotiable rule landed in the three-way
 `README.md` / `AGENTS.md` / `CLAUDE.md` mirror plus `assistant_workflow.md`, the missing cluster-lifecycle
 Update Rule landed in `documentation_standards.md`, and the operator / test-harness / persistence docs were
-reconciled to the doctrine. It has no cohort gate — the enforcing code is `Planned` Phase 2 (Sprint 2.15)
-and Phase 6 (Sprint 6.43) work, whose single-accelerator (apple-silicon) plus `linux-cpu` sign-off is
-[Wave X](cohort-validation-waves.md), tracked there.
+reconciled to the doctrine. It has no cohort gate — the enforcing code is code-side closed (2026-07-23)
+Phase 2 (Sprint 2.15) and Phase 6 (Sprint 6.43) work, whose single-accelerator (apple-silicon) plus
+`linux-cpu` sign-off is [Wave X](cohort-validation-waves.md), tracked there.
 
 Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
 machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by

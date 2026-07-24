@@ -99,9 +99,9 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   position persisted rather than an operator-idle `ClusterReady`. `cluster status` reports a
   mutation-incomplete (dirty) phase, not a false `steady-state`, and the next `cluster up` reconciles
   it — uncordoning the drained node and scaling the over-scaled deployment back — through the
-  reconcile-on-next-start repair. Documentation-first; the `ClusterMutating` position and reconcile
-  are Planned (Phase 2 Sprint 2.15) and the harness's evidence-gated `HarnessOwned` seizure Phase 6
-  Sprint 6.43. Canonical home:
+  reconcile-on-next-start repair. Code-side closed (2026-07-23): the `ClusterMutating` position and
+  reconcile (Phase 2 Sprint 2.15) and the harness's evidence-gated `HarnessOwned` seizure (Phase 6
+  Sprint 6.43) are implemented and closed under Wave X (2026-07-24). Canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md).
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and

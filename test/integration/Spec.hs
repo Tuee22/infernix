@@ -302,7 +302,7 @@ exerciseRuntimeMode paths runtimeMode = do
         -- is covered by the duplicate Exclusive pinned-member subscription
         -- check above.
         reportStep "linux engine anti-affinity enforcement"
-        validateLinuxEngineAntiAffinityEnforcement state
+        validateLinuxEngineAntiAffinityEnforcement paths state
 
       statusOutput <- captureInfernixOutput ["cluster", "status"]
       assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
@@ -1668,41 +1668,45 @@ validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> 
 validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-  (_, nodeName) <- prepareEngineDrainTargetNode state
-  let restore =
-        runKubectl state ["uncordon", nodeName]
-          >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-          >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
-          >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
-          >> waitForDrainSensitivePulsarRollouts state
-  ( do
-      runKubectl
-        state
-        [ "drain",
-          nodeName,
-          "--ignore-daemonsets",
-          "--delete-emptydir-data",
-          "--force",
-          "--timeout=180s"
-        ]
-      waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
-      waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
-      waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 1
-      waitForDrainSensitivePulsarRollouts state
-      _ <- waitForRoutedDemoConfig paths state
-      context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
-      waitForDispatcherDiscovery
-      promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
-      resultPayload <-
-        waitForConversationResultPayloadForPrompt
-          paths
-          runtimeMode
-          (durablePromptConversationTopic context)
-          (durablePromptRefMessageId promptRef)
-      assertCompletedResultPayload resultFamily resultPayload "durable prompt completes while an engine node is drained"
-      assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
-    )
-    `finally` restore
+  -- Sprint 6.43: persist a first-class ClusterMutating position across the
+  -- cordon + drain so a SIGKILL mid-mutation leaves a detectable dirty cluster
+  -- the next `cluster up` reconciles.
+  withPersistedClusterMutation paths state "engine-node-drain" "draining an engine node while a durable prompt is in flight" $ do
+    (_, nodeName) <- prepareEngineDrainTargetNode state
+    let restore =
+          runKubectl state ["uncordon", nodeName]
+            >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
+            >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
+            >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
+            >> waitForDrainSensitivePulsarRollouts state
+    ( do
+        runKubectl
+          state
+          [ "drain",
+            nodeName,
+            "--ignore-daemonsets",
+            "--delete-emptydir-data",
+            "--force",
+            "--timeout=180s"
+          ]
+        waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
+        waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
+        waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 1
+        waitForDrainSensitivePulsarRollouts state
+        _ <- waitForRoutedDemoConfig paths state
+        context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
+        waitForDispatcherDiscovery
+        promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
+        resultPayload <-
+          waitForConversationResultPayloadForPrompt
+            paths
+            runtimeMode
+            (durablePromptConversationTopic context)
+            (durablePromptRefMessageId promptRef)
+        assertCompletedResultPayload resultFamily resultPayload "durable prompt completes while an engine node is drained"
+        assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
+      )
+      `finally` restore
 
 validateModelBootstrapDeduplication :: Paths -> ClusterState -> RuntimeMode -> IO ()
 validateModelBootstrapDeduplication paths state runtimeMode = do
@@ -2624,37 +2628,41 @@ requiresHostServiceHarness paths runtimeMode =
 -- `Pending` with a scheduler `FailedScheduling` event naming pod anti-affinity.
 -- The supported recovery is to scale back to the original replica count and
 -- wait for the deployment to roll back to ready.
-validateLinuxEngineAntiAffinityEnforcement :: ClusterState -> IO ()
-validateLinuxEngineAntiAffinityEnforcement state = do
+validateLinuxEngineAntiAffinityEnforcement :: Paths -> ClusterState -> IO ()
+validateLinuxEngineAntiAffinityEnforcement paths state = do
   runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
   originalReplicas <- deploymentSpecReplicas state "infernix-engine"
   let surplusReplicas = originalReplicas + 1
       restore =
         runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show originalReplicas]
           >> runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-  ( do
-      runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
-      pendingPod <- waitForPendingEnginePod state
-      events <-
-        kubectlOutputForState
-          state
-          [ "-n",
-            "platform",
-            "get",
-            "events",
-            "--field-selector",
-            "involvedObject.name=" <> pendingPod,
-            "-o",
-            "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
-          ]
-      assert
-        ("FailedScheduling" `isInfixOf` events)
-        "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
-      assert
-        ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
-        "the FailedScheduling event names pod anti-affinity as the reason"
+  -- Sprint 6.43: persist a ClusterMutating position across the over-scale so a
+  -- SIGKILL mid-mutation leaves a detectable dirty cluster the next `cluster up`
+  -- reconciles (scaling the deployment back to its chart replica count).
+  withPersistedClusterMutation paths state "engine-deployment-over-scale" "over-scaling the engine deployment past available nodes" $
+    ( do
+        runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
+        pendingPod <- waitForPendingEnginePod state
+        events <-
+          kubectlOutputForState
+            state
+            [ "-n",
+              "platform",
+              "get",
+              "events",
+              "--field-selector",
+              "involvedObject.name=" <> pendingPod,
+              "-o",
+              "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
+            ]
+        assert
+          ("FailedScheduling" `isInfixOf` events)
+          "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
+        assert
+          ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
+          "the FailedScheduling event names pod anti-affinity as the reason"
     )
-    `finally` restore
+      `finally` restore
 
 waitForPendingEnginePod :: ClusterState -> IO String
 waitForPendingEnginePod state = go (60 :: Int)

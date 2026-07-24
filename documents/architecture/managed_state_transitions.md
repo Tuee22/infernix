@@ -189,13 +189,17 @@ the shared operator cluster identity (the test resolves the operator's `infernix
 name via `findRepoRoot`) meant even a clean `infernix test all` destroyed an operator's running cluster.
 The doctrine adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) with an evidence-gated
 seizure that fails closed on an operator cluster, the first-class `ClusterMutating` position with
-reconcile-on-next-`cluster up`, and the crash-safe `withTestHarnessConfig` backup reconcile.
-Documentation-first: the doctrine doc + governance mirror land now — **Phase 0** (Sprint 0.16, doc-only,
-`Done`) — while the enforcing code is `Planned`: the `ClusterOwner` field, `ClusterMutating` position,
-fail-closed persistence, and reconcile are **Phase 2** (Sprint 2.15), and the evidence-gated seizure,
-chaos-mutation transitions, and crash-safe config swap are **Phase 6** (Sprint 6.43). The
-single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof is the
-[Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
+reconcile-on-next-`cluster up`, and the crash-safe `withTestHarnessConfig` backup reconcile. The
+doctrine doc + governance mirror landed first — **Phase 0** (Sprint 0.16, doc-only, `Done`) — and the
+enforcing code is now **implemented and code-side closed** (2026-07-23): the `ClusterOwner` field,
+`ClusterMutating` position, fail-closed persistence (the `clusterOwner` field decodes to the safe
+default `OperatorOwned` on a pre-migration document, so an unowned-but-present cluster is protected, not
+destroyed), and the reconcile are **Phase 2** (Sprint 2.15); the evidence-gated seizure
+(`seizeHarnessClusterSlot` / `authorizeHarnessSeizure` over a hidden-constructor `ClusterTeardownAuthority`
+consumed by the unexported raw teardown), the chaos-mutation `ClusterMutating` transitions
+(`withPersistedClusterMutation`), and the crash-safe config swap (`reconcileLeftoverHarnessBackup`) are
+**Phase 6** (Sprint 6.43). The remaining single-accelerator (apple-silicon) plus `linux-cpu` behavioral
+cohort proof is the [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) residual.
 
 ## Validation
 

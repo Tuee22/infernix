@@ -60,8 +60,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   there was none). The swap is crash-safe by construction: the backup lives at
   `./infernix.dhall.harness-backup` and `withTestHarnessConfig` reconciles a leftover backup on
   **entry** (a SIGKILL bypasses the `finally` restore), so a killed run cannot leave the operator's
-  runtime config clobbered by the test config. That crash-safe entry reconcile is documentation-first
-  — Planned (Phase 6 Sprint 6.43); its canonical contract home is
+  runtime config clobbered by the test config. That crash-safe entry reconcile is implemented and
+  closed under Wave X (Phase 6 Sprint 6.43, 2026-07-24); its canonical contract home is
   [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes
   both `./infernix.dhall` and `./infernix.test.dhall`
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.
@@ -166,9 +166,10 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   must not silently destroy an operator's cluster. The target shape gives the persisted cluster a
   typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) and gates teardown on typed ownership
   evidence: a `HarnessOwned` `infernix test all` seizes the slot and **fails closed** on an
-  `OperatorOwned` running cluster instead of tearing it down. Documentation-first; the evidence-gated
-  seizure is Planned (Phase 6 Sprint 6.43) and the `ClusterOwner` field plus fail-closed persistence
-  Phase 2 Sprint 2.15. Canonical home:
+  `OperatorOwned` running cluster instead of tearing it down. Code-side closed (2026-07-23): the
+  evidence-gated seizure (Phase 6 Sprint 6.43) and the `ClusterOwner` field plus fail-closed
+  persistence (Phase 2 Sprint 2.15) are implemented and closed under Wave X (2026-07-24).
+  Canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md)
 - a typed `ClusterLifecycle` machine with phase-resume is the target shape of the
   lifecycle-interpretation surface this section describes, and its canonical home is

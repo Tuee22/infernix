@@ -1,20 +1,22 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — the memory-safety-by-construction reopen (2026-07-21) is **code-side closed**:
-Sprint 4.30 (Memory-Grant admission + capped-engine kernel) and Sprint 4.31 (host memory partition,
-required footprint, budget-enforcer split) are implemented and the machine-independent gate set is
-GREEN (2026-07-21: `cabal build all` `-Wall -Werror`, `cabal test infernix-unit`,
+**Status**: Done — the memory-safety-by-construction reopen (2026-07-21) is closed under
+[Wave W](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral
+sign-off: Sprint 4.30 (Memory-Grant admission + capped-engine kernel) and Sprint 4.31 (host memory
+partition, required footprint, budget-enforcer split) are code-side closed on the machine-independent
+gate set (2026-07-21: `cabal build all` `-Wall -Werror`, `cabal test infernix-unit`,
 `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
-`poetry run check-code`). The **apple-silicon Stage 2 behavioral evidence is GREEN (2026-07-21)**:
-`infernix test integration` drove the full per-model lane with zero host OOM (13 real completions;
+`poetry run check-code`), and both behavioral lanes are GREEN. On apple-silicon `infernix test
+integration` drove the full per-model lane with zero host OOM (13 real completions;
 `image-sdxl-turbo`/`image-apple-stable-diffusion-coreml` pre-admission typed-rejected at 12288 > 10240;
-`audio-bark-small` a live `proc_pid_rusage` watchdog resident-ceiling breach), and `infernix test e2e`
-passed routed Playwright 16/16 — see [Wave W](cohort-validation-waves.md). The residuals are a clean
-single-invocation `infernix test all` and the `linux-cpu` full-suite lane; the lifecycle-rebinding
-warm-cache flake that blocked the clean run was diagnosed as a representable invalid state (a
-fault-vs-absence collapse in the readiness observation) and **fixed by construction** in the
-Observable-Readiness reopen (Phase 1 Sprint 1.18 + Phase 8 Sprint 8.8, code-side closed 2026-07-22), so
-the Wave W residual is now a behavioral re-run rather than a race workaround. Prior Done — the Managed-State-Transition Doctrine reopen
+`audio-bark-small` a live `proc_pid_rusage` watchdog resident-ceiling breach) and `infernix test e2e`
+passed routed Playwright 16/16, and the `linux-cpu` clean `test all` passed integration and Playwright
+16/16 with typed rejections via the pod-cgroup enforcer — see [Wave W](cohort-validation-waves.md)
+(frozen workload image `sha256-bcf88c23fda211a4b5f3701c1c1c66ab223462f40d709be795e8f7b2d44ccee0`). The
+earlier lifecycle-rebinding warm-cache flake that once blocked the clean run was diagnosed as a
+representable invalid state (a fault-vs-absence collapse in the readiness observation) and **fixed by
+construction** in the Observable-Readiness reopen (Phase 1 Sprint 1.18 + Phase 8 Sprint 8.8, code-side
+closed 2026-07-22). Prior Done — the Managed-State-Transition Doctrine reopen
 (Sprint 4.28) and the Bounded-Command
 Application & Bounded-HTTP reopen (Sprint 4.29) are closed by [Wave V](cohort-validation-waves.md)
 (2026-07-20, apple-silicon plus linux-cpu full-suite). Sprint
@@ -41,13 +43,13 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > (`readCreateProcessWithExitCode` / `createProcess` in `runNativeWorker` / `runWorkerInvocation`), so a
 > **host OOM was a representable outcome and a full-suite run proved it**: an over-budget model could
 > exhaust host memory instead of failing cleanly. This phase reopens under
-> [Sprint 4.30](#sprint-430-memory-grant-admission-and-capped-engine-kernel-planned) — the grant-gated
+> [Sprint 4.30](#sprint-430-memory-grant-admission-and-capped-engine-kernel-done) — the grant-gated
 > capped-engine kernel (`admitModelMemory` returns `Either InferenceError MemoryGrant`; the only
 > engine-spawn path requires the grant and bounds resident memory to the admitted `MemoryCeiling`; a
 > macOS `proc_pid_rusage` physical-footprint watchdog + process-group SIGKILL and a Linux
 > pod-cgroup/VRAM-OOM exit classifier make an over-budget model a clean `status=failed`
 > `ModelMemoryLimitExceeded`) — and under
-> [Sprint 4.31](#sprint-431-host-memory-partition-required-footprint-and-budget-enforcer-split-planned)
+> [Sprint 4.31](#sprint-431-host-memory-partition-required-footprint-and-budget-enforcer-split-done)
 > — the checked `HostMemoryPartition`, the required `ModelMemoryFootprint`, and the budget-enforcer
 > split dropping `UnenforcedMemoryBudget`. Both are now **code-side closed** (implementation landed and
 > the machine-independent gate set GREEN on 2026-07-21): `admitModelMemory` returns
@@ -57,8 +59,8 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > engine spawns are retired from `runNativeWorker` / `runWorkerInvocation`, and the budget /
 > partition / footprint types are threaded through every codec mirror. The doctrine is documented in
 > [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md)
-> (Phase 0 Sprint 0.15), and single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off is
-> pending [Wave W](cohort-validation-waves.md).
+> (Phase 0 Sprint 0.15), and single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off closed
+> under [Wave W](cohort-validation-waves.md) (2026-07-24).
 
 > **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
 > single-accelerator cohort run surfaced a rate-limited upstream model download — the coordinator's
@@ -2105,12 +2107,12 @@ doctrine to the durable-runtime download and sentinel surface.
 
 ---
 
-## Sprint 4.30: Memory-Grant Admission and Capped-Engine Kernel [Active — code-side closed]
+## Sprint 4.30: Memory-Grant Admission and Capped-Engine Kernel [Done]
 
-**Status**: Active — code-side closed (2026-07-21). The grant-gated capped-engine kernel is the
-foundation half of the memory-safety-by-construction reopen; it is implemented and the
-machine-independent gate set is GREEN, with the single-accelerator (apple-silicon) plus `linux-cpu`
-behavioral sign-off pending Wave W.
+**Status**: Done — the grant-gated capped-engine kernel is the foundation half of the
+memory-safety-by-construction reopen; it is code-side closed 2026-07-21 on the machine-independent gate
+set, and the single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort sign-off closed under
+[Wave W](cohort-validation-waves.md) on 2026-07-24 with no remaining work.
 **Supersession note**: this sprint supersedes Sprint 4.27's proof-free
 `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Maybe InferenceError` (a `Nothing`
 carries no evidence that admission ran) with an `Either InferenceError MemoryGrant` that mints a typed
@@ -2137,7 +2139,7 @@ negative-tested), `infernix lint files/docs/proto/chart`, `infernix docs check`,
 `poetry run check-code`.
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
 that a full-suite `infernix test all` drives an over-capacity catalog with zero host OOM and every
-over-budget row cleanly typed-rejected as `ModelMemoryLimitExceeded`.
+over-budget row cleanly typed-rejected as `ModelMemoryLimitExceeded`. Closed 2026-07-24.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Runtime/Worker.hs`,
 `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Engines/AppleSilicon.hs`,
 `python/native-runners/apple_native_runner.py`
@@ -2172,7 +2174,7 @@ required-footprint / budget-enforcer-split work in Sprint 4.31 builds on. See th
 
 ### Validation
 
-Future gates (unstarted):
+Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
 
 - `cabal build all` (`-Wall -Werror`) compiles the grant-gated kernel with the raw engine-spawn path
   removed
@@ -2187,24 +2189,26 @@ Future gates (unstarted):
 
 ### Remaining Work
 
-The implementation is complete and code-side closed (2026-07-21): `admitModelMemory` mints an
+None. The implementation is complete (code-side closed 2026-07-21): `admitModelMemory` mints an
 `Either InferenceError MemoryGrant`, the `MemoryGrant`/`MemoryCeiling` opaque newtypes and the
 capped-engine kernel `Infernix.Runtime.CappedEngine` (`withCappedEngine`, the `proc_pid_rusage`
 watchdog, the Linux OOM-exit classifier) are landed, the raw engine spawns are retired from
 `runNativeWorker` / `runWorkerInvocation`, and unit coverage asserts grant mint on in-budget admission
-and typed rejection on over-budget. The one residual is the Wave W behavioral proof (a full-suite
-`infernix test all` on apple-silicon plus linux-cpu completes an over-capacity catalog with zero host
-OOM and every over-budget row cleanly typed-rejected). The superseded proof-free admission and raw
-engine spawns are recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+and typed rejection on over-budget. The apple-silicon plus linux-cpu behavioral cohort sign-off closed
+under [Wave W](cohort-validation-waves.md) on 2026-07-24 (a full-suite `infernix test all` completes an
+over-capacity catalog with zero host OOM and every over-budget row cleanly typed-rejected); no remaining
+work exists. The superseded proof-free admission and raw engine spawns are recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
 
-## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Active — code-side closed]
+## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Done]
 
-**Status**: Active — code-side closed (2026-07-21). The checked host partition, the required footprint
-newtype, and the budget-that-names-its-enforcer split are the model half of the
-memory-safety-by-construction reopen; implemented on top of Sprint 4.30 with the machine-independent
-gate set GREEN, cohort sign-off pending Wave W.
+**Status**: Done — the checked host partition, the required footprint newtype, and the
+budget-that-names-its-enforcer split are the model half of the memory-safety-by-construction reopen;
+implemented on top of Sprint 4.30 and code-side closed 2026-07-21 on the machine-independent gate set,
+and the single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort sign-off closed under
+[Wave W](cohort-validation-waves.md) on 2026-07-24 with no remaining work.
 **Supersession note**: this sprint supersedes Sprint 4.26's bare-`Int` `modelRamFootprintMib` (a
 default-0 footprint silently disables admission) with a required `ModelMemoryFootprint` newtype (no
 bare-`Int`, no default-0); supersedes the hard-coded `appleHostReserveMib = 3072` reserve in
@@ -2230,7 +2234,7 @@ set (GREEN 2026-07-21): `cabal build all` (`-Wall -Werror`), `cabal test inferni
 the web unit suite (browser contract unchanged — the footprint remains a plain `Int` at the JS wire).
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
 that the checked partition admits the fitting catalog with zero host OOM while over-capacity rows are
-cleanly typed-rejected as `ModelMemoryLimitExceeded`.
+cleanly typed-rejected as `ModelMemoryLimitExceeded`. Closed 2026-07-24.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`,
 `src/Infernix/Models.hs`, `src/Infernix/Web/Contracts.hs`
 **Blocked by**: Sprint 4.30
@@ -2264,7 +2268,7 @@ grant-gated kernel. See the canonical doctrine at
 
 ### Validation
 
-Future gates (unstarted):
+Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
 
 - `cabal build all` (`-Wall -Werror`) compiles with the required footprint newtype and the
   enforcer-named budget across every mirror
@@ -2278,13 +2282,14 @@ Future gates (unstarted):
 
 ### Remaining Work
 
-The implementation is complete and code-side closed (2026-07-21): the required `ModelMemoryFootprint`
+None. The implementation is complete (code-side closed 2026-07-21): the required `ModelMemoryFootprint`
 newtype replaced the bare-`Int` default-0 footprint, `InferenceMemoryBudget` names its enforcer
 (`HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit`, `UnenforcedMemoryBudget`
 dropped), and the checked `HostMemoryPartition` (`minHostHeadroomMib` = 6144) replaced the hard-coded
 `appleHostReserveMib = 3072`, all threaded through the JSON/Dhall/browser mirrors with unit coverage.
-The one residual is the Wave W behavioral proof. The superseded bare-`Int` footprint, the hard-coded
-reserve, and the `UnenforcedMemoryBudget` arm are recorded in
+The apple-silicon plus linux-cpu behavioral cohort sign-off closed under
+[Wave W](cohort-validation-waves.md) on 2026-07-24; no remaining work exists. The superseded bare-`Int`
+footprint, the hard-coded reserve, and the `UnenforcedMemoryBudget` arm are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
@@ -2305,13 +2310,12 @@ and the integrity-witnessed `PayloadVerified` — is closed by [Wave V](cohort-v
 (2026-07-20).
 **Sprint 4.30** (Memory-Grant admission + capped-engine kernel) and **Sprint 4.31** (host memory
 partition, required footprint, budget-enforcer split) — the memory-safety-by-construction reopen for
-this phase (2026-07-21) — are **code-side closed** (2026-07-21): they replaced Sprint 4.27's proof-free
+this phase (2026-07-21) — are closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with
+apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-21 on the
+machine-independent gate set): they replaced Sprint 4.27's proof-free
 `admitModelMemory :: … -> Maybe` and Sprint 4.28's raw unbounded engine spawn, and Sprint 4.26's
 bare-`Int` `modelRamFootprintMib` default-0, hard-coded `appleHostReserveMib = 3072`, and Sprint 4.27's
-`UnenforcedMemoryBudget`, with the machine-independent gate set GREEN. Their single-accelerator
-(apple-silicon) plus `linux-cpu` behavioral cohort sign-off is the one residual, pending
-[Wave W](cohort-validation-waves.md). This is the one open Phase 4 reopen; no other reopen work
-remains.
+`UnenforcedMemoryBudget`. No remaining Phase 4 reopen work remains.
 
 ---
 

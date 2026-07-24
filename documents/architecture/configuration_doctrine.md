@@ -51,8 +51,8 @@ banned environment reads, whose canonical home is the
 harness config swap crash-safe: `withTestHarnessConfig` restores the operator's config through a
 `./infernix.dhall.harness-backup` that it reconciles on **entry**, not only through a `finally`
 restore a SIGKILL would bypass — so an externally-killed run cannot leave the operator's runtime
-config replaced by the test config. This is documentation-first; the crash-safe entry reconcile is
-Planned (Phase 6 Sprint 6.43).
+config replaced by the test config. The crash-safe entry reconcile is implemented and closed under
+Wave X (Phase 6 Sprint 6.43, 2026-07-24).
 
 A second source of drift was **hand-maintained `.dhall` schema files** committed alongside the
 Haskell renderers that generate them, plus `.dhall` *values* rendered by Helm templating from

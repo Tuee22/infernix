@@ -8,6 +8,7 @@ module Infernix.Cluster
     clusterUp,
     seizeHarnessClusterSlot,
     authorizeHarnessSeizure,
+    withPersistedClusterMutation,
     ClusterSeizureRefusal (..),
     ClusterTeardownAuthority,
     HelmDeployPhase (..),
@@ -373,6 +374,7 @@ setLifecycleProgress paths state action phase detail emitMarker = do
           | clusterPresent state -> ClusterActivating phaseValue
           | otherwise -> ClusterProvisioning phaseValue
         LifecycleTearDown -> ClusterTearingDown phaseValue
+        LifecycleMutate -> ClusterMutating phaseValue
       updatedState =
         state
           { clusterLifecycle = lifecycle,
@@ -429,6 +431,32 @@ settleLifecycle paths state lifecycle = do
           }
   persistClusterState paths updatedState
   pure updatedState
+
+-- | Sprint 6.43 — bracket a test chaos mutation (node drain, deployment
+-- over-scale, cordon) with a persisted first-class 'ClusterMutating' position.
+-- The marker naming the in-flight mutation is persisted before the mutation and
+-- 'ClusterReady' is restored after (on every exit path, including exception), so
+-- a SIGKILL mid-mutation leaves a detectable dirty cluster that the next
+-- @cluster up@ reconciles ('reconcileInterruptedClusterMutation') rather than a
+-- false steady-state. Exported so the integration harness drives the transition
+-- while 'persistClusterState' stays module-private.
+withPersistedClusterMutation :: Paths -> ClusterState -> String -> String -> IO a -> IO a
+withPersistedClusterMutation paths state phaseName detail body = do
+  now <- getCurrentTime
+  let phaseValue =
+        LifecyclePhase
+          { lifecyclePhaseTransition = LifecycleMutate,
+            lifecyclePhaseName = phaseName,
+            lifecyclePhaseDetail = detail,
+            lifecyclePhaseHeartbeatAt = now
+          }
+      mutatingState = state {clusterLifecycle = ClusterMutating phaseValue, updatedAt = now}
+  persistClusterState paths mutatingState
+  body `finally` restoreReady
+  where
+    restoreReady = do
+      restoreTime <- getCurrentTime
+      persistClusterState paths (state {clusterLifecycle = ClusterReady, updatedAt = restoreTime})
 
 -- Sprint 6.41 (managed-state-transition doctrine): long-running lifecycle
 -- commands (docker build/pull/tag/cp, crictl pull, save|import streams) run
@@ -570,9 +598,24 @@ reconcileInterruptedClusterMutation paths runtimeMode = do
                 ( "cluster up reconciling interrupted cluster mutation: "
                     <> maybe "unknown-phase" lifecyclePhaseName (lifecyclePhaseOf state)
                 )
-              uncordonAllNodes state
-              _ <- settleLifecycle paths state ClusterReady
-              pure ()
+              -- Outer-container lanes (linux-cpu/linux-gpu) must join the Kind
+              -- Docker network before kubectl can reach the API; without this the
+              -- uncordon silently no-ops against an unreachable API on the exact
+              -- lane node-drains run on.
+              ensureOuterContainerKindNetworkAccess paths runtimeMode
+              uncordoned <- uncordonAllNodes state
+              if uncordoned
+                then do
+                  _ <- settleLifecycle paths state ClusterReady
+                  pure ()
+                else
+                  -- The API was unreachable, so the uncordon could not be
+                  -- confirmed. Leave the ClusterMutating marker in place: the
+                  -- bring-up below supersedes it with its own lifecycle phases
+                  -- and reconciles the cluster, and the marker stays detectable
+                  -- rather than being cleared to a false ClusterReady.
+                  putStrLn
+                    "cluster up could not reach the cluster API to uncordon drained nodes; leaving the mutation marker for the bring-up below to supersede"
             else do
               putStrLn "cluster up clearing stale ClusterMutating marker for an absent cluster"
               _ <- settleLifecycle paths state ClusterAbsent
@@ -588,28 +631,32 @@ clusterLifecycleMutating lifecycle = case lifecycle of
   ClusterReady -> False
   ClusterTearingDown _ -> False
 
--- | Sprint 2.15 — uncordon every node best-effort so a node cordoned by an
--- interrupted drain can schedule pods again. A failure (already uncordoned,
--- transient API error) is logged and does not abort the reconcile.
-uncordonAllNodes :: ClusterState -> IO ()
+-- | Sprint 2.15 — uncordon every node so a node cordoned by an interrupted
+-- drain can schedule pods again. Returns whether the cluster API was reachable
+-- (the node list was obtained): 'False' means the uncordon could not be
+-- confirmed and the caller must not treat the mutation as reconciled. A
+-- per-node uncordon failure (already uncordoned, transient error) is logged and
+-- does not fail the whole reconcile.
+uncordonAllNodes :: ClusterState -> IO Bool
 uncordonAllNodes state = do
   nodesResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["get", "nodes", "-o", "name"])
   case nodesResult of
-    Left _ -> pure ()
-    Right output ->
+    Left _ -> pure False
+    Right output -> do
       forM_ (nodeNamesFromOutput output) $ \nodeName -> do
         uncordonResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["uncordon", nodeName])
         case uncordonResult of
           Right _ -> pure ()
           Left err ->
             putStrLn ("cluster up uncordon " <> nodeName <> " skipped: " <> takeWhile (/= '\n') err)
+      pure True
 
 nodeNamesFromOutput :: String -> [String]
 nodeNamesFromOutput output =
   [ fromMaybe trimmed (List.stripPrefix "node/" trimmed)
-    | rawLine <- lines output,
-      let trimmed = filter (not . isSpace) rawLine,
-      not (null trimmed)
+  | rawLine <- lines output,
+    let trimmed = filter (not . isSpace) rawLine,
+    not (null trimmed)
   ]
 
 clusterUpWithPlatform :: ClusterOwner -> Paths -> RuntimeMode -> IO ()
@@ -1021,13 +1068,16 @@ newtype ClusterSeizureRefusal = ClusterSeizureRefusal ClusterOwner
 -- 'HarnessOwned'; an 'OperatorOwned' present cluster fails closed, so a clean
 -- @infernix test all@ can never destroy an operator's running cluster.
 authorizeHarnessSeizure :: Maybe ClusterState -> Either ClusterSeizureRefusal ClusterTeardownAuthority
-authorizeHarnessSeizure maybeState = case maybeState of
-  Nothing -> Right ClusterTeardownAuthority
-  Just state
-    | not (clusterPresent state) -> Right ClusterTeardownAuthority
-    | otherwise -> case clusterOwner state of
-        HarnessOwned -> Right ClusterTeardownAuthority
-        OperatorOwned -> Left (ClusterSeizureRefusal OperatorOwned)
+authorizeHarnessSeizure maybeState
+  | harnessMaySeize maybeState = Right ClusterTeardownAuthority
+  | otherwise = Left (ClusterSeizureRefusal (maybe OperatorOwned clusterOwner maybeState))
+
+-- | The harness may seize an absent or 'HarnessOwned' cluster; a present
+-- 'OperatorOwned' cluster is off-limits (the seizure fails closed on it).
+harnessMaySeize :: Maybe ClusterState -> Bool
+harnessMaySeize maybeState = case maybeState of
+  Nothing -> True
+  Just state -> not (clusterPresent state) || clusterOwner state == HarnessOwned
 
 clusterOwnerLabel :: ClusterOwner -> String
 clusterOwnerLabel OperatorOwned = "operator"

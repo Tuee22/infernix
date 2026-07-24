@@ -238,16 +238,22 @@ data PersistentClaim = PersistentClaim
 data LifecycleTransition
   = LifecycleBringUp
   | LifecycleTearDown
+  | -- | Sprint 6.43 — a test-suite chaos mutation (node drain, deployment
+    -- over-scale, cordon) in flight; a persisted 'ClusterMutating' phase tagged
+    -- with this transition is reconciled on the next @cluster up@.
+    LifecycleMutate
   deriving (Eq, Read, Show)
 
 lifecycleTransitionAction :: LifecycleTransition -> String
 lifecycleTransitionAction LifecycleBringUp = "cluster-up"
 lifecycleTransitionAction LifecycleTearDown = "cluster-down"
+lifecycleTransitionAction LifecycleMutate = "cluster-mutate"
 
 parseLifecycleTransition :: String -> Maybe LifecycleTransition
 parseLifecycleTransition rawValue = case rawValue of
   "cluster-up" -> Just LifecycleBringUp
   "cluster-down" -> Just LifecycleTearDown
+  "cluster-mutate" -> Just LifecycleMutate
   _ -> Nothing
 
 instance ToJSON LifecycleTransition where

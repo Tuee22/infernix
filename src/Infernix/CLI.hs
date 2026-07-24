@@ -4,6 +4,7 @@
 module Infernix.CLI
   ( main,
     writeGeneratedPursContracts,
+    reconcileLeftoverHarnessBackup,
   )
 where
 
@@ -58,6 +59,7 @@ import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
 import Infernix.Types
   ( CacheManifest (..),
+    ClusterOwner (..),
     DemoConfig (..),
     InferenceRequest (..),
     InferenceResult (..),

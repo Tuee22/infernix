@@ -9,6 +9,7 @@ import Crypto.Hash.Algorithms qualified
 import Crypto.PubKey.RSA qualified
 import Crypto.PubKey.RSA.PKCS15 qualified
 import Data.Aeson qualified as Aeson
+import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString qualified as BS
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Lazy qualified as Lazy
@@ -26,8 +27,8 @@ import Data.Time.Clock.POSIX qualified
 import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
-import Infernix.CLI (writeGeneratedPursContracts)
-import Infernix.Cluster (HelmDeployPhase (..), clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, loadClusterState, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
+import Infernix.CLI (reconcileLeftoverHarnessBackup, writeGeneratedPursContracts)
+import Infernix.Cluster (HelmDeployPhase (..), authorizeHarnessSeizure, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, loadClusterState, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
 import Infernix.Cluster.PublishImages
@@ -1578,6 +1579,7 @@ main = do
       let hostWorkerState =
             ClusterState
               ClusterReady
+              OperatorOwned
               19090
               30002
               []
@@ -1693,6 +1695,7 @@ main = do
     let linuxCpuFinalState =
           ClusterState
             { clusterLifecycle = ClusterReady,
+              clusterOwner = OperatorOwned,
               edgePort = 30090,
               harborPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
@@ -1788,6 +1791,7 @@ main = do
     let linuxGpuFinalState =
           ClusterState
             { clusterLifecycle = ClusterReady,
+              clusterOwner = OperatorOwned,
               edgePort = 30090,
               harborPort = 30002,
               routes = [RouteInfo "/" "demo web UI"],
@@ -2207,6 +2211,7 @@ main = do
                     lifecyclePhaseDetail = "creating or reusing the Kind cluster",
                     lifecyclePhaseHeartbeatAt = mstNow
                   },
+            clusterOwner = OperatorOwned,
             edgePort = 30090,
             harborPort = 30002,
             routes = [RouteInfo "/" "demo web UI"],
@@ -2236,6 +2241,70 @@ main = do
   assert
     (case unknownVersionResult of Left _ -> True; Right _ -> False)
     "loadClusterState fails closed on an unknown cluster-state format version"
+  -- Sprint 2.15: the persisted cluster owner round-trips through the versioned
+  -- codec, and a pre-migration document missing clusterOwner decodes to the safe
+  -- default OperatorOwned (so the harness seizure fails closed on it).
+  assert
+    (fmap clusterOwner roundTripState == Just OperatorOwned)
+    "clusterOwner round-trips OperatorOwned through the versioned aeson codec"
+  let strippedStateValue = case Aeson.toJSON mstState of
+        Aeson.Object obj -> Aeson.Object (KeyMap.delete "clusterOwner" obj)
+        other -> other
+      preMigrationEnvelope =
+        Aeson.object ["version" Aeson..= (1 :: Int), "clusterState" Aeson..= strippedStateValue]
+  Lazy.writeFile clusterStateFile (Aeson.encode preMigrationEnvelope)
+  preMigrationState <- loadClusterState clusterStatePaths
+  assert
+    (fmap clusterOwner preMigrationState == Just OperatorOwned)
+    "a pre-migration cluster-state document missing clusterOwner decodes to OperatorOwned"
+  -- Sprint 2.15: a ClusterMutating position round-trips and renders dirty
+  -- (in-progress), never steady-state — lifecyclePhaseOf projects the mutation.
+  mutatingNow <- getCurrentTime
+  let mutatingState =
+        mstState
+          { clusterLifecycle =
+              ClusterMutating
+                LifecyclePhase
+                  { lifecyclePhaseTransition = LifecycleMutate,
+                    lifecyclePhaseName = "engine-node-drain",
+                    lifecyclePhaseDetail = "draining an engine node",
+                    lifecyclePhaseHeartbeatAt = mutatingNow
+                  }
+          }
+  writeClusterStateFile clusterStateFile mutatingState
+  mutatingRoundTrip <- loadClusterState clusterStatePaths
+  assert
+    (fmap clusterPresent mutatingRoundTrip == Just True)
+    "clusterPresent projects True for a present ClusterMutating lifecycle"
+  assert
+    ((lifecyclePhaseTransition <$> (mutatingRoundTrip >>= lifecyclePhaseOf)) == Just LifecycleMutate)
+    "a ClusterMutating position round-trips and renders as an in-progress mutation, not steady-state"
+  -- Sprint 6.43: the harness seizure is authorized only for an absent or
+  -- HarnessOwned cluster; a present OperatorOwned cluster fails closed.
+  assert
+    (isRight (authorizeHarnessSeizure Nothing))
+    "harness seizure is authorized when no cluster is present"
+  assert
+    (isRight (authorizeHarnessSeizure (Just (mstState {clusterOwner = HarnessOwned}))))
+    "harness seizure is authorized for a HarnessOwned cluster"
+  assert
+    (isLeft (authorizeHarnessSeizure (Just (mstState {clusterOwner = OperatorOwned}))))
+    "harness seizure fails closed for a present OperatorOwned cluster"
+  -- Sprint 6.43: a leftover .harness-backup (from a prior killed run) is
+  -- reconciled on entry — the operator config is restored and the backup consumed.
+  let reconcileRuntimeConfig = clusterStateRoot </> "reconcile-infernix.dhall"
+      reconcileBackupConfig = reconcileRuntimeConfig <> ".harness-backup"
+  writeFile reconcileBackupConfig "OPERATOR ORIGINAL CONFIG"
+  writeFile reconcileRuntimeConfig "HARNESS LEFTOVER CONFIG"
+  reconcileLeftoverHarnessBackup reconcileRuntimeConfig reconcileBackupConfig
+  restoredContents <- readFile reconcileRuntimeConfig
+  backupStillPresent <- doesFileExist reconcileBackupConfig
+  assert
+    (restoredContents == "OPERATOR ORIGINAL CONFIG")
+    "reconcileLeftoverHarnessBackup restores the operator config from a leftover .harness-backup"
+  assert
+    (not backupStillPresent)
+    "reconcileLeftoverHarnessBackup consumes the leftover .harness-backup on restore"
   -- Sprint 5.12: the client model-bootstrap deadline is single-sourced from the
   -- server ceiling and can never be shorter than it (a negative margin clamps).
   assert

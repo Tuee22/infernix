@@ -156,10 +156,11 @@
 - the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a
   first-class `ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty
   reading) alongside the persisted `ClusterOwner` — whose canonical home is
-  [Managed State Transitions](../architecture/managed_state_transitions.md). Documentation-first: this
-  status prose lands now (doctrine doc Phase 0 Sprint 0.16, `Done`), while the enforcing
-  `ClusterMutating` / `ClusterOwner` code is `Planned` (Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43);
-  the cohort gate is [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
+  [Managed State Transitions](../architecture/managed_state_transitions.md). The enforcing
+  `ClusterMutating` / `ClusterOwner` code is code-side closed (2026-07-23; Phase 2 Sprint 2.15 and
+  Phase 6 Sprint 6.43) — `cluster status` renders the `clusterOwner` and a `ClusterMutating` dirty
+  phase — with behavioral cohort sign-off pending
+  [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 
 ## Cross-References
 

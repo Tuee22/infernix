@@ -105,8 +105,8 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   (`OperatorOwned | HarnessOwned`) and carries a first-class `ClusterMutating` position, so a
   SIGKILLed `HarnessOwned` `infernix test all` leaves `ClusterMutating` on disk as the fail-closed
   evidence the next `cluster up` reads to reconcile the interrupted mutation (uncordon drained nodes,
-  scale deployments back). This is documentation-first; the owner field, mutating position,
-  fail-closed persistence, and reconcile are Planned (Phase 2 Sprint 2.15).
+  scale deployments back). The owner field, mutating position, fail-closed persistence, and reconcile
+  are implemented and closed under Wave X (Phase 2 Sprint 2.15, 2026-07-24).
 
 ## Cleanup Rules
 

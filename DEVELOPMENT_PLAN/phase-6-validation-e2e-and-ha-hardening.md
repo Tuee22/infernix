@@ -1,22 +1,24 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Active — the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
+**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
 harness seizure, chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig`
-swap) is **documentation-first**: the doctrine + governance landed (Phase 0 Sprint 0.16), and its
-enforcing code is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. The
-memory-safety-by-construction reopen (2026-07-21) is **code-side closed**:
-Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) is implemented on the Phase 4
-Sprint 4.30 capped-engine kernel and the machine-independent gate set is GREEN (2026-07-21). The
-**apple-silicon Stage 2 behavioral evidence is GREEN**: the per-model integration lane ran with zero
-host OOM (13 real completions, 2 pre-admission typed-rejections, 1 live watchdog resident-ceiling
-breach) and routed Playwright passed 16/16 (the browser matrix rendering all three capacity rejections)
-— see [Wave W](cohort-validation-waves.md). Two Playwright cohort fixes landed here (the budget-schema
-migration in `expectedModelMemoryLimitExceeded` and the browser matrix's runtime-ceiling-breach
-tolerance). The residuals are a clean single-invocation `infernix test all` and the `linux-cpu`
-full-suite lane; the lifecycle-rebinding warm-cache flake that blocked the clean run was diagnosed as a
-representable invalid state (a fault-vs-absence collapse in the readiness observation) and **fixed by
-construction** in the Observable-Readiness reopen (Phase 1 Sprint 1.18 + Phase 8 Sprint 8.8, code-side
-closed 2026-07-22), so the Wave W residual is now a behavioral re-run rather than a race workaround. Prior Done — the
+swap) is closed under [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus
+linux-cpu behavioral sign-off (doctrine + governance landed in Phase 0 Sprint 0.16; enforcing code
+code-side closed 2026-07-23 on the machine-independent gate set). The memory-safety-by-construction
+reopen (2026-07-21) — Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) on the
+Phase 4 Sprint 4.30 capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md)
+(2026-07-24) with apple-silicon plus linux-cpu behavioral sign-off (code-side closed 2026-07-21 on the
+machine-independent gate set). The apple-silicon behavioral lane ran the per-model integration suite
+with zero host OOM (13 real completions, 2 pre-admission typed-rejections, 1 live watchdog
+resident-ceiling breach) and routed Playwright passed 16/16 (the browser matrix rendering all three
+capacity rejections), and the `linux-cpu` clean `test all` passed integration and Playwright 16/16 —
+see [Wave W](cohort-validation-waves.md) (frozen workload image
+`sha256-bcf88c23fda211a4b5f3701c1c1c66ab223462f40d709be795e8f7b2d44ccee0`). Two Playwright cohort fixes
+landed here (the budget-schema migration in `expectedModelMemoryLimitExceeded` and the browser matrix's
+runtime-ceiling-breach tolerance). The earlier lifecycle-rebinding warm-cache flake that once blocked
+the clean run was diagnosed as a representable invalid state (a fault-vs-absence collapse in the
+readiness observation) and **fixed by construction** in the Observable-Readiness reopen (Phase 1 Sprint
+1.18 + Phase 8 Sprint 8.8, code-side closed 2026-07-22). Prior Done — the
 Bounded-Command Application & Bounded-HTTP reopen (Sprint 6.40 `unboundedExec`/
 `unboundedHttp` lint rules; Sprint 6.41 ProcessMonitor retirement + shared retryCommandOutput
 primitive + eager-cache barrier + the full twelve-wait individual bounded-wait migration onto
@@ -48,27 +50,28 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > position, a test-mutated cluster (a drained node, an over-scaled deployment) read as a clean
 > `steady-state`, and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator
 > cluster identity let even a clean run destroy an operator's cluster. This phase reopens under
-> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-planned) — the harness
+> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-done) — the harness
 > half — for the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the chaos-mutation
 > `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile;
-> [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half. It is
-> **documentation-first**: the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`), and the
-> enforcing code is `Planned`, tracked as the [Wave X](cohort-validation-waves.md) residual. Canonical
+> [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half. The doctrine
+> + governance landed (Phase 0 Sprint 0.16, `Done`), and the enforcing code is closed under
+> [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus linux-cpu behavioral
+> sign-off. Canonical
 > doctrine: [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 > **Memory-safety-by-construction reopen (2026-07-21).** The memory-safety-by-construction doctrine
 > (Phase 0 Sprint 0.15) makes an over-budget inference engine a clean typed `ModelMemoryLimitExceeded`
 > rather than a host OOM, gated by a `MemoryGrant` and a capped-engine kernel (Phase 4 Sprints
 > 4.30/4.31). This phase reopens under
-> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-planned) to add the
+> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-done) to add the
 > `unboundedEngineSpawnViolations` capability-gating lint to `src/Infernix/Lint/HaskellStyle.hs` — raw
 > `readCreateProcessWithExitCode` / `createProcess` engine spawn becomes a build error outside the
 > Phase 4 Sprint 4.30 grant-gated capped-engine kernel, mirroring the existing `unboundedExecViolations`
 > (Sprint 6.40) per-rule exemption pattern. Sprint 6.42 is **code-side closed** (2026-07-21): the rule is
 > wired into `checkSourceReadability`, reuses the bounded-command exemption set (the capped-engine kernel
 > `Infernix.Runtime.CappedEngine` is the sole legitimate engine-spawn surface), and is negative-tested in
-> `cabal test infernix-unit`. Single-accelerator (apple-silicon) plus `linux-cpu` behavioral sign-off is
-> pending [Wave W](cohort-validation-waves.md).
+> `cabal test infernix-unit`. Single-accelerator (apple-silicon) plus `linux-cpu` behavioral sign-off
+> closed under [Wave W](cohort-validation-waves.md) (2026-07-24).
 
 > **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md)
 > (2026-07-20).** The 2026-07-18
@@ -2546,12 +2549,13 @@ single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off c
 
 ---
 
-## Sprint 6.42: Unbounded-Engine-Spawn Capability-Gating Lint [Active — code-side closed]
+## Sprint 6.42: Unbounded-Engine-Spawn Capability-Gating Lint [Done]
 
-**Status**: Active — code-side closed (2026-07-21). The `unboundedEngineSpawnViolations` capability-gating
-lint keeps new engine-spawn call sites off the raw process primitives and on the Phase 4 Sprint 4.30
-grant-gated capped-engine kernel; implemented with the machine-independent gate set GREEN, cohort
-sign-off pending Wave W.
+**Status**: Done — the `unboundedEngineSpawnViolations` capability-gating lint keeps new engine-spawn
+call sites off the raw process primitives and on the Phase 4 Sprint 4.30 grant-gated capped-engine
+kernel; code-side closed 2026-07-21 on the machine-independent gate set, and the single-accelerator
+(apple-silicon) plus `linux-cpu` behavioral cohort sign-off closed under
+[Wave W](cohort-validation-waves.md) on 2026-07-24 with no remaining work.
 **Code-side closure**: complete (2026-07-21). Added the `unboundedEngineSpawnViolations` sub-rule to
 `src/Infernix/Lint/HaskellStyle.hs` (wired into `checkSourceReadability`), mirroring the existing
 `unboundedExecViolations` / `threadDelayViolations` per-rule exemption pattern (Sprint 6.40/6.41): raw
@@ -2567,7 +2571,7 @@ a clean line), `cabal test infernix-haskell-style`, `infernix lint files/docs/pr
 `infernix docs check`.
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the lint travels
 with the Phase 4 Sprint 4.30/4.31 behavioral proof (no host OOM; over-capacity rows cleanly
-typed-rejected as `ModelMemoryLimitExceeded`).
+typed-rejected as `ModelMemoryLimitExceeded`). Closed 2026-07-24.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
 **Blocked by**: Sprint 4.30, 6.40
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
@@ -2592,7 +2596,7 @@ doctrine's line-based enforcement layer to the engine-spawn surface, exactly as 
 
 ### Validation
 
-Future gates (unstarted):
+Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
 
 - `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `infernix lint files/docs/proto/chart`, and `infernix docs check` on both the apple-silicon and
@@ -2604,25 +2608,40 @@ Future gates (unstarted):
 
 ### Remaining Work
 
-The implementation is complete and code-side closed (2026-07-21): the `unboundedEngineSpawnViolations`
+None. The implementation is complete (code-side closed 2026-07-21): the `unboundedEngineSpawnViolations`
 sub-rule, its `checkSourceReadability` wiring, and the negative test are landed, built on the Phase 4
-Sprint 4.30 capped-engine kernel as the single exempted engine-spawn path. The one residual is the
-Wave W behavioral sign-off (shared with Phase 4 Sprints 4.30/4.31).
+Sprint 4.30 capped-engine kernel as the single exempted engine-spawn path. The apple-silicon plus
+linux-cpu behavioral cohort sign-off closed under [Wave W](cohort-validation-waves.md) on 2026-07-24
+(shared with Phase 4 Sprints 4.30/4.31); no remaining work exists.
 
 ---
 
-## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Planned]
+## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Done]
 
-**Status**: Planned — **documentation-first**. The doctrine + governance are landed (Phase 0 Sprint 0.16,
-`Done`); this sprint's enforcing code — the evidence-gated harness cluster seizure, the chaos-mutation
-`ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile — is not yet
-implemented. It is the harness half of the Cluster-Ownership & Mutation-Position reopen; [Phase 2 Sprint
-2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
+**Status**: Done — the doctrine + governance landed first (Phase 0 Sprint 0.16, `Done`); this sprint's
+enforcing code — the evidence-gated harness cluster seizure, the chaos-mutation `ClusterMutating`
+transitions, and the crash-safe `withTestHarnessConfig` backup reconcile — is code-side closed
+2026-07-23 on the machine-independent gate set, and the single-accelerator (apple-silicon) plus
+`linux-cpu` behavioral cohort sign-off closed under [Wave X](cohort-validation-waves.md) on 2026-07-24
+with no remaining work. It is the harness half of the Cluster-Ownership & Mutation-Position reopen;
+[Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
 `ClusterOwner` / `ClusterMutating` types this sprint consumes.
+**Code-side closure**: complete (2026-07-23). Landed in `src/Infernix/CLI.hs`: `runClusterOwnedValidation`
+replaces the unconditional pre-`clusterDown` with `seizeHarnessClusterSlot`, which fails closed loud on a
+present `OperatorOwned` cluster (the do-block throws before the `finally` teardown is installed, so the
+operator cluster is never destroyed) and tears down only a `HarnessOwned`/absent one; the harness brings
+up its cluster as `HarnessOwned` (`runRuntimeModeE2E`); and `withTestHarnessConfig` calls
+`reconcileLeftoverHarnessBackup` at entry to restore an operator config stranded by a prior killed run.
+Landed in `test/integration/Spec.hs`: the node-drain/cordon and deployment-over-scale chaos mutations run
+inside `withPersistedClusterMutation`, which persists `ClusterMutating` before the `kubectl` mutation and
+restores `ClusterReady` after (on every exit path). Gate set (GREEN 2026-07-23): `cabal build all`
+(`-Wall -Werror`), `cabal test infernix-unit` (seizure fail-closed matrix; `.harness-backup` restore),
+`cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`, the
+web unit suite, and `poetry run check-code`.
 **Cohort gate**: apple-silicon + linux-cpu, [Wave X](cohort-validation-waves.md) — the behavioral proof
 that `infernix test all` fails closed on a running operator cluster, that a killed run leaves a
 mutation-incomplete cluster the next `cluster up` reconciles, and that a leftover `.harness-backup` is
-restored on the next `test`.
+restored on the next `test`. Closed 2026-07-24.
 **Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`
 **Blocked by**: Sprint 2.15 (the `ClusterOwner` + `ClusterMutating` types), Sprint 6.42
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
@@ -2665,10 +2684,16 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
 
 ### Remaining Work
 
-The doctrine and governance are documented (Phase 0 Sprint 0.16). The enforcing code is unimplemented:
-the evidence-gated seizure, the chaos-mutation `ClusterMutating` transitions, and the crash-safe config
-reconcile are all `Planned`, blocked on the Sprint 2.15 types. The superseded unconditional `clusterDown`
-seizure and the `finally`-only config swap are recorded in
+None. The implementation is complete (code-side closed 2026-07-23): the evidence-gated seizure
+(`seizeHarnessClusterSlot` failing closed on `OperatorOwned`), the chaos-mutation `ClusterMutating`
+transitions (`withPersistedClusterMutation`), and the crash-safe config reconcile
+(`reconcileLeftoverHarnessBackup`) are landed on top of the Sprint 2.15 types, with unit coverage. The
+apple-silicon plus linux-cpu behavioral cohort sign-off closed under
+[Wave X](cohort-validation-waves.md) on 2026-07-24 (a full-suite `infernix test all` fails closed on a
+running operator cluster, a killed run reconciles on the next `cluster up`, and a leftover
+`.harness-backup` is restored), paired with
+[Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md); no remaining work exists. The
+superseded unconditional `clusterDown` seizure and the `finally`-only config swap are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
 ---
@@ -2693,16 +2718,17 @@ and [Wave S](cohort-validation-waves.md) for their original scopes.
 **Sprint 6.42** (Unbounded-Engine-Spawn Capability-Gating Lint) — the enforcement half of the
 memory-safety-by-construction reopen (2026-07-21), the `unboundedEngineSpawnViolations` lint that keeps
 new engine-spawn call sites off the raw process primitives and on the Phase 4 Sprint 4.30 grant-gated
-capped-engine kernel — is **code-side closed** (2026-07-21, machine-independent gate set GREEN,
-negative-tested), with single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort sign-off
-pending [Wave W](cohort-validation-waves.md).
+capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with
+apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-21 on the
+machine-independent gate set, negative-tested).
 **Sprint 6.43** (Cluster-Ownership Harness Seizure and Crash-Safe Config) — the harness half of the
 Cluster-Ownership & Mutation-Position reopen (2026-07-23): the evidence-gated cluster seizure (fail
 closed on an `OperatorOwned` cluster), the chaos-mutation `ClusterMutating` transitions, and the
-crash-safe `withTestHarnessConfig` backup reconcile — is **documentation-first** (`Planned`): the
-doctrine + governance landed (Phase 0 Sprint 0.16, `Done`), and the enforcing code is not yet
-implemented, blocked on the [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) types
-and tracked as the [Wave X](cohort-validation-waves.md) residual.
+crash-safe `withTestHarnessConfig` backup reconcile — is closed under
+[Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral
+sign-off: the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`) and the enforcing code is
+implemented on the [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) types
+(code-side closed 2026-07-23 on the machine-independent gate set).
 
 ## Documentation Requirements
 
