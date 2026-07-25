@@ -1211,7 +1211,22 @@ runCommand budget command args inputPayload = do
 tryRunCommand :: Subprocess.Timeout -> FilePath -> [String] -> String -> IO (Either String String)
 tryRunCommand budget command args inputPayload = do
   environment <- harborSubprocessEnv
-  outcome <- Subprocess.runBoundedCommand budget environment Nothing command args inputPayload
+  boundedCommand <-
+    either
+      failWith
+      pure
+      ( Subprocess.compileBoundedCommand
+          Subprocess.ImagePublicationOperation
+          budget
+          Subprocess.NeverRetry
+          Subprocess.FatalFailure
+          environment
+          Nothing
+          command
+          args
+          inputPayload
+      )
+  outcome <- Subprocess.runBoundedCommand boundedCommand
   pure (commandOutcomeToEither outcome)
 
 -- | Collapse a total 'Subprocess.CommandOutcome' onto the @Either@-based retry

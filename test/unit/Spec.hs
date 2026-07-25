@@ -109,6 +109,7 @@ import Infernix.Engines.LinuxNative
   )
 import Infernix.Evidence.Lease qualified as Lease
 import Infernix.Evidence.Readiness qualified as Readiness
+import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
@@ -174,6 +175,7 @@ import Infernix.Runtime.Worker
   )
 import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
+import Infernix.Substrate (decodeRawRuntimeConfigFile)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
@@ -980,6 +982,44 @@ main = do
       decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
+      rawApplePlan <- decodeRawRuntimeConfigFile appleConfigPath
+      case ExecutionPlan.compileRuntimePlan rawApplePlan of
+        Left errors -> fail ("expected generated apple config to compile into an execution plan: " <> show errors)
+        Right plan -> do
+          assert
+            (length (ExecutionPlan.runtimePlanModels plan) == length (models appleHostConfig))
+            "execution-plan compiler refines every configured model"
+          case listToMaybe (models appleHostConfig) of
+            Nothing -> fail "expected an apple model for executable-placement lookup"
+            Just configuredModel ->
+              case ExecutionPlan.lookupExecutableModel (modelId configuredModel) plan of
+                Nothing -> fail "compiled plan must expose each model only as an ExecutableModel"
+                Just executableModel -> do
+                  assert
+                    (ExecutionPlan.executableModelDescriptor executableModel == configuredModel)
+                    "executable placement retains the validated model descriptor"
+                  assert
+                    ( memoryCeilingMib
+                        (grantMemoryCeiling (ExecutionPlan.executableModelGrant executableModel))
+                        == modelMemoryFootprintMib (modelRamFootprint configuredModel)
+                    )
+                    "executable placement carries a grant indexed to the admitted footprint"
+      let danglingPlanPath = buildRoot paths </> "dangling-execution-plan-test.dhall"
+          danglingPools =
+            case enginePools appleHostConfig of
+              [] -> []
+              firstPool : remainingPools ->
+                firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : remainingPools
+      Lazy.writeFile danglingPlanPath (encodeDemoConfig (appleHostConfig {enginePools = danglingPools}))
+      danglingRawPlan <- decodeRawRuntimeConfigFile danglingPlanPath
+      let danglingPlanRejected =
+            case (danglingPools, ExecutionPlan.compileRuntimePlan danglingRawPlan) of
+              (firstPool : _, Left errors) ->
+                ExecutionPlan.DanglingPoolModel (enginePoolId firstPool) "missing-model" `elem` errors
+              _ -> False
+      assert
+        danglingPlanRejected
+        "execution-plan compiler rejects dangling pool model references"
       -- Phase 4 Sprint 4.27 — the typed inference-memory budget
       -- round-trips through the substrate config. Config validation accepts
       -- mixed catalogs even when one model is too large; runtime admission
@@ -2152,39 +2192,70 @@ main = do
         && isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv seamEnv))
     )
     "clusterSubprocessEnvWithSearchPath still carries HOME/TMPDIR from the host manifest"
+  let runTestCommand timeoutValue executable arguments = do
+        boundedCommand <-
+          expectRight
+            "compile unit-test bounded command"
+            ( Subprocess.compileBoundedCommand
+                Subprocess.ClusterLifecycleOperation
+                timeoutValue
+                Subprocess.NeverRetry
+                Subprocess.FatalFailure
+                subprocessEnv
+                Nothing
+                executable
+                arguments
+                ""
+            )
+        Subprocess.runBoundedCommand boundedCommand
   echoOutcome <-
-    Subprocess.runBoundedCommand
-      (Subprocess.Timeout 30000000)
-      subprocessEnv
-      Nothing
-      "/bin/echo"
-      ["managed-transitions"]
-      ""
+    runTestCommand (Subprocess.Timeout 30000000) "/bin/echo" ["managed-transitions"]
   assert
     (echoOutcome == Subprocess.CommandSucceeded "managed-transitions\n")
     "runBoundedCommand returns real stdout on success"
   exitOutcome <-
-    Subprocess.runBoundedCommand
-      (Subprocess.Timeout 30000000)
-      subprocessEnv
-      Nothing
-      "/bin/sh"
-      ["-c", "exit 7"]
-      ""
+    runTestCommand (Subprocess.Timeout 30000000) "/bin/sh" ["-c", "exit 7"]
   assert
     (case exitOutcome of Subprocess.CommandFailedFatal _ -> True; _ -> False)
     "runBoundedCommand maps a non-zero exit to CommandFailedFatal"
   timeoutOutcome <-
-    Subprocess.runBoundedCommand
-      (Subprocess.Timeout 200000)
-      subprocessEnv
-      Nothing
-      "/bin/sleep"
-      ["5"]
-      ""
+    runTestCommand (Subprocess.Timeout 200000) "/bin/sleep" ["5"]
   assert
     (case timeoutOutcome of Subprocess.CommandTimedOut _ -> True; _ -> False)
     "runBoundedCommand reaps and reports CommandTimedOut past its budget"
+  assert
+    ( isLeft
+        ( Subprocess.compileBoundedCommand
+            Subprocess.ClusterLifecycleOperation
+            (Subprocess.Timeout 0)
+            Subprocess.NeverRetry
+            Subprocess.FatalFailure
+            subprocessEnv
+            Nothing
+            "/bin/true"
+            []
+            ""
+        )
+    )
+    "compileBoundedCommand rejects a non-positive timeout"
+  absenceCommand <-
+    expectRight
+      "compile idempotent-absence command"
+      ( Subprocess.compileBoundedCommand
+          Subprocess.ClusterLifecycleOperation
+          (Subprocess.Timeout 30000000)
+          Subprocess.NeverRetry
+          Subprocess.IdempotentAbsence
+          subprocessEnv
+          Nothing
+          "/bin/sh"
+          ["-c", "echo 'target does not exist' >&2; exit 1"]
+          ""
+      )
+  absenceOutcome <- Subprocess.runBoundedCommand absenceCommand
+  assert
+    (case absenceOutcome of Subprocess.CommandSucceeded _ -> True; _ -> False)
+    "idempotent-absence policy classifies an absent target as success"
   -- Phase 2 Sprint 2.14: fail-closed recorded-state decode.
   clusterStateRoot <- testRootPath "mst-clusterstate"
   createDirectoryIfMissing True clusterStateRoot
@@ -3819,8 +3890,15 @@ assertLinuxHostBatchForwarding paths = do
   let requestPath = requestDirectory </> Text.unpack requestIdValue <.> "pb"
       batchPath = batchDirectory </> Text.unpack requestIdValue <.> "pb"
       resultPath = resultDirectory </> Text.unpack requestIdValue <.> "pb"
+      planPath = buildRoot paths </> "filesystem-forwarding-plan.dhall"
+  Lazy.writeFile planPath (encodeDemoConfig demoConfig)
+  rawPlan <- decodeRawRuntimeConfigFile planPath
+  compiledPlan <-
+    case ExecutionPlan.compileRuntimePlan rawPlan of
+      Left errors -> fail ("filesystem-forwarding execution plan did not compile: " <> show errors)
+      Right plan -> pure plan
   payloadBytes <- BS.readFile requestPath
-  drainTopic paths LinuxCpu [] daemonConfig demoConfig requestTopic
+  drainTopic paths LinuxCpu [] daemonConfig compiledPlan requestTopic
   requestStillExists <- doesFileExist requestPath
   batchExists <- doesFileExist batchPath
   resultExists <- doesFileExist resultPath
@@ -3950,6 +4028,15 @@ assertDhallSchemaReflection =
               ("reflected Dhall schema includes " <> Text.unpack fieldName <> " for " <> Text.unpack (dhallSchemaName schema))
         )
         (dhallSchemaRequiredFields schema)
+      case schema of
+        SubstrateSchema -> do
+          assert
+            ("HostEnforced" `Text.isInfixOf` rendered && "SubstrateEnforced" `Text.isInfixOf` rendered)
+            "substrate schema reflects both inference-memory union alternatives"
+          assert
+            (not ("podLimitMib" `Text.isInfixOf` rendered) && not ("kind" `Text.isInfixOf` rendered))
+            "substrate schema excludes the retired text discriminator and zero-filled union fields"
+        _ -> pure ()
 
 dhallSchemaRequiredFields :: DhallSchema -> [Text.Text]
 dhallSchemaRequiredFields schema =

@@ -1,6 +1,6 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Done — the Observable-Readiness reopen (Sprint 8.8, the fault-vs-absence fix in the warm-model-cache barrier: tri-state `SentinelObservation` probe + `SentinelCensus` + Python `CacheValidity`) is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-22 on the machine-independent gate set). Sprints 8.1-8.7 are closed: machine-independent gates pass; the single-accelerator cohort gate closed 2026-07-04 (Wave P): `./bootstrap/linux-gpu.sh test` and `./bootstrap/linux-cpu.sh test` both ran the full `infernix test all` suite green — Haskell style, Python `check-code`, unit, web contracts, full integration with real per-model `linux-gpu`/`linux-cpu` output, and routed Playwright **9/9** including the per-model matrix's 27 GB `video-wan21-t2v` row (gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`). The Managed-State-Transition reopen (Sprint 8.7) is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green. Sprint 8.8 supersedes the earlier documented non-blocking residual (the `warm-model-cache` barrier's host-side MinIO poll observability, Sprint 8.5): that poll's fault-vs-absence collapse is now the diagnosed root cause of the retained-second-`cluster up` "11/16" stall and is fixed by construction.
+**Status**: Blocked — Sprint 8.9 (proper-union generated execution-plan schema migration) is blocked by Phase 6 Sprint 6.44; Sprints 8.1–8.8 retain their recorded closure
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -408,6 +408,40 @@ The apple-silicon plus `linux-cpu` behavioral cohort sign-off closed under
 superseded `IO Bool` sentinel probe, the `sentinelReady` error-to-`False` coercion, and the Python
 fail-open delete are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+## Sprint 8.9: Generated Proper-Union Execution Plan [Blocked]
+
+**Status**: Blocked
+**Blocked by**: Phase 6 Sprint 6.44
+**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/DhallSchema.hs`, chart payload generation
+**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/architecture/typed_execution_plan.md`, `documents/engineering/cluster_config_manifest.md`
+
+### Objective
+
+Complete the zero-tracked-Dhall doctrine by making every binary-generated runtime payload use the
+proper execution-plan unions and by deleting the flat tagged compatibility representation.
+
+### Deliverables
+
+- `infernix init`, test-harness generation, image-baked config, and cluster ConfigMap payloads emit
+  the same proper-union execution language
+- reflected schemas and renderers share the Haskell ADTs without string discriminators
+- old flat `DhallInferenceMemoryBudget` decoding and zeroed fields are removed
+- startup compiles and refines the generated plan before publishing readiness
+
+### Validation
+
+- zero tracked `.dhall` remains true
+- generated host, test, baked-image, and mounted-cluster payloads round-trip every applicable union
+- legacy flat payloads fail with a targeted migration diagnostic
+- machine-independent gates pass; behavioral evidence is consumed from the Phase 4 and Phase 6
+  single-accelerator attestations without creating a dual-accelerator gate
+
+### Remaining Work
+
+Blocked until the enforcing CPU/Apple and GPU capability surfaces are complete.
+
+---
 
 ## Documentation Requirements
 

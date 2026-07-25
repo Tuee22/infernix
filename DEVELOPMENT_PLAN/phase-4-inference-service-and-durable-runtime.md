@@ -1,6 +1,6 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Done — the memory-safety-by-construction reopen (2026-07-21) is closed under
+**Status**: Active — Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing) is unblocked after Phase 2 Sprint 2.16 closed; the earlier memory-safety reopen was closed under
 [Wave W](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral
 sign-off: Sprint 4.30 (Memory-Grant admission + capped-engine kernel) and Sprint 4.31 (host memory
 partition, required footprint, budget-enforcer split) are code-side closed on the machine-independent
@@ -2316,6 +2316,63 @@ machine-independent gate set): they replaced Sprint 4.27's proof-free
 `admitModelMemory :: … -> Maybe` and Sprint 4.28's raw unbounded engine spawn, and Sprint 4.26's
 bare-`Int` `modelRamFootprintMib` default-0, hard-coded `appleHostReserveMib = 3072`, and Sprint 4.27's
 `UnenforcedMemoryBudget`. No remaining Phase 4 reopen work remains.
+
+---
+
+## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Active]
+
+**Status**: Active
+**Code-side closure**: In progress — daemon startup now compiles the generated plan, coordinator
+routing and production engine launch consume opaque `ExecutableModel` placements, and Apple
+readiness probes the live physical-footprint sampler. The rebuilt `linux-cpu` launcher
+`sha256:0f6e256dc97e7940c0386790b97d68780c611d2de579b079096ce6f2c0cd6ed9` passes the
+source-matched Haskell and PureScript unit gate (`83/83` web tests); exact Linux CPU cgroup-v2
+refinement and its adversarial gate remain
+**Cohort gate**: selected `apple-silicon` plus `linux-cpu`, new typed-execution-plan wave
+**Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/Pulsar.hs`
+**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Separate admission capacity from exact execution enforcement, verify the Apple footprint enforcer,
+install a per-invocation Linux CPU ceiling, and make only successfully refined models routable.
+
+### Deliverables
+
+- startup acquisition fails closed when Apple footprint sampling is unavailable
+- Linux CPU uses delegated cgroup-v2 `memory.max`, or a compiler-proven one-model-per-pod placement
+  whose Kubernetes limit equals the grant
+- `launchEngine` requires matching resource-indexed `Enforcer` and `MemoryGrant`
+- coordinator and engine subscriptions derive only from `ExecutableModel`
+
+### Validation
+
+- unit and integration tests reject ineffective/mismatched enforcers and chart/plan drift
+- adversarial Apple and Linux CPU executions exceed the declared ceiling, return typed terminal
+  failure, and leave the host, daemon, and subsequent smaller inference alive
+- selected `apple-silicon` plus `linux-cpu` full-suite gate passes against one frozen state
+
+### Remaining Work
+
+The bounded command plan and execution-plan core are closed. Daemon startup compiles the mounted
+configuration before subscription readiness; coordinator pool routing requires
+`lookupExecutableModel`, production worker dispatch carries the same opaque placement through the
+capped-engine wrapper, over-capacity catalog rows remain non-executable and receive the existing
+typed request-local rejection instead of invalidating daemon startup, and Apple readiness fails
+closed when a live `proc_pid_rusage` sample is unavailable. A clean `linux-cpu` launcher rebuild
+from the current worktree completed on 2026-07-25 as
+`sha256:0f6e256dc97e7940c0386790b97d68780c611d2de579b079096ce6f2c0cd6ed9`; its
+`infernix test unit` gate passes Haskell unit coverage and PureScript `83/83`.
+Add verified Linux CPU per-execution
+cgroup-v2 refinement (the existing shared multi-model 4 GiB pod does not satisfy the
+one-model-per-pod/equal-limit alternative). The 2026-07-25 native Linux probe confirmed that the
+launcher sees the unified cgroup-v2 hierarchy mounted `ro` (`0::/`; `/sys/fs/cgroup` is not
+writable), so child-cgroup delegation is unavailable and must not be claimed; the remaining valid
+construction is model-specific engine pods whose Kubernetes `memory` limit equals the admitted
+grant, with startup refinement against the live pod `memory.max`. Add the adversarial Apple/Linux
+CPU survival tests, run
+the complete machine-independent gate set, and run the selected apple-silicon plus `linux-cpu` Wave
+Y cohort gate.
 
 ---
 

@@ -28,7 +28,10 @@ module Infernix.Runtime.CappedEngine
     withCappedEngine,
     awaitEngineOutcome,
     engineOutcomeExitCode,
+    verifyPhysicalFootprintSampler,
     runCappedProcess,
+    runExecutableProcess,
+    runExecutableStdioEngine,
     runCappedStdioEngine,
   )
 where
@@ -44,9 +47,11 @@ import Data.Word (Word64)
 import Foreign.C.Error (Errno (Errno), ePIPE)
 import GHC.IO.Exception (IOErrorType (ResourceVanished), IOException (IOError, ioe_errno, ioe_type))
 import Infernix.Types (MemoryCeiling, MemoryGrant, grantMemoryCeiling, memoryCeilingMib)
+import Infernix.ExecutionPlan (ExecutableModel, executableModelGrant)
 import System.Exit (ExitCode (..))
 import System.IO (Handle, hClose, hGetContents, hPutStr)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
+import System.Posix.Process (getProcessID)
 import System.Posix.Types (CPid)
 import System.Process
   ( CreateProcess (create_group, std_err, std_in, std_out),
@@ -166,6 +171,13 @@ runCappedProcess grant spec input =
         pure (outcome, engineOutcomeExitCode outcome, stdoutOutput, stderrOutput)
       _ -> failMissingPipes
 
+-- | Production launch boundary. An 'ExecutableModel' can only be minted by the
+-- execution-plan compiler after the model, placement, enforcer, and grant have
+-- been checked together; callers cannot pair an unrelated grant with a model.
+runExecutableProcess :: ExecutableModel -> CreateProcess -> String -> IO (EngineOutcome, ExitCode, String, String)
+runExecutableProcess executableModel =
+  runCappedProcess (executableModelGrant executableModel)
+
 -- | Run an engine subprocess to completion under its ceiling for the Python
 -- stdio protocol (binary stdin payload, binary stdout/stderr capture). Streams
 -- are drained concurrently so a full pipe cannot deadlock the wait.
@@ -182,6 +194,11 @@ runCappedStdioEngine grant spec input =
         outcome <- awaitEngineOutcome handle
         pure (outcome, engineOutcomeExitCode outcome, stdoutOutput, stderrOutput)
       _ -> failMissingPipes
+
+-- | Binary-stdio counterpart to 'runExecutableProcess'.
+runExecutableStdioEngine :: ExecutableModel -> CreateProcess -> ByteString -> IO (EngineOutcome, ExitCode, ByteString, ByteString)
+runExecutableStdioEngine executableModel =
+  runCappedStdioEngine (executableModelGrant executableModel)
 
 withStdioPipes :: CreateProcess -> CreateProcess
 withStdioPipes spec =
@@ -253,6 +270,14 @@ bytesPerMib = 1048576
 
 watchdogIntervalMicros :: Int
 watchdogIntervalMicros = 250000
+
+-- | Readiness probe for the Apple physical-footprint enforcer. A daemon must
+-- not advertise an executable Apple placement when @proc_pid_rusage@ cannot
+-- sample even its own live process.
+verifyPhysicalFootprintSampler :: IO Bool
+verifyPhysicalFootprintSampler = do
+  processId <- getProcessID
+  (> 0) <$> physicalFootprintBytes processId
 
 #if defined(darwin_HOST_OS)
 

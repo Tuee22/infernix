@@ -24,6 +24,12 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
 
 ## Current Status
 
+The prior resource-admission and bounded-command evidence remains useful but no longer closes the
+strong construction claim. The reopened validation contract is owned by
+[Typed Execution Plan](../architecture/typed_execution_plan.md): schema-negative tests, plan
+compiler properties, runtime-enforcer refusal tests, exact ceiling-breach tests, route exclusion for
+uncompiled models, and zero raw-spawn imports or lint exemptions outside the process kernels.
+
 - the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu` on
   native Linux, and real-cluster `linux-gpu`
 - the routed auxiliary checks below describe current behavior precisely: `/harbor`

@@ -65,6 +65,7 @@ let ToolPaths =
       , nvkind : HostTool
       , skopeo : HostTool
       , hostname : HostTool
+      , sysctl : HostTool
       }
 
 let FilesystemConventions =
@@ -129,6 +130,11 @@ publication selector.
 | nvkind | `toolPaths.nvkind` | n/a | `/usr/local/bin/nvkind` |
 | skopeo | `toolPaths.skopeo` | `/opt/homebrew/bin/skopeo` | `/usr/bin/skopeo` |
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
+| sysctl | `toolPaths.sysctl` | `/usr/sbin/sysctl` | n/a |
+
+`colima` is deliberately not a manifest field. The Apple memory-partition probe may read it through
+the fixed bootstrap-adjacent `/opt/homebrew/bin/colima` candidate, but Infernix never manages it and
+normal command execution cannot select it from runtime configuration.
 
 The former `tart` field (Haskell record selector `hostTart`) is no longer part of the current
 schema. Phase 1 Sprint 1.14 removed `HostTool.HostTart`, the `AppleTart` prerequisite, and the

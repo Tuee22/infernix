@@ -4,6 +4,8 @@
 
 module Infernix.Substrate
   ( decodeSubstrateConfigFile,
+    decodeCompiledRuntimePlanFile,
+    decodeRawRuntimeConfigFile,
     demoConfigGeneratedBanner,
     demoConfigGeneratedBannerLine,
     encodeSubstrateConfig,
@@ -23,6 +25,8 @@ import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
+import Infernix.ExecutionPlan (CompiledRuntimePlan, ConfigErrors, compileRuntimePlan)
+import Infernix.ExecutionPlan.Internal (RawRuntimeConfig (..))
 import Infernix.Types
 
 demoConfigGeneratedBannerLine :: String
@@ -37,6 +41,14 @@ encodeSubstrateConfig demoConfig =
 
 decodeSubstrateConfigFile :: FilePath -> IO DemoConfig
 decodeSubstrateConfigFile filePath = do
+  RawRuntimeConfig config <- decodeRawRuntimeConfigFile filePath
+  pure config
+
+-- | Decode the generated Dhall into the opaque untrusted input accepted by the
+-- execution-plan compiler.  New routing and launch consumers use this boundary
+-- and cannot inspect the raw record.
+decodeRawRuntimeConfigFile :: FilePath -> IO RawRuntimeConfig
+decodeRawRuntimeConfigFile filePath = do
   decodedValue <- try (Dhall.inputFile Dhall.auto filePath :: IO DhallDemoConfig)
   case decodedValue of
     Left err ->
@@ -45,7 +57,11 @@ decodeSubstrateConfigFile filePath = do
     Right rawConfig ->
       case demoConfigFromDhall rawConfig of
         Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
-        Right demoConfig -> pure demoConfig
+        Right demoConfig -> pure (RawRuntimeConfig demoConfig)
+
+decodeCompiledRuntimePlanFile :: FilePath -> IO (Either ConfigErrors CompiledRuntimePlan)
+decodeCompiledRuntimePlanFile filePath =
+  compileRuntimePlan <$> decodeRawRuntimeConfigFile filePath
 
 resolveRuntimeModeFromSubstrateFile :: FilePath -> IO RuntimeMode
 resolveRuntimeModeFromSubstrateFile filePath =
@@ -155,24 +171,34 @@ data DhallModelDescriptor = DhallModelDescriptor
 instance Dhall.FromDhall DhallModelDescriptor where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
--- | Phase 4 Sprint 4.31 — the flat Dhall wire shape for the enforcer-named
--- budget. @kind@ selects the arm: @host-enforced@ records the checked
--- 'HostMemoryPartition' split (physical / vmReserve / headroom; inference
--- capacity is derived on decode); @substrate-enforced@ records the descriptive
--- 'PodMemoryLimit' (@resource@, @source@, @podLimitMib@). Fields for the other
--- arm are zeroed.
-data DhallInferenceMemoryBudget = DhallInferenceMemoryBudget
-  { dhallBudgetKind :: Text,
-    dhallBudgetResource :: Text,
-    dhallBudgetSource :: Text,
-    dhallBudgetPhysicalMib :: Int,
+-- | The generated execution-plan budget is a proper union. An arm carries only
+-- its applicable fields, so the retired text discriminator plus zero-filled
+-- fields cannot be represented.
+data DhallInferenceMemoryBudget
+  = HostEnforced DhallHostMemoryBudget
+  | SubstrateEnforced DhallSubstrateMemoryBudget
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallInferenceMemoryBudget
+
+data DhallHostMemoryBudget = DhallHostMemoryBudget
+  { dhallBudgetPhysicalMib :: Int,
     dhallBudgetVmReserveMib :: Int,
-    dhallBudgetHeadroomMib :: Int,
-    dhallBudgetPodLimitMib :: Int
+    dhallBudgetHeadroomMib :: Int
   }
   deriving (Generic)
 
-instance Dhall.FromDhall DhallInferenceMemoryBudget where
+instance Dhall.FromDhall DhallHostMemoryBudget where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
+data DhallSubstrateMemoryBudget = DhallSubstrateMemoryBudget
+  { dhallBudgetResource :: Text,
+    dhallBudgetSource :: Text,
+    dhallBudgetLimitMib :: Int
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallSubstrateMemoryBudget where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 data DhallRequestField = DhallRequestField
@@ -215,13 +241,12 @@ dhallFieldSuffixName suffix =
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
     "InferenceMemoryBudget" -> "inferenceMemoryBudget"
-    "BudgetKind" -> "kind"
     "BudgetResource" -> "resource"
     "BudgetSource" -> "source"
     "BudgetPhysicalMib" -> "physicalMib"
     "BudgetVmReserveMib" -> "vmReserveMib"
     "BudgetHeadroomMib" -> "headroomMib"
-    "BudgetPodLimitMib" -> "podLimitMib"
+    "BudgetLimitMib" -> "limitMib"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
@@ -282,24 +307,26 @@ demoConfigFromDhall rawConfig = do
 
 inferenceMemoryBudgetFromDhall :: DhallInferenceMemoryBudget -> Either String InferenceMemoryBudget
 inferenceMemoryBudgetFromDhall rawBudget =
-  case Text.toLower (dhallBudgetKind rawBudget) of
-    "host-enforced" ->
+  case rawBudget of
+    HostEnforced hostBudget ->
       HostEnforcedBudget
         <$> mkHostMemoryPartition
-          (dhallBudgetPhysicalMib rawBudget)
-          (dhallBudgetVmReserveMib rawBudget)
-          (dhallBudgetHeadroomMib rawBudget)
-    "substrate-enforced" -> do
-      resource <- parseEnum "inferenceMemoryBudget.resource" parseInferenceMemoryResource (dhallBudgetResource rawBudget)
-      pure
-        ( SubstrateEnforcedBudget
-            PodMemoryLimit
-              { podMemoryLimitResource = resource,
-                podMemoryLimitSource = dhallBudgetSource rawBudget,
-                podMemoryLimitMib = max 0 (dhallBudgetPodLimitMib rawBudget)
-              }
-        )
-    other -> Left ("unsupported inferenceMemoryBudget.kind: " <> Text.unpack other)
+          (dhallBudgetPhysicalMib hostBudget)
+          (dhallBudgetVmReserveMib hostBudget)
+          (dhallBudgetHeadroomMib hostBudget)
+    SubstrateEnforced substrateBudget -> do
+      resource <- parseEnum "inferenceMemoryBudget.resource" parseInferenceMemoryResource (dhallBudgetResource substrateBudget)
+      if dhallBudgetLimitMib substrateBudget <= 0
+        then Left "inferenceMemoryBudget.limitMib must be positive"
+        else
+          pure
+            ( SubstrateEnforcedBudget
+                PodMemoryLimit
+                  { podMemoryLimitResource = resource,
+                    podMemoryLimitSource = dhallBudgetSource substrateBudget,
+                    podMemoryLimitMib = dhallBudgetLimitMib substrateBudget
+                  }
+            )
 
 deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
 deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
@@ -488,35 +515,23 @@ renderInferenceMemoryBudget :: InferenceMemoryBudget -> String
 renderInferenceMemoryBudget budget =
   case budget of
     HostEnforcedBudget partition ->
-      "{ kind = "
-        <> dhallText "host-enforced"
-        <> ", resource = "
-        <> dhallText (inferenceMemoryBudgetResourceText (inferenceMemoryBudgetResource budget))
-        <> ", source = "
-        <> dhallText (inferenceMemoryBudgetSource budget)
-        <> ", physicalMib = "
+      "< HostEnforced : { physicalMib : Integer, vmReserveMib : Integer, headroomMib : Integer }"
+        <> " | SubstrateEnforced : { resource : Text, source : Text, limitMib : Integer } >.HostEnforced "
+        <> "{ physicalMib = "
         <> dhallInteger (hostPartitionPhysicalMib partition)
         <> ", vmReserveMib = "
         <> dhallInteger (hostPartitionVmReserveMib partition)
         <> ", headroomMib = "
         <> dhallInteger (hostPartitionHeadroomMib partition)
-        <> ", podLimitMib = "
-        <> dhallInteger 0
         <> " }"
     SubstrateEnforcedBudget podLimit ->
-      "{ kind = "
-        <> dhallText "substrate-enforced"
-        <> ", resource = "
+      "< HostEnforced : { physicalMib : Integer, vmReserveMib : Integer, headroomMib : Integer }"
+        <> " | SubstrateEnforced : { resource : Text, source : Text, limitMib : Integer } >.SubstrateEnforced "
+        <> "{ resource = "
         <> dhallText (inferenceMemoryBudgetResourceText (podMemoryLimitResource podLimit))
         <> ", source = "
         <> dhallText (podMemoryLimitSource podLimit)
-        <> ", physicalMib = "
-        <> dhallInteger 0
-        <> ", vmReserveMib = "
-        <> dhallInteger 0
-        <> ", headroomMib = "
-        <> dhallInteger 0
-        <> ", podLimitMib = "
+        <> ", limitMib = "
         <> dhallInteger (podMemoryLimitMib podLimit)
         <> " }"
 

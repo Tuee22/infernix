@@ -15,9 +15,15 @@ module Infernix.Cluster.Subprocess
     subprocessEnvTmpdir,
     clusterSubprocessEnv,
     clusterSubprocessEnvWithSearchPath,
+    subprocessEnvWithOverrides,
     renderSubprocessEnv,
     Timeout (..),
+    RetryPolicy (..),
+    FailureClass (..),
+    ClusterOperation (..),
+    BoundedCommand,
     CommandOutcome (..),
+    compileBoundedCommand,
     runBoundedCommand,
   )
 where
@@ -143,6 +149,17 @@ renderSubprocessEnv environment =
   ]
     <> subprocessEnvExtra environment
 
+-- | Add command-specific variables without permitting callers to replace the
+-- kernel-owned total-environment fields.
+subprocessEnvWithOverrides :: [(String, String)] -> SubprocessEnv -> Either String SubprocessEnv
+subprocessEnvWithOverrides overrides environment =
+  case filter ((`elem` protectedNames) . fst) overrides of
+    [] -> Right environment {subprocessEnvExtra = overrides <> subprocessEnvExtra environment}
+    protected ->
+      Left ("subprocess overrides cannot replace kernel-owned variables: " <> show (map fst protected))
+  where
+    protectedNames = ["PATH", "HOME", "TMPDIR", "LANG", "LC_ALL"]
+
 -- | A required wall-clock bound for a subprocess, in microseconds.
 newtype Timeout = Timeout {timeoutMicros :: Int}
   deriving (Eq, Show)
@@ -158,29 +175,101 @@ data CommandOutcome
   | CommandTimedOut !Timeout
   deriving (Eq, Show)
 
--- | Run a command under a required 'Timeout' with a total 'SubprocessEnv'.
--- On timeout the child is reaped — 'withCreateProcess' terminates it on the
--- async exception raised by 'timeout' — and the result is 'CommandTimedOut'.
-runBoundedCommand ::
+data RetryPolicy
+  = NeverRetry
+  | BoundedRetry !Int !Int
+  deriving (Eq, Show)
+
+data FailureClass
+  = FatalFailure
+  | TransientThenFatal
+  | IdempotentAbsence
+  deriving (Eq, Show)
+
+data ClusterOperation
+  = ClusterLifecycleOperation
+  | ImagePublicationOperation
+  | LongRunningLifecycleOperation
+  deriving (Eq, Show)
+
+data BoundedCommand = BoundedCommand
+  { boundedTimeout :: !Timeout,
+    boundedEnvironment :: !SubprocessEnv,
+    boundedWorkingDirectory :: !(Maybe FilePath),
+    boundedExecutable :: !FilePath,
+    boundedArguments :: ![String],
+    boundedInput :: !String,
+    boundedRetryPolicy :: !RetryPolicy,
+    boundedFailureClass :: !FailureClass
+  }
+
+compileBoundedCommand ::
+  ClusterOperation ->
   Timeout ->
+  RetryPolicy ->
+  FailureClass ->
   SubprocessEnv ->
   Maybe FilePath ->
   FilePath ->
   [String] ->
   String ->
-  IO CommandOutcome
-runBoundedCommand budget environment workingDirectory command arguments input = do
+  Either String BoundedCommand
+compileBoundedCommand _operation budget retryPolicy failureClass environment workingDirectory command arguments input
+  | timeoutMicros budget <= 0 = Left "bounded command timeout must be positive"
+  | null command = Left "bounded command executable must be non-empty"
+  | BoundedRetry attempts backoffMicros <- retryPolicy,
+    attempts <= 0 || backoffMicros < 0 =
+      Left "bounded retry requires positive attempts and non-negative backoff"
+  | otherwise =
+      Right
+        BoundedCommand
+          { boundedTimeout = budget,
+            boundedEnvironment = environment,
+            boundedWorkingDirectory = workingDirectory,
+            boundedExecutable = command,
+            boundedArguments = arguments,
+            boundedInput = input,
+            boundedRetryPolicy = retryPolicy,
+            boundedFailureClass = failureClass
+          }
+
+-- | Run a command under a required 'Timeout' with a total 'SubprocessEnv'.
+-- On timeout the child is reaped — 'withCreateProcess' terminates it on the
+-- async exception raised by 'timeout' — and the result is 'CommandTimedOut'.
+runBoundedCommand :: BoundedCommand -> IO CommandOutcome
+runBoundedCommand command = runAttempts (retryAttempts (boundedRetryPolicy command))
+  where
+    runAttempts remaining = do
+      outcome <- runRawBoundedCommand command
+      case (outcome, boundedRetryPolicy command, remaining) of
+        (CommandFailedFatal message, _, _)
+          | boundedFailureClass command == IdempotentAbsence,
+            any (`List.isInfixOf` message) ["not found", "does not exist", "No such"] ->
+              pure (CommandSucceeded message)
+        (CommandFailedFatal _, BoundedRetry _ backoffMicros, attemptsLeft)
+          | attemptsLeft > 1 && boundedFailureClass command == TransientThenFatal -> do
+              delayVar <- newEmptyMVar
+              void (timeout backoffMicros (takeMVar delayVar))
+              runAttempts (attemptsLeft - 1)
+        _ -> pure outcome
+
+retryAttempts :: RetryPolicy -> Int
+retryAttempts NeverRetry = 1
+retryAttempts (BoundedRetry attempts _) = attempts
+
+runRawBoundedCommand :: BoundedCommand -> IO CommandOutcome
+runRawBoundedCommand command = do
   let spec =
-        (proc command arguments)
-          { cwd = workingDirectory,
-            env = Just (renderSubprocessEnv environment),
+        (proc (boundedExecutable command) (boundedArguments command))
+          { cwd = boundedWorkingDirectory command,
+            env = Just (renderSubprocessEnv (boundedEnvironment command)),
             std_in = CreatePipe,
             std_out = CreatePipe,
             std_err = CreatePipe
           }
   result <-
-    timeout (timeoutMicros budget) (withCreateProcess spec collect)
-  pure (fromMaybe (CommandTimedOut budget) result)
+    timeout (timeoutMicros (boundedTimeout command)) (withCreateProcess spec collect)
+  pure (fromMaybe (CommandTimedOut (boundedTimeout command)) result)
   where
     collect maybeIn maybeOut maybeErr processHandle =
       case (maybeIn, maybeOut, maybeErr) of
@@ -189,7 +278,7 @@ runBoundedCommand budget environment workingDirectory command arguments input = 
           stderrVar <- newEmptyMVar
           void (forkIO (drain stdoutHandle stdoutVar))
           void (forkIO (drain stderrHandle stderrVar))
-          hPutStr stdinHandle input
+          hPutStr stdinHandle (boundedInput command)
           hClose stdinHandle
           out <- takeMVar stdoutVar
           err <- takeMVar stderrVar

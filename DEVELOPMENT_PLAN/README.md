@@ -11,6 +11,33 @@
 See [development_plan_standards.md](development_plan_standards.md) for the maintenance rules that
 govern this plan.
 
+## Typed Execution Plan Doctrine Reopen (2026-07-25)
+
+The documentation/code audit found that the existing Dhall budget is descriptive rather than a
+closed execution language, Linux pod capacity does not enforce each admitted model ceiling, GPU
+VRAM lacks a verified per-process enforcer, and raw process-spawn lints exempt production modules.
+The repository therefore reopens this execution-ordered work:
+
+- **Phase 0 Sprint 0.17** — canonical doctrine, root/workflow reconciliation, plan reopens, and
+  deletion-ledger ownership.
+- **Phase 1 Sprint 1.19** — proper Dhall/Haskell unions, `RawRuntimeConfig -> RuntimePlan`
+  compilation, opaque executable placements, and resource-indexed capability types.
+- **Phase 2 Sprint 2.16** — generated semantic command policies and complete cluster migration to
+  the bounded-command kernel.
+- **Phase 4 Sprint 4.32** — verified Apple and Linux CPU per-execution memory enforcers and routing
+  only through `ExecutableModel`.
+- **Phase 6 Sprint 6.44** — verified NVIDIA VRAM enforcement, adversarial selected-`linux-gpu` plus
+  `linux-cpu` gates, import-boundary enforcement, and removal of raw-spawn lint exemptions.
+- **Phase 8 Sprint 8.9** — binary generation, reflection, round-trip, and migration of the proper
+  Dhall execution-plan unions.
+
+Phases 0, 1, and 2 are `Done` (2026-07-25). Phase 4 is the first open enforcing phase; later
+enforcing phases remain `Blocked` in forward numerical order until their predecessors reach
+code-side closure.
+Earlier validation remains valid for its original narrower scope but does not prove the reopened
+construction. The canonical target is
+[Typed Execution Plan](../documents/architecture/typed_execution_plan.md).
+
 ## Common-Shape Reopen (Pulsar ML-Workflow convergence)
 
 `infernix` and the `jitML` sister project are converging on one shared contract,
@@ -962,7 +989,26 @@ The single-accelerator (apple-silicon) plus `linux-cpu` behavioral proof closed 
 `clusterDown` seizure, and the `finally`-only config swap are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
-## Phase Overview
+## Current Phase Overview
+
+| Phase | Current status | Reopened work |
+|-------|----------------|---------------|
+| 0 | Active | Sprint 0.17 doctrine and governance |
+| 1 | Blocked by Phase 0 Sprint 0.17 | Sprint 1.19 compiler and capability core |
+| 2 | Blocked by Phase 1 Sprint 1.19 | Sprint 2.16 bounded semantic command plan |
+| 3 | Done | No work in this reopen |
+| 4 | Blocked by Phase 2 Sprint 2.16 | Sprint 4.32 verified Apple/Linux CPU enforcers |
+| 5 | Done | No work in this reopen |
+| 6 | Blocked by Phase 4 Sprint 4.32 | Sprint 6.44 verified NVIDIA enforcement and lint closure |
+| 7 | Done | No work in this reopen |
+| 8 | Blocked by Phase 6 Sprint 6.44 | Sprint 8.9 generated proper-union schema migration |
+| 9 | Done | No work in this reopen |
+
+## Prior Closure Evidence By Phase
+
+The table below preserves the evidence and narrower closure claims that existed before the Typed
+Execution Plan reopen. Its `Done` labels apply only to those recorded scopes; the current status
+table above is authoritative.
 
 | Phase | Name | Status | Document |
 |-------|------|--------|----------|

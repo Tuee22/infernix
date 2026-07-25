@@ -832,20 +832,20 @@ this section is an orientation summary.
   bound on either role
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
-- inference memory is bounded by an explicit per-substrate, resource-specific budget with admission
+- inference memory admission uses an explicit per-substrate, resource-specific budget:
   control: Apple compares models against unified host RAM, Linux CPU compares against the engine pod
   RAM limit, and Linux GPU compares against GPU VRAM. A model whose requirement exceeds that budget
   produces a typed `ModelMemoryLimitExceeded` error result with `requiredMib` and `availableMib`
-  quantities instead of exhausting the daemon. Under memory-safety by construction
+  quantities instead of launching an already-known oversized request. The stronger memory-safety
+  construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
-  admission mints a typed `MemoryGrant` that the capped-engine kernel requires and OS-bounds to its
-  ceiling — a checked `HostMemoryPartition`, a required `ModelMemoryFootprint`, and an enforcer-typed
-  budget — so an engine cannot run without an admission proof and a host out-of-memory kill is
-  structurally unrepresentable
-- every cluster subprocess runs bounded: lifecycle and image-publication commands invoke docker,
-  skopeo, `kubectl`, and `helm` through a required per-operation timeout, so a hung external command
-  (for example a Harbor `docker pull` verify that stalls) times out and advances the retry path instead
-  of stalling `cluster up` indefinitely
+  is reopened around a closed generated-Dhall execution plan, exact per-model Linux enforcement,
+  verified GPU VRAM enforcement, and resource-indexed launch capabilities. Until that work closes,
+  current admission, the Apple watchdog, and pod limits are defense-in-depth rather than proof that
+  every resource-exhaustion state is unrepresentable
+- bounded command execution exists for key lifecycle and image-publication paths, while remaining
+  raw cluster helpers are reopened for migration to generated per-operation timeout/retry policies
+  and a single capability-gated command kernel
 
 ## Messaging and Lane Model
 
@@ -998,8 +998,10 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - read [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
   for the "evidence, not hope" state-transition doctrine that makes races and flakes unrepresentable
 - read [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
-  for the "memory-safety by construction" doctrine that makes a host out-of-memory kill from inference
-  unrepresentable — a grant-gated, OS-bounded capped-engine subprocess
+  for the reopened "memory-safety by construction" target and current enforcement gaps
+- read [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
+  for the generated-Dhall execution language, compiled-plan boundary, and runtime evidence required
+  before routing or process launch
 
 ## Contributing
 

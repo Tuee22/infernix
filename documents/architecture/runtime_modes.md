@@ -121,10 +121,10 @@ sentinels. The shape names its enforcer:
 - `HostEnforcedBudget HostMemoryPartition` means the host itself owns the ceiling: admission draws
   from the partition's `inferenceCapacity` and the on-host capped-engine kernel enforces the admitted
   ceiling at runtime (the `apple-silicon` lane)
-- `SubstrateEnforcedBudget PodMemoryLimit` means the container substrate owns the ceiling — the pod
-  cgroup memory limit (`linux-cpu`) or the CUDA/VRAM allocation (`linux-gpu`) that
-  `PodMemoryLimit { podMemoryLimitResource, podMemoryLimitSource, podMemoryLimitMib }` records. There
-  is no "enforced by nobody" arm
+- `SubstrateEnforcedBudget PodMemoryLimit` currently records container capacity — the pod cgroup
+  memory limit (`linux-cpu`) or configured CUDA/VRAM quantity (`linux-gpu`) that
+  `PodMemoryLimit { podMemoryLimitResource, podMemoryLimitSource, podMemoryLimitMib }` records. It
+  does not yet prove that an individual model ceiling is installed
 - `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Either InferenceError MemoryGrant`
   mints an opaque `MemoryGrant` (carrying a `MemoryCeiling` equal to the model footprint) on success,
   and returns `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource,
@@ -155,11 +155,18 @@ At runtime, each substrate calls the same pure admission function before launchi
 subprocess or worker. When the model footprint exceeds the enforced budget, admission returns the
 typed `InferenceError` and the daemon publishes a clean `status=failed` `InferenceResult`, not
 successful inline output. On success admission mints the `MemoryGrant`, which the capped-engine kernel
-(`withCappedEngine`, the sole engine spawn) requires and OS-bounds to its `MemoryCeiling`; on
+(`withCappedEngine`, the inference spawn chokepoint) requires. The target
+[Typed Execution Plan](typed_execution_plan.md) additionally requires a verified,
+resource-indexed enforcer that OS-bounds the exact `MemoryCeiling`; on
 `apple-silicon` a `proc_pid_rusage` physical-footprint watchdog SIGKILLs the child's process group on
 a ceiling breach, so an under-estimated footprint is a typed `status=failed ModelMemoryLimitExceeded`,
 never a host OOM-kill. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error
 naming the model footprint and available memory in MiB.
+
+The Linux CPU and GPU refinement is reopened. A pod-wide RAM limit is capacity evidence, not proof
+of a smaller per-model ceiling, and CUDA OOM classification is not proof of an installed VRAM
+limit. Engine members do not become ready in the target design until the selected enforcer has been
+verified against the compiled execution plan.
 
 The per-substrate `InferenceMemoryBudget` / `ModelMemoryLimitExceeded` typed ADT — a typed
 evidence value rather than integer sentinels — is the in-repo precedent that the managed

@@ -8,6 +8,12 @@
 > bounded to the admitted ceiling — so that an over-budget model is a clean per-request `status=failed`
 > and a host out-of-memory kill is structurally unrepresentable.
 
+> **Reopened target contract.** The invariant below is the required end state, not the current
+> implementation claim. Linux currently relies on a pod-wide limit that is not equal to each model
+> grant, GPU VRAM lacks a verified per-process enforcer, and engine-adjacent modules retain
+> raw-spawn lint exemptions. The ordered correction is governed by
+> [Typed Execution Plan](typed_execution_plan.md).
+
 ## TL;DR
 
 - A **host OOM is an unmanaged resource transition**: an inference admitted on a *static estimate* but
@@ -97,8 +103,8 @@ retryable outcome, so an over-budget kill is never bootstrap-retried into a seco
 
 ## Current Status
 
-The invariant is **implemented and code-side closed** (Phase 4 Sprints 4.30/4.31, Phase 6 Sprint 6.42;
-machine-independent gate set GREEN on 2026-07-21). `admitModelMemory :: InferenceMemoryBudget ->
+The earlier grant and capped-engine work is implemented, but the full invariant is **reopened and
+not yet satisfied**. `admitModelMemory :: InferenceMemoryBudget ->
 ModelDescriptor -> Either InferenceError MemoryGrant` (`src/Infernix/Types.hs`) is the sole mint of the
 opaque `MemoryGrant` (hidden constructor), carrying a `MemoryCeiling` equal to the model footprint. The
 capped-engine kernel `Infernix.Runtime.CappedEngine` exports the sole engine spawn `withCappedEngine`

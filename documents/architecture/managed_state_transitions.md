@@ -127,6 +127,13 @@ contract](realness_contract.md) rejects), and **bottom** (every operation forces
 
 ## Current Status
 
+The evidence kernels remain implemented, but the claim that every production cluster subprocess is
+already bounded is reopened. `Cluster.hs` still contains raw unbounded helpers and the lint exempts
+it along with several other production modules. Under
+[Typed Execution Plan](typed_execution_plan.md), generated command policies compile with closed
+semantic command constructors into `BoundedCommand` capabilities; provisioning receives a separate
+bounded grant; and only bounded kernels may import raw process primitives.
+
 This is the governing contract, and its code-side implementation has landed across the ten reopened
 phases tracked in
 [../../DEVELOPMENT_PLAN/README.md](../../DEVELOPMENT_PLAN/README.md) (Managed-State-Transition Doctrine

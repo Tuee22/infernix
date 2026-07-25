@@ -4,6 +4,7 @@ module Infernix.Runtime
   ( buildPayload,
     evictCache,
     executeInference,
+    executeExecutableInferenceWithKVCache,
     executeInferenceWithKVCache,
     listCacheManifests,
     loadInferenceResult,
@@ -18,10 +19,18 @@ import Data.Text qualified as Text
 import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime)
 import Infernix.Config (Paths (..))
 import Infernix.DemoConfig (resolveInferenceMemoryBudget)
+import Infernix.ExecutionPlan
+  ( ExecutableModel,
+    executableModelDescriptor,
+  )
 import Infernix.Models (findModel, resultFamilyForDescriptor)
 import Infernix.Runtime.Cache (evictCache, listCacheManifests, materializeCache, rebuildCache)
 import Infernix.Runtime.KVCache qualified as KVCache
-import Infernix.Runtime.Worker (EngineCommandOverrideMap, runInferenceWorker)
+import Infernix.Runtime.Worker
+  ( EngineCommandOverrideMap,
+    runExecutableInferenceWorker,
+    runInferenceWorker,
+  )
 import Infernix.Storage
   ( readInferenceResultProtoMaybe,
     writeInferenceResultProto,
@@ -67,6 +76,70 @@ executeInferenceWithKVCache paths runtimeMode budget overrides maybeEngineCache 
               }
     | otherwise ->
         runAdmittedInference paths runtimeMode budget overrides maybeEngineCache maybeCacheRequest request model
+
+-- | Production execution boundary for daemon-routed work. Lookup and
+-- refinement happen before this function; the opaque placement carries the
+-- only model, engine binding, enforcer plan, and grant that may launch.
+executeExecutableInferenceWithKVCache ::
+  Paths ->
+  RuntimeMode ->
+  InferenceMemoryBudget ->
+  EngineCommandOverrideMap ->
+  Maybe KVCache.EngineKVCache ->
+  Maybe KVCache.KVCacheRequest ->
+  ExecutableModel ->
+  InferenceRequest ->
+  IO (Either ErrorResponse InferenceResult)
+executeExecutableInferenceWithKVCache paths runtimeMode budget overrides maybeEngineCache maybeCacheRequest executableModel request
+  | Text.all isSpace (inputText request) =
+      pure
+        ( Left
+            ErrorResponse
+              { errorCode = "invalid_request",
+                message = "The request input must not be blank."
+              }
+        )
+  | otherwise = do
+      now <- getCurrentTime
+      let model = executableModelDescriptor executableModel
+          requestIdValue = Text.pack (formatTime defaultTimeLocale "req-%Y%m%d%H%M%S%q" now)
+      materializeCache paths runtimeMode model
+      cacheObservation <-
+        case (maybeEngineCache, maybeCacheRequest) of
+          (Just engineCache, Just cacheRequest) -> Just <$> KVCache.observeKVCachePrefix engineCache cacheRequest
+          _ -> pure Nothing
+      workerResult <-
+        runExecutableInferenceWorker
+          paths
+          runtimeMode
+          overrides
+          executableModel
+          request
+          cacheObservation
+      case workerResult of
+        Left workerError
+          | errorCode workerError == modelMemoryLimitExceededErrorCode -> do
+              let result = failedMemoryResult now runtimeMode model (ceilingBreachError budget model)
+              persistInferenceResult paths result
+              pure (Right result)
+          | otherwise -> pure (Left workerError)
+        Right outputText -> do
+          let result =
+                InferenceResult
+                  { requestId = requestIdValue,
+                    resultModelId = modelId model,
+                    resultMatrixRowId = matrixRowId model,
+                    resultRuntimeMode = runtimeMode,
+                    resultSelectedEngine = selectedEngine model,
+                    status = "completed",
+                    payload = buildPayload (resultFamilyForDescriptor model) outputText,
+                    createdAt = now,
+                    resultUserId = "",
+                    resultContextId = "",
+                    resultCausalRef = ""
+                  }
+          persistInferenceResult paths result
+          pure (Right result)
 
 -- | Phase 4 Sprint 4.30 — admit the model against the budget, then run it under
 -- the minted grant. A grant is the capped-engine kernel's precondition, so a

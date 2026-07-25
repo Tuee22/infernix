@@ -32,6 +32,13 @@
 
 ## Current Status
 
+The role topology is implemented. Its resource-safety boundary is reopened: engine members
+currently consume decoded configuration and a grant whose exact ceiling is not independently
+enforced on every Linux substrate. The target
+[Typed Execution Plan](typed_execution_plan.md) makes engine readiness depend on refinement of a
+compiled model-placement graph into `ExecutableModel` values. Coordinators publish routes only for
+those values; engine members that cannot verify their declared enforcer never become ready.
+
 The three-role contract is the supported shape. The implementation uses
 `chart/templates/deployment-{coordinator,engine,demo}.yaml`, keeps `clusterServiceEnabled` false on
 every substrate, and has code-side support for the engine-pool model defined in

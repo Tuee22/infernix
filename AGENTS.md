@@ -38,14 +38,14 @@ Read first:
   `check-code` AST pass), owned by Phase 0 Sprint 0.12 with its per-runner scope extended by Phases 1/4,
   enforces this. Canonical doctrine:
   [documents/architecture/realness_contract.md](documents/architecture/realness_contract.md)
-- evidence-gated state transitions: every operation that acts on a system state consumes typed
+- evidence-gated state transitions are the target construction: every operation that acts on a system state consumes typed
   evidence that its transition completed. The raw destructive, commit, and spawn primitives — the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode` — are unexported, so acting on an unmanaged state (a race or flake)
   does not typecheck; enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process
-  spawn is forbidden in production `src/Infernix/` outside
-  `Infernix.Cluster.Subprocess.runBoundedCommand` (every cluster subprocess runs under a required
-  `Timeout`), enforced by the `unboundedExecViolations` lint. Canonical doctrine:
+  spawn is being migrated out of production `src/Infernix/` into
+  `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
+  is reopened, not closed. Canonical target:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
   through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
@@ -62,12 +62,13 @@ Read first:
   `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
   entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
+- memory-safety by construction is reopened around the generated typed execution plan: an inference engine subprocess must run only under a resource-indexed typed `MemoryGrant`
   minted by the `admitModelMemory` admission policy, and the capped-engine kernel bounds its actual
   resident memory to the admitted `MemoryCeiling`. The raw engine spawn
   (`readCreateProcessWithExitCode` / `createProcess`) is unexported, so launching an engine without an
   admission proof does not typecheck; a ceiling breach is a clean `status=failed`
-  `ModelMemoryLimitExceeded` rather than a host OOM-kill (`apple-silicon` enforces the ceiling with a
+  `ModelMemoryLimitExceeded` rather than a host OOM-kill. Current Linux pod-wide capacity and
+  unverified GPU VRAM paths do not yet satisfy the exact per-grant ceiling (`apple-silicon` enforces the ceiling with a
   `proc_pid_rusage` physical-footprint watchdog plus process-group kill, `linux-cpu`/`linux-gpu` by the
   pod cgroup / VRAM limit). Physical host RAM is a checked `HostMemoryPartition` (no oversubscription;
   headroom covers the OS and the routed-E2E browser), every model declares a required positive
@@ -75,6 +76,7 @@ Read first:
   the capped-engine kernel is forbidden, enforced by the `unboundedEngineSpawnViolations` lint.
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
+  and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution

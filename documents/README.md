@@ -24,9 +24,11 @@
   typed evidence that the state's transition completed, so races and flakes (unmanaged state
   transitions) are structurally unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
-  code-level "memory-safety by construction" invariant — an inference engine subprocess runs only
-  under a typed `MemoryGrant` minted by admission and is OS-bounded to the admitted ceiling, so an
-  over-budget model is a clean `status=failed` and a host out-of-memory kill is unrepresentable
+  target "memory-safety by construction" invariant and identifies the current per-substrate
+  enforcement gaps reopened by the execution-plan refactor
+- [architecture/typed_execution_plan.md](architecture/typed_execution_plan.md) defines the closed
+  generated-Dhall execution language, raw-to-compiled plan boundary, live enforcer refinement, and
+  capability-gated command, provisioning, routing, and inference surfaces
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the

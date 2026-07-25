@@ -1,6 +1,6 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 0.16, doctrine + governance mirror landed 2026-07-23) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code (Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43) closed under [Wave X](cohort-validation-waves.md) on 2026-07-24); the memory-safety-by-construction reopen (Sprint 0.15, doc + governance mirror landed 2026-07-21) is doc-only and machine-independent (closed on `infernix lint docs` + `docs check` + `cabal build all`; its enforcing code (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42) closed under [Wave W](cohort-validation-waves.md) on 2026-07-24); the Bounded-Command Application & Bounded-HTTP reopen (Sprint 0.14) and the prior Managed-State-Transition Doctrine reopen (Sprint 0.13) are code-side closed and closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 0.1-0.12 as recorded below
+**Status**: Done — Sprint 0.17 closed the Typed Execution Plan doctrine and governance reopen on 2026-07-25; Sprints 0.1–0.16 retain their recorded closure
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -834,6 +834,41 @@ machine-independent realness lint enforcement, and is **re-closed** (validated 2
 The work was machine-independent and gated nothing on hardware; the doc reconciliation landed in
 lockstep with the reopened Phase 4 catalog changes (matrix↔catalog parity), and the lint mechanism's
 per-runner scope is extended by the reopened Phases 1 (Apple) and 4 (Linux) as each de-stubs.
+
+## Sprint 0.17: Typed Execution Plan Doctrine [Done]
+
+**Status**: Done
+**Implementation**: `documents/architecture/typed_execution_plan.md`, governed doctrine and plan documents
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/`, `DEVELOPMENT_PLAN/`
+
+### Objective
+
+Replace overclaimed descriptive-limit and bounded-process language with one canonical target:
+generated Dhall is a closed execution plan, Haskell compiles and runtime-refines it into opaque
+capabilities, and routing or process launch cannot consume raw configuration.
+
+### Deliverables
+
+- canonical `typed_execution_plan.md` with explicit current status and validation contract
+- affected architecture, workflow, runbook, root, plan-index, component-inventory, and phase docs
+  distinguish current defenses from the reopened construction
+- forward-only Phase 1/2/4/6/8 reopens and deletion-ledger rows
+
+### Validation
+
+- `infernix lint docs` and `infernix docs check`
+- phase maintenance scans report zero backward dependency edges and zero dual-accelerator gates
+- `AGENTS.md` and `CLAUDE.md` keep identical non-negotiable mirrors
+
+### Remaining Work
+
+None. Closed 2026-07-25 in the supported `linux-cpu` container context: `infernix lint docs` and
+`infernix docs check` pass after registering the doctrine in `requiredDocs` with its required
+structure; the deterministic plan scans report zero backward dependency edges and zero Validation
+gates invoking both accelerator lanes; and the `AGENTS.md` / `CLAUDE.md` non-negotiable blocks are
+byte-identical. No enforcing code belongs to this sprint.
+
+---
 
 ## Documentation Requirements
 

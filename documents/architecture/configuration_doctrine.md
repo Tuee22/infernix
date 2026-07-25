@@ -101,6 +101,22 @@ model set) is volume-mounted **over** the baked file; only the deployed coordina
 
 ## The three cluster-facing config records
 
+### Execution plans are closed and refined
+
+The runtime config is being tightened from descriptive records into the closed execution language
+defined by [Typed Execution Plan](typed_execution_plan.md). The target schema uses Dhall unions for
+memory enforcers, accelerators, retry policies, and failure classes; it does not encode alternatives
+as text tags with unused fields zeroed. Each model is bound to its pool, resource requirements, and
+enforcer in one executable placement.
+
+The new execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
+validates the placement graph and
+live runtime refinement verifies that the named OS enforcer exists and matches the chart or host
+limit. Only the resulting opaque `RuntimePlan` may feed routing or process execution. This target is
+partially implemented: `DhallInferenceMemoryBudget` is now a proper `HostEnforced |
+SubstrateEnforced` union and the opaque compiler/capability core is present. Legacy direct
+decoded-config consumers remain until the owning Phase 4 routing migration closes.
+
 ### Host manifest (`infernix-host.dhall`)
 
 Typed record describing the operator's host environment — absolute **tool paths** for every external

@@ -65,7 +65,7 @@ models runnable, removes hardcoded Apple budget floors, uses Linux CPU pod memor
 GPU VRAM. Wave T closed on 2026-07-12 with `linux-cpu` image
 `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` plus selected
 `linux-gpu` image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896`.
-On 2026-07-21, Phases 0, 4, and 6 reopened for memory-safety-by-construction: an inference engine
+On 2026-07-21, Phases 0, 4, and 6 reopened for an earlier memory-safety increment: an inference engine
 subprocess runs only under a typed `MemoryGrant` minted by `admitModelMemory`, the capped-engine kernel
 bounds resident memory to the admitted `MemoryCeiling`, and an over-budget model is a clean
 `status=failed` `ModelMemoryLimitExceeded` rather than a host OOM. Phase 0 Sprint 0.15 landed the
@@ -75,7 +75,7 @@ the enforcing code is **code-side closed (2026-07-21)** — Phase 4 Sprints 4.30
 budget-enforcer split dropping `UnenforcedMemoryBudget`) and Phase 6 Sprint 6.42
 (`unboundedEngineSpawnViolations` lint), machine-independent gate set GREEN — with the behavioral
 single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off **closed under
-[Wave W](cohort-validation-waves.md) on 2026-07-24 (apple-silicon plus linux-cpu full-suite GREEN)**, so Phase 4 is now Done. On 2026-07-22 the
+[Wave W](cohort-validation-waves.md) on 2026-07-24 (apple-silicon plus linux-cpu full-suite GREEN)** for that narrower scope. The 2026-07-25 Typed Execution Plan audit reopens Phases 0/1/2/4/6/8 because Linux did not enforce each grant, GPU VRAM lacked a verified enforcer, and production raw-spawn exemptions remained. On 2026-07-22 the
 lifecycle-rebinding warm-cache flake that blocked a clean single-invocation `infernix test all` (the
 remaining Wave W residual) was, per operator directive, treated as evidence of a representable invalid
 state and fixed by construction rather than worked around: the **Observable-Readiness reopen** (Phase 1
@@ -93,7 +93,7 @@ adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`, evidence-gated se
 doctrine + governance landed first (Phase 0 Sprint 0.16, `Done`) and the enforcing code is now
 **code-side closed (2026-07-23)** (Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43) with the
 machine-independent gate set GREEN and the [Wave X](cohort-validation-waves.md) behavioral proof
-**closed on 2026-07-24 with apple-silicon plus linux-cpu full-suite GREEN**, so Phases 2 and 6 are now Done.
+**closed on 2026-07-24 with apple-silicon plus linux-cpu full-suite GREEN** for that narrower scope.
 The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct

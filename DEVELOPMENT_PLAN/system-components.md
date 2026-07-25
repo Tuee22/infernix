@@ -8,6 +8,13 @@
 
 ## Current Repo Assessment
 
+- the typed execution-plan refactor is reopened: current generated Dhall decodes descriptive model,
+  pool, and memory records, while the target compiles proper Dhall unions into an opaque
+  `RuntimePlan`, refines declared enforcers against live OS evidence, exposes only
+  `ExecutableModel` values to routing, and gates every subprocess behind a bounded command,
+  provisioning, or resource-indexed inference capability. See
+  [Typed Execution Plan](../documents/architecture/typed_execution_plan.md)
+
 - the repo ships the one-binary Haskell role topology, Envoy Gateway assets, the PureScript demo UI,
   the split runtime modules under `src/Infernix/Runtime/`, the shared Python project, the shared
   Linux substrate Dockerfile that bakes the source-snapshot manifest used by git-less

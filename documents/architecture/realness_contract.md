@@ -61,6 +61,11 @@ native runner has **no fabrication branch**:
 
 ## Current Status
 
+Real-output failure semantics remain implemented. Resource-exhaustion safety is a reopened sibling
+contract: a real engine can still be launched under a descriptive Linux capacity that does not
+enforce its individual grant. [Typed Execution Plan](typed_execution_plan.md) makes the resource
+precondition part of executability, so an unenforced model is not routable.
+
 The invariant is the governing contract now; its delivery is in flight under the reopened Phases:
 **Phase 0** (the realness doctrine plus the machine-independent realness lint mechanism, Sprint 0.12),
 **Phase 4** (the Linux adapter/runner de-stub — landed — plus the real Linux engines and Phase 4's own

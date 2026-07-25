@@ -59,14 +59,14 @@ this canonical list.
   commands fail fast if config is missing, while `./bootstrap/apple-silicon.sh up` explicitly runs
   `./.build/infernix init --if-missing` before `cluster up`.
   Canonical: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
-- evidence-gated state transitions: every operation that acts on a system state consumes typed
+- evidence-gated state transitions are the target construction: every operation that acts on a system state consumes typed
   evidence that its transition completed; the raw destructive, commit, and spawn primitives (the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode`) are unexported, so acting on an unmanaged state does not
   typecheck. Enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process spawn is
-  forbidden in production `src/Infernix/` outside `Infernix.Cluster.Subprocess.runBoundedCommand`
-  (every cluster subprocess runs under a required `Timeout`), enforced by the `unboundedExecViolations`
-  lint. Canonical:
+  being migrated out of production `src/Infernix/` into
+  `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
+  is reopened, not closed. Canonical target:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
   through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
@@ -81,15 +81,17 @@ this canonical list.
   cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
   leftover `.harness-backup` on entry. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
-- memory-safety by construction: an inference engine subprocess runs only under a typed `MemoryGrant`
+- memory-safety by construction is reopened around the generated typed execution plan: an inference engine subprocess must run only under a resource-indexed typed `MemoryGrant`
   minted by `admitModelMemory`, and the capped-engine kernel OS-bounds its actual resident memory to
   the admitted `MemoryCeiling` (the raw engine spawn is unexported, so launching an engine without an
   admission proof does not typecheck); a ceiling breach is a clean `status=failed`
-  `ModelMemoryLimitExceeded`, never a host OOM. Physical RAM is a checked `HostMemoryPartition`, every
+  `ModelMemoryLimitExceeded`, never a host OOM. Current Linux pod-wide capacity and unverified GPU
+  VRAM paths do not yet satisfy the exact per-grant ceiling. Physical RAM is a checked `HostMemoryPartition`, every
   model declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its
   enforcer; raw engine spawn outside the capped-engine kernel is forbidden, enforced by the
   `unboundedEngineSpawnViolations` lint. Canonical:
-  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
+  [../architecture/typed_execution_plan.md](../architecture/typed_execution_plan.md)
 
 ## Supported Build And Operator Workflows
 

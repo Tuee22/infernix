@@ -10,6 +10,12 @@
 
 ## TL;DR
 
+The execution-related portion of this manifest is reopened under
+[Typed Execution Plan](../architecture/typed_execution_plan.md). The current wiring records remain
+implemented, but model placements, resource requirements, enforcers, and operation policies must
+compile into one opaque `RuntimePlan`; raw decoded records must not flow directly into routing or
+process launch.
+
 - The `ClusterConfig` Haskell type (rendered by the binary at `cluster up` from
   `defaultClusterConfig`) is the typed source of truth for every in-cluster wiring value that
   previously lived in `chart/templates/deployment-*.yaml` `env:` blocks. No `.dhall` is

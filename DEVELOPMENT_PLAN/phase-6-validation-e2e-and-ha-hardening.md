@@ -1,6 +1,6 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
+**Status**: Blocked — Sprint 6.44 (verified NVIDIA enforcement and zero raw-spawn exemptions) is blocked by Phase 4 Sprint 4.32; the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
 harness seizure, chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig`
 swap) is closed under [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus
 linux-cpu behavioral sign-off (doctrine + governance landed in Phase 0 Sprint 0.16; enforcing code
@@ -2729,6 +2729,41 @@ crash-safe `withTestHarnessConfig` backup reconcile — is closed under
 sign-off: the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`) and the enforcing code is
 implemented on the [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) types
 (code-side closed 2026-07-23 on the machine-independent gate set).
+
+## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Blocked]
+
+**Status**: Blocked
+**Code-side closure**: Not started
+**Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave
+**Blocked by**: Phase 4 Sprint 4.32
+**Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Lint/HaskellStyle.hs`, validation suites
+**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Install and verify per-process-group NVIDIA VRAM enforcement, prove ceiling-breach behavior on CUDA,
+and reduce raw-spawn enforcement to explicit kernel import boundaries with no broad exemptions.
+
+### Deliverables
+
+- NVIDIA accounting/refinement fails engine readiness when device/process attribution is unavailable
+- RAM and VRAM grants are independently indexed and jointly required where a model uses both
+- provisioning/smoke processes use a bounded `ProvisioningGrant`
+- raw-spawn lint exemptions are removed outside command, engine, and provisioning kernels
+
+### Validation
+
+- negative tests reject RAM/VRAM enforcer substitution and unenforced GPU placements
+- adversarial CUDA allocation breaches the declared ceiling, yields typed terminal failure, and
+  leaves the GPU worker and subsequent smaller inference healthy
+- import-boundary and lint scans report zero non-kernel raw process access
+- selected `linux-gpu` plus `linux-cpu` full-suite gate passes against one frozen state
+
+### Remaining Work
+
+Blocked until Sprint 4.32 closes the shared resource-indexed execution boundary.
+
+---
 
 ## Documentation Requirements
 

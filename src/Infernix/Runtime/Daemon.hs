@@ -7,7 +7,7 @@ where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newMVar)
-import Control.Monad (forM_, forever, when)
+import Control.Monad (forM_, forever, unless, when)
 import Data.List (find, intercalate)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
@@ -28,9 +28,15 @@ import Infernix.Config
     watchedDemoConfigPath,
   )
 import Infernix.Conversation.Topic qualified as ConversationTopic
-import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
+import Infernix.ExecutionPlan
+  ( CompiledRuntimePlan,
+    executableModelDescriptor,
+    runtimePlanConfig,
+    runtimePlanModels,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
+import Infernix.Runtime.CappedEngine (verifyPhysicalFootprintSampler)
 import Infernix.Runtime.Pulsar
   ( PulsarTransport,
     clearServiceReadinessMarker,
@@ -50,6 +56,7 @@ import Infernix.Runtime.Pulsar
     writeServiceReadinessMarker,
   )
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types hiding (generatedDemoConfigPath)
 
 -- | Phase 7 Sprint 7.8: daemon role orchestration lives outside the
@@ -75,7 +82,14 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
                in if null demoPath then generatedDemoConfigPath paths else demoPath
             Nothing -> generatedDemoConfigPath paths
       engineOverrides = engineOverridesFromClusterConfig maybeClusterConfig
-  demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
+  compiledPlanResult <- decodeCompiledRuntimePlanFile selectedDemoConfigPath
+  compiledPlan <-
+    case compiledPlanResult of
+      Left errors ->
+        ioError
+          (userError ("generated substrate execution plan did not compile: " <> show errors))
+      Right plan -> pure plan
+  let demoConfig = runtimePlanConfig compiledPlan
   daemonConfig <- requireDaemonConfig daemonRole maybeEngineName demoConfig
   let daemonLocation = case maybeClusterConfig of
         Just clusterConfig ->
@@ -95,14 +109,21 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
   putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
   putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (daemonConfigRequestTopics daemonConfig)))
   putStrLn ("serviceResultTopic: " <> Text.unpack (daemonConfigResultTopic daemonConfig))
-  putStrLn ("serviceEngineBindingCount: " <> show (length (engines demoConfig)))
+  putStrLn ("serviceExecutableModelCount: " <> show (length (runtimePlanModels compiledPlan)))
   putStrLn "serviceHttpListener: disabled"
+  when (runtimeMode == AppleSilicon) $ do
+    samplerAvailable <- verifyPhysicalFootprintSampler
+    unless samplerAvailable $
+      ioError
+        ( userError
+            "apple-silicon engine readiness failed: proc_pid_rusage physical-footprint sampling is unavailable"
+        )
   clearServiceReadinessMarker paths
   case maybeTransport of
     Nothing ->
-      runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig demoConfig engineKVCache
+      runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig compiledPlan engineKVCache
     Just transport ->
-      runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConfig daemonRole engineKVCache transport
+      runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig compiledPlan daemonRole engineKVCache transport
 
 engineOverridesFromClusterConfig :: Maybe ClusterConfig -> EngineCommandOverrideMap
 engineOverridesFromClusterConfig maybeClusterConfig =
@@ -118,17 +139,18 @@ runFilesystemTopicSpool ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   KVCache.EngineKVCache ->
   IO ()
-runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig demoConfig engineKVCache = do
+runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig compiledPlan engineKVCache = do
+  let demoConfig = runtimePlanConfig compiledPlan
   ensureSchemaMarkers paths demoConfig
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
   forever $ do
     forM_
       (daemonConfigRequestTopics daemonConfig)
-      (drainTopicWithKVCache paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache))
+      (drainTopicWithKVCache paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache))
     threadDelay 500000
 
 runWebSocketPulsarDaemon ::
@@ -136,12 +158,13 @@ runWebSocketPulsarDaemon ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   DaemonRole ->
   KVCache.EngineKVCache ->
   PulsarTransport ->
   IO ()
-runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConfig daemonRole engineKVCache transport = do
+runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig compiledPlan daemonRole engineKVCache transport = do
+  let demoConfig = runtimePlanConfig compiledPlan
   ensureSchemaMarkers paths demoConfig
   reconcileSupportedNamespacesWithRetry transport demoConfig
   reconcileStartupTopicsWithRetry transport demoConfig
@@ -154,23 +177,24 @@ runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig demoConf
     (AppleSilicon, Engine, primaryTopic : extraTopics) -> do
       forM_
         extraTopics
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock)
-      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock primaryTopic
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock)
+      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock primaryTopic
     _ -> do
       forM_
         (daemonConfigRequestTopics daemonConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig demoConfig (Just engineKVCache) engineExecutionLock)
+        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock)
       when (daemonRole == Coordinator) $
-        startCoordinatorLoops transport runtimeMode daemonConfig demoConfig
+        startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan
       forever (threadDelay 60000000)
 
 startCoordinatorLoops ::
   PulsarTransport ->
   RuntimeMode ->
   DaemonConfig ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   IO ()
-startCoordinatorLoops transport runtimeMode daemonConfig demoConfig = do
+startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan = do
+  let demoConfig = runtimePlanConfig compiledPlan
   putStrLn "serviceResultBridgeMode: failover-subscription"
   _ <-
     forkIO
@@ -210,7 +234,7 @@ startCoordinatorLoops transport runtimeMode daemonConfig demoConfig = do
           (firstOrEmpty (daemonConfigRequestTopics daemonConfig))
           ConversationTopic.defaultDemoTopicNamespace
           contextModelMap
-          (models demoConfig)
+          (map executableModelDescriptor (runtimePlanModels compiledPlan))
       )
   pure ()
 

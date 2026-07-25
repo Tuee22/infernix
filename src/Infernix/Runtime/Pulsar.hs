@@ -137,11 +137,16 @@ import Infernix.Conversation.Reducer
     stepReducer,
   )
 import Infernix.Conversation.Topic qualified as ConversationTopic
-import Infernix.DemoConfig (decodeDemoConfigFile, resolveInferenceMemoryBudget)
+import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Evidence.Readiness qualified as Readiness
+import Infernix.ExecutionPlan
+  ( CompiledRuntimePlan,
+    lookupExecutableModel,
+    runtimePlanConfig,
+  )
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models
   ( enginePoolForModel,
@@ -152,7 +157,7 @@ import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
-import Infernix.Runtime (executeInferenceWithKVCache)
+import Infernix.Runtime (executeExecutableInferenceWithKVCache)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker (EngineCommandOverrideMap)
@@ -1306,22 +1311,22 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
     Just transport ->
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
 
-drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> DemoConfig -> Text.Text -> IO ()
-drainTopic paths runtimeMode overrides daemonConfig demoConfig =
-  drainTopicWithKVCache paths runtimeMode overrides daemonConfig demoConfig Nothing
+drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> CompiledRuntimePlan -> Text.Text -> IO ()
+drainTopic paths runtimeMode overrides daemonConfig compiledPlan =
+  drainTopicWithKVCache paths runtimeMode overrides daemonConfig compiledPlan Nothing
 
-drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> DemoConfig -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
-drainTopicWithKVCache paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache requestTopicValue =
+drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> CompiledRuntimePlan -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
+drainTopicWithKVCache paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache requestTopicValue =
   case daemonConfigRole daemonConfig of
     Coordinator ->
-      forwardTopicToDerivedPool paths runtimeMode demoConfig requestTopicValue
+      forwardTopicToDerivedPool paths runtimeMode compiledPlan requestTopicValue
     Engine ->
-      drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
+      drainInferenceTopic paths runtimeMode overrides compiledPlan maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
     Webapp ->
       ioError (userError "webapp role does not drain inference topics")
 
-forwardTopicToDerivedPool :: Paths -> RuntimeMode -> DemoConfig -> Text.Text -> IO ()
-forwardTopicToDerivedPool paths runtimeMode demoConfig sourceTopicValue = do
+forwardTopicToDerivedPool :: Paths -> RuntimeMode -> CompiledRuntimePlan -> Text.Text -> IO ()
+forwardTopicToDerivedPool paths runtimeMode compiledPlan sourceTopicValue = do
   let sourceDirectory = topicDirectoryPath paths sourceTopicValue
   sourceDirectoryPresent <- doesDirectoryExist sourceDirectory
   unless sourceDirectoryPresent (createDirectoryIfMissing True sourceDirectory)
@@ -1336,7 +1341,7 @@ forwardTopicToDerivedPool paths runtimeMode demoConfig sourceTopicValue = do
         Right requestValue ->
           pure requestValue
     targetTopicValue <-
-      case batchTopicForRequest runtimeMode demoConfig decodedRequest of
+      case batchTopicForRequest runtimeMode compiledPlan decodedRequest of
         Left err ->
           ioError (userError err)
         Right topicValue ->
@@ -1347,8 +1352,8 @@ forwardTopicToDerivedPool paths runtimeMode demoConfig sourceTopicValue = do
     ByteString.writeFile targetPath encodedRequest
     removeFile sourcePath
 
-drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> Maybe KVCache.EngineKVCache -> Text.Text -> Text.Text -> IO ()
-drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache resultTopicValue requestTopicValue = do
+drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> CompiledRuntimePlan -> Maybe KVCache.EngineKVCache -> Text.Text -> Text.Text -> IO ()
+drainInferenceTopic paths runtimeMode overrides compiledPlan maybeEngineKVCache resultTopicValue requestTopicValue = do
   let requestDirectory = topicDirectoryPath paths requestTopicValue
   requestDirectoryPresent <- doesDirectoryExist requestDirectory
   unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
@@ -1360,10 +1365,7 @@ drainInferenceTopic paths runtimeMode overrides maybeEngineKVCache resultTopicVa
       Left err ->
         ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
       Right protoRequest -> do
-        -- Harness-only repo-local spool path: resolve the same typed budget the
-        -- coordinator uses so admission mints the capped-engine grant identically.
-        budget <- resolveInferenceMemoryBudget paths runtimeMode
-        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode budget overrides maybeEngineKVCache protoRequest
+        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode compiledPlan overrides maybeEngineKVCache protoRequest
         createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
         writeInferenceResultFile
           (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -2176,17 +2178,17 @@ consumeTopicForever ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   Maybe KVCache.EngineKVCache ->
   MVar () ->
   Text.Text ->
   IO ()
-consumeTopicForever transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue =
+consumeTopicForever transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue =
   case serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue of
     Left err -> ioError (userError err)
     Right subscriptionType ->
       forever $ do
-        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType)
+        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType)
         case sessionResult of
           Right _ -> threadDelay 1000000
           Left err
@@ -2251,13 +2253,13 @@ consumeTopicSession ::
   RuntimeMode ->
   EngineCommandOverrideMap ->
   DaemonConfig ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   Maybe KVCache.EngineKVCache ->
   MVar () ->
   Text.Text ->
   ConsumerSubscriptionType ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfig maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType = do
+consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType = do
   processLabel <- currentProcessLabel
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
@@ -2294,7 +2296,7 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
       case daemonConfigRole daemonConfig of
         Coordinator -> do
           selectedBatchTopicValue <-
-            case batchTopicForRequest runtimeMode demoConfig decodedRequest of
+            case batchTopicForRequest runtimeMode compiledPlan decodedRequest of
               Left err ->
                 ioError (userError err)
               Right topicValue ->
@@ -2327,10 +2329,10 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig demoConfi
             let maybeRejection =
                   if Text.null modelIdValue
                     then Just (emptyModelIdRejectionResult runtimeMode decodedRequest)
-                    else memoryAdmissionRejection runtimeMode demoConfig modelIdValue decodedRequest
+                    else memoryAdmissionRejection runtimeMode compiledPlan modelIdValue decodedRequest
             publishedResult <-
               maybe
-                (publishedResultFromRequest (Just transport) paths runtimeMode (inferenceMemoryBudget demoConfig) overrides maybeEngineKVCache decodedRequest)
+                (publishedResultFromRequest (Just transport) paths runtimeMode compiledPlan overrides maybeEngineKVCache decodedRequest)
                 pure
                 maybeRejection
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
@@ -2373,9 +2375,9 @@ serviceConsumerName subscriptionName subscriptionType processLabel =
       Text.unpack (PulsarFailover.failoverConsumerName (Text.pack subscriptionName) processLabel)
     _ -> subscriptionName <> "-consumer-" <> sanitizeTopic processLabel
 
-batchTopicForRequest :: RuntimeMode -> DemoConfig -> ProtoInference.InferenceRequest -> Either String Text.Text
-batchTopicForRequest runtimeMode demoConfig requestValue =
-  case findModel runtimeMode modelIdValue >>= const (enginePoolForModel demoConfig modelIdValue) of
+batchTopicForRequest :: RuntimeMode -> CompiledRuntimePlan -> ProtoInference.InferenceRequest -> Either String Text.Text
+batchTopicForRequest runtimeMode compiledPlan requestValue =
+  case lookupExecutableModel modelIdValue compiledPlan >>= const (enginePoolForModel demoConfig modelIdValue) of
     Just pool -> Right (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue)
     Nothing ->
       Left
@@ -2385,6 +2387,7 @@ batchTopicForRequest runtimeMode demoConfig requestValue =
             <> Text.unpack (runtimeModeId runtimeMode)
         )
   where
+    demoConfig = runtimePlanConfig compiledPlan
     modelIdValue = view ProtoInferenceFields.requestModelId requestValue
 
 -- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
@@ -4311,22 +4314,36 @@ emptyModelIdRejectionTimestamp =
 -- typed 'InferenceError' payload before launching the engine subprocess.
 memoryAdmissionRejection ::
   RuntimeMode ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
   Text.Text ->
   ProtoInference.InferenceRequest ->
   Maybe InferenceResult
-memoryAdmissionRejection runtimeMode demoConfig modelIdValue protoRequest =
-  case find ((== modelIdValue) . modelId) (models demoConfig) of
-    Just model ->
-      -- Phase 4 Sprint 4.30: admission now mints an 'Either InferenceError
-      -- MemoryGrant'. An over-budget model produces the deterministic typed
-      -- rejection result here (before the bootstrap-retry loop, so duplicate
-      -- redeliveries collapse); an admitted model returns 'Nothing' and the
-      -- execution path re-mints the grant the capped-engine kernel requires.
-      case admitModelMemory (inferenceMemoryBudget demoConfig) model of
-        Left admissionError -> Just (memoryAdmissionRejectionResult runtimeMode model admissionError protoRequest)
-        Right _grant -> Nothing
-    Nothing -> Nothing
+memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
+  case lookupExecutableModel modelIdValue compiledPlan of
+    Just _ -> Nothing
+    Nothing ->
+      case find ((== modelIdValue) . modelId) (models demoConfig) of
+        Just model ->
+          case admitModelMemory (inferenceMemoryBudget demoConfig) model of
+            Left admissionError -> Just (memoryAdmissionRejectionResult runtimeMode model admissionError protoRequest)
+            Right _ ->
+              Just
+                ( memoryAdmissionRejectionResult
+                    runtimeMode
+                    model
+                    ( ModelMemoryLimitExceeded
+                        { inferenceErrorModelId = modelId model,
+                          inferenceErrorRequiredMib = modelMemoryFootprintMib (modelRamFootprint model),
+                          inferenceErrorAvailableMib = 0,
+                          inferenceErrorResource = inferenceMemoryBudgetResource (inferenceMemoryBudget demoConfig),
+                          inferenceErrorSource = "execution-plan refinement unavailable"
+                        }
+                    )
+                    protoRequest
+                )
+        Nothing -> Nothing
+  where
+    demoConfig = runtimePlanConfig compiledPlan
 
 memoryAdmissionRejectionResult ::
   RuntimeMode ->
@@ -4361,18 +4378,18 @@ publishedResultFromRequest ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
-  InferenceMemoryBudget ->
+  CompiledRuntimePlan ->
   EngineCommandOverrideMap ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest maybeTransport paths runtimeMode budget overrides maybeEngineKVCache protoRequest = do
+publishedResultFromRequest maybeTransport paths runtimeMode compiledPlan overrides maybeEngineKVCache protoRequest = do
   domainResult <-
     executeInferenceWithModelBootstrapRetry
       maybeTransport
       paths
       runtimeMode
-      budget
+      compiledPlan
       overrides
       maybeEngineKVCache
       (kvCacheRequestFromProto protoRequest)
@@ -4419,13 +4436,13 @@ executeInferenceWithModelBootstrapRetry ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
-  InferenceMemoryBudget ->
+  CompiledRuntimePlan ->
   EngineCommandOverrideMap ->
   Maybe KVCache.EngineKVCache ->
   Maybe KVCache.KVCacheRequest ->
   InferenceRequest ->
   IO (Either ErrorResponse InferenceResult)
-executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode budget overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
+executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode compiledPlan overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
   firstResult <- runOnce
   case firstResult of
     Left errorValue
@@ -4436,14 +4453,25 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode budget 
     _ -> pure firstResult
   where
     runOnce =
-      executeInferenceWithKVCache
-        paths
-        runtimeMode
-        budget
-        overrides
-        maybeEngineKVCache
-        maybeKVCacheRequest
-        requestValue
+      case lookupExecutableModel (requestModelId requestValue) compiledPlan of
+        Nothing ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "model_not_executable",
+                    message = "The requested model has no refined executable placement."
+                  }
+            )
+        Just executableModel ->
+          executeExecutableInferenceWithKVCache
+            paths
+            runtimeMode
+            (inferenceMemoryBudget (runtimePlanConfig compiledPlan))
+            overrides
+            maybeEngineKVCache
+            maybeKVCacheRequest
+            executableModel
+            requestValue
     bootstrapAndRetry transport errorValue =
       case findModel runtimeMode (requestModelId requestValue) of
         Nothing -> pure (Left errorValue)

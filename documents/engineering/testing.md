@@ -162,9 +162,10 @@
   [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
   the active staged substrate without dropping any layer.
-- phase closure evidence records the host cohort that ran it; one cohort passing may leave a named
-  counterpart-cohort residual, but `Done` requires the relevant Apple Silicon and CUDA Linux
-  closure runs.
+- phase closure follows the single-accelerator rule in
+  [development-plan standards](../../DEVELOPMENT_PLAN/development_plan_standards.md): one selected
+  accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`, never both in one must-pass gate.
+  Cross-accelerator contracts use sibling attestations or a later `linux-cpu`-only aggregation.
 
 ## Unsupported Paths
 

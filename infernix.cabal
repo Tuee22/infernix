@@ -57,6 +57,7 @@ library
         Infernix.Engines.AppleSilicon
         Infernix.Engines.LinuxNative
         Infernix.Error
+        Infernix.ExecutionPlan
         Infernix.Evidence.Lease
         Infernix.Evidence.Readiness
         Infernix.HostConfig
@@ -94,6 +95,7 @@ library
 
     hs-source-dirs:   src
     other-modules:
+        Infernix.ExecutionPlan.Internal
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference

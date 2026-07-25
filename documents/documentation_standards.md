@@ -171,9 +171,19 @@ Rules:
 - when the inference-memory-safety contract changes (the `MemoryGrant` / capped-engine chokepoint, the
   `HostMemoryPartition`, the required `ModelMemoryFootprint`, the enforcer-typed `InferenceMemoryBudget`,
   or the admission policy), update `documents/architecture/bounded_inference_memory.md`,
+  `documents/architecture/typed_execution_plan.md`,
   `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
   `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`
   admission cross-reference, and the relevant phase document in the same change
+- when the generated execution-plan language changes (its Dhall unions, raw-to-compiled boundary,
+  runtime refinement evidence, command policies, model-placement graph, or resource-indexed
+  enforcers), update `documents/architecture/typed_execution_plan.md`,
+  `documents/architecture/configuration_doctrine.md`,
+  `documents/architecture/bounded_inference_memory.md`,
+  `documents/architecture/managed_state_transitions.md`, `documents/architecture/runtime_modes.md`,
+  `documents/architecture/daemon_topology.md`, `documents/architecture/realness_contract.md`,
+  `documents/engineering/cluster_config_manifest.md`, `documents/development/testing_strategy.md`,
+  the relevant runbook, and the owning phase documents in the same change
 - when the cluster-ownership / lifecycle-state contract changes (the `ClusterOwner`, the
   `ClusterMutating` lifecycle position, the evidence-gated `clusterDown` seizure, the fail-closed
   lifecycle persistence, or the `cluster status` owner / mutation-incomplete output fields), update

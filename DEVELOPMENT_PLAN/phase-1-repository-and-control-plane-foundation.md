@@ -1,6 +1,6 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — the Observable-Readiness reopen (Sprint 1.18, the tri-state `PollOutcome` readiness kernel) is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-22 on the machine-independent gate set); the Managed-State-Transition Doctrine reopen (Sprint 1.16) and the Bounded-Command Application & Bounded-HTTP reopen (Sprint 1.17) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 1.1-1.15 as recorded below
+**Status**: Done — Sprint 1.19 closed the typed execution-plan compiler and capability core on 2026-07-25; Sprints 1.1–1.18 retain their recorded closure
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -976,6 +976,46 @@ Bounded-Command Application & Bounded-HTTP reopen work) are both closed by
 (the Observable-Readiness reopen) is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) —
 apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-22 on the
 machine-independent gate set); no remaining work exists.
+
+## Sprint 1.19: Execution-Plan Compiler And Capability Core [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/Types.hs`, new execution-plan modules, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/configuration_doctrine.md`
+
+### Objective
+
+Introduce proper Dhall/Haskell unions, confine raw decoded configuration, and compile a validated
+model-placement graph into opaque `RuntimePlan` and `ExecutableModel` values with
+resource-indexed grant/enforcer types.
+
+### Deliverables
+
+- no text discriminator plus zeroed inapplicable fields for execution alternatives
+- `RawRuntimeConfig -> Either ConfigErrors CompiledRuntimePlan`
+- hidden constructors for executable placements, positive quantities, resource-indexed grants, and
+  enforcer plans
+- routing and launch APIs cannot accept raw model/config records
+
+### Validation
+
+- reflected schema and round-trip tests cover every union alternative
+- property and negative compile fixtures reject zero values, resource/enforcer mismatch,
+  oversubscription, dangling placement references, and routing without `ExecutableModel`
+- machine-independent gate set passes
+
+### Remaining Work
+
+None. Closed 2026-07-25 in the supported `linux-cpu` container context. The generated memory-budget
+wire shape is a proper `HostEnforced | SubstrateEnforced` Dhall union; raw decoding is isolated
+behind abstract `RawRuntimeConfig`; the compiler validates duplicate, dangling, unplaced,
+multiply-placed, runtime-mismatched, enforcer, and capacity failures; and only hidden-constructor
+`CompiledRuntimePlan` / `ExecutableModel` values carry the indexed enforcer/grant witnesses.
+`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, all four
+repository lints, `infernix docs check`, `poetry run check-code`, and the web unit suite (83/83)
+pass. Runtime routing migration remains explicitly owned by Phase 4 Sprint 4.32.
+
+---
 
 ## Documentation Requirements
 

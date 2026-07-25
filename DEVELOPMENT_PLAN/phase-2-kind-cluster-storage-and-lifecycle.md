@@ -1,6 +1,6 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Done — the Cluster-Ownership & Mutation-Position reopen (Sprint 2.15 — the typed `ClusterOwner`, the `ClusterMutating` lifecycle position, its fail-closed persistence, and reconcile-on-next-`cluster up`) is closed under [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus linux-cpu behavioral sign-off (doctrine + governance landed in Phase 0 Sprint 0.16; enforcing code code-side closed 2026-07-23 on the machine-independent gate set). Sprints 2.1–2.13 closed on their earlier waves, and the Sprint 2.14 Managed-State-Transition reopen is closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus linux-cpu full-suite sign-off.
+**Status**: Done — Sprint 2.16 closed the bounded semantic command plan on 2026-07-25; Sprints 2.1–2.15 retain their recorded closure
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -769,6 +769,46 @@ and reconciles on the next `cluster up`; an operator's cluster is never destroye
 [Phase 6 Sprint 6.43](phase-6-validation-e2e-and-ha-hardening.md); no remaining work exists. The
 superseded ownerless `ClusterReady`-as-idle surface is recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+
+---
+
+## Sprint 2.16: Bounded Semantic Command Plan [Done]
+
+**Status**: Done
+**Implementation**: `src/Infernix/Cluster/Subprocess.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`
+**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/managed_state_transitions.md`
+
+### Objective
+
+Compile generated timeout, retry, and failure-class policies with closed semantic cluster commands
+so no cluster lifecycle path can invoke a raw or unbounded process.
+
+### Deliverables
+
+- proper Dhall unions for retry and failure classification plus positive timeout policies
+- closed `ClusterCommand` and opaque `BoundedCommand ClusterCommand`
+- complete migration of `Cluster.hs` raw helpers and all lifecycle/image publication consumers
+- only the bounded kernel imports cluster-process primitives
+
+### Validation
+
+- unit tests cover timeout, bounded retry, fatal/transient/idempotent-absence classification, and
+  child reaping
+- adversarial hanging commands terminate inside their declared budget
+- production import-boundary scan reports no raw process import outside approved kernels
+- machine-independent gate set passes
+
+### Remaining Work
+
+None. Closed 2026-07-25 in the supported `linux-cpu` container context. The subprocess kernel now
+accepts only hidden-constructor `BoundedCommand` values compiled with a positive timeout, closed
+operation/failure/retry policies, a total environment, and bounded retry parameters. Cluster
+lifecycle and image-publication consumers compile semantic commands before execution; the two
+remaining raw `readCreateProcessWithExitCode` helpers in `Cluster.hs` were removed, including the
+input-bearing path, and protected environment fields cannot be overridden. Unit tests cover
+success, fatal exit, timeout/reaping, non-positive policy rejection, and idempotent absence.
+`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, all repository
+lints, `infernix docs check`, and `poetry run check-code` pass.
 
 ---
 

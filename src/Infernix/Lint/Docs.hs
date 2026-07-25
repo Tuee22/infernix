@@ -51,6 +51,7 @@ requiredDocs =
     "documents/architecture/realness_contract.md",
     "documents/architecture/runtime_modes.md",
     "documents/architecture/tenant_isolation_doctrine.md",
+    "documents/architecture/typed_execution_plan.md",
     "documents/architecture/web_ui_architecture.md",
     "documents/development/chaos_testing.md",
     "documents/development/frontend_contracts.md",
@@ -287,6 +288,15 @@ documentStructureRules =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
             RequireSection "## The invariant",
             RequireSection "## Enforcement",
+            RequireSection "## Current Status",
+            RequireSection "## Validation"
+          ]
+      },
+    DocumentStructureRule
+      { documentStructurePath = "documents/architecture/typed_execution_plan.md",
+        documentStructureRequirements =
+          [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
+            RequireSection "## The Rule",
             RequireSection "## Current Status",
             RequireSection "## Validation"
           ]

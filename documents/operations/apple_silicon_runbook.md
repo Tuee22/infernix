@@ -7,6 +7,12 @@
 
 ## Current Status
 
+The existing host-memory partition and `proc_pid_rusage` watchdog remain operational
+defense-in-depth. The stronger guarantee is reopened under
+[Typed Execution Plan](../architecture/typed_execution_plan.md): startup must verify the footprint
+probe and refine the generated execution plan into an opaque Apple enforcer before an engine member
+becomes ready.
+
 - the supported Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
   ghcup before the binary is built
 - the Apple stage-0 bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables

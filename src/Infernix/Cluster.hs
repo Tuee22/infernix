@@ -87,14 +87,8 @@ import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (urlEncode)
 import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
-import System.Exit (ExitCode (..))
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
 import System.Info qualified
-import System.Process
-  ( CreateProcess (cwd, env),
-    proc,
-    readCreateProcessWithExitCode,
-  )
 import Text.Read (readMaybe)
 
 clusterStatePath :: Paths -> FilePath
@@ -504,7 +498,22 @@ tryCommandBounded :: Paths -> Subprocess.Timeout -> Maybe FilePath -> FilePath -
 tryCommandBounded paths budget maybeWorkingDirectory command args = do
   let resolvedCommand = resolveClusterCommandWithPaths paths command
   environment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
-  outcome <- Subprocess.runBoundedCommand budget environment maybeWorkingDirectory resolvedCommand args ""
+  boundedCommand <-
+    either
+      (ioError . userError)
+      pure
+      ( Subprocess.compileBoundedCommand
+          Subprocess.LongRunningLifecycleOperation
+          budget
+          Subprocess.NeverRetry
+          Subprocess.FatalFailure
+          environment
+          maybeWorkingDirectory
+          resolvedCommand
+          args
+          ""
+      )
+  outcome <- Subprocess.runBoundedCommand boundedCommand
   pure $ case outcome of
     Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
     Subprocess.CommandFailedTransient err -> Left err
@@ -6138,44 +6147,71 @@ runCommand maybeWorkingDirectory envOverrides command args = do
 runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
 runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
   paths <- Config.discoverPaths
-  baseEnv <- clusterSubprocessBaseEnvIO paths
   let resolvedCommand = resolveClusterCommandWithPaths paths command
-      mergedEnv = mergeEnvironment baseEnv envOverrides
-  (exitCode, _, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc resolvedCommand args)
-        { cwd = maybeWorkingDirectory,
-          env = Just mergedEnv
-        }
-      inputPayload
-  case exitCode of
-    ExitSuccess -> pure ()
+  baseEnvironment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
+  environment <-
+    either (ioError . userError) pure (Subprocess.subprocessEnvWithOverrides envOverrides baseEnvironment)
+  boundedCommand <-
+    either
+      (ioError . userError)
+      pure
+      ( Subprocess.compileBoundedCommand
+          Subprocess.ClusterLifecycleOperation
+          clusterCommandTimeout
+          Subprocess.NeverRetry
+          Subprocess.FatalFailure
+          environment
+          maybeWorkingDirectory
+          resolvedCommand
+          args
+          inputPayload
+      )
+  outcome <- Subprocess.runBoundedCommand boundedCommand
+  case outcome of
+    Subprocess.CommandSucceeded _ -> pure ()
     _ ->
       ioError
-        (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stderrOutput))
+        (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> renderBoundedCommandOutcome outcome))
 
 tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
 tryCommand maybeWorkingDirectory envOverrides command args = do
   paths <- Config.discoverPaths
-  baseEnv <- clusterSubprocessBaseEnvIO paths
   let resolvedCommand = resolveClusterCommandWithPaths paths command
-      mergedEnv = mergeEnvironment baseEnv envOverrides
-  processResult <-
-    try
-      ( readCreateProcessWithExitCode
-          (proc resolvedCommand args)
-            { cwd = maybeWorkingDirectory,
-              env = Just mergedEnv
-            }
-          ""
-      ) ::
-      IO (Either IOException (ExitCode, String, String))
-  case processResult of
-    Left err -> pure (Left (show err))
-    Right (exitCode, stdoutOutput, stderrOutput) ->
-      case exitCode of
-        ExitSuccess -> pure (Right stdoutOutput)
-        _ -> pure (Left (stdoutOutput <> stderrOutput))
+  baseEnvironment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
+  case Subprocess.subprocessEnvWithOverrides envOverrides baseEnvironment of
+    Left err -> pure (Left err)
+    Right environment -> do
+      boundedCommand <-
+        either
+          (ioError . userError)
+          pure
+          ( Subprocess.compileBoundedCommand
+              Subprocess.ClusterLifecycleOperation
+              clusterCommandTimeout
+              Subprocess.NeverRetry
+              Subprocess.FatalFailure
+              environment
+              maybeWorkingDirectory
+              resolvedCommand
+              args
+              ""
+          )
+      outcome <- Subprocess.runBoundedCommand boundedCommand
+      pure $ case outcome of
+        Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
+        _ -> Left (renderBoundedCommandOutcome outcome)
+
+clusterCommandTimeout :: Subprocess.Timeout
+clusterCommandTimeout = Subprocess.Timeout (10 * 60 * 1000000)
+
+renderBoundedCommandOutcome :: Subprocess.CommandOutcome -> String
+renderBoundedCommandOutcome outcome =
+  case outcome of
+    Subprocess.CommandSucceeded stdoutOutput -> stdoutOutput
+    Subprocess.CommandFailedTransient message -> message
+    Subprocess.CommandFailedFatal message -> message
+    Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
+      "command timed out after " <> show (micros `div` 1000000) <> "s"
 
 -- | Phase 2 Sprint 2.13 + Phase 7 Sprint 7.17 Apple cohort closure
 -- (2026-05-29): the supported base env for every cluster lifecycle
@@ -6194,11 +6230,6 @@ tryCommand maybeWorkingDirectory envOverrides command args = do
 -- when the manifest is absent instead of falling back to an ambient environment.
 -- The caller-supplied search path preserves the cluster tool-directory @PATH@
 -- (skopeo / nvkind / crictl and the rest) assembled by 'subprocessSearchPath'.
-clusterSubprocessBaseEnvIO :: Paths -> IO [(String, String)]
-clusterSubprocessBaseEnvIO paths =
-  Subprocess.renderSubprocessEnv
-    <$> Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
-
 subprocessSearchPath :: Paths -> String
 subprocessSearchPath paths =
   let fallback =
@@ -6268,10 +6299,6 @@ hostToolForClusterCommand command =
     "skopeo" -> Just HostSkopeo
     "bash" -> Just HostBash
     _ -> Nothing
-
-mergeEnvironment :: [(String, String)] -> [(String, String)] -> [(String, String)]
-mergeEnvironment baseEnv overrides =
-  overrides <> filter (\(key, _) -> key `notElem` map fst overrides) baseEnv
 
 normalizeKubeconfigServer :: ControlPlaneContext -> String -> String
 normalizeKubeconfigServer _controlPlane kubeconfigContents = kubeconfigContents
