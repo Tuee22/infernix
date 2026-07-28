@@ -1,9 +1,14 @@
 module Infernix.Lint.Files
   ( runFilesLint,
+    cabalCppMacroDefinitionViolations,
+    cabalCSourcesDeclarationViolations,
+    embeddedNativeSourceViolations,
+    nativeSourcePathViolations,
   )
 where
 
 import Control.Monad (forM, unless)
+import Data.Char (isAlphaNum, isSpace, toLower)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Data.List qualified as List
 import Data.Text qualified as Text
@@ -13,14 +18,14 @@ import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
 
 checkSuffixes :: [String]
-checkSuffixes = [".cabal", ".hs", ".js", ".json", ".md", ".mjs", ".proto", ".purs", ".py", ".sh", ".yaml", ".yml"]
+checkSuffixes = [".cabal", ".hs", ".js", ".json", ".md", ".mjs", ".proto", ".purs", ".py", ".sh", ".toml", ".yaml", ".yml"]
 
 checkFiles :: [FilePath]
-checkFiles = ["AGENTS.md", "CLAUDE.md", "README.md", "cabal.project"]
+checkFiles = ["AGENTS.md", "CLAUDE.md", "Dockerfile", "README.md", "cabal.project"]
 
 skipDirectories :: [FilePath]
 skipDirectories =
@@ -43,8 +48,8 @@ runFilesLint :: IO ()
 runFilesLint = do
   paths <- discoverPaths
   workingTreeFailures <- concat <$> walkDirectory (repoRoot paths) ""
-  trackedGeneratedFailures <- listTrackedGeneratedFailures paths
-  let failures = workingTreeFailures <> trackedGeneratedFailures
+  trackedFileFailures <- listTrackedFileFailures paths
+  let failures = List.nub (workingTreeFailures <> trackedFileFailures)
   unless (null failures) $
     ioError (userError (unlines failures))
 
@@ -78,6 +83,8 @@ shouldCheck :: FilePath -> Bool
 shouldCheck relativePath =
   fileName relativePath `elem` checkFiles
     || any (`isSuffixOf` relativePath) checkSuffixes
+    || isCabalPath relativePath
+    || isNativeSourcePath relativePath
   where
     fileName = reverse . takeWhile (/= '/') . reverse
 
@@ -90,20 +97,248 @@ shouldSkipDirectory childRelative entry =
 checkFile :: FilePath -> FilePath -> IO [String]
 checkFile root relativePath = do
   contents <- readFile (root </> relativePath)
-  let lineFailures =
+  let numberedLines = zip [(1 :: Int) ..] (lines contents)
+      lineFailures =
         concatMap
           ( \(lineNumber, lineValue) ->
               [ relativePath <> ":" <> show lineNumber <> ": trailing whitespace" | rstrip lineValue /= lineValue
               ]
                 <> [relativePath <> ":" <> show lineNumber <> ": tab character" | '\t' `elem` lineValue]
           )
-          (zip [(1 :: Int) ..] (lines contents))
+          numberedLines
       newlineFailure =
         case reverse contents of
           [] -> []
           '\n' : _ -> []
           _ -> [relativePath <> ": missing trailing newline"]
-  pure (lineFailures <> newlineFailure <> envReadFailures relativePath contents)
+  pure
+    ( nativeSourcePathViolations relativePath
+        <> cabalCSourcesDeclarationViolations relativePath numberedLines
+        <> cabalCppMacroDefinitionViolations relativePath numberedLines
+        <> embeddedNativeSourceViolations relativePath numberedLines
+        <> lineFailures
+        <> newlineFailure
+        <> envReadFailures relativePath contents
+    )
+
+nativeSourcePathViolations :: FilePath -> [String]
+nativeSourcePathViolations relativePath =
+  [ relativePath
+      <> ": repo-owned native implementation source is forbidden; use a public Haskell package/API behind an internal Haskell module"
+  | isNativeSourcePath relativePath
+  ]
+
+cabalCSourcesDeclarationViolations :: FilePath -> [(Int, String)] -> [String]
+cabalCSourcesDeclarationViolations relativePath numberedLines
+  | not (isCabalPath relativePath) = []
+  | otherwise =
+      [ relativePath
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden Cabal native-source declaration `"
+          <> fieldName
+          <> ":`; repo-owned native implementation source is not permitted"
+      | (lineNumber, lineValue) <- numberedLines,
+        Just fieldName <- [nativeSourceDeclarationField lineValue]
+      ]
+
+cabalCppMacroDefinitionViolations :: FilePath -> [(Int, String)] -> [String]
+cabalCppMacroDefinitionViolations relativePath numberedLines
+  | not (isCabalPath relativePath) = []
+  | otherwise =
+      [ relativePath
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden Cabal CPP macro definition `"
+          <> option
+          <> "`; native-boundary tokens must remain visible to source lint"
+      | (fieldLineNumber, fieldLine) <- numberedLines,
+        Just fieldIndent <- [cabalFieldIndent "cpp-options" fieldLine],
+        (lineNumber, optionLine) <-
+          (fieldLineNumber, cabalFieldValue fieldLine)
+            : takeWhile
+              (isCabalFieldContinuation fieldIndent . snd)
+              (dropWhile ((<= fieldLineNumber) . fst) numberedLines),
+        option <- cabalVisibleWords optionLine,
+        "-D" `isPrefixOf` option
+      ]
+
+cabalFieldIndent :: String -> String -> Maybe Int
+cabalFieldIndent expectedField lineValue =
+  case break (== ':') (dropWhile isSpace lineValue) of
+    (fieldName, ':' : _)
+      | map toLower (dropWhileEnd isSpace fieldName) == expectedField ->
+          Just (length (takeWhile isSpace lineValue))
+    _ -> Nothing
+  where
+    dropWhileEnd predicate = reverse . dropWhile predicate . reverse
+
+cabalFieldValue :: String -> String
+cabalFieldValue lineValue =
+  case break (== ':') lineValue of
+    (_, ':' : value) -> value
+    _ -> ""
+
+isCabalFieldContinuation :: Int -> String -> Bool
+isCabalFieldContinuation fieldIndent lineValue =
+  null (dropWhile isSpace lineValue)
+    || length (takeWhile isSpace lineValue) > fieldIndent
+
+cabalVisibleWords :: String -> [String]
+cabalVisibleWords =
+  map normalizeCabalOptionToken . takeWhile (/= "--") . words
+
+normalizeCabalOptionToken :: String -> String
+normalizeCabalOptionToken =
+  dropWhileEnd isTokenDelimiter . dropWhile isTokenDelimiter
+  where
+    isTokenDelimiter character =
+      character == '"' || character == '\'' || character == ','
+    dropWhileEnd predicate =
+      reverse . dropWhile predicate . reverse
+
+embeddedNativeSourceViolations :: FilePath -> [(Int, String)] -> [String]
+embeddedNativeSourceViolations relativePath numberedLines
+  | not (isImplementationTextPath relativePath) = []
+  | otherwise =
+      [ relativePath
+          <> ":"
+          <> show lineNumber
+          <> ": embedded repo-owned native implementation source/compiler marker `"
+          <> marker
+          <> "` is forbidden; use a public upstream package API"
+      | (lineNumber, lineValue) <- numberedLines,
+        let normalizedLine = normalizeEmbeddedNativeLine lineValue,
+        marker <- embeddedNativeMarkersForLine normalizedLine
+      ]
+
+isImplementationTextPath :: FilePath -> Bool
+isImplementationTextPath relativePath =
+  fileName relativePath == "Dockerfile"
+    || normalizedExtension relativePath
+      `elem` [".hs", ".js", ".mjs", ".purs", ".py", ".sh", ".toml", ".yaml", ".yml"]
+  where
+    fileName = reverse . takeWhile (/= '/') . reverse
+
+embeddedNativeSourceMarkers :: [String]
+embeddedNativeSourceMarkers =
+  map
+    concat
+    [ ["#inc", "lude<"],
+      ["#inc", "lude\""],
+      ["#inc", "lude\\\""],
+      ["#imp", "ort<"],
+      ["#imp", "ort\""],
+      ["#imp", "ort\\\""],
+      ["@auto", "releasepool"],
+      ["@imple", "mentation"],
+      ["@inte", "rface"],
+      ["extern", "\"c\""],
+      ["int", "main("],
+      ["newlibrary", "withsource"],
+      ["/bin/", "cc"],
+      ["/bin/", "c++"],
+      ["/bin/", "gcc"],
+      ["/bin/", "g++"],
+      ["/bin/", "clang"],
+      ["/bin/", "clang++"],
+      ["xcrun", "clang"],
+      ["cc", "-c"],
+      ["c++", "-c"],
+      ["gcc", "-c"],
+      ["g++", "-c"],
+      ["clang", "-c"],
+      ["clang++", "-c"],
+      ["clang", "-fobjc"]
+    ]
+
+embeddedNativeMarkersForLine :: String -> [String]
+embeddedNativeMarkersForLine normalizedLine =
+  filter (`isInfixOf` normalizedLine) embeddedNativeSourceMarkers
+    <> filter
+      (`hasDelimitedMarker` normalizedLine)
+      ["import" <> "metal", "import" <> "coreml"]
+
+-- Swift framework imports are native-source markers, but the Python
+-- `coremltools` package is an allowed upstream API. Require a token boundary
+-- after the exact Swift framework name so the scanner does not conflate them.
+hasDelimitedMarker :: String -> String -> Bool
+hasDelimitedMarker marker =
+  any startsWithDelimitedMarker . List.tails
+  where
+    startsWithDelimitedMarker candidate =
+      marker `isPrefixOf` candidate
+        && case drop (length marker) candidate of
+          [] -> True
+          next : _ ->
+            not
+              ( isAlphaNum next
+                  || next == '_'
+                  || next == '.'
+              )
+
+normalizeEmbeddedNativeLine :: String -> String
+normalizeEmbeddedNativeLine =
+  map toLower . filter (not . isSpace)
+
+isNativeSourcePath :: FilePath -> Bool
+isNativeSourcePath relativePath =
+  normalizedExtension relativePath
+    `elem` [ ".asm",
+             ".c",
+             ".c++",
+             ".cc",
+             ".chs",
+             ".cmm",
+             ".cpp",
+             ".cppm",
+             ".cu",
+             ".cuh",
+             ".cxx",
+             ".h",
+             ".hh",
+             ".hpp",
+             ".hsc",
+             ".hxx",
+             ".inc",
+             ".inl",
+             ".ipp",
+             ".ixx",
+             ".m",
+             ".metal",
+             ".mm",
+             ".nasm",
+             ".s",
+             ".swift",
+             ".tcc"
+           ]
+
+isCabalPath :: FilePath -> Bool
+isCabalPath relativePath =
+  normalizedExtension relativePath == ".cabal"
+
+normalizedExtension :: FilePath -> String
+normalizedExtension = map toLower . takeExtension
+
+nativeSourceDeclarationField :: String -> Maybe String
+nativeSourceDeclarationField lineValue =
+  case break (== ':') (dropWhile isSpace lineValue) of
+    (fieldName, ':' : _) ->
+      let normalizedField = map toLower (dropWhileEnd isSpace fieldName)
+       in if normalizedField `elem` nativeSourceCabalFields
+            then Just normalizedField
+            else Nothing
+    _ -> Nothing
+  where
+    dropWhileEnd predicate = reverse . dropWhile predicate . reverse
+
+nativeSourceCabalFields :: [String]
+nativeSourceCabalFields =
+  [ "asm-sources",
+    "c-sources",
+    "cmm-sources",
+    "cxx-sources"
+  ]
 
 -- | Reject environment reads in web/Python product code: no `os.environ` /
 -- `os.getenv` under `python/`, and no `process.env` under `web/`. The supported
@@ -135,32 +370,28 @@ envReadFailures relativePath contents =
 rstrip :: String -> String
 rstrip = reverse . dropWhile (`elem` [' ', '\t']) . reverse
 
-listTrackedGeneratedFailures :: Paths -> IO [String]
-listTrackedGeneratedFailures paths = do
+listTrackedFileFailures :: Paths -> IO [String]
+listTrackedFileFailures paths = do
   let root = repoRoot paths
   gitDirectoryPresent <- doesDirectoryExist (root </> ".git")
   if gitDirectoryPresent
-    then listTrackedGeneratedFailuresFromGit root
-    else listTrackedGeneratedFailuresFromSnapshotManifest
+    then listTrackedFileFailuresFromGit root
+    else listTrackedFileFailuresFromSnapshotManifest root
 
-listTrackedGeneratedFailuresFromGit :: FilePath -> IO [String]
-listTrackedGeneratedFailuresFromGit root = do
+listTrackedFileFailuresFromGit :: FilePath -> IO [String]
+listTrackedFileFailuresFromGit root = do
   paths <- discoverPaths
   gitCommand <- requireFilesLintHostTool paths HostGit
   (exitCode, stdoutOutput, stderrOutput) <-
     readCreateProcessWithExitCode
-      (proc gitCommand ["-c", "safe.directory=" <> root, "ls-files"])
+      (proc gitCommand ["-c", "safe.directory=" <> root, "ls-files", "-z"])
         { cwd = Just root,
           env = Just (filesLintSubprocessBaseEnvFor paths)
         }
       ""
   case exitCode of
     ExitSuccess ->
-      pure
-        [ relativePath <> ": tracked generated artifact"
-        | relativePath <- lines stdoutOutput,
-          isTrackedGeneratedPath relativePath
-        ]
+      concat <$> mapM (trackedFilePolicyFailures root) (splitNul stdoutOutput)
     _ ->
       ioError
         ( userError
@@ -169,19 +400,25 @@ listTrackedGeneratedFailuresFromGit root = do
             )
         )
 
-listTrackedGeneratedFailuresFromSnapshotManifest :: IO [String]
-listTrackedGeneratedFailuresFromSnapshotManifest = do
+splitNul :: String -> [String]
+splitNul input =
+  case break (== '\0') input of
+    ("", "") -> []
+    (entry, '\0' : remaining) -> entry : splitNul remaining
+    (entry, "") -> [entry | not (null entry)]
+    _ -> []
+
+listTrackedFileFailuresFromSnapshotManifest :: FilePath -> IO [String]
+listTrackedFileFailuresFromSnapshotManifest root = do
   let manifestPath = sourceSnapshotManifestPath
   manifestPresent <- doesFileExist manifestPath
   if manifestPresent
     then do
       manifestEntries <- lines <$> readFile manifestPath
-      pure
-        [ relativePath <> ": tracked generated artifact"
-        | relativePath <- manifestEntries,
-          not (null relativePath),
-          isTrackedGeneratedPath relativePath
-        ]
+      concat
+        <$> mapM
+          (trackedFilePolicyFailures root)
+          (filter (not . null) manifestEntries)
     else
       ioError
         ( userError
@@ -189,6 +426,31 @@ listTrackedGeneratedFailuresFromSnapshotManifest = do
                 <> manifestPath
             )
         )
+
+trackedFilePolicyFailures :: FilePath -> FilePath -> IO [String]
+trackedFilePolicyFailures root relativePath = do
+  cabalFailures <-
+    if isCabalPath relativePath
+      then do
+        present <- doesFileExist (root </> relativePath)
+        if present
+          then do
+            contents <- readFile (root </> relativePath)
+            pure
+              ( cabalCSourcesDeclarationViolations
+                  relativePath
+                  (zip [(1 :: Int) ..] (lines contents))
+                  <> cabalCppMacroDefinitionViolations
+                    relativePath
+                    (zip [(1 :: Int) ..] (lines contents))
+              )
+          else pure []
+      else pure []
+  pure
+    ( nativeSourcePathViolations relativePath
+        <> [relativePath <> ": tracked generated artifact" | isTrackedGeneratedPath relativePath]
+        <> cabalFailures
+    )
 
 sourceSnapshotManifestPath :: FilePath
 sourceSnapshotManifestPath = "/opt/infernix/source-snapshot-files.txt"

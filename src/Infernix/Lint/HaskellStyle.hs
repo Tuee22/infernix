@@ -1,13 +1,24 @@
 module Infernix.Lint.HaskellStyle
   ( runHaskellStyleLint,
+    appleArtifactProvisioningViolations,
+    appleClosureFixtureOwnershipViolations,
+    appleMaterializationTransactionOwnershipViolations,
+    artifactCapabilityBoundaryViolations,
+    artifactWriterBoundaryViolations,
+    boundedEngineOutputViolations,
+    cappedEngineBoundaryViolations,
+    linuxNativeMaterializationBoundaryViolations,
+    nativeArtifactInvocationKernelOwnershipViolations,
+    provisioningKernelOwnershipViolations,
+    unsafeNativeBoundaryViolations,
     unboundedEngineSpawnViolations,
   )
 where
 
 import Control.Exception (IOException, try)
 import Control.Monad (when)
-import Data.Char (isAlphaNum)
-import Data.List (find, intercalate, isInfixOf, sort)
+import Data.Char (isAlphaNum, isSpace)
+import Data.List (find, intercalate, isInfixOf, isSuffixOf, mapAccumL, sort)
 import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.Config (Paths (..), discoverPaths)
@@ -132,7 +143,17 @@ collectHsFiles directoryPath = do
 
 hasHsExtension :: FilePath -> Bool
 hasHsExtension pathValue =
-  reverse (take 3 (reverse pathValue)) == ".hs"
+  any (`isSuffixOf` pathValue) repoOwnedHaskellExtensions
+
+repoOwnedHaskellExtensions :: [String]
+repoOwnedHaskellExtensions =
+  [ ".hs",
+    ".lhs",
+    ".hs-boot",
+    ".lhs-boot",
+    ".hsig",
+    ".lhsig"
+  ]
 
 checkReadabilityRules :: FilePath -> [FilePath] -> IO ()
 checkReadabilityRules repoRoot sourceFiles = do
@@ -161,8 +182,708 @@ checkSourceReadability repoRoot sourceFile = do
         <> sharedPhase7BoundaryViolations sourceFile numberedLines
         <> realnessFabricationViolations sourceFile numberedLines
         <> escapeTokenViolations sourceFile numberedLines
+        <> unsafeNativeBoundaryViolations sourceFile numberedLines
+        <> appleArtifactProvisioningViolations sourceFile numberedLines
+        <> appleClosureFixtureOwnershipViolations sourceFile numberedLines
+        <> appleMaterializationTransactionOwnershipViolations sourceFile numberedLines
+        <> artifactCapabilityBoundaryViolations sourceFile numberedLines
+        <> artifactWriterBoundaryViolations sourceFile numberedLines
+        <> boundedEngineOutputViolations sourceFile numberedLines
+        <> cappedEngineBoundaryViolations sourceFile numberedLines
+        <> linuxNativeMaterializationBoundaryViolations sourceFile numberedLines
+        <> nativeArtifactInvocationKernelOwnershipViolations sourceFile numberedLines
+        <> provisioningKernelOwnershipViolations sourceFile numberedLines
         <> capabilityGatingViolations sourceFile numberedLines
     )
+
+-- | Only the exact validator and capped-engine kernel may see the
+-- constructor-bearing artifact capability representation or enter its
+-- validation boundary. Runtime callers cannot copy a raw runner path out of
+-- the shared-lock region.
+artifactCapabilityBoundaryViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+artifactCapabilityBoundaryViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | otherwise =
+      representationViolations <> boundaryViolations
+  where
+    sanitizedLines = sanitizeNativeBoundarySource numberedLines
+    representationViolations =
+      [ renderViolation lineNumber
+      | sourceFile `notElem` artifactCapabilityRepresentationOwners,
+        lineNumber <- artifactCapabilityImportLines sanitizedLines
+      ]
+    boundaryViolations =
+      [ renderViolation lineNumber
+      | sourceFile `notElem` artifactCapabilityBoundaryOwners,
+        (lineNumber, codeLine) <- sanitizedLines,
+        containsToken "withFirstValidatedEngineArtifact" codeLine
+      ]
+    renderViolation lineNumber =
+      sourceFile
+        <> ":"
+        <> show lineNumber
+        <> ": forbidden engine artifact capability access; only the exact validator and capped-engine kernel may enter the validated artifact boundary"
+
+artifactCapabilityImportLines :: [(Int, String)] -> [Int]
+artifactCapabilityImportLines =
+  moduleImportLines artifactCapabilityModuleName
+
+moduleImportLines :: String -> [(Int, String)] -> [Int]
+moduleImportLines moduleName sanitizedLines =
+  findImports sourceTokens
+  where
+    sourceTokens =
+      [ (lineNumber, token)
+      | (lineNumber, codeLine) <- maskNativeBoundaryPragmas sanitizedLines,
+        token <- words codeLine
+      ]
+
+    findImports ((lineNumber, "import") : remainingTokens) =
+      let afterModifiers =
+            dropWhile
+              ((`elem` ["qualified", "safe"]) . snd)
+              remainingTokens
+       in case afterModifiers of
+            (_, moduleToken) : _
+              | isExactModuleToken moduleName moduleToken ->
+                  lineNumber : findImports remainingTokens
+            _ -> findImports remainingTokens
+    findImports (_ : remainingTokens) =
+      findImports remainingTokens
+    findImports [] = []
+
+isExactModuleToken :: String -> String -> Bool
+isExactModuleToken moduleName token =
+  moduleName `isPrefixOfString` token
+    && case drop (length moduleName) token of
+      [] -> True
+      nextCharacter : _ -> not (isAlphaNum nextCharacter || nextCharacter `elem` ['.', '_', '\''])
+
+artifactCapabilityModuleName :: String
+artifactCapabilityModuleName =
+  "Infernix.Engines.Artifact.Capability"
+
+artifactCapabilityRepresentationOwners :: [FilePath]
+artifactCapabilityRepresentationOwners =
+  [ "src/Infernix/Engines/Artifact/Internal.hs",
+    "src/Infernix/Runtime/CappedEngine/Internal.hs"
+  ]
+
+artifactCapabilityBoundaryOwners :: [FilePath]
+artifactCapabilityBoundaryOwners =
+  "src/Infernix/Engines/Artifact.hs"
+    : artifactCapabilityRepresentationOwners
+
+-- | Raw artifact activation/reconciliation and exclusive materialization-lock
+-- entrypoints stay inside their audited writer owners. Runtime readers and
+-- unrelated production modules cannot add a cooperative writer by convention.
+artifactWriterBoundaryViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+artifactWriterBoundaryViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | otherwise =
+      internalImportViolations
+        <> concatMap lineViolations sanitizedLines
+  where
+    sanitizedLines = sanitizeNativeBoundarySource numberedLines
+    internalImportViolations =
+      [ renderViolation
+          lineNumber
+          "forbidden raw artifact transaction implementation import"
+      | sourceFile `notElem` artifactTransactionInternalImportOwners,
+        lineNumber <-
+          moduleImportLines
+            "Infernix.Engines.Artifact.Internal"
+            sanitizedLines
+      ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden exclusive materialization-lock implementation import"
+           | sourceFile `notElem` materializationLockInternalImportOwners,
+             lineNumber <-
+               moduleImportLines
+                 "Infernix.Engines.MaterializationLock.Internal"
+                 sanitizedLines
+           ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden Poetry project-mutation lock implementation import"
+           | sourceFile `notElem` pythonMutationLockInternalImportOwners,
+             lineNumber <-
+               moduleImportLines
+                 "Infernix.Python.MutationLock.Internal"
+                 sanitizedLines
+           ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden engine download-cache lock implementation import"
+           | sourceFile `notElem` downloadCacheLockInternalImportOwners,
+             lineNumber <-
+               moduleImportLines
+                 "Infernix.Engines.DownloadCacheLock.Internal"
+                 sanitizedLines
+           ]
+
+    lineViolations (lineNumber, codeLine) =
+      [ renderViolation
+          lineNumber
+          "forbidden raw artifact transaction access"
+      | sourceFile `notElem` artifactTransactionOwners,
+        transactionToken <- artifactTransactionTokens,
+        containsToken transactionToken codeLine
+      ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden exclusive engine-materialization lock access"
+           | sourceFile `notElem` engineMaterializationLockOwners,
+             containsToken "withEngineMaterializationLock" codeLine
+           ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden engine download-cache lock access"
+           | sourceFile `notElem` downloadCacheLockInternalImportOwners,
+             containsToken "withDownloadCacheMutationLockInternal" codeLine
+           ]
+
+    renderViolation lineNumber reason =
+      sourceFile
+        <> ":"
+        <> show lineNumber
+        <> ": "
+        <> reason
+        <> "; engine-root writers must remain inside the audited materialization authority boundary"
+
+artifactTransactionOwners :: [FilePath]
+artifactTransactionOwners =
+  [ "src/Infernix/Engines/Artifact/Internal.hs",
+    "src/Infernix/Engines/Artifact/Activation.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+engineMaterializationLockOwners :: [FilePath]
+engineMaterializationLockOwners =
+  [ "src/Infernix/Engines/MaterializationLock/Internal.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+artifactTransactionInternalImportOwners :: [FilePath]
+artifactTransactionInternalImportOwners =
+  [ "src/Infernix/Engines/Artifact.hs",
+    "src/Infernix/Engines/Artifact/Activation.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+materializationLockInternalImportOwners :: [FilePath]
+materializationLockInternalImportOwners =
+  [ "src/Infernix/Engines/Artifact/Activation.hs",
+    "src/Infernix/Engines/Artifact/Internal.hs",
+    "src/Infernix/Engines/MaterializationLock.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+pythonMutationLockInternalImportOwners :: [FilePath]
+pythonMutationLockInternalImportOwners =
+  [ "src/Infernix/Engines/Provisioning.hs",
+    "src/Infernix/Python.hs"
+  ]
+
+downloadCacheLockInternalImportOwners :: [FilePath]
+downloadCacheLockInternalImportOwners =
+  [ "src/Infernix/Engines/DownloadCacheLock/Internal.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+artifactTransactionTokens :: [String]
+artifactTransactionTokens =
+  [ "activateAppleEngineArtifactWithInstalledSmoke",
+    "activateEngineArtifactAfterCheck",
+    "activateLinuxEngineArtifactWithInstalledSmoke",
+    "withEngineArtifactActivation",
+    "finishEngineArtifactActivation",
+    "installEngineArtifactRoot",
+    "installEngineArtifactRootWithExpectedDigest",
+    "installEngineArtifactRootWithObserverForTest",
+    "installEngineArtifactRootWithPendingActionForTest",
+    "installEngineArtifactRootWithCleanupObserverForTest",
+    "reconcileEngineArtifactRoot"
+  ]
+
+-- | The capped-engine implementation is the sole owner of raw engine process
+-- descriptions and environment rendering. The hidden facade may import the
+-- implementation only to re-export closed semantic operations.
+cappedEngineBoundaryViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+cappedEngineBoundaryViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | otherwise =
+      internalImportViolations
+        <> concatMap lineViolations sanitizedLines
+  where
+    sanitizedLines = sanitizeNativeBoundarySource numberedLines
+    internalImportViolations =
+      [ renderViolation
+          lineNumber
+          "forbidden capped-engine implementation import"
+      | sourceFile /= cappedEngineFacadeFile,
+        lineNumber <-
+          moduleImportLines
+            cappedEngineInternalModuleName
+            sanitizedLines
+      ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden capped-engine output-capture implementation import"
+           | sourceFile /= cappedEngineKernelFile,
+             lineNumber <-
+               moduleImportLines
+                 cappedEngineOutputCaptureModuleName
+                 sanitizedLines
+           ]
+    lineViolations (lineNumber, codeLine) =
+      [ renderViolation
+          lineNumber
+          "forbidden raw capped-engine process authority"
+      | sourceFile /= cappedEngineKernelFile,
+        authorityToken <- rawCappedEngineAuthorityTokens,
+        containsToken authorityToken codeLine
+      ]
+        <> [ renderViolation
+               lineNumber
+               "forbidden subprocess-environment rendering"
+           | sourceFile
+               `notElem` [ boundedCommandKernelFile,
+                           cappedEngineKernelFile
+                         ],
+             containsToken "renderSubprocessEnv" codeLine
+           ]
+
+    renderViolation lineNumber reason =
+      sourceFile
+        <> ":"
+        <> show lineNumber
+        <> ": "
+        <> reason
+        <> "; use a closed typed CappedEngine operation and keep SubprocessEnv opaque"
+
+cappedEngineFacadeFile :: FilePath
+cappedEngineFacadeFile =
+  "src/Infernix/Runtime/CappedEngine.hs"
+
+cappedEngineInternalModuleName :: String
+cappedEngineInternalModuleName =
+  "Infernix.Runtime.CappedEngine.Internal"
+
+cappedEngineOutputCaptureModuleName :: String
+cappedEngineOutputCaptureModuleName =
+  "Infernix.Runtime.CappedEngine.OutputCapture"
+
+rawCappedEngineAuthorityTokens :: [String]
+rawCappedEngineAuthorityTokens =
+  [ "DirectEngineCommand",
+    "EngineCommand",
+    "directEngineCommand",
+    "nativeArtifactArgumentsForTest",
+    "nativeArtifactInstallRoots",
+    "renderNativeArtifactArguments",
+    "resolvePythonWorkerCommand",
+    "runExecutableProcess",
+    "runExecutableStdioEngine"
+  ]
+
+-- | Engine output must be captured by the fixed strict bounded reader. Lazy or
+-- unbounded handle reads would retain the artifact read lock while allowing
+-- attacker-controlled parent-memory growth.
+boundedEngineOutputViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+boundedEngineOutputViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden unbounded engine-output capture; use the fixed strict bounded CappedEngine output reader"
+      | (lineNumber, codeLine) <-
+          sanitizeNativeBoundarySource numberedLines,
+        token <- unboundedEngineOutputTokens,
+        containsToken token codeLine
+      ]
+
+unboundedEngineOutputTokens :: [String]
+unboundedEngineOutputTokens =
+  [ "hGetContents",
+    "readAllText"
+  ]
+
+-- | Linux image materialization is a closed catalog operation. Production
+-- callers may request the complete catalog, but cannot inspect raw recipe
+-- fields, mint manifests, select a candidate root, or
+-- invoke the authority-scoped implementation directly.
+linuxNativeMaterializationBoundaryViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+linuxNativeMaterializationBoundaryViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | sourceFile == linuxNativeMaterializationOwner = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden raw Linux native materialization access; use the closed complete-catalog materializer"
+      | (lineNumber, codeLine) <-
+          sanitizeNativeBoundarySource numberedLines,
+        token <- rawLinuxNativeMaterializationTokens,
+        containsToken token codeLine
+      ]
+
+linuxNativeMaterializationOwner :: FilePath
+linuxNativeMaterializationOwner =
+  "src/Infernix/Engines/LinuxNative.hs"
+
+rawLinuxNativeMaterializationTokens :: [String]
+rawLinuxNativeMaterializationTokens =
+  [ "linuxNativeEngineBuildPlan",
+    "manifestForLinuxNativeEngineArtifact",
+    "materializeLinuxNativeEnginesAt",
+    "materializeLinuxNativeEngineArtifactUnlocked",
+    "linuxNativeEngineName",
+    "linuxNativeEngineArtifactKind",
+    "linuxNativeEngineSourceRef",
+    "linuxNativeEngineVersion",
+    "linuxNativeRuntimeVersion"
+  ]
+
+-- | Keep the lifecycle and bounded-subprocess kernels on public Haskell APIs.
+-- Internal @process@ modules and inline-C are forbidden throughout production.
+-- Direct foreign imports are forbidden throughout repository-owned Haskell.
+unsafeNativeBoundaryViolations :: FilePath -> [(Int, String)] -> [String]
+unsafeNativeBoundaryViolations sourceFile numberedLines
+  | not (isRepoOwnedHaskellSource sourceFile) = []
+  | otherwise =
+      concatMap lineViolations sanitizedLines
+        <> foreignImportViolations
+  where
+    sanitizedLines = sanitizeNativeBoundarySource numberedLines
+    declarationLines = maskNativeBoundaryPragmas sanitizedLines
+    lineViolations (lineNumber, codeLine) =
+      [ nativeBoundaryViolation
+          lineNumber
+          "forbidden internal process module; bounded subprocess supervision must use only public System.Process and System.Posix APIs"
+      | any (`isInfixOf` codeLine) forbiddenProcessInternalModules
+      ]
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden inline-C use; repository-owned lifecycle and subprocess boundaries must be implemented in Haskell"
+           | "Language.C.Inline" `isInfixOf` codeLine
+           ]
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden raw POSIX fork/exec primitive outside the bounded-command kernel"
+           | isProductionHaskellSource sourceFile,
+             sourceFile /= boundedCommandKernelFile,
+             needle <- forbiddenRawPosixProcessTokens,
+             containsToken needle codeLine
+           ]
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden CPP macro definition; native-boundary tokens must remain visible to source lint"
+           | isCppDefine codeLine
+           ]
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden subprocess protocol/activity import outside its audited kernel owner"
+           | isProductionHaskellSource sourceFile,
+             forbiddenSubprocessCapabilityImport sourceFile codeLine
+           ]
+    foreignImportViolations =
+      foreignImportDeclarationViolations
+        declarationLines
+        nativeBoundaryViolation
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden direct foreign export; repository-owned native implementation boundaries are not permitted"
+           | lineNumber <- foreignDeclarationStartLines "export" declarationLines
+           ]
+        <> [ nativeBoundaryViolation
+               lineNumber
+               "forbidden ForeignFunctionInterface extension; repository-owned direct FFI is not permitted"
+           | lineNumber <- foreignFunctionInterfacePragmaLines sanitizedLines
+           ]
+    nativeBoundaryViolation lineNumber reason =
+      sourceFile
+        <> ":"
+        <> show lineNumber
+        <> ": "
+        <> reason
+        <> " (see documents/architecture/managed_state_transitions.md)"
+
+forbiddenProcessInternalModules :: [String]
+forbiddenProcessInternalModules =
+  [ "System.Process.Internal",
+    "System.Process.Internals",
+    "System.Posix.Process.Internal",
+    "System.Posix.Process.Internals"
+  ]
+
+boundedCommandKernelFile :: FilePath
+boundedCommandKernelFile =
+  "src/Infernix/Cluster/Subprocess.hs"
+
+isRepoOwnedHaskellSource :: FilePath -> Bool
+isRepoOwnedHaskellSource =
+  hasHsExtension
+
+isProductionHaskellSource :: FilePath -> Bool
+isProductionHaskellSource sourceFile =
+  sourceFile == "Setup.hs"
+    || any
+      (`isPrefixOfString` sourceFile)
+      ["app/", "src/"]
+
+isCppDefine :: String -> Bool
+isCppDefine codeLine =
+  case dropWhile isSpace codeLine of
+    '#' : remaining ->
+      case words remaining of
+        directive : _ -> directive == "define"
+        [] -> False
+    _ -> False
+
+forbiddenSubprocessCapabilityImport :: FilePath -> String -> Bool
+forbiddenSubprocessCapabilityImport sourceFile codeLine
+  | isModuleDeclaration codeLine = False
+  | "Infernix.Cluster.Subprocess.Protocol" `isInfixOf` codeLine =
+      sourceFile /= boundedCommandKernelFile
+  | "Infernix.Cluster.Subprocess.Activity" `isInfixOf` codeLine =
+      sourceFile
+        `notElem` [ boundedCommandKernelFile,
+                    "src/Infernix/Cluster/Subprocess/Protocol.hs"
+                  ]
+  | otherwise = False
+
+isModuleDeclaration :: String -> Bool
+isModuleDeclaration codeLine =
+  case words codeLine of
+    "module" : _ -> True
+    _ -> False
+
+forbiddenRawPosixProcessTokens :: [String]
+forbiddenRawPosixProcessTokens =
+  [ "forkProcess",
+    "forkProcessWithUnmask",
+    "executeFile"
+  ]
+
+foreignImportDeclarationViolations ::
+  [(Int, String)] ->
+  (Int -> String -> String) ->
+  [String]
+foreignImportDeclarationViolations sanitizedLines renderViolation =
+  [ renderViolation
+      lineNumber
+      "forbidden direct foreign import; repository-owned direct FFI is not permitted"
+  | lineNumber <- foreignImportStartLines sanitizedLines
+  ]
+
+foreignImportStartLines :: [(Int, String)] -> [Int]
+foreignImportStartLines =
+  foreignDeclarationStartLines "import"
+
+foreignDeclarationStartLines :: String -> [(Int, String)] -> [Int]
+foreignDeclarationStartLines declarationKind sanitizedLines =
+  adjacentForeignDeclarations
+    [ (lineNumber, token)
+    | (lineNumber, codeLine) <- sanitizedLines,
+      token <- words codeLine
+    ]
+  where
+    adjacentForeignDeclarations
+      ((lineNumber, "foreign") : (_, candidateKind) : remainingTokens)
+        | candidateKind == declarationKind =
+            lineNumber : adjacentForeignDeclarations remainingTokens
+    adjacentForeignDeclarations (_ : remainingTokens) =
+      adjacentForeignDeclarations remainingTokens
+    adjacentForeignDeclarations [] = []
+
+data NativeBoundaryPragmaMaskState
+  = OutsideNativeBoundaryPragma
+  | InsideNativeBoundaryPragma
+
+maskNativeBoundaryPragmas :: [(Int, String)] -> [(Int, String)]
+maskNativeBoundaryPragmas numberedLines =
+  snd (mapAccumL maskLine OutsideNativeBoundaryPragma numberedLines)
+  where
+    maskLine state (lineNumber, lineValue) =
+      let (nextState, maskedLine) = maskPragmaLine state lineValue
+       in (nextState, (lineNumber, maskedLine))
+
+    maskPragmaLine state [] = (state, [])
+    maskPragmaLine OutsideNativeBoundaryPragma ('{' : '-' : '#' : remaining) =
+      prependPragmaMask 3 (maskPragmaLine InsideNativeBoundaryPragma remaining)
+    maskPragmaLine OutsideNativeBoundaryPragma (character : remaining) =
+      prependPragmaCharacter character (maskPragmaLine OutsideNativeBoundaryPragma remaining)
+    maskPragmaLine InsideNativeBoundaryPragma ('#' : '-' : '}' : remaining) =
+      prependPragmaMask 3 (maskPragmaLine OutsideNativeBoundaryPragma remaining)
+    maskPragmaLine InsideNativeBoundaryPragma (_ : remaining) =
+      prependPragmaMask 1 (maskPragmaLine InsideNativeBoundaryPragma remaining)
+
+    prependPragmaMask characterCount (state, remaining) =
+      (state, replicate characterCount ' ' <> remaining)
+
+    prependPragmaCharacter character (state, remaining) =
+      (state, character : remaining)
+
+foreignFunctionInterfacePragmaLines :: [(Int, String)] -> [Int]
+foreignFunctionInterfacePragmaLines sanitizedLines =
+  [ lineNumber
+  | (lineNumber, pragmaBody) <- nativeBoundaryPragmaBodies sanitizedLines,
+    case pragmaBodyTokens pragmaBody of
+      "LANGUAGE" : extensions ->
+        "ForeignFunctionInterface" `elem` extensions
+      _ -> False
+  ]
+
+pragmaBodyTokens :: String -> [String]
+pragmaBodyTokens =
+  words . map normalizePragmaCharacter
+  where
+    normalizePragmaCharacter character
+      | isAlphaNum character = character
+      | otherwise = ' '
+
+nativeBoundaryPragmaBodies :: [(Int, String)] -> [(Int, String)]
+nativeBoundaryPragmaBodies =
+  collectOutside
+  where
+    collectOutside [] = []
+    collectOutside ((lineNumber, lineValue) : remainingLines) =
+      case breakAtSubstring "{-#" lineValue of
+        Nothing -> collectOutside remainingLines
+        Just (_, afterOpening) ->
+          collectInside
+            lineNumber
+            []
+            ((lineNumber, afterOpening) : remainingLines)
+
+    collectInside _ _ [] = []
+    collectInside startLine bodyParts ((lineNumber, lineValue) : remainingLines) =
+      case breakAtSubstring "#-}" lineValue of
+        Nothing ->
+          collectInside startLine (lineValue : bodyParts) remainingLines
+        Just (finalPart, afterClosing) ->
+          (startLine, unlines (reverse (finalPart : bodyParts)))
+            : collectOutside
+              ((lineNumber, afterClosing) : remainingLines)
+
+breakAtSubstring :: String -> String -> Maybe (String, String)
+breakAtSubstring needle =
+  search []
+  where
+    search _ [] = Nothing
+    search prefix remaining
+      | needle `isPrefixOfString` remaining =
+          Just (reverse prefix, drop (length needle) remaining)
+    search prefix (character : remaining) =
+      search (character : prefix) remaining
+
+data NativeBoundaryLexState
+  = NativeBoundaryCode
+  | NativeBoundaryBlockComment Int
+  | NativeBoundaryString
+  | NativeBoundaryPragma
+
+sanitizeNativeBoundarySource :: [(Int, String)] -> [(Int, String)]
+sanitizeNativeBoundarySource numberedLines =
+  snd (mapAccumL sanitizeLine NativeBoundaryCode numberedLines)
+  where
+    sanitizeLine state (lineNumber, lineValue) =
+      let (nextState, sanitizedLine) = sanitizeNativeBoundaryLine state lineValue
+       in (nextState, (lineNumber, sanitizedLine))
+
+sanitizeNativeBoundaryLine :: NativeBoundaryLexState -> String -> (NativeBoundaryLexState, String)
+sanitizeNativeBoundaryLine =
+  sanitize
+  where
+    sanitize state [] = (state, [])
+    sanitize NativeBoundaryCode ('{' : '-' : '#' : remaining) =
+      prependSanitized "{-#" (sanitize NativeBoundaryPragma remaining)
+    sanitize NativeBoundaryCode ('-' : '-' : remaining) =
+      (NativeBoundaryCode, replicate (length remaining + 2) ' ')
+    sanitize NativeBoundaryCode ('{' : '-' : remaining) =
+      prependMasked 2 (sanitize (NativeBoundaryBlockComment 1) remaining)
+    sanitize NativeBoundaryCode ('"' : remaining) =
+      prependMasked 1 (sanitize NativeBoundaryString remaining)
+    sanitize NativeBoundaryCode ('\'' : remaining) =
+      case takeCharacterLiteral remaining of
+        Just (literalTail, afterLiteral) ->
+          prependMasked
+            (1 + length literalTail)
+            (sanitize NativeBoundaryCode afterLiteral)
+        Nothing ->
+          prependSanitized "'" (sanitize NativeBoundaryCode remaining)
+    sanitize NativeBoundaryCode (character : remaining) =
+      prependSanitized [character] (sanitize NativeBoundaryCode remaining)
+    sanitize (NativeBoundaryBlockComment depth) ('{' : '-' : remaining) =
+      prependMasked 2 (sanitize (NativeBoundaryBlockComment (depth + 1)) remaining)
+    sanitize (NativeBoundaryBlockComment 1) ('-' : '}' : remaining) =
+      prependMasked 2 (sanitize NativeBoundaryCode remaining)
+    sanitize (NativeBoundaryBlockComment depth) ('-' : '}' : remaining) =
+      prependMasked 2 (sanitize (NativeBoundaryBlockComment (depth - 1)) remaining)
+    sanitize state@(NativeBoundaryBlockComment _) (_ : remaining) =
+      prependMasked 1 (sanitize state remaining)
+    sanitize NativeBoundaryString ('\\' : _escapedCharacter : remaining) =
+      prependMasked 2 (sanitize NativeBoundaryString remaining)
+    sanitize NativeBoundaryString ('"' : remaining) =
+      prependMasked 1 (sanitize NativeBoundaryCode remaining)
+    sanitize NativeBoundaryString (_ : remaining) =
+      prependMasked 1 (sanitize NativeBoundaryString remaining)
+    sanitize NativeBoundaryPragma ('#' : '-' : '}' : remaining) =
+      prependSanitized "#-}" (sanitize NativeBoundaryCode remaining)
+    sanitize NativeBoundaryPragma (character : remaining) =
+      prependSanitized [character] (sanitize NativeBoundaryPragma remaining)
+
+takeCharacterLiteral :: String -> Maybe (String, String)
+takeCharacterLiteral remaining =
+  case remaining of
+    character : '\'' : afterLiteral
+      | character /= '\\' && character /= '\'' ->
+          Just ([character, '\''], afterLiteral)
+    '\\' : '\'' : '\'' : afterLiteral ->
+      Just ("\\''", afterLiteral)
+    '\\' : escaped : afterEscape ->
+      takeEscapedCharacterLiteral escaped afterEscape
+    _ -> Nothing
+
+takeEscapedCharacterLiteral :: Char -> String -> Maybe (String, String)
+takeEscapedCharacterLiteral escaped afterEscape =
+  case break (== '\'') afterEscape of
+    (escapeTail, '\'' : afterLiteral)
+      | validCharacterEscape escaped escapeTail ->
+          Just ('\\' : escaped : escapeTail <> "'", afterLiteral)
+    _ -> Nothing
+
+validCharacterEscape :: Char -> String -> Bool
+validCharacterEscape escaped escapeTail =
+  not (isSpace escaped)
+    && escaped /= '\''
+    && not (any isSpace escapeTail)
+
+prependSanitized :: String -> (NativeBoundaryLexState, String) -> (NativeBoundaryLexState, String)
+prependSanitized prefix (state, remaining) =
+  (state, prefix <> remaining)
+
+prependMasked :: Int -> (NativeBoundaryLexState, String) -> (NativeBoundaryLexState, String)
+prependMasked characterCount (state, remaining) =
+  (state, replicate characterCount ' ' <> remaining)
 
 -- | Sprint 6.39 (managed-state-transition doctrine) — capability-gating lint.
 -- Reject raw destructive shell primitives (@rm -rf@ / @docker exec ... rm@) and
@@ -170,9 +891,10 @@ checkSourceReadability repoRoot sourceFile = do
 -- go through the lease-gated teardown (Sprint 2.14), and every subprocess must
 -- carry a typed 'Infernix.Cluster.Subprocess.SubprocessEnv' (which always
 -- carries @HOME@/@TMPDIR@) rather than an empty environment. The
--- cluster-lifecycle module owns the grandfathered container-scoped scrub surface
--- and is exempt from the raw-@rm@ rule; every other module is guarded. Canonical
--- doctrine: documents/architecture/managed_state_transitions.md.
+-- cluster-lifecycle module has no raw-shell exemption; its Haskell filesystem
+-- deletion is an unexported implementation detail of the lease-consuming
+-- retained-state transition. Canonical doctrine:
+-- documents/architecture/managed_state_transitions.md.
 capabilityGatingViolations :: FilePath -> [(Int, String)] -> [String]
 capabilityGatingViolations sourceFile numberedLines =
   rawDestructiveViolations sourceFile numberedLines
@@ -204,11 +926,7 @@ rawDestructiveReasons lineValue =
 
 rawDestructiveExemptedFiles :: [FilePath]
 rawDestructiveExemptedFiles =
-  [ -- The cluster-lifecycle module owns the container-scoped retained-state
-    -- scrub surface (the `docker exec ... rm -rf` Harbor-registry-storage
-    -- cleanup) and the lease-gated teardown of Sprint 2.14.
-    "src/Infernix/Cluster.hs",
-    -- This lint module names the forbidden tokens as literals; exempt it.
+  [ -- This lint module names the forbidden token as a literal; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
@@ -235,13 +953,13 @@ emptySubprocessEnvExemptedFiles =
 -- 'Infernix.Cluster.Subprocess.Timeout' and returns a total
 -- 'Infernix.Cluster.Subprocess.CommandOutcome', so an unbounded exec — the
 -- class that produced the ~23-minute Harbor @docker pull@ hang — is
--- unrepresentable. The exemption list is deliberately shrinking: 'ProcessMonitor.hs'
--- was retired onto the kernel by Sprint 6.41; 'Cluster.hs' still holds the general
--- cluster subprocess helpers whose raw-exec migration is deferred; the
--- engine/runtime/host-tool spawn surface (long-lived inference runners, host
--- prerequisite probes, Python tooling) is a different domain not owned by the
--- cluster kernel. The kernel module and this lint module (which names the
--- tokens as literals) are permanently exempt. Canonical doctrine:
+-- unrepresentable. The exemption list is deliberately shrinking:
+-- 'ProcessMonitor.hs' was retired onto the kernel by Sprint 6.41 and
+-- 'Cluster.hs' by Sprint 2.16; the engine/runtime/host-tool spawn surface
+-- (long-lived inference runners, host prerequisite probes, Python tooling) is a
+-- different domain not owned by the cluster kernel. The kernel module and this
+-- lint module (which names the tokens as literals) are permanently exempt.
+-- Canonical doctrine:
 -- documents/architecture/managed_state_transitions.md.
 unboundedExecViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedExecViolations sourceFile numberedLines
@@ -269,26 +987,234 @@ forbiddenUnboundedExecTokens =
     "callCommand"
   ]
 
+-- | Phase 1 Sprint 1.20 — Apple engine artifacts may provision only through
+-- the opaque, bounded provisioning grant. The artifact facade, transaction
+-- implementation, and provisioning modules therefore cannot import
+-- 'System.Process' or invoke one of its raw process primitives directly. The
+-- sole process owner remains the bounded-command kernel.
+appleArtifactProvisioningViolations :: FilePath -> [(Int, String)] -> [String]
+appleArtifactProvisioningViolations sourceFile numberedLines
+  | sourceFile `notElem` appleArtifactProvisioningFiles = []
+  | otherwise =
+      concatMap lineViolations (sanitizeNativeBoundarySource numberedLines)
+  where
+    lineViolations (lineNumber, codeLine) =
+      [ renderViolation lineNumber "forbidden System.Process access"
+      | "System.Process" `isInfixOf` codeLine
+      ]
+        <> [ renderViolation lineNumber ("forbidden raw process primitive `" <> needle <> "`")
+           | needle <- forbiddenUnboundedExecTokens,
+             containsToken needle codeLine
+           ]
+        <> [ renderViolation lineNumber ("forbidden delegation to legacy unbounded Python helper `" <> needle <> "`")
+           | needle <- forbiddenAppleProvisioningHelperTokens,
+             containsToken needle codeLine
+           ]
+        <> [ renderViolation lineNumber "forbidden direct bounded-command kernel use outside the provisioning facade"
+           | sourceFile /= appleProvisioningFacadeFile,
+             containsToken "runBoundedCommand" codeLine
+           ]
+    renderViolation lineNumber reason =
+      sourceFile
+        <> ":"
+        <> show lineNumber
+        <> ": "
+        <> reason
+        <> "; Apple artifact provisioning must use the opaque bounded Infernix.Engines.Provisioning grant (see documents/architecture/managed_state_transitions.md)"
+
+appleArtifactProvisioningFiles :: [FilePath]
+appleArtifactProvisioningFiles =
+  [ "src/Infernix/Engines/AppleSilicon.hs",
+    "src/Infernix/Engines/AppleSilicon/Internal.hs",
+    "src/Infernix/Engines/Artifact.hs",
+    "src/Infernix/Engines/Artifact/Internal.hs",
+    appleProvisioningFacadeFile,
+    "src/Infernix/Engines/Provisioning/Internal.hs"
+  ]
+
+appleProvisioningFacadeFile :: FilePath
+appleProvisioningFacadeFile =
+  "src/Infernix/Engines/Provisioning.hs"
+
+forbiddenAppleProvisioningHelperTokens :: [String]
+forbiddenAppleProvisioningHelperTokens =
+  [ "ensurePoetryExecutable",
+    "ensurePoetryProjectReady",
+    "liftProvisioningIO"
+  ]
+
+-- | The indexed Apple materialization runner is private to the concrete Apple
+-- materializer implementation. Other production modules receive only the
+-- public materialization command; they cannot name an intermediate phase or
+-- reintroduce the deleted callback-shaped request interpreter.
+appleMaterializationTransactionOwnershipViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+appleMaterializationTransactionOwnershipViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | sourceFile `elem` appleMaterializationTransactionOwners = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden Apple materialization transaction kernel access; "
+          <> "only the concrete Apple materializer may advance its private indexed runner"
+      | (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
+        token <- appleMaterializationTransactionTokens,
+        containsToken token codeLine
+      ]
+
+appleMaterializationTransactionOwners :: [FilePath]
+appleMaterializationTransactionOwners =
+  ["src/Infernix/Engines/AppleSilicon/Internal.hs"]
+
+appleMaterializationTransactionTokens :: [String]
+appleMaterializationTransactionTokens =
+  [ "Infernix.Engines.AppleSilicon.MaterializationTransaction",
+    "MaterializationRequest",
+    "closedMaterializationRequest",
+    "runMaterializationTransaction",
+    "completeCandidate",
+    "AppleMaterializationSession",
+    "beginAppleMaterialization",
+    "prepareMetalEngineCandidate",
+    "writeMetalEngineCandidatePayload",
+    "completeMetalEngineCandidate",
+    "cleanupMetalEngineCandidate"
+  ]
+
+-- | Generic provisioning mutation construction, command compilation, and
+-- executable resolution are owned by the bounded subprocess kernel, its
+-- indexed provisioning facade, and the hidden final-path activation
+-- interpreter. Other production modules receive only closed provisioning
+-- operations and cannot assemble a raw mutation or compile one of its command
+-- specifications.
+provisioningKernelOwnershipViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+provisioningKernelOwnershipViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | sourceFile `elem` provisioningKernelOwners = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden generic provisioning kernel access; "
+          <> "only the bounded subprocess kernel, indexed provisioning facade, and hidden activation interpreter may construct mutations or compile commands"
+      | (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
+        token <- provisioningKernelTokens,
+        containsToken token codeLine
+      ]
+
+provisioningKernelOwners :: [FilePath]
+provisioningKernelOwners =
+  [ "src/Infernix/Cluster/Subprocess.hs",
+    "src/Infernix/Engines/Artifact/Activation.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+provisioningKernelTokens :: [String]
+provisioningKernelTokens =
+  [ "observeProvisioningMutationRoot",
+    "provisioningCreateDirectoryLeaf",
+    "provisioningRemoveTreeLeaf",
+    "provisioningRenameSiblingDirectory",
+    "provisioningRenameSiblingRegularFile",
+    "runProvisioningFilesystemMutation",
+    "compileProvisioningCommand",
+    "compileProvisioningCommandWithExecutable",
+    "compileProvisioningCommandWithExecutableInMutationRoot",
+    "resolveProvisioningCommandExecutable"
+  ]
+
+-- | The general native-artifact invocation plan is an internal bridge between
+-- the closed capped-engine interpreter and the bounded subprocess kernel.
+-- Other production modules cannot construct a raw plan or invoke the kernel
+-- directly.
+nativeArtifactInvocationKernelOwnershipViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+nativeArtifactInvocationKernelOwnershipViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | sourceFile `elem` nativeArtifactInvocationKernelOwners = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden native-artifact invocation kernel access; "
+          <> "only the bounded subprocess kernel and hidden capped-engine interpreter may construct or run an invocation plan"
+      | (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
+        token <- nativeArtifactInvocationKernelTokens,
+        containsToken token codeLine
+      ]
+
+nativeArtifactInvocationKernelOwners :: [FilePath]
+nativeArtifactInvocationKernelOwners =
+  [ "src/Infernix/Cluster/Subprocess.hs",
+    "src/Infernix/Runtime/CappedEngine/Internal.hs"
+  ]
+
+nativeArtifactInvocationKernelTokens :: [String]
+nativeArtifactInvocationKernelTokens =
+  [ "NativeArtifactInvocationPlan",
+    "nativeArtifactInvocationPlan",
+    "runBoundedNativeArtifact"
+  ]
+
+-- | The deterministic Mach-O byte/finite-graph interpreter is test support
+-- owned by the Apple materialization kernel. Production modules may not invoke
+-- or import it; production flow uses descriptor-backed source facades.
+appleClosureFixtureOwnershipViolations ::
+  FilePath ->
+  [(Int, String)] ->
+  [String]
+appleClosureFixtureOwnershipViolations sourceFile numberedLines
+  | not (isProductionHaskellSource sourceFile) = []
+  | sourceFile `elem` appleClosureFixtureOwners = []
+  | otherwise =
+      [ sourceFile
+          <> ":"
+          <> show lineNumber
+          <> ": forbidden Apple Mach-O fixture interpreter access; production closure inspection must use the bounded otool interpreter"
+      | (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
+        token <- appleClosureFixtureTokens,
+        containsToken token codeLine
+      ]
+
+appleClosureFixtureOwners :: [FilePath]
+appleClosureFixtureOwners =
+  [ "src/Infernix/Engines/AppleSilicon/Internal.hs",
+    "src/Infernix/Engines/Provisioning.hs"
+  ]
+
+appleClosureFixtureTokens :: [String]
+appleClosureFixtureTokens =
+  [ "MachOFixturePlan",
+    "inspectMachOFixtureForTest",
+    "resolveMachOPathsFixtureForTest"
+  ]
+
 -- | Phase 6 Sprint 6.42 (memory-safety-by-construction doctrine) — reject a raw
 -- engine subprocess spawn outside the capped-engine kernel. An inference engine
--- subprocess must run only through
--- 'Infernix.Runtime.CappedEngine.withCappedEngine', which requires a
--- 'MemoryGrant' and bounds the subprocess's resident memory to the admitted
--- 'MemoryCeiling'. The raw spawn primitives are the ones with no type-level
--- chokepoint, so this line-based gate keeps a new engine-spawn call site off them
--- and on the grant-gated kernel, mirroring the 'unboundedExecViolations' /
--- 'threadDelayViolations' per-rule exemption pattern. The exemption list is
--- deliberately shrinking: the capped-engine kernel (owns the sole engine spawn)
--- and this lint module (names the tokens as literals) are permanent; the
--- remaining engine-adjacent files retain genuine non-inference spawns
--- (Poetry/venv setup, native-runner materialization, engine smoke). Canonical
--- doctrine: documents/architecture/bounded_inference_memory.md.
+-- subprocess must run only through a closed semantic operation in
+-- 'Infernix.Runtime.CappedEngine', which requires an 'ExecutableModel' carrying
+-- a resource-indexed grant and verified enforcer. Raw commands, argument
+-- vectors, working directories, and rendered environments remain in the hidden
+-- kernel. The raw spawn primitives have no type-level chokepoint, so this
+-- line-based gate keeps a new engine-spawn call site on the grant-gated kernel,
+-- mirroring the 'unboundedExecViolations' / 'threadDelayViolations' per-rule
+-- exemption pattern. The fixed Darwin observer kernel owns only its closed
+-- @/usr/bin/top@ and @/usr/bin/footprint@ specifications. Canonical doctrine:
+-- documents/architecture/bounded_inference_memory.md.
 unboundedEngineSpawnViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedEngineSpawnViolations sourceFile numberedLines
   | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
   | sourceFile `elem` unboundedEngineSpawnExemptedFiles = []
   | otherwise =
-      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw engine subprocess spawn `" <> needle <> "`; route an inference engine spawn through Infernix.Runtime.CappedEngine.withCappedEngine (a required MemoryGrant + resident-memory ceiling) so an engine that runs without an admission proof, or unbounded by its admitted ceiling, is unrepresentable (see documents/architecture/bounded_inference_memory.md)"
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden raw engine subprocess spawn `" <> needle <> "`; route inference execution through an ExecutableModel-gated Infernix.Runtime.CappedEngine launch so an engine without a matching grant and live enforcer, or unbounded by its admitted ceiling, is unrepresentable (see documents/architecture/bounded_inference_memory.md)"
       | (lineNumber, lineValue) <- numberedLines,
         not (isCommentLine lineValue),
         needle <- forbiddenEngineSpawnTokens,
@@ -305,7 +1231,11 @@ forbiddenEngineSpawnTokens =
 
 -- | The capped-engine kernel: the single legitimate engine-spawn surface.
 cappedEngineKernelFile :: FilePath
-cappedEngineKernelFile = "src/Infernix/Runtime/CappedEngine.hs"
+cappedEngineKernelFile = "src/Infernix/Runtime/CappedEngine/Internal.hs"
+
+darwinObserverKernelFile :: FilePath
+darwinObserverKernelFile =
+  "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs"
 
 -- | The engine-spawn rule exempts the capped-engine kernel (the sole legitimate
 -- engine spawn) plus every non-engine raw-spawn surface the bounded-command rule
@@ -379,12 +1309,10 @@ threadDelayExemptedFiles =
     "src/Infernix/Lint/HaskellStyle.hs",
     -- The capped-engine kernel's resident-memory watchdog samples the child's
     -- footprint on a fixed inter-poll delay (Phase 4 Sprint 4.30).
-    "src/Infernix/Runtime/CappedEngine.hs",
+    "src/Infernix/Runtime/CappedEngine/Internal.hs",
     -- Cluster lifecycle: retains genuine backoff sites (claim chmod retry, probe
     -- backoff, teardown-absence backoff) after the Sprint 6.41 wait migration.
     "src/Infernix/Cluster.hs",
-    -- Harbor image publish: push/pull-verify/login retry backoff.
-    "src/Infernix/Cluster/PublishImages.hs",
     -- Runtime transport / service loop: producer + WebSocket connect retry backoff,
     -- dispatcher topic poll, and the idle runtime-loop park / heartbeat.
     "src/Infernix/Runtime/Pulsar.hs",
@@ -404,24 +1332,22 @@ unboundedExecExemptedFiles =
     "src/Infernix/Cluster/Subprocess.hs",
     -- Owns the capped-engine kernel (the one legitimate raw engine-spawn surface,
     -- Phase 4 Sprint 4.30); every engine spawn there runs under a MemoryGrant.
-    "src/Infernix/Runtime/CappedEngine.hs",
+    "src/Infernix/Runtime/CappedEngine/Internal.hs",
+    -- Owns the fixed Apple footprint observers. The module does not accept a
+    -- caller-supplied executable, arguments, environment, or working directory.
+    darwinObserverKernelFile,
     -- Names the forbidden tokens as literals; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs",
-    -- Cluster lifecycle surface: the general cluster subprocess helpers'
-    -- raw-exec migration is deferred (ProcessMonitor.hs was retired, Sprint 6.41).
-    "src/Infernix/Cluster.hs",
-    -- Engine / runtime / host-tool spawn surface: a different domain (long-lived
-    -- inference runners, host prerequisite probes, Python tooling) not owned by
-    -- the cluster bounded-command kernel.
+    -- Remaining runtime / host-tool spawn surfaces are different domains
+    -- (long-lived inference runners, host prerequisite probes, Python tooling)
+    -- not yet owned by the cluster bounded-command kernel.
     "src/Infernix/CLI.hs",
-    "src/Infernix/Engines/AppleSilicon.hs",
     "src/Infernix/Engines/LinuxNative.hs",
     "src/Infernix/HostPrereqs.hs",
     "src/Infernix/HostTools.hs",
     "src/Infernix/Lint/Files.hs",
     "src/Infernix/Python.hs",
     "src/Infernix/Runtime/Pulsar.hs",
-    "src/Infernix/Runtime/Worker.hs",
     "src/Infernix/Workflow.hs"
   ]
 
@@ -503,7 +1429,8 @@ forbiddenEnvFunctions =
 -- does not trip its own check. The per-runner scope ('realnessScopedFiles') is
 -- extended by each accelerator phase as it de-stubs, and now covers both
 -- generated-runner modules: Phase 4 Sprint 4.21 added Engines/LinuxNative.hs;
--- Phase 1 Sprint 1.15 adds Engines/AppleSilicon.hs.
+-- Phase 1 Sprint 1.20 keeps the Apple runner in its hidden implementation
+-- module behind the public Engines/AppleSilicon.hs facade.
 -- Canonical doctrine: documents/architecture/realness_contract.md.
 realnessFabricationViolations :: FilePath -> [(Int, String)] -> [String]
 realnessFabricationViolations sourceFile numberedLines
@@ -519,7 +1446,8 @@ realnessFabricationViolations sourceFile numberedLines
 realnessScopedFiles :: [FilePath]
 realnessScopedFiles =
   [ "src/Infernix/Engines/LinuxNative.hs",
-    "src/Infernix/Engines/AppleSilicon.hs"
+    "src/Infernix/Engines/AppleSilicon.hs",
+    "src/Infernix/Engines/AppleSilicon/Internal.hs"
   ]
 
 forbiddenNativeFabricationTokens :: [String]

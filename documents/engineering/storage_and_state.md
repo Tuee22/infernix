@@ -31,13 +31,15 @@ transient Kind or `nvkind` scratch kubeconfig files, and stale
 repo-local kubeconfig lock files.
 
 This inventory bounds only **disk** state; model memory is governed separately by runtime admission.
-The disk model cache (`python/adapters/model_cache.py` LRU) never substitutes for the
-`InferenceMemoryBudget`: Apple uses unified host RAM after the Colima pledge and reserve, Linux CPU
-uses the engine pod memory limit, and Linux GPU uses GPU VRAM. An over-budget request fails with
-typed `ModelMemoryLimitExceeded` and explicit MiB quantities before the engine launches, while
-smaller configured models continue to run. The grant-gated capped-engine execution contract behind
-this — an engine runs only under a typed OS-bounded `MemoryGrant`, so a host OOM is unrepresentable —
-is owned canonically by
+The disk model cache (`python/adapters/model_cache.py` LRU) never substitutes for the typed
+execution plan. Apple and Linux CPU compilation compare each required footprint with the declared
+host or pod capacity; oversized rows remain explicit `UnavailableModel` values, while fitting
+placements receive indexed grants that live refinement must pair with matching enforcers. The
+normal coordinator path now returns typed `ModelMemoryLimitExceeded` with explicit MiB quantities
+for an unavailable request before engine launch, while smaller configured models continue to run;
+the complete source-matched Phase 1 gate passed on 2026-07-25.
+Linux GPU plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6
+provides dual RAM/VRAM enforcement. The executable-gated capped-engine contract is owned canonically by
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 The durability split is unchanged by the object-access target, but how
@@ -59,8 +61,8 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
 
 | State class | Owner | Authoritative home | Durability | Rebuild rule |
 |-------------|-------|--------------------|------------|--------------|
-| PVC-backed cluster data for Harbor, MinIO, Pulsar, and PostgreSQL | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | do not delete implicitly; supported lifecycle reruns rebind the same deterministic host paths within the active runtime lane |
-| Harbor registry content and Harbor metadata | Harbor plus operator-managed PostgreSQL | Harbor PVCs under `./.data/kind/<runtime-mode>/...` | durable | loss is a platform failure, not a cache miss |
+| PVC-backed retained data for MinIO and Pulsar, excluding the explicitly rebuildable platform-bootstrap paths below | `infernix cluster up` storage reconciliation plus the workload itself | `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` | durable | ordinary lifecycle reruns preserve and replay the same retained data within the active runtime lane |
+| Rebuildable platform-bootstrap paths: Harbor and Keycloak Patroni claim roots, Harbor Redis, and the MinIO `harbor-registry` bucket plus its bucket metadata, multipart, and temporary state | cluster lifecycle bootstrap and publication reconciliation | selected paths inside `./.data/kind/<runtime-mode>/platform/infernix/...` | derived | may be removed only after `WriterQuiesced` proves the Kind writer absent under the lifecycle lock; the next `cluster up` rebuilds database/bootstrap state and republishes Harbor content |
 | MinIO `infernix-models` bucket contents | coordinator's bootstrap Failover subscription + every engine pod (read) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable | platform model weights, tokenizers, configs under `<modelId>/<filename>` with a `<modelId>/.ready` sentinel; eagerly staged at coordinator startup and never disposed except by deliberate operator intent |
 | MinIO `infernix-demo-objects` bucket contents | demo backend (webapp object-proxy, server-side PUT/GET) + engine adapters (PUT for generated artifacts) | MinIO PVCs under `./.data/kind/<runtime-mode>/...` | durable and user-visible | per-user prefixes `users/<userId>/contexts/<contextId>/{uploads,generated}/`; browsers reach it only through the webapp `/api/objects` proxy; bucket only exists when `demo_ui = true` |
 | Pulsar ledgers and BookKeeper journals | Pulsar | Pulsar PVCs under `./.data/kind/<runtime-mode>/...` | durable | deletion resets message durability and is therefore explicit operator intent |
@@ -77,8 +79,12 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
 
 - Unexpected loss of anything under the durable rows above is a correctness or durability failure,
   not a normal cleanup event.
-- `cluster down` plus `cluster up` must preserve the deterministic PV inventory and host-path
-  binding for the durable Harbor PostgreSQL state and the other PVC-backed workloads.
+- `cluster down` plus `cluster up` must preserve retained MinIO model/demo-object data and Pulsar
+  data. Apple/non-bind teardown commits a writer-frozen detached snapshot before Kind deletion and
+  the next bring-up replays it before workloads start.
+- Harbor/Keycloak PostgreSQL, Harbor Redis, and Harbor registry content are the explicit
+  rebuildable exception. Their removal is legal only inside the post-delete `WriterQuiesced`
+  region, never while a live workload can write them.
 - when retained Pulsar ZooKeeper state is self-inconsistent and blocks `cluster up`, the supported
   control plane may log a targeted reset of the Pulsar claim roots for that runtime lane and retry
   once; treat that path as explicit durability repair that discards prior Pulsar message history
@@ -106,12 +112,15 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   SIGKILLed `HarnessOwned` `infernix test all` leaves `ClusterMutating` on disk as the fail-closed
   evidence the next `cluster up` reads to reconcile the interrupted mutation (uncordon drained nodes,
   scale deployments back). The owner field, mutating position, fail-closed persistence, and reconcile
-  are implemented and closed under Wave X (Phase 2 Sprint 2.15, 2026-07-24).
+  closed for their earlier scope under Wave X (Phase 2 Sprint 2.15, 2026-07-24). The 2026-07-25
+  owner-atomic reservation and teardown correction remains under Phase 2 implementation and source
+  review; its new source-matched Stage 1 and ordered Wave Y validation have not started.
 
 ## Cleanup Rules
 
-- Delete durable state only through explicit operator intent such as supported cluster teardown,
-  targeted data reset, or manual local cleanup that accepts data loss.
+- Delete durable state only through explicit operator intent such as a targeted data reset or
+  manual local cleanup that accepts data loss. Ordinary supported cluster teardown preserves the
+  durable retained rows and may remove only the rebuildable platform-bootstrap exception above.
 - when `cluster up` logs the targeted Pulsar claim-root reset described above, treat it as
   operator-visible data loss for the affected runtime lane rather than as implicit cache cleanup.
 - Do not hand-edit derived publication mirrors, generated demo-config files, or frontend generated

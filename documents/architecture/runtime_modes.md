@@ -27,18 +27,14 @@ demo catalog entries, service binding, and validation.
 | Ubuntu 24.04 / CPU | `linux-cpu` | `Best Linux CPU engine` |
 | Ubuntu 24.04 / NVIDIA CUDA Container | `linux-gpu` | `Best Linux CUDA engine` |
 
-The active runtime mode is encoded in `infernix.dhall` beside the built binary. The file
-is a typed Dhall record; the schema is reflected from the substrate decoder type (`infernix internal dhall-schema substrate`) and decoded
-in-process by the `dhall` Haskell library. Apple host lifecycle and validation commands
-materialize or verify that file under `./.build/`, and
-Linux outer-container lifecycle and validation commands materialize or verify
-`/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image.
-`infernix internal materialize-substrate <substrate> --demo-ui <true|false>` remains
-the direct helper for explicit restaging or inspection. `cluster up` publishes a cluster-role
-`infernix.dhall` payload into the repo-local publication mirror and
-`ConfigMap/infernix-demo-config`; on Apple this cluster-role payload is rendered from the active
-staged substrate metadata and `demo_ui` setting instead of copying the host-role file under
-`./.build/` verbatim.
+The active runtime mode is encoded in repo-root `./infernix.dhall`. The file is a typed Dhall
+record; the schema is reflected from the substrate decoder type
+(`infernix internal dhall-schema substrate`) and decoded in-process by the `dhall` Haskell library.
+`infernix init` creates operator runtime config and `infernix test init` creates the harness input;
+ordinary config-dependent commands validate the file and fail fast naming the required init when it
+is absent. `cluster up` derives a cluster-role payload into the repo-local publication mirror and
+`ConfigMap/infernix-demo-config`; on Apple this payload is rendered from the initialized runtime
+metadata and `demo_ui` setting rather than copying a build-root file.
 
 ## Substrate Architecture
 
@@ -71,44 +67,47 @@ generic placeholder branch. The runtime worker invokes the selected Python adapt
 streams model weights from the eagerly pre-staged `infernix-models` MinIO bucket via
 `adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
 guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
-realness lint). That construction guarantee covers host memory through request-time admission rather
-than catalog-wide startup rejection: on `apple-silicon` there are no in-cluster engine pods and every
-active model runs serialized, one-at-a-time as a fresh subprocess, on the on-host `infernix service`
-daemon under a per-model RAM budget and admission control, alongside the bounded disk model cache
-(`python/adapters/model_cache.py`). Peak resident memory is therefore bounded to one admitted model:
-an over-budget request publishes a clean `status=failed` real `InferenceResult` with a typed
-`ModelMemoryLimitExceeded` error before the engine subprocess launches. The error carries explicit
-MiB quantities for the model footprint and available daemon budget, so larger catalog entries no
-longer prevent smaller entries from serving. The fail-clean realness contract for host memory on
+realness lint). On `apple-silicon` there are no in-cluster engine pods. The execution-plan compiler
+accounts for each configured model as a fitting placement or explicit unavailable model against the
+checked host partition; package-owned live observations then refine fitting placements into
+`ExecutableModel`. The supported daemon runs fresh engine subprocesses under a process-local
+serialization lock and an Apple physical-footprint watchdog. A configured over-capacity model must
+publish a clean typed `ModelMemoryLimitExceeded` result without launch, while smaller compiled
+placements keep serving. Phase 4 still owns encapsulating the serialization authority and the
+adversarial breach-and-survival proof. The fail-clean realness contract for host memory on
 `apple-silicon` was introduced by
 [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
 Sprint 4.26 (inference RAM admission + bounded peak) paired with
 [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-Sprint 6.37 (memory-bounded validation lane) and is reopened under Sprint 4.27 / Sprint 6.38 to
-remove catalog-wide fail-fast and make the error surface typed across substrates. See the
+Sprint 6.37 (memory-bounded validation lane), with the later typed-error work historically closed by
+Sprints 4.27 / 6.38. The current capability/enforcer reopen is Phase 1 Sprint 1.19 followed by
+Phase 4 Sprint 4.32. See the
 Per-Substrate Inference RAM Budget section below for the updated budget contract. Phase 1 Sprint
 1.15 materializes real Apple native engine roots, replacing the former
 validation wrappers; Wave L records routed real-output proof for the then-active Apple catalog. Apple native engine artifacts resolve from
-`./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a fixed host
-Metal bridge for runtime Metal source compilation plus typed engine-artifact manifests for Core ML
-and native runner payloads. The former Tart helper path has been removed; the retained command name
-now writes typed manifests without a VM dependency. The canonical homes are
+`./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a typed
+engine-artifact manifest surface uses public upstream MLX GPU execution and coremltools device
+observation without repository-owned native source. The former Tart and native bridge helper paths
+have been removed; the retained command name writes typed manifests without a VM dependency. The
+canonical homes are
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md),
 [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), and
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
 
 On Linux substrates, `infernix internal materialize-linux-native-engines` bakes image-owned
-`/opt/infernix/engines/<adapterId>/` roots with typed manifests and smoke-validated runner
-entrypoints. The image build now installs the native payload layer for llama.cpp and whisper.cpp
-using the image architecture (`linux/amd64` or `linux/arm64`), plus Basic Pitch's ONNX model, ONNX
+`/opt/infernix/engines/<adapterId>/` roots with typed manifests. Those roots contain metadata, not
+generated command wrappers. A Cabal-hidden target catalog selects the image-owned llama.cpp or
+whisper.cpp executable, the fixed Python interpreter plus runner module, or the Audiveris JRE and
+classpath directly. Materialization records a closed target-contract fingerprint and exact
+descriptor-derived executable and immutable-closure evidence for every absolute image target.
+Runtime revalidates that evidence before launch and compiles only target-specific argument forms.
+The image build installs the native payload layer for llama.cpp and whisper.cpp using the image
+architecture (`linux/amd64` or `linux/arm64`), plus Basic Pitch's ONNX model, ONNX
 Runtime/CTranslate2 Python dependencies, faster-whisper, and Audiveris app jars with an
-image-architecture Temurin 25 JRE. Generated wrappers fail with exit 75 until the requested model
-cache contains a `.ready` sentinel, can emit a local artifact-file marker for Haskell-owned MinIO
-upload, and delegate strict smoke checks to those baked payloads, including launching Audiveris
-through Java on the native image architecture. The reopened Phases 4/6 own full routed
-`linux-gpu` plus `linux-cpu` real-output delivery, with realness enforced in the engine code by the
-realness lint. Wave K proves the then-active Linux catalogs; Wave P closed proof for the MT3 rows added
-on 2026-06-30.
+image-architecture Temurin 25 JRE. The reopened Phases 4/6 own fresh full routed `linux-gpu` plus
+`linux-cpu` real-output delivery for this direct-target topology, with realness enforced in the
+engine code by the realness lint. Wave K and Wave P are historical evidence for their source-matched
+catalogs and do not close the active correction.
 
 ## Per-Substrate Inference Memory Budget
 
@@ -121,14 +120,16 @@ sentinels. The shape names its enforcer:
 - `HostEnforcedBudget HostMemoryPartition` means the host itself owns the ceiling: admission draws
   from the partition's `inferenceCapacity` and the on-host capped-engine kernel enforces the admitted
   ceiling at runtime (the `apple-silicon` lane)
-- `SubstrateEnforcedBudget PodMemoryLimit` currently records container capacity — the pod cgroup
-  memory limit (`linux-cpu`) or configured CUDA/VRAM quantity (`linux-gpu`) that
-  `PodMemoryLimit { podMemoryLimitResource, podMemoryLimitSource, podMemoryLimitMib }` records. It
-  does not yet prove that an individual model ceiling is installed
-- `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor -> Either InferenceError MemoryGrant`
-  mints an opaque `MemoryGrant` (carrying a `MemoryCeiling` equal to the model footprint) on success,
-  and returns `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource,
-  source }` when the footprint does not fit
+- `SubstrateEnforcedBudget PodMemoryLimit` is the transitional wire record for substrate capacity.
+  On `linux-cpu` it supplies the configured outer pod envelope; refinement additionally requires the
+  live process-group RSS sampler and exact `memory.max`
+- `compileRuntimePlan` validates each model against the budget and mints
+  `MemoryGrant resource` only inside `CompiledPlacement`; an over-capacity model remains in the
+  explicit unavailable map with
+  `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`
+- package-owned live observations refine a compiled grant/enforcer plan into an
+  `EnforcedGrant resource` inside `ExecutableModel`; public engine launch accepts only that whole
+  executable capability
 
 This removes the old need for hardcoded floors such as `max 1024 ...` and the "enforced by nobody"
 arm: an over-pledged Apple host is rejected when the `HostMemoryPartition` smart constructor refuses
@@ -147,26 +148,28 @@ Budget sources are substrate-specific while admission and error construction sta
 - on `linux-cpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
   Kubernetes engine pod memory limit for the active cluster workload, with resource `PodRam`; this is
   the real cluster cap and must participate in runtime admission
-- on `linux-gpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
-  selected GPU VRAM quantity, with resource `GpuVram`, because the supported GPU model allocations
-  live in VRAM rather than CPU RAM
+- on `linux-gpu`, the final executable placement needs independently indexed pod-RAM and GPU-VRAM
+  grants. The transitional single-budget wire cannot prove both, so current compilation fails closed
+  with `GpuDualResourceBudgetRequired`; Phase 6 owns NVIDIA enforcement and Phase 8 owns the final
+  generated union
 
-At runtime, each substrate calls the same pure admission function before launching the engine
-subprocess or worker. When the model footprint exceeds the enforced budget, admission returns the
-typed `InferenceError` and the daemon publishes a clean `status=failed` `InferenceResult`, not
-successful inline output. On success admission mints the `MemoryGrant`, which the capped-engine kernel
-(`withCappedEngine`, the inference spawn chokepoint) requires. The target
-[Typed Execution Plan](typed_execution_plan.md) additionally requires a verified,
-resource-indexed enforcer that OS-bounds the exact `MemoryCeiling`; on
-`apple-silicon` a `proc_pid_rusage` physical-footprint watchdog SIGKILLs the child's process group on
-a ceiling breach, so an under-estimated footprint is a typed `status=failed ModelMemoryLimitExceeded`,
-never a host OOM-kill. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error
-naming the model footprint and available memory in MiB.
+Compilation, rather than an independently recomputed request-time check, is the shared pure admission
+boundary. When a footprint exceeds capacity, the compiled unavailable entry supplies the typed
+failure. A fitting placement receives a resource-indexed grant and can launch only after refinement
+pairs it with a verified matching enforcer inside `ExecutableModel`. On
+`apple-silicon` a fixed, bounded `/usr/bin/top` plus `/usr/bin/footprint` observer measures the
+child process group's physical footprint without direct FFI or a caller-supplied command, and the
+watchdog SIGKILLs that group on a measured ceiling breach. That path must become a typed
+`status=failed ModelMemoryLimitExceeded`; Phase 4 still owns adversarial survival proof and the
+encapsulated single-flight authority needed to make aggregate concurrent overcommit
+unrepresentable. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
+the model footprint and available memory in MiB.
 
-The Linux CPU and GPU refinement is reopened. A pod-wide RAM limit is capacity evidence, not proof
-of a smaller per-model ceiling, and CUDA OOM classification is not proof of an installed VRAM
-limit. Engine members do not become ready in the target design until the selected enforcer has been
-verified against the compiled execution plan.
+Linux CPU refinement now probes the process-group RSS sampler and exact larger cgroup envelope;
+Phase 4 owns its adversarial proof and the opaque serialization authority. CUDA OOM classification
+is not proof of an installed VRAM limit, so Linux GPU refinement remains fail-closed until Phase 6.
+Engine members do not become ready until the selected enforcer has been verified against the compiled
+execution plan.
 
 The per-substrate `InferenceMemoryBudget` / `ModelMemoryLimitExceeded` typed ADT — a typed
 evidence value rather than integer sentinels — is the in-repo precedent that the managed
@@ -175,8 +178,8 @@ state-transition doctrine generalizes; its canonical home is
 
 **Memory-safety by construction.** The admission above proves a request *fits* before launch; the
 capped-engine kernel additionally bounds the engine subprocess's *actual* resident memory to that
-decision, closing a gap a full-suite run once exercised as a host OOM-kill. Admission mints a
-`MemoryGrant` that the capped-engine kernel requires and OS-bounds to its `MemoryCeiling`, over a
+decision, closing a gap a full-suite run once exercised as a host OOM-kill. Compilation and live
+refinement create an `ExecutableModel` carrying the matching resource-indexed grant/enforcer pair over a
 checked `HostMemoryPartition` (physical minus the co-tenant pledge minus a headroom that covers the OS
 and the routed end-to-end browser, rejecting oversubscription) with a required `ModelMemoryFootprint`
 and an enforcer-typed budget (`HostEnforcedBudget` / `SubstrateEnforcedBudget`, with no unenforced
@@ -190,11 +193,12 @@ The generated demo catalog is the source of truth for the active runtime mode.
   rows whose selected engine is `Not recommended`
 - each generated entry records the selected engine, request shape, runtime lane, and workload
   metadata
-- `infernix internal materialize-substrate <runtime-mode>` is the explicit staging helper, and
-  `--demo-ui false` emits a demo-off config without hand-editing the file
-- in cluster-resident execution contexts, `ConfigMap/infernix-demo-config` is mounted read-only
-  beside the binary at `/opt/build/infernix-substrate.dhall`; cluster daemons read the cluster-role
-  payload there at startup rather than watching it for reloads
+- `infernix init` creates the operator's repo-root `./infernix.dhall`, and
+  `infernix init --demo-ui false` emits a demo-off config without hand-editing the file
+- in cluster-resident execution contexts, `cluster up` derives
+  `ConfigMap/infernix-demo-config` from that initialized config and mounts the deployment mirror
+  read-only at `/opt/build/infernix-substrate.dhall`; cluster daemons read the cluster-role payload
+  there at startup rather than watching it for reloads
 - `infernix test integration` and `infernix test e2e` enumerate every generated catalog entry for
   the active runtime mode rather than using a smoke subset
 
@@ -230,7 +234,8 @@ target shape is the three-role daemon model codified in
   cluster coordinator publishes Apple-native work to derived pool/model topics consumed by
   eligible on-host engine members.
 - on `apple-silicon`, the clustered `infernix-demo` path runs from the
-  `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file
+  `infernix-linux-cpu:local` image family while reading the cluster-role deployment mirror derived
+  from the initialized `apple-silicon` runtime config
 - the direct `infernix service` command remains the Apple host engine-role entrypoint and
   consumes the generated engine-role metadata, pool/member assignments, result topic, and engine
   bindings from the active `.dhall`. Generated engine-role metadata is derived from the validated
@@ -251,10 +256,14 @@ target shape is the three-role daemon model codified in
   node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
   topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
 - direct host runs and cluster-resident placements both launch the same process-isolated
-  engine-worker contract and honor the same adapter-specific command overrides; runtime admission
-  applies the active `InferenceMemoryBudget` before launch, mints the `MemoryGrant` the capped-engine
-  kernel (`withCappedEngine`) requires, and returns typed `ModelMemoryLimitExceeded` when the model
-  does not fit
+  engine-worker contract; commands derive only from the engine binding carried by
+  `ExecutableModel`, with no adapter-command override. Compiled unavailable models must return typed
+  `ModelMemoryLimitExceeded`; the normal coordinator path now does so without engine launch and
+  passed the complete source-matched Phase 1 gate on 2026-07-25. Fitting models launch only through
+  the refined executable capability
+- empty-model, unknown-model, wrong-route, and malformed coordinator/engine inputs also terminate
+  as failed results before their file source is removed or Pulsar message acknowledged; no fallback
+  engine route exists
 - switching runtime modes changes generated catalog content and engine bindings, not the service
   placement contract
 

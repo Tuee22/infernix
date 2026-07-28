@@ -8,10 +8,11 @@
 > bounded to the admitted ceiling — so that an over-budget model is a clean per-request `status=failed`
 > and a host out-of-memory kill is structurally unrepresentable.
 
-> **Reopened target contract.** The invariant below is the required end state, not the current
-> implementation claim. Linux currently relies on a pod-wide limit that is not equal to each model
-> grant, GPU VRAM lacks a verified per-process enforcer, and engine-adjacent modules retain
-> raw-spawn lint exemptions. The ordered correction is governed by
+> **Reopened target contract.** The invariant below is the required end state. The current worktree
+> has resource-indexed compilation/refinement plus Apple and Linux CPU watchdog implementations, but
+> their adversarial proof and an encapsulated serialized-execution authority remain Phase 4 work.
+> GPU VRAM lacks a verified per-process enforcer, and engine-adjacent modules retain raw-spawn lint
+> exemptions for Phase 6. The ordered correction is governed by
 > [Typed Execution Plan](typed_execution_plan.md).
 
 ## TL;DR
@@ -22,10 +23,9 @@
   leaves the cluster orphaned).
 - The invariant, the memory analog of the bounded-command kernel
   ([managed_state_transitions.md](managed_state_transitions.md): `runBoundedCommand` under a required
-  `Timeout`): admission mints a `MemoryGrant`, and the engine spawn **requires** it and enforces its
-  ceiling. Admission is the only producer of the grant; the capped-engine kernel is the only consumer.
-  Running an engine without an admission proof does not typecheck, and its actual resident memory is
-  OS-bounded to the admitted ceiling.
+  `Timeout`): compilation mints a resource-indexed `MemoryGrant`, live refinement pairs it with the
+  matching `Enforcer`, and engine launch **requires** the resulting opaque `ExecutableModel`.
+  Running an engine from raw configuration or a bare grant does not typecheck.
 - A breach of the ceiling at runtime is a **clean, typed, terminal per-request failure**
   (`status=failed` with `InferenceError.ModelMemoryLimitExceeded`) — the same fail-clean shape the
   [realness contract](realness_contract.md) gives for engine-logic failures — never a host kill and
@@ -36,40 +36,55 @@
 
 ## The invariant
 
-For every admitted inference there is a `MemoryGrant`; for every `MemoryGrant` there is an enforced
+For every compiled placement there is a resource-indexed `MemoryGrant`; every executable placement
+pairs that grant with a live `Enforcer` for the same resource and therefore has an enforced
 `MemoryCeiling`.
 
-- **Admission mints positive evidence.** `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor
-  -> Either InferenceError MemoryGrant` is the single honest mint. `MemoryGrant` is an **opaque newtype
-  with a hidden constructor** (the [monotone evidence](managed_state_transitions.md) shape — minted and
-  consumed once, synchronously, inside the serialized engine-execution region), carrying a
-  `MemoryCeiling` equal to the model's declared footprint. "Admitted" is no longer a proof-free `Nothing`
-  but a value that could only exist if the footprint fit the budget.
-- **Execution requires the grant and enforces the ceiling.** The capped-engine kernel exports the
-  **sole** engine spawn, `withCappedEngine :: MemoryGrant -> (forall s. EngineHandle s -> IO r) -> IO r`
-  — a rank-2 bracketed region whose `forall s.` handle cannot escape the scope in which the ceiling is
-  actively enforced, and whose `bracket` guarantees the enforcement is torn down on every exit path
-  including exception. The raw process-spawn primitives (`readCreateProcessWithExitCode` / `createProcess`
-  / `waitForProcess`) are **not exported** from that module; the terminal outcome is a total
-  `EngineOutcome` whose `EngineExceededCeiling` arm maps to `status=failed`
-  `InferenceError.ModelMemoryLimitExceeded`. An engine spawn without a grant, or one whose resident
-  memory is not bounded to its grant, is not a constructible term.
+- **Compilation mints positive evidence.** `compileRuntimePlan` validates the model footprint against
+  its declared capacity and constructs `MemoryGrant resource` only inside a `CompiledPlacement`.
+  `MemoryGrant` and `MemoryCeiling` have hidden constructors and nominal resource roles. An
+  over-capacity configured model is retained as `UnavailableModel` with its typed
+  `ModelMemoryLimitExceeded`; it is not silently filtered out.
+- **Refinement installs the matching enforcer.** Package-owned live observations refine
+  `CompiledRuntimePlan` into `RuntimePlan`. `EnforcedGrant resource` can pair only
+  `Enforcer resource` with `MemoryGrant resource`, and only this refined value can inhabit an
+  `ExecutableModel`.
+- **Execution requires the executable capability.** The public daemon/worker launch surface accepts
+  `ExecutableModel`, never a bare grant, enforcer, model descriptor, command override, or raw process
+  specification. The package-internal capped-engine kernel owns the only inference spawn and a
+  rank-2 bracketed handle that cannot escape its actively enforced region. Its total
+  `EngineOutcome` distinguishes a measured `EngineExceededCeiling` from
+  `EngineEnforcementUnavailable`; only the measured breach maps to typed
+  `ModelMemoryLimitExceeded`.
+- **Serialization is a remaining capability obligation.** The supported daemon currently serializes
+  execution with a process-local `MVar`, but the lock is supplied outside the opaque launch
+  capability and `ExecutableModel` is reusable. Phase 4 must encapsulate one execution authority so
+  callers cannot create independent locks or concurrently reuse one admitted placement. Until then,
+  resource/enforcer coherence is construction-safe but aggregate one-model-at-a-time capacity is an
+  operational invariant, not a type-level one.
 - **The ceiling is OS-enforced behind one typed interface.** On `apple-silicon` (host-native, no
-  cgroups) a watchdog samples the child's physical footprint (`proc_pid_rusage`) and `SIGKILL`s its
-  process group when it exceeds the ceiling — an address-space rlimit is *not* used, because Metal and
-  Python reserve large virtual ranges unrelated to resident memory. On `linux-cpu` / `linux-gpu` the pod
-  cgroup memory limit and the CUDA allocator already bound the process inside its own container, so host
-  death is already impossible; the kernel maps the breach to the same `EngineExceededCeiling` outcome by
-  classifying the OOM exit. Every substrate returns the one total outcome; only the host-native lane
-  carries the host-death risk the watchdog closes.
+  cgroups) a package-internal observer discovers exact process-group membership with fixed
+  `/usr/bin/top` output and measures each member's physical bytes with fixed
+  `/usr/bin/footprint`, all under one total deadline and bounded captures; the watchdog `SIGKILL`s
+  the process group when the measured total exceeds the ceiling. Callers cannot supply a command
+  specification, and no direct FFI is used. An address-space rlimit is *not* used, because Metal
+  and Python reserve large virtual ranges unrelated to resident memory. On `linux-cpu`, a verified
+  `/proc` sampler conservatively sums RSS for every process in the fresh child process group and
+  kills only that group on breach; the pod cgroup remains a larger outer envelope for the daemon,
+  admitted child ceiling, and sampling overshoot. A bare exit `137` / `SIGKILL` is not classified as
+  a memory breach without watchdog evidence. On `linux-gpu`, the same resident-RAM proof is paired
+  with independent NVIDIA process-group VRAM accounting. Every substrate returns one total outcome,
+  and the daemon remains outside the child execution group.
 
 The budget these grants draw from is itself a checked partition, and the model's footprint is required,
 so the related unmanaged states are also unbuildable:
 
 - **The budget names its enforcer.** `InferenceMemoryBudget` is `HostEnforcedBudget HostMemoryPartition
-  | SubstrateEnforcedBudget PodMemoryLimit` — there is no "enforced by nobody" arm. `apple-silicon` is
-  host-enforced by the grant plus the watchdog; `linux-cpu` / `linux-gpu` are substrate-enforced by the
-  pod cgroup / VRAM limit the descriptive `PodMemoryLimit` records.
+  | SubstrateEnforcedBudget PodMemoryLimit` during the current wire migration — there is no
+  "enforced by nobody" arm. `apple-silicon` is host-enforced by the grant plus the watchdog;
+  `linux-cpu` is enforced by its process-group RSS watchdog under a verified outer pod envelope;
+  `linux-gpu` additionally requires independent VRAM evidence. Phase 8 replaces the transitional
+  substrate record with the final proper enforcer union.
 - **Physical RAM is a checked partition.** `HostMemoryPartition` is minted by a smart constructor that
   splits physical RAM into `vmReserve + hostHeadroom + inferenceCapacity`, **rejects oversubscription**,
   and forces `hostHeadroom` to be large enough to cover the OS, the control-plane binary, the routed
@@ -89,60 +104,67 @@ type makes the capacity tradeoff explicit (running an oversized model requires e
 
 | Surface | Mechanism | Forbids |
 |---|---|---|
-| Types | GHC module export lists (opaque `MemoryGrant`, hidden constructor) under `-Wall -Werror` | spawning an engine without a `MemoryGrant`; constructing a grant outside `admitModelMemory`; a bare-`Int`/absent-zero footprint (required `ModelMemoryFootprint`); a budget with no enforcer (no unenforced arm) |
-| Region | rank-2 `withCappedEngine :: MemoryGrant -> (forall s. EngineHandle s -> IO r) -> IO r` with `bracket` teardown | an engine handle that escapes its capped region; a subprocess that runs or persists without its ceiling and watchdog |
-| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); pod-cgroup / VRAM OOM exit classification (`linux-cpu` / `linux-gpu`) | actual resident memory exceeding the admitted ceiling without a clean, typed, terminal per-request failure — i.e. a host OOM |
+| Types | GHC module export lists (opaque `CompiledRuntimePlan`, `RuntimePlan`, `ExecutableModel`, and resource-indexed grant/enforcer types) under `-Wall -Werror` | constructing or relabeling a grant; refining from caller-fabricated observations; launching from a raw model/config record; a bare-`Int`/absent-zero footprint; a budget with no named enforcer |
+| Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
+| Serialization (Phase 4 target) | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
+| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group accounting (`linux-gpu`, Phase 6 target) | actual resident memory exceeding the admitted ceiling without a clean, typed, terminal per-request failure — i.e. a host OOM |
 | Partition | `HostMemoryPartition` smart constructor | `vmReserve + hostHeadroom + inferenceCapacity` oversubscribing physical RAM; a headroom too small to cover the OS and the routed end-to-end browser |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitive that has no type-level chokepoint |
 
-Two residual review-obligations remain and are minimized to a small audit surface: **admission honesty**
-(`admitModelMemory` is the one mint of `MemoryGrant`, co-located with its hidden constructor, and must
-compare the real footprint against the partition's `inferenceCapacity`), and **retry containment** (an
-`EngineExceededCeiling` breach maps directly to the typed terminal failure, never to a string-classified
-retryable outcome, so an over-budget kill is never bootstrap-retried into a second host-death attempt).
+The residual review obligations are deliberately explicit: **compiler honesty**
+(`compileRuntimePlan` is the only grant mint and compares the required footprint with the declared
+capacity), **refinement honesty** (only live package-owned observations mint enforcers),
+**serialization containment** (Phase 4 moves the single-flight authority inside the opaque execution
+API), and **retry containment** (an `EngineExceededCeiling` maps directly to a typed terminal failure,
+never a string-classified retryable outcome).
 
 ## Current Status
 
-The earlier grant and capped-engine work is implemented, but the full invariant is **reopened and
-not yet satisfied**. `admitModelMemory :: InferenceMemoryBudget ->
-ModelDescriptor -> Either InferenceError MemoryGrant` (`src/Infernix/Types.hs`) is the sole mint of the
-opaque `MemoryGrant` (hidden constructor), carrying a `MemoryCeiling` equal to the model footprint. The
-capped-engine kernel `Infernix.Runtime.CappedEngine` exports the sole engine spawn `withCappedEngine`
-(rank-2, `bracket`-torn-down) and does **not** re-export `createProcess` / `waitForProcess`; on
-`apple-silicon` a `proc_pid_rusage` physical-footprint watchdog SIGKILLs the child's process group on
-breach, and on `linux-*` the kernel classifies the pod-cgroup OOM exit. Both surface the total
-`EngineOutcome`, whose `EngineExceededCeiling` arm the runtime rebuilds into a `status=failed`
-`ModelMemoryLimitExceeded`. `InferenceMemoryBudget` is now `HostEnforcedBudget HostMemoryPartition |
-SubstrateEnforcedBudget PodMemoryLimit` (no unenforced arm); `HostMemoryPartition` is minted only by the
-smart constructor that rejects oversubscription and a headroom below the `minHostHeadroomMib` floor
-(covering the OS, control-plane binary, and routed end-to-end browser); and `ModelDescriptor` carries a
-required `ModelMemoryFootprint` newtype (non-positive rejected). The `unboundedEngineSpawnViolations`
-capability-gating lint (`src/Infernix/Lint/HaskellStyle.hs`) keeps a new engine spawn off the raw
-primitives. A host OOM is therefore no longer representable: over-budget models fail-close cleanly at
-admission, and an admitted model whose actual footprint breaches its ceiling is killed by the watchdog
-and reported as a typed terminal failure.
+The full invariant is **reopened and not yet satisfied**, but the Phase 1 capability correction is
+present in the current worktree. Grants, ceilings, enforcers, and enforced grants retain a nominal
+resource index; only live refinement mints `RuntimePlan` / `ExecutableModel`; raw configuration,
+plain-grant launch, arbitrary command overrides, exit-137 breach fabrication, and unavailable-sampler
+fallback-to-zero are removed from the engine execution path. Raw configuration and topic derivation
+helpers live in hidden package modules. The late Phase 1 messaging closure is also present:
+unavailable/empty/unknown/wrong-route/malformed inputs receive terminal failed results before
+source removal or acknowledgement; the raw publisher is removed; bootstrap publication requires a
+plan-derived capability whose consumer revalidates model/URL/timestamp; cross-family topic
+collisions fail compilation; and substrate Dhall emission uses explicit UTF-8.
+
+Phase 1 Sprint 1.19 is `Done` for this narrower capability scope: its source-matched
+machine-independent gate and final adversarial source review passed on 2026-07-25, including 4
+positive and 27 negative compile fixtures and the focused terminal-result coverage. Phase 1 as a
+whole remains Active for Sprint 1.20's bounded artifact provisioning/runtime correction; that
+later source and evidence do not reuse Sprint 1.19's gate. Phase 4 owns the Apple/Linux CPU
+adversarial breach-and-survival proof,
+verification of the outer pod envelope under live workloads, and moving the process-local
+serialization authority inside the opaque execution API. Phase 6 owns NVIDIA per-process VRAM
+enforcement and removal of broad raw-spawn exemptions. Phase 8 owns the
+final proper-union generated-Dhall wire.
+Until the later behavioral/enforcement work passes, a host OOM remains representable despite the
+landed resource/enforcer type coherence.
 
 The superseded surfaces — `admitModelMemory :: … -> Maybe`, the unenforced budget arm, the bare-`Int`
 footprint, the raw unbounded engine spawns, and the fixed `appleHostReserveMib = 3072` host reserve —
 are recorded in
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-The remaining gate is the behavioral proof (no host OOM; the over-capacity rows cleanly typed-rejected)
-on the `apple-silicon` plus `linux-cpu` cohort wave
-[Wave W](../../DEVELOPMENT_PLAN/cohort-validation-waves.md); with the honest `minHostHeadroomMib`
-partition on a 64 GiB / 48 GiB-colima-pledge host the resolved inference capacity is 10240 MiB, so the
-heavy diffusion rows (`image-*`, `video-*`) now fail-close cleanly at admission on `apple-silicon`
-rather than racing the watchdog.
+Wave W is historical evidence for the narrower pre-audit implementation; it is not closure evidence
+for the indexed/refined capability boundary or the remaining Phase 4 serialization and adversarial
+proof. With the checked `minHostHeadroomMib` partition on a 64 GiB / 48 GiB-Colima-pledge host, the
+resolved inference capacity is 10240 MiB, so the heavy diffusion rows remain explicit unavailable
+models rather than invalidating the whole catalog.
 
 ## Validation
 
-- `cabal build all` under `-Wall -Werror` is the primary proof: an engine spawn reachable without a
-  `MemoryGrant`, a grant constructed outside admission, or a raw spawn outside the capped-engine kernel
-  is a build error.
+- `cabal build all` under `-Wall -Werror` plus the negative-compilation suite proves external callers
+  cannot construct or relabel grants/enforcers, refine a plan from raw observations, import hidden
+  decoder/routing modules, or launch an engine from a raw model/config record.
 - `cabal test infernix-haskell-style` (`infernix test lint`) runs the `unboundedEngineSpawnViolations`
   capability-gating lint and keeps the style gate clean; `cabal test infernix-unit` covers the
-  `HostMemoryPartition` oversubscription rejection, the `ModelMemoryFootprint` non-positive rejection,
-  and the `admitModelMemory` grant-versus-rejection cases.
-- The cohort full-suite (`infernix test all` on `apple-silicon` and `linux-cpu`) is the behavioral
+  `HostMemoryPartition` oversubscription rejection, `ModelMemoryFootprint` non-positive rejection,
+  exhaustive compiler placement-or-unavailable accounting, and live-refinement failures.
+- The Phase 4 cohort full-suite (`infernix test all` on the selected `apple-silicon` accelerator plus
+  `linux-cpu`) is the CPU/Apple behavioral
   proof: the full per-model real-inference lane completes with zero host OOM, and an over-capacity model
   produces a typed `status=failed` `ModelMemoryLimitExceeded` rather than a `SIGKILL`.
 - `infernix lint docs` keeps this document registered and its cross-references resolving; the reopened

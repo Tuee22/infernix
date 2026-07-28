@@ -16,8 +16,8 @@
   manifests, run `kind`, `kubectl`, or `helm`, pull containers, or publish images
 - on Linux substrates, the supported bootstrap invokes
   `docker compose run --rm infernix infernix <command>` and relies on that Compose-launched
-  binary path to build or reuse the active launcher image, stage or validate substrate state, and
-  own the requested lifecycle command
+  binary path to build or reuse the active launcher image, validate the initialized repo-root
+  `./infernix.dhall`, and own the requested lifecycle command
 - on every supported substrate, Kind or `nvkind` create or delete uses a transient
   execution-local scratch kubeconfig under the system temp directory; after cluster creation the
   lifecycle publishes the supported repo-local kubeconfig (`./.build/infernix.kubeconfig` on
@@ -38,14 +38,13 @@
 - if Harbor PostgreSQL startup pods remain `Running` but fail Patroni readiness beyond the grace
   window, `cluster up` may recycle those startup pods with a non-waiting Kubernetes delete; treat
   the log as retained-state readiness repair while the lifecycle heartbeat continues
-- Harbor and Keycloak Patroni PostgreSQL claim roots are non-retained: the lifecycle scrubs those
-  directories before recreating claim directories and after retained-state sync, including Linux
-  outer-container runs where Kind bind-mounts `./.data/runtime/kind/<mode>` into the worker node
+- Harbor and Keycloak Patroni PostgreSQL claim roots are rebuildable: only after Kind deletion, and
+  only from the detached local retained copy under a freshly proved `WriterQuiesced` lease, may the
+  lifecycle scrub those roots before a later bring-up recreates them
 - Harbor's MinIO-backed `harbor-registry` bucket is also non-retained publication cache, not
-  product data. The lifecycle may remove that bucket, its MinIO bucket metadata, and stale
-  multipart/tmp upload working sets before startup or during `cluster down`; the durable
-  `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects` buckets stay
-  retained.
+  product data. The same post-delete `WriterQuiesced` scrub of the detached local copy may remove
+  that bucket, its MinIO bucket metadata, and stale multipart/tmp upload working sets; the durable
+  `infernix-models`, `infernix-engine-artifacts`, and `infernix-demo-objects` buckets stay retained.
 - on the Apple host-native path, the command may reconcile Homebrew-managed `kind`, `kubectl`,
   and `helm` before it attempts the real Kind workflow, and verifies the selected ghcup-managed
   `ghc` and `cabal` executables plus Homebrew `protoc` before direct host build handoff. Docker
@@ -66,8 +65,8 @@
   or `test all`; low disk headroom can make Kind-hosted BookKeeper ledger directories
   non-writable during the Harbor-backed rollout and prevent `infernix-coordinator` and
   `infernix-engine` readiness
-- confirm that the chosen edge port, active runtime mode, generated demo-config paths, and
-  build-root publication details are printed
+- confirm that the chosen edge port, active runtime mode, repo-root runtime config, and publication
+  details are printed
 - when `cluster up` appears quiet, run `infernix cluster status` before abandoning it
 - the supported progress surface reports `lifecycleStatus`, the active `lifecyclePhase`, the
   current `lifecycleDetail`, and heartbeat timestamps while `cluster up` or `cluster down` is
@@ -140,12 +139,10 @@
   clusters
 - confirm `infernix kubectl get buckets` (or equivalent MinIO admin check) shows
   `infernix-models` and `infernix-engine-artifacts` always-on; when `demo_ui = true`, also shows
-  `infernix-demo-objects`.
-  Lazy first-use bootstrap means `infernix-models` may be empty immediately after `cluster
-  up`; the first inference request for a given model triggers the coordinator's bootstrap
-  workflow and the model's files plus `.ready` sentinel appear under `infernix-models/<modelId>/`
-  shortly afterward (latency bounded by upstream download speed and the engine's 900-second
-  bootstrap-ready wait)
+  `infernix-demo-objects`. The coordinator eagerly stages every model listed in the mounted
+  `infernix.dhall`, and the `warm-model-cache` cluster-up barrier requires the corresponding
+  `infernix-models/<modelId>/.ready` sentinels before bring-up completes. The per-inference
+  bootstrap request path remains only a fallback for unexpected cache loss.
 - on `apple-silicon`, confirm `infernix-coordinator` is present in Kind, the on-host engine
   daemon is running, and `/api/publication` reports `daemonLocation: cluster-pod`,
   `inferenceExecutorLocation: control-plane-host`, and the Apple batch topic
@@ -215,6 +212,31 @@ constraints, or normal Kubernetes convergence.
 | Python `pip` warning about running as root during Linux substrate image build | Substrate image-layout regression | The Linux substrate image installs Poetry into `/opt/poetry`, a dedicated virtual environment, instead of using system pip as root. If a root-pip warning returns, treat it as image-layout drift; do not treat it as permission to run host adapter setup as root. |
 | `update-alternatives` warnings about missing manpage symlinks during apt installs | Debian package metadata noise | Accept only when the package install and image build exit zero. These warnings are not eliminated by application code because they come from upstream package metadata in the base image. |
 
+## Retained Snapshot Transactions
+
+Apple and any other non-bind Kind lane keep a detached retained snapshot under
+`./.data/kind/<runtime-mode>`. Teardown pauses every workload-capable worker, rechecks the
+PVC-to-node binding map, copies every retained claim into a fresh `.incoming` tree, marks the
+staging tree complete, and atomically commits it while preserving the prior tree as `.previous`.
+Kind deletion occurs while the frozen-source lease is still held. After deletion,
+`WriterQuiesced` permits only the explicit rebuildable scrub set in that detached local copy:
+Harbor/Keycloak Patroni roots, Harbor Redis, and the MinIO `harbor-registry` bucket internals.
+Retained MinIO model/demo-object data and Pulsar data remain durable.
+
+On the next absent-cluster bring-up, the lifecycle lock and a freshly rechecked
+`WriterQuiesced` lease reconcile `.incoming` / `.previous` residue before claim preparation. A
+complete initial `.incoming` may be promoted; a partial unmarked tree is discarded; `.previous`
+restores the last committed snapshot when the current root is absent.
+
+Before first Kind creation the state machine persists the exact
+`replay-retained-state-into-kind` intent and keeps it through worker copy and claim preparation.
+A killed bring-up with a live pre-workload Kind cluster resumes only from that exact owner/runtime
+intent. A live non-bind cluster with missing, legacy, or mismatched replay evidence fails closed.
+An unreadable Kind kubeconfig permits delete/recreate without copy-back only when the private
+recovery proof revalidates that exact pending pre-workload intent under the lifecycle lock;
+ordinary live clusters are left untouched. Do not manually promote, delete, or combine snapshot
+transaction roots while either lifecycle command is active.
+
 ## Teardown
 
 - run `infernix cluster down`
@@ -223,6 +245,11 @@ constraints, or normal Kubernetes convergence.
   container build, the Apple host binary, and installed Docker or CUDA prerequisites
 - the same scratch-kubeconfig policy applies during teardown: Kind delete does not depend on the
   durable repo-local kubeconfig path or its transient lock artifacts
+- Kind delete uses the generated ten-minute total policy (three attempts, two-second backoff,
+  idempotent-absence classification) with no caller retry loop. The binary revalidates the global
+  inventory and owner/runtime authority immediately before normal or recovery deletion; unreadable
+  pre-workload recovery also rechecks the exact retained-replay intent. A terminal non-zero is
+  treated as success only when the bounded readiness probe observes that the cluster is absent
 - on Apple, expect teardown to copy retained Kind claim data back out of the worker before the
   cluster disappears when durable state exists
 - when teardown looks quiet, use `infernix cluster status` to confirm whether the active phase is
@@ -231,7 +258,8 @@ constraints, or normal Kubernetes convergence.
   reports the `mutation-incomplete` (dirty) phase and the persisted `clusterOwner`, and the next
   `cluster up` reconciles the leftover state — see
   [Managed State Transitions](../architecture/managed_state_transitions.md)
-- expect durable state under `./.data/` to remain intact
+- expect retained durable state under `./.data/` to remain intact; the named rebuildable
+  Harbor/Patroni subset above may be removed after writer quiescence and recreated on bring-up
 
 ## Durable-Context Demo Bring-Up
 

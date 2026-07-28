@@ -1,6 +1,65 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Done — Sprint 1.19 closed the typed execution-plan compiler and capability core on 2026-07-25; Sprints 1.1–1.18 retain their recorded closure
+**Status**: Active — five Sprint 1.20 adversarial reviews have rejected their reviewed source. The
+first found three High, six Medium, and two Low issues. After the initial authority and runtime
+artifact corrections, the second review still found two High, two Medium, and one Low issue:
+artifact evidence could escape its shared-lock region, writer locking was conventional rather than
+authority-coupled, a stale self-consistent recipe remained admissible, and pathname traversal could
+hash a mixed tree. A third focused runtime review found one additional High and two Medium issues:
+the package-level capped-engine facade still admitted arbitrary executable/argv/cwd/environment
+construction, the draft artifact runtime token remained reusable, and actual
+lock-through-reap/cancellation enforcement evidence was absent. A fourth materializer review found
+two High and two Medium issues: resolved tool identity was discarded before pathname execution,
+Audiveris mount evidence was neither consumed nor recoverable after owner death, Mach-O provenance
+could describe bytes other than the copied destination, and malformed `dyld[...]` output could be
+accepted as version evidence. Those findings and the missing full-materializer cleanup proof are
+under active correction. The malformed-dyld parser correction passes its focused Python contract,
+but the attempted selector-based nested-runner supervisor is rejected: a blocking post-`SIGKILL`
+wait cannot provide both a hard total deadline and exact designated-owner reap. The Python runner
+now retains only in-process package APIs and rejects native CLI and JVM routes for direct
+Haskell-owned helper supervision; its AST ownership contract and the complete Python `check-code`
+gate passed on 2026-07-27. This is focused code-side evidence only: direct Haskell target dispatch
+and helper-owned cleanup remain open, and the superseded selector result is not evidence. A fifth
+review rejected the escaping writer/lock
+boundary, arbitrary activation callback, pathname-recursive closure identity/scan paths, and
+remaining unbounded snapshot, package-discovery, and nested-capture paths. The focused artifact and
+compile-fail inventories are still growing with those corrections; no intermediate count is
+accepted Phase 1 evidence. A subsequent direct-target audit found one further High issue: the
+initial Linux image evidence hashed selected `/opt` payload roots but omitted the system loader,
+loader-resolution metadata, and recursively loaded system libraries. The corrected topology must
+bind and helper-revalidate the complete fixed ELF/Python/JVM loader closure; immutable-image path
+text is not evidence. The Linux generation identity must also bind that complete image-owned target
+evidence: a digest of only the metadata root cannot distinguish two image byte sets and therefore
+cannot key the generation lease. The same live audit found another High issue in the root-bound
+writer draft:
+it retained and revalidated the authorized root but converted the authority back to a pathname
+before `writeFile`, directory creation, rename, retirement, and the venv/pip/Poetry/protoc/curl/
+hdiutil/ditto external mutations. An adversary can swap an intermediate parent after validation and
+redirect the effect before the final root recheck. The correction must retain the exact
+destination-parent descriptor through each direct effect, use only a validated single leaf at that
+boundary, and run external mutators from an exact descriptor-derived working directory with safe
+relative operands. Deterministic tests must reject a parent swap at both direct and external-tool
+effect boundaries. Darwin does not support traversing `/dev/fd/<directory-fd>/...`, so that pathname
+spelling is not portable descriptor-relative evidence. The Audiveris download cache is outside the
+engine root and therefore requires its own exact-root lock/writer authority; widening EngineWriter
+to all of `dataRoot` is not accepted. The installed-target audit also found that the copied
+Python venv's `pyvenv.cfg` still names the source Homebrew home and executable. The venv target itself
+is created with `--copies`, but Python hydration must rewrite the structured configuration to the
+final artifact-local Python home, reject every residual source path, and prove execution after the
+source runtime is unavailable. Independently, installed targets whose canonical executable escapes
+the sealed artifact root must be rejected. Fresh final review, exact-source Stage 1, Apple
+rematerialization/runtime smokes, the Apple cohort, and the paired `linux-cpu` cohort remain.
+A later convergence audit found two additional High-severity construction defects in the
+work-in-progress source. The completion and transaction boundaries still admitted caller-supplied
+effectful callbacks while live writer/session authority was in scope, and the generation read lease
+could be acquired before the helper identities needed to recover a stopped anchor were durably
+published. The Apple-owned callbacks have been replaced by private first-order fixture actions; the
+remaining provisioning callback and helper ordering are under correction. The accepted order is:
+hash the retained candidate, acquire generation-exclusive authority and mint its exact sidecar,
+durably publish the already-born anchor/supervisor/pin identities, spend the one-shot start
+authority, acquire generation-shared authority in the supervisor, validate the exact generation,
+run and reap the target group, rehash, reacquire generation-exclusive authority, and only then
+publish the artifact. No review, Stage 1, or cohort evidence is accepted for this draft.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md)
 
 > **Purpose**: Establish the canonical repository scaffold, the one-binary role topology
@@ -9,6 +68,20 @@
 > generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
+
+> **No-repo-owned-native-source reopen (2026-07-26).** The correction audit found that
+> `src/Infernix/Engines/AppleSilicon.hs` embeds complete Objective-C/C/Metal implementation source
+> as Haskell string literals, writes `.h`, `.m`, and `.c` payloads, and compiles them with Clang.
+> That is repository-owned, version-controlled native implementation despite its `.hs` container
+> and violates the explicit ban on inline or cosmetically relocated native source. Sprint 1.20 has
+> deleted that topology and now uses upstream MLX GPU execution plus coremltools device observation,
+> with every closed provisioning and installed-smoke operation supervised through the all-Haskell
+> bounded self-exec kernel. The candidate is fully hydrated, relocated, authoritatively smoked,
+> assigned exact provenance and an actual payload-tree digest, and activated through the fsynced
+> sibling transaction. Phase 0 closed on 2026-07-27, so Sprint 1.20 is Active; final review, fresh
+> Stage 1, and Apple rematerialization/runtime/cohort evidence must pass before Phase 2 starts. The old
+> Sprint 1.14 bridge/source-smoke evidence and every later Apple claim that depends on that bridge
+> are historical GREEN-as-run only and nonreusable for this correction.
 
 > **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
 > single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
@@ -39,8 +112,10 @@
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md); the full attempt chronology
 > lives in [cohort-validation-waves.md](cohort-validation-waves.md).
 
-Phase 1 defines and closes Sprints 1.1 through 1.15 (all Done) around the current repository scaffold, the one-binary role topology,
-the staged substrate-file contract, the baked Linux launcher image, the governed
+Phase 1 Sprints 1.1 through 1.19 retain their recorded narrower closure. Sprint 1.20 is Active.
+The closed foundation work establishes the current
+repository scaffold, the one-binary role topology,
+the typed runtime-config contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary
 implemented in this worktree. Sprint 1.12 removes the Colima-oriented Apple prerequisite path and
 validates the already selected Docker context plus daemon architecture before Docker-backed Apple
@@ -62,21 +137,20 @@ the Helm dependency archive cache at `/opt/infernix/chart/charts/` with
 validation closed in Wave A, and the CUDA Linux cohort closed in Wave C with full `linux-cpu` and
 `linux-gpu` gates.
 
-Sprint 1.14 closes the Apple build lane reset. It removes the Sprint 1.13 Tart
+Sprint 1.14 historically closed the Apple build lane reset. It removed the Sprint 1.13 Tart
 implementation (`hostTart`, `AppleTart`, and Tart argument builders) from the current host-tool
 schema and retargets the retained `infernix internal materialize-metal-engines` command to typed
-engine-artifact manifest materialization. The supported Apple Metal/Core ML materialization target
-uses a fixed host Metal runtime bridge, typed engine-artifact manifests, and no Tart VM, user
-keychain dependency, Xcode UI flow, or request-time toolchain install. The code-side cleanup is
-closed for the machine-independent bridge source, manifest, and install-root contract. The
+engine-artifact manifest materialization. Its then-supported Apple Metal/Core ML target used a
+fixed repository-owned runtime bridge beside typed engine-artifact manifests. The
 2026-06-16 Apple host refresh built `./.build/infernix`, staged `apple-silicon`, materialized the
 typed Metal/Core ML engine manifests, proved the generated Metal bridge smoke
 (`Metal runtime probe passed on Apple M1 Max`), proved the installed `coreml-native` runtime-load
 smoke (`Core ML runtime probe passed`), and reran the local unit, lint, docs, focused
 `lint files/docs/proto/chart`, routed e2e, and aggregate `test all` gates against the former
-validation-wrapper state. Sprint 1.15 replaces those wrapper payloads with real Apple native runner
-roots and is closed by Wave L; Sprint 1.14 remains `Done` as the Tart-free
-manifest-materialization reset.
+validation-wrapper state. Sprint 1.15 replaced those wrapper payloads with real Apple native runner
+roots and was closed by Wave L. Sprint 1.14 remains historically `Done` only for its Tart-removal
+and manifest/install-root scope; every bridge/source/Clang-dependent claim is superseded by Sprint
+1.20 and is not reusable evidence.
 
 ## Current Repo Assessment
 
@@ -84,8 +158,9 @@ The repo matches the supported Phase 1 ownership contract: the control plane has
 Haskell command registry, the governed root docs point at canonical
 `documents/` topics with explicit metadata, and the Linux launcher uses a baked image snapshot.
 Lifecycle and validation commands
-stage or verify `infernix.dhall` under the active build root through binary-owned
-preflight, while explicit helper invocations remain available for direct inspection or restaging.
+validate the initialized repo-root `./infernix.dhall` through binary-owned preflight and fail fast
+naming `infernix init` when it is absent, while explicit internal helper invocations remain
+available for direct inspection.
 The Linux substrate Dockerfile also materializes a build-arg-selected copy inside the image
 overlay during image build, supported Compose runs keep the Linux build root in the image
 overlay rather than bind-mounting the host `./.build/` tree, and the Helm chart archive cache
@@ -97,7 +172,7 @@ The Wave A Apple Silicon validation closed the full positive lifecycle and negat
 no-daemon boundary gates named below. The Sprint 1.13 Tart helper, `hostTart` field, and
 `AppleTart` prerequisite are no longer part of the current host-tool schema or prerequisite path.
 The supported Apple build contract keeps the host free of Xcode and moves Metal/Core ML
-materialization to the Sprint 1.14 headless host bridge and typed engine-artifact manifest model.
+materialization to typed engine-artifact manifests plus public upstream MLX/Core ML package APIs.
 
 ## Substrate Foundation
 
@@ -689,8 +764,8 @@ None. The Tart-specific implementation is removed by Sprint 1.14 and recorded in
 ## Sprint 1.14: Apple Headless Metal/Core ML Materialization Reset [Done]
 
 **Status**: Done
-**Code-side closure**: Complete for the machine-independent scope — the `hostTart` host-manifest field, `HostTool.HostTart`, `AppleTart` prerequisite, and Tart argument builders are removed; the retained `infernix internal materialize-metal-engines` command writes typed engine-artifact manifests under `./.data/engines/<adapterId>/` through temp-root write, smoke-manifest validation, Darwin payload-smoke validation for materialized Apple payloads, and atomic rename; the `apple-metal-runtime-bridge` artifact materializes the fixed Objective-C/C bridge source plus `bin/infernix-apple-metal-bridge-smoke`, which compiles the bridge with `/usr/bin/clang`, links Metal/Foundation at materialization-smoke time, calls `MTLCreateSystemDefaultDevice`, compiles MSL through `newLibraryWithSource`, dispatches a tiny kernel, and returns a typed diagnostic; and `coreml-native` materializes `bin/coreml-runner` plus Objective-C smoke source that links Foundation/CoreML and instantiates `MLModelConfiguration`. Proven by `./bootstrap/linux-cpu.sh build`, rebuilt-image `infernix test unit`, and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `cabal run exe:infernix -- lint docs`, and `cabal run exe:infernix -- docs check` through the Linux outer-container lane; the 2026-06-16 Apple host refresh also proves `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`, `./.build/infernix internal materialize-substrate apple-silicon`, `./.build/infernix internal materialize-metal-engines`, installed Metal and Core ML smoke commands, direct Apple native validation-runner output for `llama-cpp-cli` and `jvm-native`, `./.build/infernix test unit` (Haskell unit plus PureScript 71/71), `./.build/infernix test lint`, `./.build/infernix docs check`, and focused `./.build/infernix lint files/docs/proto/chart`. The former deterministic Apple native runner payloads are superseded by Sprint 1.15.
-**Cohort gate**: Closed under the Section Q single-accelerator rule — the chosen accelerator is `apple-silicon`, and the 2026-06-16 Apple host evidence proves Tart-absent manifest materialization, generated Metal bridge smoke, installed `coreml-native` runtime-load smoke, focused e2e, and aggregate `./.build/infernix test all` for the Sprint 1.14 reset scope. The native `linux-cpu` lane supplies the non-accelerator support evidence for the foundation surface; Sprint 1.14 has no `linux-gpu` Metal/Core ML validation surface. Real Apple native payloads and routed real-output proof are owned by Sprint 1.15 / Wave L.
+**Code-side closure**: Historical closure for Tart removal, typed manifests, atomic install-root handling, and the then-current payload topology. The repository-owned Objective-C/C/Metal bridge and Core ML smoke source described by the original Sprint 1.14 closure were later found to violate the no-native-source boundary and have been deleted by Sprint 1.20, which became Active after Phase 0 closed on 2026-07-27. Their implementation and validation details are superseded, not a current supported architecture. The former deterministic Apple native runner payloads were separately superseded by Sprint 1.15.
+**Cohort gate**: Historical GREEN-as-run for the Tart-removal reset only. The 2026-06-16 generated-bridge and Objective-C Core ML smoke evidence is invalid for Sprint 1.20 and cannot close any correction-dependent Apple claim. Fresh upstream-package Apple evidence belongs to Sprint 1.20.
 **Implementation**: `documents/engineering/apple_silicon_metal_headless_builds.md`, `src/Infernix/Engines/AppleSilicon.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/HostConfig.hs`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/engineering/build_artifacts.md`, `documents/operations/apple_silicon_runbook.md`, `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/portability.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -702,11 +777,12 @@ The replacement path must not require Tart, user keychain state, host Xcode UI f
 
 ### Deliverables
 
-- add a fixed host Metal runtime bridge that can probe `MTLCreateSystemDefaultDevice`, compile MSL
-  through `MTLDevice.makeLibrary(source:options:)`, dispatch a small kernel, and return a typed
-  diagnostic
-- add typed engine-artifact manifests for Apple native payloads under `./.data/engines/<adapterId>/`
-  with digest, source reference, runtime fingerprint, entrypoint, and smoke command fields
+- historically, add the fixed bridge that Sprint 1.20 later deletes as an invalid repo-owned
+  native-source boundary; this deliverable is superseded and is not current architecture
+- historically, add typed engine-artifact manifests for Apple native payloads under
+  `./.data/engines/<adapterId>/` with digest, source reference, runtime fingerprint, entrypoint, and
+  smoke-command fields. Sprint 1.20 removes those command-text fields and replaces them with the
+  closed recipe/target fingerprint plus exact provenance and direct-target observations
 - change Apple materialization so it writes into a temporary root, smoke-validates the manifest
   contract, and atomically renames into the final engine root
 - remove `AppleTart` prerequisite reconciliation, `hostTart` as a supported host-tool field, and
@@ -718,7 +794,7 @@ The replacement path must not require Tart, user keychain state, host Xcode UI f
 ### Validation
 
 - unit coverage for manifest rendering, atomic install-root selection, and failure cleanup
-- Apple cohort probe proving the Metal bridge compiles and dispatches MSL from source without Tart
+- historical Apple cohort probe for the now-deleted bridge; superseded by Sprint 1.20
 - Apple cohort validation still passes when `tart` is absent or unusable and no user
   `login.keychain-db` is unlocked
 - `infernix lint docs`, `infernix lint files`, `infernix lint proto`, `infernix lint chart`,
@@ -737,8 +813,10 @@ None.
 **Code-side closure**: Complete and validated 2026-06-26 on the Apple host. The
 `infernix_emit_validation_result` validation-wrapper fabrication is deleted; generated Apple runners
 preserve the full native worker contract, enforce model-cache readiness, and return only real native
-engine output or non-zero failure. `llama-cpp-cli` and `whisper-cpp-cli` delegate to the Homebrew
-Metal-capable CLIs; `ctranslate2-native`, `onnx-runtime-native`, and `mlx-native` hydrate per-engine
+engine output or non-zero failure. `llama-cpp-cli` and `whisper-cpp-cli` copy the typed
+host-manifest Homebrew binaries into their content-addressed candidates and invoke only those
+artifact-local Metal-capable CLIs; `ctranslate2-native`, `onnx-runtime-native`, and `mlx-native`
+hydrate per-engine
 Apple arm64 venvs; `coreml-native` hydrates Basic Pitch plus Apple's Core ML Stable Diffusion
 pipeline; `jvm-native` downloads the pinned Audiveris macOS arm64 DMG and installs `Audiveris.app`;
 `audio-basic-pitch-coreml` is package-backed; and the Core ML Stable Diffusion row uses a Hugging Face
@@ -975,45 +1053,334 @@ Bounded-Command Application & Bounded-HTTP reopen work) are both closed by
 `test all` green. [Sprint 1.18](#sprint-118-observable-readiness--tri-state-poll-outcome-done)
 (the Observable-Readiness reopen) is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) —
 apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-22 on the
-machine-independent gate set); no remaining work exists.
+machine-independent gate set); no remaining work exists for Sprints 1.16–1.18.
 
 ## Sprint 1.19: Execution-Plan Compiler And Capability Core [Done]
 
-**Status**: Done
-**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/Types.hs`, new execution-plan modules, `test/unit/Spec.hs`
-**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/configuration_doctrine.md`
+**Status**: Done — complete source-matched machine-independent gate and final adversarial source
+review passed on 2026-07-25
+**Implementation**: `src/Infernix/ExecutionPlan.hs`, `src/Infernix/ExecutionPlan/Internal.hs`,
+`src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Worker.hs`,
+`src/Infernix/Runtime/Daemon.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Substrate.hs`,
+hidden configuration/routing modules, and focused unit/integration/negative-compilation suites
+**Docs to update**: `documents/architecture/typed_execution_plan.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/configuration_doctrine.md`, `documents/architecture/daemon_topology.md`,
+and `documents/architecture/runtime_modes.md`
 
 ### Objective
 
-Introduce proper Dhall/Haskell unions, confine raw decoded configuration, and compile a validated
-model-placement graph into opaque `RuntimePlan` and `ExecutableModel` values with
-resource-indexed grant/enforcer types.
+Introduce resource-indexed Haskell execution alternatives, confine raw decoded configuration, compile
+the validated graph into an opaque `CompiledRuntimePlan`, and allow only package-owned live
+observations to refine it into `RuntimePlan` / `ExecutableModel`. Phase 8 Sprint 8.9 owns the final
+proper-union generated-Dhall wire migration.
 
 ### Deliverables
 
-- no text discriminator plus zeroed inapplicable fields for execution alternatives
 - `RawRuntimeConfig -> Either ConfigErrors CompiledRuntimePlan`
 - hidden constructors for executable placements, positive quantities, resource-indexed grants, and
   enforcer plans
+- coordinator routing consumes only compiled placements and daemon capabilities and returns a
+  typed terminal result for requests to explicit unavailable placements; engine subscription and
+  launch consume only refined runtime/executable capabilities
 - routing and launch APIs cannot accept raw model/config records
+- unavailable, empty-model, unknown-model, wrong-route, and malformed coordinator/engine requests
+  terminate as failed results before their file source is removed or Pulsar message is acknowledged
+- model-bootstrap publication consumes only an opaque plan-derived capability; the consumer
+  revalidates model identity, compiled download URL, and canonical request timestamp before side
+  effects
+- compilation rejects cross-family reuse among coordinator-request, result,
+  model-bootstrap-request, model-bootstrap-ready, and engine-route topics
+- substrate Dhall emission is explicit UTF-8
 
 ### Validation
 
-- reflected schema and round-trip tests cover every union alternative
-- property and negative compile fixtures reject zero values, resource/enforcer mismatch,
-  oversubscription, dangling placement references, and routing without `ExecutableModel`
+- compiler/refinement properties reject zero values, resource/enforcer mismatch, oversubscription,
+  dangling placement references, unavailable live enforcers, and configured/live partition drift
+- an integration-focused coordinator test proves that a request for `UnavailableModel` publishes
+  `status=failed` with the compiler-produced typed `ModelMemoryLimitExceeded` and never selects an
+  engine batch topic or launches a worker
+- coordinator and engine tests prove empty, unknown, wrong-route, and malformed messages produce
+  one terminal failed result before source removal/acknowledgement
+- bootstrap tests reject model/URL/timestamp drift before download or publication side effects,
+  and negative/API tests prove no raw topic publisher remains
+- compiler properties reject every cross-family topic collision, and a non-ASCII substrate fixture
+  round-trips through UTF-8 Dhall emission and decode
+- negative compile fixtures reject coordinator routing without compiled placement/daemon authority,
+  engine launch without `ExecutableModel`, and imports of hidden raw decoders or routing helpers
 - machine-independent gate set passes
 
 ### Remaining Work
 
-None. Closed 2026-07-25 in the supported `linux-cpu` container context. The generated memory-budget
-wire shape is a proper `HostEnforced | SubstrateEnforced` Dhall union; raw decoding is isolated
-behind abstract `RawRuntimeConfig`; the compiler validates duplicate, dangling, unplaced,
-multiply-placed, runtime-mismatched, enforcer, and capacity failures; and only hidden-constructor
-`CompiledRuntimePlan` / `ExecutableModel` values carry the indexed enforcer/grant witnesses.
-`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, all four
-repository lints, `infernix docs check`, `poetry run check-code`, and the web unit suite (83/83)
-pass. Runtime routing migration remains explicitly owned by Phase 4 Sprint 4.32.
+None. Sprint 1.19 closed on 2026-07-25.
+
+### Closure Record
+
+The closed construction includes:
+
+- `MemoryGrant resource`, `MemoryCeiling resource`, `Enforcer resource`, and `EnforcedGrant
+  resource` keep the resource witness aligned through the launch boundary; the superseded
+  unindexed grant API in `Infernix.Types` is removed
+- pure compilation produces a `CompiledRuntimePlan`; only package-owned live observations can
+  refine it into `RuntimePlan` / `ExecutableModel`
+- model compilation and route construction are total: every configured model is represented
+  exactly once as a compiled placement or explicit `UnavailableModel`, and an unexpected graph
+  inconsistency returns `ConfigErrors` rather than being filtered out
+- coordinator and engine request dispatch now return terminal failed results for unavailable,
+  empty-model, unknown-model, and wrong-route requests; malformed protobuf produces a typed failed
+  result. File-spool sources are removed and Pulsar messages acknowledged only after that terminal
+  result is written or published
+- each executable placement carries its validated pool/member/topic routes, engine binding, grant,
+  and live enforcer; public worker and capped-engine launch APIs require the whole
+  `ExecutableModel`
+- daemon compilation produces opaque `CompiledDaemon` capabilities keyed by engine member, after
+  proving exact role/member coverage, location, derived topics, result topic, subscription, and
+  connection mode; subscription startup consumes those capabilities
+- the sanctioned runtime enforcer facade probes Apple physical-footprint and the live checked host
+  partition, or Linux process-group RSS plus the exact current cgroup-v2 envelope, before
+  refinement; configured/live partition drift and missing observations fail closed, and
+  per-execution sampling still fails closed if the mechanism later disappears
+- checked `Integer` arithmetic rejects host-partition overflow, and compilation rejects model
+  ceilings that cannot be represented in the watchdog byte domain; unsupported adapter types and
+  GPU-required work in the `linux-cpu` lane are also structural configuration errors
+- raw Dhall decoders and topic-derivation helpers now live only in hidden package modules; exported
+  config validation compiles the same plan used at startup, while the generator-facing catalog API
+  remains configuration-only
+- Pulsar drain/consume authority is an opaque daemon-topic capability derived from one compiled or
+  refined plan; runtime, daemon, and topic can no longer be mixed independently, and engine launch
+  additionally proves that the decoded model's routes contain the exact daemon member/topic pair.
+  The raw topic publisher is removed. Model-bootstrap publication requires an opaque
+  `ModelBootstrapRequestCapability` prepared from the compiled plan, and the consumer revalidates
+  the exact model identity, compiled download URL, and canonical timestamp before any download,
+  upload, or ready-event side effect. Dispatcher, result, bootstrap, and eager-staging paths derive
+  their topology from the same plan
+- a second adversarial pass removed `Read` from opaque grants/ceilings/partitions/footprints and
+  assigns nominal roles to every resource index, so neither textual construction nor
+  `Data.Coerce` can relabel evidence; strict canonical identifiers close filesystem traversal, and
+  `TopicFamilyCollision` rejects reuse across coordinator-request, result,
+  model-bootstrap-request, model-bootstrap-ready, and engine-route topic families
+- executable engine metadata now resolves through one exact runtime-scoped allowlist and the
+  compiler rejects every field drift, unknown choice, and cross-runtime choice before an engine
+  binding becomes executable; generated `edgePort = 0` remains the supported unpublished sentinel
+- Apple Colima observation now fails closed on missing/malformed probes and conservatively counts
+  every profile not explicitly `Stopped`; Linux refinement compares live `memory.max` with the
+  configured child limit plus daemon/sampler headroom rather than a particular model's smaller
+  grant, and non-MiB-aligned byte limits fail closed instead of being rounded into agreement
+- launch APIs derive runtime, model, and binding identity only from `ExecutableModel`, reject a
+  mismatched request model before side effects, and no longer accept a caller-controlled runtime
+- substrate materialization encodes the generated Dhall text with explicit UTF-8 before writing
+  bytes, preserving non-ASCII operator/model metadata
+- the production library and executable build are clean under `-Wall -Werror`, and the complete
+  source-matched gate passed after the final refinement and Pulsar-capability coherence edits
+
+Closure evidence on the Apple Silicon development host:
+
+- `cabal build all test:infernix-integration`
+- the unit, internal-boundary, compile-fail, and Haskell-style suites; compile-fail coverage passed
+  all 4 positive fixtures and all 27 negative fixtures
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+- the installed binary's `lint files`, `lint docs`, `lint chart`, `lint proto`, and `docs check`
+- Python `check-code`
+- web contract generation, unit tests, `spago build`, and bundle generation, including all 83/83
+  web unit tests
+- `git diff --check`
+- a final adversarial source review with no remaining Phase 1 production blocker
+
+Phase 4 Sprint 4.32 owns the ordered substrate implementation/behavioral proof after Phase 2
+closes; NVIDIA per-process accounting remains fail-closed until its later GPU phase.
+
+---
+
+## Sprint 1.20: Remove Embedded Apple Native Source [Active]
+
+**Status**: Active — Phase 0's correction gate closed on 2026-07-27, but five Phase 1 reviews
+rejected successive follow-on drafts. Native-source deletion and the exact/legacy transaction
+distinction are present. The opaque tool/session boundary and smoke-bound activation are being
+strengthened, while a non-escaping one-shot artifact runtime session, closed Python/native
+invocation languages, writer authority, current-recipe fingerprint, descriptor-anchored tree
+snapshot, recursive host-runtime closure, full-materializer failure/cancellation proof, obsolete
+bridge retirement, and Audiveris mount-death recovery remain under active correction. Earlier
+focused/aggregate results cannot close this sprint. Review #5 rejected the writer boundary because
+an authority could escape the exclusive lock inside an `IO` closure; it also found an arbitrary
+post-activation `IO` callback, pathname-recursive closure identity/scan paths, unbounded snapshot
+recovery and package discovery, and unbounded nested native-runner pipe capture. The Python
+nested-child topology has since been deleted: native CLI and JVM routes fail closed into direct
+Haskell supervision, while the remaining Python routes use only in-process upstream APIs. The
+Apple-runner AST ownership contract and the complete Python `check-code` gate passed on
+2026-07-27. The remaining paths are being replaced by one lock-interpreted indexed session,
+descriptor-relative bounded traversal, and a closed installed-validation action. The live
+correction audit also found that the capped-engine cleanup
+path reaped its process-group leader before signaling a numeric PGID, leaving a PID/PGID-reuse
+window. Phase 1 cannot close until a live exact helper identity remains owned through group
+termination and designated-owner reap; a PID-only recheck around `signalProcessGroup` is not
+accepted. Focused direct `ghc -fno-code -Wall -Werror` checks on 2026-07-27 proved that the
+then-current candidate/mount authority fields participated in the ordered and negative fixtures. A
+subsequent compiler check invalidated the callback-shaped positive as the final protocol design:
+ordinary `IO` bind cannot retain a linear success continuation without an unsafe multiplicity cast
+or a linear-effect runtime. The correction therefore uses hidden, runner-owned indexed sequencing
+so a caller never receives a droppable, reusable, or skippable next-phase continuation. Fresh
+production-dependent fixtures and the aggregate compile-fail suite remain pending with the
+coordinated Stage 1. The latest live audit also measured the existing Core ML artifact at about
+1.7 GiB (roughly 47,000 entries), which makes the then-current full-artifact package-snapshot copy
+fail its 512 MiB bound and makes raising that copy bound an invalid per-command design. Candidate,
+post-activation, and installed execution must instead retain an exact generation-specific kernel
+lease through target reap. Every candidate/final mutation and recovery path must acquire the
+writer side of that lease, and a replacement materialization writer must recover the exact durable
+activities of dead owners before any root-mutation authority is minted. Pre-publication target
+start remains impossible through the typed gate; post-publication cleanup is driven by the exact
+persisted anchor, supervisor, and target-group identities.
+The current convergence audit additionally rejects effectful completion/transaction callbacks while
+live authority is in scope and any generation-read acquisition before recoverable helper identities
+are durable. The Apple transaction fixtures now use a private first-order action language. The
+provisioning completion and bounded-helper implementation remain in progress: generation-exclusive
+authority must mint the exact sidecar before smoke, the parent must durably publish the already-born
+anchor/supervisor/pin identities before spending start authority, and only then may the supervisor
+hold generation-shared authority through target-group absence and designated-owner reap. Candidate
+rehash and exclusive revalidation must precede publication. No evidence from this draft is accepted.
+The focused adversarial-test audit also found target cleanup assertions that publish and probe only
+a numeric target PID while retaining exact birth identity only for the helper group leader. Those
+assertions are not accepted evidence: every owned target fixture must publish its exact birth
+identity and prove absence or designated-owner reap against that identity, including stopped-group,
+timeout, cancellation, and concurrent-session cases.
+The machine-independent Apple materializer boundary fixture exercises the same private indexed
+runner as production, but its fixed actions write synthetic marker files. It proves transition
+ordering, primary-failure-preserving cleanup, and lock release only; it is not evidence that actual
+hydration, relocation, smoke, activation, or Audiveris detach cleans up under cancellation. The
+private production cancellation hook is a fixed first-order `PauseAfterAudiverisMount` action
+carrying only synchronization cells, so it cannot capture writer authority or inject an arbitrary
+effect. A fresh Darwin cohort must cancel the real Audiveris materializer through that hook and
+prove exact mount recovery, candidate cleanup, prior-root preservation, and lock reacquisition
+before the full-materializer obligation can close.
+The default `infernix-apple-materializer` suite remains machine-independent. Its explicit
+`--darwin-production-audiveris-cancellation` mode discovers the configured repository paths,
+requires a current valid prior `jvm-native` root and a clean candidate boundary, waits on the exact
+post-publication mount checkpoint, cancels without a timing sleep, and then validates candidate,
+mount, and activity absence, the unchanged complete prior manifest/payload, and immediate
+reacquisition of all four Apple provisioning lifecycle locks. The mode is implemented but has not
+been run; it is not evidence until the fresh Darwin command below exits green.
+**Implementation**: `src/Infernix/Engines/AppleSilicon.hs`,
+`src/Infernix/Engines/AppleSilicon/Internal.hs`, `src/Infernix/Engines/Artifact.hs`,
+`src/Infernix/Engines/Provisioning.hs`, `src/Infernix/Engines/Provisioning/Internal.hs`,
+`src/Infernix/Cluster/Subprocess.hs`, `python/native-runners/apple_native_runner.py`,
+`test/artifact-transaction/Spec.hs`, compile-fail fixtures, and Haskell-style enforcement
+**Docs to update**: `documents/engineering/apple_silicon_metal_headless_builds.md`,
+`documents/engineering/build_artifacts.md`, `documents/development/haskell_style.md`,
+`documents/architecture/managed_state_transitions.md`, root workflow mirrors, and this plan
+
+### Objective
+
+Delete every repo-owned Objective-C/C/Metal source literal and every `.h`/`.m`/`.c` materialization
+or Clang compilation path. Preserve the headless Apple engine-artifact manifest and fail-closed
+runtime-smoke contract through public APIs whose native implementation is owned by upstream
+packages, without direct FFI, inline native source in another language, or a renamed unsafe bridge.
+
+### Deliverables
+
+- remove `appleMetalBridgeHeader`, `appleMetalBridgeSource`, `appleMetalBridgeSmokeSource`,
+  `coreMlRunnerSmokeSource`, and their source-file writers/compiler scripts
+- replace the fixed repo-owned bridge artifact with a typed smoke that performs a real bounded
+  operation through an upstream-owned Apple runtime package already admitted by the engine lane
+- keep smoke/materialization commands generated from closed adapter identities, explicit tool
+  paths, explicit arguments, bounded provisioning authority, and typed artifact manifests
+- retire every generated `bin/*` shell wrapper and the stale wrapper-shaped manifest contract;
+  launch each native CLI, interpreter, or JVM target directly through the Haskell helper kernel
+- bind Linux absolute image targets and every interpreter/library/script closure to
+  descriptor-derived exact immutable-image observations; a catalog path string or recipe-policy
+  fingerprint is not executable-byte evidence
+- keep `ProvisioningGrant s` nominal and opaque and `ProvisioningSession s result` indexed under
+  `withProvisioningGrant`'s rank-2 region. Its constructor/interpreter and all raw provisioning
+  command constructors remain hidden; the public Apple facade exposes no raw per-artifact installer
+- compile the closed Poetry install/setup, protobuf generation, Python probing/venv/package,
+  Audiveris image, installed-smoke, and provenance operations through the self-exec
+  anchor/supervisor/pin bounded-command kernel with a positive total deadline, explicit
+  environment, bounded capture, typed outcome, and exhaustive cleanup
+- hydrate and smoke the candidate root before its atomic swap so any provisioning/runtime failure
+  preserves the prior complete root and leaves no partial final root
+- pin each direct Python requirement and pip itself, record the full resolved Python/source/runtime
+  provenance, and compute the manifest digest deterministically from the sorted hydrated payload
+  paths, types, modes, bytes, and safe symlink targets rather than declarative metadata
+- create candidate venvs with copied launchers and no bytecode, rewrite owned scripts/config to the
+  final root before smoke, and fail closed if any candidate-root bytes remain
+- checksum-gate the fixed Audiveris 5.10.2 release DMG, classify a live mount by kernel device id,
+  and detach through the primary-preserving bounded release path
+- synchronize the candidate tree and parent directories around sibling renames, retain
+  `.previous` until final-path validation, roll back on synchronous/asynchronous failure, and
+  reconcile only an unambiguous exact final, previous, or candidate root after a crash; classify a
+  validated pre-correction declarative root only as an explicit migration predecessor or rollback
+  root, never as an exact candidate or successfully activated exact root
+- make an exact byte- and manifest-identical rerun a candidate-discarding no-op so immutable
+  overlay lower-layer roots do not require a rename; a different candidate still follows the
+  fail-closed replacement transaction
+- use `${HOME}/.local/share/pypoetry/venv/bin/poetry` in the generated Apple host manifest and
+  create that fixed default only through the kernel-locked, deadline-bounded bootstrap with exact
+  Python and pinned Poetry requirements; retain `/opt/homebrew/bin/poetry` only in the fixed
+  manifestless fallback list, and keep a configured non-default missing path a hard failure
+- extend lint/unit coverage so native-source strings, native source-file materializers, direct
+  compiler consumption of repo-owned source, native-source extensions, Cabal native-source fields,
+  and Cabal CPP token-synthesis definitions fail
+- record the removed embedded source and superseded bridge topology in the deletion ledger
+
+### Validation
+
+- focused unit tests prove the materializer emits no native implementation source and still
+  produces complete typed manifests and fail-closed smoke commands
+- `cabal test test:infernix-artifact-transaction --test-show-details=direct` passes the complete
+  settled-source deterministic identity, unsafe-payload, exact/legacy distinction, idempotent
+  rerun, activation,
+  smoke-bound tamper, migration, sync/async rollback, and crash-reconciliation cases
+- the dedicated full Apple materializer suite passes deterministic recursive-closure,
+  failure/cancellation, lock-release, obsolete-root retirement, and recovery cases
+- machine-independent synthetic boundary cases are accepted only for indexed-runner ordering and
+  cleanup mechanics; actual-materializer cancellation requires a fresh Darwin run through the
+  fixed post-mount hook with exact mount, candidate-root, prior-root, and lock evidence
+- after a green `./.build/infernix internal materialize-metal-engines` creates the required current
+  prior root, the exact opt-in cohort command is
+  `cabal test infernix-apple-materializer --test-show-details=direct
+  --test-options='--darwin-production-audiveris-cancellation'`; this command is pending
+- `cabal test infernix-compile-fail --test-show-details=direct` passes every settled-source positive
+  and negative fixture, including hidden Apple internal/artifact/provisioning imports and the removed raw
+  per-artifact installer
+- Haskell style rejects direct process access, legacy unbounded Poetry-helper delegation, and
+  bounded-kernel bypass throughout the Apple artifact/provisioning modules; focused unit and Python
+  `check-code` gates pass
+- repository scans and `infernix lint files` find no repo-owned native implementation source,
+  embedded equivalent, or Cabal native-source declaration
+- the complete machine-independent Stage 1 gate passes on the exact reviewed worktree
+- the Apple cohort rematerializes the affected artifacts, proves the upstream-owned runtime smoke,
+  and completes the correction-dependent routed lane before any Apple closure is claimed
+- the paired source-matched `linux-cpu` cohort completes before Phase 1 is marked `Done`
+
+### Remaining Work
+
+Close every finding from all five rejected reviews. Raw executable and raw-IO lift authority must
+not typecheck; Python and native launches must accept only closed semantic invocations whose raw
+executable, argument, working-directory, and environment representations are kernel-owned.
+Generated shell-wrapper materialization must be removed completely, and the manifest/recipe
+contract must describe direct targets rather than retain a logical `bin/*` wrapper facade. For
+absolute Linux image targets, the artifact record must bind exact descriptor-derived target,
+interpreter, script, and runtime-closure observations; hashing catalog path text alone is not
+accepted as target provenance. The runtime capability must remain inside an abstract one-shot
+indexed launch action interpreted only
+while its shared lock is held through reap; every repo-owned writer must require lock-scoped
+authority; the manifest must bind the current closed recipe; and payload traversal must use a
+descriptor-anchored stable snapshot. CLI artifacts must carry and execute their recursive upstream
+runtime closure, including frameworks and ggml plugins. Exact resolved-tool evidence must reach an
+owned immutable execution generation rather than being discarded before pathname `exec`; Poetry
+must bind its interpreter and package closure. Mach-O provenance must be minted from the exact
+copied destination. Audiveris copy, detach, and owner-death recovery must consume durable exact
+device evidence, and malformed dyld audit frames must fail closed. Full-materializer synchronous
+failure, asynchronous cancellation, obsolete bridge retirement, deterministic recursive-closure
+fixtures, macOS mount-death recovery, and capped-engine cleanup under a live exact group-owner
+identity must pass. Full-root copy is not an acceptable installed-artifact execution generation:
+the exact retained candidate/final root must be descriptor-custodied under its generation lease,
+and dead-owner activity recovery must prove every recorded group absent before a new writer can
+mutate that generation. The selected entry/byte/depth limits must be practical for all seven
+measured artifacts and covered by positive and overflow tests. Then run a fresh final review and
+complete source-matched
+Stage 1 against one identified worktree. Only afterward may the Apple lane rematerialize every
+affected artifact, run installed authoritative smokes, prove routed runtime loading, complete the
+Apple and paired `linux-cpu` cohorts, and record Wave Y evidence. Phase 0's accepted all-Haskell
+identity remains unchanged and closes Sprint 0.18 only.
 
 ---
 
@@ -1021,7 +1388,7 @@ pass. Runtime routing migration remains explicitly owned by Phase 4 Sprint 4.32.
 
 **Engineering docs to create/update:**
 - `documents/engineering/build_artifacts.md` - build roots, generated-artifact doctrine, snapshot launcher expectations, and native engine artifacts under `./.data/engines/<adapterId>/`
-- `documents/engineering/apple_silicon_metal_headless_builds.md` - Tart-free Apple Metal/Core ML materialization target, host bridge, manifest fields, and validation gates
+- `documents/engineering/apple_silicon_metal_headless_builds.md` - Tart-free Apple Metal/Core ML materialization target, upstream package boundary, manifest fields, and validation gates
 - `documents/engineering/docker_policy.md` - host versus outer-container rules, image-snapshot launcher contract, and the clarification that Apple materialization is not a Docker/Colima lane
 - `documents/engineering/host_tools_manifest.md` - supported host-tool schema without `hostTart`
   plus the retained `materialize-metal-engines` manifest surface

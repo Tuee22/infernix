@@ -68,6 +68,37 @@ this canonical list.
   `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
   is reopened, not closed. Canonical target:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
+- no repo-owned native implementation source: version-controlled native sources are forbidden,
+  including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants, CUDA, assembly,
+  Metal, Swift, C2HS, and C-- sources. Cabal `c-sources:`, `cxx-sources:`, `asm-sources:`, and
+  `cmm-sources:` declarations and Cabal CPP definitions that synthesize a native boundary are
+  likewise forbidden.
+  Embedding native implementation source or compiler invocations inside Haskell, Python, shell,
+  JavaScript, configuration, or generated payload text is the same violation. `infernix lint files`
+  enforces these rules; native implementation inside upstream dependencies is allowed. Lifecycle
+  locking and bounded subprocess creation/control use public APIs from `filelock`, `process`, and
+  `unix` behind internal Haskell modules, never direct FFI declarations, inline C,
+  `System.Process.Internals`, or a cosmetic relocation of those unsafe boundaries. Direct
+  `foreign import` is forbidden throughout repo-owned Haskell, including observer code. Darwin
+  process birth identity is registry-backed Haskell state protected by `filelock`; Apple footprint
+  observation is a fixed, bounded public-tool kernel over `/usr/bin/top` and
+  `/usr/bin/footprint`, with no caller-supplied command specification. The nonblocking
+  exclusive `filelock` token remains enclosed by the rank-2 `Lease s ClusterMutationLocked` region.
+  For bounded commands, the parent starts one self-exec anchor through public `System.Process` with
+  `close_fds = True`, `create_group = True`, an explicit environment, and ordinary standard-stream
+  pipes; the anchor starts and reaps the supervisor, and a total length-bounded typed framed
+  protocol plus hidden constructors, a rank-2 session region, and linear phase transitions prevent
+  target start before durable activity evidence or reuse and escape of start authority. Canonical:
+  [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
+- Apple engine materialization is not a process-spawn exemption: all Poetry, Python/venv,
+  package-install, Audiveris image, installed-smoke, and provenance operations must use the closed
+  package-internal provisioning language. An opaque nominal `ProvisioningGrant s` and indexed
+  `ProvisioningSession s result` stay inside a rank-2 region, and only the provisioning facade may
+  invoke the bounded self-exec kernel. The candidate root must be fully hydrated, relocated,
+  smoke-validated, provenance-recorded, and hashed before the fsynced sibling activation
+  transaction; synchronous failure, asynchronous cancellation, or crash reconciliation must
+  preserve a complete prior root or fail closed. Canonical:
+  [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 - no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
   through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
@@ -81,15 +112,16 @@ this canonical list.
   cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
   leftover `.harness-backup` on entry. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
-- memory-safety by construction is reopened around the generated typed execution plan: an inference engine subprocess must run only under a resource-indexed typed `MemoryGrant`
-  minted by `admitModelMemory`, and the capped-engine kernel OS-bounds its actual resident memory to
-  the admitted `MemoryCeiling` (the raw engine spawn is unexported, so launching an engine without an
-  admission proof does not typecheck); a ceiling breach is a clean `status=failed`
-  `ModelMemoryLimitExceeded`, never a host OOM. Current Linux pod-wide capacity and unverified GPU
-  VRAM paths do not yet satisfy the exact per-grant ceiling. Physical RAM is a checked `HostMemoryPartition`, every
-  model declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its
-  enforcer; raw engine spawn outside the capped-engine kernel is forbidden, enforced by the
-  `unboundedEngineSpawnViolations` lint. Canonical:
+- memory-safety by construction is reopened around the generated typed execution plan: compilation
+  mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
+  `Enforcer`, and an inference subprocess can launch only from the resulting opaque
+  `ExecutableModel`. The capped-engine kernel OS-bounds actual resident memory to its
+  `MemoryCeiling`; a measured breach is a clean typed `ModelMemoryLimitExceeded`. Apple and Linux CPU
+  watchdog implementations are present, but their adversarial proof and an execution authority that
+  makes concurrent reuse unrepresentable remain Phase 4 work. NVIDIA enforcement and broad raw-spawn
+  exemption removal remain Phase 6 work. Physical RAM is a checked `HostMemoryPartition`, every model
+  declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
+  Canonical:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
   [../architecture/typed_execution_plan.md](../architecture/typed_execution_plan.md)
 

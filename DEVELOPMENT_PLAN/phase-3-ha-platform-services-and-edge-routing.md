@@ -820,7 +820,18 @@ and `infernix docs check` all green on the apple-silicon lane. No Python/native 
 so `poetry run check-code` does not apply.
 **Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
 linux-cpu full-suite `test all` green.
-**Implementation**: `src/Infernix/Cluster/PublishImages.hs`
+**Current implementation note**: Wave V remains closure evidence for this sprint's original scope.
+The 2026-07-26 Phase 2 Sprint 2.16 final audit tightened the sole `BlobServable` minter after proving
+that a cached host Docker pull could succeed without independently reading Harbor. Current source
+uses a bounded authenticated platform-selected skopeo copy from the Harbor API authority into a
+fresh birth-identity-owned mode-0700 `dir:` store, forcing reads of the selected manifest, config,
+and layers; protected cleanup preserves the primary failure, dead-owner auth directories reconcile,
+and focused command/redaction/path unit coverage is landed. Phase 2 final review and Stage 1 are
+historical GREEN-as-run evidence only and are superseded by the no-repo-owned-native-source
+correction. Phase 0's accepted correction review and complete Stage 1 passed on 2026-07-27. This
+sprint remains `Done` for its recorded Wave V scope; Phase 2 remains blocked by Phase 1 and has no
+post-correction Apple or `linux-cpu` evidence.
+**Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Command.hs`
 **Blocked by**: Sprint 1.16, 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/tools/harbor.md`,
 `documents/development/no_env_vars.md`, and the phase's existing engineering/reference docs
@@ -846,8 +857,9 @@ doctrine — evidence, not hope — to the publication surface.
   through `runBoundedCommand`, and a `CommandTimedOut` surfaces as a `Left` so the retry counter
   advances instead of hanging (~23-min hang killed)
 - an opaque `newtype BlobServable` (hidden constructor) minted only by `probeRegistryPull` (a bounded
-  pull); `verifyRegistryPull` now returns `BlobServable` or fails, and `publishIfNeeded` falls through
-  to a real push when the blob is not servable instead of terminally trusting tag metadata
+  registry-only skopeo copy into a fresh empty `dir:` store); `verifyRegistryPull` returns
+  `BlobServable` or fails, and `publishIfNeeded` falls through to a real push when the blob is not
+  servable instead of terminally trusting tag metadata or a shared Docker cache
 - `harborTagExists` demoted to the non-terminal `harborTagMetadataPresent` (metadata-only, may only
   shortcut the push) and `registryReady` weakened to `registryApiReachable` (may only gate polling,
   never "done"); `PublishImages.hs` added to `escapeTokenScopedFiles` so `BlobServable` cannot be

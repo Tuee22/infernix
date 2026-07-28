@@ -15,8 +15,8 @@ mode-specific coverage, matrix behavior, and operator detail behind those canoni
   `linux-gpu` validate through the Linux outer-container control plane
 - development and validation are native-only: `linux-cpu` evidence comes from native Linux amd64
   or native Linux arm64 hosts, never from cross-architecture emulation
-- the active staged substrate remains the source of truth for validation scope, generated catalog
-  selection, and routed demo-surface expectations
+- the initialized repo-root runtime config remains the source of truth for validation scope,
+  generated catalog selection, and routed demo-surface expectations
 - phase work validates on the current hardware cohort first, then batches the counterpart Apple
   Silicon or CUDA Linux full-suite run at phase closure
 - the auxiliary routed-prefix checks require the live Harbor, MinIO, and Pulsar upstream
@@ -29,6 +29,10 @@ strong construction claim. The reopened validation contract is owned by
 [Typed Execution Plan](../architecture/typed_execution_plan.md): schema-negative tests, plan
 compiler properties, runtime-enforcer refusal tests, exact ceiling-breach tests, route exclusion for
 uncompiled models, and zero raw-spawn imports or lint exemptions outside the process kernels.
+The all-Haskell lifecycle-lock and bounded-command replacement is implemented, but every source
+digest, review, Stage 1 result, and cohort result produced before that replacement is superseded.
+Its focused adversarial suites, fresh source review, complete source-matched Stage 1, and Wave Y are
+in progress.
 
 - the implemented lane matrix is host-native `apple-silicon`, outer-container `linux-cpu` on
   native Linux, and real-cluster `linux-gpu`
@@ -41,20 +45,19 @@ uncompiled models, and zero raw-spawn imports or lint exemptions outside the pro
   flight
 - active phase docs record hardware-cohort residuals explicitly when one machine has validated and
   the counterpart Apple Silicon or CUDA Linux closure batch remains
-- resource safety is being generalized by the reopened typed admission doctrine: each model carries
-  a conservative footprint (`modelRamFootprintMib`), each substrate resolves an explicit
-  `InferenceMemoryBudget`, and an over-budget request returns a clean `status=failed` with typed
-  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` before
-  the engine launches. Apple uses unified host RAM after the Colima pledge and reserve, Linux CPU
-  uses the engine pod memory limit, and Linux GPU uses GPU VRAM. Validation must prove that one
-  oversized catalog entry does not fail daemon startup or block smaller models. This reopens
-  [../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
-  Sprint 4.27,
-  [../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md](../../DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md)
-  Sprint 5.11, and
-  [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-  Sprint 6.38. Canonical home for this grant-gated capped-engine execution invariant (a host OOM is
-  unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
+- resource safety is governed by the typed execution-plan doctrine: each model carries a
+  conservative footprint (`modelRamFootprintMib`), and `compileRuntimePlan` either mints a
+  resource-indexed grant inside a compiled placement or retains that row as an
+  `UnavailableModel`. Apple compilation uses the checked host partition and Linux CPU uses the
+  engine-pod memory envelope; live refinement must pair the grant with a matching enforcer before
+  engine launch can receive an `ExecutableModel`. Validation must prove that a request for an
+  unavailable row returns typed
+  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` without
+  blocking smaller placements. Linux GPU currently fails plan compilation closed with
+  `GpuDualResourceBudgetRequired`; Phase 6 owns the dual RAM/VRAM path. Phase 1 owns compiler
+  accounting and coordinator rejection delivery, while Phase 4 owns Apple/Linux CPU adversarial
+  survival and encapsulated serialization. Canonical home:
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 
 ## Validation Layers
 
@@ -66,8 +69,12 @@ uncompiled models, and zero raw-spawn imports or lint exemptions outside the pro
   there was none). The swap is crash-safe by construction: the backup lives at
   `./infernix.dhall.harness-backup` and `withTestHarnessConfig` reconciles a leftover backup on
   **entry** (a SIGKILL bypasses the `finally` restore), so a killed run cannot leave the operator's
-  runtime config clobbered by the test config. That crash-safe entry reconcile is implemented and
-  closed under Wave X (Phase 6 Sprint 6.43, 2026-07-24); its canonical contract home is
+  runtime config clobbered by the test config. Wave X (2026-07-24) historically closes that
+  2026-07-23 crash-safe entry-reconcile scope in Phase 6 Sprint 6.43; it does not close the
+  2026-07-25 owner-atomic reservation/teardown correction. That correction remains under Phase 2
+  validation and source review after the all-Haskell lock/supervision implementation; its focused
+  tests, fresh source-matched Stage 1, and Wave Y remain in progress, and Phase 6 validation is
+  ordered after Phases 2 and 4. The canonical contract home is
   [Configuration Doctrine](../architecture/configuration_doctrine.md). The Linux launcher image bakes
   both `./infernix.dhall` and `./infernix.test.dhall`
   at build time so the containerized `docker compose run --rm infernix infernix test all` finds them.
@@ -80,6 +87,11 @@ uncompiled models, and zero raw-spawn imports or lint exemptions outside the pro
 - `infernix lint docs` validates governed-doc metadata and generated sections, and fails when the
   README model matrix cells drift from the generated runnable catalog, explicit residual rows, or
   `Not recommended` states
+- `infernix lint files` rejects repository-owned
+  C/C++/Objective-C/CUDA/assembly/Metal/Swift/C2HS/HSC/C-- sources and headers, Cabal native-source fields and
+  native-token CPP definitions, and embedded native source/writers/compiler invocations in another
+  implementation language; native implementation in upstream `filelock`, `process`, `unix`, MLX,
+  or coremltools packages is outside repository ownership and remains allowed
 - `infernix test lint` validates repository hygiene, required chart or Kind or `.proto` assets, the
   repo-owned Haskell style stack, the Haskell build path, and the shared Python adapter quality
   gate via `poetry run check-code` from the shared `python/` project when adapters are present;
@@ -87,11 +99,18 @@ uncompiled models, and zero raw-spawn imports or lint exemptions outside the pro
   WebSocket imports from the engine runtime modules and rejects upward demo/runtime/auth/object or
   WebSocket imports from the Phase 7 shared-library helpers
 - `infernix test unit` validates generated catalog counts and selection rules, demo-config encode
-  or decode behavior, cache lifecycle, the
-  protobuf-over-stdio Python worker path and adapter-command overrides, chart image or claim
-  discovery, Harbor overlay emission, and the current PureScript generated-contract and SPA
-  view-model behavior via `spago test` driven by the maintained runner in `web/test/Main.purs`
-- `infernix test integration` validates cluster lifecycle for the active generated substrate,
+  or decode behavior, cache lifecycle, the protobuf-over-stdio Python worker path, execution-plan
+  compilation and live-enforcer refinement, executable-derived engine commands, chart image or
+  claim discovery, Harbor overlay emission, and the current PureScript generated-contract and SPA
+  view-model behavior via `spago test` driven by the maintained runner in `web/test/Main.purs`. Its
+  focused process coverage includes same-process/cross-process lifecycle-lock contention and release,
+  isolated helper handles, bounded framed-protocol failures, target provenance, parent/supervisor
+  death, timeout/exception/cancellation cleanup, stopped groups, descendants, reaping, and
+  activity-retirement proofs
+- `cabal test infernix-compile-fail` separately proves subprocess phase skipping, session escape,
+  linear start-authority reuse, lifecycle authority escape/reuse, and external access to the raw
+  command, subprocess, lifecycle-lock, or protocol kernels do not typecheck
+- `infernix test integration` validates cluster lifecycle for the active initialized substrate,
   generated demo-config publication, routed demo or tool surfaces, routed inference plus cache
   endpoints, service-path request or result publication through the active topic contract,
   `cluster status`, every generated active-mode catalog entry from the mounted demo config,
@@ -128,8 +147,8 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 > next action for any open phase is always its remaining code-side closure on the machine you
 > already have; do not switch machines to "validate the open phase." The machine switch happens only
 > at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
-> smoke of Phase 1 Sprint 1.14 — is named as
+> hardware-bound — for example the upstream MLX GPU-operation and coremltools/materialized-root
+> smoke of Phase 1 Sprint 1.20 after its fresh exact-source complete Stage 1 — is named as
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 
@@ -172,9 +191,14 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   must not silently destroy an operator's cluster. The target shape gives the persisted cluster a
   typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) and gates teardown on typed ownership
   evidence: a `HarnessOwned` `infernix test all` seizes the slot and **fails closed** on an
-  `OperatorOwned` running cluster instead of tearing it down. Code-side closed (2026-07-23): the
-  evidence-gated seizure (Phase 6 Sprint 6.43) and the `ClusterOwner` field plus fail-closed
-  persistence (Phase 2 Sprint 2.15) are implemented and closed under Wave X (2026-07-24).
+  `OperatorOwned` running cluster instead of tearing it down. Wave X (2026-07-24) historically
+  closes the 2026-07-23 evidence-gated seizure, `ClusterOwner`, and fail-closed persistence scope in
+  Phase 6 Sprint 6.43 and Phase 2 Sprint 2.15. It does not close the 2026-07-25 owner-atomic
+  reservation/teardown correction or its all-Haskell lock/supervision replacement. The
+  implementation is present, while focused validation, fresh source review, source-matched Stage 1,
+  and Wave Y remain open; Phase 6 validation is ordered after Phases 2 and 4. Wave Y requires an explicit
+  integration-test build and installed Apple binary before freezing, then a source-matched
+  `linux-cpu` launcher build and recorded image digest before its uninterrupted full-suite run.
   Canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md)
 - a typed `ClusterLifecycle` machine with phase-resume is the target shape of the
@@ -186,8 +210,8 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 - unit coverage proves generated catalog shape, selected engine metadata, request-shape helpers,
   publication-summary rendering, and object-reference result formatting for the active generated
   contract module
-- `infernix test integration` serializes the active staged substrate into the generated demo config and
-  publication state, then validates the routed demo API, auxiliary routed prefixes, every
+- `infernix test integration` projects the active initialized runtime config into the generated demo
+  config and publication state, then validates the routed demo API, auxiliary routed prefixes, every
   generated active-mode catalog entry, cache mutation endpoints, and the daemon request or result
   loop for the active substrate. This per-model traversal is bounded by runtime memory admission and
   either completes or fails closed per row with typed `ModelMemoryLimitExceeded` (see
@@ -252,8 +276,8 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
   network instead of `host.docker.internal`
 - supported Playwright launchers clear conflicting `NO_COLOR` and `FORCE_COLOR` values from the
   child environment before Playwright starts
-- changing the active staged substrate changes the generated catalog and therefore the exercised entry
-  set automatically
+- changing the active initialized runtime config changes the generated catalog and therefore the
+  exercised entry set automatically
 
 ## Per-Family Result Contract
 
@@ -263,9 +287,11 @@ model-to-`ResultFamily` and inline-vs-object-ref mapping lives at
 [../architecture/model_catalog.md](../architecture/model_catalog.md); this section is the canonical
 home for the test contract itself.
 
-The runtime worker dispatches through the selected engine binding, fetches model weights lazily from
-the `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
-typed per-family result surface. Realness is guaranteed by construction — the engine code cannot
+The coordinator eagerly stages the configured model set in the `infernix-models` MinIO bucket
+behind the `warm-model-cache` barrier. The runtime worker dispatches through the selected engine
+binding, hydrates its derived local cache from those staged objects via
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
+guaranteed by construction — the engine code cannot
 return a fabricated result (enforced by the realness lint), so the suites trust the result and fail
 closed on `status=failed`. That fail-closed guarantee extends to model memory through the reopened
 resource-admission doctrine: an over-budget request publishes typed `ModelMemoryLimitExceeded`
@@ -336,24 +362,33 @@ current cohort run required to prove newly added runnable rows.
 
 ## Resource Memory-Bounded Validation
 
-With the reopened resource-admission doctrine, per-model integration traversal is memory-bounded by
-construction across substrates. Every model carries `modelRamFootprintMib`, the active substrate
-resolves an `InferenceMemoryBudget`, and the daemon rejects only the oversized request before the
-engine launches. Apple serializes on the host daemon; Linux CPU admits against the Kubernetes engine
-pod memory limit; Linux GPU admits against GPU VRAM.
+For Apple and Linux CPU, per-model integration traversal must exercise the compiled/refined
+execution plan. Every model carries `modelRamFootprintMib`; compilation retains both available and
+unavailable rows, refinement promotes only matching grant/enforcer pairs to `ExecutableModel`, and
+the normal coordinator path now rejects only the unavailable request without engine launch. Empty,
+unknown, wrong-route, and malformed coordinator/engine inputs also have terminal failed-result
+paths before source removal/acknowledgement. The current daemon supplies caller-owned
+serialization; Phase 4 must encapsulate it and prove the Apple/Linux CPU enforcement behavior.
+Linux GPU intentionally fails plan compilation closed with
+`GpuDualResourceBudgetRequired` until Phase 6 provides independent RAM and VRAM enforcement.
 
-A full per-model run therefore has exactly two per-row outcomes and no third:
+The 2026-07-25 Phase 1 gate historically proved an Apple/Linux CPU per-model run has exactly two
+per-row outcomes and no third. It predates the all-Haskell lifecycle/subprocess correction and must
+be rerun in the fresh complete Stage 1 before it is current-worktree evidence:
 
 - **completes** — the model fits the active enforced budget, runs, and honors its per-family
   real-output contract
 - **fails closed** — the model's footprint exceeds the active budget, so the row is a clean per-row
   `status=failed` with typed `ModelMemoryLimitExceeded` and explicit MiB quantities
 
-The validation classifier must distinguish a typed memory-capacity failure from the two disallowed
+The Phase 1 suite also proved cross-family topic collisions are rejected, bootstrap
+model/URL/timestamp drift fails before side effects, the raw publisher is absent, and non-ASCII
+substrate metadata round-trips through explicit UTF-8 Dhall emission. The validation classifier
+must distinguish a typed memory-capacity failure from the two disallowed
 outcomes: a **stall** (a genuinely missing result, including the historical OS-OOM-kill symptom) and
-a **fabricated pass**. This is owned by Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6 Sprint
-6.38. Canonical doctrine for the grant-gated capped-engine execution invariant (a host OOM is
-unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+a **fabricated pass**. Phase 4 owns Apple/Linux CPU adversarial proof, Phase 6 owns GPU enforcement,
+and Phase 8 owns the final wire migration. Canonical doctrine:
+[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 ## Durable-Context Demo Validation
 

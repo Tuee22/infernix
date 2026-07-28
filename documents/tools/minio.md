@@ -29,12 +29,11 @@
     `users/<userId>/contexts/<contextId>/{uploads,generated}/<objectKey>`; absent when
     `demo_ui = false`
 - Harbor also uses a MinIO bucket named `harbor-registry` as its rebuildable registry backing
-  store. That bucket is not product-durable state: lifecycle cleanup may remove the bucket
-  contents, the matching MinIO bucket metadata, and stale multipart/tmp working sets before
-  startup or during `cluster down`; the matching Harbor Redis registry-cache claim is also
-  rebuildable and is scrubbed with the registry bucket so fresh Harbor database state never points
-  at stale image upload fragments or cached blob-existence keys. The durable model and demo-object
-  buckets remain retained.
+  store. That bucket is not product-durable state: after Kind deletion, lifecycle cleanup holding a
+  freshly proved `WriterQuiesced` lease may remove the bucket contents, matching MinIO metadata,
+  stale multipart/tmp working sets, and the matching Harbor Redis registry-cache claim only from
+  the detached local retained copy. This prevents fresh Harbor database state from pointing at
+  stale image fragments or cache keys. The durable model and demo-object buckets remain retained.
 - the **`.ready` sentinel pattern** on `infernix-models`: the coordinator's bootstrap
   worker PUTs each weight file first, then PUTs `<modelId>/.ready` last, then publishes
   `model.bootstrap.ready.<modelId>`. Engines treat the presence of `.ready` as the atomic

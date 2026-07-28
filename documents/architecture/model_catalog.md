@@ -25,13 +25,13 @@ plan.
 The model catalog is Haskell-owned typed configuration derived from the README matrix.
 
 - the service registry owns one entry for every README matrix row
-- the active generated substrate file selects the engine for each supported row and carries the
-  resulting catalog as the runtime substrate `.dhall`, a typed Dhall record whose schema is reflected
-  from the substrate decoder type and is decoded in-process by the `dhall` Haskell library
+- the initialized repo-root `./infernix.dhall` selects the engine for each supported row and carries
+  the resulting catalog as a typed Dhall record whose schema is reflected from the substrate decoder
+  type and is decoded in-process by the `dhall` Haskell library
 - `cluster up` publishes a cluster-role `infernix.dhall` payload into
-  `ConfigMap/infernix-demo-config` for cluster-resident consumers; on Apple this preserves the
-  active generated catalog and `demo_ui` setting while using cluster daemon metadata rather than
-  the host daemon role staged under `./.build/`
+  `ConfigMap/infernix-demo-config` as a deployment mirror for cluster-resident consumers; on Apple
+  this preserves the active generated catalog and `demo_ui` setting while using cluster daemon
+  metadata rather than the host daemon role in repo-root `./infernix.dhall`
 
 ## Entry Shape
 
@@ -51,11 +51,14 @@ Each generated entry includes:
   footprints (biased high) until measured peak RSS / VRAM passes refine them. The field is threaded
   through the hand-written JSON codec, the Dhall decoder/renderer/type in
   `src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
-  `web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. It is the shared
-  runtime admission input for Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. A model
-  whose footprint exceeds the active enforced budget is rejected per request with a typed
-  `ModelMemoryLimitExceeded` `InferenceError` that carries `requiredMib` and `availableMib`; it must
-  not make the entire generated daemon config invalid. The field is now a required, positive
+  `web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. The Haskell
+  execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. A model
+  whose footprint exceeds the declared capacity remains explicit as `UnavailableModel`; the normal
+  coordinator request path now returns a typed `ModelMemoryLimitExceeded` carrying `requiredMib`
+  and `availableMib` without launch, and the row does not invalidate smaller placements;
+  the complete source-matched Phase 1 gate passed on 2026-07-25. Linux GPU
+  plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6 adds
+  independently indexed RAM/VRAM enforcement. The field is now a required, positive
   `ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
   `modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
   decoder fail closed when it is absent or non-positive — the old bare-`Int` that defaulted to `0` and

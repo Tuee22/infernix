@@ -12,7 +12,7 @@ import Infernix.ClusterConfig (ClusterConfig)
 import Infernix.ClusterConfig qualified as Cluster
 import Infernix.Config (Paths, publicationStatePath)
 import Infernix.Demo.Api (DemoApiOptions (..), DemoBridgeMode (..), runDemoApiServer)
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.Types (RuntimeMode, configRuntimeMode, runtimeModeId)
 
 runWebappRole :: Paths -> RuntimeMode -> Maybe ClusterConfig -> FilePath -> IO ()

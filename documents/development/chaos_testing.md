@@ -79,18 +79,20 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   multiple distinct host ids may subscribe to a shared model pool and broker backpressure distributes
   work to members with capacity; pinned host routes use `Exclusive` and reject duplicate consumers.
 - **Engine model-memory admission failure (clean-fail by construction).** Every active substrate
-  resolves an explicit `InferenceMemoryBudget`: Apple unified host RAM after the Colima pledge and
-  host reserve, Linux CPU engine pod RAM, or Linux GPU VRAM. Every model carries
-  `ModelDescriptor.modelRamFootprintMib`. Immediately before the engine launches, the shared
-  admission policy compares the footprint against the active enforced budget. A model whose
-  footprint exceeds the budget publishes a clean per-row `status=failed` with typed
+  carries `ModelDescriptor.modelRamFootprintMib`. On Apple and Linux CPU,
+  `compileRuntimePlan` compares that footprint with the declared resource capacity, mints an indexed
+  grant only for a fitting placement, and retains an oversized row as `UnavailableModel`. Live
+  refinement pairs a fitting grant with its matching enforcer before engine launch receives an
+  `ExecutableModel`. A request for an unavailable row must publish a clean per-row
+  `status=failed` with typed
   `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` and is
   not launched. Configuration validation may surface capacity diagnostics, but it must not fail the
   whole daemon solely because one catalog model is too large; smaller models must continue to run.
   Tests classify this constructor as clean capacity failure, distinct from a missing result/stall or
-  fabricated pass. This is owned by reopened Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, and Phase 6
-  Sprint 6.38. The target invariant — a grant-gated capped engine (admitted `MemoryGrant`, OS-bounded
-  ceiling) makes a host OOM structurally unrepresentable — is owned canonically by
+  fabricated pass. Phase 1 owns exhaustive accounting and the coordinator rejection path; Phase 4
+  owns Apple/Linux CPU adversarial enforcement and encapsulated serialization. Linux GPU must fail
+  plan compilation with `GpuDualResourceBudgetRequired` until Phase 6 supplies independently
+  indexed RAM/VRAM enforcement. The executable-gated capped-engine invariant is owned canonically by
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 - **Test-harness SIGKILL mid-mutation (dirty-cluster reconcile).** A `HarnessOwned`
   `infernix test all` that is externally killed while it is actively mutating the cluster — mid
@@ -99,10 +101,20 @@ redelivery, Pulsar producer-side deduplication, and projection-layer idempotency
   position persisted rather than an operator-idle `ClusterReady`. `cluster status` reports a
   mutation-incomplete (dirty) phase, not a false `steady-state`, and the next `cluster up` reconciles
   it — uncordoning the drained node and scaling the over-scaled deployment back — through the
-  reconcile-on-next-start repair. Code-side closed (2026-07-23): the `ClusterMutating` position and
-  reconcile (Phase 2 Sprint 2.15) and the harness's evidence-gated `HarnessOwned` seizure (Phase 6
-  Sprint 6.43) are implemented and closed under Wave X (2026-07-24). Canonical home:
+  reconcile-on-next-start repair. Wave X (2026-07-24) historically closes the 2026-07-23
+  `ClusterMutating`, reconcile, and `HarnessOwned` seizure scope in Phase 2 Sprint 2.15 and Phase 6
+  Sprint 6.43. It does not close the 2026-07-25 owner-atomic reservation/teardown correction. That
+  correction now includes the all-Haskell lifecycle-lock and bounded-command supervision
+  implementation. Focused adversarial validation, fresh source review, complete source-matched
+  Stage 1, and Wave Y remain in progress, and Phase 6 validation is ordered after Phases 2 and 4.
+  Evidence produced before the all-Haskell replacement is superseded. Canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md).
+- **Bounded-command owner death and forced cleanup.** Focused machine-independent adversarial
+  coverage must prove parent death both before and after durable activity publication, stopped
+  supervisor and stopped target-group cleanup, supervisor death, descendant termination, exact
+  birth-identity recovery, and designated-owner reaping without timing sleeps or PID-only evidence.
+  Activity may retire only after the anchor, supervisor, and target groups are proven absent. These
+  tests are part of the current Phase 2 gate and are not yet reusable closure evidence.
 
 The `linux-cpu` integration lane implements these cases as pod replacement, node-drain, and
 deduplicated bootstrap replay checks against the real Kind cluster. They run alongside the

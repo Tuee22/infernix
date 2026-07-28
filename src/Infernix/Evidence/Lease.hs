@@ -1,4 +1,5 @@
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RoleAnnotations #-}
 
 -- | Phase 1 Sprint 1.16 — the revocable-evidence kernel of the
 -- managed-state-transition doctrine
@@ -24,6 +25,8 @@ import Control.Exception (bracket)
 -- is hidden: only 'withLease' builds one, and the phantom region @s@ confines
 -- it to the establishing scope.
 newtype Lease s p = Lease p
+
+type role Lease nominal nominal
 
 -- | How to establish the condition — performing the transition and proving
 -- it holds — and how to release it on scope exit.

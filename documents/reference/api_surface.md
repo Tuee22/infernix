@@ -76,7 +76,7 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   generated catalog or publication contract
 - cache status exposes the supported `minio://infernix-models/<modelId>/` durable
   source URIs, engine-runner metadata including engine-adapter availability, and selected
-  engine-binding details derived from the staged substrate `.dhall`. Cache manifests sit
+  engine-binding details derived from the effective runtime-config `.dhall`. Cache manifests sit
   beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` and are rebuildable
   via `infernix cache rebuild`

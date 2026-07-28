@@ -24,6 +24,41 @@
 > accelerator plus `linux-cpu` full-suite evidence for each phase. No phase waits on both
 > accelerators as one must-pass-together gate.
 
+> **Wave Y evidence reset (2026-07-26).** The no-repo-owned-native-source correction supersedes
+> every pre-correction source/binary digest, final review, Stage 1, and cohort assertion for the
+> affected Phase 0/1/2/4 correction surfaces. This includes Phase 1 Apple bridge/materialization,
+> Phase 2 lifecycle/subprocess, and Phase 4 direct-FFI footprint-sampler evidence. They remain
+> historical GREEN-as-run records only and cannot be reused for current closure.
+> The first accepted post-correction source identity, final review, and complete
+> machine-independent Stage 1 closed Phase 0 Sprint 0.18 on 2026-07-27; the exact identity is
+> recorded below. Wave Y still has no Apple or `linux-cpu` evidence. The Phase 1 code-side source
+> deletion, opaque bounded provisioning region, fully hydrated/smoked candidate transaction, exact
+> provenance/actual payload digest, rollback/crash reconciliation, and focused code-side proof are
+> complete but are not cohort evidence.
+> The active Phase 1 audit additionally rejects the current writer-effect boundary: direct writes
+> and external venv/package/download/mount/copy tools return to absolute pathnames after root
+> validation, so an intermediate parent can still be swapped at the effect. The correction requires
+> descriptor-retained direct effects, descriptor-derived external-tool working directories with safe
+> relative operands, a distinct fixed-root Audiveris download-cache authority, and deterministic
+> effect-time swap rejection. Apple Python configuration and installed-target containment, the
+> complete Linux loader/library closure, a Linux generation fingerprint that includes its
+> image-owned target evidence rather than only metadata payload bytes, and exact helper-owned
+> engine-group cleanup also remain
+> open. The adversarial subprocess fixtures additionally retain PID-only target disappearance and
+> stopped-state assertions; they must publish and verify exact target birth identities before they
+> can be accepted as cleanup evidence. The machine-independent Apple boundary fixture uses
+> synthetic marker actions and proves only private-runner ordering and cleanup mechanics, not
+> cancellation of hydration, relocation, smoke, activation, or Audiveris detach. A Darwin lane
+> must cancel the actual Audiveris materializer through its fixed first-order post-mount hook and
+> prove exact mount recovery, candidate cleanup, prior-root preservation, and lock reacquisition.
+> The opt-in mode is implemented, remains excluded from the default machine-independent suite, and
+> has no accepted result. After a green normal materialization creates a current valid prior root,
+> the exact cohort command is `cabal test infernix-apple-materializer --test-show-details=direct
+> --test-options='--darwin-production-audiveris-cancellation'`.
+> None has Wave Y cohort evidence.
+> Waves A-X retain their recorded narrower historical
+> evidence; this reset does not rewrite those completed scopes.
+
 ## Reopen Waves — Closed by Wave V (2026-07-20)
 
 Both doctrine-reopen waves are **closed by [Wave V](#wave-table)**, which recorded the
@@ -70,7 +105,7 @@ retained-state teardown.
 | F | Native arm64 Linux CPU execution | Validation-only Phase 3 Sprint 3.12 closure: native `linux/arm64` `linux-cpu` validation through the already selected arm64 Docker daemon on this Apple Silicon machine. Proved Harbor publication, warmup hydration, final Harbor-backed preload, integration, and routed E2E on the native ARM publication path without cross-architecture emulation or Docker-context changes. | Closed | the recorded validation |
 | G | Apple Silicon (current host) | Phase 7 auth-UX quad closure: Sprint 7.19 auth-gated landing with dual Keycloak entry points, Sprint 7.20 themed Keycloak login surface, Sprint 7.21 operator console ribbon with edge JWT gating for `/harbor`, `/pulsar/admin`, and `/minio/s3`, and Sprint 7.22 self-service account deletion with MinIO + Pulsar per-user state reaping before Keycloak account removal. | Closed | the recorded Apple host-native validation |
 | H | Apple Silicon (current host) | Full current-host Apple lifecycle revalidation from a clean build root (no prior `./.build` artifacts): `cabal install all:exes`; `infernix lint files/docs/chart/proto` plus `infernix docs check`; `infernix test lint` (haskell-style) and `infernix test unit` (`infernix-unit` plus web 71/71); explicit `infernix cluster up` → `cluster status` (77 pods across 2 nodes, `infernix-manual` storage, full Envoy Gateway route set, `pulsar-bridge-to-host-daemon` dispatch) → `cluster down` (retained-state replay, `./.data` preserved) → post-teardown `cluster status` (`clusterPresent: False`, `lifecyclePhase: cluster-absent`); `infernix test integration` PASS; `infernix test e2e` 9/9; aggregate `infernix test all`. The dynamic `choosePulsarHttpPort` chooser shifted the Pulsar host port 30080→30081 around a VS Code-held `127.0.0.1:30080`. Native arm64 throughout (colima `aarch64`, no emulation or Docker-context changes). Published cluster image `infernix-linux-cpu@sha256:7f341cb1629c1d0af9b72db0fef7b89cc1f13d2bd02afe9be1daeed5e7f18454`. **Superseded (2026-07-07):** this Apple `test integration` / `e2e` / `test all` proof predates Wave K/L realness, the MT3 replacement, Phase 8 eager staging, and Phase 9; it does not attest the current 16-model catalog, and a current full per-model apple-silicon run OS-OOM-kills the daemon (Phase 4 Sprint 4.26; see Wave R). | Closed (inference proof superseded) | 2026-06-09 |
-| I | Per-accelerator real-output attestations | Real per-family inference and engine-artifact materialization attestations. Phase 1 Sprint 1.14 is closed on Apple materialization evidence. The CUDA Linux cycle replaced Linux runner-contract payload placeholders with runtime-backed wrappers, strict-smoked all five native adapter roots in `infernix-linux-gpu:local`, then closed Phase 4 and Phase 6 real-output work on 2026-06-20: full `./bootstrap/linux-gpu.sh test` passed the selected CUDA accelerator lane, and rebuilt-image `./bootstrap/linux-cpu.sh test` passed the paired CPU lane. The GPU Playwright matrix exercised all 16 `linux-gpu` catalog rows, including framework-specific and native rows through live routed inference; the CPU lane passed 9/9 routed Playwright plus full integration. | Closed | 2026-06-20 |
+| I | Per-accelerator real-output attestations | Historical real per-family inference and engine-artifact materialization attestations. Phase 1 Sprint 1.14 closed its then-current Apple materialization topology. The CUDA Linux cycle replaced runner-contract placeholders with runtime-backed wrappers and closed the then-current Phase 4/6 real-output work on 2026-06-20. Those wrappers and their manifest-selected command contract are deleted by active Sprint 1.20. The recorded GPU and CPU results remain evidence for their exact historical sources but cannot close the corrected direct-target topology. | Closed (historical source only) | 2026-06-20 |
 | J | Apple Silicon + Linux CPU/GPU | Substrate-neutral engine-pool routing and broker-native backpressure. Re-opened Phase 4 Sprint 4.19, Phase 6 Sprint 6.32, and Phase 7 Sprint 7.24 to replace raw batch-topic routing, the Apple singleton/failover stopgap, and demo-off coordinator gating with a validated pool/member graph. Stage 1 code-side work landed on the Linux outer-container lane; Apple Stage 2 evidence covered pinned `Exclusive` member routes, same-machine host-member coexistence on a real `Shared` pool subscription, logical `Shared` backlog/backpressure, and production `demo_ui = false`; Linux CPU Stage 2 covered Kubernetes-observational members, pool placement, shared-subscription backlog/backpressure, replacement/drain cases, anti-affinity, lifecycle rebinding, and demo-off publication. The remaining Linux GPU/CUDA Stage 2 gate closed on 2026-06-20 through the full `./bootstrap/linux-gpu.sh test` pass, paired with the rebuilt-image `./bootstrap/linux-cpu.sh test` pass. Physical Apple multi-host routing is deferred hardware proof, not open Wave J work. | Closed | 2026-06-20 |
 | K | CUDA Linux + Linux CPU | **Realness reopen — real Linux inference.** Reopened Phase 4 (Sprints 4.21–4.23) and Phase 6 (Sprint 6.33), built on the Phase 0 (Sprint 0.12) machine-independent realness lint (Haskell `realnessFabricationViolations` in `HaskellStyle.hs` + Python `check-code` AST): remove every adapter/runner fabrication path (done 2026-06-23), retire the JAX/TF adapters (done), deliver real Linux engines (real ONNX basic-pitch over the input, real Audiveris invocation, de-masked whisper/CT2/llama), ONNX adoption (Demucs/Open-Unmix self-contained ONNX, SDXL-Turbo on GPU), fixed weight provisioning, modern PyTorch music-transcription rebinds, Phase 4's own real per-family fixtures + fail-closed per-row int+e2e (Sprint 4.23), and the Phase 6 fail-closed HA/service-loop assertions (Sprint 6.33). Stage 1 machine-independent gates + Stage 2 `linux-gpu` + `linux-cpu` real per-family output for the Linux catalog. **Progress 2026-06-25:** the **source-separation family is now real** — both **Demucs** (real first-party `.th` weight URL + `weights_only=False`/`load_model` fix) and **Open-Unmix** (`openunmix` dep resolving 1.3.0, dedicated `_separate_open_unmix` path, Zenodo `umxhq` record + new multi-file bootstrap staging, `umxhq(pretrained=False)`+`load_state_dict(strict=False)`) load real weights and produce real stem ZIPs (proven in the `linux-cpu` pytorch venv; `check-code` + `cabal build all` green; `poetry lock` resolves cleanly). **`linux-cpu` Stage-2 GREEN (2026-06-25):** the full `linux-cpu` cohort suite passes on a real Kind cluster — `infernix test integration` **22/22 steps PASS** (every per-model inference row then active produces real output: real LLM (qwen2.5 safetensors, tinyllama GGUF via llama.cpp), real speech (whisper.cpp + faster-whisper CT2), real Demucs + Open-Unmix stem ZIPs, real basic-pitch ONNX MIDI, real Omnizart ByteDance piano MIDI, real Bark audio, real Audiveris OMR → MusicXML; plus cache lifecycle, durable Pulsar topics, and all HA/chaos hardening — engine pool placement, backpressure, frontend/coordinator/engine failover, node drain, **bootstrap failover + dedup**, throughput, harbor/minio/pulsar recovery, postgres failover + lifecycle rebinding, anti-affinity), and `infernix test e2e` **9/9 Playwright specs PASS** (including the 11-min per-model browser smoke matrix exercising every catalog model). A later catalog update replaces the obsolete MT3 residual with MT3-PyTorch and MR-MT3 through `mt3-infer`. **`linux-gpu` Stage-2 GREEN (2026-06-26):** the rebuilt CUDA image (`infernix-linux-gpu:local`, nvidia/cuda 12.8.1 base, RTX 5090) passes `infernix test integration` (PASS — per-model inference over the then-active 14-row GPU catalog including the GPU-only rows AWQ + GPTQ via vLLM, SDXL-Turbo + Wan2.1 video via Diffusers, plus all three per-engine deployments and the HA/chaos tail) and `infernix test e2e` (9/9 specs, including the 34.8-min per-model browser matrix exercising every GPU model). The GPU-only rows were already real engine code with valid HuggingFace weight URLs; the source-separation/Audiveris/bootstrap-dedup fixes from the `linux-cpu` close carried over unchanged, so the GPU lane went green on the first cluster run. **Wave K is fully closed** (both `linux-gpu` and `linux-cpu` Stage-2 green). | Closed | linux-cpu 2026-06-25, linux-gpu 2026-06-26 |
 | L | Apple Silicon + Linux CPU | **Realness reopen — real Apple engines.** Reopened Phase 1 Sprint 1.15 to replace Apple validation wrappers with real Core ML, MLX, llama.cpp/whisper.cpp Metal, CTranslate2, ONNX, and Audiveris engines through the headless materialization lane. Stage 1 is green, Apple Stage 2 integration plus focused routed Playwright are green, and the paired `linux-cpu` full routed real-output gate closed on 2026-06-29. The closing real Linux host rerun rebuilt `infernix-linux-cpu:local` as `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8` (`19963913870` bytes, created `2026-06-29T02:43:21.839158236-04:00`) after adding the base Pulsar autorecovery JVM/resource envelope and the base Harbor registry `512Mi`/`2Gi` memory envelope with unit guards. `./bootstrap/linux-cpu.sh test` exited zero: Haskell style, Python `check-code`, Haskell unit, generated web contracts (`71/71`), full integration with every `linux-cpu` catalog row producing real output plus the HA/chaos tail and throughput (`users=3`, `contextsPerUser=2`, `promptsPerContext=2`, `totalPrompts=12`, `p95Seconds=76.10685634613037`), and routed Playwright `9/9` including the 22.7-minute per-model browser matrix all passed. **Scope (2026-07-07):** this Apple real-engine close is the then-active pre-MT3 catalog only; no apple-silicon full per-model attestation exists for the current 16-model catalog, and a current run OS-OOM-kills the daemon (Phase 4 Sprint 4.26; see Wave R). | Closed (then-active catalog only) | 2026-06-29 |
@@ -84,12 +119,413 @@ retained-state teardown.
 | T | Apple Silicon + Linux CPU/GPU | **Typed resource memory admission and inference errors (Phase 4 Sprint 4.27, Phase 5 Sprint 5.11, Phase 6 Sprint 6.38).** Stage 1 code-side closure is complete on 2026-07-09: pure `InferenceMemoryBudget` and `InferenceError` ADTs, typed `ResultPayload`/protobuf/storage/result-bridge/browser-contract error branch, no catalog-wide over-budget startup failure, Apple enforced-zero budget semantics without hardcoded floors, Linux CPU pod-limit admission, Linux GPU VRAM admission, browser rendering of `ModelMemoryLimitExceeded` from explicit MiB fields, and integration classification by constructor/quantity rather than parsed text. Machine-independent validation on the Linux outer-container lane: `./bootstrap/linux-cpu.sh build` passed; `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test lint` passed; `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test unit` passed Haskell unit plus web `74/74`; `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`, and `infernix docs check` passed on the rebuilt image; a source-bound `cabal build test:infernix-integration` compile preflight passed. Later CPU reruns repeatedly passed the full integration lane and proved typed over-budget payloads in the browser matrix, while surfacing browser render races around active-context snapshots/patches. The 2026-07-12 rebuilt image `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` fixed the tagged `InferenceError` WebSocket envelope and passed build, unit (Haskell plus web `83/83`), and full routed `linux-cpu` E2E `16/16`, including the per-model browser matrix and typed capacity-message path. The selected `linux-gpu` closure then passed on rebuilt image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` (created `2026-07-12T03:52:10.703037529-04:00`) through `./bootstrap/linux-gpu.sh test`: Haskell style, Python checks, Haskell unit, web `83/83`, full live integration, HA/recovery, and routed Playwright `16/16` in 17.1 minutes. Integration and browser matrix rows exercised typed GPU VRAM admission (`availableMib = 4096`) for over-budget rows while smaller rows continued; warm-cache warnings remained non-blocking (`music-omnizart` upstream 403, plus large lazy-fallback rows). Engine images used by the run: vLLM `sha256:a104965a23de389f8da6a86da9fe20c15fdf20c8cfb0c2c85c245d601bdae6f4`, PyTorch `sha256:c00fa185f82644efa9270e528a4f5b82b02746160709dbea6365b29393432769`, Diffusers `sha256:a4a5064a2937a155ef881bc9410cb3c2340cec2d8a32fca598a5016cfe0d6fd0`. | Closed | 2026-07-12 |
 | U | Apple Silicon + Linux CPU/GPU | **Phase 9 UAT auth residual — Keycloak SSO logout and admin account switching (Sprint 9.9).** Stage 1 code-side closure is complete on 2026-07-09: the UAT issue is diagnosed as local-only Sign out leaving the Keycloak SSO browser session alive, which could silently re-enter a prior self-registered non-admin session when the user tried the separate admin credentials. `web/src/Infernix/Web/Auth.js` now keeps Keycloak's `id_token`, clears local token/PKCE/refresh/operator-cookie state, and starts the Keycloak OIDC logout endpoint with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`; `web/src/Main.purs` routes the Sign out button through that logout redirect after closing local app state; `web/playwright/inference.spec.js` now requires the login prompt after Sign out and adds a regression that switches from non-admin to the hardcoded admin account and sees the admin marker/ribbon. The 2026-07-12 `linux-cpu` routed run on image `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` passed full Playwright `16/16`, including the Sprint 9.9 logout/account-switching specs on the live edge. The selected `linux-gpu` rerun on image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` then passed full routed Playwright `16/16`, including login-prompt-after-sign-out, non-admin-to-admin account switching, RBAC/admin-surface denial, personal-dashboard isolation, artifact coverage, and the per-model browser matrix. | Closed | 2026-07-12 |
 | V | Apple Silicon + Linux CPU | **Managed-State-Transition Doctrine reopen (2026-07-15) + Bounded-Command Application & Bounded-HTTP reopen (2026-07-19) — single-accelerator + `linux-cpu` cohort sign-off.** Closes both queued reopen waves over one frozen worktree. Sprints: MST (0.13, 1.16, 2.14, 3.14, 4.28, 5.12, 6.39, 7.29, 8.7, 9.10) + BC/HTTP (0.14, 1.17, 3.15, 4.29, 6.40, 6.41). Sprint 6.41's readiness-wait migration was completed here — the twelve remaining hand-rolled `go n` waits across `Cluster.hs` / `Runtime/Pulsar.hs` / `CLI.hs` folded onto `Infernix.Evidence.Readiness.awaitReadiness` under the shared `budgetDeadline` bridge, plus the `threadDelayViolations` lint gate — and was adversarially reviewed (two behavior-divergence findings resolved: `waitForHarborPostgresPodsReady` skips its destructive repair on the final poll exactly as the original did, and `budgetDeadline` is exact for all `attempts >= 0`). All 16 sprints' claimed implementation paths were verified present in the worktree. **Stage 1 machine-independent (apple-silicon):** `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, `cabal test infernix-haskell-style` (incl. the new `threadDelayViolations` readability rule + cabal-format), `infernix lint files/docs/proto/chart`, `infernix docs check`, `poetry run check-code`, and web `83/83` — all green. **Stage 2 apple-silicon (host-native `./.build/infernix test all`):** haskell-style/unit/web `83/83`; integration PASS — the full 16-model per-model real-inference lane with zero OS OOM-kill (transformers `llm-smollm2-safetensors`, llama.cpp Metal `llm-tinyllama-gguf`, MLX `llm-qwen15-mlx`, whisper.cpp + CTranslate2 speech, Core ML + ONNX basic-pitch, PyTorch demucs/open-unmix/bark, `music-mt3-infer`/`music-mr-mt3`/`music-omnizart`, Core ML + SDXL-Turbo diffusion, Audiveris) plus `Exclusive`/`Shared` subscription enforcement, backlog/backpressure, cache/service/durable topics, and the HA/lifecycle cycles; e2e routed Playwright **16/16** (per-model browser matrix 9.9 m + Phase 9 RBAC + Sprint 9.9 SSO logout/account-switching + artifact upload/preview/download). Clean teardown, harness config restored. **Stage 2 linux-cpu (`./bootstrap/linux-cpu.sh build && test` in-container on the native-arm64 colima daemon):** haskell-style/unit (Haskell + web) PASS; integration PASS — 6 real-inference rows (LLMs, whisper.cpp/CT2 speech, ONNX basic-pitch) plus the 6 over-budget rows (demucs/open-unmix `requiredMib = 8192`, MT3×2/omnizart `6144`, bark `5120`) cleanly typed-admission-rejected as `InferenceError.ModelMemoryLimitExceeded { availableMib = 4096, resource = PodRam, source = "cluster-engine-pod-memory-limit" }` (Sprint 4.27/5.11/6.38), cache/service/durable topics, full HA/chaos (pool placement, backlog/backpressure, frontend/coordinator/engine pod replacement, node drain, bootstrap failover/dedup), throughput (`totalPrompts = 12`, `p95Seconds = 287.58`), platform recovery (Harbor/MinIO/Pulsar/PostgreSQL), lifecycle rebinding, anti-affinity, and demo-off; e2e routed Playwright **16/16** (per-model browser matrix 5.7 m + the same auth/RBAC/artifact suite). **Cohort-surfaced fixes recorded here:** (1) the Apple native-engine `infernix internal materialize-metal-engines` step is a required pre-`test all` prerequisite — the run correctly fail-closed on the absent `llama-cli` before the engines were materialized (realness contract holding); (2) the pytorch-engine `mt3-infer` pin was uncapped (`>=0.1.3`) and had drifted to 0.2.0 (a tensor-shape regression in MT3 transcription), capped to `>=0.1.3,<0.2` — the Wave O/P/R/S-validated 0.1.3, torch/transformers unchanged, the stale `test/unit/Spec.hs` golden assertion updated in lockstep; (3) the pytorch-engine `demucs` pin was uncapped and had drifted to 4.1.0, which pulls `sphn` (no linux-aarch64 wheel → its from-source `audiopus_sys`/CMake build fails on the arm64 Linux CPU lane) — the linux-cpu group is marker-scoped to `demucs >=4.0,<4.1` (demucs 4.0.1, sphn-free; poetry collapsed the universal lock to 4.0.1; apple's demucs row validated with 4.1.0, which ships a macOS-arm64 wheel, and 4.0.1 is the conservative adapter-unchanged predecessor); (4) the `docker/Dockerfile` engine-venv install block silently masked a `poetry install` failure via a trailing `;`-chained `printf` — changed to `&&` so a venv-install failure fails the build (fail-closed). | Closed | 2026-07-20 |
-| W | Apple Silicon + Linux CPU | **Memory-safety-by-construction reopen (2026-07-21) — code-side closure of Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, then the Stage-2 behavioral proof. Stage 2 behavioral evidence GREEN on apple-silicon plus `linux-cpu` (2026-07-24).** Sprint 4.30 grant-gated capped-engine kernel (`admitModelMemory :: … -> Either InferenceError MemoryGrant`; the only engine-spawn path requires the grant and bounds resident memory to the admitted `MemoryCeiling`; macOS `proc_pid_rusage` watchdog + process-group SIGKILL; Linux pod-cgroup/VRAM-OOM exit classifier), Sprint 4.31 checked `HostMemoryPartition` (physical = vmReserve + hostHeadroom + inferenceCapacity, rejecting oversubscription; headroom covering OS + routed-E2E browser) + required `ModelMemoryFootprint` newtype + budget-enforcer split (`HostEnforcedBudget HostMemoryPartition` \| `SubstrateEnforcedBudget PodMemoryLimit`, dropping `UnenforcedMemoryBudget`), and Phase 6 Sprint 6.42 `unboundedEngineSpawnViolations` lint. Phase 0 Sprint 0.15 (doctrine doc + governance mirror) is doc-only and already `Done`; the Phase 4/6 code is now **implemented and Stage 1 (the machine-independent gate set) is GREEN (2026-07-21)**: `cabal build all` `-Wall -Werror`, `cabal test infernix-unit` (grant-mint + partition-oversubscription/headroom-floor + footprint-non-positive + lint negative-test), `cabal test infernix-haskell-style` (incl. `unboundedEngineSpawnViolations`), `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code` all pass on this Apple host. Stage 2 is the single-accelerator (apple-silicon) plus `linux-cpu` full-suite `infernix test all` behavioral proof: an over-capacity catalog completes with **zero host OOM-kill** and every over-budget row is cleanly typed-rejected as `InferenceError.ModelMemoryLimitExceeded` by the capped-engine kernel (macOS `proc_pid_rusage` watchdog on the Apple lane, pod-cgroup OOM-exit classifier on `linux-cpu`). | Closed — Stage 2 behavioral proof GREEN on both lanes against frozen workload image `sha256-bcf88c23fda211a4b5f3701c1c1c66ab223462f40d709be795e8f7b2d44ccee0` (2026-07-24). **apple-silicon**: full `infernix test all` — integration PASS and routed Playwright **16/16**; an over-capacity 16-model catalog completed with **zero host OOM**, every over-budget row typed-rejected `ModelMemoryLimitExceeded` (pre-admission `host-memory-partition-inference-capacity` for `image-sdxl-turbo`/`image-apple-stable-diffusion-coreml` at 12288>10240 MiB, and a live `capped-engine-resident-ceiling` watchdog breach for `audio-bark-small`), and the warm-model-cache barrier staged all 16 models with **no "11/16" stall** (Observable-Readiness Sprints 1.18/8.8); the per-model-matrix e2e spec cleared on a clean re-run after one first-attempt flake from a marginal 10s Playwright WebSocket-frame timeout (an inference-path timing issue orthogonal to this wave). **linux-cpu**: clean single-invocation `infernix test all` — integration PASS and routed Playwright **16/16**, zero OOM, every over-budget row typed-rejected `ModelMemoryLimitExceeded` via the `cluster-engine-pod-memory-limit` (pod-cgroup) enforcer (`SubstrateEnforcedBudget PodMemoryLimit`). | 2026-07-24 |
-| X | Apple Silicon + Linux CPU | **Cluster-Ownership & Mutation-Position reopen (2026-07-23) — closed 2026-07-24.** An externally-killed `infernix test all` exposed a DSL smell: `ClusterState` had no owner and `ClusterLifecycle` had no mutating position, so a test-mutated cluster (drained node / over-scaled deployment) was the same term as an operator's idle `ClusterReady` and a SIGKILLed run persisted a false `steady-state`; and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator cluster identity (`findRepoRoot`) let even a clean run destroy an operator's running cluster. The doctrine + governance landed first in Phase 0 Sprint 0.16; the enforcing Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43 code and the selected Apple plus Linux CPU behavioral evidence are closed. | Closed | 2026-07-24 |
-| Y | Apple Silicon + Linux CPU | **Typed Execution Plan Apple/CPU sign-off.** Phase 4 Sprint 4.32: verified Apple footprint refinement, exact Linux CPU per-execution enforcement, executable-model-only routing, adversarial ceiling breach with typed terminal failure, daemon/host survival, and subsequent smaller inference. Runs after Phase 0/1/2 code-side closure. | Planned | Pending |
+| W | Apple Silicon + Linux CPU | **Memory-safety-by-construction reopen (2026-07-21) — code-side closure of Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, then the Stage-2 behavioral proof. Stage 2 behavioral evidence GREEN on apple-silicon plus `linux-cpu` (2026-07-24).** This row is historical: its direct-FFI `proc_pid_rusage` sampler and every sampler-specific result are superseded and nonreusable for Sprint 4.32. Sprint 4.30 grant-gated capped-engine kernel (`admitModelMemory :: … -> Either InferenceError MemoryGrant`; the only engine-spawn path requires the grant and bounds resident memory to the admitted `MemoryCeiling`; historical macOS `proc_pid_rusage` watchdog + process-group SIGKILL; Linux pod-cgroup/VRAM-OOM exit classifier), Sprint 4.31 checked `HostMemoryPartition` (physical = vmReserve + hostHeadroom + inferenceCapacity, rejecting oversubscription; headroom covering OS + routed-E2E browser) + required `ModelMemoryFootprint` newtype + budget-enforcer split (`HostEnforcedBudget HostMemoryPartition` \| `SubstrateEnforcedBudget PodMemoryLimit`, dropping `UnenforcedMemoryBudget`), and Phase 6 Sprint 6.42 `unboundedEngineSpawnViolations` lint. Phase 0 Sprint 0.15 (doctrine doc + governance mirror) is doc-only and already `Done`; the historical Phase 4/6 gate was GREEN on 2026-07-21. The current implementation instead uses fixed bounded `/usr/bin/top` plus `/usr/bin/footprint` observation without direct FFI and requires fresh evidence. | Closed for its historical scope only — the 2026-07-24 behavioral result cannot close the corrected sampler. **apple-silicon**: the historical full `infernix test all` passed integration and routed Playwright **16/16**, with zero host OOM and a live resident-ceiling breach for `audio-bark-small`. **linux-cpu**: the historical clean `infernix test all` passed integration and routed Playwright **16/16** with typed pod-limit rejections. | 2026-07-24 (superseded for current sampler closure) |
+| X | Apple Silicon + Linux CPU | **Cluster-Ownership & Mutation-Position reopen (2026-07-23) — closed 2026-07-24.** An externally-killed `infernix test all` exposed a DSL smell: `ClusterState` had no owner and `ClusterLifecycle` had no mutating position, so a test-mutated cluster (drained node / over-scaled deployment) was the same term as an operator's idle `ClusterReady` and a SIGKILLed run persisted a false `steady-state`; and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator cluster identity (`findRepoRoot`) let even a clean run destroy an operator's running cluster. The doctrine + governance landed first in Phase 0 Sprint 0.16; the enforcing Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43 code and the selected Apple plus Linux CPU behavioral evidence are closed for that scope. The 2026-07-25 owner-atomic correction is outside Wave X and does not reuse its closure evidence. | Closed | 2026-07-24 |
+| Y | Apple Silicon + Linux CPU | **Typed Execution Plan Apple/CPU sign-off.** The governed no-repo-owned-native-source correction supersedes `eae424…` / `a0d1…` and interrupted Apple attempt 5. The `filelock` lifecycle boundary, all-Haskell typed subprocess replacement, and bounded fixed `/usr/bin/top` plus `/usr/bin/footprint` Apple observer are implemented. Phase 1's bounded provisioning and smoke-bound sibling transaction are present, but five adversarial reviews have rejected successive drafts. Review #5 rejected the escaping writer/lock boundary and arbitrary activation callback, plus remaining pathname-recursive or unbounded closure, recovery, package-discovery, and nested-capture paths. The live correction audit additionally found that capped-engine cleanup reaped its group leader before later numeric PGID cleanup; an exact retained helper-owned group identity through termination, absence proof, and designated-owner reap is now required. It also found that Linux evidence omitted the system loader and recursive library closure and that the root-bound writer returned to pathname effects with an intermediate-parent swap window. The measured Core ML artifact is about 1.7 GiB, so the full-root per-command snapshot copy is rejected; exact candidate/final execution must use a descriptor-retained generation lease, and dead-owner activity recovery must precede new writer authority. Full-materializer cleanup/recovery proof remains open. The direct Darwin `proc_pid_rusage` FFI sampler and old embedded Apple bridge evidence are superseded. Phase 0's focused correction proof, final review, and Stage 1 closed on 2026-07-27. | Blocked by active Phase 1 artifact/materializer, descriptor-retained writer and generation lease, dead-owner activity recovery, complete target closure, and exact engine-group correction, fresh review/Stage 1, Apple rematerialization/cohort, and paired `linux-cpu`; then Phase 2 in numerical order; both later Wave Y lanes remain | Close Phase 1 on Apple plus `linux-cpu`; then Phase 2's ordered closure; then Phase 4 Apple/CPU sign-off |
 | Z | CUDA Linux + Linux CPU | **Typed Execution Plan NVIDIA sign-off.** Phase 6 Sprint 6.44: verified per-process-group VRAM enforcement, independent RAM/VRAM grants, bounded provisioning, zero non-kernel raw-spawn imports/exemptions, adversarial CUDA ceiling breach with typed terminal failure, worker survival, and subsequent smaller inference. Consumes the committed Phase 4 Apple/CPU attestation without rerunning Apple. | Planned | Pending |
 
-**Wave W status: Closed 2026-07-24 (Stage 1 GREEN 2026-07-21; Stage 2 behavioral GREEN on apple-silicon plus `linux-cpu`).** The memory-safety-by-construction
+## Wave Y: Phase 1, Phase 2, Then Typed Execution Plan Apple/CPU Sign-Off (Blocked)
+
+Phase 0 Sprint 0.18 closed its correction gate on 2026-07-27. Wave Y is now blocked while active
+Phase 1 Sprint 1.20 closes, then while Phase 2 closes in numerical order. Phase 1 Sprint 1.19 closed
+its complete source-matched machine-independent gate
+and final adversarial source review on 2026-07-25. That gate included
+`cabal build all test:infernix-integration`, unit/internal/compile-fail/style suites (4 positive and
+27 negative compile fixtures), installation of `all:exes`, installed files/docs/chart/proto lints
+and docs check, Python `check-code`, web contract/build/bundle coverage with 83/83 unit tests, and
+`git diff --check`. The Phase 2 Sprint 2.14–2.16 final adversarial audit reopened implementation for
+command supervision/provenance, real readiness deadlines, stale mutation-state publication,
+claim-permission verification, and operator-kubectl mutation bypasses. The already-landed
+deletion-policy, lifecycle-region-indexed authority, exact reservation-reread, effect-adjacent
+authorization, and race-regression changes remain part of that scope. Phase 2 passed a clean source
+review and complete machine-independent gate on 2026-07-26, but its first Apple behavioral attempt
+exposed two executable-source defects and rejected that identity before `linux-cpu` started. The
+corrected source infers a podless retained claim only from the sole paused workload-capable worker;
+uses preserving and exhaustive synchronous/asynchronous cleanup across lifecycle, daemon, snapshot,
+protected credential, temporary-path, and descriptor boundaries; masks bounded parent/internal
+supervisor acquisition and cleanup while leaving interruptible waits interruptible; retires an
+activity lease only after exact child reap and command/supervisor-group absence proofs; and retains
+protocol, terminal-status, stdout, stderr, and cleanup diagnostics together. Final combined-source
+review and the complete Apple-host Stage 1 gate initially passed on 2026-07-26. The Apple retry
+proved production dead-owner recovery and exhaustive cleanup, but BuildKit later exposed a
+deterministic Linux `-Werror` source defect. The CPP correction invalidates that identity, so final
+review and complete Stage 1 reran GREEN. The later Apple result diagnosed Bark's 5120 MiB
+footprint under-estimate. The implemented correction raises it to 8192 MiB, retains the strict
+integration rule that every admitted catalog placement completes, removes the Playwright
+catalog-matrix runtime-ceiling escape hatch, and adds exact Apple/Linux admission unit tests.
+Final adversarial review then found the cache-sensitive Harbor verification witness. Its
+registry-only skopeo replacement and focused unit coverage are implemented. Final combined-source
+review was GREEN with no High/Medium findings, and complete corrected-source Stage 1 was GREEN; the
+skopeo auth scratch root was empty afterward. Apple attempt 4 rejected that freeze for closure:
+registry-only verification passed for the workload and every support image, cluster/routes and
+16-model staging passed, both 12288>10240 MiB image rows were correctly unavailable, and Bark then
+breached the live ceiling at required=available=8192 MiB. Exhaustive claim staging and cluster
+deletion preserved the primary diagnostic. The implemented follow-on loads Bark as fp16 on
+MPS/CUDA and fp32 on CPU, uses `torch.inference_mode()`, and converts generated audio to CPU fp32
+for WAV serialization. Focused `poetry --directory python run check-code` and
+`cabal test infernix-unit --test-show-details=direct` are GREEN. Renewed final review has no
+High/Medium findings; its sole Low observation is the substring-golden regression scope, assigned
+to the pending live Apple MPS lane and later CUDA lane. Complete Stage 1 was GREEN as run against
+`eae424…` / `a0d1…`, but the no-native-source correction supersedes and invalidates it for reuse.
+The accepted Phase 0 correction review and Stage 1 now exist; no post-correction Apple attempt or
+`linux-cpu` lane exists.
+
+Phase 1 Sprint 1.20's current code-side correction routes a closed semantic provisioning language
+through the same all-Haskell self-exec bounded-command kernel. The opaque nominal
+`ProvisioningGrant s` and indexed `ProvisioningSession s result` cannot escape their rank-2 region;
+the raw command constructors, interpreter, artifact transaction, Apple implementation, and
+per-artifact installer are package-internal. The public facade accepts one closed request; private
+runner-owned indexed sequencing retains every intermediate authority until a classified terminal
+result. Each sibling candidate is hydrated from exact direct pins, relocated fail-closed, smoked
+through a source-specific closed operation, assigned exact Python/source/runtime provenance,
+deterministically hashed from its actual payload tree, and activated only through fsynced rename
+with rollback and crash reconciliation. Generated `bin/*` wrappers and manifest-provided command
+text are deleted. A hidden direct-target catalog binds each executable and its complete runtime
+closure; Linux image targets carry exact descriptor-derived evidence. The Audiveris lane requires
+the fixed release checksum and kernel device-id mount evidence before bounded detach.
+Its cancellation seam is a fixed first-order post-mount action carrying only synchronization cells,
+not an effectful callback or escaping writer authority; no Darwin result has yet exercised that
+action against the actual materializer. The default focused suite remains machine-independent; the
+explicit `--darwin-production-audiveris-cancellation` mode requires a current valid prior
+`jvm-native` root, waits on the exact attached-mount checkpoint without a timing sleep, cancels, and
+then requires mount/candidate/activity absence, the unchanged valid prior root, and immediate
+provisioning-lock reacquisition. Its exact pending cohort command is `cabal test
+infernix-apple-materializer --test-show-details=direct
+--test-options='--darwin-production-audiveris-cancellation'` after the normal materialization
+prerequisite.
+The focused artifact-transaction and compile-fixture inventories are still growing with the active
+correction; no intermediate count is accepted evidence. The second artifact review rejected this
+work-in-progress with 2 High / 2 Medium / 1 Low findings. A third focused runtime review found 1
+High / 2 Medium: generic package-level
+capped-launch authority still admitted an arbitrary executable specification, the draft artifact
+runtime token remained reusable, and actual lock-through-reap/cancellation enforcement evidence was
+absent. A fourth materializer review found 2 High / 2 Medium: resolved tool identity was discarded
+before pathname execution, Audiveris mount evidence was inert and not owner-death recoverable,
+Mach-O provenance could name bytes other than the copied destination, and malformed dyld audit
+output could be accepted as version evidence. The dyld parser correction and focused Python
+contract checks now pass `check-code`; none of the current results is accepted closure evidence.
+A non-escaping one-shot indexed runtime action, closed Python/native invocation languages, writer
+authority, current-recipe binding, descriptor-anchored snapshot hashing, full-materializer
+failure/cancellation and recursive-closure proof, obsolete bridge retirement, and macOS mount-death
+recovery remain before another review. Fresh exact-source Stage 1, real Apple rematerialization and
+installed runtime smokes, the correction-dependent Apple cohort, and the paired `linux-cpu` cohort
+follow.
+
+The latest convergence audit adds two High-severity blockers and invalidates every intermediate
+result from this draft. Live writer/session authority was still exposed to caller-supplied
+effectful completion/transaction callbacks, and the generation read lease could be acquired before
+the stopped helper's exact recovery identities were durably published. The Apple-owned callbacks
+have been narrowed to private first-order fixture actions; provisioning and helper supervision
+remain under correction. The required order is candidate hash, generation-exclusive sidecar mint,
+durable publication of the already-born owner/anchor/supervisor/pin identities, one-shot start,
+supervisor-owned generation-shared validation through target-group absence and designated-owner
+reap, candidate rehash, generation-exclusive revalidation, then publication. Wave Y has no accepted
+review, Stage 1, Apple, or `linux-cpu` result for that source.
+Synthetic Apple marker-fixture results cannot close the full-materializer obligation; the required
+Darwin actual-materializer cancellation evidence remains open.
+
+The post-interjection target uses one parent-created self-exec anchor with closed descriptor
+inheritance, an explicit environment, a fresh process group, and standard-stream frames. The
+supervisor begins inside the anchor group and the self-exec pin begins inside the supervisor group;
+each provisional PID/birth identity must reach parent custody before that helper may detach. Only
+after reobservation and durable publication of exact owner, anchor, supervisor, and pin identities may the
+linear one-shot authority retain the pin and allow the supervisor to fork the still-gated target.
+The supervisor-owned target PID must be observed in the exact pin group before its inner gate opens;
+the target is an unreaped child, not a persisted birth identity. A bounded fsynced version-4
+distinct-boot incoming-intent filename, paired with the bounded version-3 common-boot encoding,
+preserves the exact helper identities across a crash before payload write.
+A hidden rank-2 linear session admits only
+`AnchorReady -> SupervisorReady -> LeaseDurable -> TargetRunning`. The implementation is present,
+and the obsolete C/Cabal boundary is removed. Focused correction tests, final review, and the
+complete correction Stage 1 are green; Phase 1, Phase 2's ordered closure, Apple, and `linux-cpu`
+remain.
+
+**Accepted Phase 0 correction Stage 1 identity (2026-07-27)**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- pre-evidence tracked-plus-untracked worktree digest:
+  `sha256:93a9c053bbe5d41feaba3c10fae8f55c9c42e2c566ebcacbc187747f6b87a4d9`
+- installed Apple binary digest:
+  `sha256:da62304fdec82bb5e2c1a8d3d0c3fc0fe66a9aa7c77c3d1023de8572a8095fcf`
+- final reviews found no High or Medium findings; focused adversarial/unit proof and the complete
+  machine-independent gate passed, including build/integration compile preflight, full unit,
+  execution-plan-internal, 5-positive/50-negative compile fixtures, capped-engine-observer,
+  Haskell style, install, installed files/docs/chart/proto lints and docs check, Python
+  `check-code`, web contracts/build/unit 83/83, and `git diff --check`
+- the tracked-plus-untracked digest was unchanged after the gates; subsequent evidence-only plan
+  edits record the result without changing executable source
+
+This identity closes Sprint 0.18 only. Phase 1 Sprint 1.20 is Active; any later executable-source
+change requires its own source-matched review and Stage 1. Wave Y still has no Apple or `linux-cpu`
+cohort evidence.
+
+**Superseded pre-correction Phase 2 Stage 1 source identity**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- pre-evidence worktree digest:
+  `sha256:eae424db7dec765ab89f3c73f4dbd1f282d5ee342e7bc1aa5c01e8ef6ac10228`
+- installed Apple binary digest:
+  `sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`
+- complete gate GREEN as run, superseded and nonreusable: production/integration build; unit, execution-plan-internal, compile-fail
+  (4 positive/33 negative), Haskell style; `all:exes` install; installed files/docs/chart/proto
+  lints and docs check; Python `check-code`; web 83/83; `git diff --check`
+- pre-correction renewed final review as run: no High/Medium findings; sole Low is the substring-golden Bark adapter
+  regression scope, with live behavior assigned to the pending Apple MPS and later CUDA lanes
+- protected skopeo auth scratch root empty
+- subsequent evidence-only plan edits did not change that historical executable-source identity;
+  the no-native-source implementation correction does
+
+**Latest rejected Phase 2 Stage 1 source identity**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- pre-evidence worktree digest:
+  `sha256:d57823179d2749a884dfa5b8258070ec2579023fc5b12bd14274c2a6b5f7a487`
+- installed Apple binary digest:
+  `sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`
+- complete gate GREEN: production/integration build; unit, execution-plan-internal, compile-fail
+  (4 positive/33 negative), Haskell style; `all:exes` install; installed files/docs/chart/proto
+  lints and docs check; Python `check-code`; web 83/83; `git diff --check`
+- final combined-source audits as run: no High/Medium findings after the exact Bark 10240 MiB
+  assertion and Harbor skopeo correction; protected auth scratch root empty
+- Apple attempt 4 rejected this freeze for closure after Bark breached the live ceiling at
+  required=available=8192 MiB
+- subsequent evidence-only plan edits do not change this historical executable identity
+
+**Superseded Phase 2 pre-audit source identity**
+
+This identity records the implementation preflight that exposed the lower-phase gap. It is not a
+frozen closure identity and must not be reused after Phase 1 changes.
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- complete pre-attestation worktree-content digest:
+  `sha256:bfb930ae50833a77248e4bbbb4a556ee4b0cded806d923a9580ea7b74f38ac32`
+- digest construction: sorted tracked-plus-untracked, non-ignored path names paired with each
+  `git hash-object` blob id, then SHA-256 over that stream; the subsequent edits to this result
+  block are evidence-only and do not change executable source
+
+  ```bash
+  git ls-files --cached --others --exclude-standard |
+    LC_ALL=C sort |
+    while IFS= read -r file_name; do
+      printf '%s\0%s\n' "$file_name" "$(git hash-object -- "$file_name")"
+    done |
+    shasum -a 256
+  ```
+
+- installed Apple binary digest:
+  `sha256:2ba9363bea21f3dca142f6f9cf06f47fee2426d4bc9e8f1d27079361cca27e1c`
+- Linux CPU launcher/workload image digest: pending
+
+**Rejected Phase 2 Apple attempt-1 source identity**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- complete tracked-plus-untracked worktree-content digest:
+  `sha256:c5a3d6103c93e7027e13ce6a0aaeb2f49d0ad30d09b5e35295970e81bd994c39`
+- digest construction: the sorted path/blob stream shown above
+- installed Apple binary digest:
+  `sha256:eb9c42e7f39bbbe5ffd06623d46c8a0c06949feadcb6c982271636cf6a296144`
+- Linux CPU launcher/workload image digest: not created; the Apple attempt rejected this identity
+  before the Linux CPU lane started
+
+**Superseded Phase 2 Stage 1 source identity**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- pre-evidence worktree digest:
+  `sha256:c4090b07c3b566b01d81fa8ce71153f1f61b725d09163e00536db7e7036e4a97`
+- installed Apple binary digest:
+  `sha256:e8bcfc41172e8b1bc6dc86c5c072cf7b45fb1af49825d0281d9e11d51a3dd90f`
+- complete gate GREEN: production/integration build; unit, execution-plan-internal,
+  compile-fail (4 positive/33 negative), Haskell style; `all:exes` install; installed
+  files/docs/chart/proto lints and docs check; Python `check-code`; web 83/83; `git diff --check`
+- subsequent evidence-only plan edits do not change this executable identity
+- the Bark result and subsequent registry-only Harbor verification audit rejected this
+  then-current identity for closure; the later rejected identity above superseded it
+
+**Rejected Phase 2 Stage 1 source identity**
+
+- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
+- pre-evidence tracked-plus-untracked worktree-content digest:
+  `sha256:63ab2dd3ff12d266db337464ec272335f3bd72acf7c0ab86a98291da7a4e746f`
+- digest construction: the sorted path/blob stream shown above
+- installed Apple binary digest:
+  `sha256:6cea3f49f3dbc35d6359a9902484301518cd0ca025933468956eae1bac7a6982`
+- Linux CPU launcher/workload image digest: not created; the Apple integration image build rejected
+  this source identity
+- the subsequent edits to this result block and its cross-references are evidence-only and do not
+  change that historical identity; the CPP correction does change executable source
+
+**Phase 2 machine-independent gate**
+
+- `cabal build all test:infernix-integration`
+- `cabal test infernix-unit`
+- `cabal test infernix-execution-plan-internal`
+- `cabal test infernix-compile-fail` (4 positive and 33 negative fixtures)
+- `cabal test infernix-haskell-style`
+- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+- `./.build/infernix lint files`, `lint docs`, `lint chart`, and `lint proto`
+- `./.build/infernix docs check`
+- `npm --prefix web run test:unit`
+- `poetry --directory python run check-code`
+- `git diff --check`
+
+**Rejected Phase 2 Apple attempt-1 machine-independent result**
+
+**GREEN 2026-07-26** against the rejected identity above. The production/integration build passed
+under `-Wall -Werror`; Haskell unit, execution-plan-internal, compile-fail (4 positive and 33
+negative fixtures), and Haskell-style suites passed; `all:exes` installed; the installed
+files/docs/chart/proto lints and docs check passed; the web build/bundle and unit suite passed
+83/83; Python type/format/lint checks passed; and `git diff --check` was clean. Subsequent
+executable-source corrections make this historical evidence only; it is not current-source closure
+evidence.
+
+**Rejected Phase 2 machine-independent result**
+
+**GREEN 2026-07-26** against the then-current Stage 1 source identity above. The
+production/integration build `cabal build all test:infernix-integration` passed; Haskell unit,
+execution-plan-internal, compile-fail (4 positive and 33 negative fixtures), and full Haskell-style
+suites passed; `all:exes` installed; the installed files/docs/chart/proto lints and docs check
+passed; the web unit suite passed 83/83; Python `check-code` passed; and `git diff --check` was
+clean. The later Linux `-Werror` source correction invalidated this result for closure. A later
+complete gate passed for `d578…` / `a0d1…` and is separately rejected by attempt 4 below.
+
+**Phase 2 Apple behavioral attempt 1 — FAILED, source freeze rejected**
+
+The uninterrupted Apple Silicon `./.build/infernix test all` on 2026-07-26 passed style, Python,
+Haskell unit, and web 83/83, then entered live integration. A failure during partial cluster
+bring-up invoked teardown while Pulsar bookie PVCs existed without a live pod from which the
+pod-derived claim/node map could recover their node. The writer-freeze transition failed closed on
+`retained snapshot source freeze found no owning node for claim ...bookie-journal...`; config was
+restored, the dead-owner harness reservation was retained, no bounded-command activity survived,
+and persisted lifecycle remained honestly `cluster-down/freeze-retained-state`. The cleanup
+exception also masked the original bring-up exception, which is part of the correction audit.
+This rejects the attempt-1 identity above as closure evidence. Both defects and the expanded
+cleanup/supervisor audit now have source corrections and regressions, final combined-source review
+later passed for the superseded identity. The subsequently diagnosed Linux `-Werror` defect
+invalidates that result; the corrected source must rerun complete Stage 1 before Apple.
+
+**Phase 2 Apple behavioral attempt 2 — FAILED, pre-correction source rejected**
+
+The then-current-source Apple Silicon `./.build/infernix test all` on 2026-07-26 first reconciled the
+dead-owner reservation and dirty retained-state lifecycle through the production recovery path.
+Every retained claim was staged and the stale cluster was deleted. The aggregate then passed
+Haskell unit and web unit 83/83 before live integration entered `DockerBuildOperation`. The Linux
+image's `cabal build all` reached 77/87 while compiling `Infernix.Runtime.Cache`, then returned
+`Cabal-7125` without an underlying compiler diagnostic in the aggregate output. BuildKit records
+beginning `5v09...` and `gcy...` later exposed deterministic Linux `-Wunused-top-binds` under
+`-Werror` at the unguarded Darwin-only `continueIfRunning` helper in
+`Runtime/CappedEngine/Internal.hs`. The last visible `Runtime.Cache` line was parallel log drain;
+host, Docker, and VM resources were exonerated. The preserving, exhaustive harness finalizer
+staged every retained claim from that partial cluster, deleted the cluster, and retained the
+primary `DockerBuildOperation` diagnostic. The helper is now CPP-guarded to Darwin, matching its
+only call site. This attempt proves the dead-owner recovery and failure-cleanup paths, but rejects
+the executable-source freeze and Stage 1 result. Complete Stage 1 must rerun before Apple; the
+source-matched `linux-cpu` build/test lane remains ordered after Apple.
+
+**Phase 2 Apple behavioral attempt 3 — FAILED, source freeze rejected**
+
+Stage 1 and Linux image compile/build passed, producing workload image
+`sha256:503a3be849a0dd4692edcbe3096d3f1ebc9962e45b8f0dff91d7226349d3abeb`. Harbor publication and
+verification, all 16 cache staging, and route/platform startup passed. The matrix correctly
+admission-rejected both 12288>10240 MiB image rows, then admitted `audio-bark-small` at
+required=available=5120 MiB. Its live capped-engine physical-footprint watchdog returned typed
+`ModelMemoryLimitExceeded` while integration expected completion. Exhaustive cleanup staged all
+retained claims, deleted the cluster, and preserved the primary failure. The diagnosis is
+implemented: Bark now declares 8192 MiB, integration still requires every admitted placement to
+complete, the Playwright catalog-matrix runtime-ceiling escape hatch is removed, and exact unit
+tests prove Apple admission at 8192 <= 10240 MiB and `linux-cpu` rejection at
+8192 > 4096 MiB. Final review and corrected-source Stage 1 later passed under the rejected identity
+above. No `linux-cpu` lane started.
+
+**Phase 2 Apple behavioral attempt 4 — FAILED, source freeze rejected**
+
+The source-matched `d578…` / `a0d1…` final review and Stage 1 remained green as run.
+Registry-only skopeo verification passed for the workload and every support image. Cluster and
+route startup passed, all 16 models staged, and both 12288 MiB image rows were correctly retained
+as unavailable against the 10240 MiB Apple capacity. `audio-bark-small` was then admitted at
+required=available=8192 MiB, but the live capped-engine watchdog again returned typed
+`ModelMemoryLimitExceeded` from `capped-engine-resident-ceiling` while the admitted-placement
+contract required completion. Exhaustive cleanup staged every retained claim, deleted the harness
+cluster, and preserved the primary Bark diagnostic. This preserves the review, Stage 1,
+registry-read, startup, staging, admission, and teardown evidence but rejects the freeze for
+closure. The fp16 Bark runtime correction is implemented and focused checks are GREEN. Final
+review and complete Stage 1 were GREEN as run for `eae424…` / `a0d1…`; the no-native-source
+correction supersedes them. No `linux-cpu` lane started.
+
+**Phase 2 Apple behavioral attempt 5 — INTERRUPTED, no closure evidence**
+
+The now-superseded pre-correction run passed style, Python, Haskell unit, and web 83/83; replayed
+retained state; built workload tag
+`sha256-12e0ab1c2288a8629b8e9949977c6b784d188da2d79ae01475bd5fdb8c66cc1e`; registry-only
+verified that workload; and was publishing registry-verified support images when the architectural
+interjection invalidated the freeze. Cancellation preserved the primary `user interrupt` and
+exposed same-process lifecycle-lock cleanup contention (`errno 35`). Supported recovery staged all
+retained claims, observed Kind absent, retired the harness reservation, and restored operator
+config. This is diagnostic history only and is not a post-correction Apple attempt.
+
+**Phase 2 behavioral acceptance**
+
+- correction preflight: confirm the native-source-free tree through `infernix lint files`, then pass
+  the focused lifecycle-lock and bounded-subprocess adversarial suites, native-source
+  lint/unit/negative coverage, and compile-fail phase/authority/raw-kernel fixtures
+- Stage 1: pending; all `eae424…`, `d578…`, and earlier Phase 2 review/Stage 1 identities are
+  historical GREEN-as-run evidence only and nonreusable
+- lifecycle-lock focus: deterministic same-process and cross-process contention plus automatic
+  kernel release after normal exit, exception, and owner death
+- bounded-subprocess focus: concurrent sessions cannot inherit each other's protocol handles;
+  completion, timeout, synchronous exception, asynchronous cancellation, stopped supervisor/group,
+  supervisor death, and parent death before/after activity publication all close without leaked
+  target/helper/activity state
+- provenance and cleanup focus: setup/exec failure remains `CommandFailedKernel`; genuine target
+  exits 126/127 remain `CommandFailedFatal`; descendants terminate; designated owners reap every
+  child; version-3 activity retires only after the exact recorded anchor, supervisor, and
+  pin-led target-group identities are all proven absent, while recovery remains compatible with
+  legacy version-1/version-2 leases and bounded version-3 common-boot/version-4 distinct-boot
+  incoming intents
+- compile-fail focus: phase skipping, start-authority escape/reuse, and raw-kernel access do not
+  typecheck
+- Apple Silicon: one uninterrupted `./.build/infernix test all`
+- Linux CPU: after the source is frozen, run `./bootstrap/linux-cpu.sh build`, then record the
+  source-matched image digest and build identity with
+  `docker image inspect infernix-linux-cpu:local --format '{{.Id}} {{.Created}} {{.Architecture}}/{{.Os}}'`.
+  Run one uninterrupted `./bootstrap/linux-cpu.sh test` through the already-running native arm64
+  Docker daemon, with no source edit, emulation, or Docker-context change between build and test
+- the Apple/non-bind integration lane writes a live MinIO canary, commits the detached snapshot,
+  plants an interrupted `.previous` plus unmarked partial `.incoming` filesystem state, and proves
+  the first `cluster up` publishes the exact post-create replay intent and a live `docker cp`
+  activity before being SIGKILLed; the next `cluster up` must resume that intent, recover the
+  committed canary before claim creation, remove both residues, and freshly provision rebuildable
+  Harbor storage
+- the ownership unit/integration matrix kills the whole reservation-owner process group and proves
+  config restoration and reservation release cannot overtake a live birth-verified command group;
+  death before activity publication must also reap the observed gated target without executing it
+- the deletion matrix proves the generated Kind policy has one ten-minute total deadline with
+  three attempts and two-second backoff, recognized idempotent absence returns immediately,
+  unrecognized failures exhaust only that policy, and setup/spawn failures return
+  `CommandFailedKernel`; normal and
+  unreadable-replay recovery deletes must revalidate same-lock-region authority beside the effect,
+  recovery must recheck the exact pending replay intent, and either a changed global inventory or a
+  replaced reservation record must prevent deletion and retain the harness reservation; the
+  negative compile fixture must reject authority/lease coercion, authority escape, and cross-region
+  reuse
+
+**Superseded Phase 2 preflight results**
+
+- machine-independent preflight: **GREEN 2026-07-25, superseded by Phase 1 reopen and the final
+  Phase 2 deletion audit fixes** — `cabal build all`, Haskell unit, Haskell style,
+  installed-binary `lint files/docs/chart/proto`, `docs check`, Python `check-code`, and the
+  supported `infernix test unit` path including PureScript build/test **83/83** all passed;
+  `git diff --check` is clean
+- Apple Silicon `test all`: intentionally stopped before the cluster phase when the Phase 1 audit
+  invalidated the source; cluster status remained idle/not-yet-reconciled
+- Linux CPU full suite: pending
+
+Phase 4 Sprint 4.32 uses a second frozen-source identity and result block added here only after the
+Phase 2 result block is closed. Phase 6 Sprint 6.44 remains Wave Z and does not reuse a partial Wave
+Y result.
+
+**Wave W status: Closed for its historical scope on 2026-07-24; its direct-FFI sampler and
+sampler-specific Stage 1/Stage 2 evidence are superseded and nonreusable for current closure.**
+The memory-safety-by-construction
 reopen opened with the Phase 0 Sprint 0.15 doctrine doc + governance mirror landed (doc-only,
 machine-independent, `Done`). The enforcing code is now **implemented and code-side closed**: the Phase 4
 Sprint 4.30 `MemoryGrant`-gated capped-engine kernel (`Infernix.Runtime.CappedEngine.withCappedEngine`
@@ -106,9 +542,10 @@ catalog completes with zero host OOM-kill and every over-budget row is cleanly t
 watchdog on the Apple lane, the pod-cgroup OOM-exit classifier on `linux-cpu`). With the honest
 `minHostHeadroomMib` = 6144 partition, on a 64 GiB / 48 GiB-colima host the resolved inference capacity
 is 10240 MiB, so the heavy diffusion rows (`image-*`, `video-*`) now fail-close cleanly at admission on
-apple-silicon — the expected Stage 2 behavior. This wave stays **Open** until both stages close.
+apple-silicon — the expected historical Stage 2 behavior. The current fixed
+`/usr/bin/top` plus `/usr/bin/footprint` observer requires new Sprint 4.32 evidence.
 
-**Stage 2 apple-silicon behavioral evidence GREEN (2026-07-21).** `infernix init` emitted the
+**Superseded Stage 2 apple-silicon behavioral evidence GREEN-as-run (2026-07-21).** `infernix init` emitted the
 `host-enforced` partition budget (physical 65536, colima vmReserve 49152, headroom 6144 → inference
 capacity 10240 MiB) and `demo-config validate` round-tripped it. A host-native `cluster up` staged 16/16
 models, and `infernix test integration` drove the full per-model lane with **zero host OOM-kill**: the
@@ -131,10 +568,18 @@ rendered capacity result the static footprint-vs-budget prediction cannot forese
 correctly fail-closes it (no OOM), but the footprint should be recalibrated in a future measured-RSS
 pass.
 
+**Superseded Wave W Bark workaround (2026-07-26).** Wave W's acceptance of an admitted Bark
+runtime resident-ceiling breach remains historical evidence that the watchdog prevented a host
+OOM, but it is no longer an accepted catalog-matrix outcome. Bark's declared footprint is now
+recalibrated from 5120 to 8192 MiB; integration retains the strict rule that every admitted
+placement completes; the Playwright runtime-ceiling escape hatch is removed; and exact unit tests
+prove Apple admission at 8192 <= 10240 MiB and `linux-cpu` pre-admission rejection at
+8192 > 4096 MiB.
+
 **Stage 2 linux-cpu cross-platform + `SubstrateEnforcedBudget` evidence (2026-07-21).**
 `./bootstrap/linux-cpu.sh build` rebuilt the launcher image cleanly — **all 70 Haskell modules compiled
-on `aarch64-linux` under `-Wall -Werror`** (validating the `CappedEngine` CPP `#else` FFI-free Linux
-path that the darwin host builds never exercised), the PureScript web built 561 modules 0 warnings/0
+on `aarch64-linux` under `-Wall -Werror`** (historically validating the Linux branch while the
+now-removed direct-FFI Darwin branch was not compiled), the PureScript web built 561 modules 0 warnings/0
 errors, and `poetry run check-code` passed; the rebuilt-image `infernix test unit` passed (Haskell +
 web `83/83`, including the typed-`ModelMemoryLimitExceeded` roundtrip/render tests). `./bootstrap/linux-cpu.sh test`
 then drove the per-model lane with the **six over-budget rows cleanly `SubstrateEnforcedBudget`
@@ -2147,7 +2592,9 @@ real-output gates on 2026-06-20.
 > evidence, installed `coreml-native` runtime-load smoke evidence, focused e2e, and aggregate
 > `test all` for the Sprint 1.14 Tart-free materialization reset. Sprint 1.15 supersedes the
 > former Apple wrapper payloads with real native runner roots; the selected Phase 4/6 real-output
-> gate closed on `linux-gpu` plus `linux-cpu` on 2026-06-20.
+> gate closed on `linux-gpu` plus `linux-cpu` on 2026-06-20. The bridge and Objective-C
+> source-smoke portion of this historical evidence is superseded by Sprint 1.20 and cannot be
+> reused.
 
 The machine-independent implementation for the reopened sprints landed in natural phase order
 (Phase 4 -> Phase 6) on the active hosts and passed the normal machine-independent gates
@@ -2165,7 +2612,8 @@ above for 2026-06-20; the other accelerator is not a blocker for that phase's `D
 > The Apple host-native half of Wave I was recorded on the Apple host, and the 2026-06-16 refresh
 > proved the generated Metal runtime
 > bridge smoke (`Metal runtime probe passed on Apple M1 Max`) plus the installed `coreml-native`
-> runtime-load smoke (`Core ML runtime probe passed`). The Apple transformers
+> runtime-load smoke (`Core ML runtime probe passed`). Those two native-source-dependent smoke
+> claims are historical only and superseded by Sprint 1.20. The Apple transformers
 > framework path now completes `llm-qwen25-safetensors` after the per-engine Apple venv and
 > Hugging Face snapshot bootstrap fixes. The next completed integration run exposed the missing
 > `llama-cpp-cli/bin/llama-cli` root for `llm-tinyllama-gguf`; that gap was covered in the
@@ -2213,10 +2661,11 @@ above for 2026-06-20; the other accelerator is not a blocker for that phase's `D
 > Linux native payload placeholder replacement itself is strict-smoke validated in the CUDA Linux
 > image and exercised through the routed service path.
 
-**Apple cohort.** Run the headless Metal runtime bridge probe; materialize an allowlisted
-Metal/Core ML or native-runner artifact with a typed engine manifest into
-`./.data/engines/<adapterId>/`; prove no Tart invocation, keychain unlock, offline `metal`
-compiler, host Xcode UI flow, or request-time toolchain install is required; then run
+**Apple cohort.** Materialize the corrected MLX/Core ML/native-runner roots with typed engine
+manifests into `./.data/engines/<adapterId>/`; run the installed upstream MLX GPU operation and
+coremltools compute-device observation; prove the repository/materialized trees contain no native
+source and require no Tart invocation, keychain unlock, Clang/offline `metal` compiler, direct FFI,
+host Xcode UI flow, or request-time toolchain install; then run
 `infernix test integration`, `infernix test e2e`, and `infernix test all` asserting the per-family
 real-output result contract for every row in the `apple-silicon` catalog column (LLM continuation,
 whisper transcript, CTranslate2 CPU transcript, PyTorch-MPS source-separation stems,
@@ -2634,22 +3083,38 @@ Doctrine reopen (Sprints 0.13, 1.16, 2.14, 3.14, 4.28, 5.12, 6.39, 7.29, 8.7, 9.
 Bounded-Command Application & Bounded-HTTP reopen (Sprints 0.14, 1.17, 3.15, 4.29, 6.40, 6.41) on
 2026-07-20 with `apple-silicon` plus `linux-cpu` full-suite `test all` GREEN (both routed Playwright
 `16/16`).** **Wave W closed the Memory-safety-by-construction + Observable-Readiness reopen (Sprints
-1.18, 4.30, 4.31, 6.42, 8.8) and Wave X closed the Cluster-Ownership & Mutation-Position reopen
-(Sprints 2.15, 6.43) on 2026-07-24 with `apple-silicon` plus `linux-cpu` full-suite `test all` GREEN
+1.18, 4.30, 4.31, 6.42, 8.8), while Wave X closed the 2026-07-23 typed
+owner/mutation/config scope of the Cluster-Ownership & Mutation-Position reopen (Sprints 2.15, 6.43)
+on 2026-07-24 with `apple-silicon` plus `linux-cpu` full-suite `test all` GREEN
 (both routed Playwright `16/16`, zero host OOM with every over-budget row typed-rejected
 `ModelMemoryLimitExceeded`, the warm-model-cache barrier staging with no "11/16" stall, the harness
 failing closed on a running `OperatorOwned` cluster, and the `ClusterMutating` chaos drain/over-scale
-reconcile on the `linux-cpu` lane) against frozen workload image `sha256-bcf88c23…d44ccee0`.**
+reconcile on the `linux-cpu` lane) against frozen workload image `sha256-bcf88c23…d44ccee0`.** That
+Wave X statement is historical closure only for the 2026-07-23 typed owner/mutation/config scope.
+Phase 2's first 2026-07-26 Stage 1 and Apple attempt for the 2026-07-25 owner-atomic correction were
+rejected for closure. The later identity's Apple retry proved recovery/cleanup but exposed
+deterministic Linux `-Werror`; the CPP correction invalidates that freeze. The Bark 8192 MiB/strict
+catalog-matrix correction and the later registry-only Harbor verifier are implemented. The latter
+replaces cache-sensitive Docker verification with bounded authenticated platform-selected skopeo
+copy into a fresh protected `dir:` store, with primary-preserving cleanup and focused
+command/redaction/path coverage. Final review and complete Stage 1 passed for
+`d578…` / `a0d1…`, but Apple attempt 4 rejected that freeze after Bark breached the live ceiling
+at 8192 MiB. The fp16 Bark correction passed renewed final review and complete Stage 1 against
+`eae424…` / `a0d1…` as historical GREEN-as-run evidence. The no-native-source correction
+supersedes it; interrupted attempt 5 supplies diagnostics and recovery observations only. The
+accepted 2026-07-27 Phase 0 correction identity covers the current source but is not Phase 2
+closure; Phase 2's own ordered closure and Apple/`linux-cpu` evidence remain after Phase 1.
+Phase 6 validation is ordered after Phases 2 and 4.
 
 | Phase | Code-side closure | Apple cohort gate | CUDA Linux cohort gate |
 |-------|-------------------|-------------------|------------------------|
-| 0 | Sprints 0.1-0.10 `Done` | Closed in Wave A (lint gates) | `linux-cpu` passed on the recorded validation; `linux-gpu` passed on the recorded validation |
-| 1 | Sprints 1.1-1.12 `Done`; Sprint 1.13 Tart implementation is historical and removed; Sprint 1.14 is code-side closed for the Tart-free manifest materializer and fixed host Metal bridge; Sprint 1.15 is closed for real Apple native runner materialization and native snapshot hydration; Sprint 1.18 (Observable-Readiness tri-state poll outcome) closed by Wave W on 2026-07-24 (`apple-silicon` plus `linux-cpu`) | Closed in Wave A for 1.1-1.12; Sprint 1.15 Stage 1 passed on the 2026-06-26 Apple host (`materialize-metal-engines`, installed native smokes, unit, lint), Apple Stage 2 integration plus focused routed Playwright are green, and Wave L's paired `linux-cpu` full gate closed on 2026-06-29 with rebuilt image `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`. The closing `./bootstrap/linux-cpu.sh test` pass covered style, Python `check-code`, Haskell unit, web `71/71`, full integration with all real `linux-cpu` outputs plus the HA/chaos tail, and routed Playwright `9/9`. | `linux-cpu` passed for Wave L on 2026-06-29; `linux-gpu` passed on the recorded validation; Sprint 1.15's selected accelerator is Apple Silicon |
-| 2 | Sprints 2.1–2.13 `Done`; Sprint 2.14 closed by Wave V (2026-07-20); Sprint 2.15 (`ClusterOwner` + `ClusterMutating` + fail-closed persistence + reconcile-on-next-`cluster up`) closed by Wave X on 2026-07-24 (`apple-silicon` plus `linux-cpu`) | Closed in Wave A (retained-state replay + Patroni filter + cluster lifecycle) | `linux-cpu` passed on the recorded validation; `linux-gpu` passed on the recorded validation |
+| 0 | Sprints 0.1-0.18 are `Done`; Sprint 0.18's no-repo-owned-native-source governance, focused proof, final review, and source-matched correction Stage 1 closed 2026-07-27 | No cohort gate belongs to Sprint 0.18 | Prior `linux-cpu`/`linux-gpu` evidence retained for its narrower scope |
+| 1 | Sprints 1.1-1.12 `Done`; Sprint 1.13 Tart implementation is historical and removed; Sprint 1.14 retains historical closure only for Tart removal and typed manifest/install-root handling; its native bridge evidence is superseded. Sprint 1.15 is closed for real Apple native runner materialization and native snapshot hydration; Sprint 1.18 closed by Wave W; Sprint 1.19 retains its narrower machine-independent closure. Sprint 1.20 is Active. Five adversarial reviews rejected successive drafts. The runner-owned transaction and generated-wrapper deletion are now present, but the current audit found that Linux image target evidence omitted the system loader, resolution metadata, and recursively loaded system libraries. The root-bound writer also returned to pathname effects and remains vulnerable to an intermediate-parent swap at the effect boundary. Apple Python `pyvenv.cfg` still names the source Homebrew runtime, and installed-target validation lacks a general canonical-containment rejection. It further blocks on retaining an exact live capped-engine group owner through group termination, absence proof, and reap. Focused inventories are work-in-progress only. Descriptor-retained writer effects, self-contained installed targets, complete exact loader closure, closed invocation languages, exact helper-owned engine-group cleanup, full-materializer proof, final review, and fresh exact-source Stage 1 remain. | Prior Apple evidence is retained only for narrower historical scopes. Sprint 1.20 requires corrected-root rematerialization, installed upstream smokes/runtime loading after making the source runtime unavailable, and routed proof after its fresh Stage 1. | The paired `linux-cpu` Phase 1 cohort is pending after Apple; prior Linux evidence is narrower historical proof and no CUDA claim is added |
+| 2 | Sprints 2.1–2.13 `Done`; Sprints 2.14–2.16 are blocked by Phase 1. The all-Haskell lock and nested-custody self-exec anchor/supervisor/pin implementation are present, and the obsolete C/Cabal boundary is removed. Phase 0's focused correction proof and Stage 1 are green; Phase 2's ordered closure remains. Every pre-correction review/Stage 1 identity is historical GREEN-as-run and nonreusable. | Apple pending after Phase 1 and Phase 2's ordered closure | No current `linux-cpu`; follows Apple |
 | 3 | Sprints 3.1–3.13 `Done`; Sprint 3.13 closed the `/minio/s3` route, `infernix-minio-s3` SecurityPolicy, and `presignPublicEndpoint` de-exposure | Closed in Wave A/A.2 (substrate-aware publication, Harbor port, containerd, hand-authored MinIO, and Apple host-native E2E); Sprint 3.13 selected `linux-gpu`, so no Apple gate is required for that reopen | `linux-cpu` amd64 passed on the recorded validation; `linux-gpu` passed on the recorded validation; native arm64 `linux-cpu` passed in Wave F on the recorded validation; Wave M closed Sprint 3.13 with `linux-cpu` plus `linux-gpu` full-suite passes on 2026-06-29 |
-| 4 | Sprints 4.1-4.27 `Done` (Sprint 4.22 MT3 catalog replacement closed by Wave P on 2026-07-04; Sprints 4.25/4.26 closed by Wave R + Wave S; Sprint 4.27 typed resource admission closed by Wave T on 2026-07-12; Sprints 4.28/4.29 closed by Wave V on 2026-07-20; Sprints 4.30/4.31 (grant-gated capped-engine kernel + checked `HostMemoryPartition`/required `ModelMemoryFootprint`/budget-enforcer split) closed by Wave W on 2026-07-24) | Original contract closed in Wave A; per-family real-output closed in Wave I on the selected `linux-gpu` accelerator plus `linux-cpu` for the then-active catalogs; engine-pool routing closed in Wave J; Wave R closed the Apple RAM-safety and routed matrix proof | Wave T closed the current typed resource-admission gate: `linux-cpu` image `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` passed unit + routed E2E `16/16`; selected `linux-gpu` image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896` passed full `./bootstrap/linux-gpu.sh test`, integration, and routed Playwright `16/16` |
+| 4 | Sprints 4.1-4.31 retain their recorded narrower closure. Sprint 4.32 is blocked by Phases 1-2; its fixed bounded `/usr/bin/top` plus `/usr/bin/footprint` observer and correction-wide focused/aggregate proof are present, while verified Apple/Linux CPU enforcers, the opaque single-flight authority, and Phase 4-owned behavioral proof remain. Wave W's direct-FFI sampler evidence is superseded and nonreusable. | Original contract closed in Wave A; current Sprint 4.32 Apple evidence is pending after Phases 1-2 | Historical Linux evidence is narrower; current `linux-cpu` follows the corrected Apple gate |
 | 5 | Sprints 5.1-5.11 `Done` (Sprint 5.11 typed browser inference errors closed by Wave T on 2026-07-12) | Closed in Wave A/A.2 (demo backend + adapter dhall reads via integration suite and routed E2E) | Wave T closed the browser typed-capacity gate on `linux-cpu` plus selected `linux-gpu`; routed Playwright passed `16/16` on both lanes and rendered `ModelMemoryLimitExceeded` from typed MiB fields |
-| 6 | Sprints 6.1-6.38 `Done` (Sprint 6.35 expanded MT3 gate closed by Wave P on 2026-07-04; Sprints 6.36/6.37 closed by Wave R + Wave S; Sprint 6.38 typed resource-admission validation closed by Wave T on 2026-07-12; Sprints 6.39/6.40/6.41 closed by Wave V on 2026-07-20; Sprint 6.42 (`unboundedEngineSpawnViolations` lint) closed by Wave W and Sprint 6.43 (evidence-gated harness seizure + chaos-mutation `ClusterMutating` transitions + crash-safe config reconcile) closed by Wave X on 2026-07-24) | Original coverage closed in Wave A/A.1/A.2/A.3; per-family routed real-output closed in Wave I for the then-active catalogs; engine-pool validation closed in Wave J; Wave R closed the Apple routed matrix and memory-bounded validation lane | Wave T closed the current rebuilt `linux-cpu` and selected `linux-gpu` full suites with typed `ModelMemoryLimitExceeded` classification, smaller-model continuity, integration PASS, and routed Playwright `16/16` |
+| 6 | Sprints 6.1-6.42 are `Done`; Sprint 6.43 owner-atomic implementation is landed, with final review and ordered gates remaining after Phases 2 and 4; Sprint 6.44 remains blocked by Phase 4. | Prior evidence retained | Current gate starts after Phases 2 and 4 |
 | 7 | Sprints 7.1-7.28 `Done`; Sprint 7.23 is superseded historical Apple singleton work; Sprint 7.24 is closed for engine-pool assignment, broker-native backpressure, production coordinator presence with `demo_ui = false`, and the single-host logical `Shared` backlog harness; Sprints 7.25-7.27 are closed for object-proxy isolation, Files view, and MIDI/MusicXML/ZIP rendering; Sprint 7.28 is closed for Haskell-owned generated artifact output prefixes and result-bridge authorization | Original durable-context gates closed in Wave A/A.1/A.2/A.3; Wave G closed for auth-UX; Sprint 7.24 closed in Wave J; Sprints 7.25-7.28 selected `linux-gpu`, so no Apple gate is required for those reopens; physical Apple multi-host proof is hardware-deferred | Current `linux-gpu` full-suite and current rebuilt-image `linux-cpu` full-suite passed on 2026-06-20; Wave M closed Sprints 7.25-7.27 with `linux-cpu` plus `linux-gpu` full-suite passes on 2026-06-29; Wave N closed Sprint 7.28 with `linux-gpu` plus `linux-cpu` full-suite passes on 2026-06-30 |
 | 8 | Sprints 8.1-8.6 `Done` (zero-tracked-dhall; `infernix init` / `test init`; binary-generated ConfigMap/Secret bodies; eager coordinator model-cache staging with the `warm-model-cache` barrier; test-harness config lifecycle); Sprint 8.7 closed by Wave V (2026-07-20); Sprint 8.8 (fault-vs-absence tri-state `SentinelObservation`/`SentinelCensus`/Python `CacheValidity` in the warm-model-cache barrier) closed by Wave W on 2026-07-24 (`apple-silicon` plus `linux-cpu`) | Wave W (2026-07-24) exercised the Apple warm-model-cache no-stall + zero-OOM proof; Wave P closed Phase 8 on 2026-07-04 with `linux-gpu` + `linux-cpu` full-suite `infernix test all` GREEN and routed Playwright `9/9` |
 | 9 | Sprints 9.1-9.9 `Done` (admin/user RBAC; edge admin `SecurityPolicy`; backend admin gate + `GET /api/admin/overview`; admin + per-user personal dashboards; per-user MinIO STS; Apple host-worker loopback data-plane invariant; Keycloak SSO logout/account switching) | Wave Q closed the RBAC/STS/dashboard surface on `apple-silicon` (2026-07-07): unauthenticated 401 + by-role 403/2xx, the `realm_access.roles` admin claim, the loopback split, per-user isolation, the default-on STS scoped-credential path, and routed Playwright RBAC/dashboard/lifecycle `7/7` | Wave Q closed the RBAC/STS/dashboard surface on `linux-cpu` (2026-07-07); Wave U closed Sprint 9.9 on `linux-cpu` plus selected `linux-gpu` with routed Playwright `16/16`, including login-prompt-after-sign-out and non-admin-to-admin switching |
@@ -2665,6 +3130,7 @@ engine-manifest materialization, `apple-silicon` substrate staging, unit/lint/do
 `lint files/docs/proto/chart`, the generated Metal runtime bridge smoke
 (`Metal runtime probe passed on Apple M1 Max`), installed `coreml-native` runtime-load smoke
 (`Core ML runtime probe passed`), and smoke-capable Apple native validation runner roots. The
+bridge/source-smoke part of this refresh is explicitly superseded by Sprint 1.20 and nonreusable. The
 2026-06-16 Apple integration rerun completed the active Apple catalog through the
 host engine daemon, validated the source-fingerprint rebuild/reuse path, proved pinned
 `Exclusive` duplicate rejection against a real broker, proved same-machine Apple `Shared`

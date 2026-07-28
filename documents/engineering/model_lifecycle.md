@@ -20,10 +20,13 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
 
 ## Current Status
 
-- Phase 4 (inference service), Phase 5 (web UI/shared types), and Phase 6 (validation/E2E) are
-  **Active** again for the resource-admission doctrine: Sprints 4.27/5.11/6.38 replace the
-  Apple-only stringly capacity surface with typed `InferenceError` payloads and resource-specific
-  budgets across Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM.
+- Phase 1 Sprint 1.19 has implemented the Haskell execution-plan compiler/refiner and passed its
+  complete source-matched machine-independent gate and final adversarial source review on
+  2026-07-25. Apple and Linux CPU placements compile against typed
+  capacity, retain oversized rows as `UnavailableModel`, and require matching live enforcers before
+  engine launch receives `ExecutableModel`. Phase 1 owns normal-path typed rejection delivery,
+  Phase 4 owns Apple/Linux CPU adversarial enforcement and encapsulated serialization, and Phase 6
+  owns the currently fail-closed dual RAM/VRAM Linux GPU path.
 - Phase 9 (access control + monitoring) is **Active** — the RBAC/STS/dashboard surface was Wave Q
   cohort-validated on both `apple-silicon` and `linux-cpu` (2026-07-07). Sprint 9.9 diagnoses and
   closes the later UAT logout/account-switching issue code-side; Wave U remains open for routed
@@ -41,9 +44,10 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   cluster-up barrier: every mounted-substrate model is fetched into `infernix-models` under
   `<modelId>/` with a `<modelId>/.ready` sentinel, and the barrier blocks `cluster up` until all are
   staged. The `persistent://infernix/system/model.bootstrap.request` topic is exercised only as the
-  on-demand fallback path when an engine hits an unstaged model. (Known non-blocking residual: the
-  warm-model-cache host-side MinIO poll is non-observing today — it reports 0/16 and
-  warns-and-proceeds; the eager sweep still stages the weights.)
+  on-demand fallback path when an engine hits an unexpectedly unstaged model. The sentinel probe is
+  three-valued (`present`, `absent`, or `unobservable`), retries observation faults within the
+  readiness budget, and mints ready evidence only after every configured sentinel is present;
+  Wave W proved the retained second `cluster up` no longer stalls on a fault-deflated census.
 - End-to-end lifecycle is validated by full `infernix test all` GREEN on both `linux-gpu` and
   `linux-cpu` with routed Playwright 9/9 (Wave P, 2026-07-04). Realness is enforced in the engine
   code by the realness lint: adapters and native runners return only real model output or fail.
@@ -60,12 +64,13 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
 - engine software artifacts are a separate class from model weights. The materialization
   lane stores immutable reusable payloads in `infernix-engine-artifacts` and materializes local
   roots under `./.data/engines/<adapterId>/` or Linux image-owned
-  `/opt/infernix/engines/<adapterId>/`, with typed manifests and smoke validation. The current
-  Linux image-build helper writes runtime-backed wrapper roots over image-baked llama.cpp,
-  whisper.cpp, ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris payloads; the
-  reopened Phases 4/6 own the routed full-suite real-output delivery, with realness enforced in the
-  engine code by the realness lint. Wave K covers its then-active catalog; the post-replacement MT3
-  rows added on 2026-06-30 are proven under Wave O (closed 2026-07-04 by Wave P).
+  `/opt/infernix/engines/<adapterId>/`, with typed manifests and source-specific smoke validation.
+  The Linux image-build helper writes metadata roots and binds direct image-owned llama.cpp,
+  whisper.cpp, ONNX Runtime/Basic Pitch, CTranslate2/faster-whisper, and Audiveris targets to exact
+  descriptor-derived executable and closure evidence. It does not generate command wrappers. The
+  reopened Phases 4/6 own fresh routed full-suite real-output delivery for this corrected topology,
+  with realness enforced in the engine code by the realness lint. Earlier Wave K and Wave P results
+  remain historical evidence for their source-matched implementations.
 - the Haskell worker layer (`src/Infernix/Runtime/{Pulsar,Worker,Cache}.hs`)
   stores cache manifests beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
@@ -94,28 +99,31 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   `python/adapters/model_cache.configure()` before `get_model_path(model_id)` obtains the on-disk
   path to weights streamed from the eagerly pre-staged MinIO `infernix-models` bucket.
   Note: that quota bounds the on-disk model cache (`python/adapters/model_cache.py` LRU); model
-  memory is separately budgeted by the reopened resource-admission doctrine. A per-model
-  `modelRamFootprintMib` is compared against an explicit `InferenceMemoryBudget` before launch:
-  Apple unified host RAM, Linux CPU pod RAM, or Linux GPU VRAM. An over-budget request returns typed
-  `ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`, while smaller configured models
-  continue to run. Canonical home for this grant-gated capped-engine execution invariant (a host OOM
-  is unrepresentable): [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
-- the runtime worker invokes the engine for the selected binding — the Python adapter
-  transform over a prebuilt host wheel for python-stdio bindings, or the native runner binary
-  resolved from the repo data root with a Linux image-owned `/opt/infernix/engines/<adapterId>/`
-  fallback for native-process-runner bindings — and never returns a synthetic success echo. Current
-  Linux native roots are runtime-backed wrappers over image-baked native payloads, with strict smoke
-  checks for payload presence/importability and the same model-cache readiness failure plus local
-  artifact marker contract the worker handles.
+  memory is separately governed by the typed execution plan. A per-model
+  `modelRamFootprintMib` compiles against Apple unified host RAM or Linux CPU pod capacity. An
+  oversized row remains an `UnavailableModel`; a fitting row advances through live-enforcer
+  refinement to `ExecutableModel`. The normal request path now returns typed
+  `ModelMemoryLimitExceeded` with `requiredMib` and `availableMib` for an unavailable row while
+  smaller placements continue to run; the complete source-matched Phase 1 gate passed on
+  2026-07-25. Linux GPU plan compilation currently fails closed with
+  `GpuDualResourceBudgetRequired` until Phase 6 supplies dual RAM/VRAM enforcement. Canonical home:
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
+- the runtime worker invokes the engine for the selected binding - the Python adapter transform
+  over a prebuilt host wheel for python-stdio bindings, or a direct native target selected by the
+  Cabal-hidden catalog for native-process-runner bindings - and never returns a synthetic success
+  echo. The catalog selects only the exact installed CLI, interpreter/module, or JRE/classpath form
+  for that adapter and substrate; generic command text and generated runner wrappers are absent.
+  Runtime revalidates the exact target observation while a shared artifact lease remains held.
   Each family resolves to its own real lifecycle: the LLM and speech families
   return inline text; the source-separation, audio-to-MIDI, music-transcription, image, video,
   audio-generation, and OMR artifact families write generated bytes to the `infernix-demo-objects`
   bucket and return a typed object reference. Non-text inputs (audio, image) are carried as object
   references on the request rather than inline.
 - native-process-runner artifact outputs keep MinIO credentials inside the Haskell worker. The
-  worker passes only non-secret cache and bucket hints plus an optional `--output-dir`; a native
-  runner may write a local artifact there and print `infernix-native-artifact-file:<path>`. The
-  worker then uploads that file to `infernix-demo-objects` with its secret-backed presigned PUT
+  worker passes only non-secret cache and bucket hints plus an invocation-owned output directory.
+  The bounded kernel accepts only the expected descriptor-validated regular output within that
+  directory, with global size and count limits, before the worker uploads it to
+  `infernix-demo-objects` with its secret-backed presigned PUT
   config and returns the resulting object reference.
 - real weight staging is eager and coordinator-driven: on startup the coordinator iterates every
   model in the mounted `infernix.dhall` and fetches each row's `downloadUrl` into the always-on
@@ -138,8 +146,10 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   idempotent setup-ready marker
 - per-engine software manifests record adapter id, engine name, substrate, architecture,
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
-  entrypoint, and smoke command. Current Apple materialization validates the manifest contract,
-  smoke-loads materialized Apple payloads before atomic rename on Darwin, and routes real Apple
+  recipe fingerprint, direct-target contract fingerprint, exact resolved provenance, and optional
+  Linux image-target evidence. Executable paths and arguments are selected by a hidden catalog,
+  never manifest text. Current Apple materialization validates the manifest contract, smoke-loads
+  materialized Apple payloads before atomic rename on Darwin, and routes real Apple
   engine output through the host daemon for the then-active Apple catalog; Wave L's Apple integration,
   focused routed Playwright, and paired `linux-cpu` gates are closed.
   Linux native payload strict smoke exists today, and the reopened Phases 4/6 own the routed
@@ -149,7 +159,7 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
 - derived cache state is keyed by runtime mode and model identity and is always rebuildable
 - the demo `/api/cache` surface operates on the manifest-backed contract exposed by the Haskell
   worker; the manifest reads the supported `minio://infernix-models/<modelId>/` durable source
-  URI and the engine-runner metadata derived from the staged substrate `.dhall`
+  URI and the engine-runner metadata derived from the effective runtime-config `.dhall`
 - engine adapters write real per-family artifact outputs (stems, MIDI/MusicXML, image, video,
   audio) directly into MinIO `infernix-demo-objects` at the per-user prefix and the result message
   carries an `ObjectRef` (bucket + key); text outputs from the LLM and speech families always ride

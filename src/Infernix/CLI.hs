@@ -4,13 +4,14 @@
 module Infernix.CLI
   ( main,
     writeGeneratedPursContracts,
-    reconcileLeftoverHarnessBackup,
+    RuntimeConfigRestorePlan,
+    runtimeConfigRestorePlan,
   )
 where
 
 import Control.Applicative ((<|>))
-import Control.Exception (IOException, catch, evaluate, finally, throwIO, try)
-import Control.Monad (unless, when)
+import Control.Exception (IOException, catch, evaluate, mask, throwIO, try)
+import Control.Monad (unless, void, when)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -22,21 +23,27 @@ import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.Cluster
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
-  ( decodeDemoConfigFile,
-    materializeEmptyModelsDemoConfigFile,
+  ( materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     renderModelListing,
-    validateDemoConfigFile,
   )
+import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.DhallSchema (renderDhallSchema)
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
-import Infernix.Error (InfernixError (EdgePortNotPublished))
+import Infernix.Error
+  ( InfernixError (EdgePortNotPublished),
+    bracketPreservingPrimary,
+    finallyPreservingPrimary,
+    runCleanupsPreservingFailures,
+  )
 import Infernix.Evidence.Readiness qualified as Readiness
+import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.HostTools (HostTool (..))
@@ -57,9 +64,9 @@ import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
 import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
   ( CacheManifest (..),
-    ClusterOwner (..),
     DemoConfig (..),
     InferenceRequest (..),
     InferenceResult (..),
@@ -95,6 +102,7 @@ import System.Process (CreateProcess (cwd, env), createProcess, proc, readCreate
 
 main :: IO ()
 main = do
+  dispatchInternalSubprocessMode
   setLocaleEncoding utf8
   syncBuildRootExecutable
   args <- getArgs
@@ -103,19 +111,26 @@ main = do
       putStrLn helpText
       exitFailure
     Right command -> do
-      validateCommandExecutionContext command
-      ensureAppleHostPrerequisites (commandRuntimeMode command) command
+      reconcileInterruptedHarnessState
+      resolvedRuntimeMode <- validateCommandExecutionContext command
+      ensureAppleHostPrerequisites resolvedRuntimeMode command
       dispatch command
+
+dispatchInternalSubprocessMode :: IO ()
+dispatchInternalSubprocessMode =
+  Subprocess.dispatchInternalSubprocessMode
 
 dispatch :: Command -> IO ()
 dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing -> runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing
+    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing ->
+      withRuntimeConfigWriteAccess
+        (runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing)
     TestInitCommand maybeRuntimeMode maybeDemoUi -> runTestInit maybeRuntimeMode maybeDemoUi
     ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
-    ClusterUpCommand -> clusterUp OperatorOwned Nothing
+    ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing
     ClusterStatusCommand -> clusterStatus Nothing
     CacheStatusCommand -> runCacheStatus Nothing
@@ -134,53 +149,60 @@ dispatch command =
       runCabalCommand Nothing ["test", "infernix-unit"]
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
     TestIntegrationCommand ->
-      withTestHarnessConfig (runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"]))
+      runClusterOwnedValidation
+        Nothing
+        (withTestHarnessConfig (runCabalCommand Nothing ["test", "infernix-integration"]))
     TestE2ECommand ->
-      withTestHarnessConfig (runClusterOwnedValidation Nothing (runEndToEnd Nothing))
-    TestAllCommand ->
-      withTestHarnessConfig $ do
-        ensureWebDependencies
-        runLint Nothing
-        ensurePythonAdapterDependencies Nothing
-        runCabalCommand Nothing ["test", "infernix-unit"]
-        runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
-        runClusterOwnedValidation Nothing (runCabalCommand Nothing ["test", "infernix-integration"])
-        runClusterOwnedValidation Nothing (runEndToEnd Nothing)
+      runClusterOwnedValidation
+        Nothing
+        (withTestHarnessConfig (runEndToEnd Nothing))
+    TestAllCommand -> do
+      ensureWebDependencies
+      runLint Nothing
+      ensurePythonAdapterDependencies Nothing
+      runCabalCommand Nothing ["test", "infernix-unit"]
+      runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
+      runClusterOwnedValidation Nothing $
+        withTestHarnessConfig $ do
+          runCabalCommand Nothing ["test", "infernix-integration"]
+          runEndToEnd Nothing
     InternalDiscoverImagesCommand renderedChartPath ->
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
     InternalDiscoverClaimsCommand renderedChartPath ->
       mapM_ (putStrLn . renderPersistentClaimLine) =<< discoverChartClaimsFile renderedChartPath
     InternalDiscoverHarborOverlayCommand overlayPath ->
       mapM_ putStrLn =<< discoverHarborOverlayImageRefsFile overlayPath
-    InternalPublishChartImagesCommand renderedChartPath outputPath -> do
-      paths <- discoverPaths
-      PublishImages.publishChartImagesFile (harborPublishOptionsForPaths paths) (\_ -> pure ()) renderedChartPath outputPath
-    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue emptyModels -> do
-      paths <- discoverPaths
-      ensureRepoLayout paths
-      materializedPath <-
-        if emptyModels
-          then materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue
-          else materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
-      hostManifestPath <- materializeHostManifestFile paths
-      putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
-      putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
-      putStrLn ("emptyModels: " <> show emptyModels)
-      putStrLn ("generatedDemoConfigPath: " <> materializedPath)
-      putStrLn ("hostManifestPath: " <> hostManifestPath)
+    InternalPublishChartImagesCommand renderedChartPath outputPath ->
+      PublishImages.publishChartImagesFile PublishImages.defaultHarborPublishOptions (\_ -> pure ()) renderedChartPath outputPath
+    InternalMaterializeSubstrateCommand runtimeMode demoUiEnabledValue emptyModels ->
+      withRuntimeConfigWriteAccess $ do
+        paths <- discoverPaths
+        ensureRepoLayout paths
+        materializedPath <-
+          if emptyModels
+            then materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue
+            else materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
+        hostManifestPath <- materializeHostManifestFile paths
+        putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
+        putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
+        putStrLn ("emptyModels: " <> show emptyModels)
+        putStrLn ("generatedDemoConfigPath: " <> materializedPath)
+        putStrLn ("hostManifestPath: " <> hostManifestPath)
     InternalMaterializeMetalEnginesCommand -> do
       paths <- discoverPaths
       ensureRepoLayout paths
       materializeMetalEngines paths
       mapM_ (putStrLn . ("metalEngineArtifact: " <>) . Text.unpack) metalEngineArtifactAdapterIds
     InternalMaterializeLinuxNativeEnginesCommand -> do
-      materializeLinuxNativeEngines
+      paths <- discoverPaths
+      ensureRepoLayout paths
+      materializeLinuxNativeEngines paths
       mapM_ (putStrLn . ("linuxNativeEngineArtifact: " <>) . Text.unpack) linuxNativeEngineArtifactAdapterIds
     InternalDemoConfigLoadCommand demoConfigPath -> do
       demoConfig <- decodeDemoConfigFile demoConfigPath
       putStr (renderModelListing demoConfig)
     InternalDemoConfigValidateCommand demoConfigPath ->
-      validateDemoConfigFile demoConfigPath
+      void (requireCompiledRuntimePlanFile demoConfigPath)
     InternalDhallSchemaCommand schema ->
       case renderDhallSchema schema of
         Left err -> ioError (userError err)
@@ -188,21 +210,15 @@ dispatch command =
     InternalGeneratePursContractsCommand outputDir -> do
       runtimeMode <- resolveRuntimeMode Nothing
       writeGeneratedPursContracts runtimeMode outputDir
-    InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue -> do
-      demoConfig <- decodeDemoConfigFile demoConfigPath
-      runInternalPulsarRoundTrip (configRuntimeMode demoConfig) demoConfigPath modelIdValue inputTextValue
+    InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue ->
+      runInternalPulsarRoundTrip demoConfigPath modelIdValue inputTextValue
 
-commandRuntimeMode :: Command -> Maybe RuntimeMode
-commandRuntimeMode command =
-  case command of
-    InternalMaterializeSubstrateCommand runtimeMode _ _ -> Just runtimeMode
-    _ -> Nothing
-
-validateCommandExecutionContext :: Command -> IO ()
+validateCommandExecutionContext :: Command -> IO (Maybe RuntimeMode)
 validateCommandExecutionContext command = do
   paths <- discoverPaths
   maybeRuntimeMode <- runtimeModeForCommand command
   maybe (pure ()) (ensureSupportedRuntimeModeForExecutionContext paths) maybeRuntimeMode
+  pure maybeRuntimeMode
   where
     runtimeModeForCommand selectedCommand =
       case selectedCommand of
@@ -216,13 +232,20 @@ validateCommandExecutionContext command = do
         KubectlCommand _ -> activeRuntimeMode
         TestLintCommand -> activeRuntimeMode
         TestUnitCommand -> activeRuntimeMode
-        TestIntegrationCommand -> activeRuntimeMode
-        TestE2ECommand -> activeRuntimeMode
-        TestAllCommand -> activeRuntimeMode
+        TestIntegrationCommand -> testRuntimeMode
+        TestE2ECommand -> testRuntimeMode
+        TestAllCommand -> testRuntimeMode
         InternalMaterializeSubstrateCommand runtimeMode _ _ -> pure (Just runtimeMode)
         InternalGeneratePursContractsCommand _ -> activeRuntimeMode
         _ -> pure Nothing
     activeRuntimeMode = Just <$> ensureActiveSubstrateFile
+    testRuntimeMode = do
+      paths <- discoverPaths
+      let testConfig = testConfigPath paths
+      testConfigExists <- doesFileExist testConfig
+      if testConfigExists
+        then Just . configRuntimeMode <$> decodeDemoConfigFile testConfig
+        else activeRuntimeMode
 
 -- | Phase 1 Sprint 1.11 — discover the active substrate by reading the
 -- staged @infernix-substrate.dhall@ file under the launcher build root.
@@ -246,28 +269,6 @@ ensureActiveSubstrateFile = do
 configuredRuntimeMode :: Paths -> IO RuntimeMode
 configuredRuntimeMode = targetRuntimeModeForExecutionContext
 
-harborPublishOptionsForPaths :: Paths -> PublishImages.HarborPublishOptions
-harborPublishOptionsForPaths paths =
-  PublishImages.defaultHarborPublishOptions
-    { PublishImages.harborDockerCommand = hostToolPathOrName paths HostDocker,
-      PublishImages.harborSkopeoCommand = hostToolPathOrName paths HostSkopeo
-    }
-
-hostToolPathOrName :: Paths -> HostTool -> FilePath
-hostToolPathOrName paths tool =
-  case pathsHostConfig paths of
-    Just hostConfig ->
-      let candidate = HostTools.hostToolPath hostConfig tool
-       in if Text.null candidate
-            then fallbackPathOrName
-            else Text.unpack candidate
-    Nothing -> fallbackPathOrName
-  where
-    fallbackPathOrName =
-      case HostTools.hostToolFallbackPath tool of
-        Just path -> path
-        Nothing -> Text.unpack (HostTools.hostToolName tool)
-
 runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode = do
   runCabalCommand maybeRuntimeMode ["test", "infernix-haskell-style"]
@@ -281,14 +282,18 @@ runLint maybeRuntimeMode = do
 -- | Sprint 6.43 — run a cluster-owned validation step under an evidence-gated
 -- seizure of the single cluster slot. 'seizeHarnessClusterSlot' reads the
 -- persisted owner and fails closed loud on an 'OperatorOwned' cluster (never
--- destroying it — the do-block throws before the @finally@ teardown is
--- installed), tearing down only a 'HarnessOwned' or absent one. The suite then
--- brings up its own 'HarnessOwned' cluster, which the @finally@ cleans up.
+-- destroying it because release is installed only after successful seizure),
+-- tearing down only a 'HarnessOwned' or absent one. Successful seizure and
+-- cleanup installation share one masked acquisition boundary. The suite then
+-- brings up its own 'HarnessOwned' cluster. Cleanup repeats the locked owner
+-- check, so an operator that wins the slot after seizure is never torn down by
+-- harness cleanup.
 runClusterOwnedValidation :: Maybe RuntimeMode -> IO a -> IO a
-runClusterOwnedValidation maybeRuntimeMode action = do
-  seizeHarnessClusterSlot maybeRuntimeMode
-  action
-    `finally` clusterDown maybeRuntimeMode
+runClusterOwnedValidation maybeRuntimeMode action =
+  bracketPreservingPrimary
+    (seizeHarnessClusterSlot maybeRuntimeMode)
+    (const (releaseHarnessClusterSlot maybeRuntimeMode))
+    (const action)
 
 -- | Phase 8 Sprint 8.6: the test harness owns @./infernix.dhall@ for the
 -- duration of a run. It reads @./infernix.test.dhall@ (failing fast with an
@@ -310,12 +315,6 @@ withTestHarnessConfig action = do
   let testConfig = testConfigPath paths
       runtimeConfig = runtimeConfigPath paths
       backupConfig = runtimeConfig <> ".harness-backup"
-  -- Sprint 6.43: a leftover @.harness-backup@ at entry means a prior run was
-  -- SIGKILLed after moving the operator config aside but before restoring it,
-  -- leaving the operator's runtime config clobbered by the test config. Restore
-  -- it before taking ownership, so the `finally` restore is no longer the only
-  -- recovery path.
-  reconcileLeftoverHarnessBackup runtimeConfig backupConfig
   testConfigExists <- doesFileExist testConfig
   unless testConfigExists $
     ioError
@@ -325,44 +324,56 @@ withTestHarnessConfig action = do
               <> "; run `infernix test init` to create it"
           )
       )
-  hadExistingRuntimeConfig <- doesFileExist runtimeConfig
-  when hadExistingRuntimeConfig (renameFile runtimeConfig backupConfig)
   testDemoConfig <- decodeDemoConfigFile testConfig
-  _ <-
-    materializeGeneratedDemoConfigFile
-      paths
-      (configRuntimeMode testDemoConfig)
-      (demoUiEnabled testDemoConfig)
-  action `finally` restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig
+  hadExistingRuntimeConfig <- doesFileExist runtimeConfig
+  mask $ \restore -> do
+    ( do
+        beginHarnessConfigTransaction paths hadExistingRuntimeConfig $ do
+          when hadExistingRuntimeConfig (renameFile runtimeConfig backupConfig)
+          restore $ do
+            _ <-
+              materializeGeneratedDemoConfigFile
+                paths
+                (configRuntimeMode testDemoConfig)
+                (demoUiEnabled testDemoConfig)
+            pure ()
+        restore action
+      )
+      `finallyPreservingPrimary` completeHarnessConfigTransaction
+        paths
+        (restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig)
 
 -- | Restore the pre-run @./infernix.dhall@ after a harness run: remove the
 -- harness-generated file (and any per-variant rewrite), then move the backup
 -- back into place when one was taken.
 restoreRuntimeConfig :: FilePath -> FilePath -> Bool -> IO ()
 restoreRuntimeConfig runtimeConfig backupConfig hadExistingRuntimeConfig = do
-  present <- doesFileExist runtimeConfig
-  when present (removeFile runtimeConfig)
-  when hadExistingRuntimeConfig $ do
-    backupPresent <- doesFileExist backupConfig
-    when backupPresent (renameFile backupConfig runtimeConfig)
-
--- | Sprint 6.43 — reconcile a leftover @.harness-backup@ from a prior killed
--- run before the harness takes ownership. A backup present at entry can only be
--- the operator's original config, stranded by an interrupted run; restore it
--- (remove any harness leftover at the runtime path, then move the backup back)
--- so a crash cannot leave the operator's runtime config clobbered by the test
--- config.
-reconcileLeftoverHarnessBackup :: FilePath -> FilePath -> IO ()
-reconcileLeftoverHarnessBackup runtimeConfig backupConfig = do
+  runtimePresent <- doesFileExist runtimeConfig
   backupPresent <- doesFileExist backupConfig
-  when backupPresent $ do
-    putStrLn
-      ( "reconciling a leftover harness config backup from a prior interrupted run: restoring "
-          <> runtimeConfig
-      )
-    present <- doesFileExist runtimeConfig
-    when present (removeFile runtimeConfig)
-    renameFile backupConfig runtimeConfig
+  case runtimeConfigRestorePlan hadExistingRuntimeConfig backupPresent of
+    Right RestoreOperatorRuntimeConfig -> do
+      when runtimePresent (removeFile runtimeConfig)
+      renameFile backupConfig runtimeConfig
+    Right RemoveHarnessRuntimeConfig ->
+      when runtimePresent (removeFile runtimeConfig)
+    Left refusal -> ioError (userError refusal)
+
+data RuntimeConfigRestorePlan
+  = RestoreOperatorRuntimeConfig
+  | RemoveHarnessRuntimeConfig
+
+-- Pure policy surface for testing the fail-closed presence matrix. The IO
+-- mutator remains private and is reachable only from the reservation-gated
+-- config transaction.
+runtimeConfigRestorePlan :: Bool -> Bool -> Either String RuntimeConfigRestorePlan
+runtimeConfigRestorePlan hadExistingRuntimeConfig backupPresent =
+  case (hadExistingRuntimeConfig, backupPresent) of
+    (True, True) -> Right RestoreOperatorRuntimeConfig
+    (True, False) ->
+      Left "cannot complete harness config restore: the required operator-config backup is absent"
+    (False, False) -> Right RemoveHarnessRuntimeConfig
+    (False, True) ->
+      Left "cannot complete harness config removal: an unexpected operator-config backup exists"
 
 runEndToEnd :: Maybe RuntimeMode -> IO ()
 runEndToEnd maybeRuntimeMode = do
@@ -376,7 +387,7 @@ runEndToEnd maybeRuntimeMode = do
 runRuntimeModeE2E :: Paths -> RuntimeMode -> IO ()
 runRuntimeModeE2E paths runtimeMode =
   ( do
-      clusterUp HarnessOwned (Just runtimeMode)
+      clusterUpHarness (Just runtimeMode)
       let expectedInferenceDispatchMode = Text.unpack (expectedInferenceDispatchModeForRuntime runtimeMode)
       maybePort <- readEdgePortMaybe paths
       edgePort <-
@@ -407,16 +418,12 @@ runRuntimeModeE2E paths runtimeMode =
               expectedInferenceDispatchMode
               "cluster-demo"
   )
-    `finally` clusterDown (Just runtimeMode)
+    `finallyPreservingPrimary` clusterDownHarness (Just runtimeMode)
 
-runInternalPulsarRoundTrip :: RuntimeMode -> FilePath -> String -> String -> IO ()
-runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValue = do
+runInternalPulsarRoundTrip :: FilePath -> String -> String -> IO ()
+runInternalPulsarRoundTrip demoConfigPath modelIdValue inputTextValue = do
   paths <- discoverPaths
-  demoConfig <- decodeDemoConfigFile demoConfigPath
-  requestTopicValue <-
-    case requestTopics demoConfig of
-      topicValue : _ -> pure topicValue
-      [] -> ioError (userError "demo config does not declare any request topics")
+  compiledPlan <- requireCompiledRuntimePlanFile demoConfigPath
   let requestValue =
         InferenceRequest
           { requestModelId = Text.pack modelIdValue,
@@ -425,8 +432,8 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
             requestUserId = Nothing,
             requestContextId = Nothing
           }
-  requestIdValue <- publishInferenceRequest paths runtimeMode requestTopicValue requestValue
-  maybeResult <- waitForInternalPulsarResult paths runtimeMode (resultTopic demoConfig) requestIdValue
+  requestIdValue <- publishInferenceRequest paths compiledPlan requestValue
+  maybeResult <- waitForInternalPulsarResult paths compiledPlan requestIdValue
   case maybeResult of
     Nothing ->
       ioError
@@ -441,16 +448,35 @@ runInternalPulsarRoundTrip runtimeMode demoConfigPath modelIdValue inputTextValu
 -- 'Readiness' kernel under the legacy 120-attempt × 0.25 s budget. A published
 -- result is the kernel's readiness evidence; a deadline-exhausted wait resolves to
 -- @Nothing@ exactly as the previous bare-recursion fall-through did.
-waitForInternalPulsarResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForInternalPulsarResult paths runtimeMode resultTopicValue requestIdValue = do
+waitForInternalPulsarResult ::
+  Paths ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  Text.Text ->
+  IO (Maybe InferenceResult)
+waitForInternalPulsarResult paths compiledPlan requestIdValue = do
   outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 120 250000) probe
   pure (Readiness.foldReadiness Just (const Nothing) (const Nothing) outcome)
   where
     probe = do
-      maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopicValue requestIdValue
+      maybeResult <- readPublishedInferenceResultMaybe paths compiledPlan requestIdValue
       case maybeResult of
         Just resultValue -> pure (Right resultValue)
         Nothing -> pure (Left (Readiness.Progress 0 1 "inference result not yet published"))
+
+requireCompiledRuntimePlanFile ::
+  FilePath ->
+  IO ExecutionPlan.CompiledRuntimePlan
+requireCompiledRuntimePlanFile demoConfigPath = do
+  compiledResult <- decodeCompiledRuntimePlanFile demoConfigPath
+  case compiledResult of
+    Left errors ->
+      ioError
+        ( userError
+            ( "runtime config did not compile: "
+                <> show errors
+            )
+        )
+    Right compiledPlan -> pure compiledPlan
 
 printInternalPulsarResult :: InferenceResult -> IO ()
 printInternalPulsarResult resultValue = do
@@ -618,16 +644,22 @@ withRuntimeServiceDaemonIfNeeded paths runtimeMode action =
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
   infernixExecutable <- getExecutablePath
-  (_, _, _, processHandle) <-
-    createProcess
-      (proc infernixExecutable ["service"])
-        { cwd = Just (repoRoot paths)
-        }
-  action
-    `finally` do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      pure ()
+  bracketPreservingPrimary
+    ( do
+        (_, _, _, processHandle) <-
+          createProcess
+            (proc infernixExecutable ["service"])
+              { cwd = Just (repoRoot paths)
+              }
+        pure processHandle
+    )
+    ( \processHandle ->
+        runCleanupsPreservingFailures
+          [ terminateProcess processHandle,
+            void (waitForProcess processHandle)
+          ]
+    )
+    (const action)
 
 renderPersistentClaimLine :: PersistentClaim -> String
 renderPersistentClaimLine persistentClaim =
@@ -754,6 +786,9 @@ hostToolForCliCommand command =
     "curl" -> Just HostCurl
     "poetry" -> Just HostPoetry
     "python3" -> Just HostPython3
+    "python3.11" -> Just HostPython311
+    "llama-cli" -> Just HostLlamaCli
+    "whisper-cli" -> Just HostWhisperCli
     "git" -> Just HostGit
     "protoc" -> Just HostProtoc
     _ -> Nothing
@@ -830,6 +865,9 @@ cliHostToolParentDirs hostConfig =
           HostNode,
           HostCurl,
           HostPython3,
+          HostPython311,
+          HostLlamaCli,
+          HostWhisperCli,
           HostPoetry,
           HostGit,
           HostProtoc,

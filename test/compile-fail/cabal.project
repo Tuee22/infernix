@@ -1,0 +1,17 @@
+packages:
+    ../../infernix.cabal
+    ./infernix-compile-fixtures.cabal
+
+write-ghc-environment-files: never
+with-compiler: ghc-9.12.4
+
+allow-newer:
+    *:base
+  , *:template-haskell
+  , binary:containers
+  , lens-family:base
+  , lens-family:containers
+  , lens-family:lens-family-core
+  , lens-family-core:containers
+  , proto-lens:lens-family
+  , proto-lens-setup:Cabal

@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import hashlib
 import importlib
+import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -12,7 +15,6 @@ import tempfile
 import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -480,8 +482,8 @@ def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> in
     # adapter dispatch happens upstream of this setup helper (the
     # Haskell daemon decodes the active substrate from the staged
     # `infernix-substrate.dhall` before selecting which adapters to
-    # bootstrap), so this manifest just records the adapter identity
-    # and a freshness timestamp.
+    # bootstrap), so this manifest records only the versioned adapter
+    # identity. Identical setup operations must publish identical evidence.
     resolved_install_root = (
         install_root if install_root is not None else _engine_install_root(adapter_id)
     )
@@ -489,13 +491,32 @@ def run_setup_bootstrap(adapter_id: str, install_root: Path | None = None) -> in
     install_root = resolved_install_root
     bootstrap_manifest = {
         "adapterId": adapter_id,
-        "repoRoot": str(_repo_root()),
-        "updatedAt": datetime.now(UTC).isoformat(),
+        "schemaVersion": 1,
     }
-    (install_root / "bootstrap.json").write_text(
-        json.dumps(bootstrap_manifest, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    bootstrap_path = install_root / "bootstrap.json"
+    staging_path = install_root / ".bootstrap.json.tmp"
+    payload = json.dumps(bootstrap_manifest, indent=2, sort_keys=True) + "\n"
+    staging_flags = (
+        os.O_WRONLY
+        | os.O_CREAT
+        | os.O_TRUNC
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
     )
+    staging_fd = os.open(staging_path, staging_flags, 0o600)
+    with os.fdopen(staging_fd, "w", encoding="utf-8", newline="\n") as staging:
+        staging.write(payload)
+        staging.flush()
+        os.fsync(staging.fileno())
+    os.replace(staging_path, bootstrap_path)
+    directory_fd = os.open(
+        install_root,
+        os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+    )
+    try:
+        os.fsync(directory_fd)
+    finally:
+        os.close(directory_fd)
     print(f"setup ready: {adapter_id}")
     return 0
 
@@ -603,6 +624,258 @@ def _run_native_runner_realness_check(runners_dir: Path) -> None:
         )
 
 
+def _load_native_runner_for_contract_check(runner_path: Path) -> Any:
+    module_name = "_infernix_check_apple_native_runner"
+    spec = importlib.util.spec_from_file_location(module_name, runner_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load native runner contract from {runner_path}")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(module_name, None)
+        raise
+    return module
+
+
+def _apple_native_runner_ownership_violations(
+    source_name: str, runner_source: str
+) -> list[str]:
+    runner_tree = ast.parse(runner_source, filename=source_name)
+    forbidden_modules = {
+        "_posixsubprocess",
+        "asyncio",
+        "ctypes",
+        "multiprocessing",
+        "os",
+        "posix",
+        "pty",
+        "subprocess",
+    }
+    forbidden_calls = {
+        "Popen",
+        "exec",
+        "fork",
+        "popen",
+        "posix_spawn",
+        "posix_spawnp",
+        "spawn",
+        "system",
+        "wait",
+        "wait3",
+        "wait4",
+        "waitid",
+        "waitpid",
+    }
+    forbidden_builtin_loaders = {"__import__", "compile", "eval", "exec"}
+    violations: list[str] = []
+    for node in ast.walk(runner_tree):
+        if isinstance(node, ast.Import):
+            for imported in node.names:
+                if imported.name.split(".", 1)[0] in forbidden_modules:
+                    violations.append(
+                        f"{source_name}:{node.lineno}: forbidden process module "
+                        f"{imported.name}"
+                    )
+        elif isinstance(node, ast.ImportFrom):
+            imported_module = (node.module or "").split(".", 1)[0]
+            if imported_module in forbidden_modules:
+                violations.append(
+                    f"{source_name}:{node.lineno}: forbidden process module "
+                    f"{node.module}"
+                )
+        elif isinstance(node, ast.Call):
+            call_name: str | None = None
+            if isinstance(node.func, ast.Name):
+                call_name = node.func.id
+                if call_name in forbidden_builtin_loaders:
+                    violations.append(
+                        f"{source_name}:{node.lineno}: forbidden dynamic code loader "
+                        f"{call_name}"
+                    )
+            elif isinstance(node.func, ast.Attribute):
+                call_name = node.func.attr
+                if call_name == "import_module":
+                    violations.append(
+                        f"{source_name}:{node.lineno}: forbidden dynamic module loader "
+                        "import_module"
+                    )
+            if call_name is not None and (
+                call_name in forbidden_calls
+                or call_name.startswith("exec")
+                or call_name.startswith("spawn")
+                or call_name.startswith("wait")
+            ):
+                violations.append(
+                    f"{source_name}:{node.lineno}: forbidden child-process "
+                    f"operation {call_name}"
+                )
+            if any(keyword.arg == "shell" for keyword in node.keywords):
+                violations.append(
+                    f"{source_name}:{node.lineno}: forbidden shell invocation"
+                )
+    if "_run_subprocess" in runner_source:
+        violations.append(
+            f"{source_name}: forbidden subprocess helper remains in source"
+        )
+    if "parse_known_args" in runner_source:
+        violations.append(f"{source_name}: runner accepts unknown command operands")
+    return violations
+
+
+def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
+    """Prove that the Python runner cannot create or own child processes."""
+    runner_source = runner_path.read_text(encoding="utf-8")
+    violations = _apple_native_runner_ownership_violations(
+        runner_path.name, runner_source
+    )
+    if violations:
+        raise RuntimeError(
+            "apple native runner ownership check failed:\n" + "\n".join(violations)
+        )
+
+    rejected_sources = {
+        "builtin-import.py": "__import__('subprocess')\n",
+        "builtin-eval.py": "eval('1 + 1')\n",
+        "builtin-exec.py": "exec('value = 1')\n",
+        "builtin-compile.py": "compile('value = 1', '<contract>', 'exec')\n",
+        "import-module.py": (
+            "import importlib\n"
+            "process_module = importlib.import_module('subprocess')\n"
+        ),
+    }
+    for source_name, rejected_source in rejected_sources.items():
+        if not _apple_native_runner_ownership_violations(source_name, rejected_source):
+            raise RuntimeError(
+                "apple native runner ownership check failed: dynamic loader "
+                f"fixture {source_name} was accepted"
+            )
+    if _apple_native_runner_ownership_violations(
+        "mlx-eval.py",
+        "import mlx.core as mx\nobserved = mx.eval(value)\n",
+    ):
+        raise RuntimeError(
+            "apple native runner ownership check failed: mx.eval was mistaken "
+            "for built-in eval"
+        )
+
+    runner = _load_native_runner_for_contract_check(runner_path)
+    original_argv = sys.argv
+    try:
+        sys.argv = [
+            str(runner_path),
+            "--adapter-id",
+            "onnx-runtime-native",
+            "--engine-name",
+            "contract-engine",
+            "--smoke",
+        ]
+        smoke_args = runner._parse_args()
+        if not smoke_args.smoke_only:
+            raise RuntimeError(
+                "apple native runner contract check: exact --smoke was not accepted"
+            )
+        sys.argv = [
+            str(runner_path),
+            "--adapter-id",
+            "onnx-runtime-native",
+            "--engine-name",
+            "contract-engine",
+            "--help",
+        ]
+        with contextlib.redirect_stderr(io.StringIO()):
+            try:
+                runner._parse_args()
+            except SystemExit as exc:
+                if exc.code == 0:
+                    raise RuntimeError(
+                        "apple native runner contract check: --help exited successfully"
+                    ) from exc
+            else:
+                raise RuntimeError(
+                    "apple native runner contract check: --help became smoke authority"
+                )
+    finally:
+        sys.argv = original_argv
+
+    with tempfile.TemporaryDirectory(
+        prefix="infernix-native-runner-contract-"
+    ) as temporary_root:
+        root = Path(temporary_root)
+        for adapter_id in ("llama-cpp-cli", "whisper-cpp-cli", "jvm-native"):
+            args = runner.RunnerArgs(
+                adapter_id=adapter_id,
+                engine_name="contract-engine",
+                model_id="contract-model",
+                selected_engine="contract-engine",
+                family="contract-family",
+                install_root=root / "candidate",
+                input_text="",
+                input_object_ref="",
+                input_file="",
+                model_cache_root=None,
+                output_dir=None,
+                smoke_only=False,
+            )
+            for operation_name, operation in (
+                ("smoke", runner._run_smoke),
+                ("inference", runner._run_inference),
+            ):
+                try:
+                    operation(args)
+                except runner.RunnerFailure as exc:
+                    if (
+                        exc.exit_code != 70
+                        or "Haskell direct-target supervision" not in str(exc)
+                    ):
+                        raise RuntimeError(
+                            "apple native runner ownership check failed: "
+                            f"{adapter_id} {operation_name} produced exit="
+                            f"{exc.exit_code} message={exc}"
+                        ) from exc
+                else:
+                    raise RuntimeError(
+                        "apple native runner ownership check failed: "
+                        f"{adapter_id} {operation_name} did not reject Python "
+                        "process ownership"
+                    )
+
+        output_root = root / "output"
+        output_root.mkdir()
+        regular_output = output_root / "artifact.bin"
+        regular_output.write_bytes(b"contract-output")
+        accepted_output = runner._require_nonempty_output(
+            output_root, regular_output, "contract"
+        )
+        if accepted_output != regular_output.resolve():
+            raise RuntimeError(
+                "apple native runner output check changed the accepted exact path"
+            )
+        empty_output = output_root / "empty.bin"
+        empty_output.touch()
+        external_output = root / "external.bin"
+        external_output.write_bytes(b"external")
+        linked_output = output_root / "linked.bin"
+        linked_output.symlink_to(external_output)
+        for label, rejected_output in (
+            ("empty", empty_output),
+            ("external", external_output),
+            ("symlink", linked_output),
+        ):
+            try:
+                runner._require_nonempty_output(
+                    output_root, rejected_output, "contract"
+                )
+            except runner.RunnerFailure:
+                pass
+            else:
+                raise RuntimeError(
+                    "apple native runner output check accepted "
+                    f"{label} artifact {rejected_output}"
+                )
+
+
 def run_check_code() -> int:
     project_root = Path(__file__).resolve().parent.parent
     env = {"MYPYPATH": str(generated_proto_root)}
@@ -615,6 +888,9 @@ def run_check_code() -> int:
         subprocess.run(command, cwd=project_root, check=True, env=env)
     _run_realness_ast_check(project_root / "adapters")
     _run_native_runner_realness_check(project_root / "native-runners")
+    _run_apple_native_runner_contract_check(
+        project_root / "native-runners" / "apple_native_runner.py"
+    )
     return 0
 
 

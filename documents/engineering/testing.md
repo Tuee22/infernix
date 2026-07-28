@@ -18,7 +18,7 @@
   not fail the whole daemon — see the resource-exhaustion classification under Lifecycle Failure
   Classification.
 - Integration and routed E2E coverage derive their target set from the active generated catalog,
-  so changing the staged substrate changes the exercised entries automatically.
+  so changing the initialized runtime config changes the exercised entries automatically.
 - Cross-hardware validation is cohort-based: day-to-day phase work validates on the current
   Apple Silicon or CUDA Linux machine, and the counterpart machine's full-suite run is batched at
   phase closure.
@@ -83,27 +83,32 @@
   position, so a run killed while it was actively mutating the cluster (a drained node, an
   over-scaled deployment) leaves `ClusterMutating` persisted. `cluster status` then reports a
   mutation-incomplete (dirty) phase rather than a false `steady-state`, and the next `cluster up`
-  reconciles it (uncordon drained nodes, scale deployments back). Code-side closed (2026-07-23):
-  the `ClusterMutating` position and reconcile (Phase 2 Sprint 2.15) and the evidence-gated
-  seizure and crash-safe config swap (Phase 6 Sprint 6.43) are implemented and closed under Wave X
-  (2026-07-24, apple-silicon plus linux-cpu). Canonical home:
+  reconciles it (uncordon drained nodes, scale deployments back). Wave X (2026-07-24,
+  apple-silicon plus linux-cpu) historically closes the 2026-07-23 `ClusterMutating`, seizure, and
+  crash-safe config scope in Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43. It does not close the
+  2026-07-25 owner-atomic reservation/teardown correction. That correction remains under Phase 2
+  implementation and source review; its new source-matched Stage 1 and Wave Y have not started, and
+  Phase 6 validation is ordered after Phases 2 and 4. Canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md)
 - resource exhaustion is a distinct third class from stall and clean failure: every active model
   carries `ModelDescriptor.modelRamFootprintMib`, and each substrate resolves an explicit
   `InferenceMemoryBudget` before launch
 - the active budget is typed, not a magic integer: Apple uses unified host RAM after the Colima
-  pledge and reserve, Linux CPU uses the engine pod memory limit, and Linux GPU uses GPU VRAM;
-  `EnforcedMemoryBudget 0 MiB` remains enforced, while `UnenforcedMemoryBudget` is an explicit
-  constructor for intentionally unlimited cases
+  pledge and checked host headroom, while Linux CPU uses the engine pod memory limit. Compilation
+  mints a resource-indexed grant only for a model that fits and retains an oversized row as an
+  explicit `UnavailableModel`; live refinement must pair that grant with the matching enforcer
+  before engine launch can receive an `ExecutableModel`. Linux GPU currently fails compilation
+  closed with `GpuDualResourceBudgetRequired`; Phase 6 owns dual host-RAM/GPU-VRAM accounting
 - an over-budget model publishes a clean `status=failed` real `InferenceResult` with
   `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` instead
   of launching the engine subprocess. The generated config must remain usable when only some models
   are over budget, so smaller rows still complete and honor their per-family real-output contract
 - the integration classifier must identify memory-capacity failure by the typed error constructor
   and MiB fields, distinct from a stall (a genuinely missing result, including the historical
-  OS-OOM-kill symptom) and from a fabricated pass. This is reopened as Phase 4 Sprint 4.27, Phase 5
-  Sprint 5.11, and Phase 6 Sprint 6.38. Canonical doctrine for the grant-gated capped-engine
-  execution invariant (a host OOM is unrepresentable):
+  OS-OOM-kill symptom) and from a fabricated pass. Phase 1 owns exhaustive compiler accounting and
+  typed coordinator rejection delivery, Phase 4 owns Apple/Linux CPU adversarial survival and
+  encapsulated serialization, and Phase 6 owns the GPU path. Canonical doctrine for the
+  executable-gated capped-engine invariant:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
 
 ## Canonical Entry Points
@@ -119,7 +124,7 @@
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
 | `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is bounded by substrate-specific resource admission, classifying an over-budget model as typed `ModelMemoryLimitExceeded` (see Lifecycle Failure Classification) |
 | `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
-| `infernix test all` | run every supported validation layer in sequence for the active staged substrate |
+| `infernix test all` | run every supported validation layer in sequence for the active initialized substrate |
 
 ## Validation Obligations
 
@@ -133,7 +138,7 @@
 - `infernix test unit` proves the typed control-plane and browser-contract logic that should not
   require a live cluster, and keeps the Node-based PureScript runner on maintained
   `purescript-spec` entrypoints.
-- `infernix test integration` proves the active staged substrate's generated catalog, routed surfaces,
+- `infernix test integration` proves the active initialized substrate's generated catalog, routed surfaces,
   publication state, cache contract, and the real cluster's HA or lifecycle assertions.
 - One DRY substrate-aware integration suite plus one substrate-agnostic Playwright suite assert a
   per-family real-output result contract — asserting shape and type per closed `ResultFamily`, never
@@ -161,7 +166,7 @@
   post-deletion auth loop) runs end-to-end. The per-spec detail lives in
   [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
-  the active staged substrate without dropping any layer.
+  the active initialized substrate without dropping any layer.
 - phase closure follows the single-accelerator rule in
   [development-plan standards](../../DEVELOPMENT_PLAN/development_plan_standards.md): one selected
   accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`, never both in one must-pass gate.

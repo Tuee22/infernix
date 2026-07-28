@@ -198,7 +198,10 @@ spec:
 
 The supported Apple Metal/Core ML materialization target uses typed engine-artifact records rather
 than inherited process state. Adapter id, artifact kind, source references, runtime fingerprint,
-install root, optional MinIO object key, entrypoint, and smoke command are explicit record fields;
+install root, optional MinIO object key, closed recipe fingerprint, direct-target contract
+fingerprint, and exact resolved provenance are explicit record fields. Executable paths, argument
+prefixes, and smoke operations come only from Cabal-hidden closed catalogs; they are not
+manifest-supplied commands. Every bounded helper receives an explicit constructed environment, so
 no host environment variable crosses into the materialization path. The old Tart helper path has
 been removed, and new Apple engine work must not add Tart, keychain, Xcode UI, or
 `ssh`-with-env dependencies. The canonical home for this substrate is

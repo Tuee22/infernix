@@ -15,6 +15,13 @@ module Infernix.HostConfig
     HostToolPaths (..),
     HostFilesystem (..),
     HostExecutionContext (..),
+    DhallRetryPolicy (..),
+    DhallBoundedRetry (..),
+    DhallFailureClass (..),
+    DhallCommandPolicy (..),
+    DhallCommandPolicies (..),
+    defaultDhallCommandPolicies,
+    renderDhallCommandPolicies,
     decodeHostConfigFile,
     renderHostConfig,
     renderHostConfigSchema,
@@ -35,6 +42,7 @@ import Data.Text qualified as Text
 import Dhall qualified
 import GHC.Generics (Generic)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
+import Numeric.Natural (Natural)
 import System.Info qualified
 
 -- | Where the supported binary is currently running. Mirrors the
@@ -63,6 +71,9 @@ data HostToolPaths = HostToolPaths
     hostNpm :: Text,
     hostNode :: Text,
     hostPython3 :: Text,
+    hostPython311 :: Text,
+    hostLlamaCli :: Text,
+    hostWhisperCli :: Text,
     hostPoetry :: Text,
     hostProtoc :: Text,
     hostGit :: Text,
@@ -110,12 +121,97 @@ data HostFilesystem = HostFilesystem
 instance Dhall.FromDhall HostFilesystem where
   autoWith _ = Dhall.genericAutoWith hostInterpretOptions
 
+-- | Proper Dhall retry union for generated cluster-command policies. The
+-- constructor names intentionally match the wire labels exactly.
+data DhallRetryPolicy
+  = Never
+  | Bounded DhallBoundedRetry
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall DhallRetryPolicy
+
+data DhallBoundedRetry = DhallBoundedRetry
+  { dhallAttempts :: Natural,
+    dhallBackoffMicros :: Natural
+  }
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall DhallBoundedRetry where
+  autoWith _ = Dhall.genericAutoWith commandPolicyInterpretOptions
+
+-- | Proper Dhall failure-class union. The raw generated representation remains
+-- distinct from the subprocess kernel's refined policy type.
+data DhallFailureClass
+  = Fatal
+  | TransientThenFatal
+  | IdempotentAbsence
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall DhallFailureClass
+
+data DhallCommandPolicy = DhallCommandPolicy
+  { dhallTimeoutMicros :: Natural,
+    dhallRetry :: DhallRetryPolicy,
+    dhallFailureClass :: DhallFailureClass
+  }
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall DhallCommandPolicy where
+  autoWith _ = Dhall.genericAutoWith commandPolicyInterpretOptions
+
+-- | Exact generated policy table for every production operation category in
+-- 'Infernix.Cluster.Subprocess.ClusterOperation'. Test-only kernel probes are
+-- deliberately excluded from operator configuration.
+data DhallCommandPolicies = DhallCommandPolicies
+  { dhallKindRead :: DhallCommandPolicy,
+    dhallKindCreate :: DhallCommandPolicy,
+    dhallKindDelete :: DhallCommandPolicy,
+    dhallNvkindCreate :: DhallCommandPolicy,
+    dhallKubectlRead :: DhallCommandPolicy,
+    dhallKubectlApply :: DhallCommandPolicy,
+    dhallKubectlDelete :: DhallCommandPolicy,
+    dhallKubectlWait :: DhallCommandPolicy,
+    dhallKubectlExec :: DhallCommandPolicy,
+    dhallHelmUpgrade :: DhallCommandPolicy,
+    dhallHelmDependency :: DhallCommandPolicy,
+    dhallHelmRepository :: DhallCommandPolicy,
+    dhallHelmRender :: DhallCommandPolicy,
+    dhallDockerExec :: DhallCommandPolicy,
+    dhallDockerProbe :: DhallCommandPolicy,
+    dhallDockerBuild :: DhallCommandPolicy,
+    dhallDockerInspect :: DhallCommandPolicy,
+    dhallDockerPull :: DhallCommandPolicy,
+    dhallDockerTag :: DhallCommandPolicy,
+    dhallDockerCopy :: DhallCommandPolicy,
+    dhallDockerStreamImport :: DhallCommandPolicy,
+    dhallDockerNetwork :: DhallCommandPolicy,
+    dhallContainerRuntimePull :: DhallCommandPolicy,
+    dhallHostProbe :: DhallCommandPolicy,
+    dhallHostMutation :: DhallCommandPolicy,
+    dhallCurlProbe :: DhallCommandPolicy,
+    dhallArchiveRead :: DhallCommandPolicy,
+    dhallGpuUserspaceSync :: DhallCommandPolicy,
+    dhallImagePublicationLogin :: DhallCommandPolicy,
+    dhallImagePublicationInspect :: DhallCommandPolicy,
+    dhallImagePublicationPull :: DhallCommandPolicy,
+    dhallImagePublicationVerify :: DhallCommandPolicy,
+    dhallImagePublicationTag :: DhallCommandPolicy,
+    dhallImagePublicationPush :: DhallCommandPolicy,
+    dhallImagePublicationRemove :: DhallCommandPolicy,
+    dhallImagePublicationCopy :: DhallCommandPolicy
+  }
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall DhallCommandPolicies where
+  autoWith _ = Dhall.genericAutoWith commandPolicyInterpretOptions
+
 -- | Full host manifest the binary decodes at startup.
 data HostConfig = HostConfig
   { hostExecutionContext :: HostExecutionContext,
     hostArchitecture :: Text,
     hostToolPaths :: HostToolPaths,
     hostFilesystem :: HostFilesystem,
+    hostCommandPolicies :: DhallCommandPolicies,
     hostPlaywrightHost :: Text,
     hostControlPlaneContext :: Text
   }
@@ -132,6 +228,14 @@ hostInterpretOptions :: Dhall.InterpretOptions
 hostInterpretOptions =
   Dhall.defaultInterpretOptions {Dhall.fieldModifier = hostFieldName}
 
+commandPolicyInterpretOptions :: Dhall.InterpretOptions
+commandPolicyInterpretOptions =
+  Dhall.defaultInterpretOptions {Dhall.fieldModifier = commandPolicyFieldName}
+
+commandPolicyFieldName :: Text -> Text
+commandPolicyFieldName rawFieldName =
+  maybe rawFieldName lowerInitial (Text.stripPrefix "dhall" rawFieldName)
+
 hostFieldName :: Text -> Text
 hostFieldName rawFieldName =
   case Text.stripPrefix "host" rawFieldName of
@@ -140,6 +244,7 @@ hostFieldName rawFieldName =
     Just "Architecture" -> "hostArchitecture"
     Just "ToolPaths" -> "toolPaths"
     Just "Filesystem" -> "filesystem"
+    Just "CommandPolicies" -> "commandPolicies"
     Just "PlaywrightHost" -> "playwrightHost"
     Just "ControlPlaneContext" -> "controlPlaneContext"
     Just "AptGet" -> "aptGet"
@@ -151,6 +256,85 @@ lowerInitial value =
   case Text.uncons value of
     Nothing -> value
     Just (firstCharacter, rest) -> Text.cons (toLower firstCharacter) rest
+
+defaultDhallCommandPolicies :: DhallCommandPolicies
+defaultDhallCommandPolicies =
+  DhallCommandPolicies
+    { dhallKindRead = fatalMinutes 2,
+      dhallKindCreate = fatalMinutes 30,
+      dhallKindDelete = boundedIdempotentMinutes 10 3 2000000,
+      dhallNvkindCreate = fatalMinutes 30,
+      dhallKubectlRead = fatalMinutes 10,
+      dhallKubectlApply = fatalMinutes 10,
+      dhallKubectlDelete = idempotentMinutes 10,
+      dhallKubectlWait = fatalMinutes 25,
+      dhallKubectlExec = fatalMinutes 10,
+      dhallHelmUpgrade = fatalMinutes 35,
+      dhallHelmDependency = fatalMinutes 20,
+      dhallHelmRepository = fatalMinutes 5,
+      dhallHelmRender = fatalMinutes 10,
+      dhallDockerExec = fatalMinutes 15,
+      dhallDockerProbe = fatalMinutes 2,
+      dhallDockerBuild = fatalMinutes 45,
+      dhallDockerInspect = fatalMinutes 2,
+      dhallDockerPull = fatalMinutes 20,
+      dhallDockerTag = fatalMinutes 2,
+      dhallDockerCopy = fatalMinutes 15,
+      dhallDockerStreamImport = fatalMinutes 20,
+      dhallDockerNetwork = idempotentMinutes 2,
+      dhallContainerRuntimePull = fatalMinutes 15,
+      dhallHostProbe = fatalMinutes 2,
+      dhallHostMutation = fatalMinutes 15,
+      dhallCurlProbe = fatalMinutes 2,
+      dhallArchiveRead = fatalMinutes 10,
+      dhallGpuUserspaceSync = fatalMinutes 20,
+      dhallImagePublicationLogin = transientMinutes 2 6 6000000,
+      dhallImagePublicationInspect = fatalMinutes 2,
+      dhallImagePublicationPull = fatalMinutes 20,
+      dhallImagePublicationVerify = transientMinutes 15 6 6000000,
+      dhallImagePublicationTag = fatalMinutes 2,
+      -- One kernel-owned 40-minute deadline encloses all 30 attempts and
+      -- backoffs. This replaces the caller-side loop that previously reset a
+      -- 40-minute command budget on every attempt.
+      dhallImagePublicationPush = transientMinutes 40 30 50000000,
+      dhallImagePublicationRemove = idempotentMinutes 2,
+      dhallImagePublicationCopy = transientMinutes 40 30 50000000
+    }
+  where
+    fatalMinutes count = commandPolicyMinutes count Never Fatal
+    idempotentMinutes count =
+      commandPolicyMinutes count Never IdempotentAbsence
+    boundedIdempotentMinutes count attempts backoffMicros =
+      commandPolicyMinutes
+        count
+        ( boundedRetry
+            attempts
+            backoffMicros
+        )
+        IdempotentAbsence
+    transientMinutes count attempts backoffMicros =
+      commandPolicyMinutes
+        count
+        (boundedRetry attempts backoffMicros)
+        TransientThenFatal
+    boundedRetry attempts backoffMicros =
+      Bounded
+        DhallBoundedRetry
+          { dhallAttempts = attempts,
+            dhallBackoffMicros = backoffMicros
+          }
+
+commandPolicyMinutes ::
+  Natural ->
+  DhallRetryPolicy ->
+  DhallFailureClass ->
+  DhallCommandPolicy
+commandPolicyMinutes count retryPolicy failureClass =
+  DhallCommandPolicy
+    { dhallTimeoutMicros = count * 60 * 1000000,
+      dhallRetry = retryPolicy,
+      dhallFailureClass = failureClass
+    }
 
 hostConfigGeneratedBanner :: String
 hostConfigGeneratedBanner =
@@ -205,6 +389,9 @@ renderHostConfig hostConfig =
             <> renderText "npm" hostNpm
             <> renderText "node" hostNode
             <> renderText "python3" hostPython3
+            <> renderText "python311" hostPython311
+            <> renderText "llamaCli" hostLlamaCli
+            <> renderText "whisperCli" hostWhisperCli
             <> renderText "poetry" hostPoetry
             <> renderText "protoc" hostProtoc
             <> renderText "git" hostGit
@@ -241,10 +428,93 @@ renderHostConfig hostConfig =
             <> renderText "homeDirectory" hostHomeDirectory
             <> renderText "kindRoot" hostKindRoot
             <> "  }",
+          ", commandPolicies =",
+          renderDhallCommandPolicies hostCommandPolicies,
           ", playwrightHost = " <> showT hostPlaywrightHost,
           ", controlPlaneContext = " <> showT hostControlPlaneContext,
           "}"
         ]
+
+renderDhallCommandPolicies :: DhallCommandPolicies -> String
+renderDhallCommandPolicies policies =
+  let DhallCommandPolicies {..} = policies
+      renderHead label policy =
+        "  { " <> label <> " = " <> renderDhallCommandPolicy policy <> "\n"
+      renderField label policy =
+        "  , " <> label <> " = " <> renderDhallCommandPolicy policy <> "\n"
+   in renderHead "kindRead" dhallKindRead
+        <> renderField "kindCreate" dhallKindCreate
+        <> renderField "kindDelete" dhallKindDelete
+        <> renderField "nvkindCreate" dhallNvkindCreate
+        <> renderField "kubectlRead" dhallKubectlRead
+        <> renderField "kubectlApply" dhallKubectlApply
+        <> renderField "kubectlDelete" dhallKubectlDelete
+        <> renderField "kubectlWait" dhallKubectlWait
+        <> renderField "kubectlExec" dhallKubectlExec
+        <> renderField "helmUpgrade" dhallHelmUpgrade
+        <> renderField "helmDependency" dhallHelmDependency
+        <> renderField "helmRepository" dhallHelmRepository
+        <> renderField "helmRender" dhallHelmRender
+        <> renderField "dockerExec" dhallDockerExec
+        <> renderField "dockerProbe" dhallDockerProbe
+        <> renderField "dockerBuild" dhallDockerBuild
+        <> renderField "dockerInspect" dhallDockerInspect
+        <> renderField "dockerPull" dhallDockerPull
+        <> renderField "dockerTag" dhallDockerTag
+        <> renderField "dockerCopy" dhallDockerCopy
+        <> renderField "dockerStreamImport" dhallDockerStreamImport
+        <> renderField "dockerNetwork" dhallDockerNetwork
+        <> renderField "containerRuntimePull" dhallContainerRuntimePull
+        <> renderField "hostProbe" dhallHostProbe
+        <> renderField "hostMutation" dhallHostMutation
+        <> renderField "curlProbe" dhallCurlProbe
+        <> renderField "archiveRead" dhallArchiveRead
+        <> renderField "gpuUserspaceSync" dhallGpuUserspaceSync
+        <> renderField "imagePublicationLogin" dhallImagePublicationLogin
+        <> renderField "imagePublicationInspect" dhallImagePublicationInspect
+        <> renderField "imagePublicationPull" dhallImagePublicationPull
+        <> renderField "imagePublicationVerify" dhallImagePublicationVerify
+        <> renderField "imagePublicationTag" dhallImagePublicationTag
+        <> renderField "imagePublicationPush" dhallImagePublicationPush
+        <> renderField "imagePublicationRemove" dhallImagePublicationRemove
+        <> renderField "imagePublicationCopy" dhallImagePublicationCopy
+        <> "  }"
+
+renderDhallCommandPolicy :: DhallCommandPolicy -> String
+renderDhallCommandPolicy policy =
+  "{ timeoutMicros = "
+    <> show (dhallTimeoutMicros policy)
+    <> ", retry = "
+    <> renderDhallRetryPolicy (dhallRetry policy)
+    <> ", failureClass = "
+    <> renderDhallFailureClass (dhallFailureClass policy)
+    <> " }"
+
+renderDhallRetryPolicy :: DhallRetryPolicy -> String
+renderDhallRetryPolicy retryPolicy =
+  case retryPolicy of
+    Never -> retryType <> ".Never"
+    Bounded boundedRetry ->
+      retryType
+        <> ".Bounded { attempts = "
+        <> show (dhallAttempts boundedRetry)
+        <> ", backoffMicros = "
+        <> show (dhallBackoffMicros boundedRetry)
+        <> " }"
+  where
+    retryType =
+      "< Never | Bounded : { attempts : Natural, backoffMicros : Natural } >"
+
+renderDhallFailureClass :: DhallFailureClass -> String
+renderDhallFailureClass failureClass =
+  let failureType =
+        "< Fatal | TransientThenFatal | IdempotentAbsence >"
+      constructorName =
+        case failureClass of
+          Fatal -> "Fatal"
+          TransientThenFatal -> "TransientThenFatal"
+          IdempotentAbsence -> "IdempotentAbsence"
+   in failureType <> "." <> constructorName
 
 renderHostConfigSchema :: Either String Text
 renderHostConfigSchema =
@@ -277,6 +547,9 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostNpm = "/usr/bin/npm",
             hostNode = "/usr/bin/node",
             hostPython3 = "/usr/bin/python3",
+            hostPython311 = "",
+            hostLlamaCli = "",
+            hostWhisperCli = "",
             hostPoetry = "/opt/poetry/bin/poetry",
             hostProtoc = "/usr/bin/protoc",
             hostGit = "/usr/bin/git",
@@ -314,14 +587,15 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostHomeDirectory = homeDir,
             hostKindRoot = "/workspace/.data/runtime/kind"
           },
+      hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "127.0.0.1",
       hostControlPlaneContext = "outer-container"
     }
 
 -- | Supported defaults for the Apple host-native flow. Tool paths
 -- reflect the Homebrew + ghcup convention the supported Apple operator
--- workflow uses; operators override per-host by editing
--- @./.build/infernix-host.dhall@.
+-- workflow uses; @infernix init@ materializes them into the repo-root
+-- @./infernix-host.dhall@.
 defaultAppleHostNativeHostConfig :: Text -> Text -> HostConfig
 defaultAppleHostNativeHostConfig repoRoot homeDir =
   HostConfig
@@ -341,7 +615,11 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostNpm = "/opt/homebrew/bin/npm",
             hostNode = "/opt/homebrew/bin/node",
             hostPython3 = "/opt/homebrew/bin/python3.12",
-            hostPoetry = homeDir <> "/.local/bin/poetry",
+            hostPython311 = "/opt/homebrew/bin/python3.11",
+            hostLlamaCli = "/opt/homebrew/bin/llama-cli",
+            hostWhisperCli = "/opt/homebrew/bin/whisper-cli",
+            hostPoetry =
+              homeDir <> "/.local/share/pypoetry/venv/bin/poetry",
             hostProtoc = "/opt/homebrew/bin/protoc",
             hostGit = "/usr/bin/git",
             hostTar = "/usr/bin/tar",
@@ -378,6 +656,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostHomeDirectory = homeDir,
             hostKindRoot = repoRoot <> "/.data/runtime/kind"
           },
+      hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "host.docker.internal",
       hostControlPlaneContext = "host-native"
     }

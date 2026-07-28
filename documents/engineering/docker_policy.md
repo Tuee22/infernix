@@ -31,7 +31,8 @@
 - Cross-architecture emulation is not part of the Docker policy. `linux-cpu` supports native
   Linux amd64 and native Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane.
 - Apple Metal/Core ML materialization is not a Docker or Colima lane. The target path avoids Tart
-  and uses a host Metal runtime bridge plus typed engine-artifact manifests.
+  and uses typed engine-artifact manifests plus public upstream MLX/coremltools APIs, without
+  repository-owned native source.
 
 ## Current Status
 
@@ -55,10 +56,10 @@ operations have a buildx-capable CLI when needed.
 - on the Apple host-native control-plane path, `./.build/infernix` must not create or switch
   Docker contexts, create a Colima VM, or use emulation before it attempts real cluster work
 - Apple Metal/Core ML materialization is outside the Docker policy. The supported target uses the
-  host Metal runtime bridge and typed engine-artifact manifests described in
+  typed engine-artifact manifests and public upstream MLX/coremltools APIs described in
   [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). The old
-  `hostTart` / `AppleTart` helper path has been removed and must not return as a Docker, Colima,
-  or VM prerequisite surface.
+  `hostTart` / `AppleTart` and repository-owned native bridge helper paths have been removed and
+  must not return as Docker, Colima, VM, direct-FFI, or embedded-source prerequisite surfaces.
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
   plugins on native Linux amd64 or arm64
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
@@ -81,7 +82,9 @@ operations have a buildx-capable CLI when needed.
 - the `infernix` launcher container forwards the Docker socket and bind-mounts only `./.data/`
   into `/workspace/.data`
 - the `infernix` launcher container sets `/workspace/.build/outer-container/build` as the
-  supported outer build root for the staged substrate file, while the source snapshot manifest
+  supported outer build root for compiled artifacts, while binary-generated image config provides
+  the image-local defaults, the operator runtime authority remains repo-root `./infernix.dhall`,
+  and the source snapshot manifest
   lives separately at `/opt/infernix/source-snapshot-files.txt` in the image overlay and
   cabal-home plus the cabal builddir stay at the toolchain's natural in-image locations
   (`/root/.cabal/`, `dist-newstyle/`) rather than on any bind-mounted host path

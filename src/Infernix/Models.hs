@@ -26,11 +26,7 @@ module Infernix.Models
     defaultInferenceRamBudgetMib,
     linuxEngineInferenceRamBudgetMib,
     appleFallbackInferenceRamBudgetMib,
-    engineMemberPinnedTopicForMode,
-    engineMemberRequestTopics,
     engineMembersForMode,
-    enginePoolForModel,
-    enginePoolTopicForMode,
     enginePoolsForMode,
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
@@ -51,12 +47,15 @@ module Infernix.Models
 where
 
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isAlphaNum)
 import Data.List (find, intercalate, nub)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Config (ControlPlaneContext, controlPlaneContextId)
+import Infernix.EngineBindings
+  ( canonicalEngineBindingForSelectedEngine,
+    canonicalEngineBindingsForMode,
+  )
 import Infernix.Routes qualified as Routes
 import Infernix.Substrate (encodeSubstrateConfig)
 import Infernix.Types
@@ -152,7 +151,11 @@ modelRequiresInputObject model =
 
 engineBindingsForMode :: RuntimeMode -> [EngineBinding]
 engineBindingsForMode runtimeMode =
-  uniqueEngineBindings (map (engineBindingForSelectedEngine runtimeMode . selectedEngine) (catalogForMode runtimeMode))
+  filter
+    ((`elem` selectedEngineNames) . engineBindingName)
+    (canonicalEngineBindingsForMode runtimeMode)
+  where
+    selectedEngineNames = map selectedEngine (catalogForMode runtimeMode)
 
 -- | Phase 7 Sprint 7.7 (legacy row 21): the supported default Pulsar
 -- tenant + namespace for inference topics is @infernix/demo@. The
@@ -181,10 +184,10 @@ engineNameForAdapterId adapterId =
 
 -- | The per-engine image name a selected engine resolves to, via its adapter
 -- binding.
-engineNameForSelectedEngine :: RuntimeMode -> Text -> Text
+engineNameForSelectedEngine :: RuntimeMode -> Text -> Maybe Text
 engineNameForSelectedEngine runtimeMode selectedEngineValue =
-  engineNameForAdapterId
-    (engineBindingAdapterId (engineBindingForSelectedEngine runtimeMode selectedEngineValue))
+  engineNameForAdapterId . engineBindingAdapterId
+    <$> engineBindingForSelectedEngine runtimeMode selectedEngineValue
 
 -- | The distinct framework (python-native) engine names present in a
 -- substrate's catalog. These are the per-engine engine Deployments the chart
@@ -197,43 +200,6 @@ frameworkEngineNamesForMode runtimeMode =
     | engineBinding <- engineBindingsForMode runtimeMode,
       engineBindingPythonNative engineBinding
     ]
-
--- | Derived normal-pool topic. Operators declare pools and members, never
--- raw topic strings; every legal batch topic is rendered from this helper.
-enginePoolTopicForMode :: RuntimeMode -> Text -> Text -> Text
-enginePoolTopicForMode runtimeMode poolId modelIdValue =
-  defaultPulsarTopicPrefix
-    <> "inference.batch."
-    <> runtimeModeId runtimeMode
-    <> ".pool."
-    <> topicSegment poolId
-    <> ".model."
-    <> topicSegment modelIdValue
-
--- | Derived pinned-member topic for exact-member routes. The first pool
--- implementation does not route normal traffic here, but the helper fixes the
--- only supported topic shape for pinned routes.
-engineMemberPinnedTopicForMode :: RuntimeMode -> Text -> Text -> Text
-engineMemberPinnedTopicForMode runtimeMode memberId modelIdValue =
-  defaultPulsarTopicPrefix
-    <> "inference.batch."
-    <> runtimeModeId runtimeMode
-    <> ".member."
-    <> topicSegment memberId
-    <> ".model."
-    <> topicSegment modelIdValue
-
-enginePoolForModel :: DemoConfig -> Text -> Maybe EnginePool
-enginePoolForModel demoConfig modelIdValue =
-  find ((modelIdValue `elem`) . enginePoolModelIds) (enginePools demoConfig)
-
-engineMemberRequestTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text]
-engineMemberRequestTopics runtimeMode pools member =
-  [ enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue
-  | pool <- pools,
-    enginePoolId pool `elem` engineMemberPoolIds member,
-    modelIdValue <- enginePoolModelIds pool
-  ]
 
 enginePoolsForMode :: RuntimeMode -> [EnginePool]
 enginePoolsForMode runtimeMode =
@@ -308,29 +274,23 @@ memberIdsForPool runtimeMode poolId isPythonPool =
 groupedModelsByEngine :: RuntimeMode -> [(Text, Bool, [ModelDescriptor])]
 groupedModelsByEngine runtimeMode =
   [ (engineName, pythonNative, modelsForEngine engineName)
-  | engineName <- nub (map modelEngineName activeCatalog),
-    let binding = bindingForEngineName engineName,
+  | engineName <- nub (mapMaybe modelEngineName activeCatalog),
+    binding <-
+      take
+        1
+        [ resolvedBinding
+        | model <- activeCatalog,
+          modelEngineName model == Just engineName,
+          Just resolvedBinding <-
+            [engineBindingForSelectedEngine runtimeMode (selectedEngine model)]
+        ],
     let pythonNative = engineBindingPythonNative binding
   ]
   where
     activeCatalog = catalogForMode runtimeMode
     modelEngineName model = engineNameForSelectedEngine runtimeMode (selectedEngine model)
-    modelsForEngine engineName = filter ((== engineName) . modelEngineName) activeCatalog
-    bindingForEngineName engineName =
-      case find ((== engineName) . modelEngineName) activeCatalog of
-        Just model ->
-          engineBindingForSelectedEngine runtimeMode (selectedEngine model)
-        Nothing ->
-          engineBindingForSelectedEngine runtimeMode engineName
-
-topicSegment :: Text -> Text
-topicSegment =
-  Text.map
-    ( \character ->
-        if isAlphaNum character || character `elem` ("._-" :: String)
-          then character
-          else '-'
-    )
+    modelsForEngine engineName =
+      filter ((== Just engineName) . modelEngineName) activeCatalog
 
 -- | Per-engine image name: @infernix-engine-<engine>-<mode>:local@, built from
 -- @docker/engine.Dockerfile@.
@@ -342,50 +302,8 @@ perEngineImageRepository :: RuntimeMode -> Text -> Text
 perEngineImageRepository runtimeMode engineName =
   "infernix-engine-" <> engineName <> "-" <> runtimeModeId runtimeMode
 
-engineBindingForSelectedEngine :: RuntimeMode -> Text -> EngineBinding
-engineBindingForSelectedEngine _runtimeMode selectedEngineValue =
-  let normalizedEngine = Text.toLower selectedEngineValue
-      adapterId
-        | "vllm" `Text.isInfixOf` normalizedEngine = "vllm-python"
-        | "transformers" `Text.isInfixOf` normalizedEngine = "transformers-python"
-        | "diffusers" `Text.isInfixOf` normalizedEngine = "diffusers-python"
-        | "torch" `Text.isInfixOf` normalizedEngine = "pytorch-python"
-        | "whisper.cpp" `Text.isInfixOf` normalizedEngine = "whisper-cpp-cli"
-        | "llama.cpp" `Text.isInfixOf` normalizedEngine = "llama-cpp-cli"
-        | "onnx runtime" `Text.isInfixOf` normalizedEngine = "onnx-runtime-native"
-        | "core ml" `Text.isInfixOf` normalizedEngine = "coreml-native"
-        | "ctranslate2" `Text.isInfixOf` normalizedEngine = "ctranslate2-native"
-        | "mlx" `Text.isInfixOf` normalizedEngine = "mlx-native"
-        | "jvm" `Text.isInfixOf` normalizedEngine = "jvm-native"
-        | otherwise = "engine-native"
-      pythonNative =
-        any
-          (`Text.isInfixOf` normalizedEngine)
-          ["vllm", "transformers", "diffusers", "torch"]
-      adapterType
-        | pythonNative = "python-stdio"
-        | otherwise = "native-process-runner"
-      adapterLocator
-        | pythonNative = "adapters/" <> adapterModuleName adapterId <> ".py"
-        | otherwise = adapterId
-      adapterEntrypoint
-        | pythonNative = "adapter-" <> adapterId
-        | otherwise = "runner-" <> adapterId
-      setupEntrypoint
-        | pythonNative = "setup-" <> adapterId
-        | otherwise = "setup-" <> adapterId
-   in EngineBinding
-        { engineBindingName = selectedEngineValue,
-          engineBindingAdapterId = adapterId,
-          engineBindingAdapterType = adapterType,
-          engineBindingAdapterLocator = adapterLocator,
-          engineBindingAdapterEntrypoint = adapterEntrypoint,
-          engineBindingSetupEntrypoint = setupEntrypoint,
-          engineBindingProjectDirectory = "python",
-          engineBindingPythonNative = pythonNative
-        }
-  where
-    adapterModuleName = Text.replace "-" "_"
+engineBindingForSelectedEngine :: RuntimeMode -> Text -> Maybe EngineBinding
+engineBindingForSelectedEngine = canonicalEngineBindingForSelectedEngine
 
 findModel :: RuntimeMode -> Text -> Maybe ModelDescriptor
 findModel runtimeMode wantedModelId =
@@ -654,7 +572,9 @@ descriptorForMode runtimeMode row = do
 -- (Phase 6 Sprint 6.37 / Wave R) refines them. The on-host
 -- 'apple-silicon' admission control rejects any model whose footprint
 -- exceeds the active 'InferenceMemoryBudget', so an under-estimate is the
--- only unsafe direction.
+-- only unsafe direction. Bark shares the 8 GiB heavy-PyTorch audio tier after
+-- live Apple evidence proved that its former 5 GiB declaration was below peak
+-- resident memory.
 -- | Phase 4 Sprint 4.31 — the catalog footprint as a required
 -- 'ModelMemoryFootprint'. Every 'conservativeRamFootprintMibForRow' branch is a
 -- positive constant, so the smart-constructor rejection is statically
@@ -680,7 +600,7 @@ conservativeRamFootprintMibForRow row binding =
     "tool" -> 3072
     "audio"
       | rowHas "demucs" || rowHas "unmix" -> 8192
-      | rowHas "bark" -> 5120
+      | rowHas "bark" -> 8192
       | rowHas "basic-pitch" -> 2048
       | otherwise -> 4096
     _ -> 4096
@@ -688,11 +608,9 @@ conservativeRamFootprintMibForRow row binding =
     engineHas needle = needle `Text.isInfixOf` Text.toLower (bindingEngine binding)
     rowHas needle = needle `Text.isInfixOf` Text.toLower (rowId row)
 
--- | Phase 4 Sprint 4.26 — the Linux engine pod memory limit (MiB),
--- mirroring @chart/values.yaml@ @engine.resources.limits.memory@ (4Gi).
--- On Linux the engine runs in a Kubernetes-bounded pod, so the host-RAM
--- admission control does not fire; this value is recorded in the
--- generated substrate config for observability only.
+-- | The Linux per-execution resident-memory budget (MiB). The engine pod's
+-- outer limit is intentionally larger (5 GiB) so the Haskell daemon and RSS
+-- watchdog remain outside the 4 GiB child grant.
 linuxEngineInferenceRamBudgetMib :: Int
 linuxEngineInferenceRamBudgetMib = 4096
 
@@ -1042,11 +960,3 @@ jsonFilePath = show
 
 jsonString :: Text -> String
 jsonString = show . Text.unpack
-
-uniqueEngineBindings :: [EngineBinding] -> [EngineBinding]
-uniqueEngineBindings = go []
-  where
-    go seen [] = reverse seen
-    go seen (engineBinding : rest)
-      | any ((== engineBindingName engineBinding) . engineBindingName) seen = go seen rest
-      | otherwise = go (engineBinding : seen) rest

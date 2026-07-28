@@ -1,39 +1,61 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Main (main) where
 
-import Control.Exception (SomeException, toException, try)
+import Control.Concurrent (forkIO, killThread, threadDelay, yield)
+import Control.Concurrent.MVar qualified as MVar
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
+import Control.Monad (unless, when)
 import Crypto.Hash.Algorithms qualified
+import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.PubKey.RSA qualified
 import Crypto.PubKey.RSA.PKCS15 qualified
 import Data.Aeson qualified as Aeson
+import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.Bits ((.&.))
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as Base16
+import Data.ByteString.Base64 qualified
 import Data.ByteString.Base64.URL qualified
+import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
+import Data.Char (isHexDigit, isUpper)
 import Data.Either (isLeft, isRight)
 import Data.IORef qualified as IORef
-import Data.List (find, isInfixOf, isPrefixOf, nub)
+import Data.List (find, isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
 import Data.Maybe (isJust, isNothing, listToMaybe)
 import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time (getCurrentTime)
+import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX qualified
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
+import GHC.Conc (BlockReason (BlockedOnException), ThreadStatus (ThreadBlocked), threadStatus)
 import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
-import Infernix.CLI (reconcileLeftoverHarnessBackup, writeGeneratedPursContracts)
-import Infernix.Cluster (HelmDeployPhase (..), authorizeHarnessSeizure, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, linuxGpuNvkindConfigMapBug, loadClusterState, pulsarBootstrapLogIndicatesDirtyState, renderHelmValues, writeGeneratedKindConfig)
+import Infernix.CLI (runtimeConfigRestorePlan, writeGeneratedPursContracts)
+import Infernix.Cluster (HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
+import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint qualified as ImageFingerprint
+import Infernix.Cluster.MutationRecovery
+  ( InterruptedMutationRecoveryEffects (..),
+    runInterruptedMutationRecovery,
+  )
 import Infernix.Cluster.PublishImages
   ( HarborPublishOptions (..),
     PublishedImage,
+    classifyRegistryApiStatus,
     contentAddressTagFromInspectPayload,
     contentAddressTagFromManifestPayload,
     defaultHarborPublishOptions,
@@ -41,6 +63,7 @@ import Infernix.Cluster.PublishImages
     normalizeRepositoryPath,
     prioritizePublishableImages,
     skopeoTargetRefForHarborApiHost,
+    withHarborRegistryAuthFile,
     writeHarborOverridesFile,
   )
 import Infernix.Cluster.Subprocess qualified as Subprocess
@@ -48,7 +71,6 @@ import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
     DemoBackendWiring (..),
-    EngineCommandOverride (..),
     EngineWiring (..),
     KeycloakWiring (..),
     MinioWiring (..),
@@ -74,7 +96,12 @@ import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Demo.Api qualified as DemoApi
 import Infernix.Demo.Auth qualified as DemoAuth
 import Infernix.Demo.Bootstrap qualified as DemoBootstrap
-import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, materializeHostSecrets, validateDemoConfig)
+import Infernix.DemoConfig
+  ( materializeHostSecrets,
+    renderGeneratedDemoConfigPayload,
+    validateDemoConfigFile,
+  )
+import Infernix.DemoConfig.Properties qualified as DemoConfigProperties
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
@@ -84,40 +111,68 @@ import Infernix.DhallSchema
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon
-  ( EngineArtifactManifest (..),
-    MetalEngineArtifact (..),
-    engineArtifactDigest,
-    engineArtifactManifestPath,
+  ( engineArtifactManifestPath,
     engineArtifactPreviousRoot,
     engineArtifactTempRoot,
     ensureAppleSiliconRuntimeReady,
-    manifestForEngineArtifact,
-    materializeMetalEngineArtifact,
+    manifestAdapterId,
+    manifestDigest,
+    manifestImageTargetEvidence,
+    manifestMinioObjectKey,
+    manifestRecipeFingerprint,
+    manifestSubstrate,
+    manifestTargetContractFingerprint,
+    metalEngineAdapterId,
     metalEngineArtifactAdapterIds,
     metalEngineBuildPlan,
-    metalEngineInstallRoot,
+    metalEngineSourceRef,
     renderEngineArtifactManifest,
   )
+import Infernix.Engines.AppleSilicon.Internal qualified as AppleSiliconInternal
+import Infernix.Engines.Artifact qualified as EngineArtifact
+import Infernix.Engines.Artifact.Recipe qualified as ArtifactRecipe
+import Infernix.Engines.Artifact.Target qualified as ArtifactTarget
 import Infernix.Engines.LinuxNative
   ( linuxNativeEngineAdapterId,
     linuxNativeEngineArtifactAdapterIds,
     linuxNativeEngineBuildPlan,
-    linuxNativeEngineInstallRoot,
-    linuxNativeRunnerScript,
-    manifestForLinuxNativeEngineArtifact,
-    materializeLinuxNativeEnginesAt,
+  )
+import Infernix.Engines.Provisioning qualified as Provisioning
+import Infernix.Error
+  ( bracketPreservingPrimary,
+    finallyPreservingPrimary,
+    onExceptionPreservingPrimary,
+    runCleanupsPreservingFailures,
   )
 import Infernix.Evidence.Lease qualified as Lease
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan qualified as ExecutionPlan
+import Infernix.ExecutionPlan.Properties qualified as ExecutionPlanProperties
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
-import Infernix.Lint.HaskellStyle (unboundedEngineSpawnViolations)
+import Infernix.Lint.Files
+  ( cabalCSourcesDeclarationViolations,
+    cabalCppMacroDefinitionViolations,
+    embeddedNativeSourceViolations,
+    nativeSourcePathViolations,
+  )
+import Infernix.Lint.HaskellStyle (unboundedEngineSpawnViolations, unsafeNativeBoundaryViolations)
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
 import Infernix.Objects.Sts qualified as ObjSts
+import Infernix.ProcessIdentity
+  ( ProcessBirthIdentity,
+    dropInheritedProcessIdentity,
+    parseProcessBirthIdentity,
+    readProcessBirthIdentity,
+    registerCurrentProcessIdentity,
+    renderProcessBirthIdentity,
+  )
+import Infernix.ProcessIdentity.Internal
+  ( withCurrentProcessIdentityRegistryLockForTest,
+  )
 import Infernix.Routes
   ( renderChartRouteRegistryCommentSection,
     renderEdgeRoutingInventorySection,
@@ -127,6 +182,7 @@ import Infernix.Runtime
 import Infernix.Runtime.Daemon
   ( runProductionDaemon,
   )
+import Infernix.Runtime.Enforcer.Properties qualified as EnforcerProperties
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
   ( DemoClientMessageError (..),
@@ -139,6 +195,8 @@ import Infernix.Runtime.Pulsar
     buildServiceConsumerSocketPath,
     classifyDownloadStatus,
     classifyHeadOutcome,
+    coordinatorTopicCapabilities,
+    daemonTopicCapabilityTopic,
     domainResultToProto,
     drainTopic,
     inferenceRequestProducerNameForFields,
@@ -152,42 +210,46 @@ import Infernix.Runtime.Pulsar
     planDemoClientMessagePublications,
     protoResultToDomain,
     publishInferenceRequest,
+    readPublishedInferenceResultMaybe,
     requireTopicRef,
     retryAfterSeconds,
     serviceConsumerAckTimeoutMillis,
     serviceConsumerName,
     serviceConsumerSubscriptionType,
-    serviceConsumerSubscriptionTypeForTopic,
-    startupTopicsForDemoConfig,
+    startupTopicsForPlan,
     tallyCensus,
     topicDirectoryPath,
     validateDemoClientMessageCatalog,
+    validateModelBootstrapRequest,
   )
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
-    buildWorkerRequest,
     loadWorkerModelCacheConfig,
-    nativeEngineInstallRootCandidates,
     nativeModelCacheObjectKeys,
-    nativeRunnerArgs,
-    workerRequestModelCacheConfig,
   )
 import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
-import Infernix.Substrate (decodeRawRuntimeConfigFile)
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Topic.Drafts qualified as TopicDrafts
 import Infernix.Topic.Metadata qualified as TopicMetadata
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 qualified as Lens
 import Network.WebSockets qualified as WebSockets
+import Numeric (showHex)
+import ProcessIdentitySpec qualified
 import System.Directory
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError)
 import System.Info qualified
+import System.Posix.Files (createNamedPipe, createSymbolicLink, fileMode, getFileStatus, removeLink, setFileMode)
+import System.Posix.IO qualified as PosixIO
+import System.Posix.IO.ByteString qualified as PosixByteString
+import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus)
+import System.Posix.Signals (nullSignal, sigKILL, sigSTOP, signalProcess, signalProcessGroup)
 import System.Process (proc, readCreateProcessWithExitCode)
 import System.Timeout (timeout)
 import Test.QuickCheck
@@ -202,6 +264,7 @@ import Test.QuickCheck
     quickCheckWithResult,
     stdArgs,
   )
+import Text.Read (readMaybe)
 
 -- Sprint 4.29: testable projections of a 'DownloadOutcome' (equation-based, not
 -- a hanging @case@) for the Flake 2 classification assertions.
@@ -211,13 +274,132 @@ downloadOutcomeTag (DownloadRateLimited _) = "rate-limited"
 downloadOutcomeTag (DownloadTransient _) = "transient"
 downloadOutcomeTag (DownloadPermanent _) = "permanent"
 
+isFatalCommandOutcome :: Subprocess.CommandOutcome -> Bool
+isFatalCommandOutcome outcome =
+  case outcome of
+    Subprocess.CommandFailedFatal _ -> True
+    _ -> False
+
+isKernelCommandOutcome :: Subprocess.CommandOutcome -> Bool
+isKernelCommandOutcome outcome =
+  case outcome of
+    Subprocess.CommandFailedKernel _ -> True
+    _ -> False
+
 downloadOutcomeBackoff :: DownloadOutcome -> Maybe Int
 downloadOutcomeBackoff (DownloadRateLimited backoff) = Just (retryAfterSeconds backoff)
 downloadOutcomeBackoff _ = Nothing
 
+allClusterOperations :: [ClusterCommand.ClusterOperation]
+allClusterOperations =
+  [ ClusterCommand.KindReadOperation,
+    ClusterCommand.KindCreateOperation,
+    ClusterCommand.KindDeleteOperation,
+    ClusterCommand.NvkindCreateOperation,
+    ClusterCommand.KubectlReadOperation,
+    ClusterCommand.KubectlApplyOperation,
+    ClusterCommand.KubectlDeleteOperation,
+    ClusterCommand.KubectlWaitOperation,
+    ClusterCommand.KubectlExecOperation,
+    ClusterCommand.OperatorKubectlOperation,
+    ClusterCommand.HelmUpgradeOperation,
+    ClusterCommand.HelmDependencyOperation,
+    ClusterCommand.HelmRepositoryOperation,
+    ClusterCommand.HelmRenderOperation,
+    ClusterCommand.DockerExecOperation,
+    ClusterCommand.DockerProbeOperation,
+    ClusterCommand.DockerBuildOperation,
+    ClusterCommand.DockerInspectOperation,
+    ClusterCommand.DockerPullOperation,
+    ClusterCommand.DockerTagOperation,
+    ClusterCommand.DockerCopyOperation,
+    ClusterCommand.DockerStreamImportOperation,
+    ClusterCommand.DockerNetworkOperation,
+    ClusterCommand.ContainerRuntimePullOperation,
+    ClusterCommand.HostProbeOperation,
+    ClusterCommand.HostMutationOperation,
+    ClusterCommand.CurlProbeOperation,
+    ClusterCommand.ArchiveReadOperation,
+    ClusterCommand.GpuUserspaceSyncOperation,
+    ClusterCommand.ImagePublicationLoginOperation,
+    ClusterCommand.ImagePublicationInspectOperation,
+    ClusterCommand.ImagePublicationPullOperation,
+    ClusterCommand.ImagePublicationVerifyOperation,
+    ClusterCommand.ImagePublicationTagOperation,
+    ClusterCommand.ImagePublicationPushOperation,
+    ClusterCommand.ImagePublicationRemoveOperation,
+    ClusterCommand.ImagePublicationCopyOperation
+  ]
+
+expectedClusterOperationPolicy ::
+  ClusterCommand.ClusterOperation ->
+  (Int, Subprocess.RetryPolicy, Subprocess.FailureClass)
+expectedClusterOperationPolicy operation =
+  case operation of
+    ClusterCommand.KindReadOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KindCreateOperation -> minutes 30 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KindDeleteOperation -> minutes 10 (Subprocess.BoundedRetry 3 2000000) Subprocess.IdempotentAbsence
+    ClusterCommand.NvkindCreateOperation -> minutes 30 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KubectlReadOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KubectlApplyOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KubectlDeleteOperation -> minutes 10 Subprocess.NeverRetry Subprocess.IdempotentAbsence
+    ClusterCommand.KubectlWaitOperation -> minutes 25 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.KubectlExecOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.OperatorKubectlOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HelmUpgradeOperation -> minutes 35 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HelmDependencyOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HelmRepositoryOperation -> minutes 5 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HelmRenderOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerExecOperation -> minutes 15 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerProbeOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerBuildOperation -> minutes 45 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerInspectOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerPullOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerTagOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerCopyOperation -> minutes 15 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerStreamImportOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.DockerNetworkOperation -> minutes 2 Subprocess.NeverRetry Subprocess.IdempotentAbsence
+    ClusterCommand.ContainerRuntimePullOperation -> minutes 15 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HostProbeOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.HostMutationOperation -> minutes 15 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.CurlProbeOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.ArchiveReadOperation -> minutes 10 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.GpuUserspaceSyncOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.ImagePublicationLoginOperation ->
+      minutes
+        2
+        (Subprocess.BoundedRetry 6 6000000)
+        Subprocess.TransientThenFatal
+    ClusterCommand.ImagePublicationInspectOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.ImagePublicationPullOperation -> minutes 20 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.ImagePublicationVerifyOperation ->
+      minutes
+        15
+        (Subprocess.BoundedRetry 6 6000000)
+        Subprocess.TransientThenFatal
+    ClusterCommand.ImagePublicationTagOperation -> minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.ImagePublicationPushOperation ->
+      minutes
+        40
+        (Subprocess.BoundedRetry 30 50000000)
+        Subprocess.TransientThenFatal
+    ClusterCommand.ImagePublicationRemoveOperation -> minutes 2 Subprocess.NeverRetry Subprocess.IdempotentAbsence
+    ClusterCommand.ImagePublicationCopyOperation ->
+      minutes
+        40
+        (Subprocess.BoundedRetry 30 50000000)
+        Subprocess.TransientThenFatal
+  where
+    minutes count = policyTuple (count * 60 * 1000000)
+    policyTuple timeoutMicros retryPolicy failureClass =
+      (timeoutMicros, retryPolicy, failureClass)
+
 main :: IO ()
 main = do
+  Subprocess.dispatchInternalSubprocessMode
   unitTestRoot <- testRootPath "unit"
+  ProcessIdentitySpec.runProcessIdentityTests
+    (unitTestRoot </> "process-identity")
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
@@ -370,6 +552,23 @@ main = do
   assert
     ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
     "Linux launcher image bakes hostArchitecture into the outer-container host manifest"
+  bakedLinuxHostManifest <-
+    expectRight
+      "extract the Linux launcher image host manifest"
+      (extractDockerfileHostManifest linuxDockerfileContents)
+  let bakedLinuxHostManifestPath =
+        unitTestRoot </> "dockerfile-infernix-host.dhall"
+      expectedBakedLinuxHostConfig =
+        HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture
+          "/root"
+          "arm64"
+  createDirectoryIfMissing True unitTestRoot
+  writeFile bakedLinuxHostManifestPath bakedLinuxHostManifest
+  decodedBakedLinuxHostConfig <-
+    HostConfig.decodeHostConfigFile bakedLinuxHostManifestPath
+  assert
+    (decodedBakedLinuxHostConfig == expectedBakedLinuxHostConfig)
+    "Linux launcher image bakes the complete typed HostConfig, including the exact default command-policy record"
   assert
     (not ("colima" `isInfixOf` linuxDockerfileContents))
     "Linux launcher image host manifest does not carry the retired Colima tool field"
@@ -455,8 +654,10 @@ main = do
     (null (appleHostRequirementIds AppleSilicon DocsCheckCommand))
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
   assert
-    (null (appleHostRequirementIds AppleSilicon InternalMaterializeMetalEnginesCommand))
-    "Sprint 1.14: Apple Metal/Core ML materialization does not reconcile Tart as a host prerequisite"
+    ( appleHostRequirementIds AppleSilicon InternalMaterializeMetalEnginesCommand
+        == ["llama-cli", "whisper-cli", "python", "python3.11", "poetry"]
+    )
+    "Sprint 1.20: Apple engine materialization reconciles the two native CLIs, both Python toolchains, and Poetry"
   assert
     (null (appleHostRequirementIds LinuxCpu InternalMaterializeMetalEnginesCommand))
     "Sprint 1.14: the Tart-free materialization command has no cross-runtime Homebrew prerequisite"
@@ -700,59 +901,22 @@ main = do
       assert
         ("containerPort: 30080" `isInfixOf` generatedLinuxGpuKindConfig)
         "Phase 9 Sprint 9.4: generated Kind config exposes the Pulsar proxy data-plane NodePort mapping (30080)"
-      let demoConfig =
-            let linuxPools = enginePoolsForMode LinuxCpu
-                linuxMembers = engineMembersForMode LinuxCpu
-                linuxMemberTopics =
-                  case linuxMembers of
-                    member : _ -> engineMemberRequestTopics LinuxCpu linuxPools member
-                    [] -> []
-             in DemoConfig
-                  { configRuntimeMode = LinuxCpu,
-                    configEdgePort = 0,
-                    configMapName = "infernix-demo-config",
-                    generatedPath = "./.build/infernix-substrate.dhall",
-                    mountedPath = "/opt/build/infernix-substrate.dhall",
-                    demoUiEnabled = True,
-                    activeDaemonRole = Coordinator,
-                    coordinatorDaemon =
-                      DaemonConfig
-                        { daemonConfigRole = Coordinator,
-                          daemonConfigLocation = "cluster-pod",
-                          daemonConfigMemberId = Nothing,
-                          daemonConfigRequestTopics = requestTopicsForMode LinuxCpu,
-                          daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                          daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                          daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                        },
-                    webappDaemon =
-                      unitWebappDaemonConfig
-                        LinuxCpu
-                        (requestTopicsForMode LinuxCpu)
-                        (resultTopicForMode LinuxCpu),
-                    engineDaemons =
-                      [ DaemonConfig
-                          { daemonConfigRole = Engine,
-                            daemonConfigLocation = "cluster-pod",
-                            daemonConfigMemberId = Just "linux-cpu-engine",
-                            daemonConfigRequestTopics = linuxMemberTopics,
-                            daemonConfigResultTopic = resultTopicForMode LinuxCpu,
-                            daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                            daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                          }
-                      ],
-                    enginePools = linuxPools,
-                    engineMembers = linuxMembers,
-                    requestTopics = requestTopicsForMode LinuxCpu,
-                    resultTopic = resultTopicForMode LinuxCpu,
-                    modelsBucket = defaultModelsBucket,
-                    modelBootstrapTopic = defaultModelBootstrapTopic,
-                    engines = engineBindingsForMode LinuxCpu,
-                    models = catalogForMode LinuxCpu,
-                    inferenceMemoryBudget = linuxCpuUnitInferenceMemoryBudget
-                  }
-          demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
+      let demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
+      BS.writeFile
+        demoConfigPath
+        (renderGeneratedDemoConfigPayload paths LinuxCpu True Coordinator linuxCpuUnitInferenceMemoryBudget)
+      generatedDemoPlan <-
+        decodeCompiledRuntimePlanFile demoConfigPath
+          >>= expectDecodedCompiledPlan "rendered linux demo config"
+      let generatedDemoConfig =
+            unitGeneratedDemoConfig
+              paths
+              LinuxCpu
+              True
+              Coordinator
+              linuxCpuUnitInferenceMemoryBudget
+          demoConfig = generatedDemoConfig {configEdgePort = 30090}
       Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
       demoConfigContents <- readFile demoConfigPath
       assert
@@ -769,7 +933,7 @@ main = do
       assert
         (not (null (engineDaemons decodedJsonConfig)))
         "public JSON demo-config decode preserves engine daemon metadata"
-      decodedConfig <- decodeDemoConfigFile demoConfigPath
+      let decodedConfig = demoConfig
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
       assert (activeDaemonRole decodedConfig == Coordinator) "demo-config decode preserves the active daemon role"
@@ -779,14 +943,10 @@ main = do
       let emptyModelsConfig = demoConfig {models = []}
           emptyModelsConfigPath = buildRoot paths </> "demo-config-empty-models-test.dhall"
       Lazy.writeFile emptyModelsConfigPath (encodeDemoConfig emptyModelsConfig)
-      strictEmptyModelsDecode <- try (decodeDemoConfigFile emptyModelsConfigPath) :: IO (Either IOError DemoConfig)
+      strictEmptyModelsDecode <- try (validateDemoConfigFile emptyModelsConfigPath) :: IO (Either IOError ())
       assert
-        (either (isInfixOf "models must not be empty" . show) (const False) strictEmptyModelsDecode)
-        "strict demo-config decode rejects image-baked empty-model configs"
-      bootstrapEmptyModelsConfig <- decodeBootstrapDemoConfigFile emptyModelsConfigPath
-      assert
-        (configRuntimeMode bootstrapEmptyModelsConfig == LinuxCpu && null (models bootstrapEmptyModelsConfig))
-        "bootstrap demo-config decode accepts image-baked empty-model configs"
+        (either (isInfixOf "EmptyModelCatalog" . show) (const False) strictEmptyModelsDecode)
+        "compiled runtime-config validation rejects image-baked empty-model configs"
       assert
         (daemonConfigConsumerSubscriptionType (coordinatorDaemon decodedConfig) == Just ConsumerShared)
         "linux coordinator metadata uses Shared service subscription ownership"
@@ -795,15 +955,13 @@ main = do
         "linux engine metadata uses Shared service subscription ownership"
       assert (enginePools decodedConfig == enginePoolsForMode LinuxCpu) "demo-config decode preserves engine pools"
       assert (engineMembers decodedConfig == engineMembersForMode LinuxCpu) "demo-config decode preserves engine members"
-      assert
-        (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
-        "Sprint 4.19: normal pool topics are derived from runtime, pool id, and model id"
-      assert
-        (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-smollm2-safetensors")
-        "Sprint 4.19: pinned member topics are derived from runtime, member id, and model id"
       assert (requestTopics decodedConfig == requestTopicsForMode LinuxCpu) "demo-config decode preserves request topics"
       assert (resultTopic decodedConfig == resultTopicForMode LinuxCpu) "demo-config decode preserves the result topic"
-      let startupTopics = startupTopicsForDemoConfig decodedConfig
+      compiledDemoPlan <- decodeCompiledRuntimePlanFile demoConfigPath >>= expectDecodedCompiledPlan "generated linux demo config"
+      assert
+        (ExecutionPlan.compiledPlanRuntimeMode generatedDemoPlan == LinuxCpu)
+        "the rendered Linux config compiles with its generated runtime identity"
+      let startupTopics = startupTopicsForPlan compiledDemoPlan
       assert
         (all (`elem` startupTopics) (requestTopics decodedConfig))
         "startup topic reconciliation includes coordinator request topics"
@@ -841,52 +999,52 @@ main = do
           assertDemoConfigDecodeFails
             unitTestRoot
             "duplicate-pool-id"
-            "duplicate engine pool ids"
+            "DuplicatePoolId"
             decodedConfig {enginePools = firstPool : firstPool : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "duplicate-member-id"
-            "duplicate engine member ids"
+            "DuplicateMemberId"
             decodedConfig {engineMembers = firstMember : firstMember : remainingMembers}
           assertDemoConfigDecodeFails
             unitTestRoot
             "invalid-pool-id"
-            "invalid engine pool ids"
+            "InvalidPoolId"
             decodedConfig {enginePools = firstPool {enginePoolId = "persistent://bad/topic"} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "unknown-model-id"
-            "engine pools reference unknown model ids"
+            "DanglingPoolModel"
             decodedConfig {enginePools = firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "unknown-member-id"
-            "engine pools reference unknown member ids"
+            "DanglingPoolMember"
             decodedConfig {enginePools = firstPool {enginePoolMemberIds = ["missing-member"]} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "failover-pool"
-            "engine pools must not use Failover subscriptions"
+            "InvalidPoolSubscription"
             decodedConfig {enginePools = firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "invalid-inflight"
-            "engine pools must set maxInflightPerMember greater than zero"
+            "InvalidPoolMaxInflight"
             decodedConfig {enginePools = firstPool {enginePoolMaxInflightPerMember = 0} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
             "empty-member-responsibility"
-            "engine members must declare at least one pool id"
+            "EmptyMemberPools"
             decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
           assertDemoConfigDecodeFails
             unitTestRoot
             "one-sided-pool-link"
-            "engine pool member links must be bidirectional"
+            "PoolMemberLinkMissing"
             decodedConfig {engineMembers = firstMember {engineMemberPoolIds = filter (/= firstPoolId) (engineMemberPoolIds firstMember)} : remainingMembers}
           assertDemoConfigDecodeFails
             unitTestRoot
             "one-sided-member-link"
-            "engine member pool links must be bidirectional"
+            "MemberPoolLinkMissing"
             decodedConfig
               { enginePools = firstPool {enginePoolMemberIds = ["linux-cpu-engine-secondary"]} : secondPool : remainingPools,
                 engineMembers =
@@ -900,7 +1058,7 @@ main = do
           assertDemoConfigDecodeFails
             unitTestRoot
             "ambiguous-model-pool"
-            "engine pool model ownership is ambiguous"
+            "MultiplyPlacedModel"
             decodedConfig {enginePools = firstPool : secondPool {enginePoolModelIds = firstModelId : enginePoolModelIds secondPool} : remainingPools}
           case find ((> 1) . length . enginePoolModelIds) (enginePools decodedConfig) of
             Just multiModelPool ->
@@ -913,7 +1071,7 @@ main = do
                    in assertDemoConfigDecodeFails
                         unitTestRoot
                         "unroutable-model"
-                        "models without eligible engine members"
+                        "UnplacedModel"
                         decodedConfig {enginePools = map removeModel (enginePools decodedConfig)}
                 [] ->
                   fail "expected selected multi-model engine pool to include model ids"
@@ -922,104 +1080,41 @@ main = do
         _ ->
           fail "expected linux-cpu demo config to include at least two pools and one member"
       assertClusterConfig unitTestRoot demoConfigPath
-      let appleHostConfig =
-            let applePools = enginePoolsForMode AppleSilicon
-                appleMembers = engineMembersForMode AppleSilicon
-                appleMemberTopics =
-                  case appleMembers of
-                    member : _ -> engineMemberRequestTopics AppleSilicon applePools member
-                    [] -> []
-             in DemoConfig
-                  { configRuntimeMode = AppleSilicon,
-                    configEdgePort = 0,
-                    configMapName = "infernix-demo-config",
-                    generatedPath = "./.build/infernix-substrate.dhall",
-                    mountedPath = "/opt/build/infernix-substrate.dhall",
-                    demoUiEnabled = True,
-                    activeDaemonRole = Engine,
-                    coordinatorDaemon =
-                      DaemonConfig
-                        { daemonConfigRole = Coordinator,
-                          daemonConfigLocation = "cluster-pod",
-                          daemonConfigMemberId = Nothing,
-                          daemonConfigRequestTopics = requestTopicsForMode AppleSilicon,
-                          daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                          daemonConfigPulsarConnectionMode = ConfiguredTransport,
-                          daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                        },
-                    webappDaemon =
-                      unitWebappDaemonConfig
-                        AppleSilicon
-                        (requestTopicsForMode AppleSilicon)
-                        (resultTopicForMode AppleSilicon),
-                    engineDaemons =
-                      [ DaemonConfig
-                          { daemonConfigRole = Engine,
-                            daemonConfigLocation = "control-plane-host",
-                            daemonConfigMemberId = Just "apple-host-default",
-                            daemonConfigRequestTopics = appleMemberTopics,
-                            daemonConfigResultTopic = resultTopicForMode AppleSilicon,
-                            daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery,
-                            daemonConfigConsumerSubscriptionType = Just ConsumerShared
-                          }
-                      ],
-                    enginePools = applePools,
-                    engineMembers = appleMembers,
-                    requestTopics = requestTopicsForMode AppleSilicon,
-                    resultTopic = resultTopicForMode AppleSilicon,
-                    modelsBucket = defaultModelsBucket,
-                    modelBootstrapTopic = defaultModelBootstrapTopic,
-                    engines = engineBindingsForMode AppleSilicon,
-                    models = catalogForMode AppleSilicon,
-                    inferenceMemoryBudget = appleUnitInferenceMemoryBudget
-                  }
-          appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
+      let appleConfigPath = buildRoot paths </> "apple-host-demo-config-test.dhall"
+      BS.writeFile
+        appleConfigPath
+        (renderGeneratedDemoConfigPayload paths AppleSilicon True Engine appleUnitInferenceMemoryBudget)
+      generatedApplePlan <-
+        decodeCompiledRuntimePlanFile appleConfigPath
+          >>= expectDecodedCompiledPlan "rendered apple demo config"
+      let generatedAppleConfig =
+            unitGeneratedDemoConfig
+              paths
+              AppleSilicon
+              True
+              Engine
+              appleUnitInferenceMemoryBudget
+          decodedAppleConfig = generatedAppleConfig {configEdgePort = 30090}
+      Lazy.writeFile appleConfigPath (encodeDemoConfig decodedAppleConfig)
+      compiledApplePlan <-
+        decodeCompiledRuntimePlanFile appleConfigPath
+          >>= expectDecodedCompiledPlan "generated apple demo config"
+      let appleHostConfig = decodedAppleConfig
           expectedAppleMemberTopics =
-            case engineMembersForMode AppleSilicon of
-              member : _ -> engineMemberRequestTopics AppleSilicon (enginePoolsForMode AppleSilicon) member
-              [] -> []
-      Lazy.writeFile appleConfigPath (encodeDemoConfig appleHostConfig)
-      decodedAppleConfig <- decodeDemoConfigFile appleConfigPath
+            maybe
+              []
+              ExecutionPlan.compiledDaemonRequestTopics
+              (ExecutionPlan.lookupCompiledEngineDaemon "apple-host-default" compiledApplePlan)
       assert (activeDaemonRole decodedAppleConfig == Engine) "apple host demo-config keeps host as the active local daemon role"
       assert (enginePools decodedAppleConfig == enginePoolsForMode AppleSilicon) "apple host demo-config preserves engine pools"
-      rawApplePlan <- decodeRawRuntimeConfigFile appleConfigPath
-      case ExecutionPlan.compileRuntimePlan rawApplePlan of
-        Left errors -> fail ("expected generated apple config to compile into an execution plan: " <> show errors)
-        Right plan -> do
-          assert
-            (length (ExecutionPlan.runtimePlanModels plan) == length (models appleHostConfig))
-            "execution-plan compiler refines every configured model"
-          case listToMaybe (models appleHostConfig) of
-            Nothing -> fail "expected an apple model for executable-placement lookup"
-            Just configuredModel ->
-              case ExecutionPlan.lookupExecutableModel (modelId configuredModel) plan of
-                Nothing -> fail "compiled plan must expose each model only as an ExecutableModel"
-                Just executableModel -> do
-                  assert
-                    (ExecutionPlan.executableModelDescriptor executableModel == configuredModel)
-                    "executable placement retains the validated model descriptor"
-                  assert
-                    ( memoryCeilingMib
-                        (grantMemoryCeiling (ExecutionPlan.executableModelGrant executableModel))
-                        == modelMemoryFootprintMib (modelRamFootprint configuredModel)
-                    )
-                    "executable placement carries a grant indexed to the admitted footprint"
-      let danglingPlanPath = buildRoot paths </> "dangling-execution-plan-test.dhall"
-          danglingPools =
-            case enginePools appleHostConfig of
-              [] -> []
-              firstPool : remainingPools ->
-                firstPool {enginePoolModelIds = "missing-model" : enginePoolModelIds firstPool} : remainingPools
-      Lazy.writeFile danglingPlanPath (encodeDemoConfig (appleHostConfig {enginePools = danglingPools}))
-      danglingRawPlan <- decodeRawRuntimeConfigFile danglingPlanPath
-      let danglingPlanRejected =
-            case (danglingPools, ExecutionPlan.compileRuntimePlan danglingRawPlan) of
-              (firstPool : _, Left errors) ->
-                ExecutionPlan.DanglingPoolModel (enginePoolId firstPool) "missing-model" `elem` errors
-              _ -> False
       assert
-        danglingPlanRejected
-        "execution-plan compiler rejects dangling pool model references"
+        (ExecutionPlan.compiledPlanConfiguredModels generatedApplePlan == catalogForMode AppleSilicon)
+        "the rendered Apple config compiles with every generated catalog model"
+      assertExecutionPlanWireAndQuantityProperties unitTestRoot demoConfig appleHostConfig
+      DemoConfigProperties.runDemoConfigParserProperties paths
+      DemoConfigProperties.runColimaPledgeParserProperties
+      EnforcerProperties.runFiniteCgroupLimitParserProperties
+      assertExecutionPlanCompilerCoverage paths unitTestRoot demoConfig appleHostConfig
       -- Phase 4 Sprint 4.27 — the typed inference-memory budget
       -- round-trips through the substrate config. Config validation accepts
       -- mixed catalogs even when one model is too large; runtime admission
@@ -1030,42 +1125,6 @@ main = do
       assert
         (all ((> 0) . modelMemoryFootprintMib . modelRamFootprint) (models decodedAppleConfig))
         "every apple catalog model declares a positive RAM footprint"
-      assert
-        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = appleUnitInferenceMemoryBudget})))
-        "validateDemoConfig accepts an apple config whose models all fit the inference memory budget"
-      assert
-        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = smallAppleUnitInferenceMemoryBudget})))
-        "validateDemoConfig accepts a mixed apple catalog with an oversized model"
-      assert
-        (either (const False) (const True) (validateDemoConfig False (appleHostConfig {inferenceMemoryBudget = zeroAppleUnitInferenceMemoryBudget})))
-        "validateDemoConfig accepts enforced zero memory budgets"
-      case listToMaybe (models decodedAppleConfig) of
-        Nothing -> fail "expected apple catalog model for admission tests"
-        Just sampleModel -> do
-          -- Phase 4 Sprint 4.30 — admission mints a typed 'MemoryGrant' whose
-          -- ceiling equals the admitted model footprint; over-budget is a typed
-          -- 'Left', not a proof-free 'Nothing'.
-          case admitModelMemory appleUnitInferenceMemoryBudget sampleModel of
-            Right grant ->
-              assert
-                (memoryCeilingMib (grantMemoryCeiling grant) == modelMemoryFootprintMib (modelRamFootprint sampleModel))
-                "admitModelMemory mints a grant whose ceiling equals the model footprint"
-            Left _ -> fail "admitModelMemory should admit an in-budget model"
-          case admitModelMemory smallAppleUnitInferenceMemoryBudget sampleModel of
-            Left ModelMemoryLimitExceeded {inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
-              assert
-                (inferenceErrorRequiredMib == modelMemoryFootprintMib (modelRamFootprint sampleModel) && inferenceErrorAvailableMib == 512)
-                "admitModelMemory reports explicit required and available MiB"
-              assert
-                (inferenceErrorResource == UnifiedHostRam && inferenceErrorSource == "host-memory-partition-inference-capacity")
-                "admitModelMemory reports the budget resource and source"
-            _ -> fail "admitModelMemory should reject an over-budget model"
-          assert
-            (isLeft (admitModelMemory zeroAppleUnitInferenceMemoryBudget sampleModel))
-            "admitModelMemory keeps enforced zero budgets active"
-          assert
-            (isRight (admitModelMemory (SubstrateEnforcedBudget (PodMemoryLimit PodRam "unit-test" 65536)) sampleModel))
-            "admitModelMemory admits an in-budget model on a substrate-enforced budget"
       -- Phase 4 Sprint 4.31 — the checked partition rejects oversubscription and
       -- an undersized headroom; the required footprint rejects a non-positive value.
       assert
@@ -1093,86 +1152,517 @@ main = do
         (not (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  (_, _, _, ph) <- createProcess spec")])))
         "unboundedEngineSpawnViolations fires on an injected raw createProcess in a guarded file"
       assert
-        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine.hs" [(1, "  (_, _, _, ph) <- createProcess spec")]))
+        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/Internal.hs" [(1, "  (_, _, _, ph) <- createProcess spec")]))
         "unboundedEngineSpawnViolations exempts the capped-engine kernel module"
+      assert
+        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs" [(1, "  created <- createProcess fixedObserverSpec")]))
+        "unboundedEngineSpawnViolations narrowly exempts the fixed Darwin observer kernel"
+      assert
+        ( not
+            ( any
+                null
+                [ unboundedEngineSpawnViolations
+                    "src/Infernix/Runtime/CappedEngine.hs"
+                    [(1, "  created <- createProcess callerObserverSpec")],
+                  unboundedEngineSpawnViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [(1, "  created <- createProcess callerObserverSpec")]
+                ]
+            )
+        )
+        "unboundedEngineSpawnViolations rejects raw observer spawns in callers and unrelated runtime modules"
       assert
         (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  result <- awaitEngineOutcome handle")]))
         "unboundedEngineSpawnViolations passes a line without a raw engine spawn"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/Subprocess.hs"
+                    [(1, "{-# LANGUAGE ForeignFunctionInterface #-}")]
+                )
+            )
+        )
+        "native-boundary lint rejects ForeignFunctionInterface in the subprocess kernel"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/Subprocess/Protocol.hs"
+                    [(1, "foreign import ccall unsafe \"spawn\" c_spawn :: IO Int")]
+                )
+            )
+        )
+        "native-boundary lint rejects a direct foreign import in subprocess evidence"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [ (1, "foreign"),
+                      (2, "  import ccall unsafe \"spawn\" c_spawn :: IO Int")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint rejects a direct foreign import split across lines"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [ (1, "foreign"),
+                      (2, "  export ccall infernix_spawn :: IO Int")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint rejects a direct foreign export split across lines"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "app/RelocatedShim.hs"
+                    [(1, "foreign import ccall unsafe \"spawn\" c_spawn :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "Setup.hs"
+                    [(1, "import System.Process.Internal")],
+                  unsafeNativeBoundaryViolations
+                    "src/RelocatedShim.hs"
+                    [(1, "import Language.C.Inline qualified as C")]
+                ]
+            )
+        )
+        "native-boundary lint covers every production Haskell source root"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [ (1, "quote = '\"'"),
+                      (2, "foreign import ccall unsafe \"spawn\" c_spawn :: IO Int")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint cannot be desynchronized by a character literal"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [ (1, "#define FOREIGN foreign"),
+                      (2, "FOREIGN import ccall unsafe \"spawn\" c_spawn :: IO Int")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint rejects CPP macro definitions that could hide boundary tokens"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [(1, "import Infernix.Cluster.Subprocess.Protocol")]
+                )
+            )
+        )
+        "native-boundary lint confines subprocess protocol capabilities to their kernel owner"
+      assert
+        ( all
+            null
+            [ unsafeNativeBoundaryViolations
+                "src/Infernix/Cluster/Subprocess/Activity.hs"
+                [(1, "module Infernix.Cluster.Subprocess.Activity where")],
+              unsafeNativeBoundaryViolations
+                "src/Infernix/Cluster/Subprocess/Protocol.hs"
+                [(1, "module Infernix.Cluster.Subprocess.Protocol where")]
+            ]
+        )
+        "native-boundary lint distinguishes internal module declarations from forbidden imports"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [ (1, "import"),
+                      (2, "  Infernix.Cluster.Subprocess.Protocol")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint rejects a multiline subprocess protocol import"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [(1, "import System.Process.Internal")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [(1, "import System.Process.Internals")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Cluster/RelocatedShim.hs"
+                    [(1, "import Language.C.Inline qualified as C")]
+                ]
+            )
+        )
+        "native-boundary lint rejects process internals and inline-C after cosmetic relocation"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [(1, "child <- forkProcess action")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/CLI.hs"
+                    [(1, "executeFile executable False arguments environment")]
+                ]
+            )
+        )
+        "native-boundary lint permits raw POSIX fork/exec only inside the bounded-command kernel"
+      assert
+        ( null
+            ( unsafeNativeBoundaryViolations
+                "src/Infernix/Lint/HaskellStyle.hs"
+                [ (1, "-- System.Process.Internal ForeignFunctionInterface"),
+                  (2, "{- Language.C.Inline"),
+                  (3, "foreign import ccall unsafe \"spawn\" -}"),
+                  (4, "example = \"System.Process.Internals foreign import\"")
+                ]
+            )
+        )
+        "native-boundary lint ignores policy tokens in comments and string literals"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "src/Infernix/ProcessIdentity.hs"
+                    [(1, "foreign import ccall unsafe \"proc_pid_rusage\" c_proc_pid_rusage :: CInt -> CInt -> Ptr () -> IO CInt")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/CappedEngine/Internal.hs"
+                    [(1, "foreign import ccall unsafe \"proc_pid_rusage\" c_proc_pid_rusage :: CInt -> CInt -> Ptr () -> IO CInt")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs"
+                    [(1, "foreign import ccall unsafe \"sysctlbyname\" c_sysctlbyname :: CString -> IO CInt")],
+                  unsafeNativeBoundaryViolations
+                    "app/Main.hs"
+                    [(1, "foreign import ccall unsafe \"posix_spawn\" c_spawn :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "Setup.hs"
+                    [(1, "foreign import ccall unsafe \"flock\" c_lock :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "test/NativeBoundaryFixture.hs"
+                    [(1, "foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")]
+                ]
+            )
+        )
+        "native-boundary lint rejects every direct foreign import, including the former Darwin exemptions and every repository source root"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "src/Infernix/Literate.lhs"
+                    [(1, "> foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Boot.hs-boot"
+                    [(1, "foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/LiterateBoot.lhs-boot"
+                    [(1, "> foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Signature.hsig"
+                    [(1, "foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/LiterateSignature.lhsig"
+                    [(1, "> foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")]
+                ]
+            )
+        )
+        "native-boundary lint covers Cabal Haskell, literate Haskell, boot, and signature source forms"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/MultilinePragma.hs"
+                    [ (1, "{-# LANGUAGE"),
+                      (2, "  ForeignFunctionInterface"),
+                      (3, "  #-}")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint rejects ForeignFunctionInterface in a multiline LANGUAGE pragma"
+      assert
+        ( not
+            ( null
+                ( unsafeNativeBoundaryViolations
+                    "src/Infernix/PragmaThenImport.hs"
+                    [ (1, "{-# LANGUAGE OverloadedStrings #-}"),
+                      (2, "foreign"),
+                      (3, "  import ccall unsafe \"getpid\" c_getpid :: IO Int")
+                    ]
+                )
+            )
+        )
+        "native-boundary lint finds a split direct import after a LANGUAGE pragma"
+      assert
+        ( null
+            ( unsafeNativeBoundaryViolations
+                "src/Infernix/BenignPragmas.hs"
+                [ (1, "{-# LANGUAGE OverloadedStrings #-}"),
+                  (2, "{-# ANN module \"foreign import ccall policy example\" #-}"),
+                  (3, "module Infernix.BenignPragmas where")
+                ]
+            )
+        )
+        "native-boundary lint does not treat benign LANGUAGE or annotation pragma text as a foreign declaration"
+      assert
+        ( not
+            ( any
+                null
+                [ unsafeNativeBoundaryViolations
+                    "src/Infernix/ProcessIdentity.hs"
+                    [(1, "foreign import ccall unsafe \"posix_spawn\" c_spawn :: IO Int")],
+                  unsafeNativeBoundaryViolations
+                    "src/Infernix/Runtime/CappedEngine/Internal.hs"
+                    [(1, "foreign import ccall unsafe \"flock\" c_lock :: IO Int")]
+                ]
+            )
+        )
+        "native-boundary lint rejects direct imports regardless of symbol purpose"
+      -- Repo-owned native implementation source is prohibited regardless of
+      -- extension case, and Cabal cannot reintroduce it through c-sources.
+      assert
+        ( not
+            ( any
+                (null . nativeSourcePathViolations . ("cbits/kernel" <>))
+                [ ".asm",
+                  ".c",
+                  ".C++",
+                  ".cc",
+                  ".chs",
+                  ".cmm",
+                  ".CPP",
+                  ".cppm",
+                  ".cu",
+                  ".cuh",
+                  ".cxx",
+                  ".H",
+                  ".hh",
+                  ".hpp",
+                  ".hsc",
+                  ".HSC",
+                  ".hxx",
+                  ".inc",
+                  ".inl",
+                  ".ipp",
+                  ".ixx",
+                  ".m",
+                  ".metal",
+                  ".MM",
+                  ".nasm",
+                  ".S",
+                  ".swift",
+                  ".tcc"
+                ]
+            )
+        )
+        "file lint rejects every prohibited native-source extension, including case variants"
+      assert
+        ( null (nativeSourcePathViolations "src/Infernix/Cluster/Subprocess.hs")
+            && null (nativeSourcePathViolations "documents/example.c.md")
+        )
+        "file lint accepts Haskell sources and paths that only mention a native extension"
+      assert
+        ( not
+            ( null
+                ( cabalCSourcesDeclarationViolations
+                    "infernix.cabal"
+                    [(17, "    C-Sources: cbits/kernel.c")]
+                )
+            )
+        )
+        "file lint rejects an indented, case-insensitive Cabal c-sources declaration"
+      assert
+        ( not
+            ( any
+                null
+                [ cabalCSourcesDeclarationViolations
+                    "infernix.cabal"
+                    [(1, "    cxx-sources: cbits/kernel.cpp")],
+                  cabalCSourcesDeclarationViolations
+                    "infernix.cabal"
+                    [(1, "    asm-sources: cbits/kernel.S")],
+                  cabalCSourcesDeclarationViolations
+                    "infernix.cabal"
+                    [(1, "    cmm-sources: cbits/kernel.cmm")]
+                ]
+            )
+        )
+        "file lint rejects Cabal native-source fields that could cosmetically relocate c-sources"
+      assert
+        ( null
+            ( cabalCSourcesDeclarationViolations
+                "infernix.cabal"
+                [ (1, "-- c-sources: documented prohibition"),
+                  (2, "js-sources: web/index.js"),
+                  (3, "description: no c-sources: declarations")
+                ]
+            )
+        )
+        "file lint ignores Cabal comments and fields that only mention c-sources in their values"
+      assert
+        (null (cabalCSourcesDeclarationViolations "documents/example.md" [(1, "c-sources: example.c")]))
+        "file lint scopes Cabal declaration checks to Cabal manifests"
+      assert
+        ( not
+            ( any
+                null
+                [ cabalCppMacroDefinitionViolations
+                    "infernix.cabal"
+                    [(1, "cpp-options: -DFOREIGN=foreign")],
+                  cabalCppMacroDefinitionViolations
+                    "infernix.cabal"
+                    [ (1, "  cpp-options:"),
+                      (2, "    -DIMPORT=import")
+                    ],
+                  cabalCppMacroDefinitionViolations
+                    "infernix.cabal"
+                    [(1, "cpp-options: \"-DFFI=foreign\"")]
+                ]
+            )
+        )
+        "file lint rejects Cabal CPP definitions that could synthesize native-boundary tokens"
+      assert
+        ( null
+            ( cabalCppMacroDefinitionViolations
+                "infernix.cabal"
+                [ (1, "cpp-options: -traditional"),
+                  (2, "description: example -D flag")
+                ]
+            )
+        )
+        "file lint permits CPP options without definitions and ignores unrelated Cabal fields"
+      let cIncludeMarker = "#inc" <> "lude <stdio.h>"
+          quotedIncludeMarker :: String
+          quotedIncludeMarker = "#inc" <> "lude \"local.h\""
+          quotedImportMarker :: String
+          quotedImportMarker = "#imp" <> "ort \"LocalFramework.h\""
+          spacedIncludeMarker :: String
+          spacedIncludeMarker = "# in" <> "clude <stdio.h>"
+          objectiveCMarker :: String
+          objectiveCMarker = "@auto" <> "releasepool"
+          swiftCoreMlMarker :: String
+          swiftCoreMlMarker = "import " <> "CoreML"
+          swiftMetalMarker :: String
+          swiftMetalMarker = "import " <> "Metal"
+          clangMarker = "/usr/bin/" <> "clang " <> "-fobjc-arc"
+          gccMarker = "/usr/bin/" <> "gcc" <> " -c relocated.c"
+      assert
+        ( not
+            ( any
+                null
+                [ embeddedNativeSourceViolations
+                    "src/Infernix/RelocatedShim.hs"
+                    [(1, "payload = " <> show cIncludeMarker)],
+                  embeddedNativeSourceViolations
+                    "python/relocated_shim.py"
+                    [(1, "payload = " <> show objectiveCMarker)],
+                  embeddedNativeSourceViolations
+                    "src/Infernix/QuotedInclude.hs"
+                    [(1, "payload = " <> show quotedIncludeMarker)],
+                  embeddedNativeSourceViolations
+                    "src/Infernix/QuotedImport.hs"
+                    [(1, "payload = " <> show quotedImportMarker)],
+                  embeddedNativeSourceViolations
+                    "bootstrap/relocated-shim.sh"
+                    [(1, clangMarker)],
+                  embeddedNativeSourceViolations
+                    "bootstrap/relocated-gcc.sh"
+                    [(1, gccMarker)],
+                  embeddedNativeSourceViolations
+                    "python/spaced_relocated_shim.py"
+                    [(1, "payload = " <> show spacedIncludeMarker)],
+                  embeddedNativeSourceViolations
+                    "python/relocated_swift.py"
+                    [(1, "payload = " <> show swiftCoreMlMarker)],
+                  embeddedNativeSourceViolations
+                    "src/Infernix/RelocatedSwift.hs"
+                    [(1, "payload = " <> show swiftMetalMarker)]
+                ]
+            )
+        )
+        "file lint rejects embedded native implementation and compiler relocation across implementation languages"
+      assert
+        ( null
+            ( embeddedNativeSourceViolations
+                "python/native-runners/apple_native_runner.py"
+                [ (1, "import coremltools as ct"),
+                  (2, "from coremltools.models import MLModel")
+                ]
+            )
+        )
+        "file lint permits the upstream coremltools Python package API"
+      assert
+        ( null
+            ( embeddedNativeSourceViolations
+                "documents/native_policy.md"
+                [(1, cIncludeMarker)]
+            )
+        )
+        "file lint permits governed documentation to name native-source examples"
       assert (engineMembers decodedAppleConfig == engineMembersForMode AppleSilicon) "apple host demo-config preserves engine members"
       assert (map daemonConfigRequestTopics (engineDaemons decodedAppleConfig) == [expectedAppleMemberTopics]) "apple host daemon metadata consumes derived pool topics"
       assert
         (map daemonConfigConsumerSubscriptionType (engineDaemons decodedAppleConfig) == [Just ConsumerShared])
         "Sprint 7.24: apple host engine metadata defaults to Shared pool subscription ownership"
-      case engineDaemons decodedAppleConfig of
-        [appleEngineDaemon] -> do
-          let pinnedAppleTopic = engineMemberPinnedTopicForMode AppleSilicon "apple-host-default" "image-sdxl-turbo"
-              pinnedAppleConfig =
-                appleHostConfig
-                  { engineDaemons =
-                      [ appleEngineDaemon
-                          { daemonConfigRequestTopics = [pinnedAppleTopic]
-                          }
-                      ]
-                  }
-              pinnedAppleConfigPath = buildRoot paths </> "apple-host-pinned-demo-config-test.dhall"
-              appleFailoverDaemon =
-                appleEngineDaemon
-                  { daemonConfigConsumerSubscriptionType = Just ConsumerFailover
-                  }
-              appleExclusiveDaemon =
-                appleEngineDaemon
-                  { daemonConfigConsumerSubscriptionType = Just ConsumerExclusive
-                  }
-          Lazy.writeFile pinnedAppleConfigPath (encodeDemoConfig pinnedAppleConfig)
-          decodedPinnedAppleConfig <- decodeDemoConfigFile pinnedAppleConfigPath
-          assert
-            (map daemonConfigRequestTopics (engineDaemons decodedPinnedAppleConfig) == [[pinnedAppleTopic]])
-            "apple host Dhall demo-config roundtrip preserves explicit pinned engine daemon topics"
-          assert
-            (serviceConsumerSubscriptionType AppleSilicon appleEngineDaemon == Right ConsumerShared)
-            "Sprint 7.24: apple host engine consumers select Shared by default"
-          assert
-            ( serviceConsumerSubscriptionTypeForTopic
-                AppleSilicon
-                appleEngineDaemon
-                pinnedAppleTopic
-                == Right ConsumerExclusive
-            )
-            "Sprint 7.24: pinned apple host engine topics select Exclusive ownership"
-          assert
-            (either (isInfixOf "Failover") (const False) (serviceConsumerSubscriptionType AppleSilicon appleFailoverDaemon))
-            "Sprint 7.24: apple host engine consumers reject Failover"
-          assert
-            (serviceConsumerSubscriptionType AppleSilicon appleExclusiveDaemon == Right ConsumerExclusive)
-            "Sprint 7.24: pinned engine member consumers may select Exclusive"
-          assert
-            ( serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
-                /= serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-b"
-            )
-            "Sprint 7.24: Shared service consumers use process-qualified consumer names"
-          assert
-            ( serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-a"
-                /= serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-b"
-            )
-            "Sprint 7.24: Exclusive service consumers use process-qualified consumer names so broker rejection proves ownership"
-          assert
-            ( "infernix-service-demo-topic-consumer-member-a"
-                == serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
-            )
-            "Sprint 7.24: service consumer names keep the subscription name as their stable prefix"
-          serviceConsumerTopicRef <-
-            requireTopicRef "persistent://infernix/demo/inference.batch.linux-cpu.pool.pytorch.model.audio-open-unmix"
-          let serviceConsumerPath =
-                buildServiceConsumerSocketPath
-                  (PulsarWebSocketBase "pulsar-proxy.platform.svc.cluster.local" 80 "/ws/v2")
-                  serviceConsumerTopicRef
-                  "infernix-service-demo-topic"
-                  "infernix-service-demo-topic-consumer-member-a"
-                  ConsumerShared
-          assert
-            (("ackTimeoutMillis=" <> show serviceConsumerAckTimeoutMillis) `isInfixOf` serviceConsumerPath)
-            "Phase 1 Wave L: service consumer WebSocket URLs bound unacked engine work for redelivery after pod restarts"
-        _ -> fail "apple host demo-config must decode exactly one engine daemon"
+      let appleCoordinatorCapabilities =
+            coordinatorTopicCapabilities compiledApplePlan
+      assert
+        ( not (null appleCoordinatorCapabilities)
+            && all
+              ((== ConsumerShared) . serviceConsumerSubscriptionType)
+              appleCoordinatorCapabilities
+        )
+        "compiled Apple coordinator capabilities carry Shared subscription ownership"
+      assert
+        ( map daemonTopicCapabilityTopic appleCoordinatorCapabilities
+            == ExecutionPlan.compiledPlanRequestTopics compiledApplePlan
+        )
+        "compiled Apple coordinator capabilities bind exactly the compiled request topics"
+      assert
+        ( serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
+            /= serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-b"
+        )
+        "Sprint 7.24: Shared service consumers use process-qualified consumer names"
+      assert
+        ( serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-a"
+            /= serviceConsumerName "infernix-service-demo-topic" ConsumerExclusive "member-b"
+        )
+        "Sprint 7.24: Exclusive service consumers use process-qualified consumer names so broker rejection proves ownership"
+      assert
+        ( "infernix-service-demo-topic-consumer-member-a"
+            == serviceConsumerName "infernix-service-demo-topic" ConsumerShared "member-a"
+        )
+        "Sprint 7.24: service consumer names keep the subscription name as their stable prefix"
+      serviceConsumerTopicRef <-
+        requireTopicRef "persistent://infernix/demo/inference.batch.linux-cpu.pool.pytorch.model.audio-open-unmix"
+      let serviceConsumerPath =
+            buildServiceConsumerSocketPath
+              (PulsarWebSocketBase "pulsar-proxy.platform.svc.cluster.local" 80 "/ws/v2")
+              serviceConsumerTopicRef
+              "infernix-service-demo-topic"
+              "infernix-service-demo-topic-consumer-member-a"
+              ConsumerShared
+      assert
+        (("ackTimeoutMillis=" <> show serviceConsumerAckTimeoutMillis) `isInfixOf` serviceConsumerPath)
+        "Phase 1 Wave L: service consumer WebSocket URLs bound unacked engine work for redelivery after pod restarts"
       assert
         (serviceDemoConfigPath paths (Just (unitTestClusterConfigFixture appleConfigPath)) Nothing == appleConfigPath)
         "cluster-resident services resolve runtime and daemon role from the mounted demo config"
@@ -1193,7 +1683,16 @@ main = do
         (not readinessMarkerPresent)
         "real Pulsar startup keeps the readiness marker absent until schema registration succeeds"
 
-      ensureAppleSiliconRuntimeReady paths
+      appleSetupResult <-
+        try @SomeException (ensureAppleSiliconRuntimeReady paths)
+      assert
+        ( case appleSetupResult of
+            Left failure ->
+              "kernel failed" `isInfixOf` displayException failure
+                && "target setup/exec failed" `isInfixOf` displayException failure
+            Right () -> False
+        )
+        "Sprint 1.20: Apple setup fails closed with a kernel outcome when the typed Poetry executable is absent"
 
       let request =
             InferenceRequest
@@ -1203,33 +1702,19 @@ main = do
                 requestUserId = Nothing,
                 requestContextId = Nothing
               }
-      inferenceResult <- executeInference paths AppleSilicon [] request
-      -- Phase 4 Sprint 4.7/4.15: the transformers-python adapter lazy-imports
-      -- its framework wheel, intentionally absent in the machine-independent
-      -- unit environment. The worker<->adapter protobuf-over-stdio handshake
-      -- completes and surfaces a typed adapter error; real per-family output is
-      -- the Wave I cohort gate. The bootstrap manifest and cache materialization
-      -- happen before the adapter runs and are asserted regardless of engine
-      -- success.
-      case inferenceResult of
-        Right result ->
-          assert (resultModelId result == "llm-smollm2-safetensors") "inference result records the selected model id"
-        Left err ->
-          assert
-            (not (Text.null (errorCode err)))
-            "the worker surfaces a typed adapter error when the python framework wheel is absent (real output is the cohort gate)"
+      requestPlacement <-
+        maybe
+          (fail "compiled apple plan omitted the SmolLM2 request model")
+          pure
+          (ExecutionPlan.lookupCompiledPlacement (requestModelId request) compiledApplePlan)
+      assert
+        (modelId (ExecutionPlan.compiledPlacementDescriptor requestPlacement) == requestModelId request)
+        "compiled request lookup retains the exact selected model"
       let bootstrapManifestPath = dataRoot paths </> "engines" </> "transformers-python" </> "bootstrap.json"
       bootstrapExists <- doesFileExist bootstrapManifestPath
-      assert bootstrapExists "apple-silicon setup creates per-adapter bootstrap manifests"
-      bootstrapContents <- readFile bootstrapManifestPath
-      assert ("transformers-python" `isInfixOf` bootstrapContents) "adapter bootstrap manifests record the adapter id"
-      manifests <- listCacheManifests paths AppleSilicon
-      let maybeManifest = find ((== "llm-smollm2-safetensors") . cacheModelId) manifests
-      assert (isJust maybeManifest) "inference execution materializes a cache manifest"
-      evictedCount <- evictCache paths AppleSilicon (Just "llm-smollm2-safetensors")
-      assert (evictedCount == 1) "cache eviction removes the selected cache entry"
-      rebuiltEntries <- rebuildCache paths AppleSilicon (Just "llm-smollm2-safetensors")
-      assert (length rebuiltEntries == 1) "cache rebuild restores the selected cache entry"
+      assert
+        (not bootstrapExists)
+        "Sprint 1.20: failed bounded setup cannot publish an adapter bootstrap manifest"
 
       -- Phase 4 Sprint 4.15: buildPayload routes text families to inlineOutput
       -- and artifact families to objectRef, and the protobuf result file
@@ -1343,17 +1828,13 @@ main = do
             && (selectedEngine <$> findModel LinuxGpu "music-mr-mt3") == Just "PyTorch CUDA"
         )
         "Sprint 4.18: researched matrix corrections are reflected in runnable catalog bindings"
-      -- Phase 4 Sprint 4.17: per-engine image naming plus the Phase 4.19
-      -- derived pool-topic routing surface.
+      -- Phase 4 Sprint 4.17: per-engine image naming.
       assert
-        (engineNameForSelectedEngine LinuxGpu "vLLM" == "vllm")
+        (engineNameForSelectedEngine LinuxGpu "vLLM" == Just "vllm")
         "Sprint 4.17: vLLM resolves to the vllm per-engine name"
       assert
-        (engineNameForSelectedEngine AppleSilicon "Transformers + PyTorch MPS" == "transformers")
+        (engineNameForSelectedEngine AppleSilicon "Transformers + PyTorch MPS" == Just "transformers")
         "Sprint 4.17: the transformers engine resolves to the transformers per-engine name"
-      assert
-        (enginePoolTopicForMode LinuxGpu "vllm" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.linux-gpu.pool.vllm.model.llm-smollm2-safetensors")
-        "Sprint 4.19: derived pool batch topics are inference.batch.<mode>.pool.<pool>.model.<model>"
       assert
         (perEngineImageName LinuxGpu "transformers" == "infernix-engine-transformers-linux-gpu:local")
         "Sprint 4.17: the per-engine image name is infernix-engine-<engine>-<mode>:local"
@@ -1362,6 +1843,7 @@ main = do
         "Sprint 4.17: the linux-gpu catalog deploys the vllm/diffusers/pytorch framework engines"
       transformersEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "transformers" </> "pyproject.toml")
       pytorchEnginePyproject <- readFile (repoRoot paths </> "python" </> "engines" </> "pytorch" </> "pyproject.toml")
+      pytorchAdapter <- readFile (repoRoot paths </> "python" </> "adapters" </> "pytorch_python.py")
       let applePytorchDependencyBlock =
             unlines
               [ "[tool.poetry.group.apple-silicon.dependencies]",
@@ -1392,6 +1874,14 @@ main = do
             && "platform_system == 'Linux'" `isInfixOf` pytorchEnginePyproject
         )
         "Sprint 4.16/Wave I: framework per-engine venvs separate Apple, Linux CPU, and CUDA torch sources"
+      assert
+        ( "dtype = torch.float16 if device in {\"cuda\", \"mps\"} else torch.float32" `isInfixOf` pytorchAdapter
+            && "torch_dtype=dtype" `isInfixOf` pytorchAdapter
+            && "model.eval()" `isInfixOf` pytorchAdapter
+            && "with torch.inference_mode():" `isInfixOf` pytorchAdapter
+            && "audio.to(device=\"cpu\", dtype=torch.float32).numpy().squeeze()" `isInfixOf` pytorchAdapter
+        )
+        "Bark loads accelerator weights in fp16 under inference mode and converts output to fp32 for WAV encoding"
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -1413,152 +1903,16 @@ main = do
         (isNothing (protoResultToDomain malformedTimestampProto))
         "Sprint 4.24: malformed result-topic protobuf timestamps fail closed without throwing"
 
-      nativeInferenceResult <-
-        executeInference
-          paths
-          AppleSilicon
-          []
-          InferenceRequest
-            { requestModelId = "llm-qwen15-mlx",
-              inputText = "native runner coverage",
-              inputObjectRef = Nothing,
-              requestUserId = Nothing,
-              requestContextId = Nothing
-            }
-      -- Phase 4 Sprint 4.2/4.12: native dispatch resolves the engine binary by
-      -- absolute path under ./.data/engines/<adapterId>/ and fails fast when it
-      -- is absent (no generic-metadata fallback). The real binary + output is
-      -- the Wave I cohort gate.
-      case nativeInferenceResult of
-        Right result -> do
-          payloadText <- renderPayloadText paths (payload result)
-          assert
-            (not (null payloadText))
-            "native runner execution returns a real engine output on cohort hardware"
-        Left err ->
-          assert
-            ("engine_binary_missing" `isInfixOf` show err)
-            "native dispatch resolves the engine binary by absolute path and fails fast when it is absent"
+      nativePlacement <-
+        maybe
+          (fail "compiled apple plan omitted the MLX native-runner model")
+          pure
+          (ExecutionPlan.lookupCompiledPlacement "llm-qwen15-mlx" compiledApplePlan)
+      assert
+        (engineBindingAdapterId (ExecutionPlan.compiledPlacementEngine nativePlacement) == "mlx-native")
+        "compiled native placement retains the closed MLX engine binding"
 
-      linuxNativeModel <-
-        maybe
-          (fail "expected the linux-gpu GGUF row")
-          pure
-          (findModel LinuxGpu "llm-tinyllama-gguf")
-      let linuxNativeBinding = engineBindingForSelectedEngine LinuxGpu (selectedEngine linuxNativeModel)
-          nativeInstallRoots = nativeEngineInstallRootCandidates paths linuxNativeBinding
-      assert
-        ( nativeInstallRoots
-            == [ dataRoot paths </> "engines" </> "llama-cpp-cli",
-                 "/opt/infernix/engines/llama-cpp-cli"
-               ]
-        )
-        "native runner lookup checks the repo data root before the image-owned Linux engine root"
-      let sampleModelCacheConfig =
-            WorkerModelCacheConfig
-              { workerModelCacheRoot = "/model-cache",
-                workerModelCacheQuotaBytes = 123456,
-                workerMinioEndpoint = "http://infernix-minio.platform.svc.cluster.local:9000",
-                workerMinioModelsBucket = "infernix-models",
-                workerMinioDemoArtifactsBucket = "infernix-demo-objects",
-                workerMinioRegion = "us-east-1",
-                workerMinioAccessKey = "unit-access-key",
-                workerMinioSecretKey = "unit-secret-key"
-              }
-          linuxNativeArgs =
-            nativeRunnerArgs
-              linuxNativeModel
-              InferenceRequest
-                { requestModelId = "llm-tinyllama-gguf",
-                  inputText = "native runner cache wiring",
-                  inputObjectRef = Nothing,
-                  requestUserId = Nothing,
-                  requestContextId = Nothing
-                }
-              "/opt/infernix/engines/llama-cpp-cli"
-              (Just sampleModelCacheConfig)
-              Nothing
-      assert
-        ( all
-            (`elem` linuxNativeArgs)
-            [ "--model-cache-root",
-              "/model-cache",
-              "--model-cache-quota-bytes",
-              "123456",
-              "--minio-endpoint",
-              "http://infernix-minio.platform.svc.cluster.local:9000",
-              "--minio-models-bucket",
-              "infernix-models",
-              "--minio-demo-artifacts-bucket",
-              "infernix-demo-objects",
-              "--minio-region",
-              "us-east-1",
-              "--require-native-payload"
-            ]
-            && "unit-access-key" `notElem` linuxNativeArgs
-            && "unit-secret-key" `notElem` linuxNativeArgs
-        )
-        "native runner args carry non-secret model-cache wiring without MinIO credentials"
-      linuxNativeArtifactModel <-
-        maybe
-          (fail "expected the linux-gpu Basic Pitch ONNX row")
-          pure
-          (findModel LinuxGpu "audio-basic-pitch-onnx")
-      let linuxNativeArtifactArgs =
-            nativeRunnerArgs
-              linuxNativeArtifactModel
-              InferenceRequest
-                { requestModelId = "audio-basic-pitch-onnx",
-                  inputText = "",
-                  inputObjectRef = Just "infernix-demo-objects/unit/input.wav",
-                  requestUserId = Just "unit-user",
-                  requestContextId = Just "unit-context"
-                }
-              "/opt/infernix/engines/onnx-runtime-native"
-              (Just sampleModelCacheConfig)
-              (Just "/tmp/infernix-native-output/unit")
-      assert
-        ( all
-            (`elem` linuxNativeArtifactArgs)
-            [ "--input-object-ref",
-              "infernix-demo-objects/unit/input.wav",
-              "--output-dir",
-              "/tmp/infernix-native-output/unit",
-              "--require-native-payload"
-            ]
-            && "unit-access-key" `notElem` linuxNativeArtifactArgs
-            && "unit-secret-key" `notElem` linuxNativeArtifactArgs
-        )
-        "native artifact runner args carry input object refs and an output directory without MinIO credentials"
-
-      pythonModel <-
-        maybe
-          (fail "expected the linux-gpu vLLM row")
-          pure
-          (findModel LinuxGpu "llm-smollm2-safetensors")
-      let pythonBinding = engineBindingForSelectedEngine LinuxGpu (selectedEngine pythonModel)
-          workerRequest =
-            buildWorkerRequest
-              paths
-              LinuxGpu
-              (Just sampleModelCacheConfig)
-              pythonModel
-              pythonBinding
-              InferenceRequest
-                { requestModelId = "llm-smollm2-safetensors",
-                  inputText = "worker request cache wiring",
-                  inputObjectRef = Nothing,
-                  requestUserId = Just "unit-user",
-                  requestContextId = Just "unit-context"
-                }
-      assert
-        ( workerRequestModelCacheConfig workerRequest
-            == Just sampleModelCacheConfig
-        )
-        "worker protobuf requests carry typed model-cache and MinIO wiring to Python adapters"
-      assert
-        (Lens.view (field @"generatedOutputObjectPrefix") workerRequest == "users/unit-user/contexts/unit-context/generated/")
-        "worker protobuf requests carry Haskell-derived generated artifact output prefixes"
+      ExecutionPlanProperties.runExecutableLaunchBoundaryProperties paths
       assert
         ( modelCacheBootstrapRetryableError
             ErrorResponse
@@ -1659,69 +2013,13 @@ main = do
 
       assertRuntimeKVCachePath paths
 
-      let overrideModel = maybe (fail "expected the apple-silicon SmolLM2 row") pure (findModel AppleSilicon "llm-smollm2-safetensors")
-      overrideModelDescriptor <- overrideModel
-      let overrideBinding = engineBindingForSelectedEngine AppleSilicon (selectedEngine overrideModelDescriptor)
-          overrideMarkerPath = buildRoot paths </> "worker-override-used.txt"
-          overrideWrapperPath = buildRoot paths </> "python-worker-wrapper.sh"
-      writeFile
-        overrideWrapperPath
-        ( unlines
-            [ "#!/bin/sh",
-              "printf override-used > " <> show overrideMarkerPath,
-              "exec \"$@\""
-            ]
-        )
-      wrapperPermissions <- getPermissions overrideWrapperPath
-      setPermissions overrideWrapperPath wrapperPermissions {executable = True}
       assert
-        (engineBindingAdapterId overrideBinding == "transformers-python")
-        "engine bindings expose adapter ids for cluster-config override keys"
-      assert
-        (engineBindingAdapterEntrypoint overrideBinding == "adapter-transformers-python")
-        "engine bindings publish Poetry adapter entrypoints"
-      assert
-        (engineBindingSetupEntrypoint overrideBinding == "setup-transformers-python")
-        "engine bindings publish Poetry setup entrypoints"
-      assert
-        (engineBindingProjectDirectory overrideBinding == "python")
-        "engine bindings publish the shared Poetry project directory"
-      -- Phase 4 Sprint 4.13: engine-command overrides arrive via the
-      -- typed @ClusterConfig.engine.commandOverrides@ list (keyed by
-      -- adapter id), not via @INFERNIX_ENGINE_COMMAND_*@ env vars.
-      let overrides =
-            [ ( engineBindingAdapterId overrideBinding,
-                Text.pack (overrideWrapperPath <> " ")
-              )
-            ]
-      overrideResult <-
-        executeInference
-          paths
-          AppleSilicon
-          overrides
-          InferenceRequest
-            { requestModelId = "llm-smollm2-safetensors",
-              inputText = "  override payload  ",
-              inputObjectRef = Nothing,
-              requestUserId = Nothing,
-              requestContextId = Nothing
-            }
-      -- Phase 4 Sprint 4.7: the override wrapper writes its marker before
-      -- exec-ing the selected worker, so the marker proves the configured
-      -- command-override path ran regardless of whether the lazy-imported
-      -- framework wheel is present (real adapter output is the cohort gate).
-      markerExists <- doesFileExist overrideMarkerPath
-      assert markerExists "adapter-specific command overrides invoke the configured worker wrapper"
-      case overrideResult of
-        Right _ -> pure ()
-        Left err ->
-          assert
-            (not (Text.null (errorCode err)))
-            "the override worker path surfaces a typed adapter result through the worker stdio boundary"
+        (not ("commandOverrides" `isInfixOf` renderClusterConfig (unitTestClusterConfigFixture demoConfigPath)))
+        "runtime cluster wiring has no engine command-override escape hatch"
 
     let invalidDemoConfigPath = unitTestRoot </> "invalid-demo-config.dhall"
     writeFile invalidDemoConfigPath "{\"runtimeMode\":\"apple-silicon\",\"models\":[]}\n"
-    invalidConfigResult <- try (decodeDemoConfigFile invalidDemoConfigPath) :: IO (Either IOError DemoConfig)
+    invalidConfigResult <- try (validateDemoConfigFile invalidDemoConfigPath) :: IO (Either IOError ())
     assert (either (const True) (const False) invalidConfigResult) "invalid demo configs are rejected"
 
     let linuxCpuOuterFixture =
@@ -1749,8 +2047,8 @@ main = do
               mountedDemoConfigPath = "/var/infernix/demo/infernix-substrate.dhall",
               updatedAt = linuxCpuFinalNow
             }
-        linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" FinalPhase []
-        linuxCpuPulsarReadyValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" PulsarReadyPhase []
+        linuxCpuFinalValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" FinalPhase
+        linuxCpuPulsarReadyValues = renderHelmValues linuxCpuOuterPaths OuterContainer linuxCpuFinalState "{}" PulsarReadyPhase
         expectedKeycloakExternalBaseUrl =
           "  externalBaseUrl: http://"
             <> kindControlPlaneNodeName linuxCpuOuterPaths LinuxCpu
@@ -1779,8 +2077,8 @@ main = do
       )
       "Sprint 8.4: final Helm values set clusterConfig.keycloak.baseUrl to the routed edge URL so the operator-route SecurityPolicy issuer matches Keycloak token iss"
     assert
-      ("      memory: 3584Mi" `isInfixOf` linuxCpuFinalValues)
-      "linux-cpu final Helm values cap Apple-hosted local engine memory below the prior aggregate SystemOOM envelope"
+      ("      memory: 5120Mi" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values keep a 1 GiB daemon/watchdog envelope above the 4 GiB child-execution budget"
     assert
       ("      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values override local Pulsar JVM GC away from the default pre-touch profile"
@@ -1811,7 +2109,7 @@ main = do
     let defaultClusterConfigManifestPath = unitTestRoot </> "default-cluster-config.dhall"
     writeFile
       defaultClusterConfigManifestPath
-      (renderClusterConfig (defaultClusterConfig "outer-container" defaultKeycloakWiring []))
+      (renderClusterConfig (defaultClusterConfig "outer-container" defaultKeycloakWiring))
     decodedDefaultClusterConfig <- decodeClusterConfigFile defaultClusterConfigManifestPath
     assert
       ( pulsarTenant (clusterPulsar decodedDefaultClusterConfig) == "infernix"
@@ -1852,7 +2150,6 @@ main = do
             linuxGpuFinalState
             "{}"
             FinalPhase
-            []
         expectedLinuxGpuEngineResources =
           unlines
             [ "  resources:",
@@ -1945,6 +2242,30 @@ main = do
               harborClientHost = "localhost:30002",
               harborApiHost = "infernix-linux-cpu-control-plane:30002"
             }
+        redactedHarborOptions =
+          defaultHarborPublishOptions
+            { harborPassword = "unit-harbor-password"
+            }
+        renderedHarborOptions = show redactedHarborOptions
+    assert
+      ( "harborPassword = <redacted>" `isInfixOf` renderedHarborOptions
+          && not ("unit-harbor-password" `isInfixOf` renderedHarborOptions)
+      )
+      "Harbor publication options never expose the registry password through Show"
+    assert
+      (all (isRight . classifyRegistryApiStatus) [200, 401, 403])
+      "Harbor registry readiness accepts only the measured API-ready status set"
+    let registryFailureMeasured =
+          case classifyRegistryApiStatus 503 of
+            Left progress ->
+              Readiness.progressObserved progress == 0
+                && Readiness.progressExpected progress == 1
+                && "503"
+                  `Text.isInfixOf` Readiness.progressDetail progress
+            Right () -> False
+    assert
+      registryFailureMeasured
+      "Harbor registry HTTP failure is measured non-ready progress rather than transport unobservability"
     assert
       ( skopeoTargetRefForHarborApiHost
           linuxOuterHarborOptions
@@ -2087,6 +2408,125 @@ main = do
   assert
     (Readiness.foldReadiness (const False) (const False) (const True) persistentUnobservableOutcome)
     "awaitReadinessObservable gives up bounded (Expired) when every poll is Unobservable past the stall window"
+  let exactPollAttempts = 4
+      exactPollCapDeadline =
+        Readiness.pollLimitedDeadline 0 30 30 exactPollAttempts
+  measuredPollCountRef <- IORef.newIORef (0 :: Int)
+  measuredBudgetOutcome <-
+    Readiness.awaitReadiness
+      exactPollCapDeadline
+      ( do
+          measuredPoll <-
+            IORef.atomicModifyIORef'
+              measuredPollCountRef
+              (\count -> let next = count + 1 in (next, next))
+          pure
+            ( Left
+                (Readiness.Progress measuredPoll (exactPollAttempts + 1) "advancing")
+            ) ::
+            IO (Either Readiness.Progress ())
+      )
+  measuredPollCount <- IORef.readIORef measuredPollCountRef
+  assert
+    ( measuredPollCount == exactPollAttempts
+        && Readiness.foldReadiness (const False) (const True) (const False) measuredBudgetOutcome
+    )
+    "pollLimitedDeadline enforces the exact maximum Measured poll count and classifies advancing cap exhaustion as NotReady"
+  stalledMeasuredPollCountRef <- IORef.newIORef (0 :: Int)
+  stalledMeasuredBudgetOutcome <-
+    Readiness.awaitReadiness
+      exactPollCapDeadline
+      ( do
+          IORef.modifyIORef' stalledMeasuredPollCountRef (+ 1)
+          pure (Left (Readiness.Progress 0 1 "not advancing")) ::
+            IO (Either Readiness.Progress ())
+      )
+  stalledMeasuredPollCount <- IORef.readIORef stalledMeasuredPollCountRef
+  assert
+    ( stalledMeasuredPollCount == exactPollAttempts
+        && Readiness.foldReadiness (const False) (const False) (const True) stalledMeasuredBudgetOutcome
+    )
+    "pollLimitedDeadline classifies an exact-cap constant Measured stream as Expired"
+  unobservablePollCountRef <- IORef.newIORef (0 :: Int)
+  unobservableBudgetOutcome <-
+    Readiness.awaitReadinessObservable
+      exactPollCapDeadline
+      ( do
+          IORef.modifyIORef' unobservablePollCountRef (+ 1)
+          pure (Readiness.Unobservable "readiness transport unavailable") ::
+            IO (Readiness.PollOutcome ())
+      )
+  unobservablePollCount <- IORef.readIORef unobservablePollCountRef
+  assert
+    ( unobservablePollCount == exactPollAttempts
+        && Readiness.foldReadiness (const False) (const False) (const True) unobservableBudgetOutcome
+    )
+    "pollLimitedDeadline enforces the exact maximum Unobservable poll count and classifies wholly unobservable cap exhaustion as Expired"
+  wallLimitedPollCountRef <- IORef.newIORef (0 :: Int)
+  wallLimitedBudgetOutcome <-
+    Readiness.awaitReadiness
+      (Readiness.budgetDeadline exactPollAttempts 250000)
+      ( ( do
+            poll <-
+              IORef.atomicModifyIORef'
+                wallLimitedPollCountRef
+                (\count -> let next = count + 1 in (next, next))
+            if poll == 1
+              then
+                pure
+                  ( Left
+                      (Readiness.Progress poll (exactPollAttempts + 1) "advancing")
+                  )
+              else do
+                threadDelay 5000000
+                pure
+                  ( Left
+                      (Readiness.Progress poll (exactPollAttempts + 1) "advancing")
+                  )
+        ) ::
+          IO (Either Readiness.Progress ())
+      )
+  wallLimitedPollCount <- IORef.readIORef wallLimitedPollCountRef
+  assert
+    ( wallLimitedPollCount >= 1
+        && wallLimitedPollCount < exactPollAttempts
+        && Readiness.foldReadiness
+          (const False)
+          (const True)
+          (const False)
+          wallLimitedBudgetOutcome
+    )
+    "budgetDeadline lets the monotonic wall deadline preempt the poll cap and classifies prior advancing progress as NotReady"
+  ceilingProgressRef <- IORef.newIORef (0 :: Int)
+  ceilingOutcome <-
+    Readiness.awaitReadiness
+      (Readiness.Deadline 50000 5 1)
+      ( do
+          observed <-
+            IORef.atomicModifyIORef'
+              ceilingProgressRef
+              (\count -> let next = count + 1 in (next, next))
+          pure (Left (Readiness.Progress observed 1000 "still advancing")) ::
+            IO (Either Readiness.Progress ())
+      )
+  assert
+    (Readiness.foldReadiness (const False) (const True) (const False) ceilingOutcome)
+    "awaitReadiness classifies an advancing stream that reaches the wall-clock ceiling as NotReady"
+  hungProbeStarted <- getMonotonicTimeNSec
+  hungProbeOutcome <-
+    Readiness.awaitReadiness
+      (Readiness.budgetDeadline 3 20000)
+      ( do
+          threadDelay 2000000
+          pure (Right ())
+      )
+  hungProbeFinished <- getMonotonicTimeNSec
+  let hungProbeElapsedMicros = (hungProbeFinished - hungProbeStarted) `div` 1000
+  assert
+    ( Readiness.foldReadiness (const False) (const True) (const True) hungProbeOutcome
+        && hungProbeElapsedMicros < 1000000
+    )
+    "awaitReadiness includes probe duration in the monotonic wall budget and cannot mint Ready from a probe that completes after the deadline"
   -- Sentinel observation is three-valued, so a transport fault or a
   -- not-yet-ready server status can never be laundered into a definite absence
   -- (the root invalid state behind the warm-cache stall).
@@ -2164,9 +2604,18 @@ main = do
     (case failClosedResult of Left _ -> True; Right _ -> False)
     "clusterSubprocessEnv fails closed when the host manifest is absent"
   subprocessRoot <- testRootPath "mst-subprocess"
+  removeTestPathIfPresent subprocessRoot
+  createDirectoryIfMissing True subprocessRoot
   let subprocessPaths =
         pathsWithoutManifest
           { dataRoot = subprocessRoot,
+            runtimeRoot = subprocessRoot </> "runtime",
+            kindRoot = subprocessRoot </> "kind",
+            helmConfigRoot = subprocessRoot </> "helm" </> "config",
+            helmCacheRoot = subprocessRoot </> "helm" </> "cache",
+            helmDataRoot = subprocessRoot </> "helm" </> "data",
+            resultsRoot = subprocessRoot </> "results",
+            modelCacheRoot = subprocessRoot </> "model-cache",
             pathsHostConfig =
               Just
                 ( HostConfig.defaultAppleHostNativeHostConfig
@@ -2181,81 +2630,4050 @@ main = do
   assert
     (isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv subprocessEnv)))
     "rendered subprocess env carries TMPDIR"
-  -- Sprint 3.14: the caller-supplied-search-path builder keeps the typed
-  -- HOME/TMPDIR invariant while routing an explicit cluster tool PATH.
-  seamEnv <- Subprocess.clusterSubprocessEnvWithSearchPath subprocessPaths "/opt/homebrew/bin:/usr/bin"
+  let scratchKubeconfigPath = subprocessRoot </> "kind-scratch.kubeconfig"
+      kindCreateSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.kindCreate
+              (ClusterCommand.ClusterName "unit-cluster")
+              (subprocessRoot </> "kind.yaml")
+              (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+          )
+      nvkindCreateSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.nvkindCreate
+              (ClusterCommand.ClusterName "unit-cluster")
+              (subprocessRoot </> "nvkind.yaml")
+              (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+          )
+      repositoryCommandSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          (ClusterCommand.helmTemplateInfernix [])
+      pauseWorkerSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.dockerPauseContainer
+              (ClusterCommand.ContainerName "unit-worker")
+          )
+      unpauseWorkerSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.dockerUnpauseContainer
+              (ClusterCommand.ContainerName "unit-worker")
+          )
+      pausedWorkerSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.dockerContainerPaused
+              (ClusterCommand.ContainerName "unit-worker")
+          )
+      snapshotCopyCommand =
+        ClusterCommand.dockerCopyFromNode
+          (ClusterCommand.NodeName "unit-worker")
+          "/var/lib/infernix/claims/unit"
+          (subprocessRoot </> "snapshot-target")
+      snapshotCopySpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          snapshotCopyCommand
   assert
-    (lookup "PATH" (Subprocess.renderSubprocessEnv seamEnv) == Just "/opt/homebrew/bin:/usr/bin")
-    "clusterSubprocessEnvWithSearchPath uses the caller-supplied search path"
-  assert
-    ( lookup "HOME" (Subprocess.renderSubprocessEnv seamEnv) == Just subprocessRoot
-        && isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv seamEnv))
+    ( ClusterCommand.renderedCommandEnvironment kindCreateSpec
+        == [("KUBECONFIG", scratchKubeconfigPath)]
+        && not
+          ( ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+              kindCreateSpec
+          )
     )
-    "clusterSubprocessEnvWithSearchPath still carries HOME/TMPDIR from the host manifest"
-  let runTestCommand timeoutValue executable arguments = do
-        boundedCommand <-
-          expectRight
-            "compile unit-test bounded command"
-            ( Subprocess.compileBoundedCommand
-                Subprocess.ClusterLifecycleOperation
-                timeoutValue
-                Subprocess.NeverRetry
-                Subprocess.FatalFailure
-                subprocessEnv
-                Nothing
-                executable
-                arguments
-                ""
-            )
-        Subprocess.runBoundedCommand boundedCommand
-  echoOutcome <-
-    runTestCommand (Subprocess.Timeout 30000000) "/bin/echo" ["managed-transitions"]
+    "the closed renderer owns Kind's scratch KUBECONFIG without selecting a caller working directory"
   assert
-    (echoOutcome == Subprocess.CommandSucceeded "managed-transitions\n")
-    "runBoundedCommand returns real stdout on success"
-  exitOutcome <-
-    runTestCommand (Subprocess.Timeout 30000000) "/bin/sh" ["-c", "exit 7"]
+    ( ClusterCommand.renderedCommandEnvironment nvkindCreateSpec
+        == [("KUBECONFIG", scratchKubeconfigPath), ("KUBERC", "off")]
+    )
+    "the closed Nvkind renderer disables ambient kuberc preferences for its nested kubectl"
   assert
-    (case exitOutcome of Subprocess.CommandFailedFatal _ -> True; _ -> False)
-    "runBoundedCommand maps a non-zero exit to CommandFailedFatal"
-  timeoutOutcome <-
-    runTestCommand (Subprocess.Timeout 200000) "/bin/sleep" ["5"]
+    ( ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+        repositoryCommandSpec
+        && null (ClusterCommand.renderedCommandEnvironment repositoryCommandSpec)
+    )
+    "the closed renderer owns repository working-directory selection independently of command environment"
   assert
-    (case timeoutOutcome of Subprocess.CommandTimedOut _ -> True; _ -> False)
-    "runBoundedCommand reaps and reports CommandTimedOut past its budget"
+    ( ClusterCommand.renderedCommandArgv pauseWorkerSpec
+        == ["pause", "unit-worker"]
+        && ClusterCommand.renderedCommandArgv unpauseWorkerSpec
+          == ["unpause", "unit-worker"]
+        && ClusterCommand.renderedCommandArgv pausedWorkerSpec
+          == ["inspect", "unit-worker", "--format", "{{.State.Paused}}"]
+    )
+    "retained snapshot writer freeze and recovery use closed Docker pause-state commands"
+  assert
+    ( ClusterCommand.validateClusterCommand snapshotCopyCommand == Right ()
+        && ClusterCommand.clusterCommandOperation snapshotCopyCommand
+          == ClusterCommand.DockerCopyOperation
+        && ClusterCommand.renderedCommandArgv snapshotCopySpec
+          == [ "cp",
+               "unit-worker:/var/lib/infernix/claims/unit/.",
+               subprocessRoot </> "snapshot-target"
+             ]
+        && "exec"
+          `notElem` ClusterCommand.renderedCommandArgv snapshotCopySpec
+    )
+    "retained snapshot copy-back uses one unconditional Docker cp that preserves empty directories without a paused-container exec preflight"
+  assert
+    ( classifyWorkerPauseObservation (Right "true\n")
+        == Right WorkerAlreadyPaused
+        && classifyWorkerPauseObservation (Right "false\n")
+          == Right WorkerNeedsPause
+        && isLeft (classifyWorkerPauseObservation (Right "unknown"))
+        && isLeft (classifyWorkerPauseObservation (Left "docker unavailable"))
+    )
+    "snapshot acquisition recognizes already-paused workers for restartable teardown and rejects unobservable states"
+  let operatorTarget =
+        ClusterCommand.KubeTarget (subprocessRoot </> "operator.kubeconfig")
+      forbiddenTargetFlags =
+        [ "--kubeconfig",
+          "--kuberc",
+          "--context",
+          "--server",
+          "--cluster",
+          "--user",
+          "--token",
+          "--username",
+          "--password",
+          "--client-certificate",
+          "--client-key",
+          "--certificate-authority",
+          "--insecure-skip-tls-verify",
+          "--tls-server-name",
+          "--as",
+          "--as-group",
+          "--as-user-extra",
+          "--as-uid"
+        ]
+      forbiddenOperatorArguments =
+        [ [flag, "other-target", "get", "pods"]
+        | flag <- forbiddenTargetFlags
+        ]
+          <> [ [flag <> "=other-target", "get", "pods"]
+             | flag <- forbiddenTargetFlags
+             ]
+          <> [ ["-s", "https://other-server", "get", "pods"],
+               ["-s=https://other-server", "get", "pods"],
+               ["-shttps://other-server", "get", "pods"],
+               ["config", "use-context", "other-context"],
+               ["--client_certificate=/tmp/other-cert", "get", "pods"],
+               ["--certificate_authority=/tmp/other-ca", "get", "pods"],
+               ["--insecure_skip_tls_verify=true", "get", "pods"],
+               ["--as_group=other-group", "get", "pods"],
+               ["--as_user_extra=scope=other", "get", "pods"]
+             ]
+      forbiddenLocalWriteArguments =
+        [ ["version", "--client=true", "--profile", "cpu"],
+          ["version", "--client=true", "--profile=cpu"],
+          ["version", "--client=true", "--profile-output", subprocessRoot </> "operator-profile.pprof"],
+          ["version", "--client=true", "--profile-output=" <> (subprocessRoot </> "operator-profile.pprof")],
+          ["version", "--client=true", "--profile_output", subprocessRoot </> "operator-profile.pprof"],
+          ["version", "--client=true", "--profile_output=" <> (subprocessRoot </> "operator-profile.pprof")],
+          ["get", "pods", "--cache-dir", subprocessRoot </> "operator-cache"],
+          ["get", "pods", "--cache-dir=" <> (subprocessRoot </> "operator-cache")],
+          ["get", "pods", "--cache_dir", subprocessRoot </> "operator-cache"],
+          ["get", "pods", "--cache_dir=" <> (subprocessRoot </> "operator-cache")]
+        ]
+      mutatingOperatorArguments =
+        [ ["apply", "-f", "manifest.yaml"],
+          ["create", "namespace", "other"],
+          ["delete", "namespace", "platform"],
+          ["edit", "deployment/infernix-engine"],
+          ["exec", "deployment/infernix-engine", "--", "true"],
+          ["patch", "deployment/infernix-engine", "--patch", "{}"],
+          ["replace", "-f", "manifest.yaml"],
+          ["scale", "deployment/infernix-engine", "--replicas=2"],
+          ["set", "image", "deployment/infernix-engine", "engine=other"],
+          ["-n", "platform", "rollout", "restart", "deployment/infernix-engine"],
+          ["rollout", "--namespace", "status", "restart", "deployment/infernix-engine"],
+          ["auth", "reconcile", "-f", "rbac.yaml"],
+          ["cordon", "worker"],
+          ["drain", "worker"],
+          ["taint", "node", "worker", "key=value:NoSchedule"]
+        ]
+      readOnlyOperatorArguments =
+        [ ["get", "pods", "-A"],
+          ["-n", "platform", "get", "deployments"],
+          ["--namespace=platform", "logs", "deployment/infernix-engine"],
+          ["describe", "node", "worker"],
+          ["rollout", "status", "deployment/infernix-engine"],
+          ["auth", "can-i", "get", "pods"],
+          ["config", "view", "--minify"],
+          ["wait", "--for=condition=Ready", "pod/example"]
+        ]
+  assert
+    ( all
+        (isLeft . ClusterCommand.operatorKubectlCommand operatorTarget)
+        forbiddenOperatorArguments
+    )
+    "operator kubectl rejects split and equals-form target-changing flags"
+  assert
+    ( all
+        (isLeft . ClusterCommand.operatorKubectlCommand operatorTarget)
+        forbiddenLocalWriteArguments
+    )
+    "operator kubectl rejects split, equals-form, and underscore-normalized global profile and cache writes"
+  assert
+    ( all
+        (isLeft . ClusterCommand.operatorKubectlCommand operatorTarget)
+        mutatingOperatorArguments
+        && all
+          (isRight . ClusterCommand.operatorKubectlCommand operatorTarget)
+          readOnlyOperatorArguments
+    )
+    "operator kubectl admits only the explicit observational vocabulary and cannot hide a mutation behind prefix flags"
+  assert
+    ( all
+        (isLeft . ClusterCommand.operatorKubectlCommand operatorTarget)
+        [ ["--namespace=platform", "config", "use-context", "other"],
+          ["-n", "platform", "config", "set-context", "other", "--namespace=foo"],
+          ["config", "--namespace=platform", "delete-context", "other"]
+        ]
+        && isRight
+          ( ClusterCommand.operatorKubectlCommand
+              operatorTarget
+              ["--namespace=platform", "get", "pods"]
+          )
+    )
+    "operator kubectl rejects config mutation even when persistent flags surround its command tokens"
+  let validNamespace = ClusterCommand.Namespace "platform"
+      invalidPodOptionCommand =
+        ClusterCommand.kubectlDeletePods
+          operatorTarget
+          validNamespace
+          (NonEmpty.fromList [ClusterCommand.PodName "--all"])
+      invalidNamespaceCommand =
+        ClusterCommand.kubectlApplyNamespace
+          operatorTarget
+          (ClusterCommand.Namespace "platform\n---\nkind: Secret")
+      unsafePersistentVolumeCommand =
+        ClusterCommand.kubectlApplyPersistentVolume
+          operatorTarget
+          ClusterCommand.PersistentVolumeSpec
+            { ClusterCommand.persistentVolumeName =
+                ClusterCommand.ResourceName "unit-pv",
+              ClusterCommand.persistentVolumeStorage =
+                "1Gi\n---\nkind: Secret",
+              ClusterCommand.persistentVolumeClaimNamespace =
+                validNamespace,
+              ClusterCommand.persistentVolumeClaimName =
+                ClusterCommand.PvcName "unit-pvc",
+              ClusterCommand.persistentVolumeHostPath =
+                "/var/lib/infernix/unit-pv"
+            }
+      invalidHelmDurationCommand =
+        ClusterCommand.helmUpgradeInfernix
+          ClusterCommand.HelmUpgradeSpec
+            { ClusterCommand.helmUpgradeTarget = operatorTarget,
+              ClusterCommand.helmUpgradeValues = [],
+              ClusterCommand.helmUpgradeWait = True,
+              ClusterCommand.helmUpgradeHooks = True,
+              ClusterCommand.helmUpgradeTimeout =
+                ClusterCommand.HelmSeconds 0
+            }
+      invalidKubectlDurationCommand =
+        ClusterCommand.kubectlWaitAllNodesReady operatorTarget (-1)
+      leadingOptionPathCommand =
+        ClusterCommand.kindCreate
+          (ClusterCommand.ClusterName "unit-cluster")
+          "--help"
+          (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+      emptyPathCommand =
+        ClusterCommand.dockerMakeDirectory
+          (ClusterCommand.NodeName "unit-worker")
+          ""
+      controlPathCommand =
+        ClusterCommand.helmTemplateInfernix ["values\ninjected.yaml"]
+      colonCopyToNodeCommand =
+        ClusterCommand.dockerCopyToNode
+          "/tmp/source"
+          (ClusterCommand.NodeName "worker:escape")
+          "/tmp/destination"
+      colonCopyFromNodeCommand =
+        ClusterCommand.dockerCopyFromNode
+          (ClusterCommand.NodeName "worker:escape")
+          "/tmp/source"
+          "/tmp/destination"
+      colonContainerCommand =
+        ClusterCommand.dockerPauseContainer
+          (ClusterCommand.ContainerName "container:escape")
+      credentialText = "credential-must-not-leak"
+      invalidCredentialCommand =
+        ClusterCommand.publishLogin
+          (ClusterCommand.RegistryHost "127.0.0.1:30002")
+          ClusterCommand.RegistryCredentials
+            { ClusterCommand.registryUsername =
+                ClusterCommand.Username "unit-user",
+              ClusterCommand.registryPassword =
+                ClusterCommand.Password (credentialText <> "\n")
+            }
+      adversarialClusterCommands =
+        [ invalidPodOptionCommand,
+          invalidNamespaceCommand,
+          unsafePersistentVolumeCommand,
+          invalidHelmDurationCommand,
+          invalidKubectlDurationCommand,
+          leadingOptionPathCommand,
+          emptyPathCommand,
+          controlPathCommand,
+          colonCopyToNodeCommand,
+          colonCopyFromNodeCommand,
+          colonContainerCommand
+        ]
+  assert
+    (all (isLeft . ClusterCommand.validateClusterCommand) adversarialClusterCommands)
+    "closed cluster commands reject option-shaped names, manifest injection, non-positive durations, invalid paths, and Docker composite separators"
+  assert
+    ( either
+        (not . (credentialText `isInfixOf`))
+        (const False)
+        (ClusterCommand.validateClusterCommand invalidCredentialCommand)
+    )
+    "credential validation rejects controls without including the credential in diagnostics"
+  let namespaceManifestSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          (ClusterCommand.kubectlApplyNamespace operatorTarget validNamespace)
+      namespaceManifest =
+        Aeson.decodeStrict'
+          ( TextEncoding.encodeUtf8
+              (Text.pack (ClusterCommand.renderedCommandStdin namespaceManifestSpec))
+          ) ::
+          Maybe Aeson.Value
+      expectedNamespaceManifest =
+        Aeson.object
+          [ "apiVersion" Aeson..= ("v1" :: String),
+            "kind" Aeson..= ("Namespace" :: String),
+            "metadata"
+              Aeson..= Aeson.object
+                [ "name" Aeson..= ("platform" :: String)
+                ]
+          ]
+      validPersistentVolume =
+        ClusterCommand.PersistentVolumeSpec
+          { ClusterCommand.persistentVolumeName =
+              ClusterCommand.ResourceName "unit-pv",
+            ClusterCommand.persistentVolumeStorage = "1Gi",
+            ClusterCommand.persistentVolumeClaimNamespace = validNamespace,
+            ClusterCommand.persistentVolumeClaimName =
+              ClusterCommand.PvcName "unit-pvc",
+            ClusterCommand.persistentVolumeHostPath =
+              "/var/lib/infernix data/\252mlaut"
+          }
+      persistentVolumeManifestSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.kubectlApplyPersistentVolume
+              operatorTarget
+              validPersistentVolume
+          )
+      persistentVolumeManifest =
+        Aeson.decodeStrict'
+          ( TextEncoding.encodeUtf8
+              ( Text.pack
+                  (ClusterCommand.renderedCommandStdin persistentVolumeManifestSpec)
+              )
+          ) ::
+          Maybe Aeson.Value
+      expectedPersistentVolumeManifest =
+        Aeson.object
+          [ "apiVersion" Aeson..= ("v1" :: String),
+            "kind" Aeson..= ("PersistentVolume" :: String),
+            "metadata"
+              Aeson..= Aeson.object
+                [ "name" Aeson..= ("unit-pv" :: String)
+                ],
+            "spec"
+              Aeson..= Aeson.object
+                [ "capacity"
+                    Aeson..= Aeson.object
+                      [ "storage" Aeson..= ("1Gi" :: String)
+                      ],
+                  "accessModes" Aeson..= ["ReadWriteOnce" :: String],
+                  "persistentVolumeReclaimPolicy"
+                    Aeson..= ("Retain" :: String),
+                  "storageClassName"
+                    Aeson..= ("infernix-manual" :: String),
+                  "volumeMode" Aeson..= ("Filesystem" :: String),
+                  "claimRef"
+                    Aeson..= Aeson.object
+                      [ "namespace" Aeson..= ("platform" :: String),
+                        "name" Aeson..= ("unit-pvc" :: String)
+                      ],
+                  "hostPath"
+                    Aeson..= Aeson.object
+                      [ "path"
+                          Aeson..= ("/var/lib/infernix data/\252mlaut" :: String)
+                      ]
+                ]
+          ]
+  assert
+    ( namespaceManifest == Just expectedNamespaceManifest
+        && persistentVolumeManifest == Just expectedPersistentVolumeManifest
+        && isRight
+          ( ClusterCommand.validateClusterCommand
+              ( ClusterCommand.kubectlApplyPersistentVolume
+                  operatorTarget
+                  validPersistentVolume
+              )
+          )
+    )
+    "namespace and persistent-volume manifests use structured encoding and preserve Unicode scalar values"
+  operatorCommand <-
+    expectRight
+      "construct an operator kubectl command"
+      (ClusterCommand.operatorKubectlCommand operatorTarget ["get", "pods", "-A"])
+  let operatorCommandSpec =
+        ClusterCommand.renderOperatorKubectlCommand
+          (const "/unused")
+          operatorCommand
+  assert
+    ( take 2 (ClusterCommand.renderedCommandArgv operatorCommandSpec)
+        == ["--kubeconfig", subprocessRoot </> "operator.kubeconfig"]
+        && "--kuberc=/dev/null"
+          `elem` ClusterCommand.renderedCommandArgv operatorCommandSpec
+        && null (ClusterCommand.renderedCommandEnvironment operatorCommandSpec)
+        && not
+          ( ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+              operatorCommandSpec
+          )
+    )
+    "the operator renderer prepends the recorded target and owns its environment and working directory"
+  assert
+    ( isLeft
+        (Subprocess.compileBoundedCommand invalidPodOptionCommand subprocessEnv)
+    )
+    "the subprocess compiler enforces closed-command operand validation before rendering"
   assert
     ( isLeft
         ( Subprocess.compileBoundedCommand
-            Subprocess.ClusterLifecycleOperation
-            (Subprocess.Timeout 0)
-            Subprocess.NeverRetry
-            Subprocess.FatalFailure
+            ( ClusterCommand.kubectlGetNodeNames
+                (ClusterCommand.KubeTarget "relative.kubeconfig")
+            )
             subprocessEnv
-            Nothing
-            "/bin/true"
-            []
-            ""
+        )
+        && isLeft
+          ( ClusterCommand.operatorKubectlCommand
+              (ClusterCommand.KubeTarget "relative.kubeconfig")
+              ["get", "pods"]
+          )
+    )
+    "production compilation and operator command construction reject caller-relative kubeconfig targets"
+  baseHostConfig <-
+    maybe
+      (fail "subprocess test fixture is missing its host config")
+      pure
+      (pathsHostConfig subprocessPaths)
+  let toolFixtureRoot = subprocessRoot </> "tool-fixtures"
+      providerToolDirectory = toolFixtureRoot </> "provider"
+      exactToolDirectory = toolFixtureRoot </> "exact"
+      fixtureDockerPath = providerToolDirectory </> "docker"
+      shadowKubectlPath = providerToolDirectory </> "kubectl"
+      fixtureKindPath = exactToolDirectory </> "kind"
+      fixtureNvkindPath = exactToolDirectory </> "nvkind"
+      exactKubectlPath = exactToolDirectory </> "kubectl"
+      nonExecutableBashPath = toolFixtureRoot </> "non-executable-bash"
+      writeExecutableFixture path contents = do
+        createDirectoryIfMissing True (takeDirectory path)
+        writeFile path contents
+        fixturePermissions <- getPermissions path
+        setPermissions path fixturePermissions {executable = True}
+  removeTestPathIfPresent toolFixtureRoot
+  writeExecutableFixture fixtureDockerPath "#!/bin/sh\nexit 0\n"
+  writeExecutableFixture
+    shadowKubectlPath
+    "#!/bin/sh\nprintf 'shadow-kubectl\\n'\n"
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  writeExecutableFixture
+    fixtureNvkindPath
+    "#!/bin/sh\n[ \"${KUBERC-}\" = off ] || exit 97\nexec kubectl\n"
+  writeExecutableFixture
+    exactKubectlPath
+    "#!/bin/sh\nprintf 'exact-kubectl\\n'\n"
+  writeFile nonExecutableBashPath "#!/bin/sh\nexit 0\n"
+  let baseToolPaths = HostConfig.hostToolPaths baseHostConfig
+      compileWithToolPaths toolPaths command = do
+        environment <-
+          Subprocess.clusterSubprocessEnv
+            subprocessPaths
+              { pathsHostConfig =
+                  Just
+                    baseHostConfig
+                      { HostConfig.hostToolPaths = toolPaths
+                      }
+              }
+        pure (Subprocess.compileBoundedCommand command environment)
+      kindCreateCommand =
+        ClusterCommand.kindCreate
+          (ClusterCommand.ClusterName "unit-cluster")
+          (subprocessRoot </> "kind.yaml")
+          (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+      nvkindCreateCommand =
+        ClusterCommand.nvkindCreate
+          (ClusterCommand.ClusterName "unit-cluster")
+          (subprocessRoot </> "nvkind.yaml")
+          (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+      validKindToolPaths =
+        baseToolPaths
+          { HostConfig.hostKind = Text.pack fixtureKindPath,
+            HostConfig.hostDocker = Text.pack fixtureDockerPath
+          }
+      validNvkindToolPaths =
+        validKindToolPaths
+          { HostConfig.hostNvkind = Text.pack fixtureNvkindPath,
+            HostConfig.hostKubectl = Text.pack exactKubectlPath
+          }
+      invalidKindToolPaths =
+        concat
+          [ [ validKindToolPaths {HostConfig.hostKind = invalidPath},
+              validKindToolPaths {HostConfig.hostDocker = invalidPath}
+            ]
+          | invalidPath <- ["", "relative/tool"]
+          ]
+      invalidNvkindToolPaths =
+        concat
+          [ [ baseToolPaths {HostConfig.hostNvkind = invalidPath},
+              validNvkindToolPaths {HostConfig.hostKind = invalidPath},
+              validNvkindToolPaths {HostConfig.hostDocker = invalidPath},
+              validNvkindToolPaths {HostConfig.hostKubectl = invalidPath}
+            ]
+          | invalidPath <- ["", "relative/tool"]
+          ]
+  invalidKindCompilations <-
+    mapM
+      (`compileWithToolPaths` kindCreateCommand)
+      invalidKindToolPaths
+  invalidKindReadCompilations <-
+    mapM
+      ( \invalidPath ->
+          compileWithToolPaths
+            validKindToolPaths {HostConfig.hostDocker = invalidPath}
+            ClusterCommand.kindListClusters
+      )
+      ["", "relative/tool"]
+  invalidNvkindCompilations <-
+    mapM
+      (`compileWithToolPaths` nvkindCreateCommand)
+      invalidNvkindToolPaths
+  nvkindWithoutHelm <-
+    compileWithToolPaths
+      validNvkindToolPaths {HostConfig.hostHelm = ""}
+      nvkindCreateCommand
+  independentWatcherCompilations <-
+    mapM
+      ( \invalidPath ->
+          compileWithToolPaths
+            validKindToolPaths {HostConfig.hostBash = invalidPath}
+            kindCreateCommand
+      )
+      [ "",
+        "relative/bash",
+        Text.pack (toolFixtureRoot </> "missing-bash"),
+        Text.pack nonExecutableBashPath
+      ]
+  let nonexistentKindPath = toolFixtureRoot </> "missing" </> "kind"
+  nonexistentKindCompilation <-
+    compileWithToolPaths
+      validKindToolPaths
+        { HostConfig.hostKind = Text.pack nonexistentKindPath
+        }
+      kindCreateCommand
+  assert
+    ( all isLeft invalidKindCompilations
+        && all isLeft invalidKindReadCompilations
+        && all isLeft invalidNvkindCompilations
+        && all isRight independentWatcherCompilations
+        && isRight nvkindWithoutHelm
+        && isLeft nonexistentKindCompilation
+    )
+    "Kind/Nvkind compilation requires each exact provider while the in-process watchdog remains independent of unrelated Bash and Helm tools"
+  exactNvkindEnv <-
+    Subprocess.clusterSubprocessEnv
+      subprocessPaths
+        { pathsHostConfig =
+            Just
+              baseHostConfig
+                { HostConfig.hostToolPaths = validNvkindToolPaths
+                }
+        }
+  exactNvkindCommand <-
+    expectRight
+      "compile Nvkind with exact executable fixtures"
+      (Subprocess.compileBoundedCommand nvkindCreateCommand exactNvkindEnv)
+  reusedExactNvkindEnv <-
+    Subprocess.clusterSubprocessEnv
+      subprocessPaths
+        { pathsHostConfig =
+            Just
+              baseHostConfig
+                { HostConfig.hostToolPaths = validNvkindToolPaths
+                }
+        }
+  assert
+    ( lookup "PATH" (Subprocess.renderSubprocessEnv reusedExactNvkindEnv)
+        == lookup "PATH" (Subprocess.renderSubprocessEnv exactNvkindEnv)
+    )
+    "an unchanged available-tool snapshot reuses its immutable shim generation"
+  _retargetingNvkindEnv <-
+    Subprocess.clusterSubprocessEnv
+      subprocessPaths
+        { pathsHostConfig =
+            Just
+              baseHostConfig
+                { HostConfig.hostToolPaths =
+                    validNvkindToolPaths
+                      { HostConfig.hostKubectl = Text.pack shadowKubectlPath
+                      }
+                }
+        }
+  exactNvkindOutcome <- Subprocess.runBoundedCommand exactNvkindCommand
+  assert
+    (exactNvkindOutcome == Subprocess.CommandSucceeded "exact-kubectl\n")
+    ( "a compiled Nvkind command keeps an immutable exact kubectl binding after another environment targets a shadow kubectl; observed "
+        <> show exactNvkindOutcome
+    )
+  colonPathResult <-
+    try @IOException
+      ( Subprocess.clusterSubprocessEnv
+          subprocessPaths
+            { runtimeRoot = subprocessRoot </> "runtime:ambiguous"
+            }
+      )
+  assert
+    (case colonPathResult of Left _ -> True; Right _ -> False)
+    "subprocess environment construction rejects a colon-bearing PATH component"
+  let missingDockerTools =
+        baseToolPaths
+          { HostConfig.hostDocker = ""
+          }
+      missingDockerPaths =
+        subprocessPaths
+          { pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = missingDockerTools
+                  }
+          }
+  missingDockerEnv <- Subprocess.clusterSubprocessEnv missingDockerPaths
+  assert
+    ( not
+        ( isLeft
+            ( Subprocess.compileBoundedCommand
+                (ClusterCommand.kubectlGetNodeNames operatorTarget)
+                missingDockerEnv
+            )
+        )
+        && isLeft
+          ( Subprocess.compileBoundedCommand
+              ( ClusterCommand.dockerInspectImage
+                  (ClusterCommand.ImageRef "unit/image:latest")
+              )
+              missingDockerEnv
+          )
+        && isLeft
+          ( Subprocess.compileBoundedCommand
+              ( ClusterCommand.dockerSyncGpuUserspace
+                  (ClusterCommand.NodeName "unit-worker")
+              )
+              missingDockerEnv
+          )
+    )
+    "command compilation validates only the exact main and nested tools required by the selected semantic command"
+  lifecycleLockRoot <- testRootPath "cluster-lifecycle-lock"
+  removeTestPathIfPresent lifecycleLockRoot
+  createDirectoryIfMissing True lifecycleLockRoot
+  let lifecycleLockPaths = subprocessPaths {runtimeRoot = lifecycleLockRoot}
+  (contenderGateReader, contenderGateWriter) <- PosixIO.createPipe
+  contenderPid <-
+    forkProcess $ do
+      PosixIO.closeFd contenderGateWriter
+      contenderGate <- PosixByteString.fdRead contenderGateReader 1
+      PosixIO.closeFd contenderGateReader
+      contenderResult <-
+        try @IOException
+          (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+      exitImmediately $
+        case (contenderGate, contenderResult) of
+          ("x", Left _) -> ExitSuccess
+          _ -> ExitFailure 1
+  PosixIO.closeFd contenderGateReader
+  withClusterLifecycleLock lifecycleLockPaths $ \_ -> do
+    nestedResult <-
+      try @IOException
+        (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+    assert
+      (isLeft nestedResult)
+      "a nested lifecycle-lock acquisition through an independent descriptor fails"
+    sameProcessContender <- MVar.newEmptyMVar
+    _ <-
+      forkIO
+        ( try @IOException
+            (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+            >>= MVar.putMVar sameProcessContender
+        )
+    sameProcessResult <-
+      timeout 1000000 (MVar.takeMVar sameProcessContender)
+    assert
+      (maybe False isLeft sameProcessResult)
+      "a concurrent thread in the same process cannot enter the lifecycle region while its lock is held"
+    _ <- PosixByteString.fdWrite contenderGateWriter "x"
+    PosixIO.closeFd contenderGateWriter
+    contenderStatus <- getProcessStatus True False contenderPid
+    assert
+      (contenderStatus == Just (Exited ExitSuccess))
+      "a second CLI process cannot enter the retained-state lifecycle region while its lock is held"
+  lifecycleLockReleased <-
+    try @IOException
+      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+  assert
+    (isRight lifecycleLockReleased)
+    "the kernel lifecycle lock is released after the outer region exits"
+  lifecycleLockException <-
+    try @IOException
+      ( withClusterLifecycleLock lifecycleLockPaths $ \_ ->
+          ioError (userError "intentional lifecycle-lock action failure")
+      )
+  assert
+    (isLeft lifecycleLockException)
+    "a synchronous exception escapes the lifecycle-lock region"
+  lifecycleLockAfterException <-
+    try @IOException
+      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+  assert
+    (isRight lifecycleLockAfterException)
+    "a synchronous exception releases the kernel lifecycle lock"
+  cancellationLockAcquired <- MVar.newEmptyMVar
+  cancellationBlocker <- MVar.newEmptyMVar
+  lifecycleCancellationResult <- MVar.newEmptyMVar
+  cancellationThread <-
+    forkIO
+      ( try @SomeException
+          ( withClusterLifecycleLock lifecycleLockPaths $ \_ -> do
+              MVar.putMVar cancellationLockAcquired ()
+              MVar.takeMVar cancellationBlocker
+          )
+          >>= MVar.putMVar lifecycleCancellationResult
+      )
+  MVar.takeMVar cancellationLockAcquired
+  killThread cancellationThread
+  observedCancellation <-
+    timeout 1000000 (MVar.takeMVar lifecycleCancellationResult)
+  let cancellationEscapedLifecycleLock =
+        case observedCancellation of
+          Just (Left failure) ->
+            isJust (fromException failure :: Maybe SomeAsyncException)
+          _ -> False
+  assert
+    cancellationEscapedLifecycleLock
+    "asynchronous cancellation escapes the lifecycle-lock region"
+  lifecycleLockAfterCancellation <-
+    try @IOException
+      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+  assert
+    (isRight lifecycleLockAfterCancellation)
+    "asynchronous cancellation releases the kernel lifecycle lock"
+  (ownerReadyReader, ownerReadyWriter) <- PosixIO.createPipe
+  lockOwnerPid <-
+    forkProcess $ do
+      PosixIO.closeFd ownerReadyReader
+      ownerResult <-
+        try @SomeException
+          ( withClusterLifecycleLock lifecycleLockPaths $ \_ -> do
+              _ <- PosixByteString.fdWrite ownerReadyWriter "locked"
+              PosixIO.closeFd ownerReadyWriter
+              ownerPid <- getProcessID
+              signalProcess sigSTOP ownerPid
+          )
+      exitImmediately $
+        case ownerResult of
+          Left _ -> ExitFailure 1
+          Right _ -> ExitFailure 2
+  PosixIO.closeFd ownerReadyWriter
+  ownerReadyMessage <- PosixByteString.fdRead ownerReadyReader 6
+  PosixIO.closeFd ownerReadyReader
+  assert
+    (ownerReadyMessage == "locked")
+    "the child owner publishes readiness only from inside the lifecycle-lock region"
+  lockOwnerStopped <- getProcessStatus True True lockOwnerPid
+  assert
+    (case lockOwnerStopped of Just (Stopped _) -> True; _ -> False)
+    "the lifecycle-lock owner remains alive and stopped inside the protected region"
+  signalProcess sigKILL lockOwnerPid
+  _ <- getProcessStatus True False lockOwnerPid
+  lifecycleLockAfterOwnerDeath <-
+    try @IOException
+      (withClusterLifecycleLock lifecycleLockPaths (\_ -> pure ()))
+  assert
+    (isRight lifecycleLockAfterOwnerDeath)
+    "process death automatically releases the kernel lifecycle lock"
+  defaultPolicyPlan <-
+    expectRight
+      "compile default generated command-policy plan"
+      (Subprocess.compileCommandPolicyPlan HostConfig.defaultDhallCommandPolicies)
+  let runTestCommand testCommand = do
+        boundedCommand <-
+          expectRight
+            "compile unit-test bounded command"
+            (Subprocess.compileTestCommand testCommand subprocessEnv)
+        Subprocess.runBoundedCommand boundedCommand
+      actualPolicy operation =
+        let policy = Subprocess.commandPolicyFor defaultPolicyPlan operation
+         in ( Subprocess.timeoutMicros (Subprocess.commandPolicyTimeout policy),
+              Subprocess.commandPolicyRetryPolicy policy,
+              Subprocess.commandPolicyFailureClass policy
+            )
+  assert
+    ( isLeft
+        ( Subprocess.compileTestCommand
+            ( Subprocess.TestAcquisitionDeadline
+                "relative.ready"
+                (subprocessRoot </> "acquisition-executed")
+            )
+            subprocessEnv
+        )
+        && isLeft
+          ( Subprocess.compileTestCommand
+              ( Subprocess.TestTerminalFirstStoppedOwnerDeath
+                  (subprocessRoot </> "terminal-first-descendant.pid")
+                  "relative.observed"
+              )
+              subprocessEnv
+          )
+    )
+    "test-only acquisition and terminal-observation hooks reject relative synchronization paths"
+  assert
+    ( length allClusterOperations == 37
+        && length (nub allClusterOperations) == length allClusterOperations
+        && map actualPolicy allClusterOperations
+          == map expectedClusterOperationPolicy allClusterOperations
+    )
+    "the exhaustive semantic operation inventory has its kernel-owned timeout, retry, and failure policies"
+  assert
+    ( all
+        ( (> 0)
+            . Subprocess.timeoutMicros
+            . Subprocess.commandPolicyTimeout
+            . Subprocess.commandPolicyFor defaultPolicyPlan
+        )
+        allClusterOperations
+    )
+    "every semantic operation policy has a positive timeout"
+  let changedKindReadPolicy =
+        HostConfig.DhallCommandPolicy
+          { HostConfig.dhallTimeoutMicros = 7654321,
+            HostConfig.dhallRetry =
+              HostConfig.Bounded
+                HostConfig.DhallBoundedRetry
+                  { HostConfig.dhallAttempts = 4,
+                    HostConfig.dhallBackoffMicros = 25000
+                  },
+            HostConfig.dhallFailureClass = HostConfig.TransientThenFatal
+          }
+      changedGeneratedPolicies =
+        HostConfig.defaultDhallCommandPolicies
+          { HostConfig.dhallKindRead = changedKindReadPolicy
+          }
+  changedPolicyPlan <-
+    expectRight
+      "compile changed generated command-policy plan"
+      (Subprocess.compileCommandPolicyPlan changedGeneratedPolicies)
+  let selectedChangedPolicy =
+        Subprocess.commandPolicyFor
+          changedPolicyPlan
+          ClusterCommand.KindReadOperation
+      selectedOperatorPolicy =
+        Subprocess.commandPolicyFor
+          changedPolicyPlan
+          ClusterCommand.OperatorKubectlOperation
+      selectedKubectlReadPolicy =
+        Subprocess.commandPolicyFor
+          changedPolicyPlan
+          ClusterCommand.KubectlReadOperation
+  assert
+    ( Subprocess.commandPolicyTimeout selectedChangedPolicy
+        == Subprocess.Timeout 7654321
+        && Subprocess.commandPolicyRetryPolicy selectedChangedPolicy
+          == Subprocess.BoundedRetry 4 25000
+        && Subprocess.commandPolicyFailureClass selectedChangedPolicy
+          == Subprocess.TransientThenFatal
+    )
+    "commandPolicyFor selects the changed generated policy for its semantic operation"
+  assert
+    ( Subprocess.commandPolicyTimeout selectedOperatorPolicy
+        == Subprocess.commandPolicyTimeout selectedKubectlReadPolicy
+        && Subprocess.commandPolicyRetryPolicy selectedOperatorPolicy
+          == Subprocess.commandPolicyRetryPolicy selectedKubectlReadPolicy
+        && Subprocess.commandPolicyFailureClass selectedOperatorPolicy
+          == Subprocess.commandPolicyFailureClass selectedKubectlReadPolicy
+    )
+    "operator kubectl deliberately aliases the generated kubectl-read policy"
+  let invalidKindReadPolicy policy =
+        Subprocess.compileCommandPolicyPlan
+          HostConfig.defaultDhallCommandPolicies
+            { HostConfig.dhallKindRead = policy
+            }
+      defaultKindReadPolicy =
+        HostConfig.dhallKindRead HostConfig.defaultDhallCommandPolicies
+      refinementFailsWith expectedFragment result =
+        case result of
+          Left message -> expectedFragment `isInfixOf` message
+          Right _ -> False
+  assert
+    ( refinementFailsWith
+        "commandPolicies.kindRead.timeoutMicros must be positive"
+        ( invalidKindReadPolicy
+            defaultKindReadPolicy
+              { HostConfig.dhallTimeoutMicros = 0
+              }
         )
     )
-    "compileBoundedCommand rejects a non-positive timeout"
-  absenceCommand <-
-    expectRight
-      "compile idempotent-absence command"
-      ( Subprocess.compileBoundedCommand
-          Subprocess.ClusterLifecycleOperation
-          (Subprocess.Timeout 30000000)
-          Subprocess.NeverRetry
-          Subprocess.IdempotentAbsence
-          subprocessEnv
-          Nothing
-          "/bin/sh"
-          ["-c", "echo 'target does not exist' >&2; exit 1"]
-          ""
-      )
-  absenceOutcome <- Subprocess.runBoundedCommand absenceCommand
+    "generated command policies reject a zero timeout"
   assert
-    (case absenceOutcome of Subprocess.CommandSucceeded _ -> True; _ -> False)
-    "idempotent-absence policy classifies an absent target as success"
+    ( refinementFailsWith
+        "commandPolicies.kindRead.retry.Bounded.attempts must be positive"
+        ( invalidKindReadPolicy
+            defaultKindReadPolicy
+              { HostConfig.dhallRetry =
+                  HostConfig.Bounded
+                    HostConfig.DhallBoundedRetry
+                      { HostConfig.dhallAttempts = 0,
+                        HostConfig.dhallBackoffMicros = 1
+                      }
+              }
+        )
+    )
+    "generated command policies reject zero bounded-retry attempts"
+  assert
+    ( refinementFailsWith
+        "commandPolicies.kindRead.retry.Bounded.backoffMicros must be positive"
+        ( invalidKindReadPolicy
+            defaultKindReadPolicy
+              { HostConfig.dhallRetry =
+                  HostConfig.Bounded
+                    HostConfig.DhallBoundedRetry
+                      { HostConfig.dhallAttempts = 1,
+                        HostConfig.dhallBackoffMicros = 0
+                      }
+              }
+        )
+    )
+    "generated command policies reject zero bounded-retry backoff"
+  assert
+    ( refinementFailsWith
+        "commandPolicies.kindRead.timeoutMicros exceeds the supported Int range"
+        ( invalidKindReadPolicy
+            defaultKindReadPolicy
+              { HostConfig.dhallTimeoutMicros =
+                  fromIntegral (maxBound :: Int) + 1
+              }
+        )
+    )
+    "generated command policies reject values that overflow the refined Int representation"
+  assert
+    ( refinementFailsWith
+        "commandPolicies.kindRead.retry.Bounded.attempts exceeds the supported Int range"
+        ( invalidKindReadPolicy
+            defaultKindReadPolicy
+              { HostConfig.dhallRetry =
+                  HostConfig.Bounded
+                    HostConfig.DhallBoundedRetry
+                      { HostConfig.dhallAttempts =
+                          fromIntegral (maxBound :: Int) + 1,
+                        HostConfig.dhallBackoffMicros = 1
+                      }
+              }
+        )
+        && refinementFailsWith
+          "commandPolicies.kindRead.retry.Bounded.backoffMicros exceeds the supported Int range"
+          ( invalidKindReadPolicy
+              defaultKindReadPolicy
+                { HostConfig.dhallRetry =
+                    HostConfig.Bounded
+                      HostConfig.DhallBoundedRetry
+                        { HostConfig.dhallAttempts = 1,
+                          HostConfig.dhallBackoffMicros =
+                            fromIntegral (maxBound :: Int) + 1
+                        }
+                }
+          )
+    )
+    "generated command policies reject attempts and backoff values that overflow Int"
+  boundedKindRead <-
+    expectRight
+      "compile a semantic production command"
+      (Subprocess.compileBoundedCommand ClusterCommand.kindListClusters subprocessEnv)
+  assert
+    ( Subprocess.boundedCommandOperation boundedKindRead
+        == ClusterCommand.KindReadOperation
+    )
+    "compileBoundedCommand derives the production operation from its semantic builder"
+  boundedOperatorCommand <-
+    expectRight
+      "compile a validated operator kubectl command"
+      (Subprocess.compileOperatorKubectlCommand operatorCommand subprocessEnv)
+  assert
+    ( Subprocess.boundedOperatorKubectlOperation boundedOperatorCommand
+        == ClusterCommand.OperatorKubectlOperation
+    )
+    "operator kubectl uses its separate compiler and semantic policy identity"
+  echoOutcome <- runTestCommand (Subprocess.TestEcho "managed-transitions")
+  assert
+    (echoOutcome == Subprocess.CommandSucceeded "managed-transitions\n")
+    "runBoundedCommand returns real stdout on success"
+  let executableSnapshotRoot =
+        runtimeRoot subprocessPaths
+          </> "command-executable-snapshots"
+      runExecutableSnapshotMutationTest
+        label
+        testPoint
+        expectedOutcome = do
+          let executablePath =
+                subprocessRoot </> (label <> "-executable.sh")
+              replacementPath =
+                subprocessRoot </> (label <> "-replacement.sh")
+              readyPath =
+                subprocessRoot </> (label <> ".ready")
+              releaseFifo =
+                subprocessRoot </> (label <> ".release")
+              executedPath =
+                subprocessRoot </> (label <> ".executed")
+              executableContents output =
+                "#!/bin/sh\n"
+                  <> "printf 'executed\\n' > '"
+                  <> executedPath
+                  <> "'\n"
+                  <> "printf '"
+                  <> output
+                  <> "\\n'\n"
+          mapM_
+            removeTestPathIfPresent
+            [ executablePath,
+              replacementPath,
+              readyPath,
+              releaseFifo,
+              executedPath
+            ]
+          writeFile executablePath (executableContents "original")
+          writeFile replacementPath (executableContents "replacement")
+          setFileMode executablePath 0o700
+          setFileMode replacementPath 0o700
+          createNamedPipe releaseFifo 0o600
+          compiled <-
+            expectRight
+              ("compile " <> label <> " exact executable snapshot command")
+              =<< Subprocess.compileExactExecutableSnapshotTestCommand
+                testPoint
+                (Subprocess.Timeout 5000000)
+                executablePath
+                readyPath
+                releaseFifo
+                subprocessEnv
+          result <- MVar.newEmptyMVar
+          _ <-
+            forkIO
+              ( try @SomeException
+                  (Subprocess.runBoundedCommand compiled)
+                  >>= MVar.putMVar result
+              )
+          ready <-
+            maybe
+              (fail (label <> " exact executable snapshot gate did not become ready"))
+              pure
+              =<< waitForFileContents 100 readyPath
+          assert
+            (not (null ready))
+            (label <> " exact executable snapshot gate published empty evidence")
+          renameFile replacementPath executablePath
+          released <-
+            timeout
+              1000000
+              (writeNamedPipePayloadNonblocking releaseFifo "release\n")
+          observed <-
+            timeout 5000000 (MVar.takeMVar result)
+          executed <- doesFileExist executedPath
+          snapshotEntries <-
+            do
+              present <- doesDirectoryExist executableSnapshotRoot
+              if present
+                then listDirectory executableSnapshotRoot
+                else pure []
+          removeTestPathIfPresent releaseFifo
+          assert
+            ( isJust released
+                && expectedOutcome observed executed
+                && null snapshotEntries
+            )
+            ( label
+                <> " exact executable snapshot mutation result disagreed; observed "
+                <> show
+                  ( observed,
+                    executed,
+                    snapshotEntries
+                  )
+            )
+  runExecutableSnapshotMutationTest
+    "bounded-snapshot-before"
+    Subprocess.MutateBeforeAnchorSnapshot
+    ( \observed executed ->
+        case observed of
+          Just (Right (Subprocess.CommandFailedKernel _)) ->
+            not executed
+          _ -> False
+    )
+  runExecutableSnapshotMutationTest
+    "bounded-snapshot-after"
+    Subprocess.MutateAfterAnchorSnapshot
+    ( \observed executed ->
+        case observed of
+          Just
+            (Right (Subprocess.CommandSucceeded "original\n")) ->
+              executed
+          _ -> False
+    )
+  let runExecutableSnapshotInterruptionTest
+        label
+        commandTimeout
+        cancelRunner
+        expectedOutcome = do
+          let executablePath =
+                subprocessRoot </> (label <> "-executable.sh")
+              readyPath =
+                subprocessRoot </> (label <> ".ready")
+              releaseFifo =
+                subprocessRoot </> (label <> ".release")
+              executedPath =
+                subprocessRoot </> (label <> ".executed")
+          mapM_
+            removeTestPathIfPresent
+            [ executablePath,
+              readyPath,
+              releaseFifo,
+              executedPath
+            ]
+          writeFile
+            executablePath
+            ( "#!/bin/sh\n"
+                <> "printf 'executed\\n' > '"
+                <> executedPath
+                <> "'\n"
+            )
+          setFileMode executablePath 0o700
+          createNamedPipe releaseFifo 0o600
+          compiled <-
+            expectRight
+              ("compile " <> label <> " interrupted executable snapshot command")
+              =<< Subprocess.compileExactExecutableSnapshotTestCommand
+                Subprocess.MutateAfterAnchorSnapshot
+                commandTimeout
+                executablePath
+                readyPath
+                releaseFifo
+                subprocessEnv
+          result <- MVar.newEmptyMVar
+          runner <-
+            forkIO
+              ( try @SomeException
+                  (Subprocess.runBoundedCommand compiled)
+                  >>= MVar.putMVar result
+              )
+          ready <-
+            maybe
+              (fail (label <> " interrupted executable snapshot gate did not become ready"))
+              pure
+              =<< waitForFileContents 300 readyPath
+          assert
+            (not (null ready))
+            (label <> " interrupted executable snapshot gate published empty evidence")
+          when cancelRunner (killThread runner)
+          observed <-
+            timeout 7000000 (MVar.takeMVar result)
+          executed <- doesFileExist executedPath
+          snapshotEntries <-
+            do
+              present <- doesDirectoryExist executableSnapshotRoot
+              if present
+                then listDirectory executableSnapshotRoot
+                else pure []
+          removeTestPathIfPresent releaseFifo
+          assert
+            ( expectedOutcome observed
+                && not executed
+                && null snapshotEntries
+            )
+            ( label
+                <> " interrupted executable snapshot cleanup disagreed; observed "
+                <> show (observed, executed, snapshotEntries)
+            )
+  runExecutableSnapshotInterruptionTest
+    "bounded-snapshot-timeout"
+    (Subprocess.Timeout 3000000)
+    False
+    ( \case
+        Just
+          (Right (Subprocess.CommandTimedOut (Subprocess.Timeout 3000000))) ->
+            True
+        _ -> False
+    )
+  runExecutableSnapshotInterruptionTest
+    "bounded-snapshot-cancel"
+    (Subprocess.Timeout 30000000)
+    True
+    ( \case
+        Just (Left failure) ->
+          isJust (fromException failure :: Maybe SomeAsyncException)
+        _ -> False
+    )
+  let durableFileSyncPath =
+        subprocessRoot </> "bounded-durable-file-sync.ready"
+      durableDirectorySyncPath =
+        subprocessRoot </> "bounded-durable-directory-sync.ready"
+      durableExecutedPath =
+        subprocessRoot </> "bounded-durable-target.executed"
+  mapM_
+    removeTestPathIfPresent
+    [ durableFileSyncPath,
+      durableDirectorySyncPath,
+      durableExecutedPath
+    ]
+  durableLeaseOutcome <-
+    runTestCommand
+      ( Subprocess.TestDurableLeaseOrdering
+          durableFileSyncPath
+          durableDirectorySyncPath
+          durableExecutedPath
+      )
+  durableOrderingMarkers <-
+    mapM
+      doesFileExist
+      [ durableFileSyncPath,
+        durableDirectorySyncPath,
+        durableExecutedPath
+      ]
+  assert
+    ( durableLeaseOutcome == Subprocess.CommandSucceeded ""
+        && and durableOrderingMarkers
+    )
+    ( "the target gate opens only after the activity file and containing directory are durably synchronized; observed "
+        <> show (durableLeaseOutcome, durableOrderingMarkers)
+    )
+  let concurrentReadyPath =
+        subprocessRoot </> "bounded-concurrent-long.ready"
+  removeTestPathIfPresent concurrentReadyPath
+  concurrentLongOutcome <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( runTestCommand
+          ( Subprocess.TestDelayedEcho
+              concurrentReadyPath
+              2
+              "concurrent-long"
+          )
+          >>= MVar.putMVar concurrentLongOutcome
+      )
+  _ <-
+    maybe
+      (fail "the concurrent long command never reached its live target")
+      pure
+      =<< waitForFileContents 100 concurrentReadyPath
+  concurrentQuickResult <-
+    runTestCommand (Subprocess.TestEcho "concurrent-quick")
+  concurrentLongResult <-
+    timeout 30000000 (MVar.takeMVar concurrentLongOutcome)
+  assert
+    ( concurrentQuickResult
+        == Subprocess.CommandSucceeded "concurrent-quick\n"
+        && concurrentLongResult
+          == Just (Subprocess.CommandSucceeded "concurrent-long\n")
+    )
+    ( "independent concurrent commands retain exact output and process-group ownership; observed "
+        <> show (concurrentQuickResult, concurrentLongResult)
+    )
+  let isolatedCancelledChildPath =
+        subprocessRoot </> "bounded-isolated-cancelled-child.pid"
+      isolatedPeerReadyPath =
+        subprocessRoot </> "bounded-isolated-peer.ready"
+      isolatedPeerReleaseFifo =
+        subprocessRoot </> "bounded-isolated-peer.release"
+  mapM_
+    removeTestPathIfPresent
+    [ isolatedCancelledChildPath,
+      isolatedPeerReadyPath,
+      isolatedPeerReleaseFifo
+    ]
+  isolatedCancelledResult <- MVar.newEmptyMVar
+  isolatedCancelledRunner <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              (Subprocess.TestParentDeathProcessTree isolatedCancelledChildPath)
+          )
+          >>= MVar.putMVar isolatedCancelledResult
+      )
+  isolatedCancelledChildPidContents <-
+    maybe
+      (fail "the cancelled protocol-isolation command never published its descendant")
+      pure
+      =<< waitForFileContents 100 isolatedCancelledChildPath
+  isolatedCancelledChildPid <-
+    maybe
+      (fail "the cancelled protocol-isolation command published an invalid descendant pid")
+      pure
+      (readMaybe (takeWhile (/= '\n') isolatedCancelledChildPidContents) :: Maybe Integer)
+  isolatedOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  isolatedCancelledActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      isolatedOwnerProcessGroup
+  let isolatedCancelledPinIdentity =
+        currentPinIdentity isolatedCancelledActivity
+  createNamedPipe isolatedPeerReleaseFifo 0o600
+  isolatedPeerResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              ( Subprocess.TestProtocolIsolationPeer
+                  isolatedPeerReadyPath
+                  isolatedPeerReleaseFifo
+              )
+          )
+          >>= MVar.putMVar isolatedPeerResult
+      )
+  isolatedPeerReady <-
+    maybe
+      (fail "the blocked protocol-isolation peer never published its owned target and exact pin identity")
+      pure
+      =<< waitForFileContents 100 isolatedPeerReadyPath
+  (isolatedPeerTargetIdentity, isolatedPeerPinIdentity) <-
+    expectRight
+      "decode blocked protocol-isolation peer authority"
+      (parseRegisteredTargetAndLeader isolatedPeerReady)
+  let isolatedPeerTargetPid =
+        recordedProcessId isolatedPeerTargetIdentity
+      isolatedPeerPinPid =
+        recordedProcessId isolatedPeerPinIdentity
+      isolatedPeerPinBirth =
+        recordedProcessBirth isolatedPeerPinIdentity
+  killThread isolatedCancelledRunner
+  isolatedCancelledOutcome <-
+    timeout 5000000 (MVar.takeMVar isolatedCancelledResult)
+  isolatedPeerActivity <-
+    waitForCurrentCommandActivityByPin
+      100
+      subprocessPaths
+      isolatedOwnerProcessGroup
+      isolatedPeerPinPid
+      isolatedPeerPinBirth
+  let isolatedPeerPinMatches =
+        isolatedPeerPinPid
+          == recordedProcessId (currentPinIdentity isolatedPeerActivity)
+          && isolatedPeerPinBirth
+            == recordedProcessBirth (currentPinIdentity isolatedPeerActivity)
+  isolatedCancelledPinAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      (recordedProcessId isolatedCancelledPinIdentity)
+      (recordedProcessBirth isolatedCancelledPinIdentity)
+  isolatedCancelledGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup isolatedCancelledPinIdentity)
+  isolatedCancelledChildPidAbsentCorroboration <-
+    waitForPidExit 80 (show isolatedCancelledChildPid)
+  isolatedPeerStillLive <-
+    (== Just isolatedPeerPinBirth)
+      <$> readProcessBirthIdentity isolatedPeerPinPid
+  isolatedPeerReleaseResult <-
+    timeout
+      1000000
+      ( writeNamedPipePayloadNonblocking
+          isolatedPeerReleaseFifo
+          "release\n"
+      )
+  isolatedPeerOutcome <-
+    timeout 5000000 (MVar.takeMVar isolatedPeerResult)
+  isolatedPeerPinAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      isolatedPeerPinPid
+      isolatedPeerPinBirth
+  isolatedPeerTargetAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      isolatedPeerTargetIdentity
+  removeTestPathIfPresent isolatedPeerReleaseFifo
+  isolatedActivitiesQuiescent <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      isolatedOwnerProcessGroup
+  let isolatedPeerSucceeded =
+        case isolatedPeerOutcome of
+          Just
+            ( Right
+                (Subprocess.CommandSucceeded "released\n")
+              ) -> True
+          _ -> False
+      isolatedCancellationCleanedUp =
+        case isolatedCancelledOutcome of
+          Just (Left failure) ->
+            isJust (fromException failure :: Maybe SomeAsyncException)
+              && isolatedCancelledPinAbsent
+              && isolatedCancelledGroupAbsent
+              && isolatedPeerPinMatches
+              && isolatedPeerStillLive
+              && isJust isolatedPeerReleaseResult
+              && isolatedPeerSucceeded
+              && isolatedPeerPinAbsent
+              && isolatedPeerTargetAbsent
+              && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+                isolatedActivitiesQuiescent
+                == isolatedOwnerProcessGroup
+          _ -> False
+  assert
+    isolatedCancellationCleanedUp
+    ( "closing one concurrent bounded-command session cannot keep or corrupt another session's protocol handles; observed "
+        <> show
+          ( isolatedCancelledOutcome,
+            isolatedCancelledChildPid,
+            isolatedCancelledPinAbsent,
+            isolatedCancelledGroupAbsent,
+            isolatedCancelledChildPidAbsentCorroboration,
+            isolatedPeerTargetPid,
+            isolatedPeerPinMatches,
+            isolatedPeerStillLive,
+            isJust isolatedPeerReleaseResult,
+            isolatedPeerOutcome,
+            isolatedPeerPinAbsent,
+            isolatedPeerTargetAbsent
+          )
+    )
+  let designatedReadyPath =
+        subprocessRoot </> "bounded-designated-owner.ready"
+      designatedReleaseFifo =
+        subprocessRoot </> "bounded-designated-owner.release"
+      designatedEvidencePrefix =
+        subprocessRoot </> "bounded-designated-owner-reap"
+      designatedEvidencePaths =
+        [ designatedEvidencePrefix <> ".parent.json",
+          designatedEvidencePrefix <> ".anchor.json",
+          designatedEvidencePrefix <> ".supervisor.json"
+        ]
+  mapM_
+    removeTestPathIfPresent
+    (designatedReadyPath : designatedReleaseFifo : designatedEvidencePaths)
+  createNamedPipe designatedReleaseFifo 0o600
+  designatedResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              ( Subprocess.TestDesignatedOwnerReaping
+                  designatedReadyPath
+                  designatedReleaseFifo
+                  designatedEvidencePrefix
+              )
+          )
+          >>= MVar.putMVar designatedResult
+      )
+  designatedReady <-
+    maybe
+      (fail "the designated-owner command never published its owned target and exact pin identity")
+      pure
+      =<< waitForFileContents 100 designatedReadyPath
+  (designatedTargetIdentity, designatedReadyPinIdentity) <-
+    expectRight
+      "decode designated-owner target authority"
+      (parseRegisteredTargetAndLeader designatedReady)
+  let designatedReadyPinPid =
+        recordedProcessId designatedReadyPinIdentity
+      designatedReadyPinBirth =
+        recordedProcessBirth designatedReadyPinIdentity
+  designatedOwnerGroup <- fromIntegral <$> getProcessGroupID
+  designatedActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      designatedOwnerGroup
+  designatedRelease <-
+    timeout
+      1000000
+      ( writeNamedPipePayloadNonblocking
+          designatedReleaseFifo
+          "release\n"
+      )
+  designatedOutcome <-
+    timeout 5000000 (MVar.takeMVar designatedResult)
+  designatedEvidenceContents <-
+    mapM
+      ( \evidencePath ->
+          maybe
+            (fail ("missing designated-owner reap evidence: " <> evidencePath))
+            pure
+            =<< waitForFileContents 100 evidencePath
+      )
+      designatedEvidencePaths
+  [parentReapEvidence, anchorReapEvidence, supervisorReapEvidence] <-
+    mapM
+      (expectRight "decode designated-owner reap evidence" . decodeReapEvidence)
+      designatedEvidenceContents
+  let designatedOwnerIdentity =
+        currentOwnerIdentity designatedActivity
+      designatedAnchorIdentity =
+        currentAnchorIdentity designatedActivity
+      designatedSupervisorIdentity =
+        currentSupervisorIdentity designatedActivity
+      designatedPinIdentity =
+        currentPinIdentity designatedActivity
+      designatedReadyPinMatches =
+        designatedReadyPinPid == recordedProcessId designatedPinIdentity
+          && designatedReadyPinBirth
+            == recordedProcessBirth designatedPinIdentity
+      expectedParentReaps =
+        ReapEvidence
+          designatedOwnerIdentity
+          [("anchor", ReapedRegisteredIdentity designatedAnchorIdentity)]
+      expectedAnchorReaps =
+        ReapEvidence
+          designatedAnchorIdentity
+          [("supervisor", ReapedRegisteredIdentity designatedSupervisorIdentity)]
+      expectedSupervisorReaps =
+        ReapEvidence
+          designatedSupervisorIdentity
+          [ ( "target",
+              ReapedRegisteredIdentity designatedTargetIdentity
+            ),
+            ("group-pin", ReapedRegisteredIdentity designatedPinIdentity)
+          ]
+  designatedAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      (recordedProcessId designatedAnchorIdentity)
+      (recordedProcessBirth designatedAnchorIdentity)
+  designatedSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      (recordedProcessId designatedSupervisorIdentity)
+      (recordedProcessBirth designatedSupervisorIdentity)
+  designatedPinAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      (recordedProcessId designatedPinIdentity)
+      (recordedProcessBirth designatedPinIdentity)
+  designatedTargetAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      designatedTargetIdentity
+  designatedQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      designatedOwnerGroup
+  removeTestPathIfPresent designatedReleaseFifo
+  let designatedSucceeded =
+        case designatedOutcome of
+          Just
+            ( Right
+                (Subprocess.CommandSucceeded "released\n")
+              ) -> True
+          _ -> False
+  assert
+    ( isJust designatedRelease
+        && designatedSucceeded
+        && designatedReadyPinMatches
+        && parentReapEvidence == expectedParentReaps
+        && anchorReapEvidence == expectedAnchorReaps
+        && supervisorReapEvidence == expectedSupervisorReaps
+        && designatedAnchorAbsent
+        && designatedSupervisorAbsent
+        && designatedPinAbsent
+        && designatedTargetAbsent
+        && designatedQuiescent
+    )
+    ( "each bounded-command child is reaped by its designated parent before activity retirement; observed "
+        <> show
+          ( designatedOutcome,
+            parentReapEvidence,
+            anchorReapEvidence,
+            supervisorReapEvidence,
+            designatedReadyPinMatches,
+            designatedAnchorAbsent,
+            designatedSupervisorAbsent,
+            designatedPinAbsent,
+            designatedTargetAbsent
+          )
+    )
+  let synchronousIdentityPath =
+        subprocessRoot </> "bounded-synchronous-exception.identity"
+      synchronousReleaseFifo =
+        subprocessRoot </> "bounded-synchronous-exception.release"
+      synchronousReaderReadyPath =
+        synchronousReleaseFifo <> ".reader-ready"
+  mapM_
+    removeTestPathIfPresent
+    [ synchronousIdentityPath,
+      synchronousReleaseFifo,
+      synchronousReaderReadyPath
+    ]
+  synchronousResult <- MVar.newEmptyMVar
+  synchronousThread <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              ( Subprocess.TestSynchronousExceptionProcessTree
+                  synchronousIdentityPath
+                  synchronousReleaseFifo
+              )
+          )
+          >>= MVar.putMVar synchronousResult
+      )
+  ( synchronousTargetIdentity,
+    synchronousDescendantIdentity,
+    synchronousGroupLeaderIdentity
+    ) <-
+    maybe
+      (fail "the synchronous-exception tree never published exact JSON identities")
+      pure
+      =<< waitForSynchronousTreeEvidence
+        100
+        synchronousIdentityPath
+  synchronousOwnerGroup <- fromIntegral <$> getProcessGroupID
+  synchronousActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      synchronousOwnerGroup
+  let synchronousGroupLeaderMatches =
+        synchronousGroupLeaderIdentity
+          == currentPinIdentity synchronousActivity
+  synchronousReaderReady <-
+    (== Just "reader-ready\n")
+      <$> waitForFileContents 100 synchronousReaderReadyPath
+  synchronousRelease <-
+    if synchronousReaderReady
+      then
+        try @IOException
+          (writeNamedPipePayloadNonblocking synchronousReleaseFifo "release\n")
+      else
+        pure
+          ( Left
+              ( userError
+                  "the synchronous-exception hook never published reader-ready evidence"
+              )
+          )
+  case synchronousRelease of
+    Right () -> pure ()
+    Left _ -> killThread synchronousThread
+  synchronousOutcome <-
+    timeout 5000000 (MVar.takeMVar synchronousResult)
+  synchronousGroupLeaderAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      synchronousGroupLeaderIdentity
+  synchronousTargetAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      synchronousTargetIdentity
+  synchronousDescendantAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      synchronousDescendantIdentity
+  synchronousQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      synchronousOwnerGroup
+  let synchronousPrimaryPreserved =
+        case synchronousOutcome of
+          Just (Left failure) ->
+            displayException failure == "SynchronousProtocolTestFailure"
+          _ -> False
+      synchronousReleaseSucceeded =
+        case synchronousRelease of
+          Right () -> True
+          _ -> False
+  assert
+    ( synchronousReaderReady
+        && synchronousReleaseSucceeded
+        && synchronousPrimaryPreserved
+        && synchronousGroupLeaderMatches
+        && synchronousGroupLeaderAbsent
+        && synchronousTargetAbsent
+        && synchronousDescendantAbsent
+        && synchronousQuiescent
+    )
+    ( "a deterministic synchronous protocol exception remains primary while the exact registered group leader disappears, target/descendant exits corroborate cleanup, and activity retirement proves the group absent; observed "
+        <> show
+          ( synchronousOutcome,
+            synchronousReaderReady,
+            synchronousRelease,
+            synchronousTargetIdentity,
+            synchronousDescendantIdentity,
+            synchronousGroupLeaderIdentity,
+            synchronousGroupLeaderMatches,
+            synchronousGroupLeaderAbsent,
+            synchronousTargetAbsent,
+            synchronousDescendantAbsent
+          )
+    )
+  exitOutcome <- runTestCommand (Subprocess.TestExit 7)
+  assert
+    (case exitOutcome of Subprocess.CommandFailedFatal _ -> True; _ -> False)
+    "runBoundedCommand maps a non-zero exit to CommandFailedFatal"
+  reservedExitOutcomes <-
+    mapM
+      (runTestCommand . Subprocess.TestExit)
+      [126, 127]
+  assert
+    (all isFatalCommandOutcome reservedExitOutcomes)
+    "real target exits 126 and 127 remain terminal command failures rather than colliding with exec setup provenance"
+  invalidUtf8Outcomes <-
+    mapM
+      runTestCommand
+      [ Subprocess.TestInvalidUtf8Stdout,
+        Subprocess.TestInvalidUtf8Stderr
+      ]
+  assert
+    ( and
+        [ case outcome of
+            Subprocess.CommandFailedKernel message ->
+              (streamName <> " was not valid UTF-8") `isInfixOf` message
+                && peerEvidence `isInfixOf` message
+            _ -> False
+        | (streamName, peerEvidence, outcome) <-
+            zip3
+              ["stdout", "stderr"]
+              ["valid-stderr-evidence", "valid-stdout-evidence"]
+              invalidUtf8Outcomes
+        ]
+    )
+    ( "invalid target output remains kernel provenance on both streams; observed "
+        <> show invalidUtf8Outcomes
+    )
+  overflowOutcome <-
+    runTestCommand Subprocess.TestOutputOverflow
+  let overflowWasBounded =
+        case overflowOutcome of
+          Subprocess.CommandFailedKernel message ->
+            "stdout capture failed" `isInfixOf` message
+              && "capture exceeds its size limit" `isInfixOf` message
+              && "overflow-peer-stderr" `isInfixOf` message
+          _ -> False
+  assert
+    overflowWasBounded
+    ( "bounded capture drains overflow before returning kernel provenance; observed "
+        <> show overflowOutcome
+    )
+  protocolCaptureAtLimit <-
+    runTestCommand
+      (Subprocess.TestProtocolEvidence Subprocess.ProtocolCaptureAtLimit)
+  protocolCaptureOverLimit <-
+    runTestCommand
+      (Subprocess.TestProtocolEvidence Subprocess.ProtocolCaptureOverLimit)
+  let protocolCaptureAtLimitAccepted =
+        case protocolCaptureAtLimit of
+          Subprocess.CommandSucceeded output ->
+            length output == 16777216
+          _ -> False
+      protocolCaptureOverLimitRejected =
+        case protocolCaptureOverLimit of
+          Subprocess.CommandFailedKernel message ->
+            "capture exceeds its size limit" `isInfixOf` message
+          _ -> False
+  assert
+    protocolCaptureAtLimitAccepted
+    "the framed protocol accepts a capture exactly at its 16 MiB decoded limit"
+  assert
+    protocolCaptureOverLimitRejected
+    "the framed protocol rejects a capture one byte above its 16 MiB decoded limit"
+  targetExitEvidence <-
+    mapM
+      (runTestCommand . Subprocess.TestProtocolEvidence)
+      [ Subprocess.ProtocolTargetExitAtLimit,
+        Subprocess.ProtocolTargetExitNegative,
+        Subprocess.ProtocolTargetExitOverLimit
+      ]
+  let targetExitEvidenceWasBounded =
+        case targetExitEvidence of
+          [ Subprocess.CommandFailedFatal atLimit,
+            Subprocess.CommandFailedKernel negative,
+            Subprocess.CommandFailedKernel overLimit
+            ] ->
+              "exit 255" `isInfixOf` atLimit
+                && all
+                  ("invalid bounded-command target exit evidence" `isInfixOf`)
+                  [negative, overLimit]
+          _ -> False
+  assert
+    targetExitEvidenceWasBounded
+    ( "target-exit protocol evidence accepts 255 and rejects out-of-range values; observed "
+        <> show targetExitEvidence
+    )
+  targetSignalEvidence <-
+    mapM
+      (runTestCommand . Subprocess.TestProtocolEvidence)
+      [ Subprocess.ProtocolTargetSignalAtLimit,
+        Subprocess.ProtocolTargetSignalZero,
+        Subprocess.ProtocolTargetSignalNegative,
+        Subprocess.ProtocolTargetSignalOverLimit
+      ]
+  let targetSignalEvidenceWasBounded =
+        case targetSignalEvidence of
+          [ Subprocess.CommandFailedFatal atLimit,
+            Subprocess.CommandFailedKernel zero,
+            Subprocess.CommandFailedKernel negative,
+            Subprocess.CommandFailedKernel overLimit
+            ] ->
+              "terminated by signal 127" `isInfixOf` atLimit
+                && all
+                  ("invalid bounded-command target signal evidence" `isInfixOf`)
+                  [zero, negative, overLimit]
+          _ -> False
+  assert
+    targetSignalEvidenceWasBounded
+    ( "target-signal protocol evidence accepts 127 and rejects non-positive or oversized values; observed "
+        <> show targetSignalEvidence
+    )
+  supervisorExitEvidence <-
+    mapM
+      (runTestCommand . Subprocess.TestProtocolEvidence)
+      [ Subprocess.ProtocolSupervisorExitAtLimit,
+        Subprocess.ProtocolSupervisorExitNegative,
+        Subprocess.ProtocolSupervisorExitOverLimit
+      ]
+  let supervisorExitEvidenceWasBounded =
+        case supervisorExitEvidence of
+          [ Subprocess.CommandFailedKernel atLimit,
+            Subprocess.CommandFailedKernel negative,
+            Subprocess.CommandFailedKernel overLimit
+            ] ->
+              "supervisor terminal status did not match target provenance"
+                `isInfixOf` atLimit
+                && all
+                  ("invalid bounded-command supervisor exit evidence" `isInfixOf`)
+                  [negative, overLimit]
+          _ -> False
+  assert
+    supervisorExitEvidenceWasBounded
+    ( "supervisor-exit protocol evidence accepts 255 semantically and rejects out-of-range encodings; observed "
+        <> show supervisorExitEvidence
+    )
+  timeoutOutcome <- runTestCommand (Subprocess.TestSleep 5)
+  assert
+    (timeoutOutcome == Subprocess.CommandTimedOut (Subprocess.Timeout 1000000))
+    "runBoundedCommand reaps and reports CommandTimedOut past its budget"
+  when (System.Info.os == "darwin") $ do
+    registryLockReady <- MVar.newEmptyMVar
+    registryLockRelease <- MVar.newEmptyMVar
+    registryLockHolderResult <- MVar.newEmptyMVar
+    _ <-
+      forkIO $
+        try @SomeException
+          ( withCurrentProcessIdentityRegistryLockForTest $ do
+              MVar.putMVar registryLockReady ()
+              MVar.takeMVar registryLockRelease
+          )
+          >>= MVar.putMVar registryLockHolderResult
+    MVar.takeMVar registryLockReady
+    registrationStartedAt <- getMonotonicTimeNSec
+    contendedRegistrationResult <-
+      finallyPreservingPrimary
+        (timeout 4000000 (runTestCommand (Subprocess.TestSleep 5)))
+        ( do
+            _ <- MVar.tryPutMVar registryLockRelease ()
+            pure ()
+        )
+    registrationFinishedAt <- getMonotonicTimeNSec
+    registryLockHolderFinished <-
+      timeout 2000000 (MVar.takeMVar registryLockHolderResult)
+    let registrationElapsedMicros =
+          (registrationFinishedAt - registrationStartedAt) `div` 1000
+    assert
+      ( contendedRegistrationResult
+          == Just
+            ( Subprocess.CommandTimedOut
+                (Subprocess.Timeout 1000000)
+            )
+          && registrationElapsedMicros >= 500000
+          && registrationElapsedMicros < 3000000
+          && case registryLockHolderFinished of
+            Just (Right ()) -> True
+            _ -> False
+      )
+      ( "contended helper identity registration remains inside the one-second absolute command deadline; observed "
+          <> show
+            ( contendedRegistrationResult,
+              registrationElapsedMicros,
+              fmap (either displayException (const "released")) registryLockHolderFinished
+            )
+      )
+  let retryMarkerPath = subprocessRoot </> "bounded-retry.marker"
+  removeTestPathIfPresent retryMarkerPath
+  retryOutcome <-
+    runTestCommand (Subprocess.TestRetryThenSucceed retryMarkerPath)
+  assert
+    (retryOutcome == Subprocess.CommandSucceeded "")
+    ( "bounded retry reruns a transient semantic operation and returns its real success; observed "
+        <> show retryOutcome
+    )
+  retryMarkerExists <- doesFileExist retryMarkerPath
+  assert retryMarkerExists "bounded retry performed the first failing attempt before succeeding"
+  let exhaustedRetryMarkerPath = subprocessRoot </> "bounded-exhausted-retry.marker"
+  removeTestPathIfPresent exhaustedRetryMarkerPath
+  exhaustedRetryOutcome <-
+    runTestCommand (Subprocess.TestRetryAlwaysFail exhaustedRetryMarkerPath)
+  exhaustedRetryAttempts <- lines <$> System.IO.readFile' exhaustedRetryMarkerPath
+  assert
+    ( isFatalCommandOutcome exhaustedRetryOutcome
+        && length exhaustedRetryAttempts == 3
+    )
+    "an exhausted transient retry policy returns one fatal terminal outcome after its exact attempt budget"
+  let totalDeadlineMarkerPath = subprocessRoot </> "bounded-total-deadline.marker"
+  removeTestPathIfPresent totalDeadlineMarkerPath
+  totalDeadlineOutcome <-
+    runTestCommand (Subprocess.TestRetryPastDeadline totalDeadlineMarkerPath)
+  assert
+    (totalDeadlineOutcome == Subprocess.CommandTimedOut (Subprocess.Timeout 1000000))
+    "one total command deadline encloses retry backoff instead of resetting for each attempt"
+  totalDeadlineAttempts <- lines <$> System.IO.readFile' totalDeadlineMarkerPath
+  assert
+    (length totalDeadlineAttempts == 1)
+    "the total deadline expires during backoff before a second attempt can start"
+  let acquisitionReadyPath =
+        subprocessRoot </> "bounded-acquisition-deadline.ready"
+      acquisitionExecutedPath =
+        subprocessRoot </> "bounded-acquisition-deadline.executed"
+  removeTestPathIfPresent acquisitionReadyPath
+  removeTestPathIfPresent acquisitionExecutedPath
+  acquisitionDeadlineOutcome <-
+    runTestCommand
+      ( Subprocess.TestAcquisitionDeadline
+          acquisitionReadyPath
+          acquisitionExecutedPath
+      )
+  acquisitionAnchorEvidence <-
+    maybe
+      (fail "the acquisition-deadline hook never published its exact anchor identity")
+      pure
+      =<< waitForFileContents 20 acquisitionReadyPath
+  (acquisitionAnchorPid, acquisitionAnchorBirth) <-
+    case parseExactIdentityPairs 1 acquisitionAnchorEvidence of
+      Right [identity] -> pure identity
+      Right identities ->
+        fail
+          ( "the acquisition-deadline hook published an unexpected exact identity count: "
+              <> show identities
+          )
+      Left failure ->
+        fail
+          ( "the acquisition-deadline hook published invalid exact anchor evidence: "
+              <> failure
+          )
+  acquisitionTargetExecuted <- doesFileExist acquisitionExecutedPath
+  acquisitionAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      40
+      acquisitionAnchorPid
+      acquisitionAnchorBirth
+  acquisitionOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  acquisitionActivity <-
+    readCurrentCommandActivity
+      subprocessPaths
+      acquisitionOwnerProcessGroup
+  acquisitionQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      acquisitionOwnerProcessGroup
+  assert
+    ( acquisitionDeadlineOutcome
+        == Subprocess.CommandTimedOut (Subprocess.Timeout 1000000)
+        && not acquisitionTargetExecuted
+        && acquisitionAnchorAbsent
+        && isNothing acquisitionActivity
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          acquisitionQuiescence
+          == acquisitionOwnerProcessGroup
+    )
+    ( "the total deadline interrupts acquisition after anchor spawn, reaps the anchor, keeps the target gated, and publishes no lease; observed "
+        <> show
+          ( acquisitionDeadlineOutcome,
+            acquisitionTargetExecuted,
+            acquisitionAnchorAbsent,
+            acquisitionActivity
+          )
+    )
+  let anchorPrePublicationReadyPath =
+        subprocessRoot </> "bounded-anchor-pre-publication-death.ready"
+  removeTestPathIfPresent anchorPrePublicationReadyPath
+  anchorPrePublicationOutcome <-
+    timeout
+      5000000
+      ( runTestCommand
+          ( Subprocess.TestAnchorDeathBeforeSupervisorPublication
+              anchorPrePublicationReadyPath
+          )
+      )
+  anchorPrePublicationEvidence <-
+    maybe
+      (fail "the anchor pre-publication fixture did not publish hidden supervisor custody")
+      pure
+      =<< waitForFileContents 20 anchorPrePublicationReadyPath
+  (hiddenSupervisorPid, hiddenSupervisorGroup, hiddenSupervisorBirth) <-
+    case lines anchorPrePublicationEvidence of
+      [processIdText, processGroupText, birthIdentityText]
+        | Just processId <- readMaybe processIdText,
+          Just processGroup <- readMaybe processGroupText,
+          Just birthIdentity <- parseProcessBirthIdentity birthIdentityText ->
+            pure (processId, processGroup, birthIdentity)
+      _ ->
+        fail
+          ( "the anchor pre-publication fixture published invalid exact supervisor custody: "
+              <> show anchorPrePublicationEvidence
+          )
+  hiddenSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      80
+      hiddenSupervisorPid
+      hiddenSupervisorBirth
+  hiddenSupervisorGroupAbsent <-
+    waitForProcessGroupAbsent 80 hiddenSupervisorGroup
+  anchorPrePublicationOwnerGroup <- fromIntegral <$> getProcessGroupID
+  anchorPrePublicationActivity <-
+    readCurrentCommandActivity
+      subprocessPaths
+      anchorPrePublicationOwnerGroup
+  anchorPrePublicationQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      anchorPrePublicationOwnerGroup
+  assert
+    ( maybe False isKernelCommandOutcome anchorPrePublicationOutcome
+        && hiddenSupervisorAbsent
+        && hiddenSupervisorGroupAbsent
+        && isNothing anchorPrePublicationActivity
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          anchorPrePublicationQuiescence
+          == anchorPrePublicationOwnerGroup
+    )
+    ( "anchor death before the first supervisor custody event kills the exact stopped helper group and publishes no activity; observed "
+        <> show
+          ( anchorPrePublicationOutcome,
+            hiddenSupervisorPid,
+            hiddenSupervisorGroup,
+            hiddenSupervisorAbsent,
+            hiddenSupervisorGroupAbsent,
+            anchorPrePublicationActivity
+          )
+    )
+  let idempotentAbsenceMarkerPath = subprocessRoot </> "bounded-idempotent-absence.marker"
+  removeTestPathIfPresent idempotentAbsenceMarkerPath
+  absenceOutcome <-
+    runTestCommand (Subprocess.TestIdempotentAbsence idempotentAbsenceMarkerPath)
+  idempotentAbsenceAttempts <- lines <$> System.IO.readFile' idempotentAbsenceMarkerPath
+  assert
+    ( (case absenceOutcome of Subprocess.CommandSucceeded _ -> True; _ -> False)
+        && length idempotentAbsenceAttempts == 1
+    )
+    "recognized idempotent absence succeeds immediately without consuming retry attempts"
+  let idempotentFailureMarkerPath = subprocessRoot </> "bounded-idempotent-failure.marker"
+  removeTestPathIfPresent idempotentFailureMarkerPath
+  idempotentFailureOutcome <-
+    runTestCommand (Subprocess.TestIdempotentFailure idempotentFailureMarkerPath)
+  idempotentFailureAttempts <- lines <$> System.IO.readFile' idempotentFailureMarkerPath
+  assert
+    ( isFatalCommandOutcome idempotentFailureOutcome
+        && length idempotentFailureAttempts == 3
+    )
+    "an unrecognized idempotent-absence failure exhausts its exact bounded attempt budget"
+  let missingKindPath = subprocessRoot </> "kind-does-not-exist"
+      missingKindTools =
+        (HostConfig.hostToolPaths baseHostConfig)
+          { HostConfig.hostKind = Text.pack missingKindPath,
+            HostConfig.hostDocker = Text.pack fixtureDockerPath
+          }
+      missingKindPaths =
+        subprocessPaths
+          { pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = missingKindTools,
+                    HostConfig.hostCommandPolicies =
+                      (HostConfig.hostCommandPolicies baseHostConfig)
+                        { HostConfig.dhallKindDelete =
+                            ( HostConfig.dhallKindDelete
+                                (HostConfig.hostCommandPolicies baseHostConfig)
+                            )
+                              { HostConfig.dhallRetry =
+                                  HostConfig.Bounded
+                                    HostConfig.DhallBoundedRetry
+                                      { HostConfig.dhallAttempts = 3,
+                                        HostConfig.dhallBackoffMicros = 5000000
+                                      }
+                              }
+                        }
+                  }
+          }
+  writeExecutableFixture missingKindPath "#!/bin/sh\nexit 0\n"
+  missingKindEnv <- Subprocess.clusterSubprocessEnv missingKindPaths
+  missingKindDelete <-
+    expectRight
+      "compile Kind delete before its executable fixture disappears"
+      ( Subprocess.compileBoundedCommand
+          ( ClusterCommand.kindDelete
+              (ClusterCommand.ClusterName "unit-cluster")
+              (ClusterCommand.kindScratchKubeconfig scratchKubeconfigPath)
+          )
+          missingKindEnv
+      )
+  removeFile missingKindPath
+  missingKindOutcome <-
+    maybe
+      (fail "a target exec failure incorrectly entered command retry backoff")
+      pure
+      =<< timeout
+        1000000
+        (Subprocess.runBoundedCommand missingKindDelete)
+  assert
+    (case missingKindOutcome of Subprocess.CommandFailedKernel _ -> True; _ -> False)
+    "a post-compilation target exec failure remains a kernel failure and bypasses idempotent-absence retries"
+  targetSetupFailureOutcome <-
+    runTestCommand Subprocess.TestTargetSetupFailure
+  targetSetupFailureOwnerProcessGroup <-
+    fromIntegral <$> getProcessGroupID
+  targetSetupFailureQuiescent <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      targetSetupFailureOwnerProcessGroup
+  let targetSetupFailureWasContained =
+        case targetSetupFailureOutcome of
+          Subprocess.CommandFailedKernel message ->
+            "bounded-command target setup failed before its start gate"
+              `isInfixOf` message
+              && "forced pre-gate target setup failure"
+                `isInfixOf` message
+              && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+                targetSetupFailureQuiescent
+                == targetSetupFailureOwnerProcessGroup
+          _ -> False
+  assert
+    targetSetupFailureWasContained
+    ( "a pre-gate target setup failure is kernel provenance and leaves no activity or helper custody; observed "
+        <> show targetSetupFailureOutcome
+    )
+  let childPidPath = subprocessRoot </> "bounded-process-tree.pid"
+  removeTestPathIfPresent childPidPath
+  processTreeResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( runTestCommand
+          (Subprocess.TestSpawnProcessTree childPidPath)
+          >>= MVar.putMVar processTreeResult
+      )
+  childPidContents <-
+    maybe
+      (fail "the timeout process-tree fixture never published its descendant")
+      pure
+      =<< waitForFileContents 100 childPidPath
+  processTreeOwnerGroup <- fromIntegral <$> getProcessGroupID
+  processTreeActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      processTreeOwnerGroup
+  processTreeOutcome <-
+    maybe
+      (fail "the timeout process-tree command did not terminate")
+      pure
+      =<< timeout 8000000 (MVar.takeMVar processTreeResult)
+  processTreeAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity processTreeActivity)
+  processTreeSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity processTreeActivity)
+  processTreePinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity processTreeActivity)
+  processTreeGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity processTreeActivity))
+  processTreeActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      processTreeOwnerGroup
+  let childPid = takeWhile (/= '\n') childPidContents
+  childPidAbsentCorroboration <- waitForPidExit 40 childPid
+  assert
+    ( processTreeOutcome
+        == Subprocess.CommandTimedOut (Subprocess.Timeout 1000000)
+        && processTreeAnchorAbsent
+        && processTreeSupervisorAbsent
+        && processTreePinAbsent
+        && processTreeGroupAbsent
+        && processTreeActivitiesQuiescent
+    )
+    ( "runBoundedCommand reports timeout only after its exact helper identities and target group are absent; observed "
+        <> show
+          ( processTreeOutcome,
+            processTreeAnchorAbsent,
+            processTreeSupervisorAbsent,
+            processTreePinAbsent,
+            processTreeGroupAbsent,
+            processTreeActivitiesQuiescent,
+            childPidAbsentCorroboration
+          )
+    )
+  let cancelledChildPidPath =
+        subprocessRoot </> "bounded-cancelled-process-tree.pid"
+  removeTestPathIfPresent cancelledChildPidPath
+  cancelledResult <- MVar.newEmptyMVar
+  cancelledRunner <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              (Subprocess.TestSpawnProcessTree cancelledChildPidPath)
+          )
+          >>= MVar.putMVar cancelledResult
+      )
+  cancelledChildPidContents <-
+    maybe
+      (fail "the asynchronously cancelled command never published its descendant pid")
+      pure
+      =<< waitForFileContents 100 cancelledChildPidPath
+  cancelledOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  cancelledActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      cancelledOwnerProcessGroup
+  cancellationStartedAt <- getMonotonicTimeNSec
+  killThread cancelledRunner
+  cancelledOutcome <-
+    timeout 5000000 (MVar.takeMVar cancelledResult)
+  cancellationFinishedAt <- getMonotonicTimeNSec
+  let cancelledChildPid =
+        takeWhile (/= '\n') cancelledChildPidContents
+      cancellationElapsedMicros =
+        (cancellationFinishedAt - cancellationStartedAt) `div` 1000
+  cancelledChildPidAbsentCorroboration <-
+    waitForPidExit 40 cancelledChildPid
+  cancelledAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity cancelledActivity)
+  cancelledSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity cancelledActivity)
+  cancelledPinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity cancelledActivity)
+  cancelledGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity cancelledActivity))
+  cancelledActivitiesQuiescent <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      cancelledOwnerProcessGroup
+  let cancellationWasObserved =
+        case cancelledOutcome of
+          Just (Left failure) ->
+            isJust (fromException failure :: Maybe SomeAsyncException)
+          _ -> False
+  assert
+    ( cancellationWasObserved
+        && cancellationElapsedMicros < 4000000
+        && cancelledAnchorAbsent
+        && cancelledSupervisorAbsent
+        && cancelledPinAbsent
+        && cancelledGroupAbsent
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          cancelledActivitiesQuiescent
+          == cancelledOwnerProcessGroup
+    )
+    ( "asynchronous cancellation completes bounded cleanup with no target or activity residue; observed "
+        <> show
+          ( cancelledOutcome,
+            cancellationElapsedMicros,
+            cancelledAnchorAbsent,
+            cancelledSupervisorAbsent,
+            cancelledPinAbsent,
+            cancelledGroupAbsent,
+            cancelledChildPidAbsentCorroboration
+          )
+    )
+  let stoppedGroupPidPath =
+        subprocessRoot </> "bounded-stopped-group.pid"
+  removeTestPathIfPresent stoppedGroupPidPath
+  stoppedGroupResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( runTestCommand
+          (Subprocess.TestStopProcessGroup stoppedGroupPidPath)
+          >>= MVar.putMVar stoppedGroupResult
+      )
+  stoppedGroupPid <-
+    maybe
+      (fail "the stopped process-group target did not publish its process id")
+      pure
+      =<< waitForFileContents 100 stoppedGroupPidPath
+  stoppedGroupWasObserved <-
+    waitForExternalPidStopped
+      40
+      (takeWhile (/= '\n') stoppedGroupPid)
+  stoppedGroupOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  stoppedGroupActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      stoppedGroupOwnerProcessGroup
+  stoppedGroupOutcome <-
+    timeout 8000000 (MVar.takeMVar stoppedGroupResult)
+  assert
+    ( stoppedGroupWasObserved
+        && stoppedGroupOutcome
+          == Just
+            (Subprocess.CommandTimedOut (Subprocess.Timeout 5000000))
+    )
+    ( "the target reached a kernel-observed stopped state before bounded timeout cleanup returned; observed "
+        <> show (stoppedGroupWasObserved, stoppedGroupOutcome)
+    )
+  stoppedGroupTargetPidAbsentCorroboration <-
+    waitForPidExit 40 (takeWhile (/= '\n') stoppedGroupPid)
+  stoppedGroupAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity stoppedGroupActivity)
+  stoppedGroupSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity stoppedGroupActivity)
+  stoppedGroupPinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity stoppedGroupActivity)
+  stoppedTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity stoppedGroupActivity))
+  stoppedGroupActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      stoppedGroupOwnerProcessGroup
+  assert
+    ( stoppedGroupAnchorAbsent
+        && stoppedGroupSupervisorAbsent
+        && stoppedGroupPinAbsent
+        && stoppedTargetGroupAbsent
+        && stoppedGroupActivitiesQuiescent
+    )
+    ( "the timeout path resumes and removes the exact stopped target group before activity retirement; observed "
+        <> show
+          ( stoppedGroupAnchorAbsent,
+            stoppedGroupSupervisorAbsent,
+            stoppedGroupPinAbsent,
+            stoppedTargetGroupAbsent,
+            stoppedGroupActivitiesQuiescent,
+            stoppedGroupTargetPidAbsentCorroboration
+          )
+    )
+  supervisorControlFailureOutcome <-
+    runTestCommand Subprocess.TestSupervisorControlFailure
+  let supervisorControlFailureWasKernel =
+        case supervisorControlFailureOutcome of
+          Subprocess.CommandFailedKernel message ->
+            "parent-control read failed"
+              `isInfixOf` message
+              && "supervisor-control-stdout" `isInfixOf` message
+              && "supervisor-control-stderr" `isInfixOf` message
+          _ -> False
+  assert
+    supervisorControlFailureWasKernel
+    ( "a supervisor parent-control failure remains out-of-band kernel provenance; observed "
+        <> show supervisorControlFailureOutcome
+    )
+  supervisorSignalOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  let killedSupervisorChildPidPath =
+        subprocessRoot </> "bounded-killed-supervisor-child.pid"
+  removeTestPathIfPresent killedSupervisorChildPidPath
+  killedSupervisorResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              ( Subprocess.TestParentDeathProcessTree
+                  killedSupervisorChildPidPath
+              )
+          )
+          >>= MVar.putMVar killedSupervisorResult
+      )
+  killedSupervisorChildPid <-
+    maybe
+      (fail "the supervisor-SIGKILL command never published its descendant pid")
+      (pure . takeWhile (/= '\n'))
+      =<< waitForFileContents 100 killedSupervisorChildPidPath
+  killedSupervisorActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  signalProcess
+    sigKILL
+    (fromIntegral (currentSupervisorProcessId killedSupervisorActivity))
+  killedSupervisorOutcome <-
+    timeout 8000000 (MVar.takeMVar killedSupervisorResult)
+  killedSupervisorChildPidAbsentCorroboration <-
+    waitForPidExit 80 killedSupervisorChildPid
+  killedSupervisorAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity killedSupervisorActivity)
+  killedSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity killedSupervisorActivity)
+  killedSupervisorTargetGroupLeaderAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity killedSupervisorActivity)
+  killedSupervisorTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity killedSupervisorActivity))
+  killedSupervisorActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  let killedSupervisorReturnedKernelFailure =
+        case killedSupervisorOutcome of
+          Just (Right outcome) -> isKernelCommandOutcome outcome
+          _ -> False
+  assert
+    ( killedSupervisorReturnedKernelFailure
+        && killedSupervisorAnchorAbsent
+        && killedSupervisorAbsent
+        && killedSupervisorTargetGroupLeaderAbsent
+        && killedSupervisorTargetGroupAbsent
+        && killedSupervisorActivitiesQuiescent
+    )
+    ( "hard supervisor SIGKILL makes outer cleanup kill the live process tree and retire its activity; observed "
+        <> show
+          ( killedSupervisorOutcome,
+            killedSupervisorAnchorAbsent,
+            killedSupervisorAbsent,
+            killedSupervisorTargetGroupLeaderAbsent,
+            killedSupervisorTargetGroupAbsent,
+            killedSupervisorChildPidAbsentCorroboration
+          )
+    )
+  let killedPinChildPidPath =
+        subprocessRoot </> "bounded-killed-pin-child.pid"
+  removeTestPathIfPresent killedPinChildPidPath
+  killedPinResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              ( Subprocess.TestParentDeathProcessTree
+                  killedPinChildPidPath
+              )
+          )
+          >>= MVar.putMVar killedPinResult
+      )
+  killedPinChildPid <-
+    maybe
+      (fail "the retained-pin SIGKILL command never published its descendant pid")
+      (pure . takeWhile (/= '\n'))
+      =<< waitForFileContents 100 killedPinChildPidPath
+  killedPinActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  signalProcess
+    sigKILL
+    (fromIntegral (currentTargetGroupLeaderProcessId killedPinActivity))
+  killedPinOutcome <-
+    timeout 8000000 (MVar.takeMVar killedPinResult)
+  killedPinChildPidAbsentCorroboration <-
+    waitForPidExit 100 killedPinChildPid
+  killedPinAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      100
+      (currentCommandProcessId killedPinActivity)
+      (currentCommandBirthIdentity killedPinActivity)
+  killedPinSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      100
+      (currentSupervisorProcessId killedPinActivity)
+      (currentSupervisorBirthIdentity killedPinActivity)
+  killedPinLeaderAbsent <-
+    waitForExactProcessIdentityAbsent
+      100
+      (currentTargetGroupLeaderProcessId killedPinActivity)
+      (currentTargetGroupLeaderBirthIdentity killedPinActivity)
+  killedPinTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      100
+      (recordedProcessGroup (currentPinIdentity killedPinActivity))
+  killedPinActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  let killedPinWasKernelFailure =
+        case killedPinOutcome of
+          Just (Right (Subprocess.CommandFailedKernel message)) ->
+            "retained target-group pin exited"
+              `isInfixOf` message
+          _ -> False
+  assert
+    ( killedPinWasKernelFailure
+        && killedPinAnchorAbsent
+        && killedPinSupervisorAbsent
+        && killedPinLeaderAbsent
+        && killedPinTargetGroupAbsent
+        && killedPinActivitiesQuiescent
+    )
+    ( "retained-pin death is observed as kernel failure and cannot leave the target tree or activity lease live; observed "
+        <> show
+          ( killedPinOutcome,
+            killedPinAnchorAbsent,
+            killedPinSupervisorAbsent,
+            killedPinLeaderAbsent,
+            killedPinTargetGroupAbsent,
+            killedPinChildPidAbsentCorroboration
+          )
+    )
+  let stoppedSupervisorChildPidPath =
+        subprocessRoot </> "bounded-stopped-supervisor-child.pid"
+  removeTestPathIfPresent stoppedSupervisorChildPidPath
+  stoppedSupervisorResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          ( runTestCommand
+              (Subprocess.TestSpawnProcessTree stoppedSupervisorChildPidPath)
+          )
+          >>= MVar.putMVar stoppedSupervisorResult
+      )
+  stoppedSupervisorChildPid <-
+    maybe
+      (fail "the supervisor-SIGSTOP command never published its descendant pid")
+      (pure . takeWhile (/= '\n'))
+      =<< waitForFileContents 100 stoppedSupervisorChildPidPath
+  stoppedSupervisorActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  signalProcess
+    sigSTOP
+    (fromIntegral (currentSupervisorProcessId stoppedSupervisorActivity))
+  supervisorStopObserved <-
+    waitForExternalPidStopped
+      20
+      (show (currentSupervisorProcessId stoppedSupervisorActivity))
+  stoppedSupervisorOutcome <-
+    timeout 8000000 (MVar.takeMVar stoppedSupervisorResult)
+  stoppedSupervisorChildPidAbsentCorroboration <-
+    waitForPidExit 80 stoppedSupervisorChildPid
+  stoppedSupervisorAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity stoppedSupervisorActivity)
+  stoppedSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity stoppedSupervisorActivity)
+  stoppedSupervisorPinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity stoppedSupervisorActivity)
+  stoppedSupervisorTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity stoppedSupervisorActivity))
+  stoppedSupervisorActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      supervisorSignalOwnerProcessGroup
+  let stoppedSupervisorTimedOut =
+        case stoppedSupervisorOutcome of
+          Just
+            ( Right
+                (Subprocess.CommandTimedOut (Subprocess.Timeout 1000000))
+              ) -> True
+          _ -> False
+  assert
+    ( supervisorStopObserved
+        && stoppedSupervisorTimedOut
+        && stoppedSupervisorAnchorAbsent
+        && stoppedSupervisorAbsent
+        && stoppedSupervisorPinAbsent
+        && stoppedSupervisorTargetGroupAbsent
+        && stoppedSupervisorActivitiesQuiescent
+    )
+    ( "hard supervisor SIGSTOP is observed before the total deadline makes outer cleanup kill the process tree and retire its activity; observed "
+        <> show
+          ( supervisorStopObserved,
+            stoppedSupervisorOutcome,
+            stoppedSupervisorAnchorAbsent,
+            stoppedSupervisorAbsent,
+            stoppedSupervisorPinAbsent,
+            stoppedSupervisorTargetGroupAbsent,
+            stoppedSupervisorChildPidAbsentCorroboration
+          )
+    )
+  let killedParentChildPidPath =
+        subprocessRoot </> "bounded-killed-parent.pid"
+  removeTestPathIfPresent killedParentChildPidPath
+  killedParentCommand <-
+    expectRight
+      "compile parent-liveness process-tree command"
+      ( Subprocess.compileTestCommand
+          (Subprocess.TestParentDeathProcessTree killedParentChildPidPath)
+          subprocessEnv
+      )
+  boundedCommandOwnerPid <-
+    forkProcess $ do
+      _ <- Subprocess.runBoundedCommand killedParentCommand
+      exitImmediately (ExitFailure 1)
+  killedParentChildPidContents <-
+    maybe
+      (fail "parent-liveness fixture did not publish its descendant pid")
+      pure
+      =<< waitForFileContents 100 killedParentChildPidPath
+  let killedParentChildPid =
+        takeWhile (/= '\n') killedParentChildPidContents
+      subprocessActivityRoot =
+        runtimeRoot subprocessPaths </> "bounded-command-activity"
+  ownerProcessGroup <- fromIntegral <$> getProcessGroupID
+  killedParentActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      ownerProcessGroup
+  activityEntries <- listDirectory subprocessActivityRoot
+  activityDocuments <-
+    mapM
+      (Lazy.readFile . (subprocessActivityRoot </>))
+      (filter (".lease.json" `isSuffixOf`) activityEntries)
+  let hasCurrentActivityAndCompatibilityFields activityContents =
+        case Aeson.decode activityContents of
+          Just (Aeson.Object activityObject) ->
+            KeyMap.lookup (Key.fromString "version") activityObject
+              == Just (Aeson.Number 3)
+              && all
+                ((`KeyMap.member` activityObject) . Key.fromString)
+                [ "watchdogProcessId",
+                  "watchdogProcessGroup",
+                  "watchdogBirthIdentity",
+                  "targetGroupLeaderProcessId",
+                  "targetGroup",
+                  "targetGroupLeaderBirthIdentity"
+                ]
+          _ -> False
+  signalProcess sigKILL boundedCommandOwnerPid
+  _ <- getProcessStatus True False boundedCommandOwnerPid
+  killedParentChildPidAbsentCorroboration <-
+    waitForPidExit 80 killedParentChildPid
+  killedParentAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity killedParentActivity)
+  killedParentSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity killedParentActivity)
+  killedParentPinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity killedParentActivity)
+  killedParentTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity killedParentActivity))
+  killedParentActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      ownerProcessGroup
+  assert
+    ( any hasCurrentActivityAndCompatibilityFields activityDocuments
+        && killedParentAnchorAbsent
+        && killedParentSupervisorAbsent
+        && killedParentPinAbsent
+        && killedParentTargetGroupAbsent
+        && killedParentActivitiesQuiescent
+    )
+    ( "the version-3 activity lease records exact helper identities and drives owner-death cleanup; observed "
+        <> show
+          ( killedParentAnchorAbsent,
+            killedParentSupervisorAbsent,
+            killedParentPinAbsent,
+            killedParentTargetGroupAbsent,
+            killedParentActivitiesQuiescent,
+            killedParentChildPidAbsentCorroboration
+          )
+    )
+  let recoverableOwnerDeathPidPath =
+        subprocessRoot </> "bounded-recoverable-owner-death.pid"
+  removeTestPathIfPresent recoverableOwnerDeathPidPath
+  recoverableOwnerDeathCommand <-
+    expectRight
+      "compile exact-identity owner-death recovery command"
+      ( Subprocess.compileTestCommand
+          (Subprocess.TestParentDeathProcessTree recoverableOwnerDeathPidPath)
+          subprocessEnv
+      )
+  recoverableOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand recoverableOwnerDeathCommand
+      exitImmediately (ExitFailure 1)
+  recoverableDescendantPid <-
+    maybe
+      (fail "recoverable owner-death command never published its descendant")
+      (pure . takeWhile (/= '\n'))
+      =<< waitForFileContents 100 recoverableOwnerDeathPidPath
+  recoverableActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      (fromIntegral recoverableOwnerPid)
+  signalProcess
+    sigSTOP
+    (fromIntegral (currentCommandProcessId recoverableActivity))
+  recoverableAnchorStopped <-
+    waitForExternalPidStopped
+      20
+      (show (currentCommandProcessId recoverableActivity))
+  signalProcessGroup sigKILL recoverableOwnerPid
+  _ <- getProcessStatus True False recoverableOwnerPid
+  recoverableQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral recoverableOwnerPid)
+  recoverableAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      (currentCommandProcessId recoverableActivity)
+      (currentCommandBirthIdentity recoverableActivity)
+  recoverableSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      (currentSupervisorProcessId recoverableActivity)
+      (currentSupervisorBirthIdentity recoverableActivity)
+  recoverableTargetLeaderAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      (currentTargetGroupLeaderProcessId recoverableActivity)
+      (currentTargetGroupLeaderBirthIdentity recoverableActivity)
+  recoverableDescendantPidAbsentCorroboration <-
+    waitForPidExit 120 recoverableDescendantPid
+  recoverableTargetGroupAbsent <-
+    waitForProcessGroupAbsent
+      120
+      (recordedProcessGroup (currentPinIdentity recoverableActivity))
+  recoverableActivityAfterRecovery <-
+    readCurrentCommandActivity
+      subprocessPaths
+      (fromIntegral recoverableOwnerPid)
+  assert
+    ( recoverableAnchorStopped
+        && recoverableAnchorAbsent
+        && recoverableSupervisorAbsent
+        && recoverableTargetLeaderAbsent
+        && recoverableTargetGroupAbsent
+        && isNothing recoverableActivityAfterRecovery
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          recoverableQuiescence
+          == fromIntegral recoverableOwnerPid
+    )
+    ( "dead-owner recovery uses the persisted exact identities to continue, terminate all three groups, and retire the lease; observed "
+        <> show
+          ( recoverableAnchorStopped,
+            recoverableAnchorAbsent,
+            recoverableSupervisorAbsent,
+            recoverableTargetLeaderAbsent,
+            recoverableTargetGroupAbsent,
+            recoverableDescendantPidAbsentCorroboration,
+            recoverableActivityAfterRecovery
+          )
+    )
+  let stoppedParentDeathPidPath =
+        subprocessRoot </> "bounded-parent-death-stopped-group.pid"
+  removeTestPathIfPresent stoppedParentDeathPidPath
+  stoppedParentDeathCommand <-
+    expectRight
+      "compile parent-death stopped-group command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestParentDeathStoppedProcessGroup
+              stoppedParentDeathPidPath
+          )
+          subprocessEnv
+      )
+  stoppedGroupOwnerPid <-
+    forkProcess $ do
+      _ <- Subprocess.runBoundedCommand stoppedParentDeathCommand
+      exitImmediately (ExitFailure 1)
+  stoppedParentDeathPidContents <-
+    maybe
+      (fail "parent-death stopped-group fixture did not publish its pid")
+      pure
+      =<< waitForFileContents 100 stoppedParentDeathPidPath
+  let stoppedParentDeathPid =
+        takeWhile (/= '\n') stoppedParentDeathPidContents
+  stoppedParentDeathActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      ownerProcessGroup
+  signalProcess sigKILL stoppedGroupOwnerPid
+  _ <- getProcessStatus True False stoppedGroupOwnerPid
+  stoppedParentDeathPidAbsentCorroboration <-
+    waitForPidExit 80 stoppedParentDeathPid
+  stoppedParentDeathAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentAnchorIdentity stoppedParentDeathActivity)
+  stoppedParentDeathSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentSupervisorIdentity stoppedParentDeathActivity)
+  stoppedParentDeathPinAbsent <-
+    waitForRecordedIdentityAbsent
+      80
+      (currentPinIdentity stoppedParentDeathActivity)
+  stoppedParentDeathGroupAbsent <-
+    waitForProcessGroupAbsent
+      80
+      (recordedProcessGroup (currentPinIdentity stoppedParentDeathActivity))
+  stoppedParentActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      100
+      subprocessPaths
+      ownerProcessGroup
+  assert
+    ( stoppedParentDeathAnchorAbsent
+        && stoppedParentDeathSupervisorAbsent
+        && stoppedParentDeathPinAbsent
+        && stoppedParentDeathGroupAbsent
+        && stoppedParentActivitiesQuiescent
+    )
+    ( "the out-of-group supervisor requests anchor-owned termination of the exact stopped target group after owner SIGKILL; observed "
+        <> show
+          ( stoppedParentDeathAnchorAbsent,
+            stoppedParentDeathSupervisorAbsent,
+            stoppedParentDeathPinAbsent,
+            stoppedParentDeathGroupAbsent,
+            stoppedParentActivitiesQuiescent,
+            stoppedParentDeathPidAbsentCorroboration
+          )
+    )
+  let terminalFirstChildPidPath =
+        subprocessRoot </> "bounded-terminal-first-child.pid"
+      terminalFirstObservationPath =
+        subprocessRoot </> "bounded-terminal-first.observed"
+  removeTestPathIfPresent terminalFirstChildPidPath
+  removeTestPathIfPresent terminalFirstObservationPath
+  terminalFirstCommand <-
+    expectRight
+      "compile terminal-first stopped owner-death command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestTerminalFirstStoppedOwnerDeath
+              terminalFirstChildPidPath
+              terminalFirstObservationPath
+          )
+          subprocessEnv
+      )
+  terminalFirstOwnerPid <-
+    forkProcess $ do
+      _ <- Subprocess.runBoundedCommand terminalFirstCommand
+      exitImmediately (ExitFailure 1)
+  terminalFirstChildPid <-
+    maybe
+      (fail "the terminal-first command never published its descendant pid")
+      (pure . takeWhile (/= '\n'))
+      =<< waitForFileContents 100 terminalFirstChildPidPath
+  terminalFirstObservation <-
+    maybe
+      (fail "the supervisor never published its terminal-first stop observation")
+      pure
+      =<< waitForFileContents 100 terminalFirstObservationPath
+  (terminalFirstTargetIdentity, terminalFirstObservedPinIdentity) <-
+    expectRight
+      "decode terminal-first target and pin identities"
+      (parseRegisteredTargetAndLeader terminalFirstObservation)
+  terminalFirstTargetReaped <-
+    waitForRecordedIdentityAbsent
+      0
+      terminalFirstTargetIdentity
+  terminalFirstActivity <-
+    waitForCurrentCommandActivity
+      100
+      subprocessPaths
+      ownerProcessGroup
+  let terminalFirstPinIdentity =
+        currentPinIdentity terminalFirstActivity
+      terminalFirstPinMatches =
+        terminalFirstObservedPinIdentity == terminalFirstPinIdentity
+  terminalFirstPinStopped <-
+    waitForExternalPidStopped
+      20
+      (show (recordedProcessId terminalFirstObservedPinIdentity))
+  signalProcess sigKILL terminalFirstOwnerPid
+  _ <- getProcessStatus True False terminalFirstOwnerPid
+  terminalFirstChildPidAbsentCorroboration <-
+    waitForPidExit 120 terminalFirstChildPid
+  terminalFirstPinAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      terminalFirstPinIdentity
+  terminalFirstGroupAbsent <-
+    waitForProcessGroupAbsent
+      120
+      (recordedProcessGroup terminalFirstPinIdentity)
+  terminalFirstAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      (currentAnchorIdentity terminalFirstActivity)
+  terminalFirstSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      (currentSupervisorIdentity terminalFirstActivity)
+  terminalFirstActivitiesQuiescent <-
+    waitForBoundedCommandActivitiesQuiescent
+      120
+      subprocessPaths
+      ownerProcessGroup
+  assert
+    ( terminalFirstTargetReaped
+        && terminalFirstPinMatches
+        && terminalFirstPinStopped
+        && terminalFirstPinAbsent
+        && terminalFirstGroupAbsent
+        && terminalFirstAnchorAbsent
+        && terminalFirstSupervisorAbsent
+        && terminalFirstActivitiesQuiescent
+    )
+    ( "after target reap and command-group stop, owner SIGKILL leaves no descendant, pin, anchor, supervisor, or activity; observed "
+        <> show
+          ( terminalFirstTargetReaped,
+            terminalFirstPinMatches,
+            terminalFirstPinStopped,
+            terminalFirstChildPidAbsentCorroboration,
+            terminalFirstPinAbsent,
+            terminalFirstGroupAbsent,
+            terminalFirstAnchorAbsent,
+            terminalFirstSupervisorAbsent
+          )
+    )
+  let legacyActivityDocument =
+        Aeson.object
+          [ "version" Aeson..= (1 :: Int),
+            "ownerProcessGroup" Aeson..= ownerProcessGroup,
+            "commandProcessId" Aeson..= (2147483647 :: Integer),
+            "commandProcessGroup" Aeson..= (2147483647 :: Integer),
+            "commandBirthIdentity" Aeson..= ("legacy-boot:1" :: String)
+          ]
+      legacyActivityContents =
+        Aeson.encode legacyActivityDocument
+      legacyActivityPath =
+        subprocessActivityRoot
+          </> ( "activity-"
+                  <> ByteString8.unpack
+                    (Base16.encode (SHA256.hashlazy legacyActivityContents))
+                  <> ".lease.json"
+              )
+  Lazy.writeFile legacyActivityPath legacyActivityContents
+  setFileMode legacyActivityPath 0o600
+  _ <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      ownerProcessGroup
+  legacyActivityRetained <- doesFileExist legacyActivityPath
+  assert
+    (not legacyActivityRetained)
+    "recovery decodes and retires a digest-valid version-1 activity lease"
+  let versionTwoActivityDocument =
+        Aeson.object
+          [ "version" Aeson..= (2 :: Int),
+            "ownerProcessGroup" Aeson..= ownerProcessGroup,
+            "commandProcessId" Aeson..= (2147483646 :: Integer),
+            "commandProcessGroup" Aeson..= (2147483646 :: Integer),
+            "commandBirthIdentity" Aeson..= ("legacy-boot:2" :: String),
+            "watchdogProcessId" Aeson..= (2147483645 :: Integer),
+            "watchdogProcessGroup" Aeson..= (2147483645 :: Integer),
+            "watchdogBirthIdentity" Aeson..= ("legacy-boot:3" :: String)
+          ]
+      versionTwoActivityContents =
+        Aeson.encode versionTwoActivityDocument
+      versionTwoActivityPath =
+        subprocessActivityRoot
+          </> ( "activity-"
+                  <> ByteString8.unpack
+                    (Base16.encode (SHA256.hashlazy versionTwoActivityContents))
+                  <> ".lease.json"
+              )
+  Lazy.writeFile versionTwoActivityPath versionTwoActivityContents
+  setFileMode versionTwoActivityPath 0o600
+  _ <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      ownerProcessGroup
+  versionTwoActivityRetained <- doesFileExist versionTwoActivityPath
+  assert
+    (not versionTwoActivityRetained)
+    "recovery preserves version-2 decoder compatibility while version 3 is current"
+  let oversizedFinalActivityPath =
+        subprocessActivityRoot </> "oversized.lease.json"
+  BS.writeFile
+    oversizedFinalActivityPath
+    (BS.replicate 65537 0x20)
+  setFileMode oversizedFinalActivityPath 0o600
+  oversizedFinalRecovery <-
+    try @IOException
+      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+          subprocessPaths
+          ownerProcessGroup
+      )
+  oversizedFinalRetained <- doesFileExist oversizedFinalActivityPath
+  removeFile oversizedFinalActivityPath
+  assert
+    ( isLeft oversizedFinalRecovery
+        && either
+          (isInfixOf "activity lease exceeds its size limit" . displayException)
+          (const False)
+          oversizedFinalRecovery
+        && oversizedFinalRetained
+    )
+    "an oversized authoritative final activity lease fails closed and remains for diagnosis"
+  let legacyIncomingActivityPath =
+        subprocessActivityRoot </> ".incoming-activity-v1.legacy"
+      assertIncomingActivityRefused label incomingPath = do
+        BS.writeFile incomingPath ""
+        setFileMode incomingPath 0o600
+        recovery <-
+          try @IOException
+            ( Subprocess.proveBoundedCommandActivitiesQuiescent
+                subprocessPaths
+                ownerProcessGroup
+            )
+        retained <- doesFileExist incomingPath
+        removeFile incomingPath
+        assert
+          (isLeft recovery && retained)
+          label
+  assertIncomingActivityRefused
+    "a legacy incoming activity name fails closed and remains for diagnosis"
+    legacyIncomingActivityPath
+  let renderRecoveryHex :: Integer -> String
+      renderRecoveryHex value = showHex value ""
+      collidingHelperPid = 2147483647 :: Integer
+      collidingIncomingActivityPath =
+        subprocessActivityRoot
+          </> ( ".incoming-activity-v3.legacy-boot."
+                  <> renderRecoveryHex 2147483644
+                  <> "."
+                  <> renderRecoveryHex ownerProcessGroup
+                  <> ".1."
+                  <> renderRecoveryHex collidingHelperPid
+                  <> ".2."
+                  <> renderRecoveryHex collidingHelperPid
+                  <> ".3."
+                  <> renderRecoveryHex 2147483645
+                  <> ".4"
+              )
+  assertIncomingActivityRefused
+    "an incoming activity with colliding helper identities fails closed and remains for diagnosis"
+    collidingIncomingActivityPath
+  let oversizedIncomingActivityPath =
+        subprocessActivityRoot
+          </> ( ".incoming-activity-v3.legacy-boot."
+                  <> renderRecoveryHex 2147483644
+                  <> "."
+                  <> renderRecoveryHex ownerProcessGroup
+                  <> ".1."
+                  <> renderRecoveryHex 2147483647
+                  <> ".2."
+                  <> renderRecoveryHex 2147483646
+                  <> ".3."
+                  <> renderRecoveryHex 2147483645
+                  <> ".4"
+              )
+  BS.writeFile
+    oversizedIncomingActivityPath
+    (BS.replicate (1024 * 1024) 0x61)
+  setFileMode oversizedIncomingActivityPath 0o600
+  _ <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      ownerProcessGroup
+  oversizedIncomingRetained <-
+    doesFileExist oversizedIncomingActivityPath
+  assert
+    (not oversizedIncomingRetained)
+    "an oversized non-authoritative incoming payload is never read and its exact filename identities are retired only after every recorded group is absent"
+  (deadOwnerReadyReader, deadOwnerReadyWriter) <- PosixIO.createPipe
+  (deadOwnerReleaseReader, deadOwnerReleaseWriter) <- PosixIO.createPipe
+  deadOwnerProcessId <-
+    forkProcess $ do
+      PosixIO.closeFd deadOwnerReadyReader
+      PosixIO.closeFd deadOwnerReleaseWriter
+      dropInheritedProcessIdentity
+      processId <- getProcessID
+      _ <- createProcessGroupFor processId
+      _ <- registerCurrentProcessIdentity
+      _ <- PosixByteString.fdWrite deadOwnerReadyWriter "ready"
+      PosixIO.closeFd deadOwnerReadyWriter
+      _ <- PosixByteString.fdRead deadOwnerReleaseReader 1
+      PosixIO.closeFd deadOwnerReleaseReader
+      exitImmediately ExitSuccess
+  PosixIO.closeFd deadOwnerReadyWriter
+  PosixIO.closeFd deadOwnerReleaseReader
+  deadOwnerReady <- PosixByteString.fdRead deadOwnerReadyReader 5
+  PosixIO.closeFd deadOwnerReadyReader
+  deadOwnerBirthIdentity <-
+    maybe
+      (fail "the forged-identity recovery owner had no observable birth identity")
+      pure
+      =<< readProcessBirthIdentity (fromIntegral deadOwnerProcessId)
+  _ <- PosixByteString.fdWrite deadOwnerReleaseWriter "x"
+  PosixIO.closeFd deadOwnerReleaseWriter
+  deadOwnerStatus <- getProcessStatus True False deadOwnerProcessId
+  assert
+    (deadOwnerReady == "ready" && deadOwnerStatus == Just (Exited ExitSuccess))
+    "the forged-identity recovery fixture starts from a proven-dead owner group"
+  (unrelatedReadyReader, unrelatedReadyWriter) <- PosixIO.createPipe
+  (unrelatedBlockReader, unrelatedBlockWriter) <- PosixIO.createPipe
+  unrelatedProcessId <-
+    forkProcess $ do
+      PosixIO.closeFd unrelatedReadyReader
+      PosixIO.closeFd unrelatedBlockWriter
+      processId <- getProcessID
+      _ <- createProcessGroupFor processId
+      _ <- PosixByteString.fdWrite unrelatedReadyWriter "ready"
+      PosixIO.closeFd unrelatedReadyWriter
+      _ <- PosixByteString.fdRead unrelatedBlockReader 1
+      PosixIO.closeFd unrelatedBlockReader
+      exitImmediately ExitSuccess
+  PosixIO.closeFd unrelatedReadyWriter
+  PosixIO.closeFd unrelatedBlockReader
+  unrelatedReady <- PosixByteString.fdRead unrelatedReadyReader 5
+  PosixIO.closeFd unrelatedReadyReader
+  let unrelatedProcessInteger = fromIntegral unrelatedProcessId :: Integer
+      forgedActivityDocument =
+        Aeson.object
+          [ "version" Aeson..= (3 :: Int),
+            "ownerProcessId"
+              Aeson..= (fromIntegral deadOwnerProcessId :: Integer),
+            "ownerProcessGroup"
+              Aeson..= (fromIntegral deadOwnerProcessId :: Integer),
+            "ownerBirthIdentity"
+              Aeson..= renderProcessBirthIdentity deadOwnerBirthIdentity,
+            "commandProcessId" Aeson..= unrelatedProcessInteger,
+            "commandProcessGroup" Aeson..= unrelatedProcessInteger,
+            "commandBirthIdentity" Aeson..= ("forged-boot:1" :: String),
+            "watchdogProcessId" Aeson..= unrelatedProcessInteger,
+            "watchdogProcessGroup" Aeson..= unrelatedProcessInteger,
+            "watchdogBirthIdentity" Aeson..= ("forged-boot:1" :: String),
+            "targetGroupLeaderProcessId" Aeson..= unrelatedProcessInteger,
+            "targetGroup" Aeson..= unrelatedProcessInteger,
+            "targetGroupLeaderBirthIdentity"
+              Aeson..= ("forged-boot:1" :: String)
+          ]
+      forgedActivityContents =
+        Aeson.encode forgedActivityDocument
+      forgedActivityPath =
+        subprocessActivityRoot
+          </> ( "activity-"
+                  <> ByteString8.unpack
+                    (Base16.encode (SHA256.hashlazy forgedActivityContents))
+                  <> ".lease.json"
+              )
+  Lazy.writeFile forgedActivityPath forgedActivityContents
+  setFileMode forgedActivityPath 0o600
+  forgedRecoveryResult <-
+    try @IOException
+      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+          subprocessPaths
+          (fromIntegral deadOwnerProcessId)
+      )
+  unrelatedStatusAfterRefusal <-
+    getProcessStatus False False unrelatedProcessId
+  forgedActivityRetained <- doesFileExist forgedActivityPath
+  _ <- PosixByteString.fdWrite unrelatedBlockWriter "x"
+  PosixIO.closeFd unrelatedBlockWriter
+  case unrelatedStatusAfterRefusal of
+    Nothing -> do
+      _ <- getProcessStatus True False unrelatedProcessId
+      pure ()
+    Just _ -> pure ()
+  removeFile forgedActivityPath
+  assert
+    ( unrelatedReady == "ready"
+        && isLeft forgedRecoveryResult
+        && isNothing unrelatedStatusAfterRefusal
+        && forgedActivityRetained
+    )
+    ( "recovery refuses a forged birth identity without signaling the live unrelated process group or retiring its lease; observed "
+        <> show
+          ( either displayException (const "unexpected success") forgedRecoveryResult,
+            unrelatedStatusAfterRefusal,
+            forgedActivityRetained
+          )
+    )
+  let prePreparedReadyPath =
+        subprocessRoot </> "bounded-pre-prepared-ready"
+      prePreparedExecutedPath =
+        subprocessRoot </> "bounded-pre-prepared-executed"
+  removeTestPathIfPresent prePreparedReadyPath
+  removeTestPathIfPresent prePreparedExecutedPath
+  prePreparedCommand <-
+    expectRight
+      "compile pre-prepared owner-death command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestPrePreparedOwnerDeath
+              prePreparedReadyPath
+              prePreparedExecutedPath
+          )
+          subprocessEnv
+      )
+  prePreparedOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand prePreparedCommand
+      exitImmediately (ExitFailure 1)
+  prePreparedIdentityContents <-
+    maybe
+      (fail "pre-prepared owner-death fixture never stopped its supervisor")
+      pure
+      =<< waitForFileContents 100 prePreparedReadyPath
+  [ (prePreparedAnchorPid, prePreparedAnchorBirth),
+    (prePreparedSupervisorPid, prePreparedSupervisorBirth),
+    (prePreparedPinPid, prePreparedPinBirth)
+    ] <-
+    expectRight
+      "decode pre-prepared exact helper identities"
+      (parseExactIdentityPairs 3 prePreparedIdentityContents)
+  prePreparedSupervisorStopped <-
+    waitForExternalPidStopped 20 (show prePreparedSupervisorPid)
+  signalProcessGroup sigKILL prePreparedOwnerPid
+  _ <- getProcessStatus True False prePreparedOwnerPid
+  prePreparedAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      prePreparedAnchorPid
+      prePreparedAnchorBirth
+  prePreparedSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      prePreparedSupervisorPid
+      prePreparedSupervisorBirth
+  prePreparedPinAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      prePreparedPinPid
+      prePreparedPinBirth
+  prePreparedTargetExecuted <-
+    doesFileExist prePreparedExecutedPath
+  prePreparedQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral prePreparedOwnerPid)
+  assert
+    ( prePreparedSupervisorStopped
+        && prePreparedAnchorAbsent
+        && prePreparedSupervisorAbsent
+        && prePreparedPinAbsent
+        && not prePreparedTargetExecuted
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          prePreparedQuiescence
+          == fromIntegral prePreparedOwnerPid
+    )
+    ( "owner death while a pre-Prepared supervisor is stopped leaves no exact helper identity, target, or activity lease; observed "
+        <> show
+          ( prePreparedAnchorAbsent,
+            prePreparedSupervisorStopped,
+            prePreparedSupervisorAbsent,
+            prePreparedPinAbsent,
+            prePreparedTargetExecuted
+          )
+    )
+  let custodyReadyPath =
+        subprocessRoot </> "bounded-custody-handoff-ready"
+      custodyExecutedPath =
+        subprocessRoot </> "bounded-custody-handoff-executed"
+  mapM_
+    removeTestPathIfPresent
+    [custodyReadyPath, custodyExecutedPath]
+  custodyCommand <-
+    expectRight
+      "compile custody-handoff owner-death command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestCustodyHandoffOwnerDeath
+              custodyReadyPath
+              custodyExecutedPath
+          )
+          subprocessEnv
+      )
+  custodyOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand custodyCommand
+      exitImmediately (ExitFailure 1)
+  custodyIdentityContents <-
+    maybe
+      (fail "custody-handoff owner-death fixture never stopped its supervisor")
+      pure
+      =<< waitForFileContents 100 custodyReadyPath
+  [ (custodyAnchorPid, custodyAnchorBirth),
+    (custodySupervisorPid, custodySupervisorBirth),
+    (custodyPinPid, custodyPinBirth)
+    ] <-
+    expectRight
+      "decode custody-handoff exact helper identities"
+      (parseExactIdentityPairs 3 custodyIdentityContents)
+  custodySupervisorStopped <-
+    waitForExternalPidStopped 20 (show custodySupervisorPid)
+  signalProcessGroup sigKILL custodyOwnerPid
+  _ <- getProcessStatus True False custodyOwnerPid
+  custodyAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      custodyAnchorPid
+      custodyAnchorBirth
+  custodySupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      custodySupervisorPid
+      custodySupervisorBirth
+  custodyPinAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      custodyPinPid
+      custodyPinBirth
+  custodyTargetExecuted <- doesFileExist custodyExecutedPath
+  custodyQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral custodyOwnerPid)
+  custodyActivity <-
+    readCurrentCommandActivity
+      subprocessPaths
+      (fromIntegral custodyOwnerPid)
+  assert
+    ( custodySupervisorStopped
+        && custodyAnchorAbsent
+        && custodySupervisorAbsent
+        && custodyPinAbsent
+        && not custodyTargetExecuted
+        && isNothing custodyActivity
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          custodyQuiescence
+          == fromIntegral custodyOwnerPid
+    )
+    ( "owner death during provisional supervisor/pin custody leaves no helper, target, or activity record; observed "
+        <> show
+          ( custodySupervisorStopped,
+            custodyAnchorAbsent,
+            custodySupervisorAbsent,
+            custodyPinAbsent,
+            custodyTargetExecuted,
+            custodyActivity
+          )
+    )
+  let preLeaseReadyPath =
+        subprocessRoot </> "bounded-pre-lease-ready"
+      preLeaseExecutedPath =
+        subprocessRoot </> "bounded-pre-lease-executed"
+  removeTestPathIfPresent preLeaseReadyPath
+  removeTestPathIfPresent preLeaseExecutedPath
+  preLeaseCommand <-
+    expectRight
+      "compile pre-lease owner-death command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestPreLeaseOwnerDeath
+              preLeaseReadyPath
+              preLeaseExecutedPath
+          )
+          subprocessEnv
+      )
+  preLeaseOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand preLeaseCommand
+      exitImmediately (ExitFailure 1)
+  preLeaseProcessContents <-
+    maybe
+      (fail "pre-lease owner-death fixture never reached its gated publication point")
+      pure
+      =<< waitForFileContents 100 preLeaseReadyPath
+  [ (preLeaseAnchorPid, preLeaseAnchorBirth),
+    (preLeaseSupervisorPid, preLeaseSupervisorBirth),
+    (preLeasePinPid, preLeasePinBirth)
+    ] <-
+    expectRight
+      "decode pre-lease exact helper identities"
+      (parseExactIdentityPairs 3 preLeaseProcessContents)
+  signalProcess sigSTOP (fromIntegral preLeaseSupervisorPid)
+  preLeaseSupervisorStopped <-
+    waitForExternalPidStopped 20 (show preLeaseSupervisorPid)
+  signalProcessGroup sigKILL preLeaseOwnerPid
+  _ <- getProcessStatus True False preLeaseOwnerPid
+  preLeaseAnchorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      preLeaseAnchorPid
+      preLeaseAnchorBirth
+  preLeaseSupervisorAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      preLeaseSupervisorPid
+      preLeaseSupervisorBirth
+  preLeasePinAbsent <-
+    waitForExactProcessIdentityAbsent
+      120
+      preLeasePinPid
+      preLeasePinBirth
+  preLeaseCommandExecuted <- doesFileExist preLeaseExecutedPath
+  preLeaseQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral preLeaseOwnerPid)
+  preLeaseActivityEntries <- listDirectory subprocessActivityRoot
+  let preLeaseActivityResidue =
+        filter
+          ( \entry ->
+              ".incoming-activity-" `isPrefixOf` entry
+                || ".lease.json" `isSuffixOf` entry
+          )
+          preLeaseActivityEntries
+  assert
+    ( preLeaseSupervisorStopped
+        && preLeaseAnchorAbsent
+        && preLeaseSupervisorAbsent
+        && preLeasePinAbsent
+        && not preLeaseCommandExecuted
+        && null preLeaseActivityResidue
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup preLeaseQuiescence
+          == fromIntegral preLeaseOwnerPid
+    )
+    ( "owner-group death before activity publication removes the exact anchor, stopped supervisor, and retained pin before any target or activity can escape; observed "
+        <> show
+          ( preLeaseSupervisorStopped,
+            preLeaseAnchorAbsent,
+            preLeaseSupervisorAbsent,
+            preLeasePinAbsent,
+            preLeaseCommandExecuted,
+            preLeaseActivityResidue
+          )
+    )
+  let prewriteReadyPath =
+        subprocessRoot </> "bounded-incoming-prewrite.ready"
+      prewriteReleaseFifo =
+        subprocessRoot </> "bounded-incoming-prewrite.release"
+      prewriteExecutedPath =
+        subprocessRoot </> "bounded-incoming-prewrite.executed"
+  mapM_
+    removeTestPathIfPresent
+    [prewriteReadyPath, prewriteReleaseFifo, prewriteExecutedPath]
+  createNamedPipe prewriteReleaseFifo 0o600
+  prewriteCommand <-
+    expectRight
+      "compile incoming-activity prewrite recovery command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestIncomingActivityPrewriteRecovery
+              prewriteReadyPath
+              prewriteReleaseFifo
+              prewriteExecutedPath
+          )
+          subprocessEnv
+      )
+  prewriteOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand prewriteCommand
+      exitImmediately (ExitFailure 1)
+  prewriteReadyContents <-
+    maybe
+      (fail "incoming-activity prewrite never reached its durable-name hook")
+      pure
+      =<< waitForFileContents 100 prewriteReadyPath
+  prewriteIncomingPath <-
+    case lines prewriteReadyContents of
+      [temporaryPath] -> pure temporaryPath
+      _ ->
+        fail
+          ( "invalid incoming-activity prewrite path: "
+              <> show prewriteReadyContents
+          )
+  prewriteContentsBeforeDeath <- Lazy.readFile prewriteIncomingPath
+  prewriteExecutedBeforeDeath <- doesFileExist prewriteExecutedPath
+  signalProcessGroup sigKILL prewriteOwnerPid
+  _ <- getProcessStatus True False prewriteOwnerPid
+  prewriteQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral prewriteOwnerPid)
+  prewriteIncomingExists <- doesFileExist prewriteIncomingPath
+  prewriteExecutedAfterRecovery <- doesFileExist prewriteExecutedPath
+  prewriteActivityAfterRecovery <-
+    readCurrentCommandActivity
+      subprocessPaths
+      (fromIntegral prewriteOwnerPid)
+  prewriteActivityEntries <- listDirectory subprocessActivityRoot
+  let prewriteActivityResidue =
+        filter
+          ( \entry ->
+              ".incoming-activity-" `isPrefixOf` entry
+                || ".lease.json" `isSuffixOf` entry
+          )
+          prewriteActivityEntries
+  removeTestPathIfPresent prewriteReleaseFifo
+  assert
+    ( Lazy.null prewriteContentsBeforeDeath
+        && not prewriteExecutedBeforeDeath
+        && not prewriteExecutedAfterRecovery
+        && not prewriteIncomingExists
+        && isNothing prewriteActivityAfterRecovery
+        && null prewriteActivityResidue
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          prewriteQuiescence
+          == fromIntegral prewriteOwnerPid
+    )
+    ( "an owner crash after the incoming identity intent is durable but before its payload write leaves no target, helper group, or activity residue; observed "
+        <> show
+          ( Lazy.length prewriteContentsBeforeDeath,
+            prewriteExecutedBeforeDeath,
+            prewriteExecutedAfterRecovery,
+            prewriteIncomingExists,
+            prewriteActivityAfterRecovery,
+            prewriteActivityResidue
+          )
+    )
+  let cancellationPublicationReadyPath =
+        subprocessRoot </> "bounded-incoming-cancellation-publication.ready"
+      cancellationPublicationReleaseFifo =
+        subprocessRoot </> "bounded-incoming-cancellation-publication.release"
+      cancellationRetirementReadyPath =
+        subprocessRoot </> "bounded-incoming-cancellation-retirement.ready"
+      cancellationRetirementReleaseFifo =
+        subprocessRoot </> "bounded-incoming-cancellation-retirement.release"
+      cancellationExecutedPath =
+        subprocessRoot </> "bounded-incoming-cancellation.executed"
+      cancellationPaths =
+        [ cancellationPublicationReadyPath,
+          cancellationPublicationReleaseFifo,
+          cancellationRetirementReadyPath,
+          cancellationRetirementReleaseFifo,
+          cancellationExecutedPath
+        ]
+  mapM_ removeTestPathIfPresent cancellationPaths
+  createNamedPipe cancellationPublicationReleaseFifo 0o600
+  createNamedPipe cancellationRetirementReleaseFifo 0o600
+  cancellationCommand <-
+    expectRight
+      "compile incoming-activity cancellation command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestIncomingActivityCancellation
+              cancellationPublicationReadyPath
+              cancellationPublicationReleaseFifo
+              cancellationRetirementReadyPath
+              cancellationRetirementReleaseFifo
+              cancellationExecutedPath
+          )
+          subprocessEnv
+      )
+  activityCancellationResult <-
+    MVar.newEmptyMVar ::
+      IO
+        ( MVar.MVar
+            (Either SomeException Subprocess.CommandOutcome)
+        )
+  activityCancellationThread <-
+    forkIO $
+      try @SomeException (Subprocess.runBoundedCommand cancellationCommand)
+        >>= MVar.putMVar activityCancellationResult
+  cancellationPublicationReady <-
+    maybe
+      (fail "incoming-activity cancellation never reached its durable publication hook")
+      pure
+      =<< waitForFileContents 100 cancellationPublicationReadyPath
+  cancellationIncomingPath <-
+    case lines cancellationPublicationReady of
+      [temporaryPath] -> pure temporaryPath
+      _ ->
+        fail
+          ( "invalid incoming-activity cancellation path: "
+              <> show cancellationPublicationReady
+          )
+  cancellationActivityContents <- Lazy.readFile cancellationIncomingPath
+  cancellationOwnerGroup <- fromIntegral <$> getProcessGroupID
+  cancellationActivity <-
+    maybe
+      (fail "incoming-activity cancellation record did not contain exact identities")
+      pure
+      ( decodeCurrentCommandActivity
+          cancellationOwnerGroup
+          cancellationActivityContents
+      )
+  killThread activityCancellationThread
+  cancellationRetirementReady <-
+    maybe
+      (fail "incoming-activity cancellation never reached its retirement proof hook")
+      pure
+      =<< waitForFileContents 100 cancellationRetirementReadyPath
+  cancellationIncomingRetained <-
+    doesFileExist cancellationIncomingPath
+  cancellationAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      0
+      (currentAnchorIdentity cancellationActivity)
+  cancellationSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      0
+      (currentSupervisorIdentity cancellationActivity)
+  cancellationPinAbsent <-
+    waitForRecordedIdentityAbsent
+      0
+      (currentPinIdentity cancellationActivity)
+  cancellationAnchorGroupAbsent <-
+    waitForProcessGroupAbsent
+      0
+      (recordedProcessGroup (currentAnchorIdentity cancellationActivity))
+  cancellationSupervisorGroupAbsent <-
+    waitForProcessGroupAbsent
+      0
+      (recordedProcessGroup (currentSupervisorIdentity cancellationActivity))
+  cancellationPinGroupAbsent <-
+    waitForProcessGroupAbsent
+      0
+      (recordedProcessGroup (currentPinIdentity cancellationActivity))
+  cancellationExecutedBeforeRetirement <-
+    doesFileExist cancellationExecutedPath
+  writeNamedPipePayloadNonblocking
+    cancellationRetirementReleaseFifo
+    "release\n"
+  activityCancellationTerminal <-
+    timeout 5000000 (MVar.takeMVar activityCancellationResult)
+  cancellationIncomingAfterRetirement <-
+    doesFileExist cancellationIncomingPath
+  cancellationActivityAfterRetirement <-
+    readCurrentCommandActivity subprocessPaths cancellationOwnerGroup
+  cancellationExecutedAfterRetirement <-
+    doesFileExist cancellationExecutedPath
+  mapM_ removeTestPathIfPresent cancellationPaths
+  let activityCancellationWasAsynchronous =
+        case activityCancellationTerminal of
+          Just (Left failure) ->
+            fromException failure == Just ThreadKilled
+          _ -> False
+  assert
+    ( cancellationRetirementReady == "reader-ready\n"
+        && cancellationIncomingRetained
+        && cancellationAnchorAbsent
+        && cancellationSupervisorAbsent
+        && cancellationPinAbsent
+        && cancellationAnchorGroupAbsent
+        && cancellationSupervisorGroupAbsent
+        && cancellationPinGroupAbsent
+        && not cancellationExecutedBeforeRetirement
+        && activityCancellationWasAsynchronous
+        && not cancellationIncomingAfterRetirement
+        && isNothing cancellationActivityAfterRetirement
+        && not cancellationExecutedAfterRetirement
+    )
+    ( "publication cancellation retains its exact incoming identity through every process-group absence proof and retires it only afterward; observed "
+        <> show
+          ( cancellationRetirementReady,
+            cancellationIncomingRetained,
+            cancellationAnchorAbsent,
+            cancellationSupervisorAbsent,
+            cancellationPinAbsent,
+            cancellationAnchorGroupAbsent,
+            cancellationSupervisorGroupAbsent,
+            cancellationPinGroupAbsent,
+            cancellationExecutedBeforeRetirement,
+            activityCancellationTerminal,
+            cancellationIncomingAfterRetirement,
+            cancellationActivityAfterRetirement,
+            cancellationExecutedAfterRetirement
+          )
+    )
+  let incomingReadyPath =
+        subprocessRoot </> "bounded-incoming-activity.ready"
+      incomingReleaseFifo =
+        subprocessRoot </> "bounded-incoming-activity.release"
+      incomingExecutedPath =
+        subprocessRoot </> "bounded-incoming-activity.executed"
+  mapM_
+    removeTestPathIfPresent
+    [incomingReadyPath, incomingReleaseFifo, incomingExecutedPath]
+  createNamedPipe incomingReleaseFifo 0o600
+  incomingCommand <-
+    expectRight
+      "compile incoming-activity recovery command"
+      ( Subprocess.compileTestCommand
+          ( Subprocess.TestIncomingActivityRecovery
+              incomingReadyPath
+              incomingReleaseFifo
+              incomingExecutedPath
+          )
+          subprocessEnv
+      )
+  incomingOwnerPid <-
+    forkProcess $ do
+      ownerPid <- getProcessID
+      _ <- createProcessGroupFor ownerPid
+      _ <- Subprocess.runBoundedCommand incomingCommand
+      exitImmediately (ExitFailure 1)
+  incomingReadyContents <-
+    maybe
+      (fail "incoming-activity publication never reached its post-fsync hook")
+      pure
+      =<< waitForFileContents 100 incomingReadyPath
+  incomingTemporaryPath <-
+    case lines incomingReadyContents of
+      [temporaryPath] -> pure temporaryPath
+      _ ->
+        fail
+          ( "invalid incoming-activity temporary path: "
+              <> show incomingReadyContents
+          )
+  incomingTemporaryContents <- Lazy.readFile incomingTemporaryPath
+  incomingActivity <-
+    maybe
+      (fail "incoming-activity temporary document did not contain exact version-3 identities")
+      pure
+      ( decodeCurrentCommandActivity
+          (fromIntegral incomingOwnerPid)
+          incomingTemporaryContents
+      )
+  incomingExecutedBeforeDeath <- doesFileExist incomingExecutedPath
+  signalProcessGroup sigKILL incomingOwnerPid
+  _ <- getProcessStatus True False incomingOwnerPid
+  incomingQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      (fromIntegral incomingOwnerPid)
+  incomingAnchorAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      (currentAnchorIdentity incomingActivity)
+  incomingSupervisorAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      (currentSupervisorIdentity incomingActivity)
+  incomingPinAbsent <-
+    waitForRecordedIdentityAbsent
+      120
+      (currentPinIdentity incomingActivity)
+  incomingTemporaryExists <- doesFileExist incomingTemporaryPath
+  incomingExecutedAfterRecovery <- doesFileExist incomingExecutedPath
+  incomingActivityAfterRecovery <-
+    readCurrentCommandActivity
+      subprocessPaths
+      (fromIntegral incomingOwnerPid)
+  incomingActivityEntries <- listDirectory subprocessActivityRoot
+  let incomingActivityResidue =
+        filter
+          ( \entry ->
+              ".incoming-activity-" `isPrefixOf` entry
+                || ".lease.json" `isSuffixOf` entry
+          )
+          incomingActivityEntries
+  removeTestPathIfPresent incomingReleaseFifo
+  assert
+    ( not incomingExecutedBeforeDeath
+        && not incomingExecutedAfterRecovery
+        && not incomingTemporaryExists
+        && incomingAnchorAbsent
+        && incomingSupervisorAbsent
+        && incomingPinAbsent
+        && isNothing incomingActivityAfterRecovery
+        && null incomingActivityResidue
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          incomingQuiescence
+          == fromIntegral incomingOwnerPid
+    )
+    ( "a post-fsync/pre-rename owner crash reconciles the exact incoming activity, removes every helper, keeps the target gated, and retires only after group absence; observed "
+        <> show
+          ( incomingExecutedBeforeDeath,
+            incomingExecutedAfterRecovery,
+            incomingTemporaryExists,
+            incomingAnchorAbsent,
+            incomingSupervisorAbsent,
+            incomingPinAbsent,
+            incomingActivityAfterRecovery,
+            incomingActivityResidue
+          )
+    )
+  let exitedParentChildPidPath = subprocessRoot </> "bounded-exited-parent.pid"
+  removeTestPathIfPresent exitedParentChildPidPath
+  exitedParentOutcome <-
+    runTestCommand
+      (Subprocess.TestExitLeavingDescendant exitedParentChildPidPath)
+  assert
+    (exitedParentOutcome == Subprocess.CommandSucceeded "")
+    "a direct child that exits successfully is not held open by a pipe-inheriting descendant"
+  exitedParentChildPid <-
+    fmap (takeWhile (/= '\n')) (System.IO.readFile' exitedParentChildPidPath)
+  exitedParentChildPidAbsentCorroboration <-
+    waitForPidExit 40 exitedParentChildPid
+  exitedParentOwnerProcessGroup <- fromIntegral <$> getProcessGroupID
+  exitedParentQuiescence <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      exitedParentOwnerProcessGroup
+  assert
+    ( exitedParentOutcome == Subprocess.CommandSucceeded ""
+        && Subprocess.boundedCommandActivitiesOwnerProcessGroup
+          exitedParentQuiescence
+          == exitedParentOwnerProcessGroup
+    )
+    ( "normal direct-child completion returns only after its exact recorded groups are absent and its activity is retired; descendant PID absence is diagnostic only: "
+        <> show exitedParentChildPidAbsentCorroboration
+    )
+  let secretValue = "unit-secret-password"
+      registryCredentials =
+        ClusterCommand.RegistryCredentials
+          { ClusterCommand.registryUsername = ClusterCommand.Username "unit-user",
+            ClusterCommand.registryPassword = ClusterCommand.Password secretValue
+          }
+      postgresSecretCommand =
+        ClusterCommand.kubectlRunPostgresAction
+          operatorTarget
+          (ClusterCommand.PodName "postgres-primary")
+          (ClusterCommand.DetectDirtyHarborMigration (ClusterCommand.Password secretValue))
+      postgresSecretSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          postgresSecretCommand
+      skopeoAuthFile = subprocessRoot </> "secrets" </> "skopeo-auth.json"
+      skopeoCopySpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.publishCopyDigest
+              (ClusterCommand.Architecture "arm64")
+              (ClusterCommand.RegistryAuthFile skopeoAuthFile)
+              (ClusterCommand.ImageRef "docker.io/library/busybox@sha256:abc")
+              (ClusterCommand.ImageRef "127.0.0.1:30002/library/busybox:unit")
+          )
+      registryVerificationDirectory = subprocessRoot </> "registry-pull-verification" </> "image"
+      skopeoVerifySpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.publishVerifyRegistry
+              (ClusterCommand.Architecture "arm64")
+              (ClusterCommand.RegistryAuthFile skopeoAuthFile)
+              (ClusterCommand.ImageRef "127.0.0.1:30002/library/busybox:unit")
+              registryVerificationDirectory
+          )
+  boundedLogin <-
+    expectRight
+      "compile redacted registry login"
+      ( Subprocess.compileBoundedCommand
+          ( ClusterCommand.publishLogin
+              (ClusterCommand.RegistryHost "127.0.0.1:30002")
+              registryCredentials
+          )
+          subprocessEnv
+      )
+  boundedPostgres <-
+    expectRight
+      "compile redacted postgres action"
+      (Subprocess.compileBoundedCommand postgresSecretCommand subprocessEnv)
+  assert
+    ( not (secretValue `isInfixOf` Subprocess.boundedCommandLabel boundedLogin)
+        && not (secretValue `isInfixOf` Subprocess.boundedCommandLabel boundedPostgres)
+        && "<redacted>" `isInfixOf` Subprocess.boundedCommandLabel boundedPostgres
+    )
+    "bounded command labels redact registry and PostgreSQL credentials"
+  assert
+    ( not
+        ( any
+            (secretValue `isInfixOf`)
+            (ClusterCommand.renderedCommandArgv postgresSecretSpec)
+        )
+        && ClusterCommand.renderedCommandStdin postgresSecretSpec
+          == secretValue <> "\n"
+        && "--kuberc=/dev/null"
+          `elem` ClusterCommand.renderedCommandArgv postgresSecretSpec
+        && ("--dest-authfile=" <> skopeoAuthFile)
+          `elem` ClusterCommand.renderedCommandArgv skopeoCopySpec
+        && ("--src-authfile=" <> skopeoAuthFile)
+          `elem` ClusterCommand.renderedCommandArgv skopeoVerifySpec
+        && "docker://127.0.0.1:30002/library/busybox:unit"
+          `elem` ClusterCommand.renderedCommandArgv skopeoVerifySpec
+        && ("dir:" <> registryVerificationDirectory)
+          `elem` ClusterCommand.renderedCommandArgv skopeoVerifySpec
+        && "pull"
+          `notElem` ClusterCommand.renderedCommandArgv skopeoVerifySpec
+        && not
+          ( any
+              (secretValue `isInfixOf`)
+              ( ClusterCommand.renderedCommandArgv skopeoCopySpec
+                  <> ClusterCommand.renderedCommandArgv skopeoVerifySpec
+              )
+          )
+    )
+    "PostgreSQL and skopeo credentials use protected transport, and registry verification bypasses Docker's shared store"
+  assert
+    ( isLeft
+        ( ClusterCommand.validateClusterCommand
+            ( ClusterCommand.publishVerifyRegistry
+                (ClusterCommand.Architecture "arm64")
+                (ClusterCommand.RegistryAuthFile skopeoAuthFile)
+                (ClusterCommand.ImageRef "127.0.0.1:30002/library/busybox:unit")
+                "relative-registry-verification"
+            )
+        )
+    )
+    "registry verification rejects a caller-selected relative output directory"
+  let authFileUser = "unit-\252ser"
+      authFileSecret = "auth-file-p\228ssword"
+      authFileOptions =
+        defaultHarborPublishOptions
+          { harborUser = authFileUser,
+            harborPassword = authFileSecret
+          }
+      validAuthPayload payload =
+        case Aeson.decodeStrict' payload of
+          Just (Aeson.Object rootObject) ->
+            case KeyMap.lookup "auths" rootObject of
+              Just (Aeson.Object authsObject) ->
+                case KeyMap.toList authsObject of
+                  [(authority, Aeson.Object credentialsObject)] ->
+                    Key.toString authority == "127.0.0.1:30002"
+                      && case KeyMap.lookup "auth" credentialsObject of
+                        Just (Aeson.String encodedCredential) ->
+                          Data.ByteString.Base64.decode
+                            (TextEncoding.encodeUtf8 encodedCredential)
+                            == Right
+                              ( TextEncoding.encodeUtf8
+                                  (Text.pack (authFileUser <> ":" <> authFileSecret))
+                              )
+                        _ -> False
+                  _ -> False
+              _ -> False
+          _ -> False
+  normalAuthPathRef <- IORef.newIORef Nothing
+  withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+    IORef.writeIORef normalAuthPathRef (Just authFilePath)
+    authFileStatus <- getFileStatus authFilePath
+    authPayload <- BS.readFile authFilePath
+    assert
+      ( fileMode authFileStatus .&. 0o777 == 0o600
+          && validAuthPayload authPayload
+          && not (authFileSecret `isInfixOf` authFilePath)
+      )
+      "the skopeo auth file is mode 0600, matches the normalized destination authority, and carries the expected credential"
+  normalAuthPath <- maybe (fail "auth callback did not publish its path") pure =<< IORef.readIORef normalAuthPathRef
+  normalAuthExists <- doesFileExist normalAuthPath
+  assert
+    (not normalAuthExists)
+    "the skopeo auth file is removed after a successful callback"
+  concurrentAuthPathsRef <- IORef.newIORef Nothing
+  withHarborRegistryAuthFile authFileOptions $ \outerAuthPath ->
+    withHarborRegistryAuthFile authFileOptions $ \innerAuthPath -> do
+      outerStillExists <- doesFileExist outerAuthPath
+      outerPayload <- BS.readFile outerAuthPath
+      innerPayload <- BS.readFile innerAuthPath
+      IORef.writeIORef
+        concurrentAuthPathsRef
+        (Just (outerAuthPath, innerAuthPath))
+      assert
+        ( outerAuthPath /= innerAuthPath
+            && outerStillExists
+            && validAuthPayload outerPayload
+            && validAuthPayload innerPayload
+        )
+        "concurrent same-process publication uses distinct live UTF-8 auth files"
+  concurrentAuthPaths <-
+    maybe (fail "concurrent auth callbacks did not publish their paths") pure
+      =<< IORef.readIORef concurrentAuthPathsRef
+  concurrentAuthResidue <-
+    mapM doesFileExist [fst concurrentAuthPaths, snd concurrentAuthPaths]
+  assert
+    (not (or concurrentAuthResidue))
+    "concurrent same-process auth directories are independently removed"
+  exceptionalAuthPathRef <- IORef.newIORef Nothing
+  exceptionalAuthResult <-
+    try @IOException $
+      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+        IORef.writeIORef exceptionalAuthPathRef (Just authFilePath)
+        ioError (userError "auth-file callback failure")
+  exceptionalAuthPath <-
+    maybe (fail "exceptional auth callback did not publish its path") pure
+      =<< IORef.readIORef exceptionalAuthPathRef
+  exceptionalAuthExists <- doesFileExist exceptionalAuthPath
+  assert
+    (isLeft exceptionalAuthResult && not exceptionalAuthExists)
+    "the skopeo auth file is removed after a callback exception"
+  cancelledAuthPathRef <- IORef.newIORef Nothing
+  cancelledAuthResult <-
+    timeout 100000 $
+      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+        IORef.writeIORef cancelledAuthPathRef (Just authFilePath)
+        threadDelay 2000000
+  cancelledAuthPath <-
+    maybe (fail "cancelled auth callback did not publish its path") pure
+      =<< IORef.readIORef cancelledAuthPathRef
+  cancelledAuthExists <- doesFileExist cancelledAuthPath
+  assert
+    (isNothing cancelledAuthResult && not cancelledAuthExists)
+    "the skopeo auth file is removed after asynchronous cancellation"
+  let killedAuthMarkerPath = subprocessRoot </> "killed-skopeo-auth.path"
+  removeTestPathIfPresent killedAuthMarkerPath
+  killedAuthOwnerPid <-
+    forkProcess $ do
+      dropInheritedProcessIdentity
+      _ <- registerCurrentProcessIdentity
+      withHarborRegistryAuthFile authFileOptions $ \authFilePath -> do
+        writeFile killedAuthMarkerPath authFilePath
+        threadDelay 30000000
+  killedAuthPath <-
+    maybe
+      (fail "killed auth callback did not publish its path")
+      pure
+      =<< waitForFileContents 100 killedAuthMarkerPath
+  signalProcess sigKILL killedAuthOwnerPid
+  _ <- getProcessStatus True False killedAuthOwnerPid
+  killedAuthResidueExists <- doesFileExist killedAuthPath
+  withHarborRegistryAuthFile authFileOptions (const (pure ()))
+  killedAuthResidueAfterReconcile <- doesFileExist killedAuthPath
+  assert
+    (killedAuthResidueExists && not killedAuthResidueAfterReconcile)
+    "the next publication removes a SIGKILL-stranded auth file only after proving its owner process is gone"
+  assert
+    ( isLeft
+        (Subprocess.compileTestCommand (Subprocess.TestExit 0) subprocessEnv)
+    )
+    "compileTestCommand rejects an invalid fixed test command"
   -- Phase 2 Sprint 2.14: fail-closed recorded-state decode.
   clusterStateRoot <- testRootPath "mst-clusterstate"
   createDirectoryIfMissing True clusterStateRoot
@@ -2269,6 +6687,16 @@ main = do
   assert
     (case corruptResult of Left _ -> True; Right _ -> False)
     "loadClusterState fails closed on a present but undecodable state file"
+  blankStateResults <-
+    mapM
+      ( \contents -> do
+          writeFile clusterStateFile contents
+          try @SomeException (loadClusterState clusterStatePaths)
+      )
+      ["", " \t\r\n"]
+  assert
+    (all isLeft blankStateResults)
+    "loadClusterState fails closed on present empty and whitespace-only state files"
   -- Sprint 2.14: the typed ClusterLifecycle round-trips through the versioned
   -- aeson codec, and an unknown on-disk format version fails closed.
   mstNow <- getCurrentTime
@@ -2307,6 +6735,25 @@ main = do
   assert
     ((lifecyclePhaseName <$> (roundTripState >>= lifecyclePhaseOf)) == Just "prepare-kind-cluster")
     "lifecyclePhaseOf projects the typed phase name after an aeson round-trip"
+  atomicWriterPid <-
+    forkProcess $
+      let writeForever owner = do
+            writeClusterStateFile
+              clusterStateFile
+              mstState {clusterOwner = owner}
+            writeForever
+              ( if owner == OperatorOwned
+                  then HarnessOwned
+                  else OperatorOwned
+              )
+       in writeForever HarnessOwned
+  threadDelay 20000
+  signalProcess sigKILL atomicWriterPid
+  _ <- getProcessStatus True False atomicWriterPid
+  stateAfterKilledWriter <- loadClusterState clusterStatePaths
+  assert
+    (isJust stateAfterKilledWriter)
+    "a killed cluster-state writer leaves either the prior or replacement versioned ownership record decodable"
   writeFile clusterStateFile "{\"version\":999,\"clusterState\":{}}"
   unknownVersionResult <- try @SomeException (loadClusterState clusterStatePaths)
   assert
@@ -2328,6 +6775,1106 @@ main = do
   assert
     (fmap clusterOwner preMigrationState == Just OperatorOwned)
     "a pre-migration cluster-state document missing clusterOwner decodes to OperatorOwned"
+  assert
+    ( isRight (runtimeConfigRestorePlan True True)
+        && isLeft (runtimeConfigRestorePlan True False)
+        && isRight (runtimeConfigRestorePlan False False)
+        && isLeft (runtimeConfigRestorePlan False True)
+    )
+    "the private harness config restore mutator has a total fail-closed backup-presence policy"
+  cleanupRuns <- IORef.newIORef (0 :: Int)
+  combinedCleanupFailure <-
+    try @SomeException
+      ( finallyPreservingPrimary
+          (ioError (userError "primary failure marker"))
+          ( do
+              IORef.modifyIORef' cleanupRuns (+ 1)
+              ioError (userError "cleanup failure marker")
+          )
+      )
+  observedCleanupRuns <- IORef.readIORef cleanupRuns
+  let combinedFailurePreservesBoth failure =
+        observedCleanupRuns == 1
+          && "primary failure marker" `isInfixOf` displayException failure
+          && "cleanup failure marker" `isInfixOf` displayException failure
+          && isNothing (fromException failure :: Maybe SomeAsyncException)
+  assert
+    (either combinedFailurePreservesBoth (const False) combinedCleanupFailure)
+    "a failed harness action plus failed cleanup stays synchronous, reports both failures, and runs cleanup once"
+  exhaustiveCleanupOrder <- IORef.newIORef ([] :: [Int])
+  exhaustiveCleanupFailure <-
+    try @SomeException
+      ( runCleanupsPreservingFailures
+          [ do
+              IORef.modifyIORef' exhaustiveCleanupOrder (<> [1])
+              ioError (userError "first cleanup failure marker"),
+            do
+              IORef.modifyIORef' exhaustiveCleanupOrder (<> [2])
+              ioError (userError "second cleanup failure marker"),
+            IORef.modifyIORef' exhaustiveCleanupOrder (<> [3])
+          ]
+      )
+  observedExhaustiveCleanupOrder <- IORef.readIORef exhaustiveCleanupOrder
+  let exhaustiveCleanupPreservesFailures failure =
+        observedExhaustiveCleanupOrder == [1, 2, 3]
+          && "first cleanup failure marker" `isInfixOf` displayException failure
+          && "second cleanup failure marker" `isInfixOf` displayException failure
+          && isNothing (fromException failure :: Maybe SomeAsyncException)
+  assert
+    (either exhaustiveCleanupPreservesFailures (const False) exhaustiveCleanupFailure)
+    "exhaustive cleanup attempts every step in order and retains every synchronous failure"
+  rollbackRuns <- IORef.newIORef (0 :: Int)
+  successfulRollbackGuard <-
+    onExceptionPreservingPrimary
+      (pure (7 :: Int))
+      (IORef.modifyIORef' rollbackRuns (+ 1))
+  failedRollbackGuard <-
+    try @SomeException
+      ( onExceptionPreservingPrimary
+          (ioError (userError "rollback primary failure marker"))
+          ( do
+              IORef.modifyIORef' rollbackRuns (+ 1)
+              ioError (userError "rollback cleanup failure marker")
+          )
+      )
+  observedRollbackRuns <- IORef.readIORef rollbackRuns
+  let rollbackPreservesBoth failure =
+        "rollback primary failure marker" `isInfixOf` displayException failure
+          && "rollback cleanup failure marker" `isInfixOf` displayException failure
+          && isNothing (fromException failure :: Maybe SomeAsyncException)
+  assert
+    ( successfulRollbackGuard == 7
+        && observedRollbackRuns == 1
+        && either rollbackPreservesBoth (const False) failedRollbackGuard
+    )
+    "exception-only cleanup skips success and retains both synchronous failures"
+  acquisitionPublished <- MVar.newEmptyMVar
+  finishAcquisition <- MVar.newEmptyMVar
+  blockedBracketAction <- MVar.newEmptyMVar
+  acquisitionActionRuns <- IORef.newIORef (0 :: Int)
+  acquisitionReleaseRuns <- IORef.newIORef (0 :: Int)
+  acquisitionCancellationResult <- MVar.newEmptyMVar
+  acquisitionThread <-
+    forkIO
+      ( try @SomeException
+          ( bracketPreservingPrimary
+              ( uninterruptibleMask_ $ do
+                  MVar.putMVar acquisitionPublished ()
+                  MVar.takeMVar finishAcquisition
+              )
+              ( \() ->
+                  IORef.modifyIORef' acquisitionReleaseRuns (+ 1)
+              )
+              ( \() -> do
+                  IORef.modifyIORef' acquisitionActionRuns (+ 1)
+                  MVar.takeMVar blockedBracketAction
+              )
+          )
+          >>= MVar.putMVar acquisitionCancellationResult
+      )
+  MVar.takeMVar acquisitionPublished
+  cancellationSender <- forkIO (throwTo acquisitionThread ThreadKilled)
+  let waitForQueuedCancellation remainingAttempts
+        | remainingAttempts <= 0 = pure False
+        | otherwise = do
+            senderStatus <- threadStatus cancellationSender
+            if senderStatus == ThreadBlocked BlockedOnException
+              then pure True
+              else do
+                threadDelay 1000
+                waitForQueuedCancellation (remainingAttempts - 1)
+  cancellationQueued <- waitForQueuedCancellation (2000 :: Int)
+  MVar.putMVar finishAcquisition ()
+  unless cancellationQueued $
+    fail "timed out queueing cancellation while acquisition was uninterruptibly masked"
+  observedAcquisitionCancellation <-
+    maybe
+      (fail "timed out waiting for cancellation across the acquire/cleanup-install boundary")
+      pure
+      =<< timeout 2000000 (MVar.takeMVar acquisitionCancellationResult)
+  observedAcquisitionActionRuns <- IORef.readIORef acquisitionActionRuns
+  observedAcquisitionReleaseRuns <- IORef.readIORef acquisitionReleaseRuns
+  let acquisitionCancellationRanRelease failure =
+        fromException failure == Just ThreadKilled
+          && observedAcquisitionActionRuns == 0
+          && observedAcquisitionReleaseRuns == 1
+  assert
+    (either acquisitionCancellationRanRelease (const False) observedAcquisitionCancellation)
+    "live cancellation queued at acquisition return is delivered only after cleanup installation"
+  primaryOnlyFailure <-
+    try @IOException
+      ( finallyPreservingPrimary
+          (ioError (userError "primary-only marker"))
+          (pure ())
+      )
+  assert
+    ( either
+        (isInfixOf "primary-only marker" . displayException)
+        (const False)
+        primaryOnlyFailure
+    )
+    "a successful cleanup rethrows the original primary exception type"
+  cleanupOnlyFailure <-
+    try @IOException
+      ( finallyPreservingPrimary
+          (pure ())
+          (ioError (userError "cleanup-only marker"))
+      )
+  assert
+    ( either
+        (isInfixOf "cleanup-only marker" . displayException)
+        (const False)
+        cleanupOnlyFailure
+    )
+    "a failed cleanup after a successful action rethrows the original cleanup exception type"
+  asynchronousCombinedFailure <-
+    try @SomeException
+      ( finallyPreservingPrimary
+          (throwIO ThreadKilled)
+          (ioError (userError "cleanup during cancellation marker"))
+      )
+  let asynchronousFailurePreservesBoth failure =
+        isJust (fromException failure :: Maybe SomeAsyncException)
+          && "thread killed" `isInfixOf` displayException failure
+          && "cleanup during cancellation marker" `isInfixOf` displayException failure
+  assert
+    (either asynchronousFailurePreservesBoth (const False) asynchronousCombinedFailure)
+    "cleanup failure retains both diagnostics without demoting asynchronous cancellation"
+  asynchronousCleanupFailure <-
+    try @SomeException
+      ( finallyPreservingPrimary
+          (ioError (userError "primary before cleanup cancellation marker"))
+          (throwIO ThreadKilled)
+      )
+  let cleanupCancellationPreservesBoth failure =
+        isJust (fromException failure :: Maybe SomeAsyncException)
+          && "primary before cleanup cancellation marker" `isInfixOf` displayException failure
+          && "thread killed" `isInfixOf` displayException failure
+  assert
+    (either cleanupCancellationPreservesBoth (const False) asynchronousCleanupFailure)
+    "cleanup cancellation remains asynchronous while retaining the primary failure diagnostic"
+  liveCleanupStarted <- MVar.newEmptyMVar
+  laterCleanupRuns <- IORef.newIORef (0 :: Int)
+  liveCleanupCancellationResult <- MVar.newEmptyMVar
+  liveCleanupThread <-
+    forkIO
+      ( try @SomeException
+          ( finallyPreservingPrimary
+              (ioError (userError "primary before live cleanup cancellation marker"))
+              ( runCleanupsPreservingFailures
+                  [ do
+                      MVar.putMVar liveCleanupStarted ()
+                      threadDelay 10000000,
+                    do
+                      IORef.modifyIORef' laterCleanupRuns (+ 1)
+                      ioError (userError "later cleanup failure marker")
+                  ]
+              )
+          )
+          >>= MVar.putMVar liveCleanupCancellationResult
+      )
+  MVar.takeMVar liveCleanupStarted
+  throwTo liveCleanupThread ThreadKilled
+  observedLiveCleanupCancellation <-
+    maybe
+      (fail "timed out waiting for cleanup-side cancellation")
+      pure
+      =<< timeout 2000000 (MVar.takeMVar liveCleanupCancellationResult)
+  observedLaterCleanupRuns <- IORef.readIORef laterCleanupRuns
+  let liveCleanupCancellationPreservesAll failure =
+        isJust (fromException failure :: Maybe SomeAsyncException)
+          && "primary before live cleanup cancellation marker" `isInfixOf` displayException failure
+          && "thread killed" `isInfixOf` displayException failure
+          && "later cleanup failure marker" `isInfixOf` displayException failure
+          && observedLaterCleanupRuns == 1
+  assert
+    (either liveCleanupCancellationPreservesAll (const False) observedLiveCleanupCancellation)
+    "live cleanup cancellation remains asynchronous while later cleanup still runs and all diagnostics survive"
+  ownershipRoot <- testRootPath "harness-ownership-process-matrix"
+  removeTestPathIfPresent ownershipRoot
+  createDirectoryIfMissing True ownershipRoot
+  let ownershipDataRoot = ownershipRoot </> ".data"
+      ownershipRuntimeRoot = ownershipDataRoot </> "runtime"
+      ownershipPaths =
+        subprocessPaths
+          { repoRoot = ownershipRoot,
+            buildRoot = ownershipRoot </> ".build",
+            dataRoot = ownershipDataRoot,
+            runtimeRoot = ownershipRuntimeRoot,
+            kindRoot = ownershipDataRoot </> "kind",
+            helmConfigRoot = ownershipDataRoot </> "helm" </> "config",
+            helmCacheRoot = ownershipDataRoot </> "helm" </> "cache",
+            helmDataRoot = ownershipDataRoot </> "helm" </> "data",
+            resultsRoot = ownershipDataRoot </> "results",
+            modelCacheRoot = ownershipDataRoot </> "model-cache",
+            pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = validKindToolPaths
+                  }
+          }
+      ownershipReservationPath =
+        ownershipRuntimeRoot
+          </> "locks"
+          </> "harness-cluster-slot.reserved"
+      ownershipStatePath = ownershipRuntimeRoot </> "cluster-state.state"
+      ownershipRuntimeConfig = ownershipRoot </> "infernix.dhall"
+      ownershipBackupConfig =
+        ownershipRuntimeConfig <> ".harness-backup"
+      operatorConfigContents = "operator runtime config\n"
+      harnessConfigContents = "harness runtime config\n"
+      requireMarker label markerPath =
+        waitForFileContents 200 markerPath
+          >>= maybe
+            (fail ("timed out waiting for " <> label))
+            pure
+  createDirectoryIfMissing True ownershipRuntimeRoot
+  writeExecutableFixture
+    fixtureKindPath
+    "#!/bin/sh\nprintf 'infernix-apple-silicon\\n'\n"
+  let operatorPresentState =
+        mstState
+          { clusterLifecycle = ClusterReady,
+            clusterOwner = OperatorOwned,
+            clusterRuntimeMode = AppleSilicon
+          }
+  writeClusterStateFile ownershipStatePath operatorPresentState
+  refusedPreauthorization <-
+    try @IOException
+      (seizeHarnessClusterSlotAt ownershipPaths (Just AppleSilicon))
+  reservationAfterRefusal <- doesFileExist ownershipReservationPath
+  assert
+    (isLeft refusedPreauthorization && not reservationAfterRefusal)
+    "a harness seizure refused by an actually-present operator cluster publishes no reservation"
+  removeFile ownershipStatePath
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  withRuntimeConfigWriteAccessAt ownershipPaths $ do
+    lockContenderPid <-
+      forkProcess $ do
+        contenderResult <-
+          try @IOException
+            (withRuntimeConfigWriteAccessAt ownershipPaths (pure ()))
+        exitImmediately $
+          case contenderResult of
+            Left _ -> ExitSuccess
+            Right _ -> ExitFailure 1
+    lockContenderStatus <-
+      getProcessStatus True False lockContenderPid
+    assert
+      (lockContenderStatus == Just (Exited ExitSuccess))
+      "runtime-config write authorization holds the lifecycle lock through the protected action"
+  writeFile ownershipRuntimeConfig operatorConfigContents
+  let seizedMarker = ownershipRoot </> "owner-seized"
+      descendantAuthorizedMarker =
+        ownershipRoot </> "descendant-authorized"
+      forgeProbeSignal = ownershipRoot </> "probe-forged-identity"
+      forgedIdentityRejectedMarker =
+        ownershipRoot </> "forged-identity-rejected"
+      takeoverSignal = ownershipRoot </> "begin-config-takeover"
+      takeoverMarker = ownershipRoot </> "config-taken"
+      releaseRejectedMarker =
+        ownershipRoot </> "non-owner-release-rejected"
+      boundedDescendantPidPath =
+        ownershipRoot </> "bounded-descendant.pid"
+  ownershipSubprocessEnv <-
+    Subprocess.clusterSubprocessEnv ownershipPaths
+  ownershipParentDeathCommand <-
+    expectRight
+      "compile reservation-owner parent-death command"
+      ( Subprocess.compileTestCommand
+          (Subprocess.TestParentDeathProcessTree boundedDescendantPidPath)
+          ownershipSubprocessEnv
+      )
+  reservationOwnerPid <-
+    forkProcess $ do
+      ownerResult <-
+        try @SomeException $ do
+          seizeHarnessClusterSlotAt ownershipPaths (Just AppleSilicon)
+          authorizedDescendantPid <-
+            forkProcess $ do
+              authorizationResult <-
+                try @IOException
+                  ( withRuntimeConfigWriteAccessAt
+                      ownershipPaths
+                      (writeFile descendantAuthorizedMarker "authorized")
+                  )
+              exitImmediately $
+                case authorizationResult of
+                  Right () -> ExitSuccess
+                  Left _ -> ExitFailure 1
+          authorizedDescendantStatus <-
+            getProcessStatus True False authorizedDescendantPid
+          unless
+            (authorizedDescendantStatus == Just (Exited ExitSuccess))
+            (fail "same-cohort descendant did not receive reservation authority")
+          writeFile seizedMarker "seized"
+          _ <- requireMarker "forged-identity probe signal" forgeProbeSignal
+          forgedProbePid <-
+            forkProcess $ do
+              forgedProbeResult <-
+                try @IOException
+                  (withRuntimeConfigWriteAccessAt ownershipPaths (pure ()))
+              exitImmediately $
+                case forgedProbeResult of
+                  Left _ -> ExitSuccess
+                  Right () -> ExitFailure 1
+          forgedProbeStatus <-
+            getProcessStatus True False forgedProbePid
+          unless
+            (forgedProbeStatus == Just (Exited ExitSuccess))
+            (fail "a forged reservation birth identity authorized a same-PGID descendant")
+          writeFile forgedIdentityRejectedMarker "rejected"
+          _ <- requireMarker "config-takeover signal" takeoverSignal
+          beginHarnessConfigTransaction ownershipPaths True $ do
+            renameFile ownershipRuntimeConfig ownershipBackupConfig
+            writeFile ownershipRuntimeConfig harnessConfigContents
+          nonOwnerReleasePid <-
+            forkProcess $ do
+              releaseResult <-
+                try @IOException
+                  (releaseHarnessClusterSlotAt ownershipPaths (Just AppleSilicon))
+              exitImmediately $
+                case releaseResult of
+                  Left _ -> ExitSuccess
+                  Right () -> ExitFailure 1
+          nonOwnerReleaseStatus <-
+            getProcessStatus True False nonOwnerReleasePid
+          unless
+            (nonOwnerReleaseStatus == Just (Exited ExitSuccess))
+            (fail "a same-cohort non-owner process released the reservation")
+          writeFile releaseRejectedMarker "rejected"
+          writeFile takeoverMarker "taken"
+          _ <- Subprocess.runBoundedCommand ownershipParentDeathCommand
+          fail "the bounded parent-death command returned before its reservation owner was killed"
+      exitImmediately $
+        case ownerResult of
+          Right () -> ExitSuccess
+          Left _ -> ExitFailure 1
+  _ <- requireMarker "reservation publication" seizedMarker
+  _ <- requireMarker "same-cohort authorization" descendantAuthorizedMarker
+  genuineReservation <- System.IO.readFile' ownershipReservationPath
+  configBeforeTakeover <- System.IO.readFile' ownershipRuntimeConfig
+  assert
+    ( "version=2" `isInfixOf` genuineReservation
+        && "boot-identity=" `isInfixOf` genuineReservation
+        && "process-start-time=" `isInfixOf` genuineReservation
+        && configBeforeTakeover == operatorConfigContents
+    )
+    "the birth-verified reservation is durable before harness config takeover begins"
+  let forgedReservation =
+        unlines
+          [ if "process-start-time=" `isPrefixOf` reservationLine
+              then "process-start-time=1"
+              else reservationLine
+          | reservationLine <- lines genuineReservation
+          ]
+  writeFile ownershipReservationPath forgedReservation
+  writeFile forgeProbeSignal "probe"
+  _ <- requireMarker "forged-identity rejection" forgedIdentityRejectedMarker
+  forgedReconcileResult <-
+    try @IOException
+      (reconcileInterruptedHarnessStateAt ownershipPaths)
+  reservationAfterForgedReconcile <-
+    doesFileExist ownershipReservationPath
+  assert
+    (isLeft forgedReconcileResult && reservationAfterForgedReconcile)
+    "a live numeric PID/PGID with a mismatched birth identity neither authorizes nor permits recovery"
+  writeFile ownershipReservationPath genuineReservation
+  writeFile takeoverSignal "take over"
+  _ <- requireMarker "harness config takeover" takeoverMarker
+  _ <- requireMarker "non-owner release rejection" releaseRejectedMarker
+  boundedDescendantPidContents <-
+    requireMarker "live bounded-command descendant" boundedDescendantPidPath
+  let boundedDescendantPid =
+        takeWhile (/= '\n') boundedDescendantPidContents
+  configDuringHarness <- System.IO.readFile' ownershipRuntimeConfig
+  operatorWriteDuringHarness <-
+    try @IOException
+      ( withRuntimeConfigWriteAccessAt
+          ownershipPaths
+          (writeFile ownershipRuntimeConfig "operator clobber")
+      )
+  assert
+    ( isLeft operatorWriteDuringHarness
+        && configDuringHarness == harnessConfigContents
+    )
+    "an operator process cannot write runtime config during a live harness reservation"
+  signalProcessGroup sigKILL reservationOwnerPid
+  _ <- getProcessStatus True False reservationOwnerPid
+  descendantLiveReconcile <-
+    try @IOException
+      (reconcileInterruptedHarnessStateAt ownershipPaths)
+  boundedDescendantAliveAfterReconcile <-
+    not <$> waitForPidExit 0 boundedDescendantPid
+  configWhileDescendantLives <-
+    System.IO.readFile' ownershipRuntimeConfig
+  reservationWhileDescendantLives <-
+    doesFileExist ownershipReservationPath
+  let recoveryOrderingHeld =
+        case descendantLiveReconcile of
+          Left _ ->
+            reservationWhileDescendantLives
+              && configWhileDescendantLives == harnessConfigContents
+          Right () ->
+            not boundedDescendantAliveAfterReconcile
+  assert
+    recoveryOrderingHeld
+    "reservation recovery cannot succeed while the killed owner's bounded command group remains live"
+  boundedDescendantExited <-
+    waitForPidExit 200 boundedDescendantPid
+  assert
+    boundedDescendantExited
+    "the leased command-group watcher kills the bounded command after whole-owner-group SIGKILL"
+  let awaitDeadGroupRecovery :: Int -> IO Bool
+      awaitDeadGroupRecovery attemptsRemaining = do
+        recoveryResult <-
+          try @IOException
+            (reconcileInterruptedHarnessStateAt ownershipPaths)
+        case recoveryResult of
+          Right () -> pure True
+          Left _
+            | attemptsRemaining <= 0 -> pure False
+            | otherwise -> do
+                threadDelay 50000
+                awaitDeadGroupRecovery (attemptsRemaining - 1)
+  recoveredAfterGroupExit <- awaitDeadGroupRecovery 200
+  restoredOperatorConfig <-
+    System.IO.readFile' ownershipRuntimeConfig
+  backupAfterRecovery <- doesFileExist ownershipBackupConfig
+  reservationAfterRecovery <-
+    doesFileExist ownershipReservationPath
+  assert
+    ( recoveredAfterGroupExit
+        && restoredOperatorConfig == operatorConfigContents
+        && not backupAfterRecovery
+        && not reservationAfterRecovery
+    )
+    "dead-cohort recovery restores the operator config and clears the reservation only after whole-group exit"
+  withRuntimeConfigWriteAccessAt
+    ownershipPaths
+    (writeFile ownershipRuntimeConfig "operator after recovery\n")
+  ownerReleasePid <-
+    forkProcess $ do
+      releaseResult <-
+        try @SomeException $ do
+          dropInheritedProcessIdentity
+          freshOwnerPid <- fromIntegral <$> getProcessID
+          freshOwnerIdentity <-
+            readProcessBirthIdentity freshOwnerPid
+          unless
+            (System.Info.os /= "darwin" || isNothing freshOwnerIdentity)
+            (fail "fresh harness owner unexpectedly retained its parent's Darwin registration")
+          seizeHarnessClusterSlotAt ownershipPaths (Just AppleSilicon)
+          releaseHarnessClusterSlotAt ownershipPaths (Just AppleSilicon)
+      exitImmediately $
+        case releaseResult of
+          Right () -> ExitSuccess
+          Left _ -> ExitFailure 1
+  ownerReleaseStatus <- getProcessStatus True False ownerReleasePid
+  reservationAfterOwnerRelease <-
+    doesFileExist ownershipReservationPath
+  assert
+    ( ownerReleaseStatus == Just (Exited ExitSuccess)
+        && not reservationAfterOwnerRelease
+    )
+    "a fresh unregistered process registers during harness seizure and only that owner can remove its reservation"
+  let cleanupSeizedMarker =
+        ownershipRoot </> "cleanup-owner-seized"
+      cleanupReleaseSignal =
+        ownershipRoot </> "cleanup-owner-release"
+      cleanupRejectedMarker =
+        ownershipRoot </> "cleanup-owner-rejected"
+      cleanupKindLog =
+        ownershipRoot </> "cleanup-kind.log"
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  cleanupOwnerPid <-
+    forkProcess $ do
+      cleanupOwnerResult <-
+        try @SomeException $ do
+          seizeHarnessClusterSlotAt ownershipPaths (Just AppleSilicon)
+          writeFile cleanupSeizedMarker "seized"
+          _ <- requireMarker "cleanup release signal" cleanupReleaseSignal
+          cleanupReleaseResult <-
+            try @IOException
+              (releaseHarnessClusterSlotAt ownershipPaths (Just AppleSilicon))
+          case cleanupReleaseResult of
+            Left _ -> writeFile cleanupRejectedMarker "rejected"
+            Right () ->
+              fail "harness cleanup deleted an operator-owned cluster that appeared after seizure"
+      exitImmediately $
+        case cleanupOwnerResult of
+          Right () -> ExitSuccess
+          Left _ -> ExitFailure 1
+  _ <- requireMarker "cleanup-owner reservation" cleanupSeizedMarker
+  writeClusterStateFile ownershipStatePath operatorPresentState
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show cleanupKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  printf 'infernix-apple-silicon\\n'\n"
+        <> "fi\n"
+    )
+  writeFile cleanupReleaseSignal "release"
+  _ <- requireMarker "owner-specific cleanup rejection" cleanupRejectedMarker
+  cleanupOwnerStatus <-
+    getProcessStatus True False cleanupOwnerPid
+  cleanupState <- loadClusterState ownershipPaths
+  cleanupKindInvocations <- System.IO.readFile' cleanupKindLog
+  reservationAfterCleanupRefusal <-
+    doesFileExist ownershipReservationPath
+  assert
+    ( cleanupOwnerStatus == Just (Exited ExitSuccess)
+        && fmap clusterOwner cleanupState == Just OperatorOwned
+        && not ("delete" `isInfixOf` cleanupKindInvocations)
+        && reservationAfterCleanupRefusal
+    )
+    "owner cleanup rechecks a competing operator takeover, leaves the live operator cluster untouched, and retains its fence"
+  let activityRoot =
+        ownershipRuntimeRoot </> "bounded-command-activity"
+      malformedActivityPath =
+        activityRoot </> "malformed.lease.json"
+      unknownActivityPath =
+        activityRoot </> "unknown-version.lease.json"
+      assertCorruptActivityRefused activityPath activityContents = do
+        writeFile activityPath activityContents
+        setFileMode activityPath 0o600
+        recoveryResult <-
+          try @IOException
+            (reconcileInterruptedHarnessStateAt ownershipPaths)
+        reservationRetained <-
+          doesFileExist ownershipReservationPath
+        removeFile activityPath
+        assert
+          (isLeft recoveryResult && reservationRetained)
+          "malformed or unknown-version bounded-command activity state fails closed before reservation recovery"
+  createDirectoryIfMissing True activityRoot
+  setFileMode activityRoot 0o700
+  assertCorruptActivityRefused malformedActivityPath "{"
+  assertCorruptActivityRefused unknownActivityPath "{\"version\":999}"
+  reconcileInterruptedHarnessStateAt ownershipPaths
+  reservationAfterCleanupRecovery <-
+    doesFileExist ownershipReservationPath
+  assert
+    (not reservationAfterCleanupRecovery)
+    "dead untouched harness reservation recovery releases the slot around the still-live operator-owned cluster"
+  let deleteBoundaryPaths =
+        ownershipPaths
+          { buildRoot =
+              ownershipRoot </> ".outer-build"
+          }
+      deleteBoundaryKindLog =
+        ownershipRoot </> "effect-adjacent-kind.log"
+      deleteBoundaryKindReadCount =
+        ownershipRoot </> "effect-adjacent-kind-read-count"
+      deleteBoundaryHarnessState =
+        mstState
+          { clusterLifecycle = ClusterReady,
+            clusterOwner = HarnessOwned,
+            clusterRuntimeMode = LinuxCpu
+          }
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  seizeHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu)
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show deleteBoundaryKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  count=0\n"
+        <> "  if [ -f "
+        <> show deleteBoundaryKindReadCount
+        <> " ]; then IFS= read -r count < "
+        <> show deleteBoundaryKindReadCount
+        <> "; fi\n"
+        <> "  count=$((count + 1))\n"
+        <> "  printf '%s\\n' \"$count\" > "
+        <> show deleteBoundaryKindReadCount
+        <> "\n"
+        <> "  if [ \"$count\" -le 2 ]; then\n"
+        <> "    printf 'infernix-linux-cpu\\n'\n"
+        <> "  else\n"
+        <> "    printf 'infernix-apple-silicon\\n'\n"
+        <> "  fi\n"
+        <> "fi\n"
+    )
+  deleteBoundaryReleaseResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu))
+  deleteBoundaryKindInvocations <-
+    System.IO.readFile' deleteBoundaryKindLog
+  deleteBoundaryReservationRetained <-
+    doesFileExist ownershipReservationPath
+  deleteBoundaryState <- loadClusterState deleteBoundaryPaths
+  assert
+    ( isLeft deleteBoundaryReleaseResult
+        && length
+          (filter (== "get clusters") (lines deleteBoundaryKindInvocations))
+          >= 3
+        && not ("delete cluster" `isInfixOf` deleteBoundaryKindInvocations)
+        && deleteBoundaryReservationRetained
+        && fmap clusterOwner deleteBoundaryState == Just HarnessOwned
+    )
+    "Kind deletion revalidates global inventory at the effect-adjacent boundary and retains the harness fence when ownership changes"
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  releaseHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu)
+  let reservationBoundaryKindLog =
+        ownershipRoot </> "reservation-replacement-kind.log"
+      reservationBoundaryKindReadCount =
+        ownershipRoot </> "reservation-replacement-kind-read-count"
+  seizeHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu)
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  originalDeleteBoundaryReservation <-
+    System.IO.readFile' ownershipReservationPath
+  let replacementDeleteBoundaryReservation =
+        unlines
+          [ if "config-transaction=" `isPrefixOf` reservationLine
+              then "config-transaction=restored"
+              else reservationLine
+          | reservationLine <- lines originalDeleteBoundaryReservation
+          ]
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show reservationBoundaryKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  count=0\n"
+        <> "  if [ -f "
+        <> show reservationBoundaryKindReadCount
+        <> " ]; then IFS= read -r count < "
+        <> show reservationBoundaryKindReadCount
+        <> "; fi\n"
+        <> "  count=$((count + 1))\n"
+        <> "  printf '%s\\n' \"$count\" > "
+        <> show reservationBoundaryKindReadCount
+        <> "\n"
+        <> "  if [ \"$count\" -eq 3 ]; then\n"
+        <> "    printf '%b' "
+        <> show replacementDeleteBoundaryReservation
+        <> " > "
+        <> show ownershipReservationPath
+        <> "\n"
+        <> "  fi\n"
+        <> "  printf 'infernix-linux-cpu\\n'\n"
+        <> "fi\n"
+    )
+  reservationBoundaryReleaseResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu))
+  reservationBoundaryKindInvocations <-
+    System.IO.readFile' reservationBoundaryKindLog
+  reservationBoundaryReservationRetained <-
+    doesFileExist ownershipReservationPath
+  reservationBoundaryState <- loadClusterState deleteBoundaryPaths
+  let reservationBoundaryIdentityRefused =
+        case reservationBoundaryReleaseResult of
+          Left err ->
+            "reservation identity changed after authorization"
+              `isInfixOf` show err
+          Right () -> False
+  assert
+    ( reservationBoundaryIdentityRefused
+        && length
+          (filter (== "get clusters") (lines reservationBoundaryKindInvocations))
+          >= 3
+        && not ("delete cluster" `isInfixOf` reservationBoundaryKindInvocations)
+        && reservationBoundaryReservationRetained
+        && fmap clusterOwner reservationBoundaryState == Just HarnessOwned
+    )
+    "Kind deletion requires the exact freshly reread reservation record at the effect-adjacent boundary and retains the harness fence after replacement"
+  replayIntentNow <- getCurrentTime
+  let authorizedReplayPhase =
+        LifecyclePhase
+          { lifecyclePhaseTransition = LifecycleBringUp,
+            lifecyclePhaseName = "replay-retained-state-into-kind",
+            lifecyclePhaseDetail = "authorized pre-workload replay",
+            lifecyclePhaseHeartbeatAt = replayIntentNow
+          }
+      authorizedReplayState =
+        deleteBoundaryHarnessState
+          { clusterLifecycle = ClusterActivating authorizedReplayPhase,
+            updatedAt = replayIntentNow
+          }
+      replacementReplayTime = addUTCTime 1 replayIntentNow
+      replacementReplayState =
+        authorizedReplayState
+          { clusterLifecycle =
+              ClusterActivating
+                authorizedReplayPhase
+                  { lifecyclePhaseDetail = "replacement pre-workload replay",
+                    lifecyclePhaseHeartbeatAt = replacementReplayTime
+                  },
+            updatedAt = replacementReplayTime
+          }
+  writeClusterStateFile ownershipStatePath authorizedReplayState
+  authorizedReplayStateFromDisk <-
+    maybe
+      (fail "recovery intent fixture lost its authorized lifecycle")
+      pure
+      =<< loadClusterState deleteBoundaryPaths
+  let authorizedReplayIntent =
+        clusterLifecycle authorizedReplayStateFromDisk
+  writeClusterStateFile ownershipStatePath replacementReplayState
+  replacementReplayStateFromDisk <-
+    maybe
+      (fail "recovery intent fixture lost its replacement lifecycle")
+      pure
+      =<< loadClusterState deleteBoundaryPaths
+  recoveryDeleteInvokedRef <- IORef.newIORef False
+  recoveryIntentRefused <-
+    if preWorkloadRecoveryIntentMatches
+      authorizedReplayIntent
+      replacementReplayStateFromDisk
+      then IORef.writeIORef recoveryDeleteInvokedRef True >> pure False
+      else pure True
+  recoveryDeleteInvoked <- IORef.readIORef recoveryDeleteInvokedRef
+  recoveryReservationRetained <-
+    doesFileExist ownershipReservationPath
+  recoveryReplacementStateRetained <-
+    loadClusterState deleteBoundaryPaths
+  assert
+    ( preWorkloadRecoveryIntentMatches
+        authorizedReplayIntent
+        authorizedReplayStateFromDisk
+        && retainedReplayPending replacementReplayStateFromDisk
+        && authorizedReplayIntent
+          /= clusterLifecycle replacementReplayStateFromDisk
+        && recoveryIntentRefused
+        && not recoveryDeleteInvoked
+        && recoveryReservationRetained
+        && recoveryReplacementStateRetained
+          == Just replacementReplayStateFromDisk
+    )
+    "pre-workload Kind recovery rejects a replaced still-pending replay lifecycle before delete and retains the harness fence"
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  writeFile
+    ownershipReservationPath
+    originalDeleteBoundaryReservation
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  releaseHarnessClusterSlotAt deleteBoundaryPaths (Just LinuxCpu)
+  let deletePostconditionKindLog =
+        ownershipRoot </> "delete-postcondition-kind.log"
+      deletePostconditionAbsentMarker =
+        ownershipRoot </> "delete-postcondition-absent"
+      deletePostconditionPolicies =
+        (HostConfig.hostCommandPolicies baseHostConfig)
+          { HostConfig.dhallKindDelete =
+              ( HostConfig.dhallKindDelete
+                  (HostConfig.hostCommandPolicies baseHostConfig)
+              )
+                { HostConfig.dhallRetry =
+                    HostConfig.Bounded
+                      HostConfig.DhallBoundedRetry
+                        { HostConfig.dhallAttempts = 3,
+                          HostConfig.dhallBackoffMicros = 10000
+                        }
+                }
+          }
+      deletePostconditionPaths =
+        deleteBoundaryPaths
+          { pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = validKindToolPaths,
+                    HostConfig.hostCommandPolicies =
+                      deletePostconditionPolicies
+                  }
+          }
+  removeTestPathIfPresent deletePostconditionKindLog
+  removeTestPathIfPresent deletePostconditionAbsentMarker
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  seizeHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu)
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show deletePostconditionKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  if [ ! -f "
+        <> show deletePostconditionAbsentMarker
+        <> " ]; then\n"
+        <> "    printf 'infernix-linux-cpu\\n'\n"
+        <> "  fi\n"
+        <> "fi\n"
+        <> "if [ \"$1\" = delete ] && [ \"$2\" = cluster ]; then\n"
+        <> "  printf 'absent\\n' > "
+        <> show deletePostconditionAbsentMarker
+        <> "\n"
+        <> "  printf 'synthetic terminal delete failure\\n' >&2\n"
+        <> "  exit 42\n"
+        <> "fi\n"
+    )
+  deletePostconditionReleaseResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu))
+  deletePostconditionKindInvocations <-
+    lines <$> System.IO.readFile' deletePostconditionKindLog
+  deletePostconditionReservationPresent <-
+    doesFileExist ownershipReservationPath
+  deletePostconditionState <-
+    loadClusterState deletePostconditionPaths
+  let deletePostconditionAttempts =
+        filter ("delete cluster" `isPrefixOf`) deletePostconditionKindInvocations
+      invocationsAfterLastDelete =
+        reverse
+          ( takeWhile
+              (not . ("delete cluster" `isPrefixOf`))
+              (reverse deletePostconditionKindInvocations)
+          )
+      postDeleteInventoryReads =
+        filter (== "get clusters") invocationsAfterLastDelete
+  assert
+    ( isRight deletePostconditionReleaseResult
+        && length deletePostconditionAttempts == 3
+        && length postDeleteInventoryReads >= 2
+        && fmap clusterLifecycle deletePostconditionState
+          == Just ClusterAbsent
+        && not deletePostconditionReservationPresent
+    )
+    "a terminal Kind-delete failure is accepted only after observed live absence, then writer quiescence completes teardown"
+  let deleteKernelKindLog =
+        ownershipRoot </> "delete-kernel-kind.log"
+      deleteKernelAbsentMarker =
+        ownershipRoot </> "delete-kernel-absent"
+  removeTestPathIfPresent deleteKernelKindLog
+  removeTestPathIfPresent deleteKernelAbsentMarker
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  seizeHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu)
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show deleteKernelKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  if [ ! -f "
+        <> show deleteKernelAbsentMarker
+        <> " ]; then\n"
+        <> "    printf 'infernix-linux-cpu\\n'\n"
+        <> "  fi\n"
+        <> "fi\n"
+        <> "if [ \"$1\" = delete ] && [ \"$2\" = cluster ]; then\n"
+        <> "  printf 'absent\\n' > "
+        <> show deleteKernelAbsentMarker
+        <> "\n"
+        <> "  printf '\\300\\057'\n"
+        <> "fi\n"
+    )
+  deleteKernelReleaseResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu))
+  deleteKernelInvocations <-
+    lines <$> System.IO.readFile' deleteKernelKindLog
+  deleteKernelReservationPresent <-
+    doesFileExist ownershipReservationPath
+  deleteKernelState <-
+    loadClusterState deletePostconditionPaths
+  deleteKernelAbsent <- doesFileExist deleteKernelAbsentMarker
+  let deleteKernelAttempts =
+        filter ("delete cluster" `isPrefixOf`) deleteKernelInvocations
+      deleteKernelInvocationsAfterDelete =
+        reverse
+          ( takeWhile
+              (not . ("delete cluster" `isPrefixOf`))
+              (reverse deleteKernelInvocations)
+          )
+      deleteKernelPostconditionReads =
+        filter (== "get clusters") deleteKernelInvocationsAfterDelete
+      deleteKernelProvenancePreserved =
+        case deleteKernelReleaseResult of
+          Left failure ->
+            "stdout was not valid UTF-8" `isInfixOf` show failure
+          Right () -> False
+  assert
+    ( deleteKernelProvenancePreserved
+        && deleteKernelAbsent
+        && length deleteKernelAttempts == 1
+        && null deleteKernelPostconditionReads
+        && deleteKernelReservationPresent
+        && fmap clusterLifecycle deleteKernelState /= Just ClusterAbsent
+    )
+    ( "a Kind-delete kernel failure cannot be laundered through later absent inventory and retains the harness fence; observed result "
+        <> show deleteKernelReleaseResult
+        <> ", attempts "
+        <> show deleteKernelAttempts
+        <> ", postcondition reads "
+        <> show deleteKernelPostconditionReads
+        <> ", reservation "
+        <> show deleteKernelReservationPresent
+        <> ", lifecycle "
+        <> show (clusterLifecycle <$> deleteKernelState)
+    )
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  releaseHarnessClusterSlotAt deletePostconditionPaths (Just LinuxCpu)
+  let deleteTimeoutKindLog =
+        ownershipRoot </> "delete-timeout-kind.log"
+      deleteTimeoutAbsentMarker =
+        ownershipRoot </> "delete-timeout-absent"
+      deleteTimeoutPolicies =
+        (HostConfig.hostCommandPolicies baseHostConfig)
+          { HostConfig.dhallKindDelete =
+              ( HostConfig.dhallKindDelete
+                  (HostConfig.hostCommandPolicies baseHostConfig)
+              )
+                { HostConfig.dhallTimeoutMicros = 1000000,
+                  HostConfig.dhallRetry = HostConfig.Never
+                }
+          }
+      deleteTimeoutPaths =
+        deleteBoundaryPaths
+          { pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = validKindToolPaths,
+                    HostConfig.hostCommandPolicies = deleteTimeoutPolicies
+                  }
+          }
+  removeTestPathIfPresent deleteTimeoutKindLog
+  removeTestPathIfPresent deleteTimeoutAbsentMarker
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  seizeHarnessClusterSlotAt deleteTimeoutPaths (Just LinuxCpu)
+  writeClusterStateFile ownershipStatePath deleteBoundaryHarnessState
+  writeExecutableFixture
+    fixtureKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show deleteTimeoutKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  if [ ! -f "
+        <> show deleteTimeoutAbsentMarker
+        <> " ]; then\n"
+        <> "    printf 'infernix-linux-cpu\\n'\n"
+        <> "  fi\n"
+        <> "fi\n"
+        <> "if [ \"$1\" = delete ] && [ \"$2\" = cluster ]; then\n"
+        <> "  printf 'absent\\n' > "
+        <> show deleteTimeoutAbsentMarker
+        <> "\n"
+        <> "  /bin/sleep 30\n"
+        <> "fi\n"
+    )
+  deleteTimeoutReleaseResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt deleteTimeoutPaths (Just LinuxCpu))
+  deleteTimeoutInvocations <-
+    lines <$> System.IO.readFile' deleteTimeoutKindLog
+  deleteTimeoutReservationPresent <-
+    doesFileExist ownershipReservationPath
+  deleteTimeoutState <- loadClusterState deleteTimeoutPaths
+  deleteTimeoutAbsent <- doesFileExist deleteTimeoutAbsentMarker
+  let deleteTimeoutAttempts =
+        filter ("delete cluster" `isPrefixOf`) deleteTimeoutInvocations
+      deleteTimeoutInvocationsAfterDelete =
+        reverse
+          ( takeWhile
+              (not . ("delete cluster" `isPrefixOf`))
+              (reverse deleteTimeoutInvocations)
+          )
+      deleteTimeoutPostconditionReads =
+        filter (== "get clusters") deleteTimeoutInvocationsAfterDelete
+      deleteTimeoutProvenancePreserved =
+        case deleteTimeoutReleaseResult of
+          Left failure ->
+            "command timed out after 1s" `isInfixOf` show failure
+          Right () -> False
+  assert
+    ( deleteTimeoutProvenancePreserved
+        && deleteTimeoutAbsent
+        && length deleteTimeoutAttempts == 1
+        && null deleteTimeoutPostconditionReads
+        && deleteTimeoutReservationPresent
+        && fmap clusterLifecycle deleteTimeoutState /= Just ClusterAbsent
+    )
+    "a Kind-delete timeout cannot be laundered through later absent inventory and retains the harness fence"
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  releaseHarnessClusterSlotAt deleteTimeoutPaths (Just LinuxCpu)
+  let cleanupProofRoot =
+        ownershipRoot </> "activity-proof-cleanup"
+      cleanupProofRuntimeRoot =
+        cleanupProofRoot </> ".data" </> "runtime"
+      cleanupProofPaths =
+        ownershipPaths
+          { repoRoot = cleanupProofRoot,
+            buildRoot = cleanupProofRoot </> ".build",
+            dataRoot = cleanupProofRoot </> ".data",
+            runtimeRoot = cleanupProofRuntimeRoot,
+            kindRoot = cleanupProofRoot </> ".data" </> "kind",
+            helmConfigRoot = cleanupProofRoot </> ".data" </> "helm" </> "config",
+            helmCacheRoot = cleanupProofRoot </> ".data" </> "helm" </> "cache",
+            helmDataRoot = cleanupProofRoot </> ".data" </> "helm" </> "data",
+            resultsRoot = cleanupProofRoot </> ".data" </> "results",
+            modelCacheRoot = cleanupProofRoot </> ".data" </> "model-cache"
+          }
+      cleanupProofActivityRoot =
+        cleanupProofRuntimeRoot </> "bounded-command-activity"
+      cleanupProofActivitySentinel =
+        cleanupProofActivityRoot </> "proof-sentinel"
+      cleanupProofRemovableMetadata =
+        cleanupProofRuntimeRoot </> "removable-metadata"
+  removeTestPathIfPresent cleanupProofRoot
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  seizeHarnessClusterSlotAt cleanupProofPaths (Just AppleSilicon)
+  createDirectoryIfMissing True cleanupProofActivityRoot
+  setFileMode cleanupProofActivityRoot 0o700
+  writeFile cleanupProofActivitySentinel "must survive cleanup\n"
+  writeFile cleanupProofRemovableMetadata "must be removed\n"
+  cleanupHarnessRuntimeState cleanupProofPaths AppleSilicon
+  activityProofSurvived <- doesFileExist cleanupProofActivitySentinel
+  removableMetadataSurvived <- doesFileExist cleanupProofRemovableMetadata
+  assert
+    (activityProofSurvived && not removableMetadataSurvived)
+    "harness runtime cleanup preserves bounded-command activity proofs while removing ordinary metadata"
+  removeFile cleanupProofActivitySentinel
+  releaseHarnessClusterSlotAt cleanupProofPaths (Just AppleSilicon)
+  let missingClaimPathError =
+        "chmod: claim path: No such file or directory"
+      runClaimPermissionRepairFixture attemptResults = do
+        remainingResultsRef <- IORef.newIORef attemptResults
+        recreateCountRef <- IORef.newIORef (0 :: Int)
+        delayCountRef <- IORef.newIORef (0 :: Int)
+        attemptCountRef <- IORef.newIORef (0 :: Int)
+        repairResult <-
+          ClaimPermissions.repairClaimPermissions
+            5
+            (IORef.modifyIORef' recreateCountRef (+ 1))
+            (IORef.modifyIORef' delayCountRef (+ 1))
+            ( do
+                IORef.modifyIORef' attemptCountRef (+ 1)
+                IORef.atomicModifyIORef'
+                  remainingResultsRef
+                  nextClaimPermissionResult
+            )
+        recreateCount <- IORef.readIORef recreateCountRef
+        delayCount <- IORef.readIORef delayCountRef
+        attemptCount <- IORef.readIORef attemptCountRef
+        pure (repairResult, recreateCount, delayCount, attemptCount)
+      nextClaimPermissionResult remainingResults =
+        case remainingResults of
+          [] ->
+            ([], Left "claim permission fixture exhausted its bounded observations")
+          nextResult : laterResults ->
+            (laterResults, nextResult)
+  finalClaimRepairSuccess <-
+    runClaimPermissionRepairFixture
+      (replicate 5 (Left missingClaimPathError) <> [Right ()])
+  finalClaimRepairFailure <-
+    runClaimPermissionRepairFixture
+      (replicate 5 (Left missingClaimPathError) <> [Left "proof chmod still failed"])
+  assert
+    ( finalClaimRepairSuccess == (Right (), 6, 4, 6)
+        && finalClaimRepairFailure == (Left "proof chmod still failed", 6, 4, 6)
+    )
+    "claim permission repair accepts the final recreation only after one additional bounded chmod succeeds"
   -- Sprint 2.15: a ClusterMutating position round-trips and renders dirty
   -- (in-progress), never steady-state — lifecyclePhaseOf projects the mutation.
   mutatingNow <- getCurrentTime
@@ -2350,32 +7897,982 @@ main = do
   assert
     ((lifecyclePhaseTransition <$> (mutatingRoundTrip >>= lifecyclePhaseOf)) == Just LifecycleMutate)
     "a ClusterMutating position round-trips and renders as an in-progress mutation, not steady-state"
-  -- Sprint 6.43: the harness seizure is authorized only for an absent or
-  -- HarnessOwned cluster; a present OperatorOwned cluster fails closed.
+  let mutationRoot =
+        ownershipRoot </> "persisted-cluster-mutation"
+      mutationDataRoot =
+        mutationRoot </> ".data"
+      mutationRuntimeRoot =
+        mutationDataRoot </> "runtime"
+      mutationPaths =
+        ownershipPaths
+          { repoRoot = mutationRoot,
+            buildRoot = mutationRoot </> ".build",
+            dataRoot = mutationDataRoot,
+            runtimeRoot = mutationRuntimeRoot,
+            kindRoot = mutationDataRoot </> "kind",
+            helmConfigRoot = mutationDataRoot </> "helm" </> "config",
+            helmCacheRoot = mutationDataRoot </> "helm" </> "cache",
+            helmDataRoot = mutationDataRoot </> "helm" </> "data",
+            resultsRoot = mutationDataRoot </> "results",
+            modelCacheRoot = mutationDataRoot </> "model-cache"
+          }
+      mutationStatePath =
+        mutationRuntimeRoot </> "cluster-state.state"
+      mutationReadySeed =
+        operatorPresentState
+      mutationFailureContains expectedMessage result =
+        case result of
+          Left err -> expectedMessage `isInfixOf` show err
+          Right _ -> False
+  removeTestPathIfPresent mutationRoot
+  createDirectoryIfMissing True mutationRuntimeRoot
+  writeExecutableFixture
+    fixtureKindPath
+    "#!/bin/sh\nprintf 'infernix-apple-silicon\\n'\n"
+  writeClusterStateFile mutationStatePath mutationReadySeed
+  mutationExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its ready state")
+      pure
+      =<< loadClusterState mutationPaths
+  (mutationBodyState, mutationDuringBody, mutationResult) <-
+    withPersistedClusterMutation
+      mutationPaths
+      mutationExpectedState
+      "unit-success"
+      "successful mutation"
+      ( \freshState -> do
+          stateDuringBody <- loadClusterState mutationPaths
+          pure (freshState, stateDuringBody, 42 :: Int)
+      )
+  successfulMutationState <- loadClusterState mutationPaths
+  let mutationWasMarked =
+        case mutationDuringBody >>= lifecyclePhaseOf of
+          Just phase ->
+            lifecyclePhaseTransition phase == LifecycleMutate
+              && lifecyclePhaseName phase == "unit-success"
+          Nothing -> False
   assert
-    (isRight (authorizeHarnessSeizure Nothing))
-    "harness seizure is authorized when no cluster is present"
+    ( mutationResult == 42
+        && mutationBodyState == mutationExpectedState
+        && mutationWasMarked
+        && fmap clusterLifecycle successfulMutationState == Just ClusterReady
+    )
+    "a persisted mutation passes only its fresh state to the body and publishes ClusterReady after revalidating completion"
+  failureExpectedState <-
+    maybe
+      (fail "persisted mutation fixture lost its ready state")
+      pure
+      successfulMutationState
+  changedMarkerNow <- getCurrentTime
+  let changedMutationMarker =
+        failureExpectedState
+          { clusterLifecycle =
+              ClusterMutating
+                LifecyclePhase
+                  { lifecyclePhaseTransition = LifecycleMutate,
+                    lifecyclePhaseName = "replacement-mutation-marker",
+                    lifecyclePhaseDetail = "simulated concurrent state replacement",
+                    lifecyclePhaseHeartbeatAt = changedMarkerNow
+                  },
+            updatedAt = changedMarkerNow
+          }
+  changedMarkerResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          failureExpectedState
+          "unit-marker-replaced"
+          "mutation marker replacement"
+          (\_ -> writeClusterStateFile mutationStatePath changedMutationMarker)
+      )
+  changedMarkerState <- loadClusterState mutationPaths
   assert
-    (isRight (authorizeHarnessSeizure (Just (mstState {clusterOwner = HarnessOwned}))))
-    "harness seizure is authorized for a HarnessOwned cluster"
+    ( mutationFailureContains
+        "the persisted mutation marker changed while the mutation body ran"
+        changedMarkerResult
+        && changedMarkerState == Just changedMutationMarker
+    )
+    "a mutation cannot publish ClusterReady over a replaced dirty marker after its body returns"
+  writeClusterStateFile mutationStatePath mutationReadySeed
+  failureExpectedStateAfterReset <-
+    maybe
+      (fail "persisted mutation fixture lost its reset ready state")
+      pure
+      =<< loadClusterState mutationPaths
+  failedMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          failureExpectedStateAfterReset
+          "unit-failure"
+          "failed mutation cleanup"
+          (\_ -> ioError (userError "mutation cleanup failed"))
+      )
+  failedMutationState <- loadClusterState mutationPaths
   assert
-    (isLeft (authorizeHarnessSeizure (Just (mstState {clusterOwner = OperatorOwned}))))
-    "harness seizure fails closed for a present OperatorOwned cluster"
+    ( mutationFailureContains "mutation cleanup failed" failedMutationResult
+        && case failedMutationState >>= lifecyclePhaseOf of
+          Just phase ->
+            lifecyclePhaseTransition phase == LifecycleMutate
+              && lifecyclePhaseName phase == "unit-failure"
+          Nothing -> False
+    )
+    "a failed persisted mutation retains its dirty lifecycle evidence instead of declaring steady-state"
+  writeClusterStateFile mutationStatePath mutationReadySeed
+  staleExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its stale baseline")
+      pure
+      =<< loadClusterState mutationPaths
+  let replacementState =
+        staleExpectedState
+          { edgePort = edgePort staleExpectedState + 1
+          }
+  writeClusterStateFile mutationStatePath replacementState
+  mutationBodyRanRef <- IORef.newIORef False
+  staleMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          staleExpectedState
+          "unit-stale"
+          "stale caller state"
+          (\_ -> IORef.writeIORef mutationBodyRanRef True)
+      )
+  staleMutationState <- loadClusterState mutationPaths
+  staleMutationBodyRan <- IORef.readIORef mutationBodyRanRef
+  assert
+    ( mutationFailureContains "the caller state is stale" staleMutationResult
+        && staleMutationState == Just replacementState
+        && not staleMutationBodyRan
+    )
+    "a stale mutation caller cannot overwrite the freshly persisted state or run its body"
+  writeClusterStateFile mutationStatePath mutationReadySeed
+  absentExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its absent-state baseline")
+      pure
+      =<< loadClusterState mutationPaths
+  removeFile mutationStatePath
+  IORef.writeIORef mutationBodyRanRef False
+  absentMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          absentExpectedState
+          "unit-absent-state"
+          "absent persisted state"
+          (\_ -> IORef.writeIORef mutationBodyRanRef True)
+      )
+  absentMutationState <- loadClusterState mutationPaths
+  absentMutationBodyRan <- IORef.readIORef mutationBodyRanRef
+  assert
+    ( mutationFailureContains "no persisted cluster state exists" absentMutationResult
+        && isNothing absentMutationState
+        && not absentMutationBodyRan
+    )
+    "a mutation cannot recreate an absent persisted cluster state from caller-supplied data"
+  writeClusterStateFile mutationStatePath mutationReadySeed
+  liveAbsentExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its live-absence baseline")
+      pure
+      =<< loadClusterState mutationPaths
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  IORef.writeIORef mutationBodyRanRef False
+  liveAbsentMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          liveAbsentExpectedState
+          "unit-live-absent"
+          "absent live cluster"
+          (\_ -> IORef.writeIORef mutationBodyRanRef True)
+      )
+  liveAbsentMutationState <- loadClusterState mutationPaths
+  liveAbsentMutationBodyRan <- IORef.readIORef mutationBodyRanRef
+  assert
+    ( mutationFailureContains
+        "the live cluster inventory must contain exactly"
+        liveAbsentMutationResult
+        && liveAbsentMutationState == Just liveAbsentExpectedState
+        && not liveAbsentMutationBodyRan
+    )
+    "a mutation requires an exact live cluster and leaves a ready record untouched when Kind is absent"
+  dirtyMutationNow <- getCurrentTime
+  let dirtyMutationState =
+        liveAbsentExpectedState
+          { clusterLifecycle =
+              ClusterMutating
+                LifecyclePhase
+                  { lifecyclePhaseTransition = LifecycleMutate,
+                    lifecyclePhaseName = "prior-dirty-mutation",
+                    lifecyclePhaseDetail = "unfinished prior mutation",
+                    lifecyclePhaseHeartbeatAt = dirtyMutationNow
+                  },
+            updatedAt = dirtyMutationNow
+          }
+  writeClusterStateFile mutationStatePath dirtyMutationState
+  dirtyExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its dirty state")
+      pure
+      =<< loadClusterState mutationPaths
+  writeExecutableFixture
+    fixtureKindPath
+    "#!/bin/sh\nprintf 'infernix-apple-silicon\\n'\n"
+  IORef.writeIORef mutationBodyRanRef False
+  dirtyMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          dirtyExpectedState
+          "unit-dirty"
+          "dirty persisted state"
+          (\_ -> IORef.writeIORef mutationBodyRanRef True)
+      )
+  dirtyMutationStateAfter <- loadClusterState mutationPaths
+  dirtyMutationBodyRan <- IORef.readIORef mutationBodyRanRef
+  assert
+    ( mutationFailureContains
+        "the persisted lifecycle must be ClusterReady"
+        dirtyMutationResult
+        && dirtyMutationStateAfter == Just dirtyExpectedState
+        && not dirtyMutationBodyRan
+    )
+    "a mutation refuses an exact persisted state that is already dirty"
+  ownerMutationNow <- getCurrentTime
+  let ownerMutationState =
+        liveAbsentExpectedState
+          { clusterOwner = HarnessOwned,
+            updatedAt = ownerMutationNow
+          }
+  writeClusterStateFile mutationStatePath ownerMutationState
+  ownerExpectedState <-
+    maybe
+      (fail "persisted mutation fixture is missing its owner state")
+      pure
+      =<< loadClusterState mutationPaths
+  IORef.writeIORef mutationBodyRanRef False
+  ownerMutationResult <-
+    try @IOException
+      ( withPersistedClusterMutation
+          mutationPaths
+          ownerExpectedState
+          "unit-owner"
+          "owner without reservation"
+          (\_ -> IORef.writeIORef mutationBodyRanRef True)
+      )
+  ownerMutationStateAfter <- loadClusterState mutationPaths
+  ownerMutationBodyRan <- IORef.readIORef mutationBodyRanRef
+  assert
+    ( mutationFailureContains
+        "refusing harness cluster mutation without a live cluster-slot reservation"
+        ownerMutationResult
+        && ownerMutationStateAfter == Just ownerExpectedState
+        && not ownerMutationBodyRan
+    )
+    "a harness-owned mutation requires the matching live reservation before publishing a dirty marker"
+  writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+  assert
+    ( uncordonResultsProveReady [Right "node-a", Right "node-b"]
+        && not (uncordonResultsProveReady [])
+        && not
+          ( uncordonResultsProveReady
+              [Right "node-a", Left "node-b uncordon failed"]
+          )
+    )
+    "interrupted mutation recovery clears its marker only after every discovered node uncordons successfully"
+  mutationRecoveryEventsRef <- IORef.newIORef ([] :: [String])
+  let recordMutationRecoveryEvent event =
+        IORef.modifyIORef' mutationRecoveryEventsRef (<> [event])
+      mutationRecoveryEffects uncordonSucceeds =
+        InterruptedMutationRecoveryEffects
+          { observeMutationRecoveryState = do
+              recordMutationRecoveryEvent "observe-dirty-state"
+              pure (Just ()),
+            mutationRecoveryRequired = const True,
+            mutationRecoveryClusterExists = \() -> do
+              recordMutationRecoveryEvent "prove-cluster-present"
+              pure True,
+            prepareLiveMutationRecovery = \() ->
+              recordMutationRecoveryEvent "prepare-live-recovery",
+            uncordonMutationNodes = \() -> do
+              recordMutationRecoveryEvent "uncordon-all-nodes"
+              pure uncordonSucceeds,
+            announceLiveMutationRecovered = \() ->
+              recordMutationRecoveryEvent "uncordon-proved",
+            settleAbsentMutation = \() ->
+              recordMutationRecoveryEvent "settle-absent"
+          }
+      reconcileChartReplicas =
+        recordMutationRecoveryEvent "reconcile-chart-replicas"
+  runInterruptedMutationRecovery
+    (mutationRecoveryEffects True)
+    reconcileChartReplicas
+  successfulRecoveryEvents <- IORef.readIORef mutationRecoveryEventsRef
+  assert
+    ( successfulRecoveryEvents
+        == [ "observe-dirty-state",
+             "prove-cluster-present",
+             "prepare-live-recovery",
+             "uncordon-all-nodes",
+             "uncordon-proved",
+             "reconcile-chart-replicas"
+           ]
+    )
+    "interrupted mutation recovery uncordons nodes before the desired-state continuation scales deployments back to chart replicas"
+  IORef.writeIORef mutationRecoveryEventsRef []
+  failedRecovery <-
+    try @IOException
+      ( runInterruptedMutationRecovery
+          (mutationRecoveryEffects False)
+          reconcileChartReplicas
+      )
+  failedRecoveryEvents <- IORef.readIORef mutationRecoveryEventsRef
+  assert
+    ( mutationFailureContains
+        "could not prove that every node was uncordoned"
+        failedRecovery
+        && failedRecoveryEvents
+          == [ "observe-dirty-state",
+               "prove-cluster-present",
+               "prepare-live-recovery",
+               "uncordon-all-nodes"
+             ]
+    )
+    "interrupted mutation recovery blocks chart reconciliation when uncordon cannot be proved"
+  let snapshotRecoveryCases =
+        [ (False, False, False, False, []),
+          (False, False, False, True, []),
+          (False, False, True, False, [RestorePreviousSnapshot]),
+          (False, False, True, True, [RestorePreviousSnapshot]),
+          (False, True, False, False, [DeleteIncomingSnapshot]),
+          (False, True, False, True, [PromoteIncomingSnapshot]),
+          (False, True, True, False, [RestorePreviousSnapshot, DeleteIncomingSnapshot]),
+          (False, True, True, True, [RestorePreviousSnapshot, DeleteIncomingSnapshot]),
+          (True, False, False, False, []),
+          (True, False, False, True, []),
+          (True, False, True, False, [DeletePreviousSnapshot]),
+          (True, False, True, True, [DeletePreviousSnapshot]),
+          (True, True, False, False, [DeleteIncomingSnapshot]),
+          (True, True, False, True, [DeleteIncomingSnapshot]),
+          (True, True, True, False, [DeletePreviousSnapshot, DeleteIncomingSnapshot]),
+          (True, True, True, True, [DeletePreviousSnapshot, DeleteIncomingSnapshot])
+        ]
+  assert
+    ( all
+        ( \(currentExists, incomingExists, previousExists, incomingComplete, expectedPlan) ->
+            snapshotRecoveryPlan currentExists incomingExists previousExists incomingComplete
+              == expectedPlan
+        )
+        snapshotRecoveryCases
+    )
+    "retained snapshot recovery restores the last committed root, promotes only complete initial staging, and discards partial residue"
+  let podlessRetainedClaim =
+        PersistentClaim
+          { namespace = "pulsar",
+            release = "infernix-pulsar",
+            workload = "infernix-pulsar-bookie",
+            ordinal = 0,
+            claim = "journal",
+            pvcName = "infernix-infernix-pulsar-bookie-journal-0",
+            requestedStorage = "5Gi"
+          }
+      observedRetainedClaim =
+        podlessRetainedClaim
+          { ordinal = 1,
+            pvcName = "infernix-infernix-pulsar-bookie-journal-1"
+          }
+      rebuildablePatroniClaim =
+        podlessRetainedClaim
+          { namespace = "harbor",
+            release = "harbor",
+            workload = "harbor-postgresql-postgres",
+            pvcName = "harbor-postgresql-postgres-0"
+          }
+      snapshotBindingState =
+        mstState
+          { claims =
+              [ podlessRetainedClaim,
+                observedRetainedClaim,
+                rebuildablePatroniClaim
+              ]
+          }
+      observedBindings =
+        Map.fromList
+          [ (Text.unpack (pvcName observedRetainedClaim), "unit-worker")
+          ]
+      completedSingleWorkerBindings =
+        snapshotClaimNodeBindingsForPausedWorkers
+          (Just snapshotBindingState)
+          ["unit-worker"]
+          observedBindings
+      missingBindingOnMultipleWorkers =
+        snapshotClaimNodeBindingsForPausedWorkers
+          (Just snapshotBindingState)
+          ["unit-worker-a", "unit-worker-b"]
+          observedBindings
+      explicitNonWorkerBinding =
+        snapshotClaimNodeBindingsForPausedWorkers
+          (Just snapshotBindingState)
+          ["unit-worker"]
+          ( Map.insert
+              (Text.unpack (pvcName podlessRetainedClaim))
+              "unit-control-plane"
+              observedBindings
+          )
+  assert
+    ( completedSingleWorkerBindings
+        == Right
+          ( Map.insert
+              (Text.unpack (pvcName podlessRetainedClaim))
+              "unit-worker"
+              observedBindings
+          )
+    )
+    "a sole paused worker completes a podless retained-claim binding without adding rebuildable Patroni claims"
+  assert
+    ( isLeft missingBindingOnMultipleWorkers
+        && isLeft explicitNonWorkerBinding
+        && snapshotClaimNodeBindingsForPausedWorkers
+          Nothing
+          ["unit-worker"]
+          observedBindings
+          == Right observedBindings
+    )
+    "retained snapshot binding completion preserves multi-worker ambiguity, rejects explicit non-worker ownership, and does not invent claims without persisted state"
+  snapshotFaultRoot <- testRootPath "retained-snapshot-rollback"
+  removeTestPathIfPresent snapshotFaultRoot
+  let snapshotFaultDataRoot = snapshotFaultRoot </> ".data"
+      snapshotFaultRuntimeRoot = snapshotFaultDataRoot </> "runtime"
+      snapshotFaultKindRoot = snapshotFaultDataRoot </> "kind"
+      snapshotFaultToolRoot = snapshotFaultRoot </> "tools"
+      snapshotKindPath = snapshotFaultToolRoot </> "kind"
+      snapshotDockerPath = snapshotFaultToolRoot </> "docker"
+      snapshotKindLog = snapshotFaultRoot </> "kind.log"
+      snapshotDockerLog = snapshotFaultRoot </> "docker.log"
+      snapshotLiveMarker = snapshotFaultRoot </> "cluster-live"
+      snapshotDeleteMarker = snapshotFaultRoot </> "kind-delete-invoked"
+      snapshotModePath = snapshotFaultRoot </> "docker-mode"
+      snapshotPausedRoot = snapshotFaultRoot </> "paused-workers"
+      snapshotCancellationReady =
+        snapshotFaultRoot </> "cancel-after-first-pause.ready"
+      snapshotRetryCleanMarker = snapshotFaultRoot </> "retry-observed-clean-incoming"
+      snapshotRetryFoundStaleMarker = snapshotFaultRoot </> "retry-found-stale-incoming"
+      snapshotClusterName = ("infernix-apple-silicon" :: String)
+      snapshotWorkerA = "snapshot-worker-a"
+      snapshotWorkerB = "snapshot-worker-b"
+      snapshotWorkers = [snapshotWorkerA, snapshotWorkerB]
+      snapshotToolPaths =
+        baseToolPaths
+          { HostConfig.hostKind = Text.pack snapshotKindPath,
+            HostConfig.hostDocker = Text.pack snapshotDockerPath
+          }
+      snapshotFaultPaths =
+        subprocessPaths
+          { repoRoot = snapshotFaultRoot,
+            buildRoot = snapshotFaultRoot </> ".build",
+            dataRoot = snapshotFaultDataRoot,
+            runtimeRoot = snapshotFaultRuntimeRoot,
+            kindRoot = snapshotFaultKindRoot,
+            helmConfigRoot = snapshotFaultDataRoot </> "helm" </> "config",
+            helmCacheRoot = snapshotFaultDataRoot </> "helm" </> "cache",
+            helmDataRoot = snapshotFaultDataRoot </> "helm" </> "data",
+            resultsRoot = snapshotFaultDataRoot </> "results",
+            modelCacheRoot = snapshotFaultDataRoot </> "model-cache",
+            pathsHostConfig =
+              Just
+                baseHostConfig
+                  { HostConfig.hostToolPaths = snapshotToolPaths
+                  }
+          }
+      snapshotControlPlane =
+        kindControlPlaneNodeName snapshotFaultPaths AppleSilicon
+      snapshotStatePath =
+        snapshotFaultRuntimeRoot </> "cluster-state.state"
+      snapshotReservationPath =
+        snapshotFaultRuntimeRoot
+          </> "locks"
+          </> "harness-cluster-slot.reserved"
+      committedSnapshotRoot =
+        snapshotFaultKindRoot </> "apple-silicon"
+      incomingSnapshotRoot =
+        committedSnapshotRoot <> ".incoming"
+      previousSnapshotRoot =
+        committedSnapshotRoot <> ".previous"
+      snapshotCompletionMarker =
+        incomingSnapshotRoot </> ".infernix-snapshot-complete-v1"
+      firstPartialPath =
+        incomingSnapshotRoot </> "partial-first-copy"
+      retryPartialPath =
+        incomingSnapshotRoot </> "partial-retry-copy"
+      pausedWorkerPath worker =
+        snapshotPausedRoot </> worker <.> "paused"
+      workersAreThawed = do
+        pausedStates <- mapM (doesFileExist . pausedWorkerPath) snapshotWorkers
+        pure (not (or pausedStates))
+      loggedThaw worker logContents =
+        ("unpause " <> worker) `elem` lines logContents
+      noKindDelete logContents =
+        not ("delete cluster" `isInfixOf` logContents)
+      snapshotReadyState =
+        mstState
+          { clusterLifecycle = ClusterReady,
+            clusterOwner = HarnessOwned,
+            clusterRuntimeMode = AppleSilicon,
+            claims = []
+          }
+  createDirectoryIfMissing True snapshotPausedRoot
+  writeExecutableFixture
+    snapshotKindPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show snapshotKindLog
+        <> "\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+        <> "  if [ -f "
+        <> show snapshotLiveMarker
+        <> " ]; then printf '%s\\n' "
+        <> show snapshotClusterName
+        <> "; fi\n"
+        <> "  exit 0\n"
+        <> "fi\n"
+        <> "if [ \"$1\" = get ] && [ \"$2\" = nodes ]; then\n"
+        <> "  printf '%s\\n' "
+        <> unwords (map show [snapshotControlPlane, snapshotWorkerA, snapshotWorkerB])
+        <> "\n"
+        <> "  exit 0\n"
+        <> "fi\n"
+        <> "if [ \"$1\" = delete ] && [ \"$2\" = cluster ]; then\n"
+        <> "  : > "
+        <> show snapshotDeleteMarker
+        <> "\n"
+        <> "  printf 'unexpected Kind deletion\\n' >&2\n"
+        <> "  exit 97\n"
+        <> "fi\n"
+        <> "exit 0\n"
+    )
+  writeExecutableFixture
+    snapshotDockerPath
+    ( "#!/bin/sh\n"
+        <> "printf '%s\\n' \"$*\" >> "
+        <> show snapshotDockerLog
+        <> "\n"
+        <> "mode=''\n"
+        <> "if [ -f "
+        <> show snapshotModePath
+        <> " ]; then IFS= read -r mode < "
+        <> show snapshotModePath
+        <> "; fi\n"
+        <> "paused_path="
+        <> show (snapshotPausedRoot </> "$2.paused")
+        <> "\n"
+        <> "case \"$1\" in\n"
+        <> "  inspect)\n"
+        <> "    if [ -f \"$paused_path\" ]; then printf 'true\\n'; else printf 'false\\n'; fi\n"
+        <> "    exit 0\n"
+        <> "    ;;\n"
+        <> "  pause)\n"
+        <> "    : > \"$paused_path\"\n"
+        <> "    if [ \"$mode\" = cancel-after-first-pause ] && [ \"$2\" = "
+        <> show snapshotWorkerA
+        <> " ]; then\n"
+        <> "      : > "
+        <> show snapshotCancellationReady
+        <> "\n"
+        <> "      /bin/sleep 30\n"
+        <> "      exit 0\n"
+        <> "    fi\n"
+        <> "    if [ \"$mode\" = pause-failure ] && [ \"$2\" = "
+        <> show snapshotWorkerB
+        <> " ]; then\n"
+        <> "      printf 'pause applied before failure\\n' >&2\n"
+        <> "      exit 42\n"
+        <> "    fi\n"
+        <> "    exit 0\n"
+        <> "    ;;\n"
+        <> "  unpause)\n"
+        <> "    /bin/rm -f \"$paused_path\"\n"
+        <> "    exit 0\n"
+        <> "    ;;\n"
+        <> "  cp)\n"
+        <> "    if [ \"$3\" != "
+        <> show incomingSnapshotRoot
+        <> " ]; then\n"
+        <> "      printf 'unexpected snapshot copy target: %s\\n' \"$3\" >&2\n"
+        <> "      exit 46\n"
+        <> "    fi\n"
+        <> "    if [ \"$mode\" = copy-failure ]; then\n"
+        <> "      printf 'partial first copy\\n' > "
+        <> show firstPartialPath
+        <> "\n"
+        <> "      printf 'snapshot copy failed after a partial write\\n' >&2\n"
+        <> "      exit 43\n"
+        <> "    fi\n"
+        <> "    if [ \"$mode\" = retry-copy-failure ]; then\n"
+        <> "      if [ -e "
+        <> show firstPartialPath
+        <> " ]; then\n"
+        <> "        : > "
+        <> show snapshotRetryFoundStaleMarker
+        <> "\n"
+        <> "        printf 'retry observed the stale partial copy\\n' >&2\n"
+        <> "        exit 44\n"
+        <> "      fi\n"
+        <> "      : > "
+        <> show snapshotRetryCleanMarker
+        <> "\n"
+        <> "      printf 'partial retry copy\\n' > "
+        <> show retryPartialPath
+        <> "\n"
+        <> "      printf 'retry copy failed after reconciliation\\n' >&2\n"
+        <> "      exit 45\n"
+        <> "    fi\n"
+        <> "    printf 'unexpected snapshot copy mode: %s\\n' \"$mode\" >&2\n"
+        <> "    exit 47\n"
+        <> "    ;;\n"
+        <> "esac\n"
+        <> "exit 0\n"
+    )
+  writeFile snapshotModePath "cancel-after-first-pause\n"
+  seizeHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon)
+  createDirectoryIfMissing True (committedSnapshotRoot </> "nested" </> "empty")
+  writeFile
+    (committedSnapshotRoot </> "retained.txt")
+    "committed retained snapshot\n"
+  BS.writeFile
+    (committedSnapshotRoot </> "nested" </> "payload.bin")
+    (BS.pack [0, 1, 10, 127, 128, 255])
+  writeClusterStateFile snapshotStatePath snapshotReadyState
+  writeFile snapshotLiveMarker "live\n"
+  committedSnapshotBeforeFaults <-
+    snapshotDirectoryTree committedSnapshotRoot
+
+  cancelledReleaseResult <- MVar.newEmptyMVar
+  cancelledReleaseThread <-
+    forkIO
+      ( try @SomeException
+          (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+          >>= MVar.putMVar cancelledReleaseResult
+      )
+  let cancelReleaseThread = do
+        cancellationDelivered <- MVar.newEmptyMVar
+        _ <-
+          forkIO
+            ( killThread cancelledReleaseThread
+                >> MVar.putMVar cancellationDelivered ()
+            )
+        maybe
+          (fail "timed out delivering cancellation to snapshot acquisition")
+          pure
+          =<< timeout 10000000 (MVar.takeMVar cancellationDelivered)
+  cancellationBarrier <-
+    waitForFileContents 200 snapshotCancellationReady
+  cancellationResult <-
+    case cancellationBarrier of
+      Nothing -> do
+        cancelReleaseThread
+        _ <- timeout 10000000 (MVar.takeMVar cancelledReleaseResult)
+        fail "timed out waiting for the first snapshot worker to pause"
+      Just _ -> do
+        cancelReleaseThread
+        maybe
+          (fail "cancelled snapshot acquisition did not finish its rollback")
+          pure
+          =<< timeout 10000000 (MVar.takeMVar cancelledReleaseResult)
+  cancellationWorkersThawed <- workersAreThawed
+  cancellationKindLog <- System.IO.readFile' snapshotKindLog
+  cancellationDockerLog <- System.IO.readFile' snapshotDockerLog
+  cancellationDeleteAttempted <- doesFileExist snapshotDeleteMarker
+  cancellationIncomingPresent <- doesDirectoryExist incomingSnapshotRoot
+  cancellationReservationRetained <- doesFileExist snapshotReservationPath
+  committedSnapshotAfterCancellation <-
+    snapshotDirectoryTree committedSnapshotRoot
+  let cancellationWasThreadKilled =
+        case cancellationResult of
+          Left failure ->
+            fromException failure == Just ThreadKilled
+          Right () -> False
+      cancellationDockerInvocations =
+        lines cancellationDockerLog
+  assert
+    ( cancellationWasThreadKilled
+        && cancellationWorkersThawed
+        && length
+          ( filter
+              (== "unpause " <> snapshotWorkerA)
+              cancellationDockerInvocations
+          )
+          == 1
+        && not (loggedThaw snapshotWorkerB cancellationDockerLog)
+        && noKindDelete cancellationKindLog
+        && not cancellationDeleteAttempted
+        && not cancellationIncomingPresent
+        && cancellationReservationRetained
+        && committedSnapshotAfterCancellation == committedSnapshotBeforeFaults
+    )
+    "cancelling snapshot acquisition after a worker pause thaws every possibly paused worker, preserves committed bytes, and blocks Kind deletion"
+
+  writeFile snapshotModePath "pause-failure\n"
+  writeFile snapshotKindLog ""
+  writeFile snapshotDockerLog ""
+  pauseFailureResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+  pauseWorkersThawed <- workersAreThawed
+  pauseKindLog <- System.IO.readFile' snapshotKindLog
+  pauseDockerLog <- System.IO.readFile' snapshotDockerLog
+  pauseDeleteAttempted <- doesFileExist snapshotDeleteMarker
+  pauseIncomingPresent <- doesDirectoryExist incomingSnapshotRoot
+  pauseReservationRetained <- doesFileExist snapshotReservationPath
+  committedSnapshotAfterPauseFailure <-
+    snapshotDirectoryTree committedSnapshotRoot
+  assert
+    ( isLeft pauseFailureResult
+        && pauseWorkersThawed
+        && loggedThaw snapshotWorkerA pauseDockerLog
+        && loggedThaw snapshotWorkerB pauseDockerLog
+        && noKindDelete pauseKindLog
+        && not pauseDeleteAttempted
+        && not pauseIncomingPresent
+        && pauseReservationRetained
+        && committedSnapshotAfterPauseFailure == committedSnapshotBeforeFaults
+    )
+    "an ambiguous worker-pause failure thaws the current and earlier workers, preserves the committed snapshot, and blocks Kind deletion"
+
+  writeFile snapshotModePath "copy-failure\n"
+  writeFile snapshotKindLog ""
+  writeFile snapshotDockerLog ""
+  copyFailureResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+  copyWorkersThawed <- workersAreThawed
+  copyKindLog <- System.IO.readFile' snapshotKindLog
+  copyDockerLog <- System.IO.readFile' snapshotDockerLog
+  copyDeleteAttempted <- doesFileExist snapshotDeleteMarker
+  firstPartialPresent <- doesFileExist firstPartialPath
+  incompleteMarkerPresent <- doesFileExist snapshotCompletionMarker
+  previousSnapshotPresent <- doesDirectoryExist previousSnapshotRoot
+  copyReservationRetained <- doesFileExist snapshotReservationPath
+  committedSnapshotAfterCopyFailure <-
+    snapshotDirectoryTree committedSnapshotRoot
+  assert
+    ( isLeft copyFailureResult
+        && copyWorkersThawed
+        && loggedThaw snapshotWorkerA copyDockerLog
+        && loggedThaw snapshotWorkerB copyDockerLog
+        && any ("cp " `isPrefixOf`) (lines copyDockerLog)
+        && noKindDelete copyKindLog
+        && not copyDeleteAttempted
+        && firstPartialPresent
+        && not incompleteMarkerPresent
+        && not previousSnapshotPresent
+        && copyReservationRetained
+        && committedSnapshotAfterCopyFailure == committedSnapshotBeforeFaults
+    )
+    "a partial Docker snapshot-copy failure thaws every worker, leaves unmarked incoming residue unpromoted, preserves committed bytes, and blocks Kind deletion"
+
+  writeFile snapshotModePath "retry-copy-failure\n"
+  writeFile snapshotKindLog ""
+  writeFile snapshotDockerLog ""
+  retryCopyFailureResult <-
+    try @IOException
+      (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+  retryWorkersThawed <- workersAreThawed
+  retryKindLog <- System.IO.readFile' snapshotKindLog
+  retryDockerLog <- System.IO.readFile' snapshotDockerLog
+  retryDeleteAttempted <- doesFileExist snapshotDeleteMarker
+  retryObservedCleanIncoming <- doesFileExist snapshotRetryCleanMarker
+  retryObservedStaleIncoming <- doesFileExist snapshotRetryFoundStaleMarker
+  stalePartialStillPresent <- doesFileExist firstPartialPath
+  retryPartialPresent <- doesFileExist retryPartialPath
+  retryMarkerPresent <- doesFileExist snapshotCompletionMarker
+  retryPreviousPresent <- doesDirectoryExist previousSnapshotRoot
+  retryReservationRetained <- doesFileExist snapshotReservationPath
+  committedSnapshotAfterRetryFailure <-
+    snapshotDirectoryTree committedSnapshotRoot
+  assert
+    ( isLeft retryCopyFailureResult
+        && retryWorkersThawed
+        && loggedThaw snapshotWorkerA retryDockerLog
+        && loggedThaw snapshotWorkerB retryDockerLog
+        && any ("cp " `isPrefixOf`) (lines retryDockerLog)
+        && noKindDelete retryKindLog
+        && not retryDeleteAttempted
+        && retryObservedCleanIncoming
+        && not retryObservedStaleIncoming
+        && not stalePartialStillPresent
+        && retryPartialPresent
+        && not retryMarkerPresent
+        && not retryPreviousPresent
+        && retryReservationRetained
+        && committedSnapshotAfterRetryFailure == committedSnapshotBeforeFaults
+    )
+    "a retry discards the prior incomplete incoming tree before copying, never promotes it, preserves committed bytes, and still blocks Kind deletion"
+
+  removeFile snapshotLiveMarker
+  snapshotFaultCleanup <-
+    try @IOException
+      (releaseHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon))
+  snapshotReservationAfterCleanup <-
+    doesFileExist snapshotReservationPath
+  assert
+    (isRight snapshotFaultCleanup && not snapshotReservationAfterCleanup)
+    "the retained-snapshot rollback fixture releases its harness reservation after the synthetic cluster becomes absent"
+  removeTestPathIfPresent snapshotFaultRoot
+  -- Sprint 2.15: ownership authorization combines actual Kind presence with
+  -- persisted ownership. An absent slot remains available to the first creator,
+  -- while every live cluster requires a matching present owner record.
+  let mstRuntimeMode = clusterRuntimeMode mstState
+      replayPhase =
+        LifecyclePhase
+          { lifecyclePhaseTransition = LifecycleBringUp,
+            lifecyclePhaseName = "replay-retained-state-into-kind",
+            lifecyclePhaseDetail = "replaying retained state before workloads start",
+            lifecyclePhaseHeartbeatAt = mstNow
+          }
+      replayProvisioningState =
+        mstState {clusterLifecycle = ClusterProvisioning replayPhase}
+      replayActivatingState =
+        mstState {clusterLifecycle = ClusterActivating replayPhase}
+      legacyProvisioningState =
+        mstState
+          { clusterLifecycle =
+              ClusterProvisioning
+                replayPhase
+                  { lifecyclePhaseName = "prepare-kind-cluster"
+                  }
+          }
+      invalidReplayTransitionState =
+        mstState
+          { clusterLifecycle =
+              ClusterActivating
+                replayPhase
+                  { lifecyclePhaseTransition = LifecycleMutate
+                  }
+          }
+  assert
+    ( retainedReplayPlan False False OperatorOwned mstRuntimeMode Nothing
+        == StartRetainedReplay
+        && retainedReplayPlan True True OperatorOwned mstRuntimeMode Nothing
+          == RetainedReplayNotRequired
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just replayProvisioningState)
+          == ResumeRetainedReplay
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just replayActivatingState)
+          == ResumeRetainedReplay
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just (mstState {clusterLifecycle = ClusterReady}))
+          == RetainedReplayNotRequired
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode Nothing
+          == RefuseAmbiguousRetainedReplay
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just legacyProvisioningState)
+          == RefuseAmbiguousRetainedReplay
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just invalidReplayTransitionState)
+          == RefuseAmbiguousRetainedReplay
+        && retainedReplayPlan False True HarnessOwned mstRuntimeMode (Just replayProvisioningState)
+          == RefuseAmbiguousRetainedReplay
+        && retainedReplayPlan False True OperatorOwned AppleSilicon (Just replayProvisioningState)
+          == RefuseAmbiguousRetainedReplay
+        && retainedReplayPlan False True OperatorOwned mstRuntimeMode (Just (mstState {clusterLifecycle = ClusterAbsent}))
+          == RefuseAmbiguousRetainedReplay
+    )
+    "detached retained replay starts only for absence, resumes only from the exact durable intent, and refuses ambiguous live clusters"
+  assert
+    ( retainedReplayPending replayProvisioningState
+        && retainedReplayPending replayActivatingState
+        && not (retainedReplayPending legacyProvisioningState)
+        && not (retainedReplayPending invalidReplayTransitionState)
+    )
+    "retained replay intent requires the reserved phase name and bring-up transition in a pre-workload lifecycle position"
+  assert
+    ( kindKubeconfigRecoveryPlan StartRetainedReplay
+        == RecreatePreWorkloadKind
+        && kindKubeconfigRecoveryPlan ResumeRetainedReplay
+          == RecreatePreWorkloadKind
+        && kindKubeconfigRecoveryPlan RetainedReplayNotRequired
+          == LeaveUnreadableKindUntouched
+        && kindKubeconfigRecoveryPlan RefuseAmbiguousRetainedReplay
+          == LeaveUnreadableKindUntouched
+    )
+    "an unreadable kubeconfig authorizes delete-and-recreate only while exact pre-workload replay intent is required"
+  assert
+    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] Nothing))
+    "an actually absent unrecorded slot authorizes the harness as first creator"
+  assert
+    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] (Just mstState)))
+    "an actually absent slot ignores a stale other-owner record for first-creator behavior"
+  assert
+    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
+    "a live HarnessOwned cluster authorizes the harness"
+  assert
+    (isRight (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
+    "a live OperatorOwned cluster authorizes the operator"
+  assert
+    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
+    "a live OperatorOwned cluster refuses harness takeover and teardown"
+  assert
+    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
+    "a live HarnessOwned cluster refuses operator takeover, teardown, and kubectl passthrough"
+  assert
+    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] Nothing))
+    "a live cluster without matching persisted state fails closed for the operator"
+  assert
+    (isRight (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
+    "a live cluster preserves its recorded owner through an interrupted lifecycle transition"
+  assert
+    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
+    "a live cluster with an absent lifecycle still refuses the other owner"
+  assert
+    ( isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] Nothing)
+        && isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState))
+    )
+    "a harness cleanup recheck refuses an operator that wins the slot after initial seizure"
+  assert
+    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [AppleSilicon] (Just (mstState {clusterOwner = HarnessOwned, clusterRuntimeMode = AppleSilicon}))))
+    "a live cluster in another runtime cannot be ignored by a harness operation"
+  assert
+    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode, AppleSilicon] (Just mstState)))
+    "two live Infernix runtimes are an invariant breach that fails closed"
+  assert
+    ( isRight
+        (authorizeHarnessReservationAccess OperatorOwned 100 True Nothing)
+        && isLeft
+          (authorizeHarnessReservationAccess OperatorOwned 100 True (Just 100))
+        && isLeft
+          (authorizeHarnessReservationAccess HarnessOwned 100 False (Just 100))
+        && isLeft
+          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 101))
+        && isRight
+          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 100))
+    )
+    "harness mutation authority requires a live reservation in the caller's exact process group and fences operators"
+  assert
+    ( isRight (authorizeRuntimeConfigWriteAccess 100 False Nothing)
+        && isRight (authorizeRuntimeConfigWriteAccess 100 True (Just 100))
+        && isLeft (authorizeRuntimeConfigWriteAccess 100 True (Just 101))
+        && isLeft (authorizeRuntimeConfigWriteAccess 100 False (Just 100))
+    )
+    "runtime-config writers are fenced while another live harness process group owns the config transaction"
   -- Sprint 6.43: a leftover .harness-backup (from a prior killed run) is
   -- reconciled on entry — the operator config is restored and the backup consumed.
-  let reconcileRuntimeConfig = clusterStateRoot </> "reconcile-infernix.dhall"
+  let legacyRecoveryPaths =
+        clusterStatePaths
+          { repoRoot = clusterStateRoot
+          }
+      reconcileRuntimeConfig = clusterStateRoot </> "infernix.dhall"
       reconcileBackupConfig = reconcileRuntimeConfig <> ".harness-backup"
   writeFile reconcileBackupConfig "OPERATOR ORIGINAL CONFIG"
   writeFile reconcileRuntimeConfig "HARNESS LEFTOVER CONFIG"
-  reconcileLeftoverHarnessBackup reconcileRuntimeConfig reconcileBackupConfig
+  reconcileInterruptedHarnessStateAt legacyRecoveryPaths
   restoredContents <- readFile reconcileRuntimeConfig
   backupStillPresent <- doesFileExist reconcileBackupConfig
   assert
     (restoredContents == "OPERATOR ORIGINAL CONFIG")
-    "reconcileLeftoverHarnessBackup restores the operator config from a leftover .harness-backup"
+    "locked legacy recovery restores the operator config from a leftover .harness-backup"
   assert
     (not backupStillPresent)
-    "reconcileLeftoverHarnessBackup consumes the leftover .harness-backup on restore"
+    "locked legacy recovery consumes the leftover .harness-backup on restore"
   -- Sprint 5.12: the client model-bootstrap deadline is single-sourced from the
   -- server ceiling and can never be shorter than it (a negative margin clamps).
   assert
@@ -2433,7 +8930,11 @@ hostNativeUnitTestFixture :: FilePath -> FilePath -> HostConfig.HostConfig
 hostNativeUnitTestFixture repoRootPath testRoot =
   let base = HostConfig.defaultAppleHostNativeHostConfig (Text.pack repoRootPath) (Text.pack "/tmp")
    in base
-        { HostConfig.hostFilesystem =
+        { HostConfig.hostToolPaths =
+            (HostConfig.hostToolPaths base)
+              { HostConfig.hostPoetry = "/tmp/infernix-unit-missing-poetry"
+              },
+          HostConfig.hostFilesystem =
             (HostConfig.hostFilesystem base)
               { HostConfig.hostRepoRoot = Text.pack repoRootPath,
                 HostConfig.hostBuildRoot = Text.pack (repoRootPath </> ".build"),
@@ -2530,8 +9031,7 @@ unitTestClusterConfigFixture demoConfigPathValue =
       clusterEngine =
         EngineWiring
           { engineModelCacheRoot = "/tmp/infernix-test/model-cache",
-            engineModelCacheQuotaBytes = 1024,
-            engineCommandOverrides = []
+            engineModelCacheQuotaBytes = 1024
           },
       clusterCoordinator =
         CoordinatorWiring
@@ -2545,6 +9045,721 @@ testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do
   paths <- discoverPaths
   pure (repoRoot paths </> ".build" </> ("test-" <> suiteName))
+
+extractDockerfileHostManifest :: String -> Either String String
+extractDockerfileHostManifest dockerfileContents =
+  case dropWhile (/= hostManifestPrintfStart) (lines dockerfileContents) of
+    [] -> Left "docker/Dockerfile is missing the host-manifest printf block"
+    _printfStart : remainingLines -> do
+      let (argumentLines, terminatorLines) =
+            break
+              (isInfixOf "> /opt/infernix/dhall/InfernixHost.dhall")
+              remainingLines
+      case terminatorLines of
+        [] ->
+          Left "docker/Dockerfile host-manifest printf block is unterminated"
+        _ -> unlines <$> traverse decodeArgumentLine argumentLines
+  where
+    hostManifestPrintfStart = "RUN printf '%s\\n' \\"
+
+    decodeArgumentLine rawLine
+      | "hostArchitecture =" `isInfixOf` rawLine =
+          Right ", hostArchitecture = \"arm64\""
+      | otherwise = do
+          quotedArgument <-
+            case reverse (dropWhile (== ' ') rawLine) of
+              '\\' : reversedArgument ->
+                Right (trimArgumentWhitespace (reverse reversedArgument))
+              _ ->
+                Left
+                  ( "Dockerfile host-manifest argument is missing its line continuation: "
+                      <> rawLine
+                  )
+          case quotedArgument of
+            '\'' : quotedBody
+              | not (null quotedBody),
+                last quotedBody == '\'' ->
+                  Right (init quotedBody)
+            _ ->
+              Left
+                ( "Dockerfile host-manifest argument is not a single-quoted literal: "
+                    <> rawLine
+                )
+
+    trimArgumentWhitespace =
+      reverse
+        . dropWhile (== ' ')
+        . reverse
+        . dropWhile (== ' ')
+
+removeTestPathIfPresent :: FilePath -> IO ()
+removeTestPathIfPresent path =
+  catchIOError (removePathForcibly path) $ \err ->
+    if isDoesNotExistError err
+      then pure ()
+      else ioError err
+
+writeNamedPipePayloadNonblocking :: FilePath -> BS.ByteString -> IO ()
+writeNamedPipePayloadNonblocking path payload = do
+  startedAt <- getMonotonicTimeNSec
+  bracketPreservingPrimary
+    (openBefore (startedAt + 1000000000))
+    PosixIO.closeFd
+    ( \descriptor -> do
+        written <- PosixByteString.fdWrite descriptor payload
+        unless (fromIntegral written == BS.length payload) $
+          fail "the nonblocking FIFO release write was incomplete"
+    )
+  where
+    openBefore deadline = do
+      opened <-
+        try @IOException
+          ( PosixIO.openFd
+              path
+              PosixIO.WriteOnly
+              PosixIO.defaultFileFlags
+                { PosixIO.nonBlock = True
+                }
+          )
+      case opened of
+        Right descriptor -> pure descriptor
+        Left failure
+          | isDoesNotExistError failure -> do
+              now <- getMonotonicTimeNSec
+              if now >= deadline
+                then ioError failure
+                else yield >> openBefore deadline
+          | otherwise -> ioError failure
+
+snapshotDirectoryTree :: FilePath -> IO [(FilePath, Maybe BS.ByteString)]
+snapshotDirectoryTree root = walk ""
+  where
+    walk relativeDirectory = do
+      entries <- sort <$> listDirectory (root </> relativeDirectory)
+      concat <$> mapM (snapshotEntry relativeDirectory) entries
+
+    snapshotEntry relativeDirectory entry = do
+      let relativePath =
+            if null relativeDirectory
+              then entry
+              else relativeDirectory </> entry
+          absolutePath = root </> relativePath
+      isDirectory <- doesDirectoryExist absolutePath
+      if isDirectory
+        then do
+          descendants <- walk relativePath
+          pure ((relativePath, Nothing) : descendants)
+        else do
+          contents <- BS.readFile absolutePath
+          pure [(relativePath, Just contents)]
+
+parseExactIdentityPairs ::
+  Int ->
+  String ->
+  Either String [(Integer, ProcessBirthIdentity)]
+parseExactIdentityPairs expectedPairCount contents =
+  case parsePairs (lines contents) of
+    Right pairs
+      | length pairs == expectedPairCount -> Right pairs
+      | otherwise ->
+          Left
+            ( "expected "
+                <> show expectedPairCount
+                <> " exact identities, observed "
+                <> show (length pairs)
+            )
+    Left failure -> Left failure
+  where
+    parsePairs [] = Right []
+    parsePairs (processIdText : birthIdentityText : remaining) = do
+      processId <-
+        maybe
+          (Left ("invalid process id: " <> processIdText))
+          Right
+          (readMaybe processIdText)
+      birthIdentity <-
+        maybe
+          (Left ("invalid process birth identity: " <> birthIdentityText))
+          Right
+          (parseProcessBirthIdentity birthIdentityText)
+      ((processId, birthIdentity) :) <$> parsePairs remaining
+    parsePairs _ =
+      Left "exact identity evidence had an unmatched pid/birth line"
+
+parseRegisteredTargetAndLeader ::
+  String ->
+  Either String (RecordedProcessIdentity, RecordedProcessIdentity)
+parseRegisteredTargetAndLeader contents =
+  case lines contents of
+    [ targetProcessIdText,
+      targetProcessGroupText,
+      targetBirthIdentityText,
+      leaderProcessIdText,
+      leaderBirthIdentityText
+      ] -> do
+        targetProcessId <-
+          maybe
+            (Left ("invalid registered target process id: " <> targetProcessIdText))
+            Right
+            (readMaybe targetProcessIdText)
+        targetProcessGroup <-
+          maybe
+            (Left ("invalid registered target process group: " <> targetProcessGroupText))
+            Right
+            (readMaybe targetProcessGroupText)
+        targetBirthIdentity <-
+          maybe
+            (Left ("invalid registered target birth identity: " <> targetBirthIdentityText))
+            Right
+            (parseProcessBirthIdentity targetBirthIdentityText)
+        leaderProcessId <-
+          maybe
+            (Left ("invalid registered leader process id: " <> leaderProcessIdText))
+            Right
+            (readMaybe leaderProcessIdText)
+        leaderBirthIdentity <-
+          maybe
+            (Left ("invalid registered leader birth identity: " <> leaderBirthIdentityText))
+            Right
+            (parseProcessBirthIdentity leaderBirthIdentityText)
+        unlessEither
+          ( targetProcessId > 0
+              && targetProcessGroup > 0
+              && leaderProcessId > 0
+              && targetProcessId /= leaderProcessId
+              && targetProcessGroup == leaderProcessId
+          )
+          "registered target and leader topology is invalid"
+        pure
+          ( RecordedProcessIdentity
+              targetProcessId
+              targetProcessGroup
+              targetBirthIdentity,
+            RecordedProcessIdentity
+              leaderProcessId
+              leaderProcessId
+              leaderBirthIdentity
+          )
+    _ ->
+      Left
+        "registered target authority must contain target pid/group/birth and leader pid/birth"
+
+data RecordedProcessIdentity = RecordedProcessIdentity
+  { recordedProcessId :: !Integer,
+    recordedProcessGroup :: !Integer,
+    recordedProcessBirth :: !ProcessBirthIdentity
+  }
+  deriving (Eq, Show)
+
+newtype ReapedChildIdentity
+  = ReapedRegisteredIdentity !RecordedProcessIdentity
+  deriving (Eq, Show)
+
+data ReapEvidence = ReapEvidence
+  { reapEvidenceOwner :: !RecordedProcessIdentity,
+    reapEvidenceChildren :: ![(String, ReapedChildIdentity)]
+  }
+  deriving (Eq, Show)
+
+decodeReapEvidence :: String -> Either String ReapEvidence
+decodeReapEvidence contents = do
+  value <-
+    Aeson.eitherDecodeStrict'
+      (ByteString8.pack contents)
+  case value of
+    Aeson.Object evidenceObject -> do
+      version <-
+        requireMaybe
+          "reap evidence has no numeric version"
+          (activityIntegerField "version" evidenceObject)
+      unlessEither
+        (version == 2)
+        "unsupported designated-owner reap evidence version"
+      ownerValue <-
+        requireMaybe
+          "reap evidence has no owner"
+          (KeyMap.lookup (Key.fromString "owner") evidenceObject)
+      owner <- decodeRecordedIdentityValue ownerValue
+      childrenValue <-
+        requireMaybe
+          "reap evidence has no reapedChildren"
+          (KeyMap.lookup (Key.fromString "reapedChildren") evidenceObject)
+      childValues <-
+        case Aeson.fromJSON childrenValue of
+          Aeson.Success values -> Right values
+          Aeson.Error failure -> Left failure
+      children <- mapM decodeReapedChild childValues
+      pure
+        ReapEvidence
+          { reapEvidenceOwner = owner,
+            reapEvidenceChildren = children
+          }
+    _ -> Left "reap evidence is not a JSON object"
+  where
+    decodeReapedChild childValue =
+      case childValue of
+        Aeson.Object childObject -> do
+          label <-
+            requireMaybe
+              "reaped child has no label"
+              (jsonStringField "label" childObject)
+          identityKind <-
+            requireMaybe
+              "reaped child has no identityKind"
+              (jsonStringField "identityKind" childObject)
+          identityValue <-
+            requireMaybe
+              "reaped child has no identity"
+              (KeyMap.lookup (Key.fromString "identity") childObject)
+          identity <-
+            case identityKind of
+              "registered" ->
+                ReapedRegisteredIdentity
+                  <$> decodeRecordedIdentityValue identityValue
+              _ -> Left "reaped child has an unsupported identityKind"
+          status <-
+            requireMaybe
+              "reaped child has no status"
+              (jsonStringField "status" childObject)
+          unlessEither
+            (not (null status))
+            "reaped child status is empty"
+          pure (label, identity)
+        _ -> Left "reaped child is not a JSON object"
+
+decodeRecordedIdentityValue ::
+  Aeson.Value ->
+  Either String RecordedProcessIdentity
+decodeRecordedIdentityValue value =
+  case value of
+    Aeson.Object identityObject ->
+      RecordedProcessIdentity
+        <$> requireMaybe
+          "recorded identity has no processId"
+          (activityIntegerField "processId" identityObject)
+        <*> requireMaybe
+          "recorded identity has no processGroup"
+          (activityIntegerField "processGroup" identityObject)
+        <*> requireMaybe
+          "recorded identity has no birthIdentity"
+          (activityBirthIdentityField "birthIdentity" identityObject)
+    _ -> Left "recorded identity is not a JSON object"
+
+decodePrefixedRecordedIdentity ::
+  String ->
+  KeyMap.KeyMap Aeson.Value ->
+  Either String RecordedProcessIdentity
+decodePrefixedRecordedIdentity prefix identityObject =
+  RecordedProcessIdentity
+    <$> requireMaybe
+      ("missing " <> prefix <> "ProcessId")
+      (activityIntegerField (prefix <> "ProcessId") identityObject)
+    <*> requireMaybe
+      ("missing " <> prefix <> "ProcessGroup")
+      (activityIntegerField (prefix <> "ProcessGroup") identityObject)
+    <*> requireMaybe
+      ("missing " <> prefix <> "BirthIdentity")
+      (activityBirthIdentityField (prefix <> "BirthIdentity") identityObject)
+
+decodeSynchronousTreeEvidence ::
+  Lazy.ByteString ->
+  Either
+    String
+    ( RecordedProcessIdentity,
+      RecordedProcessIdentity,
+      RecordedProcessIdentity
+    )
+decodeSynchronousTreeEvidence contents = do
+  value <- Aeson.eitherDecode contents
+  case value of
+    Aeson.Object evidenceObject -> do
+      version <-
+        requireMaybe
+          "synchronous tree evidence has no version"
+          (activityIntegerField "version" evidenceObject)
+      unlessEither
+        (version == 3)
+        "unsupported synchronous tree evidence version"
+      (,,)
+        <$> decodePrefixedRecordedIdentity "target" evidenceObject
+        <*> decodePrefixedRecordedIdentity "descendant" evidenceObject
+        <*> decodePrefixedRecordedIdentity "groupLeader" evidenceObject
+    _ -> Left "synchronous tree evidence is not a JSON object"
+
+waitForSynchronousTreeEvidence ::
+  Int ->
+  FilePath ->
+  IO
+    ( Maybe
+        ( RecordedProcessIdentity,
+          RecordedProcessIdentity,
+          RecordedProcessIdentity
+        )
+    )
+waitForSynchronousTreeEvidence attemptsRemaining evidencePath = do
+  exists <- doesFileExist evidencePath
+  decoded <-
+    if exists
+      then do
+        contents <- Lazy.readFile evidencePath
+        pure (either (const Nothing) Just (decodeSynchronousTreeEvidence contents))
+      else pure Nothing
+  case decoded of
+    Just evidence -> pure (Just evidence)
+    Nothing
+      | attemptsRemaining <= 0 -> pure Nothing
+      | otherwise -> do
+          threadDelay 50000
+          waitForSynchronousTreeEvidence
+            (attemptsRemaining - 1)
+            evidencePath
+
+waitForRecordedIdentityAbsent ::
+  Int ->
+  RecordedProcessIdentity ->
+  IO Bool
+waitForRecordedIdentityAbsent attemptsRemaining identity =
+  waitForExactProcessIdentityAbsent
+    attemptsRemaining
+    (recordedProcessId identity)
+    (recordedProcessBirth identity)
+
+jsonStringField ::
+  String ->
+  KeyMap.KeyMap Aeson.Value ->
+  Maybe String
+jsonStringField fieldName objectValue = do
+  fieldValue <- KeyMap.lookup (Key.fromString fieldName) objectValue
+  case Aeson.fromJSON fieldValue of
+    Aeson.Success stringValue -> Just stringValue
+    Aeson.Error _ -> Nothing
+
+requireMaybe :: String -> Maybe value -> Either String value
+requireMaybe failure =
+  maybe (Left failure) Right
+
+unlessEither :: Bool -> String -> Either String ()
+unlessEither condition failure =
+  if condition then Right () else Left failure
+
+waitForPidExit :: Int -> String -> IO Bool
+waitForPidExit attemptsRemaining processId = do
+  (exitCode, _, _) <-
+    readCreateProcessWithExitCode
+      (proc "/bin/kill" ["-0", processId])
+      ""
+  case exitCode of
+    ExitFailure _ -> pure True
+    ExitSuccess
+      | attemptsRemaining <= 0 -> pure False
+      | otherwise -> do
+          threadDelay 50000
+          waitForPidExit (attemptsRemaining - 1) processId
+
+waitForProcessGroupAbsent :: Int -> Integer -> IO Bool
+waitForProcessGroupAbsent attemptsRemaining processGroup = do
+  groupProbe <-
+    try @IOException
+      (signalProcessGroup nullSignal (fromIntegral processGroup))
+  case groupProbe of
+    Left failure
+      | isDoesNotExistError failure -> pure True
+      | otherwise -> ioError failure
+    Right ()
+      | attemptsRemaining <= 0 -> pure False
+      | otherwise -> do
+          threadDelay 50000
+          waitForProcessGroupAbsent
+            (attemptsRemaining - 1)
+            processGroup
+
+waitForExactProcessIdentityAbsent ::
+  Int ->
+  Integer ->
+  ProcessBirthIdentity ->
+  IO Bool
+waitForExactProcessIdentityAbsent attemptsRemaining processId expectedIdentity = do
+  observedIdentity <- readProcessBirthIdentity processId
+  if observedIdentity /= Just expectedIdentity
+    then pure True
+    else
+      if attemptsRemaining <= 0
+        then pure False
+        else do
+          threadDelay 50000
+          waitForExactProcessIdentityAbsent
+            (attemptsRemaining - 1)
+            processId
+            expectedIdentity
+
+waitForExternalPidStopped :: Int -> String -> IO Bool
+waitForExternalPidStopped attemptsRemaining processId = do
+  (exitCode, processState, _) <-
+    readCreateProcessWithExitCode
+      (proc "/bin/ps" ["-o", "state=", "-p", processId])
+      ""
+  if exitCode == ExitSuccess && 'T' `elem` processState
+    then pure True
+    else
+      if attemptsRemaining <= 0
+        then pure False
+        else do
+          threadDelay 50000
+          waitForExternalPidStopped (attemptsRemaining - 1) processId
+
+data CurrentCommandActivity = CurrentCommandActivity
+  { currentOwnerProcessId :: !Integer,
+    currentOwnerProcessGroup :: !Integer,
+    currentOwnerBirthIdentity :: !ProcessBirthIdentity,
+    currentCommandProcessId :: !Integer,
+    currentCommandProcessGroup :: !Integer,
+    currentCommandBirthIdentity :: !ProcessBirthIdentity,
+    currentSupervisorProcessId :: !Integer,
+    currentSupervisorProcessGroup :: !Integer,
+    currentSupervisorBirthIdentity :: !ProcessBirthIdentity,
+    currentTargetGroupLeaderProcessId :: !Integer,
+    currentTargetGroup :: !Integer,
+    currentTargetGroupLeaderBirthIdentity :: !ProcessBirthIdentity
+  }
+  deriving (Show)
+
+currentOwnerIdentity :: CurrentCommandActivity -> RecordedProcessIdentity
+currentOwnerIdentity activity =
+  RecordedProcessIdentity
+    (currentOwnerProcessId activity)
+    (currentOwnerProcessGroup activity)
+    (currentOwnerBirthIdentity activity)
+
+currentAnchorIdentity :: CurrentCommandActivity -> RecordedProcessIdentity
+currentAnchorIdentity activity =
+  RecordedProcessIdentity
+    (currentCommandProcessId activity)
+    (currentCommandProcessGroup activity)
+    (currentCommandBirthIdentity activity)
+
+currentSupervisorIdentity :: CurrentCommandActivity -> RecordedProcessIdentity
+currentSupervisorIdentity activity =
+  RecordedProcessIdentity
+    (currentSupervisorProcessId activity)
+    (currentSupervisorProcessGroup activity)
+    (currentSupervisorBirthIdentity activity)
+
+currentPinIdentity :: CurrentCommandActivity -> RecordedProcessIdentity
+currentPinIdentity activity =
+  RecordedProcessIdentity
+    (currentTargetGroupLeaderProcessId activity)
+    (currentTargetGroup activity)
+    (currentTargetGroupLeaderBirthIdentity activity)
+
+waitForCurrentCommandActivity ::
+  Int ->
+  Paths ->
+  Integer ->
+  IO CurrentCommandActivity
+waitForCurrentCommandActivity attemptsRemaining paths ownerProcessGroup = do
+  maybeActivity <-
+    readCurrentCommandActivity paths ownerProcessGroup
+  case maybeActivity of
+    Just activity -> pure activity
+    Nothing
+      | attemptsRemaining <= 0 ->
+          fail "bounded-command current activity lease was not published"
+      | otherwise -> do
+          threadDelay 50000
+          waitForCurrentCommandActivity
+            (attemptsRemaining - 1)
+            paths
+            ownerProcessGroup
+
+waitForCurrentCommandActivityByPin ::
+  Int ->
+  Paths ->
+  Integer ->
+  Integer ->
+  ProcessBirthIdentity ->
+  IO CurrentCommandActivity
+waitForCurrentCommandActivityByPin
+  attemptsRemaining
+  paths
+  ownerProcessGroup
+  pinProcessId
+  pinBirthIdentity = do
+    activities <-
+      readCurrentCommandActivities paths ownerProcessGroup
+    case [ activity
+         | activity <- activities,
+           let pinIdentity = currentPinIdentity activity,
+           recordedProcessId pinIdentity == pinProcessId,
+           recordedProcessBirth pinIdentity == pinBirthIdentity
+         ] of
+      [activity] -> pure activity
+      []
+        | attemptsRemaining > 0 -> do
+            threadDelay 50000
+            waitForCurrentCommandActivityByPin
+              (attemptsRemaining - 1)
+              paths
+              ownerProcessGroup
+              pinProcessId
+              pinBirthIdentity
+      [] ->
+        fail "bounded-command activity with the expected exact pin identity was not published"
+      activitiesWithMatchingPin ->
+        fail
+          ( "multiple bounded-command activities carried the same exact pin identity: "
+              <> show activitiesWithMatchingPin
+          )
+
+readCurrentCommandActivity ::
+  Paths ->
+  Integer ->
+  IO (Maybe CurrentCommandActivity)
+readCurrentCommandActivity paths ownerProcessGroup = do
+  activities <-
+    readCurrentCommandActivities paths ownerProcessGroup
+  case activities of
+    [] -> pure Nothing
+    [activity] -> pure (Just activity)
+    _ ->
+      fail
+        ( "multiple current bounded-command activities were live for owner group "
+            <> show ownerProcessGroup
+            <> ": "
+            <> show activities
+        )
+
+readCurrentCommandActivities ::
+  Paths ->
+  Integer ->
+  IO [CurrentCommandActivity]
+readCurrentCommandActivities paths ownerProcessGroup = do
+  let activityRoot =
+        runtimeRoot paths </> "bounded-command-activity"
+  activityRootExists <- doesDirectoryExist activityRoot
+  if not activityRootExists
+    then pure []
+    else do
+      entries <- listDirectory activityRoot
+      documents <-
+        mapM
+          (Lazy.readFile . (activityRoot </>))
+          (filter (".lease.json" `isSuffixOf`) entries)
+      pure
+        [ activity
+        | document <- documents,
+          Just activity <-
+            [decodeCurrentCommandActivity ownerProcessGroup document]
+        ]
+
+decodeCurrentCommandActivity ::
+  Integer ->
+  Lazy.ByteString ->
+  Maybe CurrentCommandActivity
+decodeCurrentCommandActivity ownerProcessGroup document = do
+  Aeson.Object activityObject <- Aeson.decode document
+  version <- activityIntegerField "version" activityObject
+  recordedOwner <- activityIntegerField "ownerProcessGroup" activityObject
+  ownerProcessId <-
+    activityIntegerField "ownerProcessId" activityObject
+  ownerBirthIdentity <-
+    activityBirthIdentityField "ownerBirthIdentity" activityObject
+  commandProcessId <-
+    activityIntegerField "commandProcessId" activityObject
+  commandProcessGroup <-
+    activityIntegerField "commandProcessGroup" activityObject
+  commandBirthIdentity <-
+    activityBirthIdentityField "commandBirthIdentity" activityObject
+  supervisorProcessId <-
+    activityIntegerField "watchdogProcessId" activityObject
+  supervisorProcessGroup <-
+    activityIntegerField "watchdogProcessGroup" activityObject
+  supervisorBirthIdentity <-
+    activityBirthIdentityField "watchdogBirthIdentity" activityObject
+  targetGroupLeaderProcessId <-
+    activityIntegerField "targetGroupLeaderProcessId" activityObject
+  targetGroup <-
+    activityIntegerField "targetGroup" activityObject
+  targetGroupLeaderBirthIdentity <-
+    activityBirthIdentityField
+      "targetGroupLeaderBirthIdentity"
+      activityObject
+  if version == 3 && recordedOwner == ownerProcessGroup
+    then
+      Just
+        CurrentCommandActivity
+          { currentOwnerProcessId = ownerProcessId,
+            currentOwnerProcessGroup = recordedOwner,
+            currentOwnerBirthIdentity = ownerBirthIdentity,
+            currentCommandProcessId = commandProcessId,
+            currentCommandProcessGroup = commandProcessGroup,
+            currentCommandBirthIdentity = commandBirthIdentity,
+            currentSupervisorProcessId = supervisorProcessId,
+            currentSupervisorProcessGroup = supervisorProcessGroup,
+            currentSupervisorBirthIdentity = supervisorBirthIdentity,
+            currentTargetGroupLeaderProcessId = targetGroupLeaderProcessId,
+            currentTargetGroup = targetGroup,
+            currentTargetGroupLeaderBirthIdentity =
+              targetGroupLeaderBirthIdentity
+          }
+    else Nothing
+
+activityIntegerField ::
+  String ->
+  KeyMap.KeyMap Aeson.Value ->
+  Maybe Integer
+activityIntegerField fieldName activityObject = do
+  fieldValue <-
+    KeyMap.lookup (Key.fromString fieldName) activityObject
+  case Aeson.fromJSON fieldValue of
+    Aeson.Success integerValue -> Just integerValue
+    Aeson.Error _ -> Nothing
+
+activityBirthIdentityField ::
+  String ->
+  KeyMap.KeyMap Aeson.Value ->
+  Maybe ProcessBirthIdentity
+activityBirthIdentityField fieldName activityObject = do
+  fieldValue <-
+    KeyMap.lookup (Key.fromString fieldName) activityObject
+  case Aeson.fromJSON fieldValue of
+    Aeson.Success identityText ->
+      parseProcessBirthIdentity identityText
+    Aeson.Error _ -> Nothing
+
+waitForBoundedCommandActivitiesQuiescent ::
+  Int ->
+  Paths ->
+  Integer ->
+  IO Bool
+waitForBoundedCommandActivitiesQuiescent attemptsRemaining paths ownerProcessGroup = do
+  result <-
+    try @IOException
+      ( Subprocess.proveBoundedCommandActivitiesQuiescent
+          paths
+          ownerProcessGroup
+      )
+  case result of
+    Right _ -> pure True
+    Left _
+      | attemptsRemaining <= 0 -> pure False
+      | otherwise -> do
+          threadDelay 50000
+          waitForBoundedCommandActivitiesQuiescent
+            (attemptsRemaining - 1)
+            paths
+            ownerProcessGroup
+
+waitForFileContents :: Int -> FilePath -> IO (Maybe String)
+waitForFileContents attemptsRemaining filePath = do
+  fileExists <- doesFileExist filePath
+  if fileExists
+    then Just <$> System.IO.readFile' filePath
+    else
+      if attemptsRemaining <= 0
+        then pure Nothing
+        else do
+          threadDelay 50000
+          waitForFileContents (attemptsRemaining - 1) filePath
 
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
@@ -2571,10 +9786,1579 @@ assertDemoConfigDecodeFails :: FilePath -> FilePath -> String -> DemoConfig -> I
 assertDemoConfigDecodeFails root label expectedMessageFragment demoConfig = do
   let configPath = root </> ("invalid-demo-config-" <> label <> ".dhall")
   Lazy.writeFile configPath (encodeDemoConfig demoConfig)
-  decoded <- try (decodeDemoConfigFile configPath) :: IO (Either IOError DemoConfig)
+  decoded <- try (validateDemoConfigFile configPath) :: IO (Either IOError ())
   assert
     (either (isInfixOf expectedMessageFragment . show) (const False) decoded)
     ("invalid demo config is rejected for " <> label)
+
+assertExecutionPlanWireAndQuantityProperties :: FilePath -> DemoConfig -> DemoConfig -> IO ()
+assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = do
+  let hostBudgetConfigPath = root </> "execution-plan-host-budget-roundtrip.dhall"
+      substrateConfigPath = root </> "execution-plan-substrate-budget-roundtrip.dhall"
+      legacyBudgetPath = root </> "execution-plan-legacy-flat-budget.dhall"
+      zeroBudget =
+        SubstrateEnforcedBudget
+          ( PodMemoryLimit
+              { podMemoryLimitResource = PodRam,
+                podMemoryLimitSource = "unit-zero-budget",
+                podMemoryLimitMib = 0
+              }
+          )
+      negativeBudget =
+        SubstrateEnforcedBudget
+          ( PodMemoryLimit
+              { podMemoryLimitResource = PodRam,
+                podMemoryLimitSource = "unit-negative-budget",
+                podMemoryLimitMib = -1
+              }
+          )
+  Lazy.writeFile hostBudgetConfigPath (encodeDemoConfig hostConfig)
+  _ <-
+    decodeCompiledRuntimePlanFile hostBudgetConfigPath
+      >>= expectDecodedCompiledPlan "HostEnforced budget union arm"
+  Lazy.writeFile substrateConfigPath (encodeDemoConfig substrateConfig)
+  _ <-
+    decodeCompiledRuntimePlanFile substrateConfigPath
+      >>= expectDecodedCompiledPlan "SubstrateEnforced budget union arm"
+  renderedSubstrateConfig <- System.IO.readFile' substrateConfigPath
+  legacyBudgetConfig <-
+    replaceExecutionPlanBudgetLine
+      "{ kind = \"substrate-enforced\", resource = \"pod-ram\", source = \"legacy-flat-budget\", limitMib = +65536 }"
+      renderedSubstrateConfig
+  writeFile legacyBudgetPath legacyBudgetConfig
+  assertCompiledRuntimePlanDecodeFails
+    legacyBudgetPath
+    "execution-plan decoder rejects the retired flat/tagged memory-budget shape"
+  assertCompiledRuntimePlanDecodeFailsForConfig
+    root
+    "zero-substrate-budget"
+    substrateConfig {inferenceMemoryBudget = zeroBudget}
+  assertCompiledRuntimePlanDecodeFailsForConfig
+    root
+    "negative-substrate-budget"
+    substrateConfig {inferenceMemoryBudget = negativeBudget}
+  runProperty
+    "positive model-memory quantities roundtrip through the smart constructor"
+    ( forAll (choose (1, 1048576)) $ \mib ->
+        either
+          (const False)
+          ((== mib) . modelMemoryFootprintMib)
+          (mkModelMemoryFootprint mib)
+    )
+  runProperty
+    "zero and negative model-memory quantities are rejected"
+    ( forAll (choose (-1048576, 0)) $ \mib ->
+        isLeft (mkModelMemoryFootprint mib)
+    )
+  runProperty
+    "fitting host-memory partitions preserve their exact inference capacity"
+    ( forAll (choose (0, 65536)) $ \vmReserveMib ->
+        forAll (choose (minHostHeadroomMib, minHostHeadroomMib + 8192)) $ \headroomMib ->
+          forAll (choose (0, 65536)) $ \capacityMib ->
+            let physicalMib = vmReserveMib + headroomMib + capacityMib
+             in either
+                  (const False)
+                  ((== capacityMib) . hostPartitionInferenceCapacityMib)
+                  (mkHostMemoryPartition physicalMib vmReserveMib headroomMib)
+    )
+  runProperty
+    "oversubscribed host-memory partitions are rejected"
+    ( forAll (choose (1, 65536)) $ \vmReserveMib ->
+        forAll (choose (minHostHeadroomMib, minHostHeadroomMib + 8192)) $ \headroomMib ->
+          forAll (choose (1, vmReserveMib)) $ \oversubscriptionMib ->
+            let physicalMib = vmReserveMib + headroomMib - oversubscriptionMib
+             in isLeft (mkHostMemoryPartition physicalMib vmReserveMib headroomMib)
+    )
+  runProperty
+    "host-memory partitions below the co-tenant headroom floor are rejected"
+    ( forAll (choose (0, minHostHeadroomMib - 1)) $ \headroomMib ->
+        isLeft (mkHostMemoryPartition 131072 0 headroomMib)
+    )
+  assert
+    (isLeft (mkHostMemoryPartition 1 maxBound minHostHeadroomMib))
+    "host-memory partition arithmetic rejects an overflow-boundary VM reserve"
+  assert
+    (isLeft (mkHostMemoryPartition maxBound maxBound minHostHeadroomMib))
+    "host-memory partition arithmetic rejects near-boundary oversubscription without Int wraparound"
+  assert
+    (isLeft (hostPartitionForCapacity maxBound))
+    "host-memory capacity synthesis rejects a capacity whose required headroom would overflow Int"
+
+replaceExecutionPlanBudgetLine :: String -> String -> IO String
+replaceExecutionPlanBudgetLine replacement renderedConfig =
+  case filter (isPrefixOf budgetPrefix) (lines renderedConfig) of
+    [_] ->
+      pure
+        ( unlines
+            [ if budgetPrefix `isPrefixOf` line
+                then budgetPrefix <> replacement
+                else line
+            | line <- lines renderedConfig
+            ]
+        )
+    matches ->
+      fail
+        ( "expected exactly one generated inferenceMemoryBudget line, found "
+            <> show (length matches)
+        )
+  where
+    budgetPrefix = ", inferenceMemoryBudget = "
+
+assertCompiledRuntimePlanDecodeFailsForConfig :: FilePath -> FilePath -> DemoConfig -> IO ()
+assertCompiledRuntimePlanDecodeFailsForConfig root label demoConfig = do
+  let configPath = root </> ("invalid-execution-plan-" <> label <> ".dhall")
+  Lazy.writeFile configPath (encodeDemoConfig demoConfig)
+  assertCompiledRuntimePlanDecodeFails
+    configPath
+    ("execution-plan decoder rejects " <> label)
+
+assertCompiledRuntimePlanDecodeFails :: FilePath -> String -> IO ()
+assertCompiledRuntimePlanDecodeFails configPath message = do
+  decoded <-
+    try (decodeCompiledRuntimePlanFile configPath) ::
+      IO
+        ( Either
+            IOError
+            (Either ExecutionPlan.ConfigErrors ExecutionPlan.CompiledRuntimePlan)
+        )
+  assert (isLeft decoded) message
+
+assertExecutionPlanCompilerCoverage :: Paths -> FilePath -> DemoConfig -> DemoConfig -> IO ()
+assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
+  mapM_ assertCatalogEngineResolution allRuntimeModes
+  applePlan <- expectCompiledExecutionPlan root "valid-apple-plan" appleConfig
+  assertCompiledExecutionPlanAccounting appleConfig applePlan
+  assertCompiledExecutionPlanRoutes appleConfig applePlan
+  assertCatalogPlanCoverage AppleSilicon appleConfig applePlan
+  let barkModelIdValue = "audio-bark-small"
+      barkRequiredMib = 8192
+      barkSupportedBudget = hostEnforcedUnitBudget 10240
+      barkSupportedConfig =
+        appleConfig
+          { inferenceMemoryBudget = barkSupportedBudget
+          }
+      barkConstrainedBudget = hostEnforcedUnitBudget 5120
+      barkConstrainedConfig =
+        appleConfig
+          { inferenceMemoryBudget = barkConstrainedBudget
+          }
+  barkAppleDescriptor <-
+    maybe
+      (fail "Apple catalog omitted the Bark model")
+      pure
+      (findModel AppleSilicon barkModelIdValue)
+  assert
+    (modelMemoryFootprintMib (modelRamFootprint barkAppleDescriptor) == barkRequiredMib)
+    "Bark uses the conservative 8 GiB heavy-PyTorch audio footprint"
+  barkSupportedPlan <-
+    expectCompiledExecutionPlan
+      root
+      "bark-supported-apple-plan"
+      barkSupportedConfig
+  assert
+    (isJust (ExecutionPlan.lookupCompiledPlacement barkModelIdValue barkSupportedPlan))
+    "Bark is admitted by the real 10 GiB Apple inference partition"
+  barkConstrainedPlan <-
+    expectCompiledExecutionPlan
+      root
+      "bark-constrained-apple-plan"
+      barkConstrainedConfig
+  barkConstrainedUnavailable <-
+    maybe
+      (fail "Bark remained admitted by a 5 GiB Apple inference budget")
+      pure
+      (ExecutionPlan.lookupUnavailableModel barkModelIdValue barkConstrainedPlan)
+  assert
+    ( ExecutionPlan.unavailableModelReason barkConstrainedUnavailable
+        == ModelMemoryLimitExceeded
+          { inferenceErrorModelId = barkModelIdValue,
+            inferenceErrorRequiredMib = barkRequiredMib,
+            inferenceErrorAvailableMib = 5120,
+            inferenceErrorResource = UnifiedHostRam,
+            inferenceErrorSource = inferenceMemoryBudgetSource barkConstrainedBudget
+          }
+    )
+    "Bark is rejected before execution when its 8 GiB footprint exceeds a 5 GiB Apple budget"
+  singleAppleConfig <-
+    expectRight
+      "derive a single-model execution-plan fixture"
+      (singleModelExecutionPlanConfig applePlan appleConfig)
+  model <- expectSingleton "single-model execution-plan model" (models singleAppleConfig)
+  binding <- expectSingleton "single-model execution-plan engine" (engines singleAppleConfig)
+  pool <- expectSingleton "single-model execution-plan pool" (enginePools singleAppleConfig)
+  member <- expectSingleton "single-model execution-plan member" (engineMembers singleAppleConfig)
+  daemon <- expectSingleton "single-model execution-plan daemon" (engineDaemons singleAppleConfig)
+  requestField <-
+    maybe
+      (fail "single-model execution-plan model has no request field")
+      pure
+      (listToMaybe (requestShape model))
+  requestTopic <-
+    maybe
+      (fail "single-model execution-plan config has no request topic")
+      pure
+      (listToMaybe (requestTopics singleAppleConfig))
+  engineRouteTopicValue <-
+    expectSingleton
+      "single-model execution-plan engine route topic"
+      (daemonConfigRequestTopics daemon)
+  let canonicalBootstrapRequest =
+        BootstrapModels.ModelBootstrapRequest
+          { BootstrapModels.bootstrapRequestModelId = modelId model,
+            BootstrapModels.bootstrapRequestDownloadUrl = downloadUrl model,
+            BootstrapModels.bootstrapRequestRequestedAtIso8601 = "2026-07-25T12:00:00Z"
+          }
+  assert
+    (isRight (validateModelBootstrapRequest applePlan canonicalBootstrapRequest))
+    "model-bootstrap authorization accepts the exact compiled descriptor URL and a canonical timestamp"
+  assert
+    ( isLeft
+        ( validateModelBootstrapRequest
+            applePlan
+            canonicalBootstrapRequest
+              { BootstrapModels.bootstrapRequestDownloadUrl = "https://attacker.invalid/model"
+              }
+        )
+    )
+    "model-bootstrap authorization rejects an attacker-controlled URL for a compiled model id"
+  assert
+    ( isLeft
+        ( validateModelBootstrapRequest
+            applePlan
+            canonicalBootstrapRequest
+              { BootstrapModels.bootstrapRequestModelId = "unknown-model"
+              }
+        )
+    )
+    "model-bootstrap authorization rejects an unknown model id"
+  assert
+    ( isLeft
+        ( validateModelBootstrapRequest
+            applePlan
+            canonicalBootstrapRequest
+              { BootstrapModels.bootstrapRequestRequestedAtIso8601 = "not-a-timestamp"
+              }
+        )
+    )
+    "model-bootstrap authorization rejects a malformed requestedAt timestamp"
+  let unenforceableFootprintMib =
+        fromInteger (toInteger (maxBound :: Word64) `div` 1048576 + 1)
+  unenforceableFootprint <-
+    expectRight
+      "construct a positive but unenforceable execution-plan model footprint"
+      (mkModelMemoryFootprint unenforceableFootprintMib)
+  let modelIdValue = modelId model
+      poolIdValue = enginePoolId pool
+      memberIdValue = engineMemberId member
+      wrongRuntime = LinuxCpu
+      missingModelId = "unit-missing-model"
+      missingEngineId = "unit-missing-engine"
+      missingPoolId = "unit-missing-pool"
+      missingMemberId = "unit-missing-member"
+      wrongDaemonLocation = "unit-wrong-daemon-location"
+      wrongDaemonRequestTopics = ["persistent://infernix/unit/wrong-request-topic"]
+      wrongDaemonResultTopic = "persistent://infernix/unit/wrong-result-topic"
+      memberlessDaemonLocation = "unit-memberless-engine"
+      duplicateModel =
+        model
+          { matrixRowId = matrixRowId model <> "-duplicate"
+          }
+      duplicateMatrixModel =
+        model
+          { modelId = modelIdValue <> "-duplicate"
+          }
+      duplicateMatrixPool =
+        pool
+          { enginePoolModelIds =
+              [modelIdValue, modelId duplicateMatrixModel]
+          }
+      secondPoolId = poolIdValue <> "-second"
+      secondMemberId = memberIdValue <> "-second"
+      secondPool =
+        pool
+          { enginePoolId = secondPoolId,
+            enginePoolMemberIds = [secondMemberId]
+          }
+      secondMember =
+        member
+          { engineMemberId = secondMemberId,
+            engineMemberPoolIds = [secondPoolId]
+          }
+      multiplyPlacedConfig =
+        singleAppleConfig
+          { enginePools = [pool, secondPool],
+            engineMembers = [member, secondMember]
+          }
+      podBudget resource source limitMib =
+        SubstrateEnforcedBudget
+          ( PodMemoryLimit
+              { podMemoryLimitResource = resource,
+                podMemoryLimitSource = source,
+                podMemoryLimitMib = limitMib
+              }
+          )
+      linuxCpuConfig =
+        executionPlanConfigForRuntime
+          LinuxCpu
+          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          singleAppleConfig
+      linuxCpuGpuModel =
+        model
+          { runtimeMode = LinuxCpu,
+            runtimeLane = KindLinuxCpu,
+            requiresGpu = True
+          }
+      linuxCpuGpuConfig =
+        executionPlanConfigForRuntime
+          LinuxCpu
+          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          (singleAppleConfig {models = [linuxCpuGpuModel]})
+      linuxGpuModel =
+        model
+          { runtimeMode = LinuxGpu,
+            runtimeLane = KindLinuxGpuGpu,
+            requiresGpu = True
+          }
+      linuxGpuWithPodBudget =
+        executionPlanConfigForRuntime
+          LinuxGpu
+          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          (singleAppleConfig {models = [linuxGpuModel]})
+      linuxGpuWithVramBudget =
+        executionPlanConfigForRuntime
+          LinuxGpu
+          (podBudget GpuVram "nvidia-vram-accounting" 65536)
+          (singleAppleConfig {models = [linuxGpuModel]})
+      invalidIdentifiers =
+        [ ("path", "path/segment"),
+          ("whitespace", "has whitespace"),
+          ("backslash", "back\\slash"),
+          ("uppercase", "Uppercase"),
+          ("unicode", "unicodé"),
+          ("leading-separator", "-leading"),
+          ("trailing-separator", "trailing-"),
+          ("repeated-separator", "repeated--separator")
+        ]
+      canonicalBindingDrifts =
+        [ ("adapter-id", binding {engineBindingAdapterId = engineBindingAdapterId binding <> "-drift"}),
+          ("adapter-type", binding {engineBindingAdapterType = alternateAdapterType (engineBindingAdapterType binding)}),
+          ("adapter-locator", binding {engineBindingAdapterLocator = engineBindingAdapterLocator binding <> ".drift"}),
+          ("adapter-entrypoint", binding {engineBindingAdapterEntrypoint = engineBindingAdapterEntrypoint binding <> "-drift"}),
+          ("setup-entrypoint", binding {engineBindingSetupEntrypoint = engineBindingSetupEntrypoint binding <> "-drift"}),
+          ("project-directory", binding {engineBindingProjectDirectory = engineBindingProjectDirectory binding <> "-drift"}),
+          ("python-native", binding {engineBindingPythonNative = not (engineBindingPythonNative binding)})
+        ]
+      arbitraryBinding =
+        binding
+          { engineBindingName = "arbitrary-engine"
+          }
+      lookalikeBinding =
+        binding
+          { engineBindingName = engineBindingName binding <> " extended"
+          }
+      bootstrapReadyTopicValue =
+        ConversationTopic.modelBootstrapReadyTopicName
+          ConversationTopic.systemTopicNamespace
+          modelIdValue
+      withCoordinatorRequestTopic topicValue =
+        singleAppleConfig
+          { requestTopics = [topicValue],
+            coordinatorDaemon =
+              (coordinatorDaemon singleAppleConfig)
+                { daemonConfigRequestTopics = [topicValue]
+                },
+            webappDaemon =
+              (webappDaemon singleAppleConfig)
+                { daemonConfigRequestTopics = [topicValue]
+                }
+          }
+      withResultTopic topicValue =
+        singleAppleConfig
+          { resultTopic = topicValue,
+            coordinatorDaemon =
+              (coordinatorDaemon singleAppleConfig)
+                { daemonConfigResultTopic = topicValue
+                },
+            webappDaemon =
+              (webappDaemon singleAppleConfig)
+                { daemonConfigResultTopic = topicValue
+                },
+            engineDaemons =
+              [ engineDaemon
+                  { daemonConfigResultTopic = topicValue
+                  }
+              | engineDaemon <- engineDaemons singleAppleConfig
+              ]
+          }
+  _ <-
+    expectCompiledExecutionPlan
+      root
+      "zero-edge-port"
+      (singleAppleConfig {configEdgePort = 0})
+  assertExecutionPlanIdentifierCoverage
+    root
+    singleAppleConfig
+    model
+    binding
+    pool
+    member
+    invalidIdentifiers
+  mapM_
+    ( \(label, driftedBinding) ->
+        assertExecutionPlanError
+          root
+          ("engine-binding-drift-" <> label)
+          (ExecutionPlan.EngineBindingMismatch (engineBindingName binding) binding driftedBinding)
+          (singleAppleConfig {engines = [driftedBinding]})
+    )
+    canonicalBindingDrifts
+  assertExecutionPlanError
+    root
+    "unsupported-arbitrary-engine-binding"
+    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName arbitraryBinding))
+    ( singleAppleConfig
+        { engines = [arbitraryBinding],
+          models = [model {selectedEngine = engineBindingName arbitraryBinding}]
+        }
+    )
+  assertExecutionPlanError
+    root
+    "unsupported-substring-lookalike-engine-binding"
+    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName lookalikeBinding))
+    ( singleAppleConfig
+        { engines = [lookalikeBinding],
+          models = [model {selectedEngine = engineBindingName lookalikeBinding}]
+        }
+    )
+  crossRuntimeBinding <-
+    maybe
+      (fail "Linux GPU vLLM binding is missing from the canonical engine catalog")
+      pure
+      (engineBindingForSelectedEngine LinuxGpu "vLLM")
+  assertExecutionPlanError
+    root
+    "unsupported-cross-runtime-engine-binding"
+    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName crossRuntimeBinding))
+    ( singleAppleConfig
+        { engines = [crossRuntimeBinding],
+          models = [model {selectedEngine = engineBindingName crossRuntimeBinding}]
+        }
+    )
+  assertExecutionPlanError root "empty-model-catalog" ExecutionPlan.EmptyModelCatalog (singleAppleConfig {models = []})
+  assertExecutionPlanError root "empty-engine-catalog" ExecutionPlan.EmptyEngineCatalog (singleAppleConfig {engines = []})
+  assertExecutionPlanError root "empty-pool-catalog" ExecutionPlan.EmptyPoolCatalog (singleAppleConfig {enginePools = []})
+  assertExecutionPlanError root "empty-member-catalog" ExecutionPlan.EmptyMemberCatalog (singleAppleConfig {engineMembers = []})
+  assertExecutionPlanError
+    root
+    "empty-engine-daemon-catalog"
+    ExecutionPlan.EmptyEngineDaemonCatalog
+    (singleAppleConfig {engineMembers = [], engineDaemons = []})
+  assertExecutionPlanError root "empty-request-topics" ExecutionPlan.EmptyRequestTopics (singleAppleConfig {requestTopics = []})
+  assertExecutionPlanError root "blank-request-topic" ExecutionPlan.BlankRequestTopic (singleAppleConfig {requestTopics = [" "]})
+  assertExecutionPlanError root "blank-result-topic" ExecutionPlan.BlankResultTopic (singleAppleConfig {resultTopic = " "})
+  assertExecutionPlanError root "blank-models-bucket" ExecutionPlan.BlankModelsBucket (singleAppleConfig {modelsBucket = " "})
+  assertExecutionPlanError
+    root
+    "blank-model-bootstrap-topic"
+    ExecutionPlan.BlankModelBootstrapTopic
+    (singleAppleConfig {modelBootstrapTopic = " "})
+  assertExecutionPlanError
+    root
+    "models-bucket-drift"
+    (ExecutionPlan.ModelsBucketMismatch defaultModelsBucket "unit-models-bucket")
+    (singleAppleConfig {modelsBucket = "unit-models-bucket"})
+  assertExecutionPlanError
+    root
+    "model-bootstrap-topic-drift"
+    (ExecutionPlan.ModelBootstrapTopicMismatch defaultModelBootstrapTopic "persistent://infernix/unit/bootstrap")
+    (singleAppleConfig {modelBootstrapTopic = "persistent://infernix/unit/bootstrap"})
+  assertExecutionPlanError
+    root
+    "negative-edge-port"
+    (ExecutionPlan.InvalidEdgePort (-1))
+    (singleAppleConfig {configEdgePort = -1})
+  assertExecutionPlanError
+    root
+    "oversized-edge-port"
+    (ExecutionPlan.InvalidEdgePort 65536)
+    (singleAppleConfig {configEdgePort = 65536})
+  assertExecutionPlanError
+    root
+    "blank-config-map-name"
+    ExecutionPlan.BlankConfigMapName
+    (singleAppleConfig {configMapName = " "})
+  assertExecutionPlanError
+    root
+    "blank-generated-path"
+    ExecutionPlan.BlankGeneratedPath
+    (singleAppleConfig {generatedPath = " "})
+  assertExecutionPlanError
+    root
+    "blank-mounted-path"
+    ExecutionPlan.BlankMountedPath
+    (singleAppleConfig {mountedPath = " "})
+  assertExecutionPlanError
+    root
+    "invalid-active-daemon-role"
+    ExecutionPlan.InvalidActiveDaemonRole
+    ( singleAppleConfig
+        { activeDaemonRole = Engine,
+          engineDaemons = [daemon {daemonConfigRole = Coordinator}]
+        }
+    )
+  assertExecutionPlanError
+    root
+    "invalid-coordinator-daemon"
+    (ExecutionPlan.InvalidDaemonConfig "coordinator")
+    (singleAppleConfig {coordinatorDaemon = (coordinatorDaemon singleAppleConfig) {daemonConfigLocation = " "}})
+  assertExecutionPlanError
+    root
+    "invalid-webapp-daemon"
+    (ExecutionPlan.InvalidDaemonConfig "webapp")
+    (singleAppleConfig {webappDaemon = (webappDaemon singleAppleConfig) {daemonConfigRequestTopics = []}})
+  assertExecutionPlanError
+    root
+    "invalid-engine-daemon"
+    (ExecutionPlan.InvalidDaemonConfig memberIdValue)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigResultTopic = " "}]})
+  assertExecutionPlanError
+    root
+    "daemon-role-mismatch"
+    (ExecutionPlan.DaemonRoleMismatch "coordinator" Coordinator Webapp)
+    ( singleAppleConfig
+        { coordinatorDaemon =
+            (coordinatorDaemon singleAppleConfig)
+              { daemonConfigRole = Webapp
+              }
+        }
+    )
+  assertExecutionPlanError
+    root
+    "daemon-member-mismatch"
+    (ExecutionPlan.DaemonMemberMismatch "coordinator" Nothing (Just memberIdValue))
+    ( singleAppleConfig
+        { coordinatorDaemon =
+            (coordinatorDaemon singleAppleConfig)
+              { daemonConfigMemberId = Just memberIdValue
+              }
+        }
+    )
+  assertExecutionPlanError
+    root
+    "daemon-location-mismatch"
+    (ExecutionPlan.DaemonLocationMismatch memberIdValue (engineMemberLocation member) wrongDaemonLocation)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigLocation = wrongDaemonLocation}]})
+  assertExecutionPlanError
+    root
+    "daemon-request-topics-mismatch"
+    (ExecutionPlan.DaemonRequestTopicsMismatch memberIdValue (daemonConfigRequestTopics daemon) wrongDaemonRequestTopics)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigRequestTopics = wrongDaemonRequestTopics}]})
+  assertExecutionPlanError
+    root
+    "daemon-result-topic-mismatch"
+    (ExecutionPlan.DaemonResultTopicMismatch memberIdValue (resultTopic singleAppleConfig) wrongDaemonResultTopic)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigResultTopic = wrongDaemonResultTopic}]})
+  assertExecutionPlanError
+    root
+    "daemon-connection-mode-mismatch"
+    (ExecutionPlan.DaemonConnectionModeMismatch memberIdValue PublicationEdgeAutoDiscovery ConfiguredTransport)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigPulsarConnectionMode = ConfiguredTransport}]})
+  assertExecutionPlanError
+    root
+    "engine-daemon-member-missing"
+    (ExecutionPlan.EngineDaemonMemberMissing memberlessDaemonLocation)
+    ( singleAppleConfig
+        { engineDaemons =
+            [ daemon,
+              daemon
+                { daemonConfigLocation = memberlessDaemonLocation,
+                  daemonConfigMemberId = Nothing
+                }
+            ]
+        }
+    )
+  assertExecutionPlanError
+    root
+    "missing-engine-daemon"
+    (ExecutionPlan.MissingEngineDaemon memberIdValue)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigMemberId = Just missingMemberId}]})
+  assertExecutionPlanError
+    root
+    "duplicate-engine-daemon-member"
+    (ExecutionPlan.DuplicateEngineDaemonMember memberIdValue)
+    (singleAppleConfig {engineDaemons = [daemon, daemon]})
+  assertExecutionPlanError
+    root
+    "invalid-engine-binding"
+    (ExecutionPlan.InvalidEngineBinding (engineBindingName binding))
+    (singleAppleConfig {engines = [binding {engineBindingAdapterId = " "}]})
+  assertExecutionPlanError
+    root
+    "unsupported-engine-adapter-type"
+    (ExecutionPlan.UnsupportedEngineAdapterType (engineBindingName binding) "unit-unsupported-adapter")
+    (singleAppleConfig {engines = [binding {engineBindingAdapterType = "unit-unsupported-adapter"}]})
+  assertExecutionPlanError
+    root
+    "invalid-model-descriptor"
+    (ExecutionPlan.InvalidModelDescriptor modelIdValue)
+    (singleAppleConfig {models = [model {requestShape = []}]})
+  assertExecutionPlanError
+    root
+    "unenforceable-model-memory-footprint"
+    (ExecutionPlan.UnenforceableModelMemoryFootprint modelIdValue (toInteger unenforceableFootprintMib))
+    (singleAppleConfig {models = [model {modelRamFootprint = unenforceableFootprint}]})
+  assertExecutionPlanError
+    root
+    "duplicate-model-id"
+    (ExecutionPlan.DuplicateModelId modelIdValue)
+    (singleAppleConfig {models = [model, duplicateModel]})
+  assertExecutionPlanError
+    root
+    "duplicate-matrix-row-id"
+    (ExecutionPlan.DuplicateMatrixRowId (matrixRowId model))
+    ( singleAppleConfig
+        { models = [model, duplicateMatrixModel],
+          enginePools = [duplicateMatrixPool]
+        }
+    )
+  assertExecutionPlanError
+    root
+    "duplicate-engine-id"
+    (ExecutionPlan.DuplicateEngineId (engineBindingName binding))
+    (singleAppleConfig {engines = [binding, binding]})
+  assertExecutionPlanError
+    root
+    "duplicate-pool-id"
+    (ExecutionPlan.DuplicatePoolId poolIdValue)
+    (singleAppleConfig {enginePools = [pool, pool]})
+  assertExecutionPlanError
+    root
+    "duplicate-member-id"
+    (ExecutionPlan.DuplicateMemberId memberIdValue)
+    (singleAppleConfig {engineMembers = [member, member]})
+  assertExecutionPlanError
+    root
+    "duplicate-request-topic"
+    (ExecutionPlan.DuplicateRequestTopic requestTopic)
+    (singleAppleConfig {requestTopics = [requestTopic, requestTopic]})
+  assertExecutionPlanError
+    root
+    "result-engine-route-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision engineRouteTopicValue ["engine-route", "result"])
+    (withResultTopic engineRouteTopicValue)
+  assertExecutionPlanError
+    root
+    "request-engine-route-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision engineRouteTopicValue ["coordinator-request", "engine-route"])
+    (withCoordinatorRequestTopic engineRouteTopicValue)
+  assertExecutionPlanError
+    root
+    "request-result-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision (resultTopic singleAppleConfig) ["coordinator-request", "result"])
+    (withCoordinatorRequestTopic (resultTopic singleAppleConfig))
+  assertExecutionPlanError
+    root
+    "request-bootstrap-ready-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["coordinator-request", "model-bootstrap-ready"])
+    (withCoordinatorRequestTopic bootstrapReadyTopicValue)
+  assertExecutionPlanError
+    root
+    "result-bootstrap-ready-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["model-bootstrap-ready", "result"])
+    (withResultTopic bootstrapReadyTopicValue)
+  assertDerivedRouteTopicCollision
+    root
+    singleAppleConfig
+    model
+    pool
+    member
+    daemon
+  assertExecutionPlanError
+    root
+    "duplicate-pool-model-reference"
+    (ExecutionPlan.DuplicatePoolModelReference poolIdValue modelIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = [modelIdValue, modelIdValue]}]})
+  assertExecutionPlanError
+    root
+    "duplicate-pool-member-reference"
+    (ExecutionPlan.DuplicatePoolMemberReference poolIdValue memberIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [memberIdValue, memberIdValue]}]})
+  assertExecutionPlanError
+    root
+    "duplicate-member-pool-reference"
+    (ExecutionPlan.DuplicateMemberPoolReference memberIdValue poolIdValue)
+    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = [poolIdValue, poolIdValue]}]})
+  assertExecutionPlanError
+    root
+    "duplicate-request-field"
+    (ExecutionPlan.DuplicateRequestField modelIdValue (name requestField))
+    (singleAppleConfig {models = [model {requestShape = [requestField, requestField]}]})
+  assertExecutionPlanError
+    root
+    "invalid-pool-id"
+    (ExecutionPlan.InvalidPoolId "unit/bad-pool")
+    (singleAppleConfig {enginePools = [pool {enginePoolId = "unit/bad-pool"}]})
+  assertExecutionPlanError
+    root
+    "invalid-member-id"
+    (ExecutionPlan.InvalidMemberId "unit/bad-member")
+    (singleAppleConfig {engineMembers = [member {engineMemberId = "unit/bad-member"}]})
+  assertExecutionPlanError
+    root
+    "empty-pool-models"
+    (ExecutionPlan.EmptyPoolModels poolIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = []}]})
+  assertExecutionPlanError
+    root
+    "empty-pool-members"
+    (ExecutionPlan.EmptyPoolMembers poolIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
+  assertExecutionPlanError
+    root
+    "empty-member-pools"
+    (ExecutionPlan.EmptyMemberPools memberIdValue)
+    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = []}]})
+  assertExecutionPlanError
+    root
+    "unknown-selected-engine"
+    (ExecutionPlan.UnknownSelectedEngine modelIdValue missingEngineId)
+    (singleAppleConfig {models = [model {selectedEngine = missingEngineId}]})
+  assertExecutionPlanError
+    root
+    "model-runtime-mismatch"
+    (ExecutionPlan.ModelRuntimeMismatch modelIdValue AppleSilicon wrongRuntime)
+    (singleAppleConfig {models = [model {runtimeMode = wrongRuntime}]})
+  assertExecutionPlanError
+    root
+    "model-runtime-lane-mismatch"
+    (ExecutionPlan.ModelRuntimeLaneMismatch modelIdValue AppleSilicon KindLinuxCpu)
+    (singleAppleConfig {models = [model {runtimeLane = KindLinuxCpu}]})
+  assertExecutionPlanError
+    root
+    "unsupported-linux-cpu-gpu-requirement"
+    (ExecutionPlan.UnsupportedGpuRequirement modelIdValue LinuxCpu)
+    linuxCpuGpuConfig
+  assertExecutionPlanError
+    root
+    "dangling-pool-model"
+    (ExecutionPlan.DanglingPoolModel poolIdValue missingModelId)
+    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = [modelIdValue, missingModelId]}]})
+  assertExecutionPlanError
+    root
+    "dangling-pool-member"
+    (ExecutionPlan.DanglingPoolMember poolIdValue missingMemberId)
+    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [memberIdValue, missingMemberId]}]})
+  assertExecutionPlanError
+    root
+    "dangling-member-pool"
+    (ExecutionPlan.DanglingMemberPool memberIdValue missingPoolId)
+    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = [poolIdValue, missingPoolId]}]})
+  assertExecutionPlanError
+    root
+    "pool-member-link-missing"
+    (ExecutionPlan.PoolMemberLinkMissing poolIdValue memberIdValue)
+    (singleAppleConfig {engineMembers = [member {engineMemberPoolIds = []}]})
+  assertExecutionPlanError
+    root
+    "member-pool-link-missing"
+    (ExecutionPlan.MemberPoolLinkMissing memberIdValue poolIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
+  assertExecutionPlanError
+    root
+    "unknown-daemon-member"
+    (ExecutionPlan.UnknownDaemonMember missingMemberId)
+    (singleAppleConfig {engineDaemons = [daemon {daemonConfigMemberId = Just missingMemberId}]})
+  assertExecutionPlanError
+    root
+    "unplaced-model"
+    (ExecutionPlan.UnplacedModel modelIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolModelIds = []}]})
+  assertExecutionPlanError
+    root
+    "multiply-placed-model"
+    (ExecutionPlan.MultiplyPlacedModel modelIdValue [poolIdValue, secondPoolId])
+    multiplyPlacedConfig
+  assertExecutionPlanError
+    root
+    "pool-runtime-mismatch"
+    (ExecutionPlan.PoolRuntimeMismatch poolIdValue AppleSilicon wrongRuntime)
+    (singleAppleConfig {enginePools = [pool {enginePoolRuntimeMode = wrongRuntime}]})
+  assertExecutionPlanError
+    root
+    "member-runtime-mismatch"
+    (ExecutionPlan.MemberRuntimeMismatch memberIdValue AppleSilicon wrongRuntime)
+    (singleAppleConfig {engineMembers = [member {engineMemberRuntimeMode = wrongRuntime}]})
+  assertExecutionPlanError
+    root
+    "member-location-mismatch"
+    (ExecutionPlan.MemberLocationMismatch memberIdValue AppleSilicon "unit-wrong-member-location")
+    (singleAppleConfig {engineMembers = [member {engineMemberLocation = "unit-wrong-member-location"}]})
+  assertExecutionPlanError
+    root
+    "invalid-pool-subscription"
+    (ExecutionPlan.InvalidPoolSubscription poolIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerFailover}]})
+  assertExecutionPlanError
+    root
+    "invalid-exclusive-pool-subscription"
+    (ExecutionPlan.InvalidPoolSubscription poolIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerExclusive}]})
+  assertExecutionPlanError
+    root
+    "zero-pool-max-inflight"
+    (ExecutionPlan.InvalidPoolMaxInflight poolIdValue 0)
+    (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = 0}]})
+  assertExecutionPlanError
+    root
+    "negative-pool-max-inflight"
+    (ExecutionPlan.InvalidPoolMaxInflight poolIdValue (-1))
+    (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = -1}]})
+  assertExecutionPlanError
+    root
+    "model-without-eligible-member"
+    (ExecutionPlan.ModelWithoutEligibleMember modelIdValue)
+    (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = [missingMemberId]}]})
+  assertExecutionPlanError
+    root
+    "apple-pod-budget-mismatch"
+    (ExecutionPlan.RuntimeBudgetMismatch AppleSilicon PodRam)
+    (singleAppleConfig {inferenceMemoryBudget = podBudget PodRam "unit-pod-budget" 65536})
+  assertExecutionPlanError
+    root
+    "linux-host-budget-mismatch"
+    (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu UnifiedHostRam)
+    (linuxCpuConfig {inferenceMemoryBudget = inferenceMemoryBudget singleAppleConfig})
+  assertExecutionPlanError
+    root
+    "linux-vram-budget-mismatch"
+    (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu GpuVram)
+    (linuxCpuConfig {inferenceMemoryBudget = podBudget GpuVram "unit-vram-budget" 65536})
+  assertExecutionPlanError
+    root
+    "gpu-dual-resource-budget-required"
+    ExecutionPlan.GpuDualResourceBudgetRequired
+    linuxGpuWithVramBudget
+  assertExecutionPlanError
+    root
+    "gpu-model-without-vram-enforcer"
+    (ExecutionPlan.GpuModelWithoutVramEnforcer modelIdValue)
+    linuxGpuWithPodBudget
+  assertExecutionPlanError
+    root
+    "blank-memory-enforcer-source"
+    (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty")
+    (linuxCpuConfig {inferenceMemoryBudget = podBudget PodRam " " 65536})
+  assertExecutionPlanError
+    root
+    "unified-host-substrate-enforcer"
+    (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM")
+    (linuxCpuConfig {inferenceMemoryBudget = podBudget UnifiedHostRam "unit-invalid-enforcer" 65536})
+  let availableMib = inferenceMemoryBudgetCapacityMib (inferenceMemoryBudget singleAppleConfig)
+      requiredMib = availableMib + 1
+  oversizedFootprint <-
+    expectRight
+      "construct an oversized execution-plan model footprint"
+      (mkModelMemoryFootprint requiredMib)
+  let oversizedModel = model {modelRamFootprint = oversizedFootprint}
+      oversizedConfig = singleAppleConfig {models = [oversizedModel]}
+  oversizedPlan <- expectCompiledExecutionPlan root "one-unavailable-model" oversizedConfig
+  assert
+    (null (ExecutionPlan.compiledRuntimePlanPlacements oversizedPlan))
+    "over-capacity execution-plan model is absent from compiled placements"
+  unavailable <-
+    maybe
+      (fail "over-capacity execution-plan model is missing from unavailable accounting")
+      pure
+      (ExecutionPlan.lookupUnavailableModel modelIdValue oversizedPlan)
+  assert
+    (ExecutionPlan.unavailableModelDescriptor unavailable == oversizedModel)
+    "unavailable execution-plan entry retains the exact configured model"
+  assert
+    ( ExecutionPlan.unavailableModelReason unavailable
+        == ModelMemoryLimitExceeded
+          { inferenceErrorModelId = modelIdValue,
+            inferenceErrorRequiredMib = requiredMib,
+            inferenceErrorAvailableMib = availableMib,
+            inferenceErrorResource = UnifiedHostRam,
+            inferenceErrorSource = inferenceMemoryBudgetSource (inferenceMemoryBudget singleAppleConfig)
+          }
+    )
+    "unavailable execution-plan entry carries the exact typed admission failure"
+  assertCompiledExecutionPlanAccounting oversizedConfig oversizedPlan
+  -- Keep the Linux fixture tied to the same public compiler boundary.
+  linuxPlan <- expectCompiledExecutionPlan root "valid-linux-plan" linuxConfig
+  assertCompiledExecutionPlanAccounting linuxConfig linuxPlan
+  assertCompiledExecutionPlanRoutes linuxConfig linuxPlan
+  assertCatalogPlanCoverage LinuxCpu linuxConfig linuxPlan
+  barkLinuxDescriptor <-
+    maybe
+      (fail "Linux CPU catalog omitted the Bark model")
+      pure
+      (findModel LinuxCpu barkModelIdValue)
+  assert
+    (modelMemoryFootprintMib (modelRamFootprint barkLinuxDescriptor) == barkRequiredMib)
+    "Linux CPU uses the same conservative 8 GiB Bark footprint"
+  barkLinuxUnavailable <-
+    maybe
+      (fail "Linux CPU admitted Bark despite its 4 GiB inference budget")
+      pure
+      (ExecutionPlan.lookupUnavailableModel barkModelIdValue linuxPlan)
+  assert
+    ( ExecutionPlan.unavailableModelReason barkLinuxUnavailable
+        == ModelMemoryLimitExceeded
+          { inferenceErrorModelId = barkModelIdValue,
+            inferenceErrorRequiredMib = barkRequiredMib,
+            inferenceErrorAvailableMib = 4096,
+            inferenceErrorResource = PodRam,
+            inferenceErrorSource = inferenceMemoryBudgetSource (inferenceMemoryBudget linuxConfig)
+          }
+    )
+    "Linux CPU rejects Bark before execution with the exact 8 GiB required and 4 GiB available budget"
+  let linuxGpuConfigPath = root </> "execution-plan-linux-gpu-catalog.dhall"
+      linuxGpuBudget = podBudget GpuVram "nvidia-vram-accounting" 65536
+  BS.writeFile
+    linuxGpuConfigPath
+    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuBudget)
+  linuxGpuResult <- decodeCompiledRuntimePlanFile linuxGpuConfigPath
+  case linuxGpuResult of
+    Right _ ->
+      fail "Linux GPU catalog unexpectedly compiled before dual-resource budget support landed"
+    Left errors -> do
+      let errorList = NonEmpty.toList errors
+      assert
+        (ExecutionPlan.GpuDualResourceBudgetRequired `elem` errorList)
+        "Linux GPU catalog reaches the explicit dual-resource budget blocker"
+      assert
+        (not (any engineBindingSelectionError errorList))
+        "every Linux GPU catalog engine resolves canonically before the dual-resource budget blocker"
+
+assertCatalogEngineResolution :: RuntimeMode -> IO ()
+assertCatalogEngineResolution mode =
+  mapM_
+    ( \descriptor ->
+        case engineBindingForSelectedEngine mode (selectedEngine descriptor) of
+          Nothing ->
+            fail
+              ( "catalog engine does not resolve canonically for "
+                  <> show mode
+                  <> ": "
+                  <> Text.unpack (selectedEngine descriptor)
+              )
+          Just binding ->
+            assert
+              (binding `elem` engineBindingsForMode mode)
+              ( "resolved catalog engine is absent from the generated binding set for "
+                  <> show mode
+                  <> ": "
+                  <> Text.unpack (selectedEngine descriptor)
+              )
+    )
+    (catalogForMode mode)
+
+assertCatalogPlanCoverage ::
+  RuntimeMode ->
+  DemoConfig ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO ()
+assertCatalogPlanCoverage mode demoConfig compiledPlan =
+  mapM_
+    ( \descriptor -> do
+        assert
+          (descriptor `elem` models demoConfig)
+          ( "generated config omitted a catalog descriptor for "
+              <> show mode
+              <> ": "
+              <> Text.unpack (modelId descriptor)
+          )
+        binding <-
+          maybe
+            ( fail
+                ( "catalog engine stopped resolving while checking the compiled plan for "
+                    <> Text.unpack (modelId descriptor)
+                )
+            )
+            pure
+            (engineBindingForSelectedEngine mode (selectedEngine descriptor))
+        assert
+          (binding `elem` engines demoConfig)
+          ( "generated config omitted the canonical binding for "
+              <> Text.unpack (modelId descriptor)
+          )
+        assert
+          ( isJust (ExecutionPlan.lookupCompiledPlacement (modelId descriptor) compiledPlan)
+              || isJust (ExecutionPlan.lookupUnavailableModel (modelId descriptor) compiledPlan)
+          )
+          ( "compiled plan omitted catalog model "
+              <> Text.unpack (modelId descriptor)
+          )
+    )
+    (catalogForMode mode)
+
+engineBindingSelectionError :: ExecutionPlan.ConfigError -> Bool
+engineBindingSelectionError configError =
+  case configError of
+    ExecutionPlan.InvalidEngineBinding _ -> True
+    ExecutionPlan.UnsupportedEngineBinding _ _ -> True
+    ExecutionPlan.EngineBindingMismatch {} -> True
+    ExecutionPlan.UnsupportedEngineAdapterType _ _ -> True
+    ExecutionPlan.UnknownSelectedEngine _ _ -> True
+    _ -> False
+
+alternateAdapterType :: Text.Text -> Text.Text
+alternateAdapterType adapterType
+  | adapterType == "python-stdio" = "native-process-runner"
+  | otherwise = "python-stdio"
+
+assertExecutionPlanIdentifierCoverage ::
+  FilePath ->
+  DemoConfig ->
+  ModelDescriptor ->
+  EngineBinding ->
+  EnginePool ->
+  EngineMember ->
+  [(FilePath, Text.Text)] ->
+  IO ()
+assertExecutionPlanIdentifierCoverage root demoConfig model binding pool member =
+  mapM_
+    ( \(label, invalidIdentifier) -> do
+        assertExecutionPlanError
+          root
+          ("invalid-model-id-" <> label)
+          (ExecutionPlan.InvalidModelId invalidIdentifier)
+          (demoConfig {models = [model {modelId = invalidIdentifier}]})
+        assertExecutionPlanError
+          root
+          ("invalid-matrix-row-id-" <> label)
+          (ExecutionPlan.InvalidMatrixRowId invalidIdentifier)
+          (demoConfig {models = [model {matrixRowId = invalidIdentifier}]})
+        assertExecutionPlanError
+          root
+          ("invalid-adapter-id-" <> label)
+          (ExecutionPlan.InvalidAdapterId (engineBindingName binding) invalidIdentifier)
+          (demoConfig {engines = [binding {engineBindingAdapterId = invalidIdentifier}]})
+        assertExecutionPlanError
+          root
+          ("invalid-pool-id-" <> label)
+          (ExecutionPlan.InvalidPoolId invalidIdentifier)
+          (demoConfig {enginePools = [pool {enginePoolId = invalidIdentifier}]})
+        assertExecutionPlanError
+          root
+          ("invalid-member-id-" <> label)
+          (ExecutionPlan.InvalidMemberId invalidIdentifier)
+          (demoConfig {engineMembers = [member {engineMemberId = invalidIdentifier}]})
+    )
+
+assertDerivedRouteTopicCollision ::
+  FilePath ->
+  DemoConfig ->
+  ModelDescriptor ->
+  EnginePool ->
+  EngineMember ->
+  DaemonConfig ->
+  IO ()
+assertDerivedRouteTopicCollision root demoConfig model pool member daemon = do
+  let firstModelId = "b.model.c"
+      secondModelId = "c"
+      firstPoolId = "a"
+      secondPoolId = "a.model.b"
+      collisionTopic =
+        "persistent://infernix/demo/inference.batch.apple-silicon.pool.a.model.b.model.c"
+      firstModel =
+        model
+          { modelId = firstModelId
+          }
+      secondModel =
+        model
+          { matrixRowId = matrixRowId model <> "-collision",
+            modelId = secondModelId
+          }
+      firstPool =
+        pool
+          { enginePoolId = firstPoolId,
+            enginePoolModelIds = [firstModelId]
+          }
+      secondPool =
+        pool
+          { enginePoolId = secondPoolId,
+            enginePoolModelIds = [secondModelId]
+          }
+      collisionConfig =
+        demoConfig
+          { engineDaemons =
+              [daemon {daemonConfigRequestTopics = [collisionTopic, collisionTopic]}],
+            enginePools = [firstPool, secondPool],
+            engineMembers =
+              [member {engineMemberPoolIds = [firstPoolId, secondPoolId]}],
+            models = [firstModel, secondModel]
+          }
+      expectedSources =
+        [(firstPoolId, firstModelId), (secondPoolId, secondModelId)]
+  result <- compileExecutionPlanFixture root "derived-route-topic-collision" collisionConfig
+  case result of
+    Right _ -> fail "ambiguous derived route topics unexpectedly compiled"
+    Left errors ->
+      case [ sources
+           | ExecutionPlan.DuplicateDerivedRouteTopic topic sources <- NonEmpty.toList errors,
+             topic == collisionTopic
+           ] of
+        [sources] ->
+          assert
+            ( length sources == length expectedSources
+                && all (`elem` sources) expectedSources
+            )
+            "derived route-topic collision reports both conflicting pool/model sources"
+        collisions ->
+          fail
+            ( "derived route-topic collision emitted unexpected diagnostics: "
+                <> show collisions
+            )
+
+expectCompiledExecutionPlan :: FilePath -> FilePath -> DemoConfig -> IO ExecutionPlan.CompiledRuntimePlan
+expectCompiledExecutionPlan root label demoConfig = do
+  result <- compileExecutionPlanFixture root label demoConfig
+  case result of
+    Left errors ->
+      fail
+        ( "expected execution-plan fixture to compile for "
+            <> label
+            <> ", errors="
+            <> show (NonEmpty.toList errors)
+        )
+    Right plan -> pure plan
+
+compileExecutionPlanFixture ::
+  FilePath ->
+  FilePath ->
+  DemoConfig ->
+  IO (Either ExecutionPlan.ConfigErrors ExecutionPlan.CompiledRuntimePlan)
+compileExecutionPlanFixture root label demoConfig = do
+  let configPath = root </> ("execution-plan-" <> label <> ".dhall")
+  Lazy.writeFile configPath (encodeDemoConfig demoConfig)
+  decodeCompiledRuntimePlanFile configPath
+
+expectDecodedCompiledPlan ::
+  String ->
+  Either ExecutionPlan.ConfigErrors ExecutionPlan.CompiledRuntimePlan ->
+  IO ExecutionPlan.CompiledRuntimePlan
+expectDecodedCompiledPlan label decoded =
+  case decoded of
+    Left errors ->
+      fail
+        ( label
+            <> " failed execution-plan compilation: "
+            <> show (NonEmpty.toList errors)
+        )
+    Right plan -> pure plan
+
+assertExecutionPlanError ::
+  FilePath ->
+  FilePath ->
+  ExecutionPlan.ConfigError ->
+  DemoConfig ->
+  IO ()
+assertExecutionPlanError root label expectedError demoConfig = do
+  result <- compileExecutionPlanFixture root label demoConfig
+  case result of
+    Left errors ->
+      assert
+        (expectedError `elem` NonEmpty.toList errors)
+        ( "execution-plan fixture "
+            <> label
+            <> " did not emit "
+            <> executionPlanConfigErrorTag expectedError
+            <> "; errors="
+            <> show (NonEmpty.toList errors)
+        )
+    Right _ ->
+      fail
+        ( "execution-plan fixture unexpectedly compiled for "
+            <> label
+            <> "; expected "
+            <> executionPlanConfigErrorTag expectedError
+        )
+
+executionPlanConfigErrorTag :: ExecutionPlan.ConfigError -> String
+executionPlanConfigErrorTag configError =
+  case configError of
+    ExecutionPlan.EmptyModelCatalog -> "EmptyModelCatalog"
+    ExecutionPlan.EmptyEngineCatalog -> "EmptyEngineCatalog"
+    ExecutionPlan.EmptyPoolCatalog -> "EmptyPoolCatalog"
+    ExecutionPlan.EmptyMemberCatalog -> "EmptyMemberCatalog"
+    ExecutionPlan.EmptyEngineDaemonCatalog -> "EmptyEngineDaemonCatalog"
+    ExecutionPlan.EmptyRequestTopics -> "EmptyRequestTopics"
+    ExecutionPlan.BlankRequestTopic -> "BlankRequestTopic"
+    ExecutionPlan.BlankResultTopic -> "BlankResultTopic"
+    ExecutionPlan.BlankModelsBucket -> "BlankModelsBucket"
+    ExecutionPlan.BlankModelBootstrapTopic -> "BlankModelBootstrapTopic"
+    ExecutionPlan.ModelsBucketMismatch _ _ -> "ModelsBucketMismatch"
+    ExecutionPlan.ModelBootstrapTopicMismatch _ _ -> "ModelBootstrapTopicMismatch"
+    ExecutionPlan.InvalidEdgePort _ -> "InvalidEdgePort"
+    ExecutionPlan.BlankConfigMapName -> "BlankConfigMapName"
+    ExecutionPlan.BlankGeneratedPath -> "BlankGeneratedPath"
+    ExecutionPlan.BlankMountedPath -> "BlankMountedPath"
+    ExecutionPlan.InvalidActiveDaemonRole -> "InvalidActiveDaemonRole"
+    ExecutionPlan.InvalidDaemonConfig _ -> "InvalidDaemonConfig"
+    ExecutionPlan.DaemonRoleMismatch {} -> "DaemonRoleMismatch"
+    ExecutionPlan.DaemonMemberMismatch {} -> "DaemonMemberMismatch"
+    ExecutionPlan.DaemonLocationMismatch {} -> "DaemonLocationMismatch"
+    ExecutionPlan.DaemonRequestTopicsMismatch {} -> "DaemonRequestTopicsMismatch"
+    ExecutionPlan.DaemonResultTopicMismatch {} -> "DaemonResultTopicMismatch"
+    ExecutionPlan.DaemonConnectionModeMismatch {} -> "DaemonConnectionModeMismatch"
+    ExecutionPlan.DaemonSubscriptionMismatch {} -> "DaemonSubscriptionMismatch"
+    ExecutionPlan.EngineDaemonMemberMissing _ -> "EngineDaemonMemberMissing"
+    ExecutionPlan.MissingEngineDaemon _ -> "MissingEngineDaemon"
+    ExecutionPlan.DuplicateEngineDaemonMember _ -> "DuplicateEngineDaemonMember"
+    ExecutionPlan.InvalidEngineBinding _ -> "InvalidEngineBinding"
+    ExecutionPlan.UnsupportedEngineBinding _ _ -> "UnsupportedEngineBinding"
+    ExecutionPlan.EngineBindingMismatch {} -> "EngineBindingMismatch"
+    ExecutionPlan.UnsupportedEngineAdapterType _ _ -> "UnsupportedEngineAdapterType"
+    ExecutionPlan.InvalidModelDescriptor _ -> "InvalidModelDescriptor"
+    ExecutionPlan.InvalidModelId _ -> "InvalidModelId"
+    ExecutionPlan.InvalidMatrixRowId _ -> "InvalidMatrixRowId"
+    ExecutionPlan.InvalidAdapterId _ _ -> "InvalidAdapterId"
+    ExecutionPlan.UnenforceableModelMemoryFootprint _ _ -> "UnenforceableModelMemoryFootprint"
+    ExecutionPlan.DuplicateModelId _ -> "DuplicateModelId"
+    ExecutionPlan.DuplicateMatrixRowId _ -> "DuplicateMatrixRowId"
+    ExecutionPlan.DuplicateEngineId _ -> "DuplicateEngineId"
+    ExecutionPlan.DuplicatePoolId _ -> "DuplicatePoolId"
+    ExecutionPlan.DuplicateMemberId _ -> "DuplicateMemberId"
+    ExecutionPlan.DuplicateRequestTopic _ -> "DuplicateRequestTopic"
+    ExecutionPlan.DuplicatePoolModelReference _ _ -> "DuplicatePoolModelReference"
+    ExecutionPlan.DuplicatePoolMemberReference _ _ -> "DuplicatePoolMemberReference"
+    ExecutionPlan.DuplicateMemberPoolReference _ _ -> "DuplicateMemberPoolReference"
+    ExecutionPlan.DuplicateRequestField _ _ -> "DuplicateRequestField"
+    ExecutionPlan.InvalidPoolId _ -> "InvalidPoolId"
+    ExecutionPlan.InvalidMemberId _ -> "InvalidMemberId"
+    ExecutionPlan.EmptyPoolModels _ -> "EmptyPoolModels"
+    ExecutionPlan.EmptyPoolMembers _ -> "EmptyPoolMembers"
+    ExecutionPlan.EmptyMemberPools _ -> "EmptyMemberPools"
+    ExecutionPlan.UnknownSelectedEngine _ _ -> "UnknownSelectedEngine"
+    ExecutionPlan.ModelRuntimeMismatch {} -> "ModelRuntimeMismatch"
+    ExecutionPlan.ModelRuntimeLaneMismatch {} -> "ModelRuntimeLaneMismatch"
+    ExecutionPlan.UnsupportedGpuRequirement _ _ -> "UnsupportedGpuRequirement"
+    ExecutionPlan.DanglingPoolModel _ _ -> "DanglingPoolModel"
+    ExecutionPlan.DanglingPoolMember _ _ -> "DanglingPoolMember"
+    ExecutionPlan.DanglingMemberPool _ _ -> "DanglingMemberPool"
+    ExecutionPlan.PoolMemberLinkMissing _ _ -> "PoolMemberLinkMissing"
+    ExecutionPlan.MemberPoolLinkMissing _ _ -> "MemberPoolLinkMissing"
+    ExecutionPlan.UnknownDaemonMember _ -> "UnknownDaemonMember"
+    ExecutionPlan.UnplacedModel _ -> "UnplacedModel"
+    ExecutionPlan.MultiplyPlacedModel _ _ -> "MultiplyPlacedModel"
+    ExecutionPlan.PoolRuntimeMismatch {} -> "PoolRuntimeMismatch"
+    ExecutionPlan.MemberRuntimeMismatch {} -> "MemberRuntimeMismatch"
+    ExecutionPlan.MemberLocationMismatch {} -> "MemberLocationMismatch"
+    ExecutionPlan.InvalidPoolSubscription _ -> "InvalidPoolSubscription"
+    ExecutionPlan.InvalidPoolMaxInflight _ _ -> "InvalidPoolMaxInflight"
+    ExecutionPlan.ModelWithoutEligibleMember _ -> "ModelWithoutEligibleMember"
+    ExecutionPlan.DuplicateDerivedRouteTopic _ _ -> "DuplicateDerivedRouteTopic"
+    ExecutionPlan.TopicFamilyCollision _ _ -> "TopicFamilyCollision"
+    ExecutionPlan.RuntimeBudgetMismatch _ _ -> "RuntimeBudgetMismatch"
+    ExecutionPlan.GpuDualResourceBudgetRequired -> "GpuDualResourceBudgetRequired"
+    ExecutionPlan.GpuModelWithoutVramEnforcer _ -> "GpuModelWithoutVramEnforcer"
+    ExecutionPlan.InvalidMemoryEnforcer _ -> "InvalidMemoryEnforcer"
+
+assertCompiledExecutionPlanAccounting :: DemoConfig -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+assertCompiledExecutionPlanAccounting demoConfig compiledPlan = do
+  let configuredModels = ExecutionPlan.compiledPlanConfiguredModels compiledPlan
+      availableModels = ExecutionPlan.compiledPlanAvailableModels compiledPlan
+      unavailableModels = ExecutionPlan.compiledRuntimePlanUnavailableModels compiledPlan
+      configuredIds = map modelId configuredModels
+      availableIds = map modelId availableModels
+      unavailableIds = map (modelId . ExecutionPlan.unavailableModelDescriptor) unavailableModels
+      accountedIds = availableIds <> unavailableIds
+      configuredCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- configuredIds]
+      accountedCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- accountedIds]
+  assert
+    (configuredModels == models demoConfig)
+    "compiled execution plan retains the exact configured model order"
+  assert
+    (accountedCounts == configuredCounts)
+    "compiled placements plus unavailable models account for every configured model exactly once"
+  assert
+    (null [modelIdValue | modelIdValue <- availableIds, modelIdValue `elem` unavailableIds])
+    "compiled placement and unavailable-model maps are disjoint"
+  assert
+    (ExecutionPlan.compiledPlanRuntimeMode compiledPlan == configRuntimeMode demoConfig)
+    "compiled execution plan preserves runtime mode"
+  assert
+    ( compiledDaemonProjection (ExecutionPlan.compiledPlanCoordinatorDaemon compiledPlan)
+        == daemonConfigProjection (coordinatorDaemon demoConfig)
+    )
+    "compiled execution plan preserves coordinator metadata"
+  assert
+    ( compiledDaemonProjection (ExecutionPlan.compiledPlanWebappDaemon compiledPlan)
+        == daemonConfigProjection (webappDaemon demoConfig)
+    )
+    "compiled execution plan preserves webapp metadata"
+  assert
+    ( map compiledDaemonProjection (ExecutionPlan.compiledPlanEngineDaemons compiledPlan)
+        == map daemonConfigProjection (engineDaemons demoConfig)
+    )
+    "compiled execution plan preserves engine daemon metadata"
+  assert
+    (ExecutionPlan.compiledPlanRequestTopics compiledPlan == requestTopics demoConfig)
+    "compiled execution plan preserves request topics"
+  assert
+    (ExecutionPlan.compiledPlanResultTopic compiledPlan == resultTopic demoConfig)
+    "compiled execution plan preserves the result topic"
+  assert
+    (ExecutionPlan.compiledPlanModelsBucket compiledPlan == modelsBucket demoConfig)
+    "compiled execution plan preserves the models bucket"
+  assert
+    (ExecutionPlan.compiledPlanModelBootstrapTopic compiledPlan == modelBootstrapTopic demoConfig)
+    "compiled execution plan preserves the model-bootstrap topic"
+
+type DaemonProjection =
+  ( DaemonRole,
+    Text.Text,
+    Maybe Text.Text,
+    [Text.Text],
+    Text.Text,
+    PulsarConnectionMode,
+    Maybe ConsumerSubscriptionType
+  )
+
+daemonConfigProjection :: DaemonConfig -> DaemonProjection
+daemonConfigProjection daemon =
+  ( daemonConfigRole daemon,
+    daemonConfigLocation daemon,
+    daemonConfigMemberId daemon,
+    daemonConfigRequestTopics daemon,
+    daemonConfigResultTopic daemon,
+    daemonConfigPulsarConnectionMode daemon,
+    daemonConfigConsumerSubscriptionType daemon
+  )
+
+compiledDaemonProjection :: ExecutionPlan.CompiledDaemon -> DaemonProjection
+compiledDaemonProjection daemon =
+  ( ExecutionPlan.compiledDaemonRole daemon,
+    ExecutionPlan.compiledDaemonLocation daemon,
+    ExecutionPlan.compiledDaemonMemberId daemon,
+    ExecutionPlan.compiledDaemonRequestTopics daemon,
+    ExecutionPlan.compiledDaemonResultTopic daemon,
+    ExecutionPlan.compiledDaemonPulsarConnectionMode daemon,
+    ExecutionPlan.compiledDaemonConsumerSubscriptionType daemon
+  )
+
+assertCompiledExecutionPlanRoutes :: DemoConfig -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+assertCompiledExecutionPlanRoutes demoConfig compiledPlan = do
+  let placements = ExecutionPlan.compiledRuntimePlanPlacements compiledPlan
+      routeKeys =
+        [ ( ExecutionPlan.compiledPlacementId placement,
+            ExecutionPlan.engineRoutePoolId route,
+            ExecutionPlan.engineRouteMemberId route
+          )
+        | placement <- placements,
+          route <- NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement)
+        ]
+  assert
+    (length routeKeys == length (nub routeKeys))
+    "compiled execution-plan routes are unique by model, pool, and member"
+  mapM_
+    ( \placement -> do
+        let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
+            actualRoutes =
+              map
+                executionPlanRouteMetadata
+                (NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement))
+            expectedRoutes = expectedExecutionPlanRoutes demoConfig descriptor
+            expectedEngine =
+              find
+                ((== selectedEngine descriptor) . engineBindingName)
+                (engines demoConfig)
+        assert
+          (ExecutionPlan.lookupCompiledPlacement (modelId descriptor) compiledPlan == Just placement)
+          "compiled execution-plan lookup returns the exact placement"
+        assert
+          (Just (ExecutionPlan.compiledPlacementEngine placement) == expectedEngine)
+          "compiled placement retains the selected engine binding"
+        assert
+          (actualRoutes == expectedRoutes)
+          ( "compiled placement routes preserve exact pool/member/subscription/inflight fields for "
+              <> Text.unpack (modelId descriptor)
+          )
+        mapM_
+          (assertCompiledRouteOwnedByDaemon compiledPlan)
+          (NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement))
+    )
+    placements
+
+executionPlanRouteMetadata ::
+  ExecutionPlan.EngineRoute ->
+  (Text.Text, Text.Text, ConsumerSubscriptionType, Int)
+executionPlanRouteMetadata route =
+  ( ExecutionPlan.engineRoutePoolId route,
+    ExecutionPlan.engineRouteMemberId route,
+    ExecutionPlan.engineRouteSubscriptionType route,
+    ExecutionPlan.engineRouteMaxInflightPerMember route
+  )
+
+assertCompiledRouteOwnedByDaemon ::
+  ExecutionPlan.CompiledRuntimePlan ->
+  ExecutionPlan.EngineRoute ->
+  IO ()
+assertCompiledRouteOwnedByDaemon compiledPlan route =
+  case ExecutionPlan.lookupCompiledEngineDaemon (ExecutionPlan.engineRouteMemberId route) compiledPlan of
+    Nothing ->
+      fail
+        ( "compiled route references a missing engine daemon: "
+            <> Text.unpack (ExecutionPlan.engineRouteMemberId route)
+        )
+    Just daemon ->
+      assert
+        (ExecutionPlan.engineRouteTopic route `elem` ExecutionPlan.compiledDaemonRequestTopics daemon)
+        "compiled route topic is authorized by its compiled engine daemon"
+
+expectedExecutionPlanRoutes ::
+  DemoConfig ->
+  ModelDescriptor ->
+  [(Text.Text, Text.Text, ConsumerSubscriptionType, Int)]
+expectedExecutionPlanRoutes demoConfig descriptor =
+  [ ( enginePoolId pool,
+      memberIdValue,
+      enginePoolSubscriptionType pool,
+      enginePoolMaxInflightPerMember pool
+    )
+  | pool <- enginePools demoConfig,
+    modelId descriptor `elem` enginePoolModelIds pool,
+    memberIdValue <- enginePoolMemberIds pool,
+    Just member <- [find ((== memberIdValue) . engineMemberId) (engineMembers demoConfig)],
+    enginePoolId pool `elem` engineMemberPoolIds member
+  ]
+
+singleModelExecutionPlanConfig ::
+  ExecutionPlan.CompiledRuntimePlan ->
+  DemoConfig ->
+  Either String DemoConfig
+singleModelExecutionPlanConfig compiledPlan demoConfig = do
+  model <- maybe (Left "model catalog is empty") Right (listToMaybe (models demoConfig))
+  pool <-
+    maybe
+      (Left "first model has no engine pool")
+      Right
+      (find ((modelId model `elem`) . enginePoolModelIds) (enginePools demoConfig))
+  memberIdValue <-
+    maybe
+      (Left "first model pool has no member")
+      Right
+      (listToMaybe (enginePoolMemberIds pool))
+  member <-
+    maybe
+      (Left "first model pool member is missing")
+      Right
+      (find ((== memberIdValue) . engineMemberId) (engineMembers demoConfig))
+  binding <-
+    maybe
+      (Left "first model selected engine is missing")
+      Right
+      (find ((== selectedEngine model) . engineBindingName) (engines demoConfig))
+  daemon <-
+    maybe
+      (Left "engine daemon catalog is empty")
+      Right
+      (listToMaybe (engineDaemons demoConfig))
+  placement <-
+    maybe
+      (Left "first model has no compiled placement")
+      Right
+      (ExecutionPlan.lookupCompiledPlacement (modelId model) compiledPlan)
+  route <-
+    maybe
+      (Left "first model has no compiled route for its selected pool member")
+      Right
+      ( find
+          ( \candidate ->
+              ExecutionPlan.engineRoutePoolId candidate == enginePoolId pool
+                && ExecutionPlan.engineRouteMemberId candidate == memberIdValue
+          )
+          (NonEmpty.toList (ExecutionPlan.compiledPlacementRoutes placement))
+      )
+  let poolIdValue = enginePoolId pool
+      routeTopic = ExecutionPlan.engineRouteTopic route
+  pure
+    demoConfig
+      { activeDaemonRole = Engine,
+        engineDaemons =
+          [ daemon
+              { daemonConfigRole = Engine,
+                daemonConfigMemberId = Just memberIdValue,
+                daemonConfigRequestTopics = [routeTopic]
+              }
+          ],
+        enginePools =
+          [ pool
+              { enginePoolModelIds = [modelId model],
+                enginePoolMemberIds = [memberIdValue]
+              }
+          ],
+        engineMembers =
+          [ member
+              { engineMemberPoolIds = [poolIdValue]
+              }
+          ],
+        engines = [binding],
+        models = [model]
+      }
+
+executionPlanConfigForRuntime ::
+  RuntimeMode ->
+  InferenceMemoryBudget ->
+  DemoConfig ->
+  DemoConfig
+executionPlanConfigForRuntime runtimeModeValue budget demoConfig =
+  demoConfig
+    { configRuntimeMode = runtimeModeValue,
+      engineDaemons =
+        [ daemon
+            { daemonConfigLocation = memberLocation,
+              daemonConfigPulsarConnectionMode = engineConnectionMode
+            }
+        | daemon <- engineDaemons demoConfig
+        ],
+      enginePools =
+        [pool {enginePoolRuntimeMode = runtimeModeValue} | pool <- enginePools demoConfig],
+      engineMembers =
+        [ member
+            { engineMemberRuntimeMode = runtimeModeValue,
+              engineMemberLocation = memberLocation
+            }
+        | member <- engineMembers demoConfig
+        ],
+      models =
+        [ configuredModel
+            { runtimeMode = runtimeModeValue,
+              runtimeLane = runtimeLaneForMode runtimeModeValue (requiresGpu configuredModel)
+            }
+        | configuredModel <- models demoConfig
+        ],
+      inferenceMemoryBudget = budget
+    }
+  where
+    memberLocation =
+      case runtimeModeValue of
+        AppleSilicon -> "control-plane-host"
+        LinuxCpu -> "cluster-pod"
+        LinuxGpu -> "cluster-pod"
+    engineConnectionMode =
+      case runtimeModeValue of
+        AppleSilicon -> PublicationEdgeAutoDiscovery
+        LinuxCpu -> ConfiguredTransport
+        LinuxGpu -> ConfiguredTransport
+
+runtimeLaneForMode :: RuntimeMode -> Bool -> RuntimeLane
+runtimeLaneForMode runtimeModeValue gpuRequired =
+  case runtimeModeValue of
+    AppleSilicon -> AppleSiliconHost
+    LinuxCpu -> KindLinuxCpu
+    LinuxGpu
+      | gpuRequired -> KindLinuxGpuGpu
+      | otherwise -> KindLinuxGpuShared
+
+expectSingleton :: String -> [a] -> IO a
+expectSingleton label values =
+  case values of
+    [value] -> pure value
+    _ -> fail ("expected exactly one " <> label <> ", found " <> show (length values))
 
 assertPhase7JsonRoundtrips :: IO ()
 assertPhase7JsonRoundtrips = do
@@ -3748,13 +12532,6 @@ assertDemoAuthRealm = do
 
 assertResultBridgeAndBatchTopics :: IO ()
 assertResultBridgeAndBatchTopics = do
-  assert
-    (enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf" == "persistent://infernix/demo/inference.batch.linux-cpu.pool.llama-cpp-cli.model.llm-tinyllama-gguf")
-    "linux-cpu coordinator metadata derives pool/model request topics"
-  assert
-    (engineMemberPinnedTopicForMode AppleSilicon "mac-studio-1" "llm-smollm2-safetensors" == "persistent://infernix/demo/inference.batch.apple-silicon.member.mac-studio-1.model.llm-smollm2-safetensors")
-    "apple pinned routes derive member/model request topics"
-
   -- Result-bridge subscription naming
   let bridgeConfig =
         ResultBridge.ResultBridgeConfig
@@ -3836,50 +12613,43 @@ assertPulsarMessageIdSequenceParsing = do
 
 assertLinuxHostBatchForwarding :: Paths -> IO ()
 assertLinuxHostBatchForwarding paths = do
-  let requestTopic = "persistent://infernix/demo/inference.request.linux-cpu"
-      batchTopic = enginePoolTopicForMode LinuxCpu "llama-cpp-cli" "llm-tinyllama-gguf"
-      resultTopic = "persistent://infernix/demo/inference.result.linux-cpu"
+  let planPath = buildRoot paths </> "filesystem-forwarding-plan.dhall"
+  BS.writeFile
+    planPath
+    (renderGeneratedDemoConfigPayload paths LinuxCpu True Coordinator linuxCpuUnitInferenceMemoryBudget)
+  compiledPlan <-
+    decodeCompiledRuntimePlanFile planPath
+      >>= expectDecodedCompiledPlan "filesystem-forwarding execution plan"
+  requestTopic <-
+    maybe
+      (fail "filesystem-forwarding execution plan has no coordinator request topic")
+      pure
+      (listToMaybe (ExecutionPlan.compiledPlanRequestTopics compiledPlan))
+  coordinatorCapability <-
+    maybe
+      (fail "filesystem-forwarding plan did not mint its coordinator topic capability")
+      pure
+      ( find
+          ((== requestTopic) . daemonTopicCapabilityTopic)
+          (coordinatorTopicCapabilities compiledPlan)
+      )
+  placement <-
+    maybe
+      (fail "filesystem-forwarding execution plan omitted llm-tinyllama-gguf")
+      pure
+      (ExecutionPlan.lookupCompiledPlacement "llm-tinyllama-gguf" compiledPlan)
+  let batchTopic =
+        ExecutionPlan.engineRouteTopic
+          (NonEmpty.head (ExecutionPlan.compiledPlacementRoutes placement))
+      resultTopic = ExecutionPlan.compiledPlanResultTopic compiledPlan
       requestDirectory = topicDirectoryPath paths requestTopic
       batchDirectory = topicDirectoryPath paths batchTopic
       resultDirectory = topicDirectoryPath paths resultTopic
-      demoConfig =
-        DemoConfig
-          { configRuntimeMode = LinuxCpu,
-            configEdgePort = 0,
-            configMapName = "infernix-demo-config",
-            generatedPath = "./.build/infernix-substrate.dhall",
-            mountedPath = "/opt/build/infernix-substrate.dhall",
-            demoUiEnabled = True,
-            activeDaemonRole = Coordinator,
-            coordinatorDaemon = daemonConfig,
-            webappDaemon = unitWebappDaemonConfig LinuxCpu [requestTopic] resultTopic,
-            engineDaemons = [],
-            enginePools = enginePoolsForMode LinuxCpu,
-            engineMembers = engineMembersForMode LinuxCpu,
-            requestTopics = [requestTopic],
-            resultTopic = resultTopic,
-            modelsBucket = defaultModelsBucket,
-            modelBootstrapTopic = defaultModelBootstrapTopic,
-            engines = engineBindingsForMode LinuxCpu,
-            models = catalogForMode LinuxCpu,
-            inferenceMemoryBudget = linuxCpuUnitInferenceMemoryBudget
-          }
-      daemonConfig =
-        DaemonConfig
-          { daemonConfigRole = Coordinator,
-            daemonConfigLocation = "cluster-pod",
-            daemonConfigMemberId = Nothing,
-            daemonConfigRequestTopics = [requestTopic],
-            daemonConfigResultTopic = resultTopic,
-            daemonConfigPulsarConnectionMode = ConfiguredTransport,
-            daemonConfigConsumerSubscriptionType = Just ConsumerShared
-          }
   mapM_ removeIfPresent [requestDirectory, batchDirectory, resultDirectory]
   requestIdValue <-
     publishInferenceRequest
       paths
-      LinuxCpu
-      requestTopic
+      compiledPlan
       InferenceRequest
         { requestModelId = "llm-tinyllama-gguf",
           inputText = "forward me",
@@ -3890,15 +12660,8 @@ assertLinuxHostBatchForwarding paths = do
   let requestPath = requestDirectory </> Text.unpack requestIdValue <.> "pb"
       batchPath = batchDirectory </> Text.unpack requestIdValue <.> "pb"
       resultPath = resultDirectory </> Text.unpack requestIdValue <.> "pb"
-      planPath = buildRoot paths </> "filesystem-forwarding-plan.dhall"
-  Lazy.writeFile planPath (encodeDemoConfig demoConfig)
-  rawPlan <- decodeRawRuntimeConfigFile planPath
-  compiledPlan <-
-    case ExecutionPlan.compileRuntimePlan rawPlan of
-      Left errors -> fail ("filesystem-forwarding execution plan did not compile: " <> show errors)
-      Right plan -> pure plan
   payloadBytes <- BS.readFile requestPath
-  drainTopic paths LinuxCpu [] daemonConfig compiledPlan requestTopic
+  drainTopic paths coordinatorCapability
   requestStillExists <- doesFileExist requestPath
   batchExists <- doesFileExist batchPath
   resultExists <- doesFileExist resultPath
@@ -3907,12 +12670,302 @@ assertLinuxHostBatchForwarding paths = do
   assert batchExists "linux handoff forwarding writes the request to the batch topic"
   assert (not resultExists) "linux handoff forwarding does not execute inference inline"
   assert (batchPayload == payloadBytes) "linux handoff forwarding preserves the request payload bytes"
+  let unavailableModelId = "audio-demucs-htdemucs"
+  unavailable <-
+    maybe
+      (fail "filesystem-forwarding plan did not retain the oversized Demucs model")
+      pure
+      (ExecutionPlan.lookupUnavailableModel unavailableModelId compiledPlan)
+  unavailablePool <-
+    maybe
+      (fail "generated Linux CPU pools omitted the oversized Demucs model")
+      pure
+      (find ((unavailableModelId `elem`) . enginePoolModelIds) (enginePoolsForMode LinuxCpu))
+  let unavailableBatchTopic =
+        unitEnginePoolTopic
+          LinuxCpu
+          (enginePoolId unavailablePool)
+          unavailableModelId
+      unavailableBatchDirectory =
+        topicDirectoryPath paths unavailableBatchTopic
+  mapM_
+    removeIfPresent
+    [requestDirectory, unavailableBatchDirectory, resultDirectory]
+  unavailableRequestId <-
+    publishInferenceRequest
+      paths
+      compiledPlan
+      InferenceRequest
+        { requestModelId = unavailableModelId,
+          inputText = "reject before forwarding",
+          inputObjectRef = Nothing,
+          requestUserId = Nothing,
+          requestContextId = Nothing
+        }
+  let unavailableRequestPath =
+        requestDirectory </> Text.unpack unavailableRequestId <.> "pb"
+      unavailableBatchPath =
+        unavailableBatchDirectory </> Text.unpack unavailableRequestId <.> "pb"
+  drainTopic paths coordinatorCapability
+  unavailableSourceExists <- doesFileExist unavailableRequestPath
+  unavailableBatchExists <- doesFileExist unavailableBatchPath
+  unavailableResult <-
+    readPublishedInferenceResultMaybe
+      paths
+      compiledPlan
+      unavailableRequestId
+  case unavailableResult of
+    Nothing ->
+      fail "coordinator admission rejection did not publish a terminal result"
+    Just resultValue -> do
+      assert
+        (status resultValue == "failed")
+        "coordinator admission rejection publishes a failed terminal result"
+      assert
+        (inferenceError (payload resultValue) == Just (ExecutionPlan.unavailableModelReason unavailable))
+        "coordinator admission rejection preserves the compiler's typed memory error"
+  assert
+    (not unavailableSourceExists)
+    "coordinator admission rejection removes the source request"
+  assert
+    (not unavailableBatchExists)
+    "coordinator admission rejection does not create a batch request"
+  emptyModelResult <-
+    assertCoordinatorRejection
+      compiledPlan
+      coordinatorCapability
+      ""
+      "model id was not resolved"
+  unknownModelResult <-
+    assertCoordinatorRejection
+      compiledPlan
+      coordinatorCapability
+      "unknown-model"
+      "model_not_executable"
+  assert
+    (createdAt emptyModelResult == createdAt unknownModelResult)
+    "coordinator poison-message rejections use the deterministic rejection timestamp"
+  malformedResult <-
+    assertMalformedCoordinatorRejection
+      compiledPlan
+      coordinatorCapability
+  assert
+    (createdAt malformedResult == createdAt emptyModelResult)
+    "malformed coordinator messages use the deterministic rejection timestamp"
   where
+    assertCoordinatorRejection compiledPlan capability rejectedModelId expectedDiagnostic = do
+      requestIdValue <-
+        publishInferenceRequest
+          paths
+          compiledPlan
+          InferenceRequest
+            { requestModelId = rejectedModelId,
+              inputText = "reject without forwarding",
+              inputObjectRef = Nothing,
+              requestUserId = Nothing,
+              requestContextId = Nothing
+            }
+      let requestTopic =
+            daemonTopicCapabilityTopic capability
+          requestPath =
+            topicDirectoryPath paths requestTopic
+              </> Text.unpack requestIdValue
+                <.> "pb"
+          batchPaths =
+            [ topicDirectoryPath paths topic
+                </> Text.unpack requestIdValue
+                  <.> "pb"
+            | daemon <- ExecutionPlan.compiledPlanEngineDaemons compiledPlan,
+              topic <- ExecutionPlan.compiledDaemonRequestTopics daemon
+            ]
+      drainTopic paths capability
+      sourceExists <- doesFileExist requestPath
+      batchExists <- or <$> mapM doesFileExist batchPaths
+      maybeResult <-
+        readPublishedInferenceResultMaybe
+          paths
+          compiledPlan
+          requestIdValue
+      resultValue <-
+        maybe
+          (fail "coordinator poison-message rejection did not publish a terminal result")
+          pure
+          maybeResult
+      assert
+        (status resultValue == "failed")
+        "coordinator poison-message rejection publishes a failed terminal result"
+      assert
+        (resultModelId resultValue == rejectedModelId)
+        "coordinator poison-message rejection preserves the rejected model id"
+      assert
+        (maybe False (Text.isInfixOf expectedDiagnostic) (inlineOutput (payload resultValue)))
+        "coordinator poison-message rejection publishes the expected deterministic diagnostic"
+      assert
+        (isNothing (objectRef (payload resultValue)) && isNothing (inferenceError (payload resultValue)))
+        "coordinator poison-message rejection does not fabricate output or a memory error"
+      assert
+        (not sourceExists)
+        "coordinator poison-message rejection removes the source request"
+      assert
+        (not batchExists)
+        "coordinator poison-message rejection does not create a request on any engine route"
+      drainTopic paths capability
+      repeatedResult <-
+        readPublishedInferenceResultMaybe
+          paths
+          compiledPlan
+          requestIdValue
+      assert
+        (repeatedResult == Just resultValue)
+        "coordinator poison-message rejection is stable after the source message is removed"
+      pure resultValue
+
+    assertMalformedCoordinatorRejection compiledPlan capability = do
+      let malformedRequestId = "malformed-coordinator-request"
+          requestTopic =
+            daemonTopicCapabilityTopic capability
+          requestDirectory =
+            topicDirectoryPath paths requestTopic
+          requestPath =
+            requestDirectory
+              </> Text.unpack malformedRequestId
+                <.> "pb"
+          batchPaths =
+            [ topicDirectoryPath paths topic
+                </> Text.unpack malformedRequestId
+                  <.> "pb"
+            | daemon <- ExecutionPlan.compiledPlanEngineDaemons compiledPlan,
+              topic <- ExecutionPlan.compiledDaemonRequestTopics daemon
+            ]
+      createDirectoryIfMissing True requestDirectory
+      BS.writeFile requestPath (BS.pack [0x80])
+      drainTopic paths capability
+      sourceExists <- doesFileExist requestPath
+      batchExists <- or <$> mapM doesFileExist batchPaths
+      maybeResult <-
+        readPublishedInferenceResultMaybe
+          paths
+          compiledPlan
+          malformedRequestId
+      resultValue <-
+        maybe
+          (fail "malformed coordinator message did not publish a terminal result")
+          pure
+          maybeResult
+      assert
+        ( status resultValue == "failed"
+            && maybe
+              False
+              (Text.isInfixOf "malformed_inference_request")
+              (inlineOutput (payload resultValue))
+        )
+        "malformed coordinator message publishes a typed failed result"
+      assert
+        (not sourceExists)
+        "malformed coordinator message removes the source request"
+      assert
+        (not batchExists)
+        "malformed coordinator message does not create a request on any engine route"
+      drainTopic paths capability
+      repeatedResult <-
+        readPublishedInferenceResultMaybe
+          paths
+          compiledPlan
+          malformedRequestId
+      assert
+        (repeatedResult == Just resultValue)
+        "malformed coordinator rejection is stable after the source message is removed"
+      pure resultValue
+
     removeIfPresent path =
       catchIOError (removePathForcibly path) $ \err ->
         if isDoesNotExistError err
           then pure ()
           else ioError err
+
+unitGeneratedDemoConfig ::
+  Paths ->
+  RuntimeMode ->
+  Bool ->
+  DaemonRole ->
+  InferenceMemoryBudget ->
+  DemoConfig
+unitGeneratedDemoConfig paths mode demoEnabled daemonRole budget =
+  DemoConfig
+    { configRuntimeMode = mode,
+      configEdgePort = 0,
+      configMapName = "infernix-demo-config",
+      generatedPath = Config.generatedDemoConfigPath paths,
+      mountedPath = Config.watchedDemoConfigPath,
+      demoUiEnabled = demoEnabled,
+      activeDaemonRole = daemonRole,
+      coordinatorDaemon =
+        unitDaemonConfig
+          Coordinator
+          "cluster-pod"
+          Nothing
+          (requestTopicsForMode mode)
+          ConfiguredTransport,
+      webappDaemon =
+        unitDaemonConfig
+          Webapp
+          "cluster-pod"
+          Nothing
+          (requestTopicsForMode mode)
+          ConfiguredTransport,
+      engineDaemons =
+        [ unitDaemonConfig
+            Engine
+            (engineMemberLocation member)
+            (Just (engineMemberId member))
+            (unitEngineMemberTopics mode pools member)
+            engineConnectionMode
+        | member <- members
+        ],
+      enginePools = pools,
+      engineMembers = members,
+      requestTopics = requestTopicsForMode mode,
+      resultTopic = resultTopicForMode mode,
+      modelsBucket = defaultModelsBucket,
+      modelBootstrapTopic = defaultModelBootstrapTopic,
+      engines = engineBindingsForMode mode,
+      models = catalogForMode mode,
+      inferenceMemoryBudget = budget
+    }
+  where
+    pools = enginePoolsForMode mode
+    members = engineMembersForMode mode
+    engineConnectionMode
+      | mode == AppleSilicon = PublicationEdgeAutoDiscovery
+      | otherwise = ConfiguredTransport
+    unitDaemonConfig role location memberIdValue topics connectionMode =
+      DaemonConfig
+        { daemonConfigRole = role,
+          daemonConfigLocation = location,
+          daemonConfigMemberId = memberIdValue,
+          daemonConfigRequestTopics = topics,
+          daemonConfigResultTopic = resultTopicForMode mode,
+          daemonConfigPulsarConnectionMode = connectionMode,
+          daemonConfigConsumerSubscriptionType = Just ConsumerShared
+        }
+
+unitEngineMemberTopics :: RuntimeMode -> [EnginePool] -> EngineMember -> [Text.Text]
+unitEngineMemberTopics mode pools member =
+  [ unitEnginePoolTopic mode (enginePoolId pool) modelIdValue
+  | pool <- pools,
+    enginePoolId pool `elem` engineMemberPoolIds member,
+    engineMemberId member `elem` enginePoolMemberIds pool,
+    modelIdValue <- enginePoolModelIds pool
+  ]
+
+unitEnginePoolTopic :: RuntimeMode -> Text.Text -> Text.Text -> Text.Text
+unitEnginePoolTopic mode poolIdValue modelIdValue =
+  "persistent://infernix/demo/inference.batch."
+    <> runtimeModeId mode
+    <> ".pool."
+    <> poolIdValue
+    <> ".model."
+    <> modelIdValue
 
 -- | Phase 4 Sprint 4.26 — a generous apple-silicon inference RAM budget for
 -- unit fixtures, chosen well above every catalog model's conservative RAM
@@ -3924,16 +12977,15 @@ appleUnitInferenceRamBudgetMib = 65536
 -- given inference capacity (synthesized with the headroom floor and no VM
 -- reserve so it round-trips through the Dhall codec).
 hostEnforcedUnitBudget :: Int -> InferenceMemoryBudget
-hostEnforcedUnitBudget capacityMib = HostEnforcedBudget (hostPartitionForCapacity capacityMib)
+hostEnforcedUnitBudget capacityMib =
+  case hostPartitionForCapacity capacityMib of
+    Left message ->
+      error ("invalid host-enforced unit budget: " <> message)
+    Right partition ->
+      HostEnforcedBudget partition
 
 appleUnitInferenceMemoryBudget :: InferenceMemoryBudget
 appleUnitInferenceMemoryBudget = hostEnforcedUnitBudget appleUnitInferenceRamBudgetMib
-
-smallAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
-smallAppleUnitInferenceMemoryBudget = hostEnforcedUnitBudget 512
-
-zeroAppleUnitInferenceMemoryBudget :: InferenceMemoryBudget
-zeroAppleUnitInferenceMemoryBudget = hostEnforcedUnitBudget 0
 
 linuxCpuUnitInferenceMemoryBudget :: InferenceMemoryBudget
 linuxCpuUnitInferenceMemoryBudget =
@@ -3943,18 +12995,6 @@ linuxCpuUnitInferenceMemoryBudget =
         podMemoryLimitSource = "cluster-engine-pod-memory-limit",
         podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
       }
-
-unitWebappDaemonConfig :: RuntimeMode -> [Text.Text] -> Text.Text -> DaemonConfig
-unitWebappDaemonConfig _runtimeMode requestTopicValues resultTopicValue =
-  DaemonConfig
-    { daemonConfigRole = Webapp,
-      daemonConfigLocation = "cluster-pod",
-      daemonConfigMemberId = Nothing,
-      daemonConfigRequestTopics = requestTopicValues,
-      daemonConfigResultTopic = resultTopicValue,
-      daemonConfigPulsarConnectionMode = ConfiguredTransport,
-      daemonConfigConsumerSubscriptionType = Just ConsumerShared
-    }
 
 mangleLastChar :: Text.Text -> Text.Text
 mangleLastChar token =
@@ -4073,17 +13113,6 @@ assertUniqueModelIds mode = do
       matrixRows = map matrixRowId modelsForMode
   assert (length identifiers == length (nub identifiers)) ("catalog model ids are unique for " <> show mode)
   assert (length matrixRows == length (nub matrixRows)) ("catalog matrix rows are unique for " <> show mode)
-
-renderPayloadText :: Paths -> ResultPayload -> IO String
-renderPayloadText _paths payloadValue =
-  -- Phase 7 Sprint 7.7: text outputs always ride inline. Binary outputs flow
-  -- through an MinIO `ObjectRef` rather than a host filesystem fallback, so
-  -- the helper no longer needs the @Paths@ argument; the parameter is kept
-  -- for call-site stability while the integration suite still threads it
-  -- through.
-  case inlineOutput payloadValue of
-    Just outputText -> pure (Text.unpack outputText)
-    Nothing -> pure ""
 
 sampleRenderedChart :: String
 sampleRenderedChart =
@@ -4692,6 +13721,20 @@ assertHostConfig testRoot = do
   let appleConfig = HostConfig.defaultAppleHostNativeHostConfig "/Users/operator/infernix" "/Users/operator"
       linuxConfig = HostConfig.defaultLinuxOuterContainerHostConfig "/root"
       linuxArmConfig = HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture "/root" "aarch64"
+      linuxMaterializationPaths =
+        Paths
+          { repoRoot = testRoot,
+            buildRoot = testRoot </> ".build",
+            dataRoot = testRoot </> ".data",
+            runtimeRoot = testRoot </> ".data" </> "runtime",
+            kindRoot = testRoot </> ".data" </> "kind",
+            helmConfigRoot = testRoot </> ".data" </> "helm" </> "config",
+            helmCacheRoot = testRoot </> ".data" </> "helm" </> "cache",
+            helmDataRoot = testRoot </> ".data" </> "helm" </> "data",
+            resultsRoot = testRoot </> ".data" </> "results",
+            modelCacheRoot = testRoot </> ".data" </> "model-cache",
+            pathsHostConfig = Just linuxConfig
+          }
   assert
     (HostConfig.hostExecutionContext appleConfig == HostConfig.AppleHostNative)
     "default Apple host config reports the Apple host-native execution context"
@@ -4711,19 +13754,102 @@ assertHostConfig testRoot = do
     (Text.unpack (HostTools.hostToolPath appleConfig HostTools.HostBrew) == "/opt/homebrew/bin/brew")
     "HostTools resolves brew by Homebrew absolute path on Apple"
   assert
+    ( Text.unpack (HostTools.hostToolPath appleConfig HostTools.HostPoetry)
+        == "/Users/operator/.local/share/pypoetry/venv/bin/poetry"
+    )
+    "HostTools resolves Poetry from the typed user-local bootstrap root on Apple"
+  assert
+    ( HostTools.hostToolPath appleConfig HostTools.HostPython3
+        == "/opt/homebrew/bin/python3.12"
+        && HostTools.hostToolPath appleConfig HostTools.HostPython311
+          == "/opt/homebrew/bin/python3.11"
+    )
+    "HostTools keeps the general Python 3.12 and Core ML Python 3.11 paths distinct on Apple"
+  assert
+    (HostTools.hostToolPath linuxConfig HostTools.HostPython311 == "")
+    "HostTools marks the Core ML Python 3.11 tool unavailable in the Linux outer-container"
+  assert
+    ( HostTools.hostToolPath appleConfig HostTools.HostLlamaCli
+        == "/opt/homebrew/bin/llama-cli"
+        && HostTools.hostToolPath appleConfig HostTools.HostWhisperCli
+          == "/opt/homebrew/bin/whisper-cli"
+    )
+    "HostTools resolves both Apple native engine CLIs from explicit Homebrew paths"
+  assert
+    ( HostTools.hostToolPath linuxConfig HostTools.HostLlamaCli == ""
+        && HostTools.hostToolPath linuxConfig HostTools.HostWhisperCli == ""
+    )
+    "HostTools marks Apple native engine CLIs unavailable in the Linux outer-container"
+  assert
     (HostTools.hostToolPath appleConfig HostTools.HostAptGet == "")
     "HostTools returns empty path for tools unavailable in the active context"
   assert
     ( "/root/.ghcup/bin/cabal" `elem` HostTools.hostToolFallbackCandidates HostTools.HostCabal
         && "/root/.ghcup/bin/ghc" `elem` HostTools.hostToolFallbackCandidates HostTools.HostGhc
+        && "/opt/homebrew/bin/python3.11" `elem` HostTools.hostToolFallbackCandidates HostTools.HostPython311
+        && "/opt/homebrew/bin/llama-cli" `elem` HostTools.hostToolFallbackCandidates HostTools.HostLlamaCli
+        && "/opt/homebrew/bin/whisper-cli" `elem` HostTools.hostToolFallbackCandidates HostTools.HostWhisperCli
+        && "/opt/homebrew/bin/poetry" `elem` HostTools.hostToolFallbackCandidates HostTools.HostPoetry
     )
-    "Sprint 6.34: HostTools fallback candidates include the Linux launcher ghcup toolchain paths"
+    "HostTools fallback candidates include the supported Linux ghcup and Apple Homebrew paths"
+  let poetryBootstrapRequirements =
+        Provisioning.pinnedPoetryBootstrapRequirementSpecs
+      poetryBootstrapPackage =
+        takeWhile (/= '=')
+      validPoetryBootstrapRequirement requirement =
+        case words requirement of
+          [packageVersion, hashArgument] ->
+            not (null (poetryBootstrapPackage packageVersion))
+              && "==" `isInfixOf` packageVersion
+              && length hashArgument == 78
+              && "--hash=sha256:" `isPrefixOf` hashArgument
+              && all
+                (\character -> isHexDigit character && not (isUpper character))
+                (drop 14 hashArgument)
+          _ -> False
+  assert
+    ( Provisioning.pinnedPipRequirementSpec
+        == ArtifactRecipe.pinnedPipRequirement
+        && length poetryBootstrapRequirements == 45
+        && all validPoetryBootstrapRequirement poetryBootstrapRequirements
+        && length
+          (nub (map poetryBootstrapPackage poetryBootstrapRequirements))
+          == length poetryBootstrapRequirements
+        && "pip==25.1.1 --hash=sha256:2913a38a2abf4ea6b64ab507bd9e967f3b53dc1ede74b01b0931e1ce548751af"
+          `elem` poetryBootstrapRequirements
+        && "poetry==2.4.1 --hash=sha256:a91f13279a3c9add0d12c5ca5c7cb173622930a5c8272fee68c751cb5c72f951"
+          `elem` poetryBootstrapRequirements
+        && and
+          [ Provisioning.pinnedPythonRequirementSpecs provisioningAdapter
+              == ArtifactRecipe.pinnedPythonRequirements recipe
+          | (provisioningAdapter, recipe) <-
+              [ ( Provisioning.ctranslate2PythonAdapter,
+                  ArtifactRecipe.CTranslate2PythonRecipe
+                ),
+                ( Provisioning.onnxRuntimePythonAdapter,
+                  ArtifactRecipe.OnnxRuntimePythonRecipe
+                ),
+                ( Provisioning.mlxPythonAdapter,
+                  ArtifactRecipe.MlxPythonRecipe
+                ),
+                ( Provisioning.coreMlPythonAdapter,
+                  ArtifactRecipe.CoreMlPythonRecipe
+                )
+              ]
+          ]
+        && Provisioning.audiverisPinnedVersion
+          == ArtifactRecipe.audiverisVersion
+        && Provisioning.audiverisPinnedDmgFileName
+          == ArtifactRecipe.audiverisDmgFileName
+        && Provisioning.audiverisPinnedDmgUrl
+          == ArtifactRecipe.audiverisDmgUrl
+    )
+    "Sprint 1.20: provisioner commands and artifact fingerprints share one exact recipe catalog"
   -- Phase 1 Sprint 1.14 — the allowlisted Apple headless artifact
   -- plan uses runtime adapter ids and typed manifests, not a Tart VM.
   assert
     ( metalEngineArtifactAdapterIds
-        == [ "apple-metal-runtime-bridge",
-             "llama-cpp-cli",
+        == [ "llama-cpp-cli",
              "whisper-cpp-cli",
              "coreml-native",
              "ctranslate2-native",
@@ -4732,7 +13858,7 @@ assertHostConfig testRoot = do
              "jvm-native"
            ]
     )
-    "Sprint 1.14: the Apple materialization plan uses runtime adapter ids"
+    "Sprint 1.20: the Apple materialization plan uses runtime adapter ids without a repo-owned native bridge"
   assert
     (all (\artifact -> "tart" `notElem` Text.words (Text.toLower (metalEngineSourceRef artifact))) metalEngineBuildPlan)
     "Sprint 1.14: the Apple materialization plan carries no Tart source reference"
@@ -4741,24 +13867,65 @@ assertHostConfig testRoot = do
       assert False "Sprint 1.14: the Apple materialization plan is non-empty"
     Just sampleArtifact -> do
       let sampleInstallRoot = testRoot </> ".data" </> "engines" </> Text.unpack (metalEngineAdapterId sampleArtifact)
-          sampleManifest = manifestForEngineArtifact sampleInstallRoot sampleArtifact
-          sampleManifestJson = renderEngineArtifactManifest sampleManifest
+          sampleDigest = "sha256:" <> Text.replicate 64 "a"
+          sampleProvenance =
+            [ EngineArtifact.ResolvedArtifactProvenance
+                { EngineArtifact.resolvedProvenanceName = "sample-runtime",
+                  EngineArtifact.resolvedProvenanceVersion = "1.2.3",
+                  EngineArtifact.resolvedProvenanceSource = "upstream:test"
+                }
+            ]
+      sampleManifest <-
+        either
+          (fail . ("Sprint 1.20: hydrated Apple manifest recipe resolution failed: " <>))
+          pure
+          ( AppleSiliconInternal.manifestForHydratedMetalEngineArtifact
+              sampleInstallRoot
+              sampleArtifact
+              "1.2.3"
+              (Just "Python 3.12.11")
+              "runtime-1.2.3"
+              sampleProvenance
+              sampleDigest
+          )
+      let sampleManifestJson = renderEngineArtifactManifest sampleManifest
           sampleManifestText = TextEncoding.decodeUtf8 (Lazy.toStrict sampleManifestJson)
       assert
         (manifestAdapterId sampleManifest == metalEngineAdapterId sampleArtifact)
-        "Sprint 1.14: manifest rendering preserves the adapter id"
+        "Sprint 1.20: hydrated manifest rendering preserves the adapter id"
       assert
-        (manifestDigest sampleManifest == engineArtifactDigest sampleArtifact)
-        "Sprint 1.14: manifest digest is derived from the artifact spec"
+        (manifestDigest sampleManifest == sampleDigest)
+        "Sprint 1.20: hydrated manifest records the actual payload-tree digest"
+      assert
+        ("sha256:" `Text.isPrefixOf` manifestRecipeFingerprint sampleManifest)
+        "Sprint 1.20: the public Apple manifest facade exposes its closed recipe fingerprint"
+      assert
+        ( "sha256:"
+            `Text.isPrefixOf` manifestTargetContractFingerprint sampleManifest
+            && isNothing (manifestImageTargetEvidence sampleManifest)
+        )
+        "architectural correction: Apple manifests bind an installed direct target, not image evidence"
       assert
         ("\"artifactKind\"" `isInfixOf` Text.unpack sampleManifestText)
         "Sprint 1.14: manifest JSON records artifactKind"
       assert
-        ("\"smokeCommand\"" `isInfixOf` Text.unpack sampleManifestText)
-        "Sprint 1.14: manifest JSON records smokeCommand"
+        ( "\"targetContractFingerprint\""
+            `isInfixOf` Text.unpack sampleManifestText
+            && "\"imageTargetEvidence\":null"
+              `isInfixOf` Text.unpack sampleManifestText
+            && not
+              ("\"smokeCommand\"" `isInfixOf` Text.unpack sampleManifestText)
+        )
+        "architectural correction: manifest JSON records the closed direct target without a shell command"
       assert
         ("\"minioObjectKey\"" `isInfixOf` Text.unpack sampleManifestText)
         "Sprint 1.14: manifest JSON records the content-addressed MinIO key"
+      assert
+        ("\"resolvedProvenance\"" `isInfixOf` Text.unpack sampleManifestText)
+        "Sprint 1.20: manifest JSON records exact resolved provenance"
+      assert
+        ("\"recipeFingerprint\"" `isInfixOf` Text.unpack sampleManifestText)
+        "Sprint 1.20: manifest JSON records the recipe fingerprint"
       assert
         (either (const False) (const True) (decodeLazy sampleManifestJson :: Either String Aeson.Value))
         "Sprint 1.14: manifest JSON decodes as valid Aeson"
@@ -4772,283 +13939,464 @@ assertHostConfig testRoot = do
            ]
     )
     "Sprint 4.18: the Linux native materialization plan covers the runnable Linux native adapter ids"
-  case listToMaybe linuxNativeEngineBuildPlan of
-    Nothing ->
-      assert False "Sprint 4.18: the Linux native materialization plan is non-empty"
-    Just sampleLinuxArtifact -> do
-      let sampleLinuxInstallRoot = testRoot </> "linux-native-engines" </> Text.unpack (linuxNativeEngineAdapterId sampleLinuxArtifact)
-          sampleLinuxManifest = manifestForLinuxNativeEngineArtifact sampleLinuxInstallRoot sampleLinuxArtifact
-          sampleLinuxManifestJson = renderEngineArtifactManifest sampleLinuxManifest
-          sampleLinuxScript = linuxNativeRunnerScript sampleLinuxArtifact
-      assert
-        (manifestSubstrate sampleLinuxManifest == "linux-native")
-        "Sprint 4.18: Linux native manifests record the linux-native substrate"
-      assert
-        ("engine-artifacts/linux/" `Text.isInfixOf` manifestMinioObjectKey sampleLinuxManifest)
-        "Sprint 4.18: Linux native manifests use the engine-artifacts Linux key namespace"
-      assert
-        ("--smoke|--help" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runtime-backed payloads support the smoke command"
-      assert
-        ("#!/bin/sh" `isPrefixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runtime-backed payloads use a portable POSIX shell shebang"
-      assert
-        ("/opt/infernix/native-payloads" `isInfixOf` sampleLinuxScript && "infernix-demo-objects" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runtime-backed payloads return per-family result shapes"
-      assert
-        ("whisper-bin-ubuntu-arm64" `isInfixOf` sampleLinuxScript && "whisper-bin-ubuntu-x64" `isInfixOf` sampleLinuxScript)
-        "Wave L: Linux native whisper.cpp runner resolves native arm64 and x64 payload roots without cross-architecture emulation"
-      let audiverisLinuxScript =
-            maybe "" linuxNativeRunnerScript $
-              find ((== "jvm-native") . linuxNativeEngineAdapterId) linuxNativeEngineBuildPlan
-      assert
-        ( "/opt/infernix/audiveris-jre/bin/java" `isInfixOf` audiverisLinuxScript
-            && "-cp \"$audiveris_classpath\" Audiveris" `isInfixOf` audiverisLinuxScript
-            && "run_audiveris -help >/dev/null" `isInfixOf` audiverisLinuxScript
-        )
-        "Wave L: Linux native Audiveris uses the image-architecture Temurin JRE and Java classpath smoke, not the x86 launcher"
-      assert
-        ("--output-dir" `isInfixOf` sampleLinuxScript && "infernix-native-artifact-file:" `isInfixOf` sampleLinuxScript)
-        "Phase 4 realness: Linux native artifact families (real basic-pitch ONNX, real Audiveris) emit real worker-upload artifact markers"
-      assert
-        ("model_cache_not_populated" `isInfixOf` sampleLinuxScript && "exit 75" `isInfixOf` sampleLinuxScript)
-        "Sprint 4.18: Linux native runtime-backed payloads fail fast on missing model-cache readiness"
-      assert
-        (either (const False) (const True) (decodeLazy sampleLinuxManifestJson :: Either String Aeson.Value))
-        "Sprint 4.18: Linux native manifest JSON decodes as valid Aeson"
-  materializeLinuxNativeEnginesAt (testRoot </> "linux-native-engines")
-  let llamaInstallRoot = linuxNativeEngineInstallRoot (testRoot </> "linux-native-engines") "llama-cpp-cli"
-      llamaRunnerPath = llamaInstallRoot </> "bin" </> "llama-cli"
-  linuxRunnerPresent <- doesFileExist llamaRunnerPath
-  linuxManifestPresent <- doesFileExist (engineArtifactManifestPath llamaInstallRoot)
+  let linuxArchitecture =
+        case System.Info.arch of
+          "x86_64" -> "amd64"
+          "aarch64" -> "arm64"
+          other -> Text.pack other
+      catalogTarget adapterId = do
+        identity <-
+          maybe
+            (fail ("closed native identity omitted " <> Text.unpack adapterId))
+            pure
+            (EngineArtifact.parseNativeArtifactIdentity adapterId)
+        expectRight
+          ("resolve Linux direct target for " <> Text.unpack adapterId)
+          (ArtifactTarget.nativeArtifactTarget identity "linux-native" linuxArchitecture)
+      catalogInstallRoot adapterId =
+        testRoot </> "linux-native-engines" </> Text.unpack adapterId
+  llamaTarget <- catalogTarget "llama-cpp-cli"
+  whisperTarget <- catalogTarget "whisper-cpp-cli"
+  onnxTarget <- catalogTarget "onnx-runtime-native"
+  jvmTarget <- catalogTarget "jvm-native"
+  let llamaExecutable =
+        ArtifactTarget.nativeArtifactTargetExecutable
+          (catalogInstallRoot "llama-cpp-cli")
+          llamaTarget
+      whisperExecutable =
+        ArtifactTarget.nativeArtifactTargetExecutable
+          (catalogInstallRoot "whisper-cpp-cli")
+          whisperTarget
+      onnxExecutable =
+        ArtifactTarget.nativeArtifactTargetExecutable
+          (catalogInstallRoot "onnx-runtime-native")
+          onnxTarget
+      jvmExecutable =
+        ArtifactTarget.nativeArtifactTargetExecutable
+          (catalogInstallRoot "jvm-native")
+          jvmTarget
+      onnxPrefix =
+        ArtifactTarget.nativeArtifactTargetLeadingArguments
+          (catalogInstallRoot "onnx-runtime-native")
+          "ONNX Runtime Linux runner"
+          onnxTarget
+      jvmPrefix =
+        ArtifactTarget.nativeArtifactTargetLeadingArguments
+          (catalogInstallRoot "jvm-native")
+          "Audiveris JVM Linux runner"
+          jvmTarget
   assert
-    (linuxRunnerPresent && linuxManifestPresent)
-    "Sprint 4.18: Linux native materialization writes an executable root plus manifest"
-  materializeLinuxNativeEnginesAt (testRoot </> "linux-native-engines")
-  linuxRunnerAfterRerun <- doesFileExist llamaRunnerPath
-  linuxTempAfterRerun <- doesDirectoryExist (engineArtifactTempRoot llamaInstallRoot)
-  linuxPreviousAfterRerun <- doesDirectoryExist (engineArtifactPreviousRoot llamaInstallRoot)
+    ( llamaExecutable
+        == "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-cli"
+        && null
+          ( ArtifactTarget.nativeArtifactTargetLeadingArguments
+              (catalogInstallRoot "llama-cpp-cli")
+              "llama.cpp Linux runner"
+              llamaTarget
+          )
+        && ArtifactTarget.nativeArtifactTargetImmutableClosureRoots
+          (catalogInstallRoot "llama-cpp-cli")
+          llamaTarget
+          == ["/opt/infernix/native-payloads/llama.cpp/llama-b9704"]
+    )
+    "architectural correction: Linux llama execution is a fixed direct image target and closure"
   assert
-    (linuxRunnerAfterRerun && not linuxTempAfterRerun && not linuxPreviousAfterRerun)
-    "Sprint 4.18: Linux native materialization reruns cleanly over an existing root"
-  let linuxNativeCacheRoot = testRoot </> "linux-native-model-cache"
-      linuxNativeReadyDir = linuxNativeCacheRoot </> "llm-tinyllama-gguf"
-      linuxNativeRunnerArgs =
-        [ "--model",
-          "llm-tinyllama-gguf",
-          "--engine",
-          "llama.cpp",
-          "--family",
-          "llm",
-          "--install-root",
-          llamaInstallRoot,
-          "--input-text",
-          "unit native cache probe",
-          "--model-cache-root",
-          linuxNativeCacheRoot
-        ]
-  (missingCacheExit, _, missingCacheStderr) <-
-    readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
+    ( ( if linuxArchitecture == "amd64"
+          then "whisper-bin-ubuntu-x64"
+          else "whisper-bin-ubuntu-arm64"
+      )
+        `isInfixOf` whisperExecutable
+    )
+    "architectural correction: whisper selects exactly the host-architecture image target"
   assert
-    (missingCacheExit == ExitFailure 75 && "model_cache_not_populated" `isInfixOf` missingCacheStderr)
-    "Sprint 4.18: Linux native runtime-backed execution maps missing cache readiness to exit 75"
-  createDirectoryIfMissing True linuxNativeReadyDir
-  writeFile (linuxNativeReadyDir </> ".ready") "ready\n"
-  (readyCacheExit, _, readyCacheStderr) <-
-    readCreateProcessWithExitCode (proc llamaRunnerPath linuxNativeRunnerArgs) ""
+    ( onnxExecutable == "/opt/infernix/native-python/bin/python"
+        && take 1 onnxPrefix
+          == ["/workspace/python/native-runners/apple_native_runner.py"]
+        && "--adapter-id" `elem` onnxPrefix
+        && "onnx-runtime-native" `elem` onnxPrefix
+    )
+    "architectural correction: Linux Python adapters use the fixed interpreter and closed runner prefix"
   assert
-    (readyCacheExit == ExitFailure 70 && "native_payload_missing" `isInfixOf` readyCacheStderr)
-    "Phase 4 Sprint 4.21 realness: with the model cache ready the runner crosses the readiness gate and fails closed on the genuinely-missing native binary (no fabricated fallback)"
+    ( jvmExecutable == "/opt/infernix/audiveris-jre/bin/java"
+        && jvmPrefix
+          == ["-cp", "/opt/audiveris/lib/app/*", "Audiveris"]
+    )
+    "architectural correction: Audiveris uses the fixed image JRE and classpath"
   assert
-    (HostTools.hostToolName HostTools.HostKubectl == "kubectl")
-    "HostTools reports the supported short name for each tool"
+    ( all
+        (Text.isPrefixOf "sha256:" . ArtifactTarget.nativeArtifactTargetFingerprint)
+        [llamaTarget, whisperTarget, onnxTarget, jvmTarget]
+    )
+    "architectural correction: every direct target has a stable closed-contract fingerprint"
+  assert
+    ( HostTools.hostToolName HostTools.HostKubectl == "kubectl"
+        && HostTools.hostToolName HostTools.HostPython311 == "python3.11"
+        && HostTools.hostToolName HostTools.HostLlamaCli == "llama-cli"
+        && HostTools.hostToolName HostTools.HostWhisperCli == "whisper-cli"
+    )
+    "HostTools reports the supported short name for each tool, including the pinned Apple engine tools"
   -- Round-trip through the renderer + decoder so the materialization
   -- path stays mechanically self-consistent.
   let hostManifestRoot = testRoot </> "host-manifest"
       hostManifestPath = hostManifestRoot </> "infernix-host.dhall"
+      generatedPolicyManifestPath =
+        hostManifestRoot </> "infernix-host-generated-policies.dhall"
+      boundedTransientPolicy =
+        HostConfig.DhallCommandPolicy
+          { HostConfig.dhallTimeoutMicros = 9000000,
+            HostConfig.dhallRetry =
+              HostConfig.Bounded
+                HostConfig.DhallBoundedRetry
+                  { HostConfig.dhallAttempts = 3,
+                    HostConfig.dhallBackoffMicros = 5000
+                  },
+            HostConfig.dhallFailureClass = HostConfig.TransientThenFatal
+          }
+      generatedPolicies =
+        HostConfig.defaultDhallCommandPolicies
+          { HostConfig.dhallKindRead = boundedTransientPolicy
+          }
+      generatedPolicyConfig =
+        linuxConfig
+          { HostConfig.hostCommandPolicies = generatedPolicies
+          }
+      renderedPolicies =
+        HostConfig.renderDhallCommandPolicies generatedPolicies
+      renderedPolicyAlternatives =
+        [ ">.Never",
+          ">.Bounded { attempts = 3, backoffMicros = 5000 }",
+          ">.Fatal",
+          ">.TransientThenFatal",
+          ">.IdempotentAbsence"
+        ]
   createDirectoryIfMissing True hostManifestRoot
   writeFile hostManifestPath (HostConfig.renderHostConfig linuxConfig)
   decoded <- HostConfig.decodeHostConfigFile hostManifestPath
   assert
     (decoded == linuxConfig)
     "HostConfig round-trip through renderHostConfig + decodeHostConfigFile preserves every field"
+  assert
+    (all (`isInfixOf` renderedPolicies) renderedPolicyAlternatives)
+    "generated command-policy rendering covers both retry arms and every failure-class alternative"
+  writeFile
+    generatedPolicyManifestPath
+    (HostConfig.renderHostConfig generatedPolicyConfig)
+  decodedGeneratedPolicyConfig <-
+    HostConfig.decodeHostConfigFile generatedPolicyManifestPath
+  assert
+    (decodedGeneratedPolicyConfig == generatedPolicyConfig)
+    "generated command policies round-trip through the HostConfig renderer and Dhall decoder"
+  hostConfigSchema <-
+    expectRight
+      "reflect generated HostConfig schema"
+      HostConfig.renderHostConfigSchema
+  assert
+    ( all
+        (`Text.isInfixOf` hostConfigSchema)
+        [ "commandPolicies",
+          "retry",
+          "Never",
+          "Bounded",
+          "attempts",
+          "backoffMicros",
+          "failureClass",
+          "Fatal",
+          "TransientThenFatal",
+          "IdempotentAbsence"
+        ]
+    )
+    "reflected HostConfig schema exposes the proper retry and failure-class unions"
   let realRepoRoot = takeDirectory (takeDirectory testRoot)
-  paths <- discoverPathsWithHostManifest (Just (hostNativeUnitTestFixture realRepoRoot testRoot))
-  case listToMaybe metalEngineBuildPlan of
-    Nothing ->
-      assert False "Sprint 1.14: the Apple materialization plan is non-empty for artifact writes"
-    Just materializedArtifact -> do
-      let materializedRoot = metalEngineInstallRoot paths (metalEngineAdapterId materializedArtifact)
-          staleTempRoot = engineArtifactTempRoot materializedRoot
-          previousRoot = engineArtifactPreviousRoot materializedRoot
-          bridgeSourcePath = materializedRoot </> "src" </> "infernix_apple_metal_bridge.m"
-          bridgeSmokePath = materializedRoot </> "bin" </> "infernix-apple-metal-bridge-smoke"
-      createDirectoryIfMissing True staleTempRoot
-      writeFile (staleTempRoot </> "stale") "stale temp should be removed"
-      installedRoot <- materializeMetalEngineArtifact paths materializedArtifact
-      manifestExists <- doesFileExist (engineArtifactManifestPath installedRoot)
-      bridgeSourceExists <- doesFileExist bridgeSourcePath
-      bridgeSmokeExists <- doesFileExist bridgeSmokePath
-      bridgeSource <- readFile bridgeSourcePath
-      bridgeSmoke <- readFile bridgeSmokePath
-      staleTempExists <- doesDirectoryExist staleTempRoot
-      previousRootExists <- doesDirectoryExist previousRoot
-      assert
-        (installedRoot == materializedRoot)
-        "Sprint 1.14: materialization returns the final adapter install root"
-      assert
-        manifestExists
-        "Sprint 1.14: materialization writes engine-artifact.json under the final root"
-      assert
-        (bridgeSourceExists && bridgeSmokeExists)
-        "Sprint 1.14: materialization writes the fixed Apple Metal bridge source and smoke script"
-      assert
-        ("MTLCreateSystemDefaultDevice" `isInfixOf` bridgeSource)
-        "Sprint 1.14: Apple bridge source probes the Metal runtime device"
-      assert
-        ("newLibraryWithSource" `isInfixOf` bridgeSource)
-        "Sprint 1.14: Apple bridge source uses runtime Metal source compilation"
-      let bridgeSmokeLower = Text.toLower (Text.pack bridgeSmoke)
-      assert
-        ( all
-            (\needle -> not (needle `Text.isInfixOf` bridgeSmokeLower))
-            ["tart", "xcrun", "/usr/bin/metal"]
-        )
-        "Sprint 1.14: bridge smoke script avoids Tart, xcrun, and the offline metal compiler"
-      assert
-        (not staleTempExists)
-        "Sprint 1.14: materialization removes stale temp roots before writing"
-      assert
-        (not previousRootExists)
-        "Sprint 1.14: successful materialization leaves no previous-root cleanup residue"
+      appleRunnerLibraryPath =
+        realRepoRoot
+          </> "python"
+          </> "native-runners"
+          </> "apple_native_runner.py"
+  appleRunnerLibrary <- readFile appleRunnerLibraryPath
   case find ((== "coreml-native") . metalEngineAdapterId) metalEngineBuildPlan of
     Nothing ->
-      assert False "Sprint 1.14: the Apple materialization plan includes coreml-native"
+      assert False "Sprint 1.20: the Apple materialization plan includes coreml-native"
     Just coreMlArtifact -> do
-      let coreMlRoot = metalEngineInstallRoot paths (metalEngineAdapterId coreMlArtifact)
-          coreMlRunnerPath = coreMlRoot </> "bin" </> "coreml-runner"
-          coreMlSmokeSourcePath = coreMlRoot </> "src" </> "infernix_coreml_runner_smoke.m"
-          coreMlRunnerLibraryPath = coreMlRoot </> "lib" </> "apple_native_runner.py"
-      installedCoreMlRoot <- materializeMetalEngineArtifact paths coreMlArtifact
-      coreMlManifestExists <- doesFileExist (engineArtifactManifestPath installedCoreMlRoot)
-      coreMlRunnerExists <- doesFileExist coreMlRunnerPath
-      coreMlSmokeSource <- readFile coreMlSmokeSourcePath
-      coreMlRunner <- readFile coreMlRunnerPath
-      coreMlRunnerLibrary <- readFile coreMlRunnerLibraryPath
+      coreMlIdentity <-
+        maybe
+          (fail "closed native identity omitted coreml-native")
+          pure
+          (EngineArtifact.parseNativeArtifactIdentity "coreml-native")
+      coreMlTarget <-
+        expectRight
+          "resolve Apple Core ML direct target"
+          ( ArtifactTarget.nativeArtifactTarget
+              coreMlIdentity
+              "apple-silicon"
+              "arm64"
+          )
+      let coreMlInstallRoot =
+            testRoot </> "apple-engines" </> "coreml-native"
+          coreMlExecutable =
+            ArtifactTarget.nativeArtifactTargetExecutable
+              coreMlInstallRoot
+              coreMlTarget
+          coreMlPrefix =
+            ArtifactTarget.nativeArtifactTargetLeadingArguments
+              coreMlInstallRoot
+              "Core ML native runner"
+              coreMlTarget
       assert
-        (installedCoreMlRoot == coreMlRoot)
-        "Sprint 1.14: coreml-native materialization returns the final adapter install root"
-      assert
-        coreMlManifestExists
-        "Sprint 1.14: coreml-native materialization writes engine-artifact.json"
-      assert
-        coreMlRunnerExists
-        "Sprint 1.14: coreml-native materialization writes bin/coreml-runner"
-      assert
-        ("#import <CoreML/CoreML.h>" `isInfixOf` coreMlSmokeSource)
-        "Sprint 1.14: coreml-native smoke source links the Core ML framework"
-      assert
-        ("MLModelConfiguration" `isInfixOf` coreMlSmokeSource)
-        "Sprint 1.14: coreml-native smoke source instantiates a Core ML runtime type"
-      assert
-        ("-framework CoreML" `isInfixOf` coreMlRunner)
-        "Sprint 1.14: coreml-native smoke command links Core ML through clang"
-      assert
-        ( "apple_native_runner.py" `isInfixOf` coreMlRunner
-            && "--install-root" `isInfixOf` coreMlRunner
-            && "--adapter-id" `isInfixOf` coreMlRunner
-            && not ("native-validation" `isInfixOf` coreMlRunner)
-            && not ("infernix_emit_validation_result" `isInfixOf` coreMlRunner)
+        ( coreMlExecutable == coreMlInstallRoot </> "venv" </> "bin" </> "python"
+            && take 1 coreMlPrefix
+              == [coreMlInstallRoot </> "lib" </> "apple_native_runner.py"]
+            && "--adapter-id" `elem` coreMlPrefix
+            && metalEngineAdapterId coreMlArtifact
+              `elem` map Text.pack coreMlPrefix
+            && not ("clang" `isInfixOf` appleRunnerLibrary)
         )
-        "Phase 1 Sprint 1.15 realness: coreml-native delegates normal execution to the copied real runner module"
+        "architectural correction: Core ML directly executes the artifact interpreter and fixed upstream-package runner"
       assert
-        ( "--model" `isInfixOf` coreMlRunnerLibrary
-            && "--input-text" `isInfixOf` coreMlRunnerLibrary
-            && "--input-file" `isInfixOf` coreMlRunnerLibrary
-            && "--model-cache-root" `isInfixOf` coreMlRunnerLibrary
-            && "--output-dir" `isInfixOf` coreMlRunnerLibrary
-            && "model_cache_not_populated" `isInfixOf` coreMlRunnerLibrary
-            && "NATIVE_ARTIFACT_PREFIX" `isInfixOf` coreMlRunnerLibrary
-            && not ("native-validation" `isInfixOf` coreMlRunnerLibrary)
-            && not ("infernix_emit_validation_result" `isInfixOf` coreMlRunnerLibrary)
+        ( "MLModel.get_available_compute_devices" `isInfixOf` appleRunnerLibrary
+            && "mx.set_default_device(mx.gpu)" `isInfixOf` appleRunnerLibrary
+            && "mx.eval(observed)" `isInfixOf` appleRunnerLibrary
+            && "mx.synchronize()" `isInfixOf` appleRunnerLibrary
         )
-        "Phase 1 Sprint 1.15: the copied Apple runner module preserves the native worker contract"
+        "Sprint 1.20: public Core ML observation and synchronized MLX GPU execution replace the native bridge"
       assert
-        ( "--model-version" `isInfixOf` coreMlRunnerLibrary
-            && "runwayml/stable-diffusion-v1-5" `isInfixOf` coreMlRunnerLibrary
-            && "CPU_AND_GPU" `isInfixOf` coreMlRunnerLibrary
-            && "require_output=False" `isInfixOf` coreMlRunnerLibrary
-            && "timeout_seconds=900" `isInfixOf` coreMlRunnerLibrary
+        ( "--model-version" `isInfixOf` appleRunnerLibrary
+            && "runwayml/stable-diffusion-v1-5" `isInfixOf` appleRunnerLibrary
+            && "CPU_AND_GPU" `isInfixOf` appleRunnerLibrary
+            && "require_output=False" `isInfixOf` appleRunnerLibrary
+            && "timeout_seconds=900" `isInfixOf` appleRunnerLibrary
         )
-        "Phase 1 Sprint 1.15: Core ML Stable Diffusion selects the v1.5 model version and accepts artifact-only stdout"
+        "Phase 1 Sprint 1.15: Core ML Stable Diffusion retains the real upstream execution contract"
   case find ((== "llama-cpp-cli") . metalEngineAdapterId) metalEngineBuildPlan of
     Nothing ->
-      assert False "Sprint 1.14: the Apple materialization plan includes llama-cpp-cli"
-    Just llamaArtifact -> do
-      let llamaRoot = metalEngineInstallRoot paths (metalEngineAdapterId llamaArtifact)
-          appleLlamaRunnerPath = llamaRoot </> "bin" </> "llama-cli"
-          appleLlamaRunnerLibraryPath = llamaRoot </> "lib" </> "apple_native_runner.py"
-      installedLlamaRoot <- materializeMetalEngineArtifact paths llamaArtifact
-      llamaManifestExists <- doesFileExist (engineArtifactManifestPath installedLlamaRoot)
-      llamaRunnerExists <- doesFileExist appleLlamaRunnerPath
-      llamaRunner <- readFile appleLlamaRunnerPath
-      llamaRunnerLibrary <- readFile appleLlamaRunnerLibraryPath
+      assert False "Sprint 1.20: the Apple materialization plan includes llama-cpp-cli"
+    Just _llamaArtifact -> do
+      llamaIdentity <-
+        maybe
+          (fail "closed native identity omitted llama-cpp-cli")
+          pure
+          (EngineArtifact.parseNativeArtifactIdentity "llama-cpp-cli")
+      llamaTarget <-
+        expectRight
+          "resolve Apple llama direct target"
+          ( ArtifactTarget.nativeArtifactTarget
+              llamaIdentity
+              "apple-silicon"
+              "arm64"
+          )
+      let llamaInstallRoot =
+            testRoot </> "apple-engines" </> "llama-cpp-cli"
       assert
-        (installedLlamaRoot == llamaRoot)
-        "Sprint 1.14: llama-cpp-cli materialization returns the final adapter install root"
-      assert
-        llamaManifestExists
-        "Sprint 1.14: llama-cpp-cli materialization writes engine-artifact.json"
-      assert
-        llamaRunnerExists
-        "Sprint 1.14: llama-cpp-cli materialization writes bin/llama-cli"
-      assert
-        ( "#!/bin/sh" `isPrefixOf` llamaRunner
-            && "apple_native_runner.py" `isInfixOf` llamaRunner
-            && "--install-root" `isInfixOf` llamaRunner
-            && "--adapter-id" `isInfixOf` llamaRunner
-            && "adapter_id='llama-cpp-cli'" `isInfixOf` llamaRunner
+        ( ArtifactTarget.nativeArtifactTargetExecutable
+            llamaInstallRoot
+            llamaTarget
+            == llamaInstallRoot </> "native" </> "bin" </> "llama-cli"
+            && null
+              ( ArtifactTarget.nativeArtifactTargetLeadingArguments
+                  llamaInstallRoot
+                  "llama.cpp Metal"
+                  llamaTarget
+              )
+            && ArtifactTarget.nativeArtifactTargetImmutableClosureRoots
+              llamaInstallRoot
+              llamaTarget
+              == [llamaInstallRoot </> "."]
         )
-        "Phase 1 Sprint 1.15: llama-cpp-cli materialization writes a POSIX runner that delegates to the copied real runner module"
+        "architectural correction: Apple llama directly executes the retained artifact binary"
       assert
-        ( "--model" `isInfixOf` llamaRunnerLibrary
-            && "--input-text" `isInfixOf` llamaRunnerLibrary
-            && "--input-file" `isInfixOf` llamaRunnerLibrary
-            && "--model-cache-root" `isInfixOf` llamaRunnerLibrary
-            && "--output-dir" `isInfixOf` llamaRunnerLibrary
-            && "model_cache_not_populated" `isInfixOf` llamaRunnerLibrary
-            && "RunnerFailure" `isInfixOf` llamaRunnerLibrary
+        ( "inference must use Haskell direct-target supervision"
+            `isInfixOf` appleRunnerLibrary
+            && "smoke must use Haskell direct-target supervision"
+              `isInfixOf` appleRunnerLibrary
+            && not ("native-validation" `isInfixOf` appleRunnerLibrary)
+            && not ("infernix_emit_validation_result" `isInfixOf` appleRunnerLibrary)
         )
-        "Phase 1 Sprint 1.15: Apple native runners preserve the full inference arg contract and model-cache readiness gate in the copied module"
+        "architectural correction: the Python runner rejects CLI/JVM bypasses of direct Haskell supervision"
+  case AppleSiliconInternal.parseResolvedPythonProvenance
+    "coremltools==9.0\npython-coreml-stable-diffusion @ git+https://github.com/apple/ml-stable-diffusion.git@e12202c1f6405b83918b58a5d097cd61e3e1f702\n" of
+    Left failure ->
+      fail ("Sprint 1.20 provenance parser rejected exact pins: " <> failure)
+    Right provenance ->
       assert
-        ( "_run_llama_cpp" `isInfixOf` llamaRunnerLibrary
-            && "/opt/homebrew/bin/llama-cli" `isInfixOf` llamaRunnerLibrary
-            && "--single-turn" `isInfixOf` llamaRunnerLibrary
-            && "timeout_seconds=120" `isInfixOf` llamaRunnerLibrary
-            && "subprocess.run" `isInfixOf` llamaRunnerLibrary
-            && not ("native-validation" `isInfixOf` llamaRunner)
-            && not ("infernix_emit_validation_result" `isInfixOf` llamaRunner)
-            && not ("native-validation" `isInfixOf` llamaRunnerLibrary)
-            && not ("infernix_emit_validation_result" `isInfixOf` llamaRunnerLibrary)
-        )
-        "Phase 1 Sprint 1.15 realness: Apple native runners invoke real host-native tools without fabricated validation output"
+        (length provenance == 2)
+        "Sprint 1.20: Python provenance parser records exact package and source versions"
+  let relocationRoot = testRoot </> "apple-venv-relocation"
+      relocationTempRoot = relocationRoot <> ".tmp"
+      relocationBinRoot = relocationTempRoot </> "venv" </> "bin"
+      relocationConfigPath = relocationTempRoot </> "venv" </> "pyvenv.cfg"
+      relocationScriptPath = relocationBinRoot </> "engine-tool"
+      residualPath = relocationTempRoot </> "venv" </> "lib" </> "residual.pth"
+  createDirectoryIfMissing True (takeDirectory residualPath)
+  createDirectoryIfMissing True relocationBinRoot
+  writeFile
+    relocationScriptPath
+    ("#!" <> relocationTempRoot </> "venv" </> "bin" </> "python" <> "\n")
+  writeFile
+    relocationConfigPath
+    ("command = python -m venv " <> relocationTempRoot </> "venv" <> "\n")
+  relocationEnvironment <-
+    Subprocess.clusterSubprocessEnv linuxMaterializationPaths
+  let relocateFixture =
+        Provisioning.withEngineProvisioningSession
+          linuxMaterializationPaths
+          (dataRoot linuxMaterializationPaths </> "engines")
+          relocationEnvironment
+          ( \writer _grant ->
+              Provisioning.provisioningRelocateCandidateVenv
+                writer
+                relocationRoot
+                relocationTempRoot
+          )
+  relocateFixture
+  relocatedScript <- readFile relocationScriptPath
+  relocatedConfig <- readFile relocationConfigPath
+  assert
+    ( relocationRoot `isInfixOf` relocatedScript
+        && relocationRoot `isInfixOf` relocatedConfig
+        && not (relocationTempRoot `isInfixOf` relocatedScript)
+        && not (relocationTempRoot `isInfixOf` relocatedConfig)
+    )
+    "Sprint 1.20: candidate venv paths are rewritten to the final sibling root before smoke and hashing"
+  writeFile residualPath ("residual=" <> relocationTempRoot)
+  residualResult <-
+    try relocateFixture ::
+      IO (Either IOError ())
+  assert
+    (isLeft residualResult)
+    "Sprint 1.20: candidate relocation fails closed when any temp-root byte sequence remains"
+  let relocationByteBound =
+        Provisioning.relocationCandidateByteBoundForTest
+  assert
+    ( relocationByteBound == 4 * 1024 * 1024 * 1024
+        && Provisioning.validateRelocationCandidateByteSequenceForTest
+          [1, relocationByteBound - 1]
+          == Right relocationByteBound
+        && isLeft
+          ( Provisioning.validateRelocationCandidateByteSequenceForTest
+              [relocationByteBound, 1]
+          )
+        && isLeft
+          ( Provisioning.validateRelocationCandidateByteSequenceForTest
+              [-1]
+          )
+    )
+    "Sprint 1.20: relocation scanning admits the exact positive 4 GiB bound and rejects over-bound or negative byte totals"
+  let setupFixtureRoot =
+        dataRoot linuxMaterializationPaths
+          </> "engines"
+          </> "setup-manifest-fixture"
+      setupManifestPath =
+        setupFixtureRoot </> "bootstrap.json"
+      setupStagingPath =
+        setupFixtureRoot </> ".bootstrap.json.incoming"
+      setupExternalPath =
+        testRoot </> "setup-manifest-external"
+      expectedSetupManifest =
+        "{\"adapterId\":\"transformers-python\",\"schemaVersion\":1}\n"
+      withSetupWriter action =
+        Provisioning.withEngineProvisioningSession
+          linuxMaterializationPaths
+          (dataRoot linuxMaterializationPaths </> "engines")
+          relocationEnvironment
+          (\writer _grant -> action writer)
+  removePathForcibly setupFixtureRoot
+  setupReady <-
+    withSetupWriter $ \writer -> do
+      Provisioning.provisioningCreateDirectory writer setupFixtureRoot
+      Provisioning.provisioningPublishAppleSetupManifest
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+      Provisioning.provisioningAppleSetupReady
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+  setupManifest <- BS.readFile setupManifestPath
+  assert
+    (setupReady && setupManifest == ByteString8.pack expectedSetupManifest)
+    "Sprint 1.20: setup bootstrap publication writes only the exact canonical adapter evidence"
+  staleRecovered <-
+    withSetupWriter $ \writer -> do
+      Provisioning.provisioningRemovePath writer setupManifestPath
+      Provisioning.provisioningWriteBytes
+        writer
+        setupStagingPath
+        "stale"
+      Provisioning.provisioningPublishAppleSetupManifest
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+      Provisioning.provisioningAppleSetupReady
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+  staleStagingExists <- doesPathExist setupStagingPath
+  assert
+    (staleRecovered && not staleStagingExists)
+    "Sprint 1.20: setup bootstrap publication recovers an exact stale staging file"
+  withSetupWriter $ \writer ->
+    Provisioning.provisioningRemovePath writer setupManifestPath
+  BS.writeFile setupExternalPath "external"
+  createSymbolicLink setupExternalPath setupStagingPath
+  nofollowResult <-
+    try @SomeException $
+      withSetupWriter $ \writer ->
+        Provisioning.provisioningPublishAppleSetupManifest
+          writer
+          Provisioning.transformersPoetrySetup
+          setupFixtureRoot
+  nofollowManifestExists <- doesPathExist setupManifestPath
+  externalContents <- BS.readFile setupExternalPath
+  assert
+    ( isLeft nofollowResult
+        && not nofollowManifestExists
+        && externalContents == "external"
+    )
+    "Sprint 1.20: setup bootstrap staging refuses a symlink without touching its target"
+  removeLink setupStagingPath
+  setupPauseEntered <- MVar.newEmptyMVar
+  setupPauseResume <- MVar.newEmptyMVar
+  setupCancellationResult <- MVar.newEmptyMVar
+  setupPublisher <-
+    forkIO $
+      ( try @SomeException $
+          withSetupWriter $ \writer ->
+            Provisioning.provisioningPublishAppleSetupManifestWithPauseForTest
+              writer
+              Provisioning.transformersPoetrySetup
+              setupFixtureRoot
+              setupPauseEntered
+              setupPauseResume
+      )
+        >>= MVar.putMVar setupCancellationResult
+  MVar.takeMVar setupPauseEntered
+  killThread setupPublisher
+  cancelledSetup <- MVar.takeMVar setupCancellationResult
+  cancelledManifestExists <- doesPathExist setupManifestPath
+  cancelledStagingExists <- doesFileExist setupStagingPath
+  recoveredAfterCancellation <-
+    withSetupWriter $ \writer -> do
+      Provisioning.provisioningPublishAppleSetupManifest
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+      Provisioning.provisioningAppleSetupReady
+        writer
+        Provisioning.transformersPoetrySetup
+        setupFixtureRoot
+  recoveredStagingExists <- doesPathExist setupStagingPath
+  assert
+    ( isLeft cancelledSetup
+        && not cancelledManifestExists
+        && cancelledStagingExists
+        && recoveredAfterCancellation
+        && not recoveredStagingExists
+    )
+    "Sprint 1.20: cancellation cannot publish a partial setup manifest and the next locked session retires staging"
 
 -- Phase 4 Sprint 4.13 — ClusterConfig renderer + decoder roundtrip.
 assertClusterConfig :: FilePath -> FilePath -> IO ()
 assertClusterConfig testRoot demoConfigPathValue = do
-  let baseConfig = unitTestClusterConfigFixture demoConfigPathValue
-      clusterConfig =
-        baseConfig
-          { clusterEngine =
-              (clusterEngine baseConfig)
-                { engineCommandOverrides =
-                    [ EngineCommandOverride
-                        { engineOverrideKey = "transformers-python",
-                          engineOverrideValue = "/tmp/infernix-test/python-worker-wrapper.sh "
-                        }
-                    ]
-                }
-          }
+  let clusterConfig = unitTestClusterConfigFixture demoConfigPathValue
       clusterManifestRoot = testRoot </> "cluster-manifest"
       clusterManifestPath = clusterManifestRoot </> "infernix-cluster.dhall"
   createDirectoryIfMissing True clusterManifestRoot
@@ -5057,3 +14405,7 @@ assertClusterConfig testRoot demoConfigPathValue = do
   assert
     (decoded == clusterConfig)
     "ClusterConfig round-trip through renderClusterConfig + decodeClusterConfigFile preserves every field"
+  rendered <- readFile clusterManifestPath
+  assert
+    (not ("commandOverrides" `isInfixOf` rendered))
+    "ClusterConfig has no command-override binding surface"

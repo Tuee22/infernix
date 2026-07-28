@@ -7,8 +7,9 @@
 
 ## Current Status
 
-The existing host-memory partition and `proc_pid_rusage` watchdog remain operational
-defense-in-depth. The stronger guarantee is reopened under
+The existing host-memory partition and fixed, bounded `/usr/bin/top` plus
+`/usr/bin/footprint` watchdog remain operational defense-in-depth without direct FFI. The stronger
+guarantee is reopened under
 [Typed Execution Plan](../architecture/typed_execution_plan.md): startup must verify the footprint
 probe and refine the generated execution plan into an opaque Apple enforcer before an engine member
 becomes ready.
@@ -48,8 +49,9 @@ becomes ready.
   readiness does not converge; treat those as supported retained-state repair rather than
   unexpected failure modes
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane. The retained
-  `materialize-metal-engines` helper name now writes typed engine-artifact manifests; the Apple
-  cohort still owns the host Metal runtime bridge smoke and native artifact load evidence named in
+  `materialize-metal-engines` helper name writes typed engine-artifact manifests without emitting
+  or compiling repository-owned native source; the Apple cohort owns upstream MLX GPU-operation,
+  coremltools device-observation, native artifact load, and routed real-output evidence named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 ## Supported Flow
@@ -83,6 +85,17 @@ Direct reference path:
   `build-cluster-images`, `publish-harbor-images`, `preload-harbor-images`, and
   `replay-retained-state`; a cold `build-cluster-images` phase can remain healthy well past
   twenty minutes before Harbor publication begins
+- Apple teardown freezes every workload-capable Kind worker, rechecks claim placement, stages a
+  complete detached snapshot in `.incoming`, and atomically commits it with `.previous` recovery
+  before Kind deletion. Retained MinIO model/demo-object and Pulsar data stay durable; the
+  post-delete `WriterQuiesced` scrub may remove only the rebuildable Harbor/Keycloak Patroni,
+  Harbor Redis, and MinIO `harbor-registry` subset.
+- Apple bring-up reconciles interrupted `.incoming` / `.previous` roots before claim preparation,
+  then keeps the exact `replay-retained-state-into-kind` lifecycle intent from before Kind creation
+  through worker copy and claim preparation. A live pre-workload cluster resumes only with matching
+  owner/runtime intent; ambiguous state fails closed. An unreadable kubeconfig authorizes
+  delete/recreate only for that exact pending pre-workload intent, never for an ordinary live
+  cluster. Do not manually alter these transaction roots while a lifecycle command is active.
 - on host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
   image carries the current source fingerprint, runtime-mode label, architecture, and pushable
   manifest shape; the first run after source changes may rebuild, while unchanged-source reruns
@@ -137,10 +150,11 @@ Direct reference path:
   `./bootstrap/apple-silicon.sh <command>` surface rather than jumping straight to a later direct
   command; same-process tool installation continues only after the bootstrap verifies the required
   executable explicitly
-- supported Apple lifecycle and validation commands materialize or verify
-  `./.build/infernix.dhall` through the binary-owned substrate path;
-  `./.build/infernix internal materialize-substrate apple-silicon` remains the direct helper when
-  an operator intentionally needs to restage or inspect that file
+- `./.build/infernix init` creates the operator runtime config at repo-root
+  `./infernix.dhall` and the host manifest at `./infernix-host.dhall`; ordinary lifecycle and
+  validation commands validate that config and fail fast naming `infernix init` when it is absent
+- `./.build/infernix test init` creates `./infernix.test.dhall`; the test harness uses it to
+  generate and own a temporary `./infernix.dhall` for the run
 - Kind create or delete uses a host-local scratch kubeconfig under the system temp directory, and
   `cluster up` publishes `./.build/infernix.kubeconfig` afterward
 - supported flows do not mutate `$HOME/.kube/config`
@@ -151,10 +165,10 @@ Direct reference path:
   (the `infernix service` process). `cluster up` adds `infernix-demo` when `demo_ui` is enabled
   and always deploys the cluster `infernix-coordinator` Deployment
 - on `apple-silicon`, the clustered demo and coordinator workloads run from the
-  `infernix-linux-cpu:local` image family while reading the staged `apple-silicon` substrate file;
-  the coordinator role owns request fan-in and batch handoff, not Apple-native inference
-  execution, and the host-native `infernix` binary builds or freshness-reuses that image family and
-  publishes it to Harbor after Harbor is responsive
+  `infernix-linux-cpu:local` image family while reading the cluster-role deployment mirror derived
+  from the initialized `apple-silicon` runtime config; the coordinator role owns request fan-in and
+  batch handoff, not Apple-native inference execution, and the host-native `infernix` binary builds
+  or freshness-reuses that image family and publishes it to Harbor after Harbor is responsive
 - `/api/publication` keeps the routed demo API on `apiUpstream.mode: cluster-demo`, reports
   `daemonLocation: cluster-pod`, reports `inferenceExecutorLocation: control-plane-host`, and
   publishes `inferenceDispatchMode: pulsar-bridge-to-host-daemon` so the routed demo surface can
@@ -175,8 +189,9 @@ Direct reference path:
   staging the in-cluster Linux engine pods rely on). The host daemon caches
   weights under `./.data/runtime/model-cache/<modelId>/`; this cache is host-local ephemeral
   state on the operator's machine (not a Kubernetes PVC, not durable cluster state) and is
-  purgeable. First-use of a model triggers the cluster-side coordinator's bootstrap
-  subscription; subsequent uses are local-cache hits. The on-host `infernix service` daemon runs
+  purgeable. The `warm-model-cache` barrier requires every configured model's `.ready` sentinel
+  before cluster bring-up completes; the per-inference bootstrap subscription remains only a
+  fallback for unexpected cache loss. The on-host `infernix service` daemon runs
   each active model serialized as a fresh subprocess under a single execution lock
   (`engineExecutionLock`) and admits each inference against the typed `InferenceMemoryBudget`
   (see the "Inference Memory Budget and Host-Memory Admission" section): an over-budget model
@@ -201,15 +216,24 @@ Direct reference path:
   `./.build/`, `./.data/`, the host-built `./.build/infernix` binaries, any host-level runtime
   container image, Docker state, and Homebrew-managed prerequisites
 - `infernix service` runs `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow
-  ensures the shared `python/` project is installed, creates repo-local engine roots under
-  `./.data/engines/`, and invokes each `poetry run setup-*` entrypoint for the active mode's
-  Python-native engine bindings
+  installs the shared `python/` project through the exact configured Poetry launcher, resolves the
+  installed project interpreter for direct protobuf generation, and creates repo-local binding
+  roots under `./.data/engines/`. The `setup-*` values remain closed binding identities, but no
+  setup subprocess is launched; readiness is a canonical, fsynced manifest publication under the
+  engine writer. Project installation and protobuf generation remain closed operations through the
+  opaque bounded provisioning region
 - the Apple bootstrap also reconciles the Homebrew-managed `python@3.12` formula and `python3.12`
   command plus a user-local Poetry bootstrap when the `poetry` executable is absent; the Poetry
-  bootstrap may reuse an already available compatible Python 3.12+ executable, after which the
-  shared `python/.venv/` still materializes only on demand
-- the current `setup-*` entrypoints remain idempotent preflight hooks layered on top of that
-  prerequisite bootstrap and shared-project install flow
+  bootstrap uses the exact configured Python 3.12 executable, after which the shared
+  `python/.venv/` still materializes only on demand
+- the generated Apple host manifest records
+  `${HOME}/.local/share/pypoetry/venv/bin/poetry`; a missing default is created under its dedicated
+  kernel lock by closed, deadline-bounded Python probe, venv, and pinned-install operations.
+  Manifestless discovery retains `/opt/homebrew/bin/poetry` as a fixed absolute fallback. A
+  configured non-default missing Poetry path is a hard prerequisite failure rather than permission
+  to search ambient `PATH`
+- the current `setup-*` identifiers select idempotent canonical binding manifests layered on top of
+  that prerequisite bootstrap and shared-project install flow; they are not executable names
 
 ## Apple Silicon Native Architecture
 
@@ -234,22 +258,55 @@ On Apple Silicon the `infernix` and `infernix-demo` Haskell binaries build host-
 ghcup/cabal toolchain and run on the host against Metal. The supported engine materialization
 target avoids Tart, user keychain state, Xcode UI flows, and request-time toolchain work:
 
-- Metal source compilation uses a fixed host bridge that calls the OS Metal runtime compiler.
+- MLX smoke selects `mx.gpu`, executes and evaluates a real operation, synchronizes it, and verifies
+  the result through the public upstream package API.
+- Core ML smoke uses coremltools to require a nonempty compute-device observation. It is not a
+  substitute for routed Core ML model-inference evidence.
 - Core ML models and native runner payloads materialize under `./.data/engines/<adapterId>/` with
   typed engine-artifact manifests.
+- the only exposed materialization surface is the whole-plan Apple facade. Per-artifact
+  installation, artifact transaction, provisioning commands, and the provisioning interpreter are
+  package-internal
+- every Poetry, Python/venv, exact requirement, Audiveris image, installed `--smoke`, and
+  provenance subprocess is selected from a closed language and executed under an opaque nominal
+  `ProvisioningGrant s` inside the rank-2 `ProvisioningSession s result`. Each operation uses an
+  explicit environment, positive total deadline, bounded capture, and the all-Haskell self-exec
+  subprocess kernel's process-group cleanup
+- the configured Poetry launcher itself is the exact executable authority for project installation;
+  its shebang interpreter and package/runtime closure are immutable supporting evidence. Protobuf
+  generation executes the exact installed `python/.venv/bin/python` directly with fixed
+  repository-relative operands rather than starting a nested Poetry child
+- each `.tmp` sibling is fully hydrated before activation. A source-specific direct smoke selected
+  by the hidden catalog is authoritative; it must return a nonempty exact version before the
+  candidate records Python/source/runtime provenance and the deterministic digest of its actual
+  payload tree. The manifest cannot provide executable text or arguments, and no generated
+  `bin/*` wrapper is created
+- each candidate receives a fixed regular `venv/bin/infernix-python` target. Candidate venv
+  scripts/config are rewritten to the final root and any remaining candidate-root bytes reject
+  installation. Audiveris uses its fixed release URL and SHA-256; cleanup detaches an image only
+  after the mount path is observed on a different kernel device id
+- activation fsyncs the complete candidate and parent directory around sibling renames, retains
+  `.previous` through final-path validation, rolls back on failure or cancellation, and
+  reconciles only exact complete crash residue
 - Prebuilt host wheels or binaries remain preferred for MLX / MLX-LM, ONNX Runtime, CTranslate2,
   PyTorch MPS paths, and Audiveris.
 - Runtime inference consumes already materialized artifacts; it must not start virtualization,
   unlock a keychain, accept an Xcode license, invoke SwiftPM for generated glue, or install
   frameworks on a request path.
+- Materialization must not own, embed, generate, or compile C/C++/Objective-C/Metal source and must
+  not replace that boundary with direct FFI.
 
 The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed from the current
 host-tool schema and prerequisite path. The retained
 `infernix internal materialize-metal-engines` helper is the Tart-free manifest materialization
-surface; the current Apple host materializes the real runner roots, proves the fixed Metal runtime
-bridge, and smoke-loads the installed native artifacts. The Sprint 1.15 cohort gate — full routed
-real output for the Apple catalog plus `linux-cpu` — closed in Wave L; current cohort validation
-evidence lives in
+surface. Sprint 1.20 deleted the former repository-owned bridge and Clang/Core ML source-smoke
+topology. Its all-Haskell bounded candidate-root replacement and focused suites remain under active
+correction after five rejected source reviews; every earlier suite count and result is superseded.
+Sprint 1.20 remains Active because settled focused proof, final source review, a fresh exact-source
+complete Stage 1, real Apple
+rematerialization and installed runtime smokes, and routed Apple cohort evidence remain required.
+The Sprint 1.15 gate remains historical full routed output for its then-active Apple catalog plus
+`linux-cpu`; current cohort validation evidence lives in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 The authoritative replacement design is
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
@@ -302,16 +359,23 @@ admission rather than racing the watchdog.
   because one catalog model's declared `ModelMemoryFootprint` (wire field `modelRamFootprintMib`, now
   required and positive) exceeds the resolved Apple `inferenceCapacity`. Smaller configured models
   must still serve.
-- At runtime the daemon serializes inference under a single execution lock and admits each model at
-  that critical section. `admitModelMemory` either mints a `MemoryGrant` or, for an over-budget model,
-  returns `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`
-  and publishes a clean `status=failed` real `InferenceResult` instead of launching the engine
-  subprocess. Serialization bounds the host to *one* admitted footprint at a time, but admission
-  compares a *declared* footprint; the admitted engine therefore runs under the capped-engine kernel
-  `withCappedEngine`, which OS-bounds the request's *actual* resident memory to its `MemoryCeiling` — a
-  physical-footprint (`proc_pid_rusage`) watchdog that SIGKILLs the child's process group on a breach —
-  so a footprint under-estimate is a clean typed `status=failed ModelMemoryLimitExceeded` rather than a
-  host OOM-kill. Canonical home:
+- At startup, `compileRuntimePlan` classifies each configured model against the resolved partition.
+  A model that exceeds the available capacity remains in the compiled plan as an
+  `UnavailableModel`; smaller placements remain routable. Live Apple observations then pair each
+  admitted, resource-indexed grant with its matching enforcer inside an opaque `ExecutableModel`.
+  Public engine launch accepts only that complete capability and derives the process command from
+  its compiled binding. The Apple capped-engine kernel discovers exact process-group members with
+  fixed `/usr/bin/top`, samples exact physical bytes with fixed `/usr/bin/footprint`, and kills the
+  child process group on a ceiling breach. Both commands run under one total deadline, bounded
+  captures, an explicit environment, and exhaustive group cleanup; callers cannot provide a raw
+  observer specification. The supported daemon
+  currently supplies a caller-owned process-local execution lock; Phase 4 must encapsulate that
+  single-flight authority and prove adversarial breach survival before the construction is closed.
+  The normal coordinator path now publishes a clean `status=failed`
+  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` for an
+  unavailable model rather than attempting engine launch; the complete source-matched Phase 1 gate
+  passed on 2026-07-25.
+  Canonical home:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 - To run a larger model whose footprint exceeds the current budget, free host headroom so the
   resolved `inferenceCapacity` rises. The most direct lever is lowering the Colima VM memory pledge,
@@ -320,8 +384,10 @@ admission rather than racing the watchdog.
   choice: a host cannot both pledge most of its RAM to the VM and admit a model larger than the
   remaining capacity — it fails that model closed rather than over-committing physical RAM.
 
-Linux uses the same typed admission policy with different budget sources: `linux-cpu` admits
-against the cluster engine pod memory limit, and `linux-gpu` admits against GPU VRAM.
+Linux CPU uses the same compile/refine boundary with the engine pod memory limit as its declared
+outer envelope; Phase 4 owns the verified per-invocation process-group RSS construction and
+adversarial proof. Linux GPU currently fails compilation closed with
+`GpuDualResourceBudgetRequired`; Phase 6 owns the dual host-RAM/GPU-VRAM grant and enforcement path.
 
 ## Harbor Host-Port Conflicts
 

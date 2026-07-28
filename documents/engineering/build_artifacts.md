@@ -13,11 +13,17 @@
 - Native engine artifacts and engine install roots live under `./.data/engines/<adapterId>/`,
   never `./.build/`; the Haskell binaries still build host-native to `./.build/`.
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane and typed
-  engine-artifact manifests; the old `hostTart` / `AppleTart` helper path is removed.
+  engine-artifact manifests; the old `hostTart` / `AppleTart` helper path is removed. All
+  provisioning and installed-smoke processes run through the opaque bounded provisioning region,
+  and a root becomes visible only after candidate hydration, smoke, provenance capture, actual
+  payload hashing, and the fsynced sibling activation transaction.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
   records.
+- Operator config is not a build artifact: `infernix init` owns the gitignored repo-root
+  `./infernix.dhall` and `./infernix-host.dhall`, while `infernix test init` owns
+  `./infernix.test.dhall`.
 
 ## Current Status
 
@@ -39,7 +45,7 @@ of the supported artifact contract.
   the launcher binaries under `./.build/`
 - on the supported outer-container path, cabal-home and the cabal builddir live at the toolchain's
   natural in-image locations (`/root/.cabal/`, `dist-newstyle/`); they are not bind-mounted to the
-  host, and `/workspace/.build/outer-container/build` only carries the staged substrate file
+  host
 - on the outer-container path, the baked launcher binaries remain `/usr/local/bin/infernix` and
   `/usr/local/bin/infernix-demo`; the substrate image uses `tini` as its `ENTRYPOINT` for clean
   signal handling and zombie reaping
@@ -54,9 +60,9 @@ of the supported artifact contract.
 - `cluster up` publishes `./.data/runtime/infernix.kubeconfig` on the outer-container path after
   Kind or `nvkind` create or delete uses a transient launcher-local scratch kubeconfig under the
   container temp directory
-- the active generated substrate file lives at `./.build/infernix.dhall` on the Apple
-  host path and `/workspace/.build/outer-container/build/infernix.dhall` inside the
-  Linux launcher image
+- the active operator runtime config lives at repo-root `./infernix.dhall` in both execution
+  contexts; `./infernix-host.dhall` is the operator host manifest and
+  `./infernix.test.dhall` is the test-harness input
 - `cluster up` writes `./.data/runtime/publication.json` as the publication inventory consumed by
   routed status surfaces
 - the web build stages `web/src/Generated/Contracts.purs`, written by
@@ -76,23 +82,25 @@ engine-install root), never `./.build/`. The `infernix` and `infernix-demo` Hask
 build host-native to `./.build/`; engine payloads are separate runtime artifacts.
 
 On `apple-silicon`, the supported target is the Tart-free headless materialization model in
-[apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md): Metal source
-compilation goes through a fixed host bridge that calls the OS Metal runtime compiler, Core ML and
-native runners materialize into typed engine roots, and request-time inference never starts a VM,
-unlocks a keychain, invokes Xcode UI flows, or installs toolchains. MLX, ONNX Runtime,
+[apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md): Core ML and native
+runners materialize into typed engine roots; upstream MLX executes and synchronizes the GPU smoke,
+and coremltools owns the compute-device observation. The repository emits or compiles no native
+implementation source, and request-time inference never starts a VM, unlocks a keychain, invokes
+Xcode UI flows, or installs toolchains. MLX, ONNX Runtime,
 CTranslate2, PyTorch MPS paths, and Audiveris continue to prefer prebuilt host wheels or binaries
 when available.
 
 Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTart` host-manifest
 field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
 `infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
-for each allowlisted Apple adapter into its final engine root. The `apple-metal-runtime-bridge`
-root carries the fixed bridge source and smoke command. Sprint 1.15 replaces the former Apple
+for each allowlisted Apple adapter into its final engine root. Sprint 1.20 removed the standalone
+bridge root, embedded native source, generated native files, and compiler scripts. Sprint 1.15
+replaced the former Apple
 validation-wrapper roots with real native runners: llama.cpp/whisper.cpp delegate to host CLIs,
 CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs the pinned macOS
-arm64 app. The current Apple host evidence executes installed Metal, Core ML, CTranslate2, MLX,
-ONNX Runtime, and Audiveris smokes and verifies the Core ML venv imports Basic Pitch plus Apple's
-Stable Diffusion pipeline. Apple integration evidence from the prior lane validates pinned Apple
+arm64 app. The correction's focused direct upstream MLX and coremltools preflights are green, but
+fresh installed-root and routed Apple evidence remains open. Historical Apple integration evidence
+from the prior lane validates pinned Apple
 host-engine `Exclusive` duplicate rejection, proves same-machine Apple `Shared` subscription
 coexistence, and covers Apple production `demo_ui = false` assertions. It also proves the
 source-fingerprint rebuild/reuse path by
@@ -104,11 +112,25 @@ Dockerfile dependency caching for that host-native Apple cluster-image path. The
 residual is the remaining routed real-output e2e/all evidence recorded in
 [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
-Every materialized engine root should carry a typed manifest recording `adapterId`, `engineName`,
-`substrate`, `architecture`, `artifactKind`, `sourceRef`, versions, digest, optional MinIO object
-key, local install root, entrypoint, and smoke command. Current Apple materialization validates the
-manifest contract, smoke-loads materialized Apple payloads before atomic rename when possible, then
-hydrates and re-smokes package-backed installed roots. Linux native roots exercise runtime-backed
+Every materialized engine root carries a typed manifest recording `adapterId`, `engineName`,
+`substrate`, `architecture`, `artifactKind`, `sourceRef`, exact engine/Python/runtime versions,
+`resolvedProvenance`, the current closed-recipe fingerprint, the actual payload digest, optional
+MinIO object key, local install root, and the direct-target contract fingerprint. Linux manifests
+also record exact descriptor-derived executable and immutable-closure evidence. Manifest text never
+selects an executable or argument. Apple materialization hydrates its owned `.tmp` sibling,
+relocates an embedded venv to the final-root identity, executes a source-specific direct smoke under
+the rank-2 bounded provisioning session, records exact resolved provenance, and deterministically
+hashes the sorted payload tree before writing the manifest. Any residual candidate-root bytes
+reject the venv. Audiveris download and mount/copy operations use the same closed bounded language;
+the fixed release checksum gates the cache and kernel device identity gates detach cleanup.
+
+Activation fsyncs the complete candidate and parent directory around sibling renames, retains the
+prior exact root through final-path revalidation, rolls back on synchronous failure or asynchronous
+cancellation, and reconciles only unambiguous complete `.previous` / `.tmp` crash residue. The
+focused transaction, full-materializer, and compile-boundary suites are being expanded with the
+active Sprint 1.20 correction; no earlier inventory or result closes the current source. Fresh final
+review, exact-source complete Stage 1, and real Apple rematerialization/runtime plus paired
+`linux-cpu` cohort evidence remain. Linux native roots exercise runtime-backed
 payload smoke over the image-baked native layer, Apple native roots exercise real runner smoke, and
 Wave L closed the routed full-suite Apple real-output gate for its then-active catalog. Wave K closed
 the Linux routed full-suite real-output delivery that consumes the Linux payloads through the service
@@ -118,51 +140,47 @@ path for its then-active catalog; Wave P closed proof for post-replacement MT3 r
 
 On `linux-cpu` and `linux-gpu`, native-process-runner artifacts are image-owned. The worker checks
 the repo data root first for parity with host-native execution and then resolves Linux-baked
-artifacts under `/opt/infernix/engines/<adapterId>/bin/`. The mounted `/workspace/.data` tree remains
+artifact metadata under `/opt/infernix/engines/<adapterId>/`. The actual executable, interpreter
+and module, or JRE and classpath is selected directly from the immutable image by a hidden typed
+catalog. The mounted `/workspace/.data` tree remains
 durable operator state and may be an `emptyDir` inside engine pods, so Linux native runners must not
 depend on image content under `/workspace/.data/engines` surviving a pod mount.
 
 `infernix internal materialize-linux-native-engines` is the image-build helper for these roots. It
-writes typed `engine-artifact.json` manifests, creates the allowlisted runner entrypoints, executes
-each runner's `--smoke` command, and installs the result under
-`/opt/infernix/engines/<adapterId>/` by renaming a validated temp root into place. On ordinary
-mutable filesystems the existing root is first moved to a rollback backup. The installer also
-tolerates reruns over roots baked into a Docker image layer: when Docker overlay rejects the
-existing-root backup rename with a cross-device operation error, the helper removes the existing
-generated root and renames the freshly smoke-validated temp root into place. The current Linux
-payloads are runtime-backed wrappers: strict image smoke requires the baked llama.cpp and
-whisper.cpp executables selected for the image architecture (`linux/amd64` or `linux/arm64`),
-Basic Pitch ONNX model, ONNX Runtime/CTranslate2/faster-whisper Python environment, and Audiveris
-app jars plus the image-architecture Temurin 25 JRE to be present and loadable. The Audiveris smoke
-launches the JVM classpath entrypoint so native arm64 images cannot silently retain an x86 launcher.
-Normal invocations parse native worker arguments, support `--output-dir` for artifact-producing
-families, fail with exit 75 until the requested model-cache entry has a `.ready` sentinel, and can
-emit the local
-`infernix-native-artifact-file:<path>` marker consumed by the Haskell worker's credentialed MinIO
-upload bridge. The reopened Phases 4/6 own full routed real-output delivery, with realness enforced
-in the engine code by the realness lint. Wave K covers its then-active catalog; Wave P closed proof for
-post-replacement MT3 rows added on 2026-06-30.
+writes typed `engine-artifact.json` manifests, observes each direct image target and its immutable
+runtime closure through bounded descriptor-based traversal, executes a source-specific smoke, and
+installs the result under
+`/opt/infernix/engines/<adapterId>/` through the same exact-payload artifact transaction. The
+validated sibling candidate is fsynced, the existing root is moved to `.previous`, and the new root
+is renamed and revalidated before the rollback root is retired. A filesystem that cannot provide
+those sibling-rename semantics fails closed; the installer does not fall back to destructive
+overlay replacement. Strict image smoke requires the baked llama.cpp and whisper.cpp executables
+selected for the image architecture (`linux/amd64` or `linux/arm64`), Basic Pitch ONNX model, ONNX
+Runtime/CTranslate2/faster-whisper Python environment, and Audiveris app jars plus the
+image-architecture Temurin 25 JRE to be present and loadable. Runtime compiles a distinct
+target-specific invocation for each CLI, Python, and JVM family. Artifact-producing invocations use
+an owned output directory, descriptor-bounded output discovery, and Haskell-owned credentialed
+MinIO upload. The reopened Phases 4/6 own fresh full routed real-output delivery for this corrected
+direct-target topology. Historical Wave K and Wave P results do not close it.
 
 ## Generated Demo Config Publication
 
-The substrate file is a typed Dhall record at `infernix.dhall`; the schema is reflected from the
+The runtime config is a typed Dhall record at repo-root `./infernix.dhall`; the schema is reflected from the
 substrate decoder type (`infernix internal dhall-schema substrate`) and decoded in-process by the
 `dhall` Haskell library. Cluster pods
 that consume the file link the same library through the in-cluster `infernix` binary.
 
-- Apple host lifecycle and validation flows materialize or verify `infernix.dhall`
-  under `./.build/`; `./.build/infernix internal materialize-substrate apple-silicon` remains the
-  direct helper for explicit restaging or inspection
-- Linux outer-container lifecycle and validation flows materialize or verify
-  `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image;
-  `docker compose run --rm infernix infernix internal materialize-substrate <substrate> --demo-ui <true|false>`
-  remains the direct helper for explicit restaging or inspection
+- operators create `./infernix.dhall` and `./infernix-host.dhall` only through `infernix init`;
+  ordinary config-dependent commands validate that file and fail fast with the init to run when it
+  is absent
+- `infernix test init` creates `./infernix.test.dhall`; the harness reserves the cluster slot, then
+  generates and owns `./infernix.dhall` for the duration of integration, E2E, or aggregate runs
 - `cluster up` mirrors the cluster-role substrate payload under
   `./.data/runtime/configmaps/infernix-demo-config/` and publishes it into
   `ConfigMap/infernix-demo-config` on the real cluster path; on Apple this cluster-role payload is
-  rendered from the active staged substrate metadata and `demo_ui` setting rather than copied
-  verbatim from the host-role file under `./.build/`
-- in cluster-resident execution contexts, the ConfigMap-backed file is mounted beside the binary
+  rendered from the initialized runtime metadata and `demo_ui` setting rather than copied verbatim
+- in cluster-resident execution contexts, the ConfigMap-backed file is a deployment mirror of the
+  initialized runtime config, not an operator-authoritative config location
 - the cluster pod's ConfigMap-backed substrate mount path is
   `/opt/build/infernix-substrate.dhall` (chart `demoConfig.mountPath=/opt/build`,
   `fileName=infernix-substrate.dhall`); the separate Phase-8 cluster-wiring `ClusterConfig`
@@ -174,11 +192,11 @@ that consume the file link the same library through the in-cluster `infernix` bi
   and launcher ownership stays with the direct `cabal`, `docker compose`, and `infernix`
   surfaces, and shell lifecycle commands preserve `./.build/`, `./.data/`, host-level container
   builds, Apple host binaries, and installed Docker or CUDA prerequisites
-- generated demo-config files live under the active build root, not tracked source paths
-- `cluster up`, `service`, and the validation entrypoints own the generated substrate-file
-  preflight for their execution context: they materialize or validate the file under the active
-  build root before relying on it, while the explicit internal materialization helper remains
-  available for direct operator restaging
+- generated `.dhall` files are gitignored and never tracked; operator config lives at the repo root,
+  not under the build root
+- `cluster up`, `service`, and other config-dependent entrypoints validate the initialized
+  `./infernix.dhall` and fail fast naming `infernix init` when it is absent; the test harness names
+  `infernix test init` when `./infernix.test.dhall` is absent
 - kubeconfig output is repo-local and execution-context-specific: Apple host mode publishes
   `./.build/infernix.kubeconfig`, while Linux outer-container mode publishes the durable
   `./.data/runtime/infernix.kubeconfig`; Kind and `nvkind` cluster create or delete uses a

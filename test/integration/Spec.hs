@@ -4,8 +4,8 @@
 module Main (main) where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, bracket, bracketOnError, bracket_, displayException, finally, onException, try)
-import Control.Monad (forM, forM_, unless, when)
+import Control.Exception (IOException, SomeException, bracket, bracketOnError, displayException, try)
+import Control.Monad (forM, forM_, unless, void, when)
 import Data.Aeson ((.:), (.=))
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
@@ -17,7 +17,8 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
 import Data.Char (isAsciiUpper)
 import Data.FileEmbed (embedFile)
-import Data.List (find, intercalate, isInfixOf, isPrefixOf, nub, partition, sort)
+import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort)
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
 import Data.Set qualified as Set
@@ -27,25 +28,25 @@ import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.Error
+  ( bracketPreservingPrimary,
+    finallyPreservingPrimary,
+    onExceptionPreservingPrimary,
+    runCleanupsPreservingFailures,
+  )
+import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
-  ( encodeDemoConfig,
-    engineBindingForSelectedEngine,
-    engineMemberPinnedTopicForMode,
-    engineMemberRequestTopics,
+  ( engineBindingForSelectedEngine,
     engineNameForSelectedEngine,
-    enginePoolForModel,
-    enginePoolTopicForMode,
     expectedDaemonLocationForRuntime,
     expectedInferenceExecutorLocationForRuntime,
     findModel,
-    requestTopicsForMode,
     resultFamilyForDescriptor,
-    resultTopicForMode,
   )
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
@@ -55,11 +56,10 @@ import Infernix.Runtime.Pulsar
     RawTopicMessage (..),
     compactTopicAndWait,
     discoverPulsarTransport,
-    ensureRegisteredSchemasWithRetry,
+    prepareModelBootstrapRequest,
     publishDemoClientMessage,
     publishInferenceRequest,
     publishModelBootstrapRequest,
-    publishRawTopicPayload,
     rawTopicInferenceRequestIds,
     rawTopicInferenceRequestPromptIds,
     rawTopicInferenceResultCausalRefs,
@@ -69,6 +69,7 @@ import Infernix.Runtime.Pulsar
     serviceConsumerName,
     serviceReadinessMarkerPath,
   )
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Network.Socket
@@ -89,9 +90,12 @@ import Network.Socket
 import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, (</>))
-import System.IO (BufferMode (LineBuffering), Handle, IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
+import System.FilePath ((</>))
+import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
 import System.IO.Error (catchIOError, isAlreadyInUseError, isDoesNotExistError)
+import System.Posix.Process (ProcessStatus (..), forkProcessWithUnmask, getProcessGroupID, getProcessStatus)
+import System.Posix.Signals (sigKILL, signalProcess)
+import System.Posix.Types (ProcessID)
 import System.Process
   ( CreateProcess (cwd, std_err, std_out),
     ProcessHandle,
@@ -126,6 +130,7 @@ instance Aeson.FromJSON IntegrationPulsarEnvelope where
 
 main :: IO ()
 main = do
+  Subprocess.dispatchInternalSubprocessMode
   integrationTestRoot <- testRootPath "integration"
   withTestRoot integrationTestRoot $ do
     paths <- Config.discoverPaths
@@ -146,10 +151,10 @@ integrationRuntimeModes =
 withClusterLifecycle :: RuntimeMode -> IO a -> IO a
 withClusterLifecycle runtimeMode action =
   ( do
-      clusterUp HarnessOwned (Just runtimeMode)
+      clusterUpHarness (Just runtimeMode)
       action
   )
-    `finally` clusterDown (Just runtimeMode)
+    `finallyPreservingPrimary` clusterDownHarness (Just runtimeMode)
 
 exerciseRuntimeMode :: Paths -> RuntimeMode -> IO ()
 exerciseRuntimeMode paths runtimeMode = do
@@ -159,10 +164,9 @@ exerciseRuntimeMode paths runtimeMode = do
       reportStep ("cluster state reload: " <> showRuntimeMode runtimeMode)
       maybeState <- loadClusterState paths
       state <- maybe (fail "cluster state was not available after cluster up") pure maybeState
-      reportStep ("demo config decode: " <> showRuntimeMode runtimeMode)
-      demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
+      compiledPlan <- requireCompiledRuntimePlanFile (generatedDemoConfigPath state)
       reportStep ("demo config loaded: " <> showRuntimeMode runtimeMode)
-      let activeModels = models demoConfig
+      let activeModels = ExecutionPlan.compiledPlanConfiguredModels compiledPlan
           activeModelIds = map (Text.unpack . modelId) activeModels
           expectedDaemonLocation = Text.unpack (expectedDaemonLocationForRuntime runtimeMode)
           expectedInferenceExecutorLocation = Text.unpack (expectedInferenceExecutorLocationForRuntime runtimeMode)
@@ -196,7 +200,7 @@ exerciseRuntimeMode paths runtimeMode = do
       assertHostBatchPublication runtimeMode publicationResponse
       assert ("\"demo_ui\":true" `isInfixOf` compact demoConfigResponse) "demo config reports the enabled demo UI flag"
       assert (activeDaemonRole routedDemoConfig == Coordinator) "cluster-mounted demo config reports the coordinator role"
-      assertRoutedDaemonSplit runtimeMode routedDemoConfig
+      assertRoutedDaemonSplit runtimeMode compiledPlan
       assert
         ( ("\"request_topics\":[\"persistent://infernix/demo/inference.request." <> showRuntimeMode runtimeMode <> "\"]")
             `isInfixOf` compact demoConfigResponse
@@ -230,7 +234,7 @@ exerciseRuntimeMode paths runtimeMode = do
         (pulsarHttpStatus `elem` [401, 403])
         "pulsar websocket route is gated by the operator Keycloak JWT edge policy when demo_ui is enabled (401 unauthenticated)"
       reportStep ("per-model inference: " <> showRuntimeMode runtimeMode)
-      validateCatalogModelInferenceForRuntime paths state runtimeMode demoConfig
+      validateCatalogModelInferenceForRuntime paths state runtimeMode compiledPlan
       reportStep ("cache lifecycle: " <> showRuntimeMode runtimeMode)
       -- Phase 9 Sprint 9.3: @GET /api/cache@ exposes cluster-wide model-cache
       -- state, so it is now admin-gated (`withAdminRequest`) alongside the
@@ -247,39 +251,33 @@ exerciseRuntimeMode paths runtimeMode = do
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
       ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
-      validateServiceRuntimeLoop paths state runtimeMode representativeModelId
+      validateServiceRuntimeLoop paths state runtimeMode compiledPlan representativeModelId
 
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
       ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
-      -- Compatibility guard for pinned Apple host-engine ownership. The
-      -- first host daemon is already subscribed to its assigned topic; this
-      -- case validates that a second spawn exits non-zero when the broker
-      -- rejects a duplicate Exclusive consumer.
       when (requiresHostServiceHarness paths runtimeMode) $ do
-        reportStep ("apple host engine exclusive subscription enforcement: " <> showRuntimeMode runtimeMode)
-        validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig
         reportStep ("apple host engine shared subscription coexistence: " <> showRuntimeMode runtimeMode)
-        validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig
+        validateAppleHostEngineSharedSubscriptionCoexistence paths (generatedDemoConfigPath state) compiledPlan
         reportStep ("apple shared subscription backlog backpressure: " <> showRuntimeMode runtimeMode)
-        validateAppleSharedSubscriptionBackpressure paths demoConfig
+        validateAppleSharedSubscriptionBackpressure paths compiledPlan
 
       when (runtimeMode == LinuxCpu) $ do
         reportStep "linux engine pool placement"
-        validateLinuxEnginePoolPlacement state runtimeMode demoConfig
+        validateLinuxEnginePoolPlacement state runtimeMode compiledPlan
         reportStep "linux shared subscription backlog backpressure"
-        validateLinuxSharedSubscriptionBackpressure paths runtimeMode demoConfig
+        validateLinuxSharedSubscriptionBackpressure paths runtimeMode compiledPlan
         reportStep "frontend pod replacement preserves durable state"
-        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demoConfig representativeModelId
+        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode compiledPlan representativeModelId
         reportStep "coordinator failover preserves durable prompt dispatch"
-        validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig representativeModelId
+        validateCoordinatorFailoverDurablePrompt paths state runtimeMode compiledPlan representativeModelId
         reportStep "engine pod replacement preserves durable prompt result"
-        validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig representativeModelId
+        validateEnginePodReplacementDurablePrompt paths state runtimeMode compiledPlan representativeModelId
         reportStep "engine node drain preserves durable prompt result"
-        validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId
+        validateEngineNodeDrainDurablePrompt paths state runtimeMode compiledPlan representativeModelId
         reportStep "model bootstrap failover and deduplication"
-        validateModelBootstrapDeduplication paths state runtimeMode
+        validateModelBootstrapDeduplication paths state runtimeMode compiledPlan representativeModelId
         reportStep "multi-user durable prompt throughput"
         validateMultiUserDurablePromptThroughput paths runtimeMode representativeModelId
         reportStep "harbor recovery"
@@ -287,7 +285,7 @@ exerciseRuntimeMode paths runtimeMode = do
         reportStep "minio durability"
         validateMinioDurability state
         reportStep "routed pulsar recovery"
-        validateRoutedPulsarRecovery paths state runtimeMode activeModelIds
+        validateRoutedPulsarRecovery paths state runtimeMode compiledPlan activeModelIds
         reportStep "postgres failover"
         validatePostgresFailover state
         reportStep "postgres lifecycle rebinding"
@@ -298,9 +296,7 @@ exerciseRuntimeMode paths runtimeMode = do
         -- pod anti-affinity keyed by hostname; scaling the deployment
         -- past the available engine-capable node count must leave the
         -- extra replica `Pending` with the anti-affinity rejection
-        -- message in its scheduler events. The Apple-host equivalent
-        -- is covered by the duplicate Exclusive pinned-member subscription
-        -- check above.
+        -- message in its scheduler events.
         reportStep "linux engine anti-affinity enforcement"
         validateLinuxEngineAntiAffinityEnforcement paths state
 
@@ -314,19 +310,24 @@ exerciseRuntimeMode paths runtimeMode = do
       assert ("kubernetesNodeCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes nodes"
       assert ("kubernetesPodCount: 0" `notElemString` statusOutput) "cluster status reports reachable Kubernetes pods"
 
+    when (usesDetachedRetainedSnapshot paths runtimeMode) $ do
+      reportStep ("detached retained snapshot replay: " <> showRuntimeMode runtimeMode)
+      validateDetachedRetainedSnapshotReplay paths runtimeMode
+
   maybeDownState <- loadClusterState paths
   assert (maybe False (not . clusterPresent) maybeDownState) "cluster down records cluster absence"
   downStatusOutput <- captureInfernixOutput ["cluster", "status"]
   assert ("clusterPresent: False" `isInfixOf` downStatusOutput) "cluster status reports cluster absence after down"
   assert ("lifecyclePhase: cluster-absent" `isInfixOf` downStatusOutput) "cluster status reports the idle absent lifecycle phase after down"
 
-validateCatalogModelInference :: Paths -> ClusterState -> RuntimeMode -> InferenceMemoryBudget -> String -> IO ()
-validateCatalogModelInference paths state runtimeMode budget modelIdValue = do
-  requestTopic <-
-    case requestTopicsForMode runtimeMode of
-      topic : _ -> pure topic
-      [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
-  let resultTopic = resultTopicForMode runtimeMode
+validateCatalogModelInference ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  String ->
+  IO ()
+validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue = do
   model <-
     case findModel runtimeMode (Text.pack modelIdValue) of
       Just descriptor -> pure descriptor
@@ -338,8 +339,7 @@ validateCatalogModelInference paths state runtimeMode budget modelIdValue = do
   requestIdValue <-
     publishInferenceRequest
       paths
-      runtimeMode
-      requestTopic
+      compiledPlan
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack ("integration coverage for " <> modelIdValue),
@@ -347,7 +347,7 @@ validateCatalogModelInference paths state runtimeMode budget modelIdValue = do
           requestUserId = Just requestUserIdValue,
           requestContextId = Just requestContextIdValue
         }
-  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+  maybeResult <- waitForPublishedResult paths compiledPlan requestIdValue
   case maybeResult of
     -- Phase 6 Sprint 6.37: a missing result on apple-silicon is the OS-OOM-kill
     -- symptom (the on-host daemon died before publishing). The Phase 4 Sprint
@@ -369,21 +369,25 @@ validateCatalogModelInference paths state runtimeMode budget modelIdValue = do
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
-      -- Phase 6 Sprint 6.38: memory-bounded classification is typed and
-      -- substrate-neutral. An over-budget row is a clean per-request
-      -- @status=failed@ with 'ModelMemoryLimitExceeded' fields; failed rows
-      -- without that typed error still fail closed through the completion
-      -- assertion below.
-      case classifyResourceMemoryAdmissionResult (status resultValue) (payload resultValue) of
-        ResourceMemoryAdmissionFailClosed errorValue -> do
-          assertTypedMemoryAdmissionError budget model (payload resultValue) errorValue
+      case ExecutionPlan.lookupUnavailableModel (Text.pack modelIdValue) compiledPlan of
+        Just unavailable -> do
+          let expectedError = ExecutionPlan.unavailableModelReason unavailable
+          assert
+            (status resultValue == "failed")
+            "an unavailable compiled model publishes a failed terminal result"
+          assert
+            (inferenceError (payload resultValue) == Just expectedError)
+            "an unavailable compiled model publishes the compiler's typed admission error"
+          assert
+            (isNothing (inlineOutput (payload resultValue)) && isNothing (objectRef (payload resultValue)))
+            "an unavailable compiled model does not masquerade as real output"
           putStrLn
             ( "resource memory admission fail-closed for "
                 <> modelIdValue
                 <> ": "
-                <> show errorValue
+                <> show expectedError
             )
-        InferenceCompletedOrRealFailure -> do
+        Nothing -> do
           assert
             (status resultValue == "completed")
             ( "inference completes for "
@@ -513,51 +517,79 @@ objectMagicBytesPlausible ref bytes
     hasExtension extension = extension `Text.isSuffixOf` ref
     startsWith signature = signature `ByteString.isPrefixOf` bytes
 
-validateCatalogModelInferenceForRuntime :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> IO ()
-validateCatalogModelInferenceForRuntime paths state runtimeMode demoConfig =
-  let activeModels = models demoConfig
-      budget = inferenceMemoryBudget demoConfig
-   in validateCatalogModelInferenceWithBudget paths state runtimeMode budget activeModels
+validateCatalogModelInferenceForRuntime ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO ()
+validateCatalogModelInferenceForRuntime paths state runtimeMode compiledPlan =
+  validateCatalogModelInferenceWithPlan
+    paths
+    state
+    runtimeMode
+    compiledPlan
+    (ExecutionPlan.compiledPlanConfiguredModels compiledPlan)
 
-validateCatalogModelInferenceWithBudget :: Paths -> ClusterState -> RuntimeMode -> InferenceMemoryBudget -> [ModelDescriptor] -> IO ()
-validateCatalogModelInferenceWithBudget paths state runtimeMode budget activeModels =
+validateCatalogModelInferenceWithPlan ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  [ModelDescriptor] ->
+  IO ()
+validateCatalogModelInferenceWithPlan paths state runtimeMode compiledPlan activeModels =
   case runtimeMode of
-    LinuxGpu -> validateLinuxGpuCatalogModelInferenceSerially paths state budget activeModels
-    _ -> forM_ (map (Text.unpack . modelId) activeModels) (validateCatalogModelInference paths state runtimeMode budget)
+    LinuxGpu -> validateLinuxGpuCatalogModelInferenceSerially paths state compiledPlan activeModels
+    _ -> forM_ (map (Text.unpack . modelId) activeModels) (validateCatalogModelInference paths state runtimeMode compiledPlan)
 
-validateLinuxGpuCatalogModelInferenceSerially :: Paths -> ClusterState -> InferenceMemoryBudget -> [ModelDescriptor] -> IO ()
-validateLinuxGpuCatalogModelInferenceSerially paths state budget activeModels = do
+validateLinuxGpuCatalogModelInferenceSerially ::
+  Paths ->
+  ClusterState ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  [ModelDescriptor] ->
+  IO ()
+validateLinuxGpuCatalogModelInferenceSerially paths state compiledPlan activeModels = do
   let (pythonNativeModels, nativeModels) = partition linuxGpuModelUsesPythonNativeEngine activeModels
-      perEngineNames =
+  pythonNativeDeployments <-
+    forM pythonNativeModels $ \model -> do
+      deploymentName <- requireLinuxGpuPerEngineDeploymentName model
+      pure (model, deploymentName)
+  let perEngineNames =
         sort
           . nub
-          $ map linuxGpuPerEngineDeploymentName pythonNativeModels
+          $ map snd pythonNativeDeployments
   prepareLinuxGpuEngineDeployment state perEngineNames Nothing
-  forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu budget)
+  forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu compiledPlan)
   forM_ perEngineNames $ \engineName -> do
     reportStep ("linux-gpu per-engine deployment: " <> Text.unpack engineName)
     prepareLinuxGpuEngineDeployment state perEngineNames (Just engineName)
     forM_
       [ Text.unpack (modelId model)
-      | model <- pythonNativeModels,
-        linuxGpuPerEngineDeploymentName model == engineName
+      | (model, deploymentName) <- pythonNativeDeployments,
+        deploymentName == engineName
       ]
-      (validateCatalogModelInference paths state LinuxGpu budget)
+      (validateCatalogModelInference paths state LinuxGpu compiledPlan)
   prepareLinuxGpuEngineDeployment state perEngineNames Nothing
 
 ensureLinuxGpuRepresentativeEngineDeployment :: ClusterState -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
 ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId =
   when (runtimeMode == LinuxGpu) $ do
     let pythonNativeModels = filter linuxGpuModelUsesPythonNativeEngine activeModels
-        perEngineNames =
+    pythonNativeDeployments <-
+      forM pythonNativeModels $ \model -> do
+        deploymentName <- requireLinuxGpuPerEngineDeploymentName model
+        pure (model, deploymentName)
+    let perEngineNames =
           sort
             . nub
-            $ map linuxGpuPerEngineDeploymentName pythonNativeModels
-    case find ((== Text.pack representativeModelId) . modelId) activeModels of
-      Just model
-        | linuxGpuModelUsesPythonNativeEngine model ->
-            prepareLinuxGpuEngineDeployment state perEngineNames (Just (linuxGpuPerEngineDeploymentName model))
-      _ ->
+            $ map snd pythonNativeDeployments
+    case find
+      ((== Text.pack representativeModelId) . modelId . fst)
+      pythonNativeDeployments of
+      Just (_, deploymentName) ->
+        prepareLinuxGpuEngineDeployment state perEngineNames (Just deploymentName)
+      Nothing ->
         prepareLinuxGpuEngineDeployment state perEngineNames Nothing
 
 ensureCatalogInputObject :: Paths -> ClusterState -> RuntimeMode -> ModelDescriptor -> IO (Maybe Text.Text)
@@ -643,13 +675,16 @@ withMinioPortForward :: Paths -> ClusterState -> (Int -> IO a) -> IO a
 withMinioPortForward paths state action = do
   localPort <- allocateLoopbackPort
   let logPath = buildRoot paths </> "minio-port-forward-" <> show localPort <> ".log"
-  createDirectoryIfMissing True (takeDirectoryPortable logPath)
-  bracket
-    (startMinioPortForward paths state localPort logPath)
-    stopMinioPortForward
-    $ \(processHandle, _logHandle) -> do
-      waitForMinioPortForward localPort processHandle logPath
-      action localPort
+      loadProcess =
+        hostToolProcessForPaths
+          paths
+          HostTools.HostKubectl
+          ( ["--kubeconfig", kubeconfigPath state]
+              <> ["-n", "platform", "port-forward", "svc/infernix-minio", show localPort <> ":9000"]
+          )
+  withLoggedProcess logPath loadProcess $ \processHandle -> do
+    waitForMinioPortForward localPort processHandle logPath
+    action localPort
 
 allocateLoopbackPort :: IO Int
 allocateLoopbackPort =
@@ -660,25 +695,6 @@ allocateLoopbackPort =
     case socketAddress of
       SockAddrInet portNumber _ -> pure (fromIntegral portNumber)
       _ -> fail ("unexpected socket address for loopback port allocation: " <> show socketAddress)
-
-startMinioPortForward :: Paths -> ClusterState -> Int -> FilePath -> IO (ProcessHandle, Handle)
-startMinioPortForward paths state localPort logPath = do
-  logHandle <- openFile logPath WriteMode
-  hSetBuffering logHandle LineBuffering
-  kubectlProcess <-
-    hostToolProcessForPaths
-      paths
-      HostTools.HostKubectl
-      ( ["--kubeconfig", kubeconfigPath state]
-          <> ["-n", "platform", "port-forward", "svc/infernix-minio", show localPort <> ":9000"]
-      )
-  (_, _, _, processHandle) <-
-    createProcess
-      kubectlProcess
-        { std_out = UseHandle logHandle,
-          std_err = UseHandle logHandle
-        }
-  pure (processHandle, logHandle)
 
 hostToolProcessForPaths :: Paths -> HostTools.HostTool -> [String] -> IO CreateProcess
 hostToolProcessForPaths paths tool args =
@@ -702,13 +718,6 @@ requireFallbackHostTool tool =
       if exists
         then pure candidate
         else go rest
-
-stopMinioPortForward :: (ProcessHandle, Handle) -> IO ()
-stopMinioPortForward (processHandle, logHandle) = do
-  maybeExitCode <- getProcessExitCode processHandle
-  when (isNothing maybeExitCode) (terminateProcess processHandle)
-  _ <- waitForProcess processHandle
-  hClose logHandle
 
 waitForMinioPortForward :: Int -> ProcessHandle -> FilePath -> IO ()
 waitForMinioPortForward localPort processHandle logPath =
@@ -945,7 +954,10 @@ littleEndian32 value =
 
 linuxGpuModelUsesPythonNativeEngine :: ModelDescriptor -> Bool
 linuxGpuModelUsesPythonNativeEngine model =
-  engineBindingPythonNative (engineBindingForSelectedEngine LinuxGpu (selectedEngine model))
+  maybe
+    False
+    engineBindingPythonNative
+    (engineBindingForSelectedEngine LinuxGpu (selectedEngine model))
 
 representativeModelForRuntime :: RuntimeMode -> [ModelDescriptor] -> IO String
 representativeModelForRuntime runtimeMode activeModels =
@@ -961,9 +973,19 @@ representativeModelForRuntime runtimeMode activeModels =
         model : _ -> pure (Text.unpack (modelId model))
         [] -> fail "generated demo config did not publish any models"
 
-linuxGpuPerEngineDeploymentName :: ModelDescriptor -> Text.Text
-linuxGpuPerEngineDeploymentName model =
-  engineNameForSelectedEngine LinuxGpu (selectedEngine model)
+requireLinuxGpuPerEngineDeploymentName :: ModelDescriptor -> IO Text.Text
+requireLinuxGpuPerEngineDeploymentName model =
+  maybe
+    ( fail
+        ( "Linux GPU catalog model has no canonical per-engine deployment name: "
+            <> Text.unpack (modelId model)
+            <> " (selected engine "
+            <> Text.unpack (selectedEngine model)
+            <> ")"
+        )
+    )
+    pure
+    (engineNameForSelectedEngine LinuxGpu (selectedEngine model))
 
 prepareLinuxGpuEngineDeployment :: ClusterState -> [Text.Text] -> Maybe Text.Text -> IO ()
 prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
@@ -1006,46 +1028,6 @@ prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
 -- key extension matches the family's artifact type. The deeper byte/dimension
 -- checks (>= 2 separation stems, valid MIDI/MusicXML, image dimensions, audio
 -- sample rate) run against the fetched artifact on cohort hardware.
--- | Phase 6 Sprint 6.38 — classify a published inference result for the
--- typed resource-admission lane. An over-budget model is a clean per-row
--- @status=failed@ produced by runtime admission and represented by
--- 'ModelMemoryLimitExceeded'. Every other result — a real completion or a
--- genuine engine failure — is grouped so the existing completion and
--- per-family contract assertions apply unchanged.
-data ResourceMemoryAdmissionResult
-  = ResourceMemoryAdmissionFailClosed InferenceError
-  | InferenceCompletedOrRealFailure
-
-classifyResourceMemoryAdmissionResult :: Text.Text -> ResultPayload -> ResourceMemoryAdmissionResult
-classifyResourceMemoryAdmissionResult resultStatus payloadValue
-  | resultStatus == "failed",
-    Just errorValue@ModelMemoryLimitExceeded {} <- inferenceError payloadValue =
-      ResourceMemoryAdmissionFailClosed errorValue
-  | otherwise = InferenceCompletedOrRealFailure
-
-assertTypedMemoryAdmissionError :: InferenceMemoryBudget -> ModelDescriptor -> ResultPayload -> InferenceError -> IO ()
-assertTypedMemoryAdmissionError budget model payloadValue errorValue =
-  case errorValue of
-    ModelMemoryLimitExceeded {inferenceErrorModelId, inferenceErrorRequiredMib, inferenceErrorAvailableMib, inferenceErrorResource, inferenceErrorSource} -> do
-      assert (isNothing (inlineOutput payloadValue)) "memory admission failure does not masquerade as inline output"
-      assert (isNothing (objectRef payloadValue)) "memory admission failure does not carry an object reference"
-      assert (inferenceErrorModelId == modelId model) "memory admission error reports the selected model id"
-      assert (inferenceErrorRequiredMib == modelMemoryFootprintMib (modelRamFootprint model)) "memory admission error reports the model footprint"
-      -- Two distinct fail-closed paths carry ModelMemoryLimitExceeded and are
-      -- distinguished by the source: a pre-admission over-budget rejection
-      -- reports the budget capacity/resource/source (required > available), while
-      -- a runtime resident-ceiling breach (an admitted model whose actual RSS
-      -- exceeded its ceiling) reports the ceiling (required == available).
-      if inferenceErrorSource == cappedEngineResidentCeilingSource
-        then do
-          assert (inferenceErrorAvailableMib == inferenceErrorRequiredMib) "resident-ceiling breach reports the admitted ceiling as required == available"
-          assert (inferenceErrorResource == inferenceMemoryBudgetResource budget) "resident-ceiling breach reports the active resource"
-        else do
-          assert (inferenceErrorRequiredMib > inferenceErrorAvailableMib) "memory admission error reports an exceeded budget"
-          assert (inferenceErrorAvailableMib == inferenceMemoryBudgetCapacityMib budget) "memory admission error reports the active budget capacity"
-          assert (inferenceErrorResource == inferenceMemoryBudgetResource budget) "memory admission error reports the active resource"
-          assert (inferenceErrorSource == inferenceMemoryBudgetSource budget) "memory admission error reports the budget source"
-
 assertResultFamilyContract :: ResultFamily -> String -> ResultPayload -> IO ()
 assertResultFamilyContract resultFamily modelIdValue payloadValue
   | resultFamilyIsArtifact resultFamily =
@@ -1098,31 +1080,39 @@ assertHostBatchStatus runtimeMode statusOutput =
     (not ("publicationHostInferenceBatchTopic:" `isInfixOf` statusOutput))
     ("cluster status omits legacy inference batch handoff topic for " <> showRuntimeMode runtimeMode)
 
-assertRoutedDaemonSplit :: RuntimeMode -> DemoConfig -> IO ()
-assertRoutedDaemonSplit runtimeMode routedDemoConfig = do
-  assert (daemonConfigRole (coordinatorDaemon routedDemoConfig) == Coordinator) "demo config reports coordinator metadata"
+assertRoutedDaemonSplit :: RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+assertRoutedDaemonSplit runtimeMode compiledPlan = do
+  let coordinator = ExecutionPlan.compiledPlanCoordinatorDaemon compiledPlan
+      engineDaemons = ExecutionPlan.compiledPlanEngineDaemons compiledPlan
+      engineRoutes =
+        concatMap
+          (NonEmpty.toList . ExecutionPlan.compiledPlacementRoutes)
+          (ExecutionPlan.compiledRuntimePlanPlacements compiledPlan)
+      expectedEngineRequestTopics = map ExecutionPlan.engineRouteTopic engineRoutes
+      actualEngineRequestTopics = concatMap ExecutionPlan.compiledDaemonRequestTopics engineDaemons
   assert
-    (daemonConfigRequestTopics (coordinatorDaemon routedDemoConfig) == requestTopicsForMode runtimeMode)
+    (ExecutionPlan.compiledPlanRuntimeMode compiledPlan == runtimeMode)
+    "compiled plan reports the exercised runtime mode"
+  assert (ExecutionPlan.compiledDaemonRole coordinator == Coordinator) "compiled plan reports coordinator metadata"
+  assert
+    (ExecutionPlan.compiledDaemonRequestTopics coordinator == ExecutionPlan.compiledPlanRequestTopics compiledPlan)
     "coordinator consumes the substrate request topic"
   assert
-    (not (null (engineDaemons routedDemoConfig)))
-    ("demo config omits engine metadata for " <> showRuntimeMode runtimeMode)
-  mapM_ assertEngineConfig (engineDaemons routedDemoConfig)
-  let expectedEngineRequestTopics =
-        concatMap
-          (engineMemberRequestTopics runtimeMode (enginePools routedDemoConfig))
-          (engineMembers routedDemoConfig)
+    (not (null engineDaemons))
+    ("compiled plan omits engine metadata for " <> showRuntimeMode runtimeMode)
+  mapM_
+    ( \engineDaemon ->
+        assert
+          (ExecutionPlan.compiledDaemonRole engineDaemon == Engine)
+          "compiled plan reports engine metadata"
+    )
+    engineDaemons
   assert
     (not (null expectedEngineRequestTopics))
-    "engine metadata has derived engine-pool request topics to consume"
+    "compiled placements have validated engine routes to consume"
   assert
-    (expectedEngineRequestTopics `allTopicsPresentIn` concatMap daemonConfigRequestTopics (engineDaemons routedDemoConfig))
-    "engine metadata includes the derived engine-pool request topics"
-  where
-    assertEngineConfig engineConfig = do
-      assert (daemonConfigRole engineConfig == Engine) "demo config reports engine metadata"
-    allTopicsPresentIn expectedTopics actualTopics =
-      all (`elem` actualTopics) expectedTopics
+    (all (`elem` actualEngineRequestTopics) expectedEngineRequestTopics)
+    "compiled engine daemons include every validated placement route"
 
 assertClusterServiceDeployment :: ClusterState -> IO ()
 assertClusterServiceDeployment state = do
@@ -1155,13 +1145,14 @@ assertClusterServiceDeployment state = do
     (serviceSessionAffinity == "None")
     "demo Service disables Kubernetes session affinity so any stateless frontend replica can host WebSocket sessions"
 
-validateServiceRuntimeLoop :: Paths -> ClusterState -> RuntimeMode -> String -> IO ()
-validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
-  requestTopic <-
-    case requestTopicsForMode runtimeMode of
-      topic : _ -> pure topic
-      [] -> fail ("no request topics configured for " <> showRuntimeMode runtimeMode)
-  let resultTopic = resultTopicForMode runtimeMode
+validateServiceRuntimeLoop ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  String ->
+  IO ()
+validateServiceRuntimeLoop paths state runtimeMode compiledPlan representativeModelId = do
   model <-
     case findModel runtimeMode (Text.pack representativeModelId) of
       Just descriptor -> pure descriptor
@@ -1173,8 +1164,7 @@ validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
   requestIdValue <-
     publishInferenceRequest
       paths
-      runtimeMode
-      requestTopic
+      compiledPlan
       InferenceRequest
         { requestModelId = Text.pack representativeModelId,
           inputText = "service daemon request path",
@@ -1182,7 +1172,7 @@ validateServiceRuntimeLoop paths state runtimeMode representativeModelId = do
           requestUserId = Just requestUserIdValue,
           requestContextId = Just requestContextIdValue
         }
-  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+  maybeResult <- waitForPublishedResult paths compiledPlan requestIdValue
   case maybeResult of
     Nothing -> fail ("service daemon did not publish a result for " <> showRuntimeMode runtimeMode)
     Just resultValue -> do
@@ -1208,7 +1198,6 @@ validateDurableTopicFamilyRoundTrips :: Paths -> RuntimeMode -> String -> IO ()
 validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = do
   runToken <- integrationRunToken
   let namespace = ConversationTopic.defaultDemoTopicNamespace
-      systemNamespace = ConversationTopic.systemTopicNamespace
       runtimeText = runtimeModeId runtimeMode
       tokenText = Text.pack runToken
       userIdValue = Contracts.UserId ("integration-user-" <> runtimeText <> "-" <> tokenText)
@@ -1218,9 +1207,6 @@ validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = d
       contextTopic = ConversationTopic.contextsMetadataTopicName namespace userIdValue
       draftsTopic = ConversationTopic.draftsMetadataTopicName namespace userIdValue
       conversationTopic = ConversationTopic.conversationTopicName namespace userIdValue contextIdValue
-      bootstrapModelId = "integration-bootstrap-" <> runtimeText <> "-" <> tokenText
-      bootstrapReadyTopic =
-        ConversationTopic.modelBootstrapReadyTopicName systemNamespace bootstrapModelId
       createdEvent =
         Contracts.ContextCreated
           { Contracts.contextCreatedContextId = contextIdValue,
@@ -1233,11 +1219,6 @@ validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = d
           ( Contracts.ConversationCancelPayload
               (Contracts.MessageId ("prompt-for-cancel-" <> runtimeText))
           )
-      bootstrapReadyEvent =
-        BootstrapModels.ModelBootstrapReadyEvent
-          { BootstrapModels.readyEventModelId = bootstrapModelId,
-            BootstrapModels.readyEventReadyAtIso8601 = "2026-05-28T00:00:00Z"
-          }
 
   publishDemoClientMessage
     paths
@@ -1272,19 +1253,6 @@ validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId = d
   conversationMessages <- waitForRawTopicMessages paths runtimeMode conversationTopic 1
   assertTopicMessageKey conversationMessages Nothing "conversation log topic remains append-only without a compaction key"
   assertTopicHasDecoded conversationMessages cancelEvent "conversation topic round-trips the ConversationCancelEvent"
-
-  publishRawTopicPayload
-    paths
-    runtimeMode
-    Nothing
-    bootstrapReadyTopic
-    ("integration-bootstrap-" <> runtimeText)
-    (Just bootstrapModelId)
-    bootstrapModelId
-    (LazyByteString.toStrict (Aeson.encode bootstrapReadyEvent))
-  bootstrapMessages <- waitForRawTopicMessages paths runtimeMode bootstrapReadyTopic 1
-  assertTopicMessageKey bootstrapMessages (Just bootstrapModelId) "model-bootstrap ready topic carries the model id as the Pulsar message key"
-  assertTopicHasDecoded bootstrapMessages bootstrapReadyEvent "model-bootstrap ready topic round-trips the ready event"
 
 integrationRunToken :: IO String
 integrationRunToken = do
@@ -1436,41 +1404,41 @@ conversationResultPayloadsForPrompt promptMessageId messages =
     Contracts.inferenceResultUserPromptMessageId resultPayload == promptMessageId
   ]
 
-waitForPromptPipelineCounts :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO PromptPipelineCounts
-waitForPromptPipelineCounts paths runtimeMode demoConfig promptRef = go (120 :: Int)
+waitForPromptPipelineCounts :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO PromptPipelineCounts
+waitForPromptPipelineCounts paths runtimeMode compiledPlan promptRef = go (120 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
           fail ("timed out waiting for prompt pipeline counts for " <> Text.unpack promptIdText)
       | otherwise = do
-          counts <- readPromptPipelineCounts paths runtimeMode demoConfig promptRef
+          counts <- readPromptPipelineCounts paths runtimeMode compiledPlan promptRef
           if promptPipelineComplete counts
             then do
               threadDelay 2000000
-              readPromptPipelineCounts paths runtimeMode demoConfig promptRef
+              readPromptPipelineCounts paths runtimeMode compiledPlan promptRef
             else do
               threadDelay 1000000
               go (remainingAttempts - 1)
     promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
-    maybeBatchTopic = batchTopicForPrompt demoConfig runtimeMode promptRef
+    maybeBatchTopic = batchTopicForPrompt compiledPlan promptRef
     promptPipelineComplete counts =
       promptPipelineRequestCount counts >= 1
         && maybe True (const (promptPipelineBatchCount counts >= 1)) maybeBatchTopic
         && promptPipelineResultCount counts >= 1
         && promptPipelineConversationResultCount counts >= 1
 
-readPromptPipelineCounts :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO PromptPipelineCounts
-readPromptPipelineCounts paths runtimeMode demoConfig promptRef = do
+readPromptPipelineCounts :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO PromptPipelineCounts
+readPromptPipelineCounts paths runtimeMode compiledPlan promptRef = do
   requestTopic <-
-    case requestTopicsForMode runtimeMode of
+    case ExecutionPlan.compiledPlanRequestTopics compiledPlan of
       topic : _ -> pure topic
       [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
   let promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
-      resultTopic = resultTopicForMode runtimeMode
+      resultTopic = ExecutionPlan.compiledPlanResultTopic compiledPlan
       conversationTopic = durablePromptConversationTopic (durablePromptRefContext promptRef)
   requestMessages <- readRawTopicPayloads paths runtimeMode Nothing requestTopic 1024
   batchMessages <-
-    case batchTopicForPrompt demoConfig runtimeMode promptRef of
+    case batchTopicForPrompt compiledPlan promptRef of
       Nothing -> pure []
       Just batchTopic -> readRawTopicPayloads paths runtimeMode Nothing batchTopic 1024
   resultMessages <- readRawTopicPayloads paths runtimeMode Nothing resultTopic 1024
@@ -1499,21 +1467,24 @@ readPromptPipelineCounts paths runtimeMode demoConfig promptRef = do
           length (conversationResultPayloadsForPrompt (durablePromptRefMessageId promptRef) conversationMessages)
       }
 
-batchTopicForPrompt :: DemoConfig -> RuntimeMode -> DurablePromptRef -> Maybe Text.Text
-batchTopicForPrompt demoConfig runtimeMode promptRef =
-  case enginePoolForModel demoConfig modelIdText of
-    Just pool -> Just (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdText)
-    Nothing -> Nothing
-  where
-    modelIdText = durablePromptModelId (durablePromptRefContext promptRef)
+batchTopicForPrompt :: ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> Maybe Text.Text
+batchTopicForPrompt compiledPlan promptRef = do
+  placement <-
+    ExecutionPlan.lookupCompiledPlacement
+      (durablePromptModelId (durablePromptRefContext promptRef))
+      compiledPlan
+  pure
+    ( ExecutionPlan.engineRouteTopic
+        (NonEmpty.head (ExecutionPlan.compiledPlacementRoutes placement))
+    )
 
-assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> DemoConfig -> DurablePromptRef -> IO ()
-assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef = do
-  counts <- waitForPromptPipelineCounts paths runtimeMode demoConfig promptRef
+assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO ()
+assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef = do
+  counts <- waitForPromptPipelineCounts paths runtimeMode compiledPlan promptRef
   assert
     (promptPipelineRequestCount counts == 1)
     ("exactly one inference request is published for " <> Text.unpack promptIdText <> ": " <> show counts)
-  case batchTopicForPrompt demoConfig runtimeMode promptRef of
+  case batchTopicForPrompt compiledPlan promptRef of
     Nothing -> pure ()
     Just _ ->
       assert
@@ -1590,8 +1561,8 @@ resultFamilyForRepresentativeModel runtimeMode representativeModelId =
     Nothing ->
       fail ("model " <> representativeModelId <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
 
-validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
-validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demoConfig representativeModelId = do
+validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
+validateFrontendPodReplacementPreservesDurableState paths state runtimeMode compiledPlan representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "frontend"
@@ -1622,10 +1593,10 @@ validateFrontendPodReplacementPreservesDurableState paths state runtimeMode demo
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultFamily resultPayload "durable prompt still completes after frontend pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
 
-validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
-validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
+validateCoordinatorFailoverDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "coordinator"
@@ -1642,10 +1613,10 @@ validateCoordinatorFailoverDurablePrompt paths state runtimeMode demoConfig repr
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through coordinator pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
 
-validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
-validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
+validateEnginePodReplacementDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine"
@@ -1662,26 +1633,31 @@ validateEnginePodReplacementDurablePrompt paths state runtimeMode demoConfig rep
       (durablePromptConversationTopic context)
       (durablePromptRefMessageId promptRef)
   assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through engine pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
+  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
 
-validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> DemoConfig -> String -> IO ()
-validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig representativeModelId = do
+validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
+validateEngineNodeDrainDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
   resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
   waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
   -- Sprint 6.43: persist a first-class ClusterMutating position across the
   -- cordon + drain so a SIGKILL mid-mutation leaves a detectable dirty cluster
   -- the next `cluster up` reconciles.
-  withPersistedClusterMutation paths state "engine-node-drain" "draining an engine node while a durable prompt is in flight" $ do
-    (_, nodeName) <- prepareEngineDrainTargetNode state
+  mutationState <-
+    maybe
+      (fail "engine-node-drain requires a freshly persisted cluster state")
+      pure
+      =<< loadClusterState paths
+  withPersistedClusterMutation paths mutationState "engine-node-drain" "draining an engine node while a durable prompt is in flight" $ \freshState -> do
+    (_, nodeName) <- prepareEngineDrainTargetNode freshState
     let restore =
-          runKubectl state ["uncordon", nodeName]
-            >> waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-            >> waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
-            >> waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
-            >> waitForDrainSensitivePulsarRollouts state
+          runKubectl freshState ["uncordon", nodeName]
+            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-engine" 2
+            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-coordinator" 2
+            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-demo" 2
+            >> waitForDrainSensitivePulsarRollouts freshState
     ( do
         runKubectl
-          state
+          freshState
           [ "drain",
             nodeName,
             "--ignore-daemonsets",
@@ -1689,11 +1665,11 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig represen
             "--force",
             "--timeout=180s"
           ]
-        waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 1
-        waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 1
-        waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 1
-        waitForDrainSensitivePulsarRollouts state
-        _ <- waitForRoutedDemoConfig paths state
+        waitForDeploymentReadyReplicasAtLeast freshState "infernix-engine" 1
+        waitForDeploymentReadyReplicasAtLeast freshState "infernix-coordinator" 1
+        waitForDeploymentReadyReplicasAtLeast freshState "infernix-demo" 1
+        waitForDrainSensitivePulsarRollouts freshState
+        _ <- waitForRoutedDemoConfig paths freshState
         context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
         waitForDispatcherDiscovery
         promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
@@ -1704,68 +1680,92 @@ validateEngineNodeDrainDurablePrompt paths state runtimeMode demoConfig represen
             (durablePromptConversationTopic context)
             (durablePromptRefMessageId promptRef)
         assertCompletedResultPayload resultFamily resultPayload "durable prompt completes while an engine node is drained"
-        assertPromptPipelineExactlyOnce paths runtimeMode demoConfig promptRef
+        assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
       )
-      `finally` restore
+      `finallyPreservingPrimary` restore
 
-validateModelBootstrapDeduplication :: Paths -> ClusterState -> RuntimeMode -> IO ()
-validateModelBootstrapDeduplication paths state runtimeMode = do
+validateModelBootstrapDeduplication ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  String ->
+  IO ()
+validateModelBootstrapDeduplication paths state runtimeMode compiledPlan representativeModelId = do
   waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
-  runToken <- Text.pack <$> integrationRunToken
-  let modelIdText = "integration-bootstrap-chaos-" <> runToken
-      -- This chaos test exercises bootstrap coordinator failover + producer
-      -- dedup, not real weight staging, so it needs any in-cluster URL the
-      -- staging path accepts. The webapp root serves HTML, which the Sprint
-      -- 4.21 realness weight guard (`bodyLooksLikeHtml`) now fails closed; use
-      -- the `/healthz` endpoint (plain-text "ok") so the bootstrap completes and
-      -- the failover/dedup mechanics can be observed.
-      request =
-        BootstrapModels.ModelBootstrapRequest
-          { BootstrapModels.bootstrapRequestModelId = modelIdText,
-            BootstrapModels.bootstrapRequestDownloadUrl = "http://infernix-demo.platform.svc.cluster.local/healthz",
-            BootstrapModels.bootstrapRequestRequestedAtIso8601 = "2026-06-02T00:00:00Z"
-          }
+  let modelIdText = Text.pack representativeModelId
       readyTopic =
         ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace modelIdText
-  publishModelBootstrapRequest paths runtimeMode Nothing request
+  baselineReadyMessageIds <-
+    bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
+  bootstrapCapability <-
+    prepareModelBootstrapRequest compiledPlan modelIdText
+      >>= either
+        (fail . ("could not prepare the compiled model-bootstrap request: " <>))
+        pure
+  publishModelBootstrapRequest paths bootstrapCapability
   oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
   runKubectl state ["-n", "platform", "delete", "pod", oldPod]
-  publishModelBootstrapRequest paths runtimeMode Nothing request
-  publishModelBootstrapRequest paths runtimeMode Nothing request
+  publishModelBootstrapRequest paths bootstrapCapability
+  publishModelBootstrapRequest paths bootstrapCapability
   waitForRollout state "deployment/infernix-coordinator"
   _ <- waitForPodByPrefix state "platform" "infernix-coordinator-" (Just oldPod)
-  readyMessages <- waitForBootstrapReadyMessages paths runtimeMode readyTopic modelIdText
+  newReadyMessageIds <-
+    waitForNewBootstrapReadyMessageIds
+      paths
+      runtimeMode
+      readyTopic
+      modelIdText
+      baselineReadyMessageIds
   assert
-    (length readyMessages == 1)
-    ("model-bootstrap producer dedup yields exactly one ready event, saw " <> show (length readyMessages))
+    (Set.size newReadyMessageIds == 1)
+    ( "model-bootstrap producer dedup yields exactly one new ready event for the authorized request attempt, saw "
+        <> show (Set.size newReadyMessageIds)
+    )
 
-waitForBootstrapReadyMessages :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO [BootstrapModels.ModelBootstrapReadyEvent]
-waitForBootstrapReadyMessages paths runtimeMode readyTopic modelIdText = go (120 :: Int)
+waitForNewBootstrapReadyMessageIds ::
+  Paths ->
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  Set.Set Text.Text ->
+  IO (Set.Set Text.Text)
+waitForNewBootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText baselineMessageIds = go (120 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
           fail ("timed out waiting for model-bootstrap ready event on " <> Text.unpack readyTopic)
       | otherwise = do
-          messages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 16
-          let readyEvents =
-                [ readyEvent
-                | rawMessage <- messages,
-                  Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
-                  BootstrapModels.readyEventModelId readyEvent == modelIdText
-                ]
-          if null readyEvents
+          observedMessageIds <-
+            bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
+          let newMessageIds =
+                observedMessageIds `Set.difference` baselineMessageIds
+          if Set.null newMessageIds
             then do
               threadDelay 1000000
               go (remainingAttempts - 1)
             else do
               threadDelay 2000000
-              settledMessages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 16
-              pure
-                [ readyEvent
-                | rawMessage <- settledMessages,
-                  Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
-                  BootstrapModels.readyEventModelId readyEvent == modelIdText
-                ]
+              settledMessageIds <-
+                bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
+              pure (settledMessageIds `Set.difference` baselineMessageIds)
+
+bootstrapReadyMessageIds ::
+  Paths ->
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  IO (Set.Set Text.Text)
+bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText = do
+  messages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 64
+  pure
+    ( Set.fromList
+        [ rawTopicMessageId rawMessage
+        | rawMessage <- messages,
+          Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
+          BootstrapModels.readyEventModelId readyEvent == modelIdText
+        ]
+    )
 
 data ThroughputMatrix = ThroughputMatrix
   { throughputUserCount :: Int,
@@ -2130,14 +2130,18 @@ shellSingleQuote value =
 -- the failure payload) rather than a client-side wait expiry. 70 minutes covers
 -- the largest catalog repo (Wan2.1-T2V-1.3B `-Diffusers`) on a constrained link.
 -- Warm/cached rows return in seconds.
-waitForPublishedResult :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-waitForPublishedResult paths runtimeMode resultTopic requestIdValue = do
+waitForPublishedResult ::
+  Paths ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  Text.Text ->
+  IO (Maybe InferenceResult)
+waitForPublishedResult paths compiledPlan requestIdValue = do
   startTime <- getPOSIXTime
   go startTime
   where
     deadlineSeconds = 4200 :: Double
     go startTime = do
-      maybeResult <- readPublishedInferenceResultMaybe paths runtimeMode resultTopic requestIdValue
+      maybeResult <- readPublishedInferenceResultMaybe paths compiledPlan requestIdValue
       case maybeResult of
         Just resultValue -> pure (Just resultValue)
         Nothing -> do
@@ -2150,7 +2154,7 @@ waitForPublishedResult paths runtimeMode resultTopic requestIdValue = do
 
 validateEdgePortConflictAndRediscovery :: Paths -> RuntimeMode -> IO ()
 validateEdgePortConflictAndRediscovery paths runtimeMode = do
-  cleanupRuntimeState paths
+  cleanupRuntimeState paths runtimeMode
   busyState <-
     bracket (openBusyTcpPort 9090) closeBusyTcpPortFixture $ \_busyFixture -> do
       waitForPortConflictHelper
@@ -2213,7 +2217,7 @@ openBusyTcpPortOnce port =
 validateDemoUiDisabled :: Paths -> RuntimeMode -> IO ()
 validateDemoUiDisabled paths runtimeMode =
   ( do
-      cleanupRuntimeState paths
+      cleanupRuntimeState paths runtimeMode
       materializeGeneratedSubstrate runtimeMode False
       withClusterLifecycle runtimeMode $ do
         state <- maybe (fail "cluster state was not available after demo-disabled cluster up") pure =<< loadClusterState paths
@@ -2244,7 +2248,7 @@ validateDemoUiDisabled paths runtimeMode =
           (pulsarHttpStatus == 405)
           "pulsar websocket route remains published when demo_ui is disabled"
   )
-    `finally` materializeGeneratedSubstrate runtimeMode True
+    `finallyPreservingPrimary` materializeGeneratedSubstrate runtimeMode True
 
 resolveInfernixExecutable :: IO FilePath
 resolveInfernixExecutable =
@@ -2261,53 +2265,8 @@ trim =
     . dropWhile (`elem` [' ', '\n', '\r', '\t'])
     . reverse
 
-cleanupRuntimeState :: Paths -> IO ()
-cleanupRuntimeState paths = do
-  secretsSnapshot <- snapshotDirectoryFiles (runtimeRoot paths </> "secrets")
-  catchIOError (removePathForcibly (runtimeRoot paths)) ignoreMissing
-  createDirectoryIfMissing True (runtimeRoot paths)
-  restoreDirectoryFiles (runtimeRoot paths </> "secrets") secretsSnapshot
-  where
-    ignoreMissing err
-      | isDoesNotExistError err = pure ()
-      | otherwise = ioError err
-
-snapshotDirectoryFiles :: FilePath -> IO [(FilePath, ByteString.ByteString)]
-snapshotDirectoryFiles root = do
-  rootExists <- doesDirectoryExist root
-  if rootExists
-    then go ""
-    else pure []
-  where
-    go relativeDirectory = do
-      let absoluteDirectory =
-            if null relativeDirectory
-              then root
-              else root </> relativeDirectory
-      entries <- listDirectory absoluteDirectory
-      concat <$> forM entries snapshotEntry
-      where
-        snapshotEntry entry = do
-          let relativePath =
-                if null relativeDirectory
-                  then entry
-                  else relativeDirectory </> entry
-              absolutePath = root </> relativePath
-          entryIsDirectory <- doesDirectoryExist absolutePath
-          entryIsFile <- doesFileExist absolutePath
-          case (entryIsDirectory, entryIsFile) of
-            (True, _) -> go relativePath
-            (_, True) -> do
-              payload <- ByteString.readFile absolutePath
-              pure [(relativePath, payload)]
-            _ -> pure []
-
-restoreDirectoryFiles :: FilePath -> [(FilePath, ByteString.ByteString)] -> IO ()
-restoreDirectoryFiles root files =
-  forM_ files $ \(relativePath, payload) -> do
-    let targetPath = root </> relativePath
-    createDirectoryIfMissing True (takeDirectory targetPath)
-    ByteString.writeFile targetPath payload
+cleanupRuntimeState :: Paths -> RuntimeMode -> IO ()
+cleanupRuntimeState = cleanupHarnessRuntimeState
 
 captureInfernixOutput :: [String] -> IO String
 captureInfernixOutput args = do
@@ -2393,6 +2352,19 @@ requireJsonDemoConfig payload =
   case Aeson.decode (LazyByteStringChar8.pack payload) of
     Just demoConfig -> pure demoConfig
     Nothing -> fail "unable to decode routed demo config JSON"
+
+requireCompiledRuntimePlanFile :: FilePath -> IO ExecutionPlan.CompiledRuntimePlan
+requireCompiledRuntimePlanFile configPath = do
+  compiledPlanResult <- decodeCompiledRuntimePlanFile configPath
+  case compiledPlanResult of
+    Right compiledPlan -> pure compiledPlan
+    Left errors ->
+      fail
+        ( "unable to compile generated execution plan "
+            <> configPath
+            <> ": "
+            <> show errors
+        )
 
 compact :: String -> String
 compact = filter (`notElem` [' ', '\n', '\r', '\t'])
@@ -2517,8 +2489,316 @@ validateMinioDurability state = do
   sentinelContents <- trim <$> kubectlOutputForState state ["-n", "platform", "exec", minioPod, "--", "sh", "-lc", "cat " <> sentinelPath]
   assert (sentinelContents == "minio-durable") "minio data written before pod replacement remains available afterward"
 
-validateRoutedPulsarRecovery :: Paths -> ClusterState -> RuntimeMode -> [String] -> IO ()
-validateRoutedPulsarRecovery paths state runtimeMode activeModelIds =
+usesDetachedRetainedSnapshot :: Paths -> RuntimeMode -> Bool
+usesDetachedRetainedSnapshot paths runtimeMode =
+  case runtimeMode of
+    AppleSilicon -> True
+    _ -> Config.controlPlaneContext paths == Config.HostNative
+
+-- Sprint 2.14 acceptance for the Apple/non-bind lifecycle. A unique canary is
+-- written only to a live non-Patroni MinIO claim. While Kind is live it must not
+-- appear in the detached host mirror. Teardown then freezes and commits that
+-- claim before deleting Kind, after which its WriterQuiesced scrub removes only
+-- rebuildable Harbor storage from the detached copy. Before recreate, the test
+-- turns that committed snapshot into a crash residue: the last committed tree
+-- is under @.previous@ and an unmarked partial @.incoming@ also exists. The
+-- first recreate is killed after Kind exists and the exact replay intent moves
+-- to ClusterActivating. A second recreate must resume that intent, recover the
+-- committed tree before claim preparation, replay the canary, remove both
+-- residues, and provision a fresh Harbor registry bucket.
+validateDetachedRetainedSnapshotReplay :: Paths -> RuntimeMode -> IO ()
+validateDetachedRetainedSnapshotReplay paths runtimeMode = do
+  state <-
+    maybe
+      (fail "cluster state was not available before retained snapshot validation")
+      pure
+      =<< loadClusterState paths
+  retainedClaim <-
+    maybe
+      (fail "the cluster state did not contain a non-Patroni MinIO data claim")
+      pure
+      (find isMinioDataClaim (claims state))
+  now <- getPOSIXTime
+  let token = show (round (now * 1000000) :: Integer)
+      podName = "infernix-minio-" <> show (ordinal retainedClaim)
+      canaryName = "phase2-retained-" <> token <> ".txt"
+      canaryPayload = "writer-frozen-retained-" <> token
+      retainedRuntimeRoot =
+        kindRoot paths </> showRuntimeMode runtimeMode
+      previousSnapshotRoot =
+        retainedRuntimeRoot <> ".previous"
+      incomingSnapshotRoot =
+        retainedRuntimeRoot <> ".incoming"
+      retainedClaimRoot =
+        retainedRuntimeRoot
+          </> Text.unpack (namespace retainedClaim)
+          </> Text.unpack (release retainedClaim)
+          </> Text.unpack (workload retainedClaim)
+          </> show (ordinal retainedClaim)
+          </> Text.unpack (claim retainedClaim)
+      retainedCanaryPath = retainedClaimRoot </> "ha-smoke" </> canaryName
+      retainedHarborRoot = retainedClaimRoot </> "harbor-registry"
+  waitForPodReady state "platform" podName
+  mountPath <- podMountPathForVolume state "platform" podName "data"
+  assert (not (null mountPath)) "the selected MinIO claim has a live pod mount"
+  let liveCanaryPath = mountPath </> "ha-smoke" </> canaryName
+      liveHarborRoot = mountPath </> "harbor-registry"
+  runKubectl
+    state
+    [ "-n",
+      "platform",
+      "exec",
+      podName,
+      "--",
+      "sh",
+      "-c",
+      "mkdir -p \"$1\" && printf '%s' \"$2\" > \"$3\"",
+      "infernix-retained-snapshot-canary",
+      mountPath </> "ha-smoke",
+      canaryPayload,
+      liveCanaryPath
+    ]
+  liveCanaryContents <-
+    trim
+      <$> kubectlOutputForState
+        state
+        ["-n", "platform", "exec", podName, "--", "cat", liveCanaryPath]
+  liveHarborPresent <- remotePathExists state podName liveHarborRoot
+  detachedCanaryPresentWhileLive <- doesFileExist retainedCanaryPath
+  detachedHarborPresentWhileLive <- doesDirectoryExist retainedHarborRoot
+  assert
+    ( liveCanaryContents == canaryPayload
+        && liveHarborPresent
+        && not detachedCanaryPresentWhileLive
+        && not detachedHarborPresentWhileLive
+    )
+    "the live MinIO writer contains the canary and Harbor bucket while its detached host mirror remains untouched"
+
+  clusterDownHarness (Just runtimeMode)
+  downState <- loadClusterState paths
+  retainedCanaryPresent <- doesFileExist retainedCanaryPath
+  retainedCanaryContents <-
+    if retainedCanaryPresent
+      then trim <$> readFile retainedCanaryPath
+      else pure ""
+  retainedHarborPresent <- doesDirectoryExist retainedHarborRoot
+  assert
+    ( maybe False (not . clusterPresent) downState
+        && retainedCanaryContents == canaryPayload
+        && not retainedHarborPresent
+    )
+    "post-delete detached snapshot retains non-Patroni data and scrubs rebuildable Harbor storage under WriterQuiesced"
+
+  renameDirectory retainedRuntimeRoot previousSnapshotRoot
+  createDirectoryIfMissing True incomingSnapshotRoot
+  writeFile
+    (incomingSnapshotRoot </> "partial-copy")
+    "unmarked incomplete snapshot must not be promoted\n"
+  interruptBringUpDuringRetainedReplay paths runtimeMode
+  clusterUpHarness (Just runtimeMode)
+  reboundState <-
+    maybe
+      (fail "cluster state was not available after retained snapshot replay")
+      pure
+      =<< loadClusterState paths
+  waitForPodReady reboundState "platform" podName
+  reboundMountPath <- podMountPathForVolume reboundState "platform" podName "data"
+  assert (not (null reboundMountPath)) "the replayed MinIO claim has a live pod mount"
+  reboundCanaryContents <-
+    trim
+      <$> kubectlOutputForState
+        reboundState
+        [ "-n",
+          "platform",
+          "exec",
+          podName,
+          "--",
+          "cat",
+          reboundMountPath </> "ha-smoke" </> canaryName
+        ]
+  reboundHarborPresent <-
+    remotePathExists
+      reboundState
+      podName
+      (reboundMountPath </> "harbor-registry")
+  previousResiduePresent <- doesDirectoryExist previousSnapshotRoot
+  incomingResiduePresent <- doesDirectoryExist incomingSnapshotRoot
+  assert
+    ( reboundCanaryContents == canaryPayload
+        && reboundHarborPresent
+        && not previousResiduePresent
+        && not incomingResiduePresent
+    )
+    "cluster recreate recovers the last committed snapshot before claim preparation, removes partial swap residue, replays the canary, and provisions fresh Harbor storage"
+  where
+    isMinioDataClaim persistentClaim =
+      namespace persistentClaim == "platform"
+        && workload persistentClaim == "minio"
+        && claim persistentClaim == "data"
+
+data RetainedReplayBringUpObservation
+  = RetainedReplayActivated
+  | RetainedReplayBringUpExited ProcessStatus
+  | RetainedReplayObservationTimedOut
+
+interruptBringUpDuringRetainedReplay :: Paths -> RuntimeMode -> IO ()
+interruptBringUpDuringRetainedReplay paths runtimeMode = do
+  baselineActivities <- boundedCommandActivityLeaseNames paths
+  bracketPreservingPrimary
+    ( forkProcessWithUnmask
+        (\unmask -> unmask (clusterUpHarness (Just runtimeMode)))
+    )
+    stopInterruptedBringUp
+    ( \bringUpPid -> do
+        observation <-
+          waitForRetainedReplayActivation
+            paths
+            baselineActivities
+            bringUpPid
+            (7200 :: Int)
+        case observation of
+          RetainedReplayActivated -> do
+            signalProcess sigKILL bringUpPid
+            processStatus <-
+              maybe
+                (fail "interrupted retained replay child did not produce an exit status")
+                pure
+                =<< getProcessStatus True False bringUpPid
+            assert
+              (retainedReplayBringUpWasKilled processStatus)
+              "the first recreated cluster bring-up is killed while retained replay intent is active"
+            waitForInterruptedBringUpCommandsToQuiesce paths 1000
+          RetainedReplayBringUpExited processStatus ->
+            fail
+              ( "the first recreated cluster bring-up exited before retained replay became active: "
+                  <> show processStatus
+              )
+          RetainedReplayObservationTimedOut ->
+            fail
+              "timed out waiting for the first recreated cluster bring-up to publish active retained replay intent"
+    )
+
+retainedReplayBringUpWasKilled :: ProcessStatus -> Bool
+retainedReplayBringUpWasKilled processStatus =
+  case processStatus of
+    Terminated signal _ -> signal == sigKILL
+    _ -> False
+
+waitForRetainedReplayActivation ::
+  Paths ->
+  Set.Set FilePath ->
+  ProcessID ->
+  Int ->
+  IO RetainedReplayBringUpObservation
+waitForRetainedReplayActivation paths baselineActivities bringUpPid remainingAttempts
+  | remainingAttempts <= 0 = pure RetainedReplayObservationTimedOut
+  | otherwise = do
+      maybeState <- loadClusterState paths
+      replayCopyActivityPublished <-
+        case maybeState of
+          Just state
+            | clusterPresent state,
+              retainedReplayPending state,
+              maybe
+                False
+                ( ("copying retained Kind runtime data into " `isPrefixOf`)
+                    . lifecyclePhaseDetail
+                )
+                (lifecyclePhaseOf state) ->
+                do
+                  currentActivities <- boundedCommandActivityLeaseNames paths
+                  pure
+                    ( not
+                        ( Set.null
+                            (currentActivities `Set.difference` baselineActivities)
+                        )
+                    )
+          _ -> pure False
+      if replayCopyActivityPublished
+        then pure RetainedReplayActivated
+        else do
+          maybeStatus <- getProcessStatus False False bringUpPid
+          case maybeStatus of
+            Just processStatus ->
+              pure (RetainedReplayBringUpExited processStatus)
+            Nothing -> do
+              threadDelay 50000
+              waitForRetainedReplayActivation
+                paths
+                baselineActivities
+                bringUpPid
+                (remainingAttempts - 1)
+
+boundedCommandActivityLeaseNames :: Paths -> IO (Set.Set FilePath)
+boundedCommandActivityLeaseNames paths = do
+  let activityRoot = runtimeRoot paths </> "bounded-command-activity"
+  rootExists <- doesDirectoryExist activityRoot
+  if rootExists
+    then
+      Set.fromList
+        . filter (".lease.json" `isSuffixOf`)
+        <$> listDirectory activityRoot
+    else pure Set.empty
+
+stopInterruptedBringUp :: ProcessID -> IO ()
+stopInterruptedBringUp bringUpPid = do
+  maybeStatusResult <-
+    try @IOException (getProcessStatus False False bringUpPid)
+  case maybeStatusResult of
+    Left _ -> pure ()
+    Right (Just _) -> pure ()
+    Right Nothing -> do
+      _ <- try @IOException (signalProcess sigKILL bringUpPid)
+      _ <- try @IOException (getProcessStatus True False bringUpPid)
+      pure ()
+
+waitForInterruptedBringUpCommandsToQuiesce :: Paths -> Int -> IO ()
+waitForInterruptedBringUpCommandsToQuiesce paths remainingAttempts
+  | remainingAttempts <= 0 =
+      fail
+        "bounded commands from the killed retained replay bring-up did not become quiescent"
+  | otherwise = do
+      reservationProcessGroup <- fromIntegral <$> getProcessGroupID
+      quiescenceResult <-
+        try @IOException
+          ( requireBoundedCommandActivitiesQuiescent
+              paths
+              reservationProcessGroup
+          )
+      case quiescenceResult of
+        Right _ -> pure ()
+        Left _ -> do
+          threadDelay 10000
+          waitForInterruptedBringUpCommandsToQuiesce
+            paths
+            (remainingAttempts - 1)
+
+remotePathExists :: ClusterState -> String -> FilePath -> IO Bool
+remotePathExists state podName pathValue =
+  (== "present")
+    . trim
+    <$> kubectlOutputForState
+      state
+      [ "-n",
+        "platform",
+        "exec",
+        podName,
+        "--",
+        "sh",
+        "-c",
+        "if [ -e \"$1\" ]; then printf present; else printf absent; fi",
+        "infernix-remote-path-exists",
+        pathValue
+      ]
+
+validateRoutedPulsarRecovery ::
+  Paths ->
+  ClusterState ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  [String] ->
+  IO ()
+validateRoutedPulsarRecovery paths state runtimeMode compiledPlan activeModelIds =
   case activeModelIds of
     firstModelId : secondModelId : _ -> do
       -- Entry guard: the broker StatefulSet must be fully reconciled before we
@@ -2526,30 +2806,30 @@ validateRoutedPulsarRecovery paths state runtimeMode activeModelIds =
       -- evict broker pods without re-establishing broker-tier health, so a bare
       -- `delete pod <ordinal>` here races a still-reconciling StatefulSet.
       runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
-      publishAndRequireResultWithRetry paths runtimeMode firstModelId "pulsar-pre-restart"
+      publishAndRequireResultWithRetry paths runtimeMode compiledPlan firstModelId "pulsar-pre-restart"
       -- Restart the broker tier through the controller rather than hard-deleting
       -- a hardcoded pod ordinal: never assumes a specific ordinal is present and
       -- never aborts on a transient NotFound, while still proving routed
       -- inference survives a broker restart.
       runKubectl state ["-n", "platform", "rollout", "restart", "statefulset/infernix-infernix-pulsar-broker"]
       runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
-      publishAndRequireResultWithRetry paths runtimeMode secondModelId "pulsar-post-restart"
+      publishAndRequireResultWithRetry paths runtimeMode compiledPlan secondModelId "pulsar-post-restart"
     _ -> fail "need at least two catalog entries to validate routed Pulsar recovery"
 
-publishAndRequireResult :: Paths -> RuntimeMode -> String -> String -> IO ()
-publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
-  requestTopic <-
-    case requestTopicsForMode runtimeMode of
-      topic : _ -> pure topic
-      [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
-  let resultTopic = resultTopicForMode runtimeMode
-      requestUserIdValue = "integration-direct-user"
+publishAndRequireResult ::
+  Paths ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  String ->
+  String ->
+  IO ()
+publishAndRequireResult paths _runtimeMode compiledPlan modelIdValue inputValue = do
+  let requestUserIdValue = "integration-direct-user"
       requestContextIdValue = Text.pack ("direct-" <> sanitizeFileToken modelIdValue)
   requestIdValue <-
     publishInferenceRequest
       paths
-      runtimeMode
-      requestTopic
+      compiledPlan
       InferenceRequest
         { requestModelId = Text.pack modelIdValue,
           inputText = Text.pack inputValue,
@@ -2557,7 +2837,7 @@ publishAndRequireResult paths runtimeMode modelIdValue inputValue = do
           requestUserId = Just requestUserIdValue,
           requestContextId = Just requestContextIdValue
         }
-  maybeResult <- waitForPublishedResult paths runtimeMode resultTopic requestIdValue
+  maybeResult <- waitForPublishedResult paths compiledPlan requestIdValue
   case maybeResult of
     Nothing -> fail ("pulsar roundtrip did not publish a result for " <> modelIdValue)
     Just resultValue ->
@@ -2631,21 +2911,26 @@ requiresHostServiceHarness paths runtimeMode =
 validateLinuxEngineAntiAffinityEnforcement :: Paths -> ClusterState -> IO ()
 validateLinuxEngineAntiAffinityEnforcement paths state = do
   runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-  originalReplicas <- deploymentSpecReplicas state "infernix-engine"
-  let surplusReplicas = originalReplicas + 1
-      restore =
-        runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show originalReplicas]
-          >> runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
   -- Sprint 6.43: persist a ClusterMutating position across the over-scale so a
   -- SIGKILL mid-mutation leaves a detectable dirty cluster the next `cluster up`
   -- reconciles (scaling the deployment back to its chart replica count).
-  withPersistedClusterMutation paths state "engine-deployment-over-scale" "over-scaling the engine deployment past available nodes" $
+  mutationState <-
+    maybe
+      (fail "engine-deployment-over-scale requires a freshly persisted cluster state")
+      pure
+      =<< loadClusterState paths
+  withPersistedClusterMutation paths mutationState "engine-deployment-over-scale" "over-scaling the engine deployment past available nodes" $ \freshState -> do
+    originalReplicas <- deploymentSpecReplicas freshState "infernix-engine"
+    let surplusReplicas = originalReplicas + 1
+        restore =
+          runKubectl freshState ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show originalReplicas]
+            >> runKubectl freshState ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
     ( do
-        runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
-        pendingPod <- waitForPendingEnginePod state
+        runKubectl freshState ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
+        pendingPod <- waitForPendingEnginePod freshState
         events <-
           kubectlOutputForState
-            state
+            freshState
             [ "-n",
               "platform",
               "get",
@@ -2661,8 +2946,8 @@ validateLinuxEngineAntiAffinityEnforcement paths state = do
         assert
           ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
           "the FailedScheduling event names pod anti-affinity as the reason"
-    )
-      `finally` restore
+      )
+      `finallyPreservingPrimary` restore
 
 waitForPendingEnginePod :: ClusterState -> IO String
 waitForPendingEnginePod state = go (60 :: Int)
@@ -2697,8 +2982,8 @@ data EnginePodPlacement = EnginePodPlacement
   }
   deriving (Eq, Show)
 
-validateLinuxEnginePoolPlacement :: ClusterState -> RuntimeMode -> DemoConfig -> IO ()
-validateLinuxEnginePoolPlacement state runtimeMode demoConfig = do
+validateLinuxEnginePoolPlacement :: ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+validateLinuxEnginePoolPlacement state runtimeMode compiledPlan = do
   runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
   podPlacementLines <-
     lines
@@ -2716,15 +3001,20 @@ validateLinuxEnginePoolPlacement state runtimeMode demoConfig = do
   let placements = mapMaybe parseEnginePodPlacement podPlacementLines
       runningPlacements = filter ((== "Running") . enginePodPlacementPhase) placements
       placementNodeNames = nub (map enginePodPlacementNodeName runningPlacements)
-      memberIds = map engineMemberId (engineMembers demoConfig)
-      engineTopics = concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
-      expectedTopics = concatMap (engineMemberRequestTopics runtimeMode (enginePools demoConfig)) (engineMembers demoConfig)
+      compiledEngineDaemons = ExecutionPlan.compiledPlanEngineDaemons compiledPlan
+      compiledRoutes =
+        concatMap
+          (NonEmpty.toList . ExecutionPlan.compiledPlacementRoutes)
+          (ExecutionPlan.compiledRuntimePlanPlacements compiledPlan)
+      memberIds = mapMaybe ExecutionPlan.compiledDaemonMemberId compiledEngineDaemons
+      engineTopics = concatMap ExecutionPlan.compiledDaemonRequestTopics compiledEngineDaemons
+      expectedTopics = map ExecutionPlan.engineRouteTopic compiledRoutes
       routingSurface =
         Text.unpack
           ( Text.unwords
               ( memberIds
-                  <> concatMap engineMemberPoolIds (engineMembers demoConfig)
-                  <> concatMap enginePoolModelIds (enginePools demoConfig)
+                  <> map ExecutionPlan.engineRoutePoolId compiledRoutes
+                  <> map ExecutionPlan.engineRouteMemberId compiledRoutes
                   <> engineTopics
               )
           )
@@ -2732,8 +3022,12 @@ validateLinuxEnginePoolPlacement state runtimeMode demoConfig = do
   assert (length runningPlacements >= 2) "linux-cpu has at least two running engine pods for placement validation"
   assert (length placementNodeNames >= 2) "linux-cpu engine pods are placed on distinct Kubernetes worker nodes"
   assert (memberIds == ["linux-cpu-engine"]) "linux-cpu keeps one logical engine member id independent of pod count"
-  assert (all ((== "cluster-pod") . engineMemberLocation) (engineMembers demoConfig)) "linux engine members are cluster-pod members"
-  assert (sort engineTopics == sort expectedTopics) "linux engine daemon topics are derived from engine pool membership"
+  assert
+    (all ((== "cluster-pod") . ExecutionPlan.compiledDaemonLocation) compiledEngineDaemons)
+    "linux engine members are cluster-pod members"
+  assert
+    (all (`elem` engineTopics) expectedTopics)
+    "linux engine daemons include every available compiled placement route"
   forM_ runningPlacements $ \placement -> do
     assert
       (enginePodPlacementPodName placement `notElemString` routingSurface)
@@ -2761,160 +3055,95 @@ splitPipes value =
     (segment, []) -> [segment]
     (segment, _ : rest) -> segment : splitPipes rest
 
--- | Apple pinned-member compatibility guard. Normal host-engine pool
--- topics use Shared subscriptions, so the guard creates a temporary
--- pinned-member daemon config whose request topic shape selects
--- Exclusive broker ownership. The first daemon proves it owns the
--- pinned route by completing one request; the second must fail.
-validateAppleHostEngineExclusiveSubscriptionEnforcement :: Paths -> DemoConfig -> IO ()
-validateAppleHostEngineExclusiveSubscriptionEnforcement paths demoConfig = do
-  infernixExecutable <- resolveInfernixExecutable
-  (pinnedConfig, memberIdValue, modelIdValue, pinnedTopic) <- applePinnedHostEngineConfig demoConfig
-  withPinnedDemoConfigFile paths pinnedConfig $ \pinnedConfigPath ->
-    withLoggedServiceDaemon
-      paths
-      infernixExecutable
-      ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", pinnedConfigPath]
-      (runtimeRoot paths </> "service" </> "host-service-pinned-exclusive.log")
-      ( \pinnedProcessHandle pinnedLogPath -> do
-          waitForProcessLogContains pinnedProcessHandle pinnedLogPath "serviceSubscriptionMode: websocket-pulsar"
-          requestIdValue <-
-            publishInferenceRequest
-              paths
-              AppleSilicon
-              pinnedTopic
-              InferenceRequest
-                { requestModelId = modelIdValue,
-                  inputText = "pinned apple host engine exclusive subscription",
-                  inputObjectRef = Nothing,
-                  requestUserId = Nothing,
-                  requestContextId = Nothing
-                }
-          maybePinnedResult <- waitForPublishedResult paths AppleSilicon (resultTopic pinnedConfig) requestIdValue
-          case maybePinnedResult of
-            Nothing -> fail "pinned apple host engine daemon did not publish a validation result"
-            Just pinnedResult -> do
-              assert (resultModelId pinnedResult == modelIdValue) "pinned apple host engine daemon publishes the selected model id"
-              assert (status pinnedResult == "completed") "pinned apple host engine daemon completes the validation request"
-          duplicateLog <-
-            runDuplicatePinnedHostEngineAndCaptureLog
-              paths
-              infernixExecutable
-              memberIdValue
-              pinnedConfigPath
-          validateDuplicatePinnedHostEngineDiagnostic duplicateLog
-      )
-
-applePinnedHostEngineConfig :: DemoConfig -> IO (DemoConfig, Text.Text, Text.Text, Text.Text)
-applePinnedHostEngineConfig demoConfig =
-  case engineDaemons demoConfig of
-    [] -> fail "apple demo config does not contain an engine daemon for pinned-route validation"
-    engineDaemon : _ -> do
-      memberIdValue <-
-        case daemonConfigMemberId engineDaemon of
-          Just memberId -> pure memberId
-          Nothing -> fail "apple engine daemon metadata does not contain a stable member id"
-      modelIdValue <-
-        case find ((== "llm-smollm2-safetensors") . modelId) (models demoConfig) of
-          Just model -> pure (modelId model)
-          Nothing ->
-            case models demoConfig of
-              model : _ -> pure (modelId model)
-              [] -> fail "apple demo config does not contain a model for pinned-route validation"
-      let pinnedTopic = engineMemberPinnedTopicForMode AppleSilicon memberIdValue modelIdValue
-          pinnedDaemon =
-            engineDaemon
-              { daemonConfigRequestTopics = [pinnedTopic]
-              }
-      pure
-        ( demoConfig
-            { activeDaemonRole = Engine,
-              engineDaemons = [pinnedDaemon]
-            },
-          memberIdValue,
-          modelIdValue,
-          pinnedTopic
-        )
-
 -- | Phase 7 Sprint 7.24 Wave J: prove the normal Apple host-engine
 -- pool route admits multiple live Shared consumers on one stable
--- broker subscription. The already-running default host daemon stays
--- on the generated catalog topics, so this fixture uses an isolated
--- pool topic and two temporary member-specific daemon configs.
-validateAppleHostEngineSharedSubscriptionCoexistence :: Paths -> DemoConfig -> IO ()
-validateAppleHostEngineSharedSubscriptionCoexistence paths demoConfig = do
+-- broker subscription. Both processes consume the same route and daemon
+-- capability from the validated generated execution plan.
+validateAppleHostEngineSharedSubscriptionCoexistence ::
+  Paths ->
+  FilePath ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO ()
+validateAppleHostEngineSharedSubscriptionCoexistence paths configPath compiledPlan = do
   infernixExecutable <- resolveInfernixExecutable
-  (sharedConfig, memberA, memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
+  (memberIdValue, modelIdValue, sharedTopic) <-
+    requireCompiledSharedRoute (Just "llm-smollm2-safetensors") compiledPlan
   transport <-
     maybe
       (fail "Pulsar transport was unavailable for apple shared-subscription coexistence validation")
       pure
       =<< discoverPulsarTransport paths AppleSilicon Nothing
-  withTemporaryDemoConfigFile paths "host-service-shared-two-member" sharedConfig $ \sharedConfigPath ->
-    withLoggedServiceDaemon
-      paths
-      infernixExecutable
-      ["service", "--role", "engine", "--engine-name", Text.unpack memberA, "--config", sharedConfigPath]
-      (runtimeRoot paths </> "service" </> "host-service-shared-a.log")
-      ( \memberAProcessHandle memberALogPath -> do
-          waitForProcessLogContains memberAProcessHandle memberALogPath ("serviceEngineMemberId: " <> Text.unpack memberA)
-          waitForProcessLogContains memberAProcessHandle memberALogPath "serviceSubscriptionMode: websocket-pulsar"
-          withLoggedServiceDaemon
-            paths
-            infernixExecutable
-            ["service", "--role", "engine", "--engine-name", Text.unpack memberB, "--config", sharedConfigPath]
-            (runtimeRoot paths </> "service" </> "host-service-shared-b.log")
-            ( \memberBProcessHandle memberBLogPath -> do
-                waitForProcessLogContains memberBProcessHandle memberBLogPath ("serviceEngineMemberId: " <> Text.unpack memberB)
-                waitForProcessLogContains memberBProcessHandle memberBLogPath "serviceSubscriptionMode: websocket-pulsar"
-                assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
-                requestIdValue <-
-                  publishInferenceRequest
-                    paths
-                    AppleSilicon
-                    sharedTopic
-                    InferenceRequest
-                      { requestModelId = modelIdValue,
-                        inputText = "shared apple host engine subscription",
-                        inputObjectRef = Nothing,
-                        requestUserId = Nothing,
-                        requestContextId = Nothing
-                      }
-                maybeSharedResult <- waitForPublishedResult paths AppleSilicon (resultTopic sharedConfig) requestIdValue
-                case maybeSharedResult of
-                  Nothing -> fail "shared apple host engine daemons did not publish a validation result"
-                  Just sharedResult -> do
-                    assert (resultModelId sharedResult == modelIdValue) "shared apple host engine daemon publishes the selected model id"
-                    assert (status sharedResult == "completed") "shared apple host engine daemon completes the validation request"
-            )
-      )
+  withLoggedServiceDaemon
+    paths
+    infernixExecutable
+    ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", configPath]
+    (runtimeRoot paths </> "service" </> "host-service-shared-a.log")
+    ( \memberAProcessHandle memberALogPath -> do
+        waitForProcessLogContains memberAProcessHandle memberALogPath ("serviceEngineMemberId: " <> Text.unpack memberIdValue)
+        waitForProcessLogContains memberAProcessHandle memberALogPath "serviceSubscriptionMode: websocket-pulsar"
+        withLoggedServiceDaemon
+          paths
+          infernixExecutable
+          ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", configPath]
+          (runtimeRoot paths </> "service" </> "host-service-shared-b.log")
+          ( \memberBProcessHandle memberBLogPath -> do
+              waitForProcessLogContains memberBProcessHandle memberBLogPath ("serviceEngineMemberId: " <> Text.unpack memberIdValue)
+              waitForProcessLogContains memberBProcessHandle memberBLogPath "serviceSubscriptionMode: websocket-pulsar"
+              assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
+              requestIdValue <-
+                publishInferenceRequest
+                  paths
+                  compiledPlan
+                  InferenceRequest
+                    { requestModelId = modelIdValue,
+                      inputText = "shared apple host engine subscription",
+                      inputObjectRef = Nothing,
+                      requestUserId = Nothing,
+                      requestContextId = Nothing
+                    }
+              maybeSharedResult <-
+                waitForPublishedResult
+                  paths
+                  compiledPlan
+                  requestIdValue
+              case maybeSharedResult of
+                Nothing -> fail "shared apple host engine daemons did not publish a validation result"
+                Just sharedResult -> do
+                  assert (resultModelId sharedResult == modelIdValue) "shared apple host engine daemon publishes the selected model id"
+                  assert (status sharedResult == "completed") "shared apple host engine daemon completes the validation request"
+          )
+    )
 
 -- | Phase 7 Sprint 7.24 Wave J: prove the Shared subscription's
 -- broker-native permit/backlog behavior with one busy logical Apple
--- member and one free logical Apple member. The first consumer holds a
--- delivered request unacked; with receiverQueueSize=1 the second
--- published request must be assigned to the free consumer on the same
--- service subscription.
-validateAppleSharedSubscriptionBackpressure :: Paths -> DemoConfig -> IO ()
-validateAppleSharedSubscriptionBackpressure paths demoConfig = do
-  (sharedConfig, _memberA, _memberB, modelIdValue, sharedTopic) <- appleSharedHostEngineConfig demoConfig
-  validateSharedSubscriptionBackpressure paths AppleSilicon sharedConfig modelIdValue sharedTopic "apple"
+-- member and one free logical Apple member. A test-owned subscription keeps
+-- the check isolated from the live service consumer on the compiled route.
+validateAppleSharedSubscriptionBackpressure :: Paths -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+validateAppleSharedSubscriptionBackpressure paths compiledPlan = do
+  (modelIdValue, sharedTopic, subscriptionName) <- isolatedSharedBackpressureFixture AppleSilicon compiledPlan
+  validateSharedSubscriptionBackpressure paths AppleSilicon compiledPlan modelIdValue sharedTopic subscriptionName "apple"
 
-validateLinuxSharedSubscriptionBackpressure :: Paths -> RuntimeMode -> DemoConfig -> IO ()
-validateLinuxSharedSubscriptionBackpressure paths runtimeMode demoConfig = do
-  (sharedConfig, modelIdValue, sharedTopic) <- isolatedLinuxSharedPoolConfig runtimeMode demoConfig
-  validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdValue sharedTopic "linux"
+validateLinuxSharedSubscriptionBackpressure :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> IO ()
+validateLinuxSharedSubscriptionBackpressure paths runtimeMode compiledPlan = do
+  (modelIdValue, sharedTopic, subscriptionName) <- isolatedSharedBackpressureFixture runtimeMode compiledPlan
+  validateSharedSubscriptionBackpressure paths runtimeMode compiledPlan modelIdValue sharedTopic subscriptionName "linux"
 
-validateSharedSubscriptionBackpressure :: Paths -> RuntimeMode -> DemoConfig -> Text.Text -> Text.Text -> String -> IO ()
-validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdValue sharedTopic cohortLabel = do
+validateSharedSubscriptionBackpressure ::
+  Paths ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  Text.Text ->
+  Text.Text ->
+  String ->
+  String ->
+  IO ()
+validateSharedSubscriptionBackpressure paths runtimeMode compiledPlan modelIdValue sharedTopic subscriptionName cohortLabel = do
   transport <-
     maybe
       (fail ("Pulsar transport was unavailable for " <> cohortLabel <> " shared backpressure validation"))
       pure
       =<< discoverPulsarTransport paths runtimeMode Nothing
-  ensureRegisteredSchemasWithRetry paths transport sharedConfig
   let websocketBase = pulsarWebSocketBase transport
-      subscriptionName = integrationServiceSubscriptionName sharedTopic
       busyConsumerName = serviceConsumerName subscriptionName ConsumerShared "integration-busy"
       freeConsumerName = serviceConsumerName subscriptionName ConsumerShared "integration-free"
   busyConsumerPath <- integrationSharedConsumerSocketPath websocketBase sharedTopic subscriptionName busyConsumerName
@@ -2923,8 +3152,7 @@ validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdVal
     busyRequestId <-
       publishInferenceRequest
         paths
-        runtimeMode
-        sharedTopic
+        compiledPlan
         InferenceRequest
           { requestModelId = modelIdValue,
             inputText = Text.pack ("shared " <> cohortLabel <> " engine busy logical member"),
@@ -2938,12 +3166,11 @@ validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdVal
       (observedBusyRequestId == busyRequestId)
       "busy shared-subscription consumer receives the first published request"
     withIntegrationPulsarClient websocketBase freeConsumerPath $ \freeConnection -> do
-      assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
+      assertPulsarSubscriptionConsumerCount transport sharedTopic subscriptionName 2
       freeRequestId <-
         publishInferenceRequest
           paths
-          runtimeMode
-          sharedTopic
+          compiledPlan
           InferenceRequest
             { requestModelId = modelIdValue,
               inputText = Text.pack ("shared " <> cohortLabel <> " engine free logical member"),
@@ -2959,45 +3186,50 @@ validateSharedSubscriptionBackpressure paths runtimeMode sharedConfig modelIdVal
       ackIntegrationPulsarMessage freeConnection freeMessageId
       ackIntegrationPulsarMessage busyConnection busyMessageId
 
-isolatedLinuxSharedPoolConfig :: RuntimeMode -> DemoConfig -> IO (DemoConfig, Text.Text, Text.Text)
-isolatedLinuxSharedPoolConfig runtimeMode demoConfig = do
-  uniqueSuffix <- Text.pack <$> integrationRunToken
-  selectedModel <-
-    case models demoConfig of
-      model : _ -> pure model
-      [] -> fail "linux demo config does not contain a model for shared-subscription validation"
-  selectedPool <-
-    case enginePoolForModel demoConfig (modelId selectedModel) of
-      Just pool -> pure pool
-      Nothing -> fail ("linux demo config does not contain an engine pool for " <> Text.unpack (modelId selectedModel))
-  let memberA = "linux-integration-shared-a"
-      memberB = "linux-integration-shared-b"
-      sharedPoolId = enginePoolId selectedPool <> "-integration-shared-" <> uniqueSuffix
-      sharedTopic = enginePoolTopicForMode runtimeMode sharedPoolId (modelId selectedModel)
-      sharedPool =
-        selectedPool
-          { enginePoolId = sharedPoolId,
-            enginePoolModelIds = [modelId selectedModel],
-            enginePoolMemberIds = [memberA, memberB],
-            enginePoolSubscriptionType = ConsumerShared,
-            enginePoolMaxInflightPerMember = 1
-          }
-      sharedMember memberIdValue =
-        EngineMember
-          { engineMemberId = memberIdValue,
-            engineMemberRuntimeMode = runtimeMode,
-            engineMemberLocation = "cluster-pod",
-            engineMemberPoolIds = [sharedPoolId]
-          }
+isolatedSharedBackpressureFixture ::
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO (Text.Text, Text.Text, String)
+isolatedSharedBackpressureFixture runtimeMode compiledPlan = do
+  (_, modelIdValue, sharedTopic) <- requireCompiledSharedRoute Nothing compiledPlan
+  uniqueSuffix <- integrationRunToken
   pure
-    ( demoConfig
-        { requestTopics = [sharedTopic],
-          enginePools = [sharedPool],
-          engineMembers = [sharedMember memberA, sharedMember memberB]
-        },
-      modelId selectedModel,
-      sharedTopic
+    ( modelIdValue,
+      sharedTopic,
+      "infernix-integration-shared-backpressure-"
+        <> Text.unpack (runtimeModeId runtimeMode)
+        <> "-"
+        <> uniqueSuffix
     )
+
+requireCompiledSharedRoute ::
+  Maybe Text.Text ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  IO (Text.Text, Text.Text, Text.Text)
+requireCompiledSharedRoute maybePreferredModelId compiledPlan = do
+  placement <-
+    case maybePreferredModelId >>= (`ExecutionPlan.lookupCompiledPlacement` compiledPlan) of
+      Just preferredPlacement -> pure preferredPlacement
+      Nothing ->
+        case ExecutionPlan.compiledRuntimePlanPlacements compiledPlan of
+          firstPlacement : _ -> pure firstPlacement
+          [] -> fail "compiled execution plan does not contain an available engine placement"
+  let route = NonEmpty.head (ExecutionPlan.compiledPlacementRoutes placement)
+      memberIdValue = ExecutionPlan.engineRouteMemberId route
+      modelIdValue = ExecutionPlan.compiledPlacementId placement
+      topicValue = ExecutionPlan.engineRouteTopic route
+  unless (ExecutionPlan.engineRouteSubscriptionType route == ConsumerShared) $
+    fail ("compiled engine route is not Shared: " <> Text.unpack topicValue)
+  daemon <-
+    maybe
+      (fail ("compiled execution plan does not contain engine daemon " <> Text.unpack memberIdValue))
+      pure
+      (ExecutionPlan.lookupCompiledEngineDaemon memberIdValue compiledPlan)
+  unless (ExecutionPlan.compiledDaemonConsumerSubscriptionType daemon == Just ConsumerShared) $
+    fail ("compiled engine daemon is not a Shared consumer for " <> Text.unpack memberIdValue)
+  unless (topicValue `elem` ExecutionPlan.compiledDaemonRequestTopics daemon) $
+    fail ("compiled engine daemon does not consume its placement route " <> Text.unpack topicValue)
+  pure (memberIdValue, modelIdValue, topicValue)
 
 integrationSharedConsumerSocketPath :: PulsarWebSocketBase -> Text.Text -> String -> String -> IO String
 integrationSharedConsumerSocketPath websocketBase topicValue subscriptionName consumerName = do
@@ -3007,7 +3239,7 @@ integrationSharedConsumerSocketPath websocketBase topicValue subscriptionName co
         websocketBase
         ("consumer/" <> topicPath <> "/" <> subscriptionName)
         [ ("subscriptionType", "Shared"),
-          ("subscriptionInitialPosition", "Earliest"),
+          ("subscriptionInitialPosition", "Latest"),
           ("receiverQueueSize", "1"),
           ("consumerName", consumerName)
         ]
@@ -3080,68 +3312,16 @@ ackIntegrationPulsarMessage connection messageIdValue =
         )
     )
 
-appleSharedHostEngineConfig :: DemoConfig -> IO (DemoConfig, Text.Text, Text.Text, Text.Text, Text.Text)
-appleSharedHostEngineConfig demoConfig =
-  case engineDaemons demoConfig of
-    [] -> fail "apple demo config does not contain an engine daemon for shared-subscription validation"
-    engineDaemon : _ -> do
-      uniqueSuffix <- Text.pack <$> integrationRunToken
-      selectedModel <-
-        case find ((== "llm-smollm2-safetensors") . modelId) (models demoConfig) of
-          Just model -> pure model
-          Nothing ->
-            case models demoConfig of
-              model : _ -> pure model
-              [] -> fail "apple demo config does not contain a model for shared-subscription validation"
-      selectedPool <-
-        case enginePoolForModel demoConfig (modelId selectedModel) of
-          Just pool -> pure pool
-          Nothing -> fail ("apple demo config does not contain an engine pool for " <> Text.unpack (modelId selectedModel))
-      let memberA = "apple-host-shared-a"
-          memberB = "apple-host-shared-b"
-          sharedPoolId = enginePoolId selectedPool <> "-integration-shared-" <> uniqueSuffix
-          sharedTopic = enginePoolTopicForMode AppleSilicon sharedPoolId (modelId selectedModel)
-          sharedPool =
-            selectedPool
-              { enginePoolId = sharedPoolId,
-                enginePoolModelIds = [modelId selectedModel],
-                enginePoolMemberIds = [memberA, memberB],
-                enginePoolSubscriptionType = ConsumerShared,
-                enginePoolMaxInflightPerMember = 1
-              }
-          sharedMember memberIdValue =
-            EngineMember
-              { engineMemberId = memberIdValue,
-                engineMemberRuntimeMode = AppleSilicon,
-                engineMemberLocation = "control-plane-host",
-                engineMemberPoolIds = [sharedPoolId]
-              }
-          sharedDaemon memberIdValue =
-            engineDaemon
-              { daemonConfigMemberId = Just memberIdValue,
-                daemonConfigRequestTopics = [sharedTopic],
-                daemonConfigConsumerSubscriptionType = Just ConsumerShared
-              }
-      pure
-        ( demoConfig
-            { activeDaemonRole = Engine,
-              engineDaemons = [sharedDaemon memberA, sharedDaemon memberB],
-              enginePools = [sharedPool],
-              engineMembers = [sharedMember memberA, sharedMember memberB],
-              requestTopics = [sharedTopic],
-              engines = [engineBindingForSelectedEngine AppleSilicon (selectedEngine selectedModel)],
-              models = [selectedModel]
-            },
-          memberA,
-          memberB,
-          modelId selectedModel,
-          sharedTopic
-        )
-
 assertPulsarSharedSubscriptionConsumerCount :: PulsarTransport -> Text.Text -> Int -> IO ()
-assertPulsarSharedSubscriptionConsumerCount transport topicValue expectedCount = go (120 :: Int) Nothing
+assertPulsarSharedSubscriptionConsumerCount transport topicValue =
+  assertPulsarSubscriptionConsumerCount
+    transport
+    topicValue
+    (integrationServiceSubscriptionName topicValue)
+
+assertPulsarSubscriptionConsumerCount :: PulsarTransport -> Text.Text -> String -> Int -> IO ()
+assertPulsarSubscriptionConsumerCount transport topicValue subscriptionName expectedCount = go (120 :: Int) Nothing
   where
-    subscriptionName = integrationServiceSubscriptionName topicValue
     go remainingAttempts maybeLastObservation
       | remainingAttempts <= 0 =
           fail
@@ -3205,44 +3385,48 @@ sanitizePulsarSubscriptionSegment =
     replaceSeparator '.' = '_'
     replaceSeparator character = character
 
-withPinnedDemoConfigFile :: Paths -> DemoConfig -> (FilePath -> IO a) -> IO a
-withPinnedDemoConfigFile paths =
-  withTemporaryDemoConfigFile paths "host-service-pinned-exclusive"
-
-withTemporaryDemoConfigFile :: Paths -> String -> DemoConfig -> (FilePath -> IO a) -> IO a
-withTemporaryDemoConfigFile paths label demoConfig action = do
-  let configPath = runtimeRoot paths </> "service" </> sanitizeFileToken label <> ".dhall"
-  createDirectoryIfMissing True (takeDirectoryPortable configPath)
-  bracket_
-    (LazyByteString.writeFile configPath (encodeDemoConfig demoConfig))
-    (removePathForcibly configPath)
-    (action configPath)
-
 withLoggedServiceDaemon :: Paths -> FilePath -> [String] -> FilePath -> (ProcessHandle -> FilePath -> IO a) -> IO a
-withLoggedServiceDaemon paths infernixExecutable args logPath action = do
+withLoggedServiceDaemon paths infernixExecutable args logPath action =
+  withLoggedProcess
+    logPath
+    ( pure
+        (proc infernixExecutable args)
+          { cwd = Just (repoRoot paths)
+          }
+    )
+    (`action` logPath)
+
+withLoggedProcess :: FilePath -> IO CreateProcess -> (ProcessHandle -> IO a) -> IO a
+withLoggedProcess logPath loadProcess action = do
   createDirectoryIfMissing True (takeDirectoryPortable logPath)
-  bracket
-    ( do
-        logHandle <- openFile logPath WriteMode
+  bracketPreservingPrimary
+    (openFile logPath WriteMode)
+    hClose
+    ( \logHandle -> do
         hSetBuffering logHandle LineBuffering
-        (_, _, _, processHandle) <-
-          createProcess
-            (proc infernixExecutable args)
-              { cwd = Just (repoRoot paths),
-                std_out = UseHandle logHandle,
-                std_err = UseHandle logHandle
-              }
-        pure (processHandle, logHandle)
+        processSpec <- loadProcess
+        bracketPreservingPrimary
+          ( do
+              (_, _, _, processHandle) <-
+                createProcess
+                  processSpec
+                    { std_out = UseHandle logHandle,
+                      std_err = UseHandle logHandle
+                    }
+              pure processHandle
+          )
+          stopChildProcess
+          action
     )
-    ( \(processHandle, logHandle) -> do
+
+stopChildProcess :: ProcessHandle -> IO ()
+stopChildProcess processHandle =
+  runCleanupsPreservingFailures
+    [ do
         maybeExitCode <- getProcessExitCode processHandle
-        when (isNothing maybeExitCode) (terminateProcess processHandle)
-        _ <- waitForProcess processHandle
-        hClose logHandle
-    )
-    ( \(processHandle, _logHandle) ->
-        action processHandle logPath
-    )
+        when (isNothing maybeExitCode) (terminateProcess processHandle),
+      void (waitForProcess processHandle)
+    ]
 
 waitForProcessLogContains :: ProcessHandle -> FilePath -> String -> IO ()
 waitForProcessLogContains processHandle logPath needle = go (600 :: Int)
@@ -3265,64 +3449,17 @@ waitForProcessLogContains processHandle logPath needle = go (600 :: Int)
                   threadDelay 100000
                   go (remainingAttempts - 1)
 
-runDuplicatePinnedHostEngineAndCaptureLog :: Paths -> FilePath -> Text.Text -> FilePath -> IO String
-runDuplicatePinnedHostEngineAndCaptureLog paths infernixExecutable memberIdValue pinnedConfigPath = do
-  let duplicateLogPath = runtimeRoot paths </> "service" </> "host-service-pinned-exclusive-duplicate.log"
-  createDirectoryIfMissing True (takeDirectoryPortable duplicateLogPath)
-  logHandle <- openFile duplicateLogPath WriteMode
-  hSetBuffering logHandle LineBuffering
-  (_, _, _, processHandle) <-
-    createProcess
-      (proc infernixExecutable ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", pinnedConfigPath])
-        { cwd = Just (repoRoot paths),
-          std_out = UseHandle logHandle,
-          std_err = UseHandle logHandle
-        }
-  maybeExitCode <- timeout (30 * 1000000) (waitForProcess processHandle)
-  case maybeExitCode of
-    Nothing -> do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      hClose logHandle
-      logSnapshot <- readFileIfPresent duplicateLogPath
-      fail ("a duplicate pinned apple host engine service did not fail within 30 seconds\n" <> logSnapshot)
-    Just exitCode -> do
-      hClose logHandle
-      logSnapshot <- readFileIfPresent duplicateLogPath
-      assert
-        (exitCode /= ExitSuccess)
-        "a second pinned `infernix service` invocation exits non-zero when the Exclusive subscription is already owned"
-      pure logSnapshot
-
-validateDuplicatePinnedHostEngineDiagnostic :: String -> IO ()
-validateDuplicatePinnedHostEngineDiagnostic duplicateLog = do
-  assert
-    ("subscription rejected" `isInfixOf` duplicateLog || "Exclusive" `isInfixOf` duplicateLog || "exclusive" `isInfixOf` duplicateLog)
-    "the second pinned `infernix service` invocation surfaces the Exclusive subscription diagnostic"
-  assert
-    ("Shared" `notElem` words duplicateLog)
-    "the duplicate pinned Apple host engine diagnostic does not fall back to Shared subscription ownership"
-
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
   infernixExecutable <- resolveInfernixExecutable
   let logPath = hostServiceDaemonLogPath paths
-  createDirectoryIfMissing True (takeDirectoryPortable logPath)
-  logHandle <- openFile logPath WriteMode
-  hSetBuffering logHandle LineBuffering
   reportStep ("apple host service daemon log: " <> logPath)
-  (_, _, _, processHandle) <-
-    createProcess
-      (proc infernixExecutable ["service"])
-        { cwd = Just (repoRoot paths),
-          std_out = UseHandle logHandle,
-          std_err = UseHandle logHandle
-        }
-  action
-    `finally` do
-      terminateProcess processHandle
-      _ <- waitForProcess processHandle
-      hClose logHandle
+  withLoggedServiceDaemon
+    paths
+    infernixExecutable
+    ["service"]
+    logPath
+    (\_processHandle _logPath -> action)
 
 hostServiceDaemonLogPath :: Paths -> FilePath
 hostServiceDaemonLogPath paths =
@@ -3340,11 +3477,17 @@ expectedInferenceDispatchMode runtimeMode =
     AppleSilicon -> "pulsar-bridge-to-host-daemon"
     _ -> "pulsar-bridge-to-cluster-daemon"
 
-publishAndRequireResultWithRetry :: Paths -> RuntimeMode -> String -> String -> IO ()
-publishAndRequireResultWithRetry paths runtimeMode modelIdValue inputValue = go (24 :: Int) Nothing
+publishAndRequireResultWithRetry ::
+  Paths ->
+  RuntimeMode ->
+  ExecutionPlan.CompiledRuntimePlan ->
+  String ->
+  String ->
+  IO ()
+publishAndRequireResultWithRetry paths runtimeMode compiledPlan modelIdValue inputValue = go (24 :: Int) Nothing
   where
     go remainingAttempts maybeLastError = do
-      result <- try (publishAndRequireResult paths runtimeMode modelIdValue inputValue) :: IO (Either SomeException ())
+      result <- try (publishAndRequireResult paths runtimeMode compiledPlan modelIdValue inputValue) :: IO (Either SomeException ())
       case result of
         Right _ -> pure ()
         Left err
@@ -3375,8 +3518,8 @@ validatePostgresLifecycleRebinding paths runtimeMode state = do
   assert (not (Map.null inventoryBefore)) "operator-managed PostgreSQL persistent-volume inventory is present before cluster lifecycle rebind validation"
   boundVolumesBefore <- postgresBoundVolumeNames state
   assert (boundVolumesBefore == Map.keysSet inventoryBefore) "operator-managed PostgreSQL PVCs bind to the full deterministic Harbor PV inventory before cluster lifecycle rebind validation"
-  clusterDown (Just runtimeMode)
-  clusterUp HarnessOwned (Just runtimeMode)
+  clusterDownHarness (Just runtimeMode)
+  clusterUpHarness (Just runtimeMode)
   reboundState <- maybe (fail "cluster state was not available after lifecycle rebind validation") pure =<< loadClusterState paths
   waitForRollout reboundState "deployment/harbor-postgresql-pgbouncer"
   inventoryAfter <- postgresPersistentVolumeInventory reboundState
@@ -3661,7 +3804,7 @@ prepareEngineDrainTargetNode state = do
                         <> intercalate ", " (map podNodePlacementPodName remainingCriticalPods)
                     )
             )
-            `onException` runKubectl state ["uncordon", nodeName]
+            `onExceptionPreservingPrimary` runKubectl state ["uncordon", nodeName]
 
 findEngineDrainTargetAvoidingPulsar :: ClusterState -> [(String, String, String, String)] -> IO (Maybe (String, String, String, String))
 findEngineDrainTargetAvoidingPulsar state readyEnginePodNodes = do

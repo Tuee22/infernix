@@ -12,6 +12,12 @@ extra-source-files:
     README.md
     proto/infernix/runtime/inference.proto
     proto/infernix/manifest/runtime_manifest.proto
+    test/compile-fail/cabal.project
+    test/compile-fail/infernix-compile-fixtures.cabal
+    test/compile-fail/support/DesiredApi.hs
+    test/compile-fail/pass/*.hs
+    test/compile-fail/fail/*.hs
+    test/execution-plan-internal/Spec.hs
 
 custom-setup
     setup-depends:
@@ -38,7 +44,6 @@ library
         Infernix.Cluster.Discover
         Infernix.Cluster.ImageFingerprint
         Infernix.Cluster.PublishImages
-        Infernix.Cluster.Subprocess
         Infernix.Config
         Infernix.Conversation.Event
         Infernix.Conversation.Hash
@@ -54,10 +59,12 @@ library
         Infernix.Demo.Bootstrap
         Infernix.Demo.WebSocket
         Infernix.DemoConfig
+        Infernix.DemoConfig.Properties
         Infernix.Engines.AppleSilicon
         Infernix.Engines.LinuxNative
         Infernix.Error
         Infernix.ExecutionPlan
+        Infernix.ExecutionPlan.Properties
         Infernix.Evidence.Lease
         Infernix.Evidence.Readiness
         Infernix.HostConfig
@@ -79,8 +86,9 @@ library
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
-        Infernix.Runtime.CappedEngine
         Infernix.Runtime.Daemon
+        Infernix.Runtime.Enforcer
+        Infernix.Runtime.Enforcer.Properties
         Infernix.Runtime.KVCache
         Infernix.Runtime.Pulsar
         Infernix.Runtime.Pulsar.Failover
@@ -95,7 +103,42 @@ library
 
     hs-source-dirs:   src
     other-modules:
+        Infernix.Cluster.ClaimPermissions
+        Infernix.Cluster.Command
+        Infernix.Cluster.LifecycleLock
+        Infernix.Cluster.MutationRecovery
+        Infernix.Cluster.Subprocess
+        Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Protocol
+        Infernix.EngineBindings
+        Infernix.EngineRouting
+        Infernix.DemoConfig.Colima
+        Infernix.DemoConfig.Internal
+        Infernix.Engines.AppleSilicon.Internal
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Activation
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.DownloadCacheLock.Internal
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Engines.Provisioning
+        Infernix.Engines.Provisioning.Internal
+        Infernix.Python.MutationLock.Internal
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
         Infernix.ExecutionPlan.Internal
+        Infernix.Runtime.CappedEngine
+        Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.Internal
+        Infernix.Runtime.CappedEngine.OutputCapture
+        Infernix.Runtime.Enforcer.Internal
+        Infernix.Substrate.Internal
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference
@@ -123,6 +166,8 @@ library
         directory >=1.3 && <1.4,
         dhall >=1.42 && <1.43,
         either >=5.0 && <5.1,
+        entropy >=0.4.1.11 && <0.5,
+        filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
         http-client >=0.7 && <0.8,
         http-client-tls >=0.3 && <0.4,
@@ -166,51 +211,476 @@ executable infernix
 test-suite infernix-unit
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    hs-source-dirs:   test/unit
+    hs-source-dirs:   test/unit src
+    other-modules:
+        Infernix.Auth.Jwt
+        Infernix.Bootstrap.Models
+        Infernix.Bridge.Result
+        Infernix.CLI
+        Infernix.Cluster
+        Infernix.Cluster.ClaimPermissions
+        Infernix.Cluster.Command
+        Infernix.Cluster.Discover
+        Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.LifecycleLock
+        Infernix.Cluster.MutationRecovery
+        Infernix.Cluster.PublishImages
+        Infernix.Cluster.Subprocess
+        Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Protocol
+        Infernix.ClusterConfig
+        Infernix.CommandRegistry
+        Infernix.Config
+        Infernix.Conversation.Event
+        Infernix.Conversation.Hash
+        Infernix.Conversation.Idempotency
+        Infernix.Conversation.Reducer
+        Infernix.Conversation.Topic
+        Infernix.Demo.Api
+        Infernix.Demo.Auth
+        Infernix.Demo.Bootstrap
+        Infernix.Demo.WebSocket
+        Infernix.DemoConfig
+        Infernix.DemoConfig.Colima
+        Infernix.DemoConfig.Internal
+        Infernix.DemoConfig.Properties
+        Infernix.DhallSchema
+        Infernix.DhallSchema.Reflection
+        Infernix.Dispatch.ContextModelMap
+        Infernix.Dispatch.SingleFlight
+        Infernix.EngineBindings
+        Infernix.EngineRouting
+        Infernix.Engines.AppleSilicon
+        Infernix.Engines.AppleSilicon.Internal
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Activation
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.DownloadCacheLock.Internal
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Engines.LinuxNative
+        Infernix.Engines.Provisioning
+        Infernix.Engines.Provisioning.Internal
+        Infernix.Error
+        Infernix.Evidence.Lease
+        Infernix.Evidence.Readiness
+        Infernix.ExecutionPlan
+        Infernix.ExecutionPlan.Internal
+        Infernix.ExecutionPlan.Properties
+        Infernix.HostConfig
+        Infernix.HostPrereqs
+        Infernix.HostTools
+        Infernix.Internal.Util
+        Infernix.Lint.Chart
+        Infernix.Lint.Docs
+        Infernix.Lint.Files
+        Infernix.Lint.HaskellStyle
+        Infernix.Lint.Proto
+        Infernix.Models
+        Infernix.Objects.Layout
+        Infernix.Objects.Presigned
+        Infernix.Objects.Sts
+        Infernix.Objects.Upload
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
+        Infernix.ProjectInit
+        Infernix.Python
+        Infernix.Python.MutationLock.Internal
+        Infernix.Routes
+        Infernix.Runtime
+        Infernix.Runtime.Cache
+        Infernix.Runtime.CappedEngine
+        Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.Internal
+        Infernix.Runtime.CappedEngine.OutputCapture
+        Infernix.Runtime.Daemon
+        Infernix.Runtime.Enforcer
+        Infernix.Runtime.Enforcer.Internal
+        Infernix.Runtime.Enforcer.Properties
+        Infernix.Runtime.KVCache
+        Infernix.Runtime.Pulsar
+        Infernix.Runtime.Pulsar.Failover
+        Infernix.Runtime.Worker
+        Infernix.SecretsConfig
+        Infernix.Service
+        Infernix.Storage
+        Infernix.Substrate
+        Infernix.Substrate.Internal
+        Infernix.Topic.Drafts
+        Infernix.Topic.Metadata
+        Infernix.Types
+        Infernix.Web.Contracts
+        Infernix.Webapp
+        Infernix.Workflow
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+        ProcessIdentitySpec
+
+    autogen-modules:
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+
     default-language: GHC2021
-    ghc-options:      -Wall -Werror
+    ghc-options:      -Wall -Werror -threaded
     build-depends:
         aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
         base64-bytestring >=1.2 && <1.3,
         bytestring >=0.11 && <0.13,
+        case-insensitive >=1.2 && <1.3,
         containers >=0.6 && <0.9,
+        cryptohash-sha256 >=0.11 && <0.12,
         cryptonite >=0.30 && <0.31,
         directory >=1.3 && <1.4,
+        dhall >=1.42 && <1.43,
+        either >=5.0 && <5.1,
+        entropy >=0.4.1.11 && <0.5,
+        filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
+        http-client >=0.7 && <0.8,
+        http-client-tls >=0.3 && <0.4,
+        http-types >=0.12 && <0.13,
         lens-family >=1.2 && <2.2,
+        memory >=0.18 && <0.19,
+        network >=3.1 && <3.3,
         process >=1.6 && <1.7,
         proto-lens >=0.7 && <0.8,
         proto-lens-runtime >=0.7 && <0.8,
+        purescript-bridge >=0.15 && <0.16,
         QuickCheck >=2.14 && <2.20,
+        scientific >=0.3 && <0.4,
         text >=2.0 && <2.2,
         time >=1.12 && <1.16,
+        unix >=2.8 && <2.9,
+        vector >=0.13 && <0.14,
+        wai >=3.2 && <3.3,
+        wai-websockets >=3.0 && <3.1,
         websockets >=0.13 && <0.14,
+        warp >=3.3 && <3.5,
+        yaml >=0.11 && <0.12,
+        infernix
+
+test-suite infernix-artifact-transaction
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/artifact-transaction src
+    other-modules:
+        Infernix.Cluster.LifecycleLock
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Error
+
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror -threaded
+    build-depends:
+        aeson >=2.1 && <2.3,
+        base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
+        bytestring >=0.11 && <0.13,
+        cryptohash-sha256 >=0.11 && <0.12,
+        directory >=1.3 && <1.4,
+        filelock >=0.1.1.9 && <0.2,
+        filepath >=1.4 && <1.6,
+        text >=2.0 && <2.2,
+        unix >=2.8 && <2.9
+
+test-suite infernix-apple-materializer
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/apple-materializer src
+    other-modules:
+        Infernix.Bootstrap.Models
+        Infernix.Cluster.Command
+        Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.LifecycleLock
+        Infernix.Cluster.Subprocess
+        Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Protocol
+        Infernix.Config
+        Infernix.DhallSchema.Reflection
+        Infernix.EngineBindings
+        Infernix.EngineRouting
+        Infernix.Engines.AppleSilicon.Internal
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Activation
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.DownloadCacheLock.Internal
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Engines.Provisioning
+        Infernix.Engines.Provisioning.Internal
+        Infernix.Error
+        Infernix.Evidence.Readiness
+        Infernix.ExecutionPlan
+        Infernix.ExecutionPlan.Internal
+        Infernix.HostConfig
+        Infernix.HostTools
+        Infernix.Internal.Util
+        Infernix.Models
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
+        Infernix.Python
+        Infernix.Python.MutationLock.Internal
+        Infernix.Routes
+        Infernix.Substrate
+        Infernix.Substrate.Internal
+        Infernix.Types
+
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror -threaded
+    build-depends:
+        aeson >=2.1 && <2.3,
+        base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
+        base64-bytestring >=1.2 && <1.3,
+        bytestring >=0.11 && <0.13,
+        containers >=0.6 && <0.9,
+        cryptohash-sha256 >=0.11 && <0.12,
+        dhall >=1.42 && <1.43,
+        directory >=1.3 && <1.4,
+        either >=5.0 && <5.1,
+        entropy >=0.4.1.11 && <0.5,
+        filelock >=0.1.1.9 && <0.2,
+        filepath >=1.4 && <1.6,
+        process >=1.6 && <1.7,
+        text >=2.0 && <2.2,
+        time >=1.12 && <1.16,
+        unix >=2.8 && <2.9
+
+test-suite infernix-capped-engine-observer
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/capped-engine-observer src
+    other-modules:
+        Infernix.Error
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
+        Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.OutputCapture
+
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror -threaded
+    build-depends:
+        base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
+        bytestring >=0.11 && <0.13,
+        containers >=0.6 && <0.9,
+        directory >=1.3 && <1.4,
+        entropy >=0.4.1.11 && <0.5,
+        filelock >=0.1.1.9 && <0.2,
+        filepath >=1.4 && <1.6,
+        process >=1.6 && <1.7,
+        text >=2.0 && <2.2,
+        unix >=2.8 && <2.9
+
+test-suite infernix-compile-fail
+    type:             exitcode-stdio-1.0
+    main-is:          Main.hs
+    hs-source-dirs:   test/compile-fail
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.18 && <4.23,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6,
+        process >=1.6 && <1.7,
+        unix >=2.8 && <2.9
+
+test-suite infernix-execution-plan-internal
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    hs-source-dirs:   test/execution-plan-internal
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror
+    build-depends:
+        base >=4.18 && <4.23,
         infernix
 
 test-suite infernix-integration
     type:             exitcode-stdio-1.0
     main-is:          Spec.hs
-    hs-source-dirs:   test/integration
+    hs-source-dirs:   test/integration src
+    other-modules:
+        Infernix.Auth.Jwt
+        Infernix.Bootstrap.Models
+        Infernix.Bridge.Result
+        Infernix.CLI
+        Infernix.Cluster
+        Infernix.Cluster.ClaimPermissions
+        Infernix.Cluster.Command
+        Infernix.Cluster.Discover
+        Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.LifecycleLock
+        Infernix.Cluster.MutationRecovery
+        Infernix.Cluster.PublishImages
+        Infernix.Cluster.Subprocess
+        Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Protocol
+        Infernix.ClusterConfig
+        Infernix.CommandRegistry
+        Infernix.Config
+        Infernix.Conversation.Event
+        Infernix.Conversation.Hash
+        Infernix.Conversation.Idempotency
+        Infernix.Conversation.Reducer
+        Infernix.Conversation.Topic
+        Infernix.Demo.Api
+        Infernix.Demo.Auth
+        Infernix.Demo.Bootstrap
+        Infernix.Demo.WebSocket
+        Infernix.DemoConfig
+        Infernix.DemoConfig.Colima
+        Infernix.DemoConfig.Internal
+        Infernix.DemoConfig.Properties
+        Infernix.DhallSchema
+        Infernix.DhallSchema.Reflection
+        Infernix.Dispatch.ContextModelMap
+        Infernix.Dispatch.SingleFlight
+        Infernix.EngineBindings
+        Infernix.EngineRouting
+        Infernix.Engines.AppleSilicon
+        Infernix.Engines.AppleSilicon.Internal
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Activation
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.DownloadCacheLock.Internal
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Engines.LinuxNative
+        Infernix.Engines.Provisioning
+        Infernix.Engines.Provisioning.Internal
+        Infernix.Error
+        Infernix.Evidence.Lease
+        Infernix.Evidence.Readiness
+        Infernix.ExecutionPlan
+        Infernix.ExecutionPlan.Internal
+        Infernix.ExecutionPlan.Properties
+        Infernix.HostConfig
+        Infernix.HostPrereqs
+        Infernix.HostTools
+        Infernix.Internal.Util
+        Infernix.Lint.Chart
+        Infernix.Lint.Docs
+        Infernix.Lint.Files
+        Infernix.Lint.HaskellStyle
+        Infernix.Lint.Proto
+        Infernix.Models
+        Infernix.Objects.Layout
+        Infernix.Objects.Presigned
+        Infernix.Objects.Sts
+        Infernix.Objects.Upload
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
+        Infernix.ProjectInit
+        Infernix.Python
+        Infernix.Python.MutationLock.Internal
+        Infernix.Routes
+        Infernix.Runtime
+        Infernix.Runtime.Cache
+        Infernix.Runtime.CappedEngine
+        Infernix.Runtime.CappedEngine.Cleanup
+        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.Internal
+        Infernix.Runtime.CappedEngine.OutputCapture
+        Infernix.Runtime.Daemon
+        Infernix.Runtime.Enforcer
+        Infernix.Runtime.Enforcer.Internal
+        Infernix.Runtime.Enforcer.Properties
+        Infernix.Runtime.KVCache
+        Infernix.Runtime.Pulsar
+        Infernix.Runtime.Pulsar.Failover
+        Infernix.Runtime.Worker
+        Infernix.SecretsConfig
+        Infernix.Service
+        Infernix.Storage
+        Infernix.Substrate
+        Infernix.Substrate.Internal
+        Infernix.Topic.Drafts
+        Infernix.Topic.Metadata
+        Infernix.Types
+        Infernix.Web.Contracts
+        Infernix.Webapp
+        Infernix.Workflow
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+
+    autogen-modules:
+        Proto.Infernix.Manifest.RuntimeManifest
+        Proto.Infernix.Manifest.RuntimeManifest_Fields
+        Proto.Infernix.Runtime.Inference
+        Proto.Infernix.Runtime.Inference_Fields
+
     default-language: GHC2021
-    ghc-options:      -Wall -Werror
+    ghc-options:      -Wall -Werror -threaded
     build-depends:
         aeson >=2.2 && <2.3,
         base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
         base64-bytestring >=1.2 && <1.3,
         bytestring >=0.11 && <0.13,
+        case-insensitive >=1.2 && <1.3,
         containers >=0.6 && <0.9,
+        cryptohash-sha256 >=0.11 && <0.12,
+        cryptonite >=0.30 && <0.31,
         directory >=1.3 && <1.4,
+        dhall >=1.42 && <1.43,
+        either >=5.0 && <5.1,
+        entropy >=0.4.1.11 && <0.5,
         file-embed >=0.0.15 && <0.1,
+        filelock >=0.1.1.9 && <0.2,
         filepath >=1.4 && <1.6,
+        http-client >=0.7 && <0.8,
+        http-client-tls >=0.3 && <0.4,
+        http-types >=0.12 && <0.13,
         lens-family >=1.2 && <2.2,
+        memory >=0.18 && <0.19,
         network >=3.1 && <3.3,
         process >=1.6 && <1.7,
         proto-lens >=0.7 && <0.8,
         proto-lens-runtime >=0.7 && <0.8,
+        purescript-bridge >=0.15 && <0.16,
+        QuickCheck >=2.14 && <2.20,
+        scientific >=0.3 && <0.4,
         text >=2.0 && <2.2,
         time >=1.12 && <1.16,
+        unix >=2.8 && <2.9,
+        vector >=0.13 && <0.14,
+        wai >=3.2 && <3.3,
+        wai-websockets >=3.0 && <3.1,
         websockets >=0.13 && <0.14,
+        warp >=3.3 && <3.5,
+        yaml >=0.11 && <0.12,
         infernix
 
 test-suite infernix-haskell-style

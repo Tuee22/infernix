@@ -25,7 +25,6 @@ module Infernix.ClusterConfig
     DemoBackendWiring (..),
     EngineWiring (..),
     CoordinatorWiring (..),
-    EngineCommandOverride (..),
     decodeClusterConfigFile,
     renderClusterConfig,
     renderClusterConfigSchema,
@@ -43,7 +42,6 @@ where
 
 import Control.Exception (SomeException, displayException, try)
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Dhall qualified
@@ -165,33 +163,10 @@ demoBackendFieldOptions =
         other -> other
     }
 
--- | One @INFERNIX_ENGINE_COMMAND_<NAME>@ override entry, encoded in
--- Dhall as a @{ mapKey, mapValue }@ list element.
-data EngineCommandOverride = EngineCommandOverride
-  { engineOverrideKey :: Text,
-    engineOverrideValue :: Text
-  }
-  deriving (Eq, Show, Generic)
-
-instance Dhall.FromDhall EngineCommandOverride where
-  autoWith _ = Dhall.genericAutoWith engineOverrideFieldOptions
-
-engineOverrideFieldOptions :: Dhall.InterpretOptions
-engineOverrideFieldOptions =
-  Dhall.defaultInterpretOptions
-    { Dhall.fieldModifier = \case
-        "engineOverrideKey" -> "mapKey"
-        "engineOverrideValue" -> "mapValue"
-        other -> other
-    }
-
--- | Engine-role wiring values: model-cache rooting + per-engine
--- command overrides previously delivered through
--- @INFERNIX_ENGINE_COMMAND_<NAME>@ env vars.
+-- | Engine-role model-cache wiring.
 data EngineWiring = EngineWiring
   { engineModelCacheRoot :: Text,
-    engineModelCacheQuotaBytes :: Natural,
-    engineCommandOverrides :: [EngineCommandOverride]
+    engineModelCacheQuotaBytes :: Natural
   }
   deriving (Eq, Show, Generic)
 
@@ -204,7 +179,6 @@ engineFieldOptions =
     { Dhall.fieldModifier = \case
         "engineModelCacheRoot" -> "modelCacheRoot"
         "engineModelCacheQuotaBytes" -> "modelCacheQuotaBytes"
-        "engineCommandOverrides" -> "commandOverrides"
         other -> other
     }
 
@@ -273,14 +247,14 @@ defaultClusterConfigMountPath = "/opt/infernix/cluster.dhall"
 -- chart template is a `nindent` passthrough of the rendered
 -- 'renderClusterConfig' string. @cluster up@ overrides the keycloak wiring
 -- and control-plane context per deploy phase before rendering.
-defaultClusterConfig :: Text -> KeycloakWiring -> [EngineCommandOverride] -> ClusterConfig
-defaultClusterConfig controlPlaneContextValue keycloakWiring engineOverrides =
+defaultClusterConfig :: Text -> KeycloakWiring -> ClusterConfig
+defaultClusterConfig controlPlaneContextValue keycloakWiring =
   ClusterConfig
     { clusterPulsar = defaultPulsarWiring,
       clusterMinio = defaultMinioWiring,
       clusterKeycloak = keycloakWiring,
       clusterDemoBackend = defaultDemoBackendWiring,
-      clusterEngine = defaultEngineWiring {engineCommandOverrides = engineOverrides},
+      clusterEngine = defaultEngineWiring,
       clusterCoordinator =
         CoordinatorWiring
           { coordinatorCatalogSource = "mounted-configmap",
@@ -342,8 +316,7 @@ defaultEngineWiring :: EngineWiring
 defaultEngineWiring =
   EngineWiring
     { engineModelCacheRoot = "/model-cache",
-      engineModelCacheQuotaBytes = 68719476736,
-      engineCommandOverrides = []
+      engineModelCacheQuotaBytes = 68719476736
     }
 
 clusterConfigGeneratedBanner :: String
@@ -441,16 +414,6 @@ renderEngineWiring value =
     <> dhallText (engineModelCacheRoot value)
     <> ", modelCacheQuotaBytes = "
     <> dhallNatural (engineModelCacheQuotaBytes value)
-    <> ", commandOverrides = "
-    <> dhallList engineCommandOverrideType renderEngineCommandOverride (engineCommandOverrides value)
-    <> " }"
-
-renderEngineCommandOverride :: EngineCommandOverride -> String
-renderEngineCommandOverride value =
-  "{ mapKey = "
-    <> dhallText (engineOverrideKey value)
-    <> ", mapValue = "
-    <> dhallText (engineOverrideValue value)
     <> " }"
 
 renderCoordinatorWiring :: CoordinatorWiring -> String
@@ -463,12 +426,6 @@ renderCoordinatorWiring value =
     <> dhallText (coordinatorDaemonLocation value)
     <> " }"
 
-dhallList :: String -> (a -> String) -> [a] -> String
-dhallList itemType renderItem values =
-  case values of
-    [] -> "([] : List " <> itemType <> ")"
-    _ -> "[ " <> intercalate ", " (map renderItem values) <> " ]"
-
 dhallNatural :: Natural -> String
 dhallNatural = show
 
@@ -479,10 +436,6 @@ dhallBool False = "False"
 dhallText :: Text -> String
 dhallText value =
   Text.unpack ("\"" <> DhallCore.escapeText value <> "\"")
-
-engineCommandOverrideType :: String
-engineCommandOverrideType =
-  "{ mapKey : Text, mapValue : Text }"
 
 -- | Decode a materialized @InfernixCluster.dhall@ file. Errors carry the
 -- supported failure context so daemon-startup flows surface them early.

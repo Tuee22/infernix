@@ -237,6 +237,9 @@ RUN printf '%s\n' \
     '    , npm = "/usr/bin/npm"' \
     '    , node = "/usr/bin/node"' \
     '    , python3 = "/usr/bin/python3"' \
+    '    , python311 = ""' \
+    '    , llamaCli = ""' \
+    '    , whisperCli = ""' \
     '    , poetry = "/opt/poetry/bin/poetry"' \
     '    , protoc = "/usr/bin/protoc"' \
     '    , git = "/usr/bin/git"' \
@@ -272,6 +275,44 @@ RUN printf '%s\n' \
     '    , secretsRoot = "/workspace/.data/runtime/secrets"' \
     '    , homeDirectory = "/root"' \
     '    , kindRoot = "/workspace/.data/runtime/kind"' \
+    '    }' \
+    ', commandPolicies =' \
+    '    { kindRead = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kindDelete = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 3, backoffMicros = 2000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
+    '    , nvkindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kubectlRead = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kubectlApply = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kubectlDelete = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
+    '    , kubectlWait = { timeoutMicros = 1500000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , kubectlExec = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , helmUpgrade = { timeoutMicros = 2100000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , helmDependency = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , helmRepository = { timeoutMicros = 300000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , helmRender = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerExec = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerBuild = { timeoutMicros = 2700000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerInspect = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerPull = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerTag = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerCopy = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerStreamImport = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , dockerNetwork = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
+    '    , containerRuntimePull = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , hostProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , hostMutation = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , curlProbe = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , archiveRead = { timeoutMicros = 600000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , gpuUserspaceSync = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , imagePublicationLogin = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 6, backoffMicros = 6000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
+    '    , imagePublicationInspect = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , imagePublicationPull = { timeoutMicros = 1200000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , imagePublicationVerify = { timeoutMicros = 900000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 6, backoffMicros = 6000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
+    '    , imagePublicationTag = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
+    '    , imagePublicationPush = { timeoutMicros = 2400000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 30, backoffMicros = 50000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
+    '    , imagePublicationRemove = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.IdempotentAbsence }' \
+    '    , imagePublicationCopy = { timeoutMicros = 2400000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Bounded { attempts = 30, backoffMicros = 50000000 }, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.TransientThenFatal }' \
     '    }' \
     ', playwrightHost = "127.0.0.1"' \
     ', controlPlaneContext = "outer-container"' \

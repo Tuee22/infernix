@@ -8,6 +8,8 @@ module Infernix.Runtime.Pulsar
     PulsarTransport (..),
     PulsarWebSocketBase (..),
     RawTopicMessage (..),
+    DaemonTopicCapability,
+    ModelBootstrapRequestCapability,
     ModelBootstrapReady,
     WarmModelCacheReady,
     WarmModelCacheOutcome (..),
@@ -16,6 +18,7 @@ module Infernix.Runtime.Pulsar
     compactTopicAndWait,
     clearServiceReadinessMarker,
     consumeTopicForever,
+    coordinatorTopicCapabilities,
     DemoUserTopicDeletion (..),
     authorizedGeneratedResultObjectRefs,
     deleteDemoUserTopics,
@@ -26,19 +29,20 @@ module Infernix.Runtime.Pulsar
     publishDemoClientMessage,
     streamDemoContextConversation,
     streamDemoUserMetadata,
+    prepareModelBootstrapRequest,
     publishModelBootstrapRequest,
-    publishRawTopicPayload,
+    validateModelBootstrapRequest,
     validateDemoClientMessageCatalog,
-    ensureRegisteredSchemasWithRetry,
-    ensureSchemaMarkers,
+    ensureRegisteredSchemasForPlanWithRetry,
+    ensureSchemaMarkersForPlan,
     modelCacheBootstrapRetryableError,
     classifyDownloadStatus,
     DownloadOutcome (..),
     RetryAfterSeconds,
     retryAfterSeconds,
     modelBootstrapReadyWaitMaxSeconds,
-    reconcileStartupTopicsWithRetry,
-    reconcileSupportedNamespacesWithRetry,
+    reconcileStartupTopicsForPlanWithRetry,
+    reconcileSupportedNamespacesForPlanWithRetry,
     isMultiFileModelRepoUrl,
     isPackageBackedNativeModel,
     renderPulsarWebSocketBase,
@@ -57,13 +61,16 @@ module Infernix.Runtime.Pulsar
     isRetryablePulsarWebSocketClientFailure,
     drainTopic,
     drainTopicWithKVCache,
+    daemonTopicCapabilityAuthorizesModel,
+    daemonTopicCapabilityTopic,
+    engineTopicCapabilities,
     buildServiceConsumerSocketPath,
     serviceConsumerAckTimeoutMillis,
     requireTopicRef,
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
-    sweepEagerModelCache,
+    sweepEagerModelCacheForPlan,
     waitForEagerModelCacheReady,
     SentinelObservation (..),
     SentinelCensus (..),
@@ -71,10 +78,9 @@ module Infernix.Runtime.Pulsar
     tallyCensus,
     schemaMarkerPath,
     serviceConsumerSubscriptionType,
-    serviceConsumerSubscriptionTypeForTopic,
     serviceConsumerName,
     serviceReadinessMarkerPath,
-    startupTopicsForDemoConfig,
+    startupTopicsForPlan,
     topicDirectoryPath,
     writeServiceReadinessMarker,
   )
@@ -109,6 +115,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.Int (Int32)
 import Data.List (find, intercalate, sort)
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
@@ -137,32 +144,50 @@ import Infernix.Conversation.Reducer
     stepReducer,
   )
 import Infernix.Conversation.Topic qualified as ConversationTopic
-import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Dispatch.ContextModelMap (ContextModelMap)
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan
-  ( CompiledRuntimePlan,
+  ( CompiledDaemon,
+    CompiledRuntimePlan,
+    RuntimePlan,
+    compiledDaemonConsumerSubscriptionType,
+    compiledDaemonMemberId,
+    compiledDaemonRequestTopics,
+    compiledDaemonResultTopic,
+    compiledDaemonRole,
+    compiledPlacementRoutes,
+    compiledPlanConfiguredModels,
+    compiledPlanCoordinatorDaemon,
+    compiledPlanEngineDaemons,
+    compiledPlanModelBootstrapTopic,
+    compiledPlanRequestTopics,
+    compiledPlanResultTopic,
+    compiledPlanRuntimeMode,
+    engineRouteMemberId,
+    engineRouteTopic,
+    executableModelDescriptor,
+    executableModelRoutes,
+    lookupCompiledEngineDaemon,
+    lookupCompiledPlacement,
     lookupExecutableModel,
-    runtimePlanConfig,
+    lookupUnavailableModel,
+    runtimePlanCompiledPlan,
+    unavailableModelDescriptor,
+    unavailableModelReason,
   )
 import Infernix.HostConfig qualified as HostConfig
-import Infernix.Models
-  ( enginePoolForModel,
-    enginePoolTopicForMode,
-    findModel,
-    modelRequiresInputObject,
-  )
+import Infernix.Models (modelRequiresInputObject)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
-import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.SecretsConfig qualified as Secrets
 import Infernix.Storage (formatTimestamp, parseTimestamp, readPulsarHttpPortMaybe)
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types
 import Infernix.Web.Contracts qualified as Contracts
 import Lens.Family2 (set, view)
@@ -200,7 +225,7 @@ import System.Directory
     removeFile,
   )
 import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, (<.>), (</>))
+import System.FilePath (dropExtension, takeDirectory, (<.>), (</>))
 import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hPutStrLn, openBinaryTempFile, stderr, withBinaryFile)
 import System.Posix.Process (getProcessID)
 import System.Process (readProcessWithExitCode)
@@ -283,8 +308,18 @@ instance FromJSON LongRunningProcessStatus where
       <$> value .: "status"
       <*> value .:? "lastError"
 
-publishInferenceRequest :: Paths -> RuntimeMode -> Text.Text -> InferenceRequest -> IO Text.Text
-publishInferenceRequest paths runtimeMode topic requestValue = do
+publishInferenceRequest ::
+  Paths ->
+  CompiledRuntimePlan ->
+  InferenceRequest ->
+  IO Text.Text
+publishInferenceRequest paths compiledPlan requestValue = do
+  topic <-
+    case compiledDaemonRequestTopics (compiledPlanCoordinatorDaemon compiledPlan) of
+      requestTopicValue : _ -> pure requestTopicValue
+      [] ->
+        ioError
+          (userError "compiled coordinator capability has no inference request topic")
   -- Phase 4 Sprint 4.13: this is the host-side @internal
   -- pulsar-roundtrip@ entrypoint; it never runs in a cluster pod, so
   -- 'discoverPulsarTransport' is invoked with no 'ClusterConfig' and
@@ -316,6 +351,8 @@ publishInferenceRequest paths runtimeMode topic requestValue = do
               protoPayload
       publishTopicPayload transport topic options requestIdValue (encodeMessage protoPayload)
       pure requestIdValue
+  where
+    runtimeMode = compiledPlanRuntimeMode compiledPlan
 
 -- | Phase 7 Sprint 7.14 wiring for the demo WebSocket frontend:
 -- browser-originated durable-context messages publish onto the same
@@ -351,8 +388,16 @@ validateDemoClientMessage :: Paths -> Maybe ClusterConfig -> Contracts.WsClientM
 validateDemoClientMessage paths maybeClusterConfig clientMessage =
   case clientMessage of
     Contracts.ClientCreateContext {} -> do
-      demoConfig <- decodeDemoConfigFile (demoClientMessageDemoConfigPath paths maybeClusterConfig)
-      case validateDemoClientMessageCatalog (models demoConfig) clientMessage of
+      compiledResult <-
+        decodeCompiledRuntimePlanFile
+          (demoClientMessageDemoConfigPath paths maybeClusterConfig)
+      compiledPlan <-
+        case compiledResult of
+          Left errors ->
+            ioError
+              (userError ("demo client execution plan did not compile: " <> show errors))
+          Right plan -> pure plan
+      case validateDemoClientMessageCatalog (compiledPlanConfiguredModels compiledPlan) clientMessage of
         Right () -> pure ()
         Left validationError -> throwIO validationError
     _ -> pure ()
@@ -1019,43 +1064,41 @@ stableSequenceId value =
   where
     step acc byte = acc * 256 + fromIntegral byte
 
-publishRawTopicPayload ::
-  Paths ->
-  RuntimeMode ->
-  Maybe ClusterConfig ->
+newtype AuthorizedBootstrapRequest
+  = AuthorizedBootstrapRequest
+      BootstrapModels.ModelBootstrapRequest
+
+data ModelBootstrapRequestCapability
+  = ModelBootstrapRequestCapability
+      CompiledRuntimePlan
+      AuthorizedBootstrapRequest
+
+prepareModelBootstrapRequest ::
+  CompiledRuntimePlan ->
   Text.Text ->
-  Text.Text ->
-  Maybe Text.Text ->
-  Text.Text ->
-  ByteString.ByteString ->
-  IO ()
-publishRawTopicPayload paths runtimeMode maybeClusterConfig topic producerName messageKey contextValue payload = do
-  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
-  case maybeTransport of
+  IO (Either String ModelBootstrapRequestCapability)
+prepareModelBootstrapRequest compiledPlan modelIdValue =
+  case find ((== modelIdValue) . modelId) (compiledPlanConfiguredModels compiledPlan) of
     Nothing ->
-      ioError
-        ( userError
-            ( "Pulsar publish is unavailable for "
-                <> Text.unpack (runtimeModeId runtimeMode)
-                <> "; no Pulsar transport could be discovered"
+      pure
+        ( Left
+            ( "compiled execution plan has no model-bootstrap authority for "
+                <> Text.unpack modelIdValue
             )
         )
-    Just transport ->
-      publishTopicPayload
-        transport
-        topic
-        ((defaultPublishOptions producerName) {publishMessageKey = messageKey})
-        contextValue
-        payload
+    Just model -> do
+      request <- modelBootstrapRequestFor model
+      pure
+        ( ModelBootstrapRequestCapability compiledPlan
+            <$> authorizeModelBootstrapRequest compiledPlan request
+        )
 
 publishModelBootstrapRequest ::
   Paths ->
-  RuntimeMode ->
-  Maybe ClusterConfig ->
-  BootstrapModels.ModelBootstrapRequest ->
+  ModelBootstrapRequestCapability ->
   IO ()
-publishModelBootstrapRequest paths runtimeMode maybeClusterConfig request = do
-  maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
+publishModelBootstrapRequest paths (ModelBootstrapRequestCapability compiledPlan authorizedRequest) = do
+  maybeTransport <- discoverPulsarTransport paths runtimeMode Nothing
   case maybeTransport of
     Nothing ->
       ioError
@@ -1065,15 +1108,18 @@ publishModelBootstrapRequest paths runtimeMode maybeClusterConfig request = do
                 <> "; no Pulsar transport could be discovered"
             )
         )
-    Just transport -> publishModelBootstrapRequestViaTransport transport request
+    Just transport ->
+      publishModelBootstrapRequestViaTransport transport compiledPlan authorizedRequest
+  where
+    runtimeMode = compiledPlanRuntimeMode compiledPlan
 
 publishModelBootstrapRequestViaTransport ::
   PulsarTransport ->
-  BootstrapModels.ModelBootstrapRequest ->
+  CompiledRuntimePlan ->
+  AuthorizedBootstrapRequest ->
   IO ()
-publishModelBootstrapRequestViaTransport transport request = do
-  let systemNamespace = ConversationTopic.systemTopicNamespace
-      requestTopic = ConversationTopic.modelBootstrapRequestTopicName systemNamespace
+publishModelBootstrapRequestViaTransport transport compiledPlan (AuthorizedBootstrapRequest request) = do
+  let requestTopic = compiledPlanModelBootstrapTopic compiledPlan
       options =
         (defaultPublishOptions ("infernix-engine-model-bootstrap-" <> BootstrapModels.bootstrapRequestModelId request))
           { publishMessageKey = Just (BootstrapModels.bootstrapRequestModelId request)
@@ -1291,8 +1337,12 @@ decodeEnvelopeBase64Payload payloadLabel envelope =
             )
         )
 
-readPublishedInferenceResultMaybe :: Paths -> RuntimeMode -> Text.Text -> Text.Text -> IO (Maybe InferenceResult)
-readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
+readPublishedInferenceResultMaybe ::
+  Paths ->
+  CompiledRuntimePlan ->
+  Text.Text ->
+  IO (Maybe InferenceResult)
+readPublishedInferenceResultMaybe paths compiledPlan requestIdValue = do
   -- Phase 4 Sprint 4.13: see note on 'publishInferenceRequest' above.
   maybeTransport <- discoverPulsarTransport paths runtimeMode Nothing
   case maybeTransport of
@@ -1310,20 +1360,117 @@ readPublishedInferenceResultMaybe paths runtimeMode topic requestIdValue = do
               pure (protoResultToDomain protoResult)
     Just transport ->
       readPublishedInferenceResultViaPulsar transport topic requestIdValue
+  where
+    runtimeMode = compiledPlanRuntimeMode compiledPlan
+    topic =
+      compiledDaemonResultTopic (compiledPlanCoordinatorDaemon compiledPlan)
 
-drainTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> CompiledRuntimePlan -> Text.Text -> IO ()
-drainTopic paths runtimeMode overrides daemonConfig compiledPlan =
-  drainTopicWithKVCache paths runtimeMode overrides daemonConfig compiledPlan Nothing
+-- | Authority to consume exactly one compiler-authorized daemon topic.
+-- Constructors stay private so callers cannot combine a daemon, runtime,
+-- refined plan, or topic from different execution plans.
+data DaemonTopicCapability
+  = CoordinatorTopicCapability
+      CompiledRuntimePlan
+      CompiledDaemon
+      Text.Text
+      ConsumerSubscriptionType
+  | EngineTopicCapability
+      RuntimePlan
+      CompiledDaemon
+      Text.Text
+      ConsumerSubscriptionType
 
-drainTopicWithKVCache :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> DaemonConfig -> CompiledRuntimePlan -> Maybe KVCache.EngineKVCache -> Text.Text -> IO ()
-drainTopicWithKVCache paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache requestTopicValue =
-  case daemonConfigRole daemonConfig of
-    Coordinator ->
-      forwardTopicToDerivedPool paths runtimeMode compiledPlan requestTopicValue
-    Engine ->
-      drainInferenceTopic paths runtimeMode overrides compiledPlan maybeEngineKVCache (daemonConfigResultTopic daemonConfig) requestTopicValue
-    Webapp ->
-      ioError (userError "webapp role does not drain inference topics")
+coordinatorTopicCapabilities :: CompiledRuntimePlan -> [DaemonTopicCapability]
+coordinatorTopicCapabilities compiledPlan =
+  map
+    (mkCoordinatorTopicCapability compiledPlan compiledDaemon)
+    (compiledDaemonRequestTopics compiledDaemon)
+  where
+    compiledDaemon = compiledPlanCoordinatorDaemon compiledPlan
+
+mkCoordinatorTopicCapability ::
+  CompiledRuntimePlan ->
+  CompiledDaemon ->
+  Text.Text ->
+  DaemonTopicCapability
+mkCoordinatorTopicCapability compiledPlan compiledDaemon requestTopicValue =
+  CoordinatorTopicCapability
+    compiledPlan
+    compiledDaemon
+    requestTopicValue
+    (authorizedSubscriptionType (compiledPlanRuntimeMode compiledPlan) compiledDaemon requestTopicValue)
+
+engineTopicCapabilities ::
+  Text.Text ->
+  RuntimePlan ->
+  Either String [DaemonTopicCapability]
+engineTopicCapabilities memberIdValue runtimePlan =
+  case lookupCompiledEngineDaemon memberIdValue compiledPlan of
+    Nothing ->
+      Left
+        ( "refined execution plan does not contain engine daemon "
+            <> Text.unpack memberIdValue
+        )
+    Just compiledDaemon ->
+      Right
+        ( map
+            (mkEngineTopicCapability runtimePlan compiledDaemon)
+            (compiledDaemonRequestTopics compiledDaemon)
+        )
+  where
+    compiledPlan = runtimePlanCompiledPlan runtimePlan
+
+mkEngineTopicCapability ::
+  RuntimePlan ->
+  CompiledDaemon ->
+  Text.Text ->
+  DaemonTopicCapability
+mkEngineTopicCapability runtimePlan compiledDaemon requestTopicValue =
+  EngineTopicCapability
+    runtimePlan
+    compiledDaemon
+    requestTopicValue
+    (authorizedSubscriptionType runtimeMode compiledDaemon requestTopicValue)
+  where
+    runtimeMode =
+      compiledPlanRuntimeMode (runtimePlanCompiledPlan runtimePlan)
+
+daemonTopicCapabilityTopic :: DaemonTopicCapability -> Text.Text
+daemonTopicCapabilityTopic capability =
+  case capability of
+    CoordinatorTopicCapability _ _ requestTopicValue _ -> requestTopicValue
+    EngineTopicCapability _ _ requestTopicValue _ -> requestTopicValue
+
+daemonTopicCapabilityRuntimeMode :: DaemonTopicCapability -> RuntimeMode
+daemonTopicCapabilityRuntimeMode capability =
+  compiledPlanRuntimeMode (daemonTopicCapabilityCompiledPlan capability)
+
+daemonTopicCapabilityCompiledPlan :: DaemonTopicCapability -> CompiledRuntimePlan
+daemonTopicCapabilityCompiledPlan capability =
+  case capability of
+    CoordinatorTopicCapability compiledPlan _ _ _ -> compiledPlan
+    EngineTopicCapability runtimePlan _ _ _ ->
+      runtimePlanCompiledPlan runtimePlan
+
+drainTopic :: Paths -> DaemonTopicCapability -> IO ()
+drainTopic paths capability =
+  drainTopicWithKVCache paths capability Nothing
+
+drainTopicWithKVCache ::
+  Paths ->
+  DaemonTopicCapability ->
+  Maybe KVCache.EngineKVCache ->
+  IO ()
+drainTopicWithKVCache paths capability maybeEngineKVCache =
+  case capability of
+    CoordinatorTopicCapability compiledPlan _ requestTopicValue _ ->
+      forwardTopicToDerivedPool
+        paths
+        (compiledPlanRuntimeMode compiledPlan)
+        compiledPlan
+        requestTopicValue
+    EngineTopicCapability {} ->
+      drainInferenceTopic paths capability maybeEngineKVCache
 
 forwardTopicToDerivedPool :: Paths -> RuntimeMode -> CompiledRuntimePlan -> Text.Text -> IO ()
 forwardTopicToDerivedPool paths runtimeMode compiledPlan sourceTopicValue = do
@@ -1334,47 +1481,104 @@ forwardTopicToDerivedPool paths runtimeMode compiledPlan sourceTopicValue = do
   forM_ (filter (".pb" `endsWith`) requestFiles) $ \requestFile -> do
     let sourcePath = sourceDirectory </> requestFile
     encodedRequest <- readFileBytes sourcePath
-    decodedRequest <-
-      case decodeMessage encodedRequest of
-        Left err ->
-          ioError (userError ("failed to decode inference request from " <> sourcePath <> ": " <> err))
-        Right requestValue ->
-          pure requestValue
-    targetTopicValue <-
-      case batchTopicForRequest runtimeMode compiledPlan decodedRequest of
-        Left err ->
-          ioError (userError err)
-        Right topicValue ->
-          pure topicValue
-    let targetDirectory = topicDirectoryPath paths targetTopicValue
-        targetPath = targetDirectory </> requestFile
-    createDirectoryIfMissing True targetDirectory
-    ByteString.writeFile targetPath encodedRequest
-    removeFile sourcePath
-
-drainInferenceTopic :: Paths -> RuntimeMode -> EngineCommandOverrideMap -> CompiledRuntimePlan -> Maybe KVCache.EngineKVCache -> Text.Text -> Text.Text -> IO ()
-drainInferenceTopic paths runtimeMode overrides compiledPlan maybeEngineKVCache resultTopicValue requestTopicValue = do
-  let requestDirectory = topicDirectoryPath paths requestTopicValue
-  requestDirectoryPresent <- doesDirectoryExist requestDirectory
-  unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
-  requestFiles <- sort <$> listDirectory requestDirectory
-  forM_ (filter (".pb" `endsWith`) requestFiles) $ \requestFile -> do
-    let requestPath = requestDirectory </> requestFile
-    encodedRequest <- readFileBytes requestPath
     case decodeMessage encodedRequest of
-      Left err ->
-        ioError (userError ("failed to decode inference request from " <> requestPath <> ": " <> err))
-      Right protoRequest -> do
-        publishedResult <- publishedResultFromRequest Nothing paths runtimeMode compiledPlan overrides maybeEngineKVCache protoRequest
-        createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
-        writeInferenceResultFile
-          (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
-          (domainResultToProto publishedResult)
-        removeFile requestPath
+      Left err -> do
+        writeMalformedInferenceRequestFile
+          paths
+          runtimeMode
+          (compiledPlanResultTopic compiledPlan)
+          requestFile
+          err
+        removeFile sourcePath
+      Right decodedRequest ->
+        case coordinatorAdmissionRejection runtimeMode compiledPlan decodedRequest of
+          Just rejection -> do
+            let resultDirectory =
+                  topicDirectoryPath
+                    paths
+                    (compiledPlanResultTopic compiledPlan)
+                resultPath =
+                  resultDirectory
+                    </> Text.unpack (requestId rejection)
+                      <.> "pb"
+            createDirectoryIfMissing True resultDirectory
+            writeInferenceResultFile resultPath (domainResultToProto rejection)
+            removeFile sourcePath
+          Nothing -> do
+            targetTopicValue <-
+              case batchTopicForRequest runtimeMode compiledPlan decodedRequest of
+                Left err ->
+                  ioError (userError err)
+                Right topicValue ->
+                  pure topicValue
+            let targetDirectory = topicDirectoryPath paths targetTopicValue
+                targetPath = targetDirectory </> requestFile
+            createDirectoryIfMissing True targetDirectory
+            ByteString.writeFile targetPath encodedRequest
+            removeFile sourcePath
 
-ensureSchemaMarkers :: Paths -> DemoConfig -> IO ()
-ensureSchemaMarkers paths demoConfig = do
-  let topics = schemaTopicsForDemoConfig demoConfig
+drainInferenceTopic ::
+  Paths ->
+  DaemonTopicCapability ->
+  Maybe KVCache.EngineKVCache ->
+  IO ()
+drainInferenceTopic paths capability maybeEngineKVCache =
+  case capability of
+    CoordinatorTopicCapability {} ->
+      ioError
+        (userError "coordinator topic capability cannot execute inference")
+    EngineTopicCapability runtimePlan compiledDaemon requestTopicValue _ -> do
+      let runtimeMode = daemonTopicCapabilityRuntimeMode capability
+          compiledPlan = runtimePlanCompiledPlan runtimePlan
+          resultTopicValue = compiledDaemonResultTopic compiledDaemon
+          requestDirectory = topicDirectoryPath paths requestTopicValue
+      requestDirectoryPresent <- doesDirectoryExist requestDirectory
+      unless requestDirectoryPresent (createDirectoryIfMissing True requestDirectory)
+      requestFiles <- sort <$> listDirectory requestDirectory
+      forM_ (filter (".pb" `endsWith`) requestFiles) $ \requestFile -> do
+        let requestPath = requestDirectory </> requestFile
+        encodedRequest <- readFileBytes requestPath
+        case decodeMessage encodedRequest of
+          Left err -> do
+            writeMalformedInferenceRequestFile
+              paths
+              runtimeMode
+              resultTopicValue
+              requestFile
+              err
+            removeFile requestPath
+          Right protoRequest -> do
+            let modelIdValue = view ProtoInferenceFields.requestModelId protoRequest
+                maybeRejection =
+                  if Text.null modelIdValue
+                    then Just (emptyModelIdRejectionResult runtimeMode protoRequest)
+                    else memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest
+            publishedResult <-
+              case maybeRejection of
+                Just rejection -> pure rejection
+                Nothing ->
+                  case executableRequestRouteAuthorization capability modelIdValue of
+                    Left err ->
+                      pure
+                        ( modelNotExecutableRejectionResult
+                            runtimeMode
+                            (Text.pack err)
+                            protoRequest
+                        )
+                    Right () ->
+                      publishedResultFromRequest Nothing paths runtimeMode runtimePlan maybeEngineKVCache protoRequest
+            createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
+            writeInferenceResultFile
+              (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
+              (domainResultToProto publishedResult)
+            removeFile requestPath
+
+ensureSchemaMarkersForPlan :: Paths -> CompiledRuntimePlan -> IO ()
+ensureSchemaMarkersForPlan paths =
+  ensureSchemaMarkersForTopics paths . schemaTopicsForPlan
+
+ensureSchemaMarkersForTopics :: Paths -> [Text.Text] -> IO ()
+ensureSchemaMarkersForTopics paths topics = do
   forM_ topics writeSchemaMarker
   where
     writeSchemaMarker topicValue = do
@@ -1595,47 +1799,66 @@ discoverAppleHostPulsarTransport paths = do
                   }
             )
 
-ensureRegisteredSchemas :: Paths -> PulsarTransport -> DemoConfig -> IO ()
-ensureRegisteredSchemas paths transport demoConfig = do
-  ensureSchemaMarkers paths demoConfig
+ensureRegisteredSchemasForPlan :: Paths -> PulsarTransport -> CompiledRuntimePlan -> IO ()
+ensureRegisteredSchemasForPlan paths transport compiledPlan =
+  ensureRegisteredSchemasForTopics
+    paths
+    transport
+    (requestLikeSchemaTopicsForPlan compiledPlan)
+    (resultLikeSchemaTopicsForPlan compiledPlan)
+
+ensureRegisteredSchemasForTopics ::
+  Paths ->
+  PulsarTransport ->
+  [Text.Text] ->
+  [Text.Text] ->
+  IO ()
+ensureRegisteredSchemasForTopics paths transport requestSchemaTopics resultSchemaTopics = do
+  ensureSchemaMarkersForTopics paths (uniqueTexts (requestSchemaTopics <> resultSchemaTopics))
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   manager <- newManager defaultManagerSettings
-  forM_ (requestLikeSchemaTopics demoConfig) $ \topicValue ->
+  forM_ requestSchemaTopics $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceRequest"
-  forM_ (resultLikeSchemaTopics demoConfig) $ \topicValue ->
+  forM_ resultSchemaTopics $ \topicValue ->
     ensureRemoteSchema manager adminBaseUrl topicValue "infernix.runtime.InferenceResult"
 
-schemaTopicsForDemoConfig :: DemoConfig -> [Text.Text]
-schemaTopicsForDemoConfig demoConfig =
-  uniqueTexts (requestLikeSchemaTopics demoConfig <> resultLikeSchemaTopics demoConfig)
-
-startupTopicsForDemoConfig :: DemoConfig -> [Text.Text]
-startupTopicsForDemoConfig demoConfig =
-  uniqueTexts (schemaTopicsForDemoConfig demoConfig <> modelBootstrapTopicsForDemoConfig demoConfig)
-
-requestLikeSchemaTopics :: DemoConfig -> [Text.Text]
-requestLikeSchemaTopics demoConfig =
+schemaTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
+schemaTopicsForPlan compiledPlan =
   uniqueTexts
-    ( requestTopics demoConfig
-        <> daemonConfigRequestTopics (coordinatorDaemon demoConfig)
-        <> concatMap daemonConfigRequestTopics (engineDaemons demoConfig)
+    ( requestLikeSchemaTopicsForPlan compiledPlan
+        <> resultLikeSchemaTopicsForPlan compiledPlan
     )
 
-resultLikeSchemaTopics :: DemoConfig -> [Text.Text]
-resultLikeSchemaTopics demoConfig =
+startupTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
+startupTopicsForPlan compiledPlan =
   uniqueTexts
-    ( resultTopic demoConfig
-        : daemonConfigResultTopic (coordinatorDaemon demoConfig)
-        : map daemonConfigResultTopic (engineDaemons demoConfig)
+    ( schemaTopicsForPlan compiledPlan
+        <> modelBootstrapTopicsForPlan compiledPlan
     )
 
-modelBootstrapTopicsForDemoConfig :: DemoConfig -> [Text.Text]
-modelBootstrapTopicsForDemoConfig demoConfig =
+requestLikeSchemaTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
+requestLikeSchemaTopicsForPlan compiledPlan =
   uniqueTexts
-    ( modelBootstrapTopic demoConfig
+    ( compiledPlanRequestTopics compiledPlan
+        <> compiledDaemonRequestTopics (compiledPlanCoordinatorDaemon compiledPlan)
+        <> concatMap compiledDaemonRequestTopics (compiledPlanEngineDaemons compiledPlan)
+    )
+
+resultLikeSchemaTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
+resultLikeSchemaTopicsForPlan compiledPlan =
+  uniqueTexts
+    ( compiledPlanResultTopic compiledPlan
+        : compiledDaemonResultTopic (compiledPlanCoordinatorDaemon compiledPlan)
+        : map compiledDaemonResultTopic (compiledPlanEngineDaemons compiledPlan)
+    )
+
+modelBootstrapTopicsForPlan :: CompiledRuntimePlan -> [Text.Text]
+modelBootstrapTopicsForPlan compiledPlan =
+  uniqueTexts
+    ( compiledPlanModelBootstrapTopic compiledPlan
         : map
           (ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace . modelId)
-          (models demoConfig)
+          (compiledPlanConfiguredModels compiledPlan)
     )
 
 uniqueTexts :: [Text.Text] -> [Text.Text]
@@ -1646,12 +1869,12 @@ uniqueTexts = go []
       | value `elem` seen = go seen rest
       | otherwise = go (value : seen) rest
 
-ensureRegisteredSchemasWithRetry :: Paths -> PulsarTransport -> DemoConfig -> IO ()
-ensureRegisteredSchemasWithRetry paths transport demoConfig =
+ensureRegisteredSchemasForPlanWithRetry :: Paths -> PulsarTransport -> CompiledRuntimePlan -> IO ()
+ensureRegisteredSchemasForPlanWithRetry paths transport compiledPlan =
   retry (1 :: Int)
   where
     retry attempt = do
-      registrationResult <- try @SomeException (ensureRegisteredSchemas paths transport demoConfig)
+      registrationResult <- try @SomeException (ensureRegisteredSchemasForPlan paths transport compiledPlan)
       case registrationResult of
         Right _ -> pure ()
         Left err ->
@@ -1660,7 +1883,7 @@ ensureRegisteredSchemasWithRetry paths transport demoConfig =
             Nothing -> do
               hPutStrLn
                 stderr
-                ( "pulsar schema registration attempt "
+                ( "pulsar plan schema registration attempt "
                     <> show attempt
                     <> " failed:\n"
                     <> displayException err
@@ -1690,8 +1913,8 @@ ensureRegisteredSchemasWithRetry paths transport demoConfig =
 -- @infernix@ tenant is created here so the supported demo and system
 -- namespaces live in a dedicated tenant rather than the stock-Pulsar
 -- @public/default@ defaults.
-reconcileSupportedNamespaces :: PulsarTransport -> DemoConfig -> IO ()
-reconcileSupportedNamespaces transport _demoConfig = do
+reconcileSupportedNamespacesCore :: PulsarTransport -> IO ()
+reconcileSupportedNamespacesCore transport = do
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   manager <- newManager defaultManagerSettings
   -- Tenant + namespaces. Pulsar's tenant-create endpoint requires a
@@ -1719,12 +1942,12 @@ reconcileSupportedNamespaces transport _demoConfig = do
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/demo"
   ensureNamespaceDeduplicationEnabled manager adminBaseUrl "infernix/system"
 
-reconcileSupportedNamespacesWithRetry :: PulsarTransport -> DemoConfig -> IO ()
-reconcileSupportedNamespacesWithRetry transport demoConfig =
+reconcileSupportedNamespacesForPlanWithRetry :: PulsarTransport -> CompiledRuntimePlan -> IO ()
+reconcileSupportedNamespacesForPlanWithRetry transport _compiledPlan =
   retry (1 :: Int)
   where
     retry attempt = do
-      reconcileResult <- try @SomeException (reconcileSupportedNamespaces transport demoConfig)
+      reconcileResult <- try @SomeException (reconcileSupportedNamespacesCore transport)
       case reconcileResult of
         Right _ -> pure ()
         Left err ->
@@ -1733,7 +1956,7 @@ reconcileSupportedNamespacesWithRetry transport demoConfig =
             Nothing -> do
               hPutStrLn
                 stderr
-                ( "pulsar namespace reconcile attempt "
+                ( "pulsar plan namespace reconcile attempt "
                     <> show attempt
                     <> " failed:\n"
                     <> displayException err
@@ -1741,23 +1964,27 @@ reconcileSupportedNamespacesWithRetry transport demoConfig =
               threadDelay 1000000
               retry (attempt + 1)
 
--- | Reconcile every static startup topic derived from the typed
--- 'DemoConfig' topology. This makes the coordinator/engine topic surface
+-- | Reconcile every static startup topic derived from the compiled topology.
+-- This makes the coordinator/engine topic surface
 -- explicit before schema registration, rather than relying on broker
 -- auto-topic creation during first publish or first schema registration.
-reconcileStartupTopics :: PulsarTransport -> DemoConfig -> IO ()
-reconcileStartupTopics transport demoConfig = do
+reconcileStartupTopicsForPlan :: PulsarTransport -> CompiledRuntimePlan -> IO ()
+reconcileStartupTopicsForPlan transport compiledPlan =
+  reconcileStartupTopicList transport (startupTopicsForPlan compiledPlan)
+
+reconcileStartupTopicList :: PulsarTransport -> [Text.Text] -> IO ()
+reconcileStartupTopicList transport topics = do
   adminBaseUrl <- requirePulsarAdminBaseUrl transport
   manager <- newManager defaultManagerSettings
-  forM_ (startupTopicsForDemoConfig demoConfig) $
+  forM_ topics $
     ensureNonPartitionedTopic manager adminBaseUrl
 
-reconcileStartupTopicsWithRetry :: PulsarTransport -> DemoConfig -> IO ()
-reconcileStartupTopicsWithRetry transport demoConfig =
+reconcileStartupTopicsForPlanWithRetry :: PulsarTransport -> CompiledRuntimePlan -> IO ()
+reconcileStartupTopicsForPlanWithRetry transport compiledPlan =
   retry (1 :: Int)
   where
     retry attempt = do
-      reconcileResult <- try @SomeException (reconcileStartupTopics transport demoConfig)
+      reconcileResult <- try @SomeException (reconcileStartupTopicsForPlan transport compiledPlan)
       case reconcileResult of
         Right _ -> pure ()
         Left err ->
@@ -1766,7 +1993,7 @@ reconcileStartupTopicsWithRetry transport demoConfig =
             Nothing -> do
               hPutStrLn
                 stderr
-                ( "pulsar topic reconcile attempt "
+                ( "pulsar plan topic reconcile attempt "
                     <> show attempt
                     <> " failed:\n"
                     <> displayException err
@@ -2175,43 +2402,47 @@ ensureRemoteSchema manager adminBaseUrl topicValue messageTypeName = do
 consumeTopicForever ::
   PulsarTransport ->
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  DaemonConfig ->
-  CompiledRuntimePlan ->
+  DaemonTopicCapability ->
   Maybe KVCache.EngineKVCache ->
   MVar () ->
-  Text.Text ->
   IO ()
-consumeTopicForever transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue =
-  case serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue of
-    Left err -> ioError (userError err)
-    Right subscriptionType ->
-      forever $ do
-        sessionResult <- try @SomeException (consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType)
-        case sessionResult of
-          Right _ -> threadDelay 1000000
-          Left err
-            | isFatalServiceConsumerError subscriptionType err -> do
-                hPutStrLn
-                  stderr
-                  ( "pulsar consumer subscription rejected for "
-                      <> Text.unpack requestTopicValue
-                      <> " with "
-                      <> Text.unpack (consumerSubscriptionTypeId subscriptionType)
-                      <> " ownership:\n"
-                      <> displayException err
-                  )
-                throwIO err
-            | otherwise -> do
-                hPutStrLn
-                  stderr
-                  ( "pulsar consumer loop failed for "
-                      <> Text.unpack requestTopicValue
-                      <> ":\n"
-                      <> displayException err
-                  )
-                threadDelay 1000000
+consumeTopicForever transport paths capability maybeEngineKVCache engineExecutionLock =
+  forever $ do
+    sessionResult <-
+      try @SomeException
+        ( consumeTopicSession
+            transport
+            paths
+            capability
+            maybeEngineKVCache
+            engineExecutionLock
+        )
+    case sessionResult of
+      Right _ -> threadDelay 1000000
+      Left err
+        | isFatalServiceConsumerError subscriptionType err -> do
+            hPutStrLn
+              stderr
+              ( "pulsar consumer subscription rejected for "
+                  <> Text.unpack requestTopicValue
+                  <> " with "
+                  <> Text.unpack (consumerSubscriptionTypeId subscriptionType)
+                  <> " ownership:\n"
+                  <> displayException err
+              )
+            throwIO err
+        | otherwise -> do
+            hPutStrLn
+              stderr
+              ( "pulsar consumer loop failed for "
+                  <> Text.unpack requestTopicValue
+                  <> ":\n"
+                  <> displayException err
+              )
+            threadDelay 1000000
+  where
+    requestTopicValue = daemonTopicCapabilityTopic capability
+    subscriptionType = serviceConsumerSubscriptionType capability
 
 isFatalServiceConsumerError :: ConsumerSubscriptionType -> SomeException -> Bool
 isFatalServiceConsumerError subscriptionType err =
@@ -2220,23 +2451,25 @@ isFatalServiceConsumerError subscriptionType err =
   where
     errorText = Text.toLower (Text.pack (displayException err))
 
-serviceConsumerSubscriptionType :: RuntimeMode -> DaemonConfig -> Either String ConsumerSubscriptionType
-serviceConsumerSubscriptionType runtimeMode daemonConfig =
-  serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig ""
+serviceConsumerSubscriptionType :: DaemonTopicCapability -> ConsumerSubscriptionType
+serviceConsumerSubscriptionType capability =
+  case capability of
+    CoordinatorTopicCapability _ _ _ subscriptionType -> subscriptionType
+    EngineTopicCapability _ _ _ subscriptionType -> subscriptionType
 
-serviceConsumerSubscriptionTypeForTopic :: RuntimeMode -> DaemonConfig -> Text.Text -> Either String ConsumerSubscriptionType
-serviceConsumerSubscriptionTypeForTopic runtimeMode daemonConfig requestTopicValue
-  | selectedType == ConsumerFailover =
-      Left "service consumers must not use Failover; Failover is reserved for coordinator-owned dispatcher, result-bridge, and model-bootstrap leadership loops"
-  | daemonConfigRole daemonConfig /= Engine && selectedType /= ConsumerShared =
-      Left "coordinator service consumers use Shared; Exclusive is reserved for pinned engine member routes"
-  | daemonConfigRole daemonConfig == Engine
+authorizedSubscriptionType ::
+  RuntimeMode ->
+  CompiledDaemon ->
+  Text.Text ->
+  ConsumerSubscriptionType
+authorizedSubscriptionType runtimeMode compiledDaemon requestTopicValue
+  | compiledDaemonRole compiledDaemon == Engine
       && isPinnedEngineMemberTopic runtimeMode requestTopicValue =
-      Right ConsumerExclusive
-  | otherwise = Right selectedType
+      ConsumerExclusive
+  | otherwise = selectedType
   where
     selectedType =
-      fromMaybe ConsumerShared (daemonConfigConsumerSubscriptionType daemonConfig)
+      fromMaybe ConsumerShared (compiledDaemonConsumerSubscriptionType compiledDaemon)
 
 isPinnedEngineMemberTopic :: RuntimeMode -> Text.Text -> Bool
 isPinnedEngineMemberTopic runtimeMode requestTopicValue =
@@ -2250,16 +2483,11 @@ isPinnedEngineMemberTopic runtimeMode requestTopicValue =
 consumeTopicSession ::
   PulsarTransport ->
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  DaemonConfig ->
-  CompiledRuntimePlan ->
+  DaemonTopicCapability ->
   Maybe KVCache.EngineKVCache ->
   MVar () ->
-  Text.Text ->
-  ConsumerSubscriptionType ->
   IO ()
-consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledPlan maybeEngineKVCache engineExecutionLock requestTopicValue subscriptionType = do
+consumeTopicSession transport paths capability maybeEngineKVCache engineExecutionLock = do
   processLabel <- currentProcessLabel
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
@@ -2289,40 +2517,59 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledP
             )
   where
     handleConsumerEnvelope connection envelope = do
-      decodedRequest <- decodeEnvelopePayload "inference request" envelope
+      case decodeEnvelopePayloadEither "inference request" envelope of
+        Left decodeError -> do
+          publishMalformedInferenceRequest
+            transport
+            capability
+            envelope
+            decodeError
+          hPutStrLn
+            stderr
+            ( "pulsar inference consumer rejected malformed message "
+                <> Text.unpack (envelopeMessageId envelope)
+                <> ": "
+                <> decodeError
+            )
+        Right decodedRequest ->
+          handleDecodedRequest decodedRequest
+      sendAck connection (envelopeMessageId envelope)
+    handleDecodedRequest decodedRequest =
       -- Coordinator-role handoff routes through the validated engine-pool
       -- graph. Engine-role consumers execute the request and publish the
       -- typed result.
-      case daemonConfigRole daemonConfig of
-        Coordinator -> do
-          selectedBatchTopicValue <-
-            case batchTopicForRequest runtimeMode compiledPlan decodedRequest of
-              Left err ->
-                ioError (userError err)
-              Right topicValue ->
-                pure topicValue
-          -- Coordinator-role hand-off to the engine-batch topic. The
-          -- producer name is stable per coordinator role so the broker
-          -- dedups concurrent coordinator replicas. Sequence-id
-          -- derivation from the application-level
-          -- @userPromptMessageId@ key lives in
-          -- @Infernix.Dispatch.SingleFlight.producerDedupSequenceId@;
-          -- the broker-side dedup gate ('reconcileSupportedNamespaces')
-          -- accepts the resulting tuple. Phase 7 Sprint 7.14 wires the
-          -- typed envelope read here.
-          let requestContextId = view ProtoInferenceFields.contextId decodedRequest
-              batchProducerScope =
-                if Text.null requestContextId
-                  then "infernix-coordinator-batch-" <> runtimeModeId runtimeMode
-                  else "infernix-coordinator-batch-" <> runtimeModeId runtimeMode <> "-" <> requestContextId
-              batchOptions = inferenceRequestPublishOptions batchProducerScope decodedRequest
-          publishTopicPayload
-            transport
-            selectedBatchTopicValue
-            batchOptions
-            (view ProtoInferenceFields.requestId decodedRequest)
-            (encodeMessage decodedRequest)
-        Engine ->
+      case capability of
+        CoordinatorTopicCapability coordinatorPlan _ _ _ ->
+          case coordinatorAdmissionRejection runtimeMode coordinatorPlan decodedRequest of
+            Just rejection ->
+              publishCoordinatorAdmissionRejection
+                transport
+                coordinatorPlan
+                decodedRequest
+                rejection
+            Nothing -> do
+              selectedBatchTopicValue <-
+                case batchTopicForRequest runtimeMode coordinatorPlan decodedRequest of
+                  Left err ->
+                    ioError (userError err)
+                  Right topicValue ->
+                    pure topicValue
+              -- Coordinator-role hand-off to the engine-batch topic. The
+              -- producer name is stable per coordinator role so the broker
+              -- dedups concurrent coordinator replicas.
+              let requestContextId = view ProtoInferenceFields.contextId decodedRequest
+                  batchProducerScope =
+                    if Text.null requestContextId
+                      then "infernix-coordinator-batch-" <> runtimeModeId runtimeMode
+                      else "infernix-coordinator-batch-" <> runtimeModeId runtimeMode <> "-" <> requestContextId
+                  batchOptions = inferenceRequestPublishOptions batchProducerScope decodedRequest
+              publishTopicPayload
+                transport
+                selectedBatchTopicValue
+                batchOptions
+                (view ProtoInferenceFields.requestId decodedRequest)
+                (encodeMessage decodedRequest)
+        EngineTopicCapability runtimePlan compiledDaemon _ _ ->
           modifyMVar_ engineExecutionLock $ \() -> do
             let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
                 requestIdValue = view ProtoInferenceFields.requestId decodedRequest
@@ -2331,10 +2578,19 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledP
                     then Just (emptyModelIdRejectionResult runtimeMode decodedRequest)
                     else memoryAdmissionRejection runtimeMode compiledPlan modelIdValue decodedRequest
             publishedResult <-
-              maybe
-                (publishedResultFromRequest (Just transport) paths runtimeMode compiledPlan overrides maybeEngineKVCache decodedRequest)
-                pure
-                maybeRejection
+              case maybeRejection of
+                Just rejection -> pure rejection
+                Nothing ->
+                  case executableRequestRouteAuthorization capability modelIdValue of
+                    Left err ->
+                      pure
+                        ( modelNotExecutableRejectionResult
+                            runtimeMode
+                            (Text.pack err)
+                            decodedRequest
+                        )
+                    Right () ->
+                      publishedResultFromRequest (Just transport) paths runtimeMode runtimePlan maybeEngineKVCache decodedRequest
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
             -- engine-side inference so the host daemon log surfaces the
             -- request id, resolved model id, and final status. Diagnoses
@@ -2356,14 +2612,121 @@ consumeTopicSession transport paths runtimeMode overrides daemonConfig compiledP
                 resultOptions = inferenceRequestPublishOptions resultProducerScope decodedRequest
             publishTopicPayload
               transport
-              (daemonConfigResultTopic daemonConfig)
+              (compiledDaemonResultTopic compiledDaemon)
               resultOptions
               (requestId publishedResult)
               (encodeMessage (domainResultToProto publishedResult))
             pure ()
-        Webapp ->
-          ioError (userError "webapp role does not consume inference topics")
-      sendAck connection (envelopeMessageId envelope)
+    requestTopicValue = daemonTopicCapabilityTopic capability
+    runtimeMode = daemonTopicCapabilityRuntimeMode capability
+    compiledPlan = daemonTopicCapabilityCompiledPlan capability
+    subscriptionType = serviceConsumerSubscriptionType capability
+
+publishCoordinatorAdmissionRejection ::
+  PulsarTransport ->
+  CompiledRuntimePlan ->
+  ProtoInference.InferenceRequest ->
+  InferenceResult ->
+  IO ()
+publishCoordinatorAdmissionRejection transport compiledPlan decodedRequest rejection = do
+  let runtimeMode = compiledPlanRuntimeMode compiledPlan
+      requestContextId = view ProtoInferenceFields.contextId decodedRequest
+      producerScope =
+        if Text.null requestContextId
+          then "infernix-coordinator-rejection-" <> runtimeModeId runtimeMode
+          else "infernix-coordinator-rejection-" <> runtimeModeId runtimeMode <> "-" <> requestContextId
+      publishOptions = inferenceRequestPublishOptions producerScope decodedRequest
+  publishTopicPayload
+    transport
+    (compiledPlanResultTopic compiledPlan)
+    publishOptions
+    (requestId rejection)
+    (encodeMessage (domainResultToProto rejection))
+
+publishMalformedInferenceRequest ::
+  PulsarTransport ->
+  DaemonTopicCapability ->
+  PulsarEnvelope ->
+  String ->
+  IO ()
+publishMalformedInferenceRequest transport capability envelope decodeError = do
+  let runtimeMode = daemonTopicCapabilityRuntimeMode capability
+      requestIdValue =
+        case envelopeKey envelope of
+          Just keyValue | not (Text.null keyValue) -> keyValue
+          _ -> envelopeMessageId envelope
+      rejection =
+        malformedInferenceRequestResult
+          runtimeMode
+          requestIdValue
+          (Text.pack decodeError)
+      producerScope = "infernix-malformed-inference-" <> runtimeModeId runtimeMode
+      publishOptions =
+        (defaultPublishOptions (dedupProducerName producerScope requestIdValue))
+          { publishMessageKey = Just requestIdValue,
+            publishSequenceId = Just (stableSequenceId requestIdValue)
+          }
+  publishTopicPayload
+    transport
+    (daemonTopicCapabilityResultTopic capability)
+    publishOptions
+    requestIdValue
+    (encodeMessage (domainResultToProto rejection))
+
+daemonTopicCapabilityResultTopic :: DaemonTopicCapability -> Text.Text
+daemonTopicCapabilityResultTopic capability =
+  case capability of
+    CoordinatorTopicCapability compiledPlan _ _ _ ->
+      compiledPlanResultTopic compiledPlan
+    EngineTopicCapability _ compiledDaemon _ _ ->
+      compiledDaemonResultTopic compiledDaemon
+
+daemonTopicCapabilityAuthorizesModel ::
+  DaemonTopicCapability ->
+  Text.Text ->
+  Bool
+daemonTopicCapabilityAuthorizesModel capability modelIdValue =
+  case executableRequestRouteAuthorization capability modelIdValue of
+    Left _ -> False
+    Right () -> True
+
+executableRequestRouteAuthorization ::
+  DaemonTopicCapability ->
+  Text.Text ->
+  Either String ()
+executableRequestRouteAuthorization capability modelIdValue =
+  case capability of
+    CoordinatorTopicCapability {} ->
+      Left "coordinator topic capability cannot authorize engine execution"
+    EngineTopicCapability runtimePlan compiledDaemon requestTopicValue _ ->
+      case compiledDaemonMemberId compiledDaemon of
+        Nothing ->
+          Left "engine topic capability has no compiled daemon member"
+        Just memberIdValue ->
+          case lookupExecutableModel modelIdValue runtimePlan of
+            Nothing ->
+              Left
+                ( "engine topic capability has no executable model "
+                    <> Text.unpack modelIdValue
+                )
+            Just executableModel
+              | any
+                  (routeMatches memberIdValue requestTopicValue)
+                  (NonEmpty.toList (executableModelRoutes executableModel)) ->
+                  Right ()
+              | otherwise ->
+                  Left
+                    ( "engine topic capability rejects model "
+                        <> Text.unpack modelIdValue
+                        <> " on member "
+                        <> Text.unpack memberIdValue
+                        <> " and topic "
+                        <> Text.unpack requestTopicValue
+                    )
+  where
+    routeMatches memberIdValue requestTopicValue route =
+      engineRouteMemberId route == memberIdValue
+        && engineRouteTopic route == requestTopicValue
 
 serviceConsumerAckTimeoutMillis :: Int
 serviceConsumerAckTimeoutMillis = 900000
@@ -2377,18 +2740,31 @@ serviceConsumerName subscriptionName subscriptionType processLabel =
 
 batchTopicForRequest :: RuntimeMode -> CompiledRuntimePlan -> ProtoInference.InferenceRequest -> Either String Text.Text
 batchTopicForRequest runtimeMode compiledPlan requestValue =
-  case lookupExecutableModel modelIdValue compiledPlan >>= const (enginePoolForModel demoConfig modelIdValue) of
-    Just pool -> Right (enginePoolTopicForMode runtimeMode (enginePoolId pool) modelIdValue)
+  if runtimeMode /= compiledPlanRuntimeMode compiledPlan
+    then
+      Left
+        ( "execution-plan runtime mismatch: requested "
+            <> Text.unpack (runtimeModeId runtimeMode)
+            <> ", compiled "
+            <> Text.unpack (runtimeModeId (compiledPlanRuntimeMode compiledPlan))
+        )
+    else resolveCompiledBatchTopic runtimeMode compiledPlan modelIdValue
+  where
+    modelIdValue = view ProtoInferenceFields.requestModelId requestValue
+
+resolveCompiledBatchTopic :: RuntimeMode -> CompiledRuntimePlan -> Text.Text -> Either String Text.Text
+resolveCompiledBatchTopic runtimeMode compiledPlan modelIdValue =
+  case lookupCompiledPlacement modelIdValue compiledPlan of
+    Just placement ->
+      Right
+        (engineRouteTopic (NonEmpty.head (compiledPlacementRoutes placement)))
     Nothing ->
       Left
-        ( "no engine pool route for model "
+        ( "no compiled engine route for model "
             <> Text.unpack modelIdValue
             <> " on "
             <> Text.unpack (runtimeModeId runtimeMode)
         )
-  where
-    demoConfig = runtimePlanConfig compiledPlan
-    modelIdValue = view ProtoInferenceFields.requestModelId requestValue
 
 -- | Phase 7 Sprint 7.7 producer-side dedup wiring. Each publish carries
 -- a stable @producerName@ in the URL query. For the WebSocket API, the
@@ -2606,11 +2982,9 @@ pulsarProducerPublishRetryDelayMicros = 1_000_000
 -- harmlessly on the next subscription session.
 runResultBridgeLoop ::
   PulsarTransport ->
-  RuntimeMode ->
-  Text.Text ->
-  ConversationTopic.TopicNamespace ->
+  CompiledRuntimePlan ->
   IO ()
-runResultBridgeLoop transport runtimeMode resultTopic topicNamespace = do
+runResultBridgeLoop transport compiledPlan = do
   topicRef <- requireTopicRef resultTopic
   processLabel <- currentProcessLabel
   let runtimeModeText = runtimeModeId runtimeMode
@@ -2626,7 +3000,7 @@ runResultBridgeLoop transport runtimeMode resultTopic topicNamespace = do
     sessionResult <-
       try @SomeException
         ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
-            forever (handleResultBridgeMessage transport runtimeMode topicNamespace connection)
+            forever (handleResultBridgeMessage transport topicNamespace connection)
         )
     case sessionResult of
       Right _ -> threadDelay 1_000_000
@@ -2639,14 +3013,18 @@ runResultBridgeLoop transport runtimeMode resultTopic topicNamespace = do
               <> displayException err
           )
         threadDelay 1_000_000
+  where
+    runtimeMode = compiledPlanRuntimeMode compiledPlan
+    resultTopic =
+      compiledDaemonResultTopic (compiledPlanCoordinatorDaemon compiledPlan)
+    topicNamespace = ConversationTopic.defaultDemoTopicNamespace
 
 handleResultBridgeMessage ::
   PulsarTransport ->
-  RuntimeMode ->
   ConversationTopic.TopicNamespace ->
   WebSockets.Connection ->
   IO ()
-handleResultBridgeMessage transport _runtimeMode topicNamespace connection = do
+handleResultBridgeMessage transport topicNamespace connection = do
   rawEnvelope <- receiveJsonFrame "Pulsar result-bridge message" connection
   envelope <- decodeJsonText "Pulsar result-bridge message" rawEnvelope
   handled <-
@@ -2812,19 +3190,18 @@ dispatcherTopicPollSeconds = 30
 
 runDispatcherLoop ::
   PulsarTransport ->
-  RuntimeMode ->
-  Text.Text ->
-  ConversationTopic.TopicNamespace ->
+  CompiledRuntimePlan ->
   ContextModelMap ->
-  [ModelDescriptor] ->
   IO ()
-runDispatcherLoop transport runtimeMode requestTopic topicNamespace contextModelMap modelCatalog
-  | Text.null requestTopic = do
-      hPutStrLn
-        stderr
-        "dispatcher loop disabled: daemon config has no inference request topic"
-      forever (threadDelay 60_000_000)
-  | otherwise = do
+runDispatcherLoop transport compiledPlan contextModelMap =
+  case compiledDaemonRequestTopics (compiledPlanCoordinatorDaemon compiledPlan) of
+    [] ->
+      ioError
+        (userError "compiled coordinator capability has no inference request topic")
+    requestTopic : _ -> do
+      let runtimeMode = compiledPlanRuntimeMode compiledPlan
+          topicNamespace = ConversationTopic.defaultDemoTopicNamespace
+          modelCatalog = compiledPlanConfiguredModels compiledPlan
       managedContexts <- newMVar Set.empty
       managedUsers <- newMVar Set.empty
       manager <- newManager tlsManagerSettings
@@ -3321,11 +3698,9 @@ renderDispatchedObjectRef objectRef =
 -- ready-event dedup key.
 runModelBootstrapLoop ::
   PulsarTransport ->
-  ConversationTopic.TopicNamespace ->
+  CompiledRuntimePlan ->
   IO ()
-runModelBootstrapLoop transport systemNamespace = do
-  let requestTopic =
-        ConversationTopic.modelBootstrapRequestTopicName systemNamespace
+runModelBootstrapLoop transport compiledPlan = do
   topicRef <- requireTopicRef requestTopic
   processLabel <- currentProcessLabel
   let consumerName =
@@ -3344,7 +3719,13 @@ runModelBootstrapLoop transport systemNamespace = do
     sessionResult <-
       try @SomeException
         ( runPulsarWebSocketClient (pulsarWebSocketBase transport) consumerPath $ \connection ->
-            forever (handleBootstrapMessage transport systemNamespace connection)
+            forever
+              ( handleBootstrapMessage
+                  transport
+                  compiledPlan
+                  systemNamespace
+                  connection
+              )
         )
     case sessionResult of
       Right _ -> threadDelay 1_000_000
@@ -3357,33 +3738,49 @@ runModelBootstrapLoop transport systemNamespace = do
               <> displayException err
           )
         threadDelay 1_000_000
+  where
+    requestTopic = compiledPlanModelBootstrapTopic compiledPlan
+    systemNamespace = ConversationTopic.systemTopicNamespace
 
 handleBootstrapMessage ::
   PulsarTransport ->
+  CompiledRuntimePlan ->
   ConversationTopic.TopicNamespace ->
   WebSockets.Connection ->
   IO ()
-handleBootstrapMessage transport systemNamespace connection = do
+handleBootstrapMessage transport compiledPlan systemNamespace connection = do
   rawEnvelope <- receiveJsonFrame "Pulsar bootstrap message" connection
   envelope <- decodeJsonText "Pulsar bootstrap message" rawEnvelope
   handled <-
     try @SomeException
-      ( do
-          payloadBytes <- bootstrapPayloadBytes envelope
-          case eitherDecodeStrict' payloadBytes of
-            Left err ->
-              hPutStrLn
-                stderr
-                ( "model-bootstrap skipping undecodable request "
-                    <> Text.unpack (envelopeMessageId envelope)
-                    <> ": "
-                    <> err
-                )
-            Right request -> processBootstrapRequest transport systemNamespace request
-      )
+      (processBootstrapEnvelope transport compiledPlan systemNamespace envelope)
   case handled of
     Right _ -> sendAck connection (envelopeMessageId envelope)
     Left err -> handleBootstrapFailure connection (envelopeMessageId envelope) err
+
+processBootstrapEnvelope ::
+  PulsarTransport ->
+  CompiledRuntimePlan ->
+  ConversationTopic.TopicNamespace ->
+  PulsarEnvelope ->
+  IO ()
+processBootstrapEnvelope transport compiledPlan systemNamespace envelope =
+  case bootstrapPayloadBytes envelope of
+    Left err ->
+      logRejectedBootstrapEnvelope envelope err
+    Right payloadBytes ->
+      case eitherDecodeStrict' payloadBytes of
+        Left err ->
+          logRejectedBootstrapEnvelope envelope err
+        Right request ->
+          case authorizeModelBootstrapRequest compiledPlan request of
+            Left err ->
+              logRejectedBootstrapEnvelope envelope err
+            Right authorizedRequest ->
+              processBootstrapRequest
+                transport
+                systemNamespace
+                authorizedRequest
 
 -- | Sprint 4.29 (managed-state-transition doctrine): decide redelivery from the
 -- typed download outcome rather than blindly negative-acking every failure. A
@@ -3419,26 +3816,71 @@ handleBootstrapFailure connection messageId err =
       threadDelay (seconds * 1000000)
       sendNegativeAck connection messageId
 
-bootstrapPayloadBytes :: PulsarEnvelope -> IO ByteString.ByteString
+logRejectedBootstrapEnvelope :: PulsarEnvelope -> String -> IO ()
+logRejectedBootstrapEnvelope envelope rejection =
+  hPutStrLn
+    stderr
+    ( "model-bootstrap rejected request "
+        <> Text.unpack (envelopeMessageId envelope)
+        <> ": "
+        <> rejection
+    )
+
+bootstrapPayloadBytes :: PulsarEnvelope -> Either String ByteString.ByteString
 bootstrapPayloadBytes envelope =
   case Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)) of
-    Right raw -> pure raw
+    Right raw -> Right raw
     Left err ->
-      ioError
-        ( userError
-            ( "failed to decode base64 model-bootstrap payload for message "
-                <> Text.unpack (envelopeMessageId envelope)
-                <> ":\n"
-                <> err
-            )
+      Left
+        ( "failed to decode base64 model-bootstrap payload for message "
+            <> Text.unpack (envelopeMessageId envelope)
+            <> ":\n"
+            <> err
         )
+
+validateModelBootstrapRequest ::
+  CompiledRuntimePlan ->
+  BootstrapModels.ModelBootstrapRequest ->
+  Either String ()
+validateModelBootstrapRequest compiledPlan request =
+  case find ((== requestModelIdValue) . modelId) (compiledPlanConfiguredModels compiledPlan) of
+    Nothing ->
+      Left
+        ( "model id is not present in the compiled execution plan: "
+            <> Text.unpack requestModelIdValue
+        )
+    Just model
+      | BootstrapModels.bootstrapRequestDownloadUrl request /= downloadUrl model ->
+          Left
+            ( "download URL does not match the compiled model descriptor for "
+                <> Text.unpack requestModelIdValue
+            )
+      | isNothing
+          ( parseTimestamp
+              (BootstrapModels.bootstrapRequestRequestedAtIso8601 request)
+          ) ->
+          Left
+            ( "requestedAt is not a canonical UTC timestamp for "
+                <> Text.unpack requestModelIdValue
+            )
+      | otherwise -> Right ()
+  where
+    requestModelIdValue = BootstrapModels.bootstrapRequestModelId request
+
+authorizeModelBootstrapRequest ::
+  CompiledRuntimePlan ->
+  BootstrapModels.ModelBootstrapRequest ->
+  Either String AuthorizedBootstrapRequest
+authorizeModelBootstrapRequest compiledPlan request = do
+  validateModelBootstrapRequest compiledPlan request
+  pure (AuthorizedBootstrapRequest request)
 
 processBootstrapRequest ::
   PulsarTransport ->
   ConversationTopic.TopicNamespace ->
-  BootstrapModels.ModelBootstrapRequest ->
+  AuthorizedBootstrapRequest ->
   IO ()
-processBootstrapRequest transport systemNamespace request = do
+processBootstrapRequest transport systemNamespace (AuthorizedBootstrapRequest request) = do
   presignedConfigResult <- loadBootstrapPresignedConfig
   case presignedConfigResult of
     Left configError ->
@@ -3585,17 +4027,43 @@ commitDownloadedReadySentinel presigned manager now modelId payloadObject sentin
 -- the remaining models still stage (the coordinator surfaces per-model
 -- progress and the @cluster up@ warm-model-cache barrier waits on the
 -- sentinels).
-sweepEagerModelCache ::
+sweepEagerModelCacheForPlan ::
+  PulsarTransport ->
+  CompiledRuntimePlan ->
+  IO ()
+sweepEagerModelCacheForPlan transport compiledPlan =
+  sweepEagerModelCacheModels
+    transport
+    ConversationTopic.systemTopicNamespace
+    compiledPlan
+    (compiledPlanConfiguredModels compiledPlan)
+
+sweepEagerModelCacheModels ::
   PulsarTransport ->
   ConversationTopic.TopicNamespace ->
-  DemoConfig ->
+  CompiledRuntimePlan ->
+  [ModelDescriptor] ->
   IO ()
-sweepEagerModelCache transport systemNamespace demoConfig = do
-  let modelDescriptors = models demoConfig
+sweepEagerModelCacheModels transport systemNamespace compiledPlan modelDescriptors = do
   putStrLn ("serviceEagerModelCacheCount: " <> show (length modelDescriptors))
   forM_ modelDescriptors $ \model -> do
     request <- modelBootstrapRequestFor model
-    outcome <- try @SomeException (processBootstrapRequest transport systemNamespace request)
+    outcome <-
+      try @SomeException $ do
+        authorizedRequest <-
+          case authorizeModelBootstrapRequest compiledPlan request of
+            Left err ->
+              ioError
+                ( userError
+                    ( "compiled eager model-bootstrap request lost authority: "
+                        <> err
+                    )
+                )
+            Right authorized -> pure authorized
+        processBootstrapRequest
+          transport
+          systemNamespace
+          authorizedRequest
     case outcome of
       Right _ -> putStrLn ("serviceEagerModelCacheStaged: " <> Text.unpack (modelId model))
       Left err ->
@@ -4307,11 +4775,9 @@ emptyModelIdRejectionTimestamp =
     Just timestamp -> timestamp
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
--- | Phase 4 Sprint 4.27 — runtime memory admission. Evaluated under the
--- serialized engine-execution lock, so at most one inference is resident
--- at a time and peak resident memory is bounded to the admitted model's
--- footprint. Enforced budgets reject only the oversized request with a
--- typed 'InferenceError' payload before launching the engine subprocess.
+-- | Return the compiler's explicit admission rejection for an unavailable
+-- model. Admission is never recomputed from raw configuration at execution
+-- time; the compiled plan accounts for every configured model exactly once.
 memoryAdmissionRejection ::
   RuntimeMode ->
   CompiledRuntimePlan ->
@@ -4319,31 +4785,112 @@ memoryAdmissionRejection ::
   ProtoInference.InferenceRequest ->
   Maybe InferenceResult
 memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
-  case lookupExecutableModel modelIdValue compiledPlan of
-    Just _ -> Nothing
-    Nothing ->
-      case find ((== modelIdValue) . modelId) (models demoConfig) of
-        Just model ->
-          case admitModelMemory (inferenceMemoryBudget demoConfig) model of
-            Left admissionError -> Just (memoryAdmissionRejectionResult runtimeMode model admissionError protoRequest)
-            Right _ ->
-              Just
-                ( memoryAdmissionRejectionResult
-                    runtimeMode
-                    model
-                    ( ModelMemoryLimitExceeded
-                        { inferenceErrorModelId = modelId model,
-                          inferenceErrorRequiredMib = modelMemoryFootprintMib (modelRamFootprint model),
-                          inferenceErrorAvailableMib = 0,
-                          inferenceErrorResource = inferenceMemoryBudgetResource (inferenceMemoryBudget demoConfig),
-                          inferenceErrorSource = "execution-plan refinement unavailable"
-                        }
-                    )
-                    protoRequest
-                )
-        Nothing -> Nothing
+  case lookupUnavailableModel modelIdValue compiledPlan of
+    Nothing -> Nothing
+    Just unavailable ->
+      Just
+        ( memoryAdmissionRejectionResult
+            runtimeMode
+            (unavailableModelDescriptor unavailable)
+            (unavailableModelReason unavailable)
+            protoRequest
+        )
+
+coordinatorAdmissionRejection ::
+  RuntimeMode ->
+  CompiledRuntimePlan ->
+  ProtoInference.InferenceRequest ->
+  Maybe InferenceResult
+coordinatorAdmissionRejection runtimeMode compiledPlan protoRequest
+  | Text.null modelIdValue =
+      Just (emptyModelIdRejectionResult runtimeMode protoRequest)
+  | Just rejection <-
+      memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
+      Just rejection
+  | Just _ <- lookupCompiledPlacement modelIdValue compiledPlan =
+      Nothing
+  | otherwise =
+      Just
+        ( modelNotExecutableRejectionResult
+            runtimeMode
+            "model_not_executable: the requested model is not present in the compiled execution plan"
+            protoRequest
+        )
   where
-    demoConfig = runtimePlanConfig compiledPlan
+    modelIdValue = view ProtoInferenceFields.requestModelId protoRequest
+
+modelNotExecutableRejectionResult ::
+  RuntimeMode ->
+  Text.Text ->
+  ProtoInference.InferenceRequest ->
+  InferenceResult
+modelNotExecutableRejectionResult runtimeMode rejectionMessage protoRequest =
+  InferenceResult
+    { requestId = view ProtoInferenceFields.requestId protoRequest,
+      resultModelId = view ProtoInferenceFields.requestModelId protoRequest,
+      resultMatrixRowId = "",
+      resultRuntimeMode = runtimeMode,
+      resultSelectedEngine = "",
+      status = "failed",
+      payload =
+        ResultPayload
+          { inlineOutput = Just rejectionMessage,
+            objectRef = Nothing,
+            inferenceError = Nothing
+          },
+      createdAt = emptyModelIdRejectionTimestamp,
+      resultUserId = view ProtoInferenceFields.userId protoRequest,
+      resultContextId = view ProtoInferenceFields.contextId protoRequest,
+      resultCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
+    }
+
+malformedInferenceRequestResult ::
+  RuntimeMode ->
+  Text.Text ->
+  Text.Text ->
+  InferenceResult
+malformedInferenceRequestResult runtimeMode requestIdValue rejectionMessage =
+  InferenceResult
+    { requestId = requestIdValue,
+      resultModelId = "",
+      resultMatrixRowId = "",
+      resultRuntimeMode = runtimeMode,
+      resultSelectedEngine = "",
+      status = "failed",
+      payload =
+        ResultPayload
+          { inlineOutput =
+              Just
+                ( "malformed_inference_request: "
+                    <> rejectionMessage
+                ),
+            objectRef = Nothing,
+            inferenceError = Nothing
+          },
+      createdAt = emptyModelIdRejectionTimestamp,
+      resultUserId = "",
+      resultContextId = "",
+      resultCausalRef = ""
+    }
+
+writeMalformedInferenceRequestFile ::
+  Paths ->
+  RuntimeMode ->
+  Text.Text ->
+  FilePath ->
+  String ->
+  IO ()
+writeMalformedInferenceRequestFile paths runtimeMode resultTopicValue requestFile decodeError = do
+  let resultDirectory = topicDirectoryPath paths resultTopicValue
+      resultPath = resultDirectory </> requestFile
+      requestIdValue = Text.pack (dropExtension requestFile)
+      rejection =
+        malformedInferenceRequestResult
+          runtimeMode
+          requestIdValue
+          (Text.pack decodeError)
+  createDirectoryIfMissing True resultDirectory
+  writeInferenceResultFile resultPath (domainResultToProto rejection)
 
 memoryAdmissionRejectionResult ::
   RuntimeMode ->
@@ -4378,19 +4925,16 @@ publishedResultFromRequest ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
-  CompiledRuntimePlan ->
-  EngineCommandOverrideMap ->
+  RuntimePlan ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest maybeTransport paths runtimeMode compiledPlan overrides maybeEngineKVCache protoRequest = do
+publishedResultFromRequest maybeTransport paths runtimeMode runtimePlan maybeEngineKVCache protoRequest = do
   domainResult <-
     executeInferenceWithModelBootstrapRetry
       maybeTransport
       paths
-      runtimeMode
-      compiledPlan
-      overrides
+      runtimePlan
       maybeEngineKVCache
       (kvCacheRequestFromProto protoRequest)
       (protoRequestToDomain protoRequest)
@@ -4435,14 +4979,12 @@ publishedResultFromRequest maybeTransport paths runtimeMode compiledPlan overrid
 executeInferenceWithModelBootstrapRetry ::
   Maybe PulsarTransport ->
   Paths ->
-  RuntimeMode ->
-  CompiledRuntimePlan ->
-  EngineCommandOverrideMap ->
+  RuntimePlan ->
   Maybe KVCache.EngineKVCache ->
   Maybe KVCache.KVCacheRequest ->
   InferenceRequest ->
   IO (Either ErrorResponse InferenceResult)
-executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode compiledPlan overrides maybeEngineKVCache maybeKVCacheRequest requestValue = do
+executeInferenceWithModelBootstrapRetry maybeTransport paths runtimePlan maybeEngineKVCache maybeKVCacheRequest requestValue = do
   firstResult <- runOnce
   case firstResult of
     Left errorValue
@@ -4453,7 +4995,7 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode compile
     _ -> pure firstResult
   where
     runOnce =
-      case lookupExecutableModel (requestModelId requestValue) compiledPlan of
+      case lookupExecutableModel (requestModelId requestValue) runtimePlan of
         Nothing ->
           pure
             ( Left
@@ -4465,20 +5007,32 @@ executeInferenceWithModelBootstrapRetry maybeTransport paths runtimeMode compile
         Just executableModel ->
           executeExecutableInferenceWithKVCache
             paths
-            runtimeMode
-            (inferenceMemoryBudget (runtimePlanConfig compiledPlan))
-            overrides
             maybeEngineKVCache
             maybeKVCacheRequest
             executableModel
             requestValue
     bootstrapAndRetry transport errorValue =
-      case findModel runtimeMode (requestModelId requestValue) of
+      case lookupExecutableModel (requestModelId requestValue) runtimePlan of
         Nothing -> pure (Left errorValue)
-        Just model -> do
-          request <- modelBootstrapRequestFor model
+        Just executableModel -> do
+          request <- modelBootstrapRequestFor (executableModelDescriptor executableModel)
+          authorizedRequest <-
+            case authorizeModelBootstrapRequest
+              (runtimePlanCompiledPlan runtimePlan)
+              request of
+              Left err ->
+                ioError
+                  ( userError
+                      ( "refined executable lost model-bootstrap authority: "
+                          <> err
+                      )
+                  )
+              Right authorized -> pure authorized
           let requestModelIdValue = BootstrapModels.bootstrapRequestModelId request
-          publishModelBootstrapRequestViaTransport transport request
+          publishModelBootstrapRequestViaTransport
+            transport
+            (runtimePlanCompiledPlan runtimePlan)
+            authorizedRequest
           readyEvidence <- awaitModelBootstrapReady transport requestModelIdValue
           case readyEvidence of
             Nothing -> pure (Left (modelBootstrapTimeoutError requestModelIdValue))
@@ -4650,27 +5204,31 @@ kvCacheRequestFromProto protoRequest = do
           }
 
 decodeEnvelopePayload :: (Message a) => String -> PulsarEnvelope -> IO a
-decodeEnvelopePayload payloadLabel envelope = do
-  encodedPayload <-
-    either
-      ( \err ->
-          ioError
-            ( userError
-                ( "failed to decode base64 "
-                    <> payloadLabel
-                    <> " payload for message "
-                    <> Text.unpack (envelopeMessageId envelope)
-                    <> ":\n"
-                    <> err
-                )
-            )
-      )
-      pure
-      (Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)))
-  case decodeMessage encodedPayload of
+decodeEnvelopePayload payloadLabel envelope =
+  case decodeEnvelopePayloadEither payloadLabel envelope of
+    Left err -> ioError (userError err)
+    Right decodedValue -> pure decodedValue
+
+decodeEnvelopePayloadEither ::
+  (Message a) =>
+  String ->
+  PulsarEnvelope ->
+  Either String a
+decodeEnvelopePayloadEither payloadLabel envelope =
+  case Base64.decode (TextEncoding.encodeUtf8 (envelopePayload envelope)) of
     Left err ->
-      ioError
-        ( userError
+      Left
+        ( "failed to decode base64 "
+            <> payloadLabel
+            <> " payload for message "
+            <> Text.unpack (envelopeMessageId envelope)
+            <> ":\n"
+            <> err
+        )
+    Right encodedPayload ->
+      case decodeMessage encodedPayload of
+        Left err ->
+          Left
             ( "failed to decode protobuf "
                 <> payloadLabel
                 <> " payload for message "
@@ -4678,8 +5236,7 @@ decodeEnvelopePayload payloadLabel envelope = do
                 <> ":\n"
                 <> err
             )
-        )
-    Right decodedValue -> pure decodedValue
+        Right decodedValue -> Right decodedValue
 
 sendAck :: WebSockets.Connection -> Text.Text -> IO ()
 sendAck connection messageIdValue =

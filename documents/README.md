@@ -165,9 +165,11 @@
   discipline — the "evidence, not hope" invariant that every state-acting operation consumes typed
   evidence — generalizing the results-side `documents/architecture/realness_contract.md`.
 - `documents/architecture/bounded_inference_memory.md` owns the inference-memory-safety discipline —
-  the "memory-safety by construction" invariant that an engine subprocess runs only under a typed
-  `MemoryGrant` and is OS-bounded to the admitted ceiling — the memory analog of the bounded-command
-  kernel in `documents/architecture/managed_state_transitions.md`; `realness_contract.md` and
+  the "memory-safety by construction" invariant that compilation mints a resource-indexed
+  `MemoryGrant`, live refinement pairs it with a matching `Enforcer`, and public engine launch
+  accepts only the resulting opaque `ExecutableModel` whose capped-engine region applies the
+  ceiling — the memory analog of the bounded-command kernel in
+  `documents/architecture/managed_state_transitions.md`; `realness_contract.md` and
   `runtime_modes.md` reference it as the home for the runtime-memory chokepoint.
 - Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
   canonical `documents/engineering/monitoring.md` until the supported platform contract changes.

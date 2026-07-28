@@ -52,7 +52,7 @@ import Infernix.Demo.Auth
   )
 import Infernix.Demo.Bootstrap (requiredDemoBuckets)
 import Infernix.Demo.WebSocket qualified as DemoWebSocket
-import Infernix.DemoConfig (decodeDemoConfigFile)
+import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
 import Infernix.Models (engineBindingForSelectedEngine)
 import Infernix.Objects.Layout
   ( DemoObjectsBucket (..),
@@ -1536,6 +1536,10 @@ cacheEntryValue options manifest = do
           </> Text.unpack (runtimeModeId (cacheRuntimeMode manifest))
           </> Text.unpack (cacheModelId manifest)
           </> "default"
+      maybeEngineBinding =
+        engineBindingForSelectedEngine
+          (cacheRuntimeMode manifest)
+          (cacheSelectedEngine manifest)
   materialized <- doesDirectoryExist cacheRoot
   pure
     ( object
@@ -1545,8 +1549,12 @@ cacheEntryValue options manifest = do
           "durableSourceUri" .= cacheDurableSourceUri manifest,
           "cacheKey" .= cacheCacheKey manifest,
           "materialized" .= materialized,
-          "engineAdapterId" .= engineBindingAdapterId (engineBindingForSelectedEngine (cacheRuntimeMode manifest) (cacheSelectedEngine manifest)),
-          "engineAdapterAvailability" .= ("available" :: String),
+          "engineAdapterId" .= (engineBindingAdapterId <$> maybeEngineBinding),
+          "engineAdapterAvailability"
+            .= maybe
+              ("unsupported" :: String)
+              (const "available")
+              maybeEngineBinding,
           "sourceArtifactManifestUri" .= sourceArtifactManifestUri manifest,
           "sourceArtifactSelectionMode" .= ("engine-specific-direct-artifact" :: String),
           "sourceArtifactAuthoritativeUri" .= cacheDurableSourceUri manifest,

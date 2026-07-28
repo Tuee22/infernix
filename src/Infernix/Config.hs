@@ -45,7 +45,7 @@ data Paths = Paths
     helmDataRoot :: FilePath,
     resultsRoot :: FilePath,
     modelCacheRoot :: FilePath,
-    -- | Phase 2 Sprint 2.13: the staged host manifest, when present.
+    -- | The generated host manifest, when present.
     -- Cluster lifecycle helpers route their external invocations
     -- through this so absolute tool paths come from
     -- @HostConfig.toolPaths.*@ instead of @\$PATH@. 'Nothing' means
@@ -56,15 +56,10 @@ data Paths = Paths
   }
   deriving (Eq, Show)
 
--- | Phase 1 Sprint 1.11 — discover the active 'Paths' by combining the
--- repo-root walk with any staged host manifest. When the manifest is
--- present (post-bootstrap), its @filesystem@ record overrides the
--- convention defaults so operators can edit the typed Dhall record
--- instead of setting process-inherited build/data-root overrides.
--- When the manifest is absent (first-run bootstrap, before the
--- binary has materialized it), the convention defaults still apply so
--- the binary remains workable enough to materialize the manifest from
--- itself.
+-- | Discover the active 'Paths' by combining the repo-root walk with the
+-- generated host manifest. @infernix init@ creates the authoritative
+-- repo-root manifest; convention defaults keep the first-run bootstrap
+-- workable before that explicit initialization.
 discoverPaths :: IO Paths
 discoverPaths = do
   cwd <- getCurrentDirectory
@@ -133,12 +128,11 @@ resolveAgainst anchor candidate
   | isAbsolute candidate = candidate
   | otherwise = anchor </> candidate
 
--- | Try the supported staging locations for the host manifest in
--- preference order: Apple host-native build root, Linux outer-container
--- bind-mount build root (legacy compose layout retained until Sprint
--- 1.11's compose shrink lands), and the Linux launcher image's baked
--- default. Returns @Nothing@ if no candidate exists; the caller falls
--- back to convention defaults so first-run bootstrap remains workable.
+-- | Try the supported host-manifest locations in preference order:
+-- the repo-root operator manifest, legacy build-root compatibility
+-- locations, and the Linux launcher image's baked default. Returns
+-- @Nothing@ if no candidate exists; the caller falls back to convention
+-- defaults so first-run bootstrap remains workable.
 -- If a candidate exists but is invalid, fail immediately: silently
 -- falling through to convention defaults can misclassify the execution
 -- context and route Linux launcher work through host-native guardrails.
@@ -215,7 +209,7 @@ ensureSupportedRuntimeModeForExecutionContext paths runtimeMode =
         ( userError
             ( unlines
                 [ "Unsupported host-native runtime mode: " <> Text.unpack (runtimeModeId runtimeMode),
-                  "The supported host-native control-plane workflow stages only `apple-silicon` under `./.build/`.",
+                  "The host-native `./.build/infernix` control plane supports only `apple-silicon`.",
                   "Use the Linux outer-container workflow for `linux-cpu` and `linux-gpu`:"
                     <> " `./bootstrap/linux-cpu.sh ...` or `./bootstrap/linux-gpu.sh ...`."
                 ]
@@ -323,16 +317,13 @@ resolveRuntimeMode Nothing = do
 -- targets without consulting any environment variable. The supported
 -- contract is:
 --
--- * Host-native (Apple) → 'AppleSilicon'. Lifecycle commands can use
---   this value before @./.build/infernix-substrate.dhall@ exists, then
---   materialize or validate that file through the binary-owned
---   substrate preflight.
--- * Outer-container (Linux) → read the substrate from the staged
---   @infernix-substrate.dhall@ baked into the launcher image (the image
---   build runs @infernix internal materialize-substrate@ as part of the
---   Dockerfile). When the file is absent (first-run bootstrap before
---   the binary has staged anything), the caller surfaces a typed
---   diagnostic.
+-- * Host-native (Apple) → 'AppleSilicon'. This execution-context default
+--   lets @infernix init@ create repo-root @./infernix.dhall@ without an
+--   existing runtime config.
+-- * Outer-container (Linux) → read the substrate from repo-root
+--   @./infernix.dhall@. The launcher image may generate its default during
+--   image build, but ordinary commands never create a missing runtime
+--   config; they surface the typed @infernix init@ diagnostic below.
 targetRuntimeModeForExecutionContext :: Paths -> IO RuntimeMode
 targetRuntimeModeForExecutionContext paths =
   case controlPlaneContext paths of
@@ -357,11 +348,9 @@ missingGeneratedSubstrateFileError substratePath =
     userErrorType
     ( unlines
         [ "Missing generated substrate file: " <> substratePath,
-          "Build or restage the active substrate before running supported infernix commands.",
-          "Examples:",
-          "  cabal install --installdir=./.build --install-method=copy --overwrite-policy=always exe:infernix",
-          "  infernix internal materialize-substrate apple-silicon",
-          "  docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui true"
+          "Runtime configuration is not created by ordinary infernix commands.",
+          "Run `infernix init` to create ./infernix.dhall and ./infernix-host.dhall.",
+          "For the test harness, run `infernix test init` to create ./infernix.test.dhall."
         ]
     )
     Nothing

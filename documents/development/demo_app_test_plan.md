@@ -104,11 +104,15 @@ resubscribe, and submits another prompt. The startup MinIO bucket repair, real w
 Keycloak token rejection for `/api/objects` and `/ws`, throughput matrix parameterization, and
 extracted Playwright artifact fixtures under `web/test/fixtures/artifactSamples.js` are part of
 the supported surface. Model-memory capacity is also part of the browser contract: if a selected
-model exceeds the active runtime budget, the result stream carries typed
+model is compiled as unavailable, the result stream must carry typed
 `InferenceError.ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`, and the demo app
-renders a helpful capacity error for that row while leaving smaller models usable. The browser must
-not identify this case by parsing successful inline output text. Canonical home for the grant-gated
-capped-engine execution invariant behind this capacity failure (a host OOM is unrepresentable):
+must render a helpful capacity error for that row while leaving smaller models usable. The normal
+coordinator result path passed the Phase 1 validation gate on 2026-07-25 for that historical source;
+the all-Haskell lifecycle/subprocess correction supersedes it as current-worktree evidence, so the
+fresh complete Stage 1 must cover the path again.
+The browser must
+not identify this case by parsing successful inline output text. Canonical home for the
+executable-gated capped-engine target:
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 ## Unit Layer
@@ -188,8 +192,11 @@ Coverage:
   Each prompt-oriented case asserts completed conversation writeback plus exactly-one
   request/batch/result/conversation-result broker counts. The node-drain and pool over-scale cases
   are mutation-position exemplars: a harness run killed mid-mutation leaves a persisted
-  `ClusterMutating` dirty phase reconciled on the next `cluster up` (code-side closed 2026-07-23,
-  closed under Wave X (2026-07-24); canonical home
+  `ClusterMutating` dirty phase reconciled on the next `cluster up` (the 2026-07-23 scope is
+  historically closed under Wave X (2026-07-24); the 2026-07-25 owner-atomic correction remains
+  open after its all-Haskell lifecycle-lock/supervision implementation, with focused validation,
+  fresh source review, complete source-matched Stage 1, and Wave Y still in progress; Phase 6
+  validation is ordered after Phases 2 and 4; canonical home
   [Managed State Transitions](../architecture/managed_state_transitions.md)).
 - **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix`
   (3 users x 2 contexts x 2 prompts) through the durable prompt path, asserts exact per-context
@@ -422,7 +429,7 @@ Assertions:
    `clientIdempotencyKey` produces exactly one inference dispatch and exactly one result.
 
 The test is substrate-aware: ceilings, batching assertions, and the chosen LLM differ per
-substrate but the test code is one suite parameterized on the active substrate file.
+substrate but the test code is one suite parameterized on the active runtime config.
 
 ## Substrate-Agnostic E2E
 
@@ -472,8 +479,11 @@ row even though no single substrate carries all 19 rows.
 - `infernix test all` aggregates lint, unit, integration, and E2E. Phase 7 closure requires
   `infernix test all` green on at least one substrate with `demo_ui = true`. A `HarnessOwned`
   `infernix test all` seizes the single cluster slot under typed `ClusterOwner` evidence and fails
-  closed on an `OperatorOwned` running cluster instead of tearing it down (code-side closed
-  2026-07-23 — Phase 6 Sprint 6.43, closed under Wave X (2026-07-24); canonical home
+  closed on an `OperatorOwned` running cluster instead of tearing it down (Wave X (2026-07-24)
+  historically closes the 2026-07-23 Phase 6 Sprint 6.43 scope, not the 2026-07-25 owner-atomic
+  correction or its all-Haskell lock/supervision replacement; the implementation is present while
+  focused validation, fresh source review, complete source-matched Stage 1, and Wave Y remain in
+  progress, and Phase 6 validation is ordered after Phases 2 and 4; canonical home
   [Managed State Transitions](../architecture/managed_state_transitions.md)).
 - `infernix lint docs` must remain clean as new suites and fixtures are added.
 

@@ -15,6 +15,10 @@ The runtime image carries that executable. Chart workload args select the role w
 `infernix service --role coordinator|engine|webapp`; the demo-gated `infernix-demo` Kubernetes
 workload runs the Webapp role.
 
+Config-dependent command families read repo-root `./infernix.dhall`, created explicitly by
+`infernix init`, and fail fast naming that init when the file is absent. `infernix test init`
+creates the separate `./infernix.test.dhall` consumed by the test harness.
+
 <!-- infernix:family-overview:start -->
 ## `infernix` Families
 
@@ -22,7 +26,7 @@ workload runs the Webapp role.
 - `service` - starts one long-running role from the single infernix binary: coordinator, engine, or webapp
 - `cluster` - reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces
 - `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
-- `kubectl` - proxies upstream Kubernetes access through the repo-local kubeconfig
+- `kubectl` - proxies read-only Kubernetes diagnostics through the repo-local kubeconfig
 - `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
 - `test` - runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite
 - `docs` - validates the governed documentation suite and the development-plan shape
@@ -40,6 +44,10 @@ workload runs the Webapp role.
   SIGKILLed `infernix test all` left the cluster mid-mutation — rather than a false `steady-state`,
   and the next `cluster up` reconciles it; canonical home:
   [Managed State Transitions](../architecture/managed_state_transitions.md)
+- operator `cluster up`, `cluster down`, and `kubectl` actions are serialized by the lifecycle lock
+  and refuse a harness reservation or `HarnessOwned` live cluster. Harness bring-up/teardown uses
+  separate reservation-gated ownership paths and cannot seize or delete an `OperatorOwned` live
+  cluster.
 
 ## Cross-References
 

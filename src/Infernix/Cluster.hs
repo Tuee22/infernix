@@ -1,16 +1,47 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE RoleAnnotations #-}
 
 module Infernix.Cluster
   ( clusterWorkloadArchitectureForHostArchitecture,
     clusterDown,
+    clusterDownHarness,
     clusterStatus,
     clusterUp,
-    seizeHarnessClusterSlot,
-    authorizeHarnessSeizure,
-    withPersistedClusterMutation,
-    ClusterSeizureRefusal (..),
+    clusterUpHarness,
+    cleanupHarnessRuntimeState,
+    ClusterMutationLocked,
     ClusterTeardownAuthority,
+    clusterTeardownAuthorityRegionWitness,
+    withClusterLifecycleLock,
+    requireBoundedCommandActivitiesQuiescent,
+    beginHarnessConfigTransaction,
+    completeHarnessConfigTransaction,
+    reconcileInterruptedHarnessState,
+    reconcileInterruptedHarnessStateAt,
+    withRuntimeConfigWriteAccess,
+    withRuntimeConfigWriteAccessAt,
+    RetainedReplayPlan (..),
+    retainedReplayPlan,
+    retainedReplayPending,
+    preWorkloadRecoveryIntentMatches,
+    KindKubeconfigRecoveryPlan (..),
+    kindKubeconfigRecoveryPlan,
+    SnapshotRecoveryAction (..),
+    snapshotRecoveryPlan,
+    WorkerPauseState (..),
+    classifyWorkerPauseObservation,
+    snapshotClaimNodeBindingsForPausedWorkers,
+    seizeHarnessClusterSlot,
+    seizeHarnessClusterSlotAt,
+    releaseHarnessClusterSlot,
+    releaseHarnessClusterSlotAt,
+    authorizeClusterOwnership,
+    authorizeHarnessReservationAccess,
+    authorizeRuntimeConfigWriteAccess,
+    uncordonResultsProveReady,
+    withPersistedClusterMutation,
+    ClusterOwnershipRefusal (..),
     HelmDeployPhase (..),
     kindControlPlaneNodeName,
     linuxGpuNvkindConfigMapBug,
@@ -24,8 +55,8 @@ module Infernix.Cluster
 where
 
 import Control.Concurrent (threadDelay)
-import Control.Exception (IOException, SomeException, bracket, displayException, finally, throwIO, try)
-import Control.Monad (forM_, unless, when)
+import Control.Exception (IOException, SomeException, bracket, displayException, mask, throwIO, try)
+import Control.Monad (forM_, unless, void, when)
 import Data.Aeson (FromJSON (parseJSON), Value (..), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
@@ -33,36 +64,54 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isSpace, toLower)
+import Data.Char (isAlphaNum, isSpace, toLower)
+import Data.Either (isRight)
 import Data.IORef (atomicModifyIORef', modifyIORef', newIORef, readIORef, writeIORef)
 import Data.List qualified as List
+import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Maybe (catMaybes, fromMaybe, mapMaybe, maybeToList)
 import Data.Text qualified as Text
 import Data.Time (UTCTime, diffUTCTime, getCurrentTime)
 import Data.Vector qualified as Vector
+import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
+import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint
+import Infernix.Cluster.LifecycleLock (withLifecycleFileLock)
+import Infernix.Cluster.MutationRecovery
+  ( InterruptedMutationRecoveryEffects (..),
+    runInterruptedMutationRecovery,
+  )
 import Infernix.Cluster.PublishImages qualified as PublishImages
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.ClusterConfig
-  ( EngineCommandOverride (EngineCommandOverride),
-    KeycloakWiring (keycloakBaseUrl, keycloakClientId, keycloakJwksUrl),
+  ( KeycloakWiring (keycloakBaseUrl, keycloakClientId, keycloakJwksUrl),
     defaultClusterConfig,
     defaultKeycloakWiring,
     renderClusterConfig,
   )
 import Infernix.Config (ControlPlaneContext (..), Paths (..), controlPlaneContextId)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig (decodeBootstrapDemoConfigFile, decodeDemoConfigFile, renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
+import Infernix.DemoConfig (renderGeneratedDemoConfigPayload, resolveInferenceMemoryBudget)
+import Infernix.DemoConfig.Internal (decodeBootstrapDemoConfigFile, decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
-import Infernix.Error (InfernixError (ClusterStateDecodeFailure))
+import Infernix.Error
+  ( InfernixError (ClusterStateDecodeFailure),
+    bracketPreservingPrimary,
+    finallyPreservingPrimary,
+    onExceptionPreservingPrimary,
+    runCleanupsPreservingFailures,
+  )
 import Infernix.Evidence.Lease (Acquire (..), Lease, leasePayload, withLease)
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.HostConfig qualified as HostConfig
-import Infernix.HostTools (HostTool (..))
-import Infernix.HostTools qualified as HostTools
 import Infernix.Models
+import Infernix.ProcessIdentity
+  ( ProcessBirthIdentity (..),
+    readProcessBirthIdentity,
+    registerCurrentProcessIdentity,
+  )
 import Infernix.Routes (routeHelmValues)
 import Infernix.Runtime.Pulsar (WarmModelCacheOutcome (..), waitForEagerModelCacheReady)
 import Infernix.Storage
@@ -86,13 +135,83 @@ import Network.HTTP.Types.Header (Header)
 import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (urlEncode)
 import Network.Socket qualified as Socket
-import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameFile)
+import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameDirectory, renameFile)
 import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
+import System.IO (hClose, hIsClosed, hPutStr, openBinaryTempFile)
+import System.IO.Error (isDoesNotExistError)
 import System.Info qualified
+import System.Posix.Process (createProcessGroupFor, getProcessGroupID, getProcessID)
+import System.Posix.Signals (nullSignal, signalProcessGroup)
 import Text.Read (readMaybe)
 
 clusterStatePath :: Paths -> FilePath
 clusterStatePath paths = runtimeRoot paths </> "cluster-state.state"
+
+clusterLifecycleLockPath :: Paths -> FilePath
+clusterLifecycleLockPath paths =
+  runtimeRoot paths </> "locks" </> "cluster-lifecycle.lock"
+
+harnessReservationPath :: Paths -> FilePath
+harnessReservationPath paths =
+  runtimeRoot paths </> "locks" </> "harness-cluster-slot.reserved"
+
+data ClusterMutationLocked = ClusterMutationLocked
+
+data HarnessConfigTransaction
+  = HarnessConfigUntouched
+  | HarnessConfigRestorePending
+  | HarnessConfigRemovePending
+  | HarnessConfigRestored
+  deriving (Eq, Show)
+
+data HarnessReservation = HarnessReservation
+  { harnessReservationOwnerPid :: Integer,
+    harnessReservationProcessGroup :: Integer,
+    harnessReservationOwnerBirthIdentity :: Maybe ProcessBirthIdentity,
+    harnessReservationConfigTransaction :: HarnessConfigTransaction
+  }
+  deriving (Eq, Show)
+
+data ClusterReservationAccess
+  = OperatorReservationAccess
+  | HarnessReservationAccess HarnessReservation
+  deriving (Eq)
+
+data HarnessReservationOwnerStatus
+  = HarnessReservationOwnerVerifiedAlive
+  | HarnessReservationOwnerDefinitelyDead
+  | HarnessReservationOwnerUnverifiable
+  deriving (Eq, Show)
+
+-- | Serialize every cluster mutation across CLI processes and threads. The
+-- non-blocking exclusive file lock makes independent acquisitions contend
+-- within and across processes, and the kernel releases it after normal exit
+-- or process death.
+withClusterLifecycleLock ::
+  Paths ->
+  (forall s. Lease s ClusterMutationLocked -> IO a) ->
+  IO a
+withClusterLifecycleLock paths action = do
+  let lockPath = clusterLifecycleLockPath paths
+  createDirectoryIfMissing True (takeDirectory lockPath)
+  withLifecycleFileLock lockPath $
+    withLease
+      Acquire
+        { acquireEstablish = pure ClusterMutationLocked,
+          acquireRelease = \_ -> pure ()
+        }
+      action
+
+-- | Require that the bounded-command kernel has no live activity for one
+-- owner process group without exposing the command construction or execution
+-- capabilities themselves.
+requireBoundedCommandActivitiesQuiescent :: Paths -> Integer -> IO ()
+requireBoundedCommandActivitiesQuiescent paths ownerProcessGroup =
+  void
+    ( Subprocess.proveBoundedCommandActivitiesQuiescent
+        paths
+        ownerProcessGroup
+    )
 
 nodeMountedKindRoot :: FilePath
 nodeMountedKindRoot = "/var/infernix-data"
@@ -121,13 +240,13 @@ data ClusterUpInputs = ClusterUpInputs
 clusterServiceEnabled :: RuntimeMode -> Bool
 clusterServiceEnabled _runtimeMode = False
 
-helmRepositories :: [(String, String)]
+helmRepositories :: [Command.HelmRepository]
 helmRepositories =
-  [ ("goharbor", "https://helm.goharbor.io"),
-    ("percona", "https://percona.github.io/percona-helm-charts"),
-    ("apachepulsar", "https://pulsar.apache.org/charts"),
-    ("bitnami", "https://charts.bitnami.com/bitnami"),
-    ("nvdp", "https://nvidia.github.io/k8s-device-plugin")
+  [ Command.GoharborRepo,
+    Command.PerconaRepo,
+    Command.PulsarRepo,
+    Command.BitnamiRepo,
+    Command.NvidiaPluginRepo
   ]
 
 -- | Phase 3 Sprint 3.11 (2026-05-29): the bitnami minio sub-chart is
@@ -201,14 +320,11 @@ harborFinalPhaseStatefulSets =
 nvidiaDevicePluginVersion :: String
 nvidiaDevicePluginVersion = "0.17.1"
 
-nvidiaCudaContainerImage :: String
-nvidiaCudaContainerImage = "nvidia/cuda:12.4.1-base-ubuntu22.04"
-
 kindNodeImage :: String
 kindNodeImage = "kindest/node:v1.34.0"
 
-harborBootstrapHelmTimeout :: String
-harborBootstrapHelmTimeout = "90s"
+harborBootstrapHelmTimeout :: Command.HelmDuration
+harborBootstrapHelmTimeout = Command.HelmSeconds 90
 
 data HelmDeployPhase
   = WarmupPhase
@@ -247,9 +363,6 @@ postgresOperatorDeployment = "deployment/infernix-postgres-operator"
 harborPostgresClusterName :: String
 harborPostgresClusterName = "harbor-postgresql"
 
-harborPostgresPatroniClusterName :: String
-harborPostgresPatroniClusterName = "harbor-postgresql-ha"
-
 harborPostgresExpectedDataClaims :: Int
 harborPostgresExpectedDataClaims = 3
 
@@ -274,20 +387,8 @@ finalPhaseExpectedOperatorClaims :: Int
 finalPhaseExpectedOperatorClaims =
   harborPostgresExpectedOperatorClaims + keycloakPostgresExpectedOperatorClaims
 
-harborPostgresPrimarySelector :: String
-harborPostgresPrimarySelector =
-  "postgres-operator.crunchydata.com/cluster="
-    <> harborPostgresClusterName
-    <> ",postgres-operator.crunchydata.com/role=primary"
-
-harborPostgresUserName :: String
-harborPostgresUserName = "harbor"
-
 harborPostgresUserSecretName :: String
 harborPostgresUserSecretName = "infernix-harbor-db-user"
-
-harborPostgresSchemaName :: String
-harborPostgresSchemaName = "harbor"
 
 keycloakRealmName :: String
 keycloakRealmName = "infernix"
@@ -428,150 +529,201 @@ settleLifecycle paths state lifecycle = do
 
 -- | Sprint 6.43 — bracket a test chaos mutation (node drain, deployment
 -- over-scale, cordon) with a persisted first-class 'ClusterMutating' position.
--- The marker naming the in-flight mutation is persisted before the mutation and
--- 'ClusterReady' is restored after (on every exit path, including exception), so
--- a SIGKILL mid-mutation leaves a detectable dirty cluster that the next
--- @cluster up@ reconciles ('reconcileInterruptedClusterMutation') rather than a
--- false steady-state. Exported so the integration harness drives the transition
--- while 'persistClusterState' stays module-private.
-withPersistedClusterMutation :: Paths -> ClusterState -> String -> String -> IO a -> IO a
-withPersistedClusterMutation paths state phaseName detail body = do
-  now <- getCurrentTime
-  let phaseValue =
-        LifecyclePhase
-          { lifecyclePhaseTransition = LifecycleMutate,
-            lifecyclePhaseName = phaseName,
-            lifecyclePhaseDetail = detail,
-            lifecyclePhaseHeartbeatAt = now
+-- The caller's state is only an optimistic token: while holding the lifecycle
+-- lock, this rereads the persisted state, complete Kind inventory, and owner
+-- reservation, and accepts only an exact live 'ClusterReady' match. The freshly
+-- validated state is passed to the body and is the sole basis for the dirty and
+-- restored records. An exception or failed postcondition leaves the dirty
+-- marker in place so the next @cluster up@ reconciles it
+-- ('reconcileInterruptedClusterMutation') rather than publishing a false
+-- steady-state.
+withPersistedClusterMutation ::
+  Paths ->
+  ClusterState ->
+  String ->
+  String ->
+  (ClusterState -> IO a) ->
+  IO a
+withPersistedClusterMutation paths expectedState phaseName detail body =
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    recordedState <- loadClusterState paths
+    freshState <-
+      case recordedState of
+        Nothing ->
+          refuseMutation
+            "no persisted cluster state exists"
+        Just currentState
+          | currentState /= expectedState ->
+              refuseMutation
+                "the caller state is stale; reload the persisted cluster state before retrying"
+          | clusterLifecycle currentState /= ClusterReady ->
+              refuseMutation
+                ( "the persisted lifecycle must be ClusterReady, but is "
+                    <> show (clusterLifecycle currentState)
+                )
+          | otherwise -> pure currentState
+    let runtimeMode = clusterRuntimeMode freshState
+        owner = clusterOwner freshState
+    reservationAccess <- requireReservationAccess paths owner
+    presentRuntimeModes <- presentClusterRuntimeModes paths
+    unless (presentRuntimeModes == [runtimeMode]) $
+      refuseMutation
+        ( "the live cluster inventory must contain exactly "
+            <> Text.unpack (runtimeModeId runtimeMode)
+            <> ", but contains "
+            <> show (map runtimeModeId presentRuntimeModes)
+        )
+    _ <-
+      requireClusterOwnership
+        lifecycleLock
+        paths
+        runtimeMode
+        "begin a persisted cluster mutation"
+        owner
+        reservationAccess
+        presentRuntimeModes
+        recordedState
+    now <- getCurrentTime
+    let phaseValue =
+          LifecyclePhase
+            { lifecyclePhaseTransition = LifecycleMutate,
+              lifecyclePhaseName = phaseName,
+              lifecyclePhaseDetail = detail,
+              lifecyclePhaseHeartbeatAt = now
+            }
+        mutatingState =
+          freshState
+            { clusterLifecycle = ClusterMutating phaseValue,
+              updatedAt = now
+            }
+    persistClusterState paths mutatingState
+    result <- body freshState
+    currentReservationAccess <- requireReservationAccess paths owner
+    unless (currentReservationAccess == reservationAccess) $
+      refuseMutation
+        "the owner reservation identity changed while the mutation body ran"
+    currentRuntimeModes <- presentClusterRuntimeModes paths
+    unless (currentRuntimeModes == [runtimeMode]) $
+      refuseMutation
+        ( "the live cluster inventory changed while the mutation body ran; expected "
+            <> Text.unpack (runtimeModeId runtimeMode)
+            <> ", but found "
+            <> show (map runtimeModeId currentRuntimeModes)
+        )
+    stateAfterBody <- loadClusterState paths
+    unless (stateAfterBody == Just mutatingState) $
+      refuseMutation
+        "the persisted mutation marker changed while the mutation body ran"
+    _ <-
+      requireClusterOwnership
+        lifecycleLock
+        paths
+        runtimeMode
+        "complete a persisted cluster mutation"
+        owner
+        currentReservationAccess
+        currentRuntimeModes
+        stateAfterBody
+    restoreTime <- getCurrentTime
+    persistClusterState
+      paths
+      ( freshState
+          { clusterLifecycle = ClusterReady,
+            updatedAt = restoreTime
           }
-      mutatingState = state {clusterLifecycle = ClusterMutating phaseValue, updatedAt = now}
-  persistClusterState paths mutatingState
-  body `finally` restoreReady
-  where
-    restoreReady = do
-      restoreTime <- getCurrentTime
-      persistClusterState paths (state {clusterLifecycle = ClusterReady, updatedAt = restoreTime})
-
--- Sprint 6.41 (managed-state-transition doctrine): long-running lifecycle
--- commands (docker build/pull/tag/cp, crictl pull, save|import streams) run
--- under a required, large-but-finite 'Subprocess.Timeout' via the bounded
--- command kernel. This retires the @ProcessMonitor@ heartbeat, whose only
--- observable effect was to keep re-freshening the lifecycle-progress marker
--- every 30 s so a wedged command read as healthy progress (a hang mask no
--- control-flow consumed). A 'Subprocess.CommandTimedOut' now surfaces as a loud
--- bounded failure -> status=failed, rather than an unbounded "still running"
--- drip. Budgets sit comfortably above the largest legitimate duration yet below
--- the pathological hang class.
-
-dockerBuildTimeout :: Subprocess.Timeout
-dockerBuildTimeout = Subprocess.Timeout (45 * 60 * 1000000)
-
-dockerPullTimeout :: Subprocess.Timeout
-dockerPullTimeout = Subprocess.Timeout (20 * 60 * 1000000)
-
-dockerTagTimeout :: Subprocess.Timeout
-dockerTagTimeout = Subprocess.Timeout (2 * 60 * 1000000)
-
-crictlPullTimeout :: Subprocess.Timeout
-crictlPullTimeout = Subprocess.Timeout (15 * 60 * 1000000)
-
-dockerStreamImportTimeout :: Subprocess.Timeout
-dockerStreamImportTimeout = Subprocess.Timeout (20 * 60 * 1000000)
-
-dockerCpTimeout :: Subprocess.Timeout
-dockerCpTimeout = Subprocess.Timeout (15 * 60 * 1000000)
-
--- | Sprint 6.41: run a lifecycle command bounded, failing loudly (including on
--- timeout) instead of hanging. Replaces the former ProcessMonitor-heartbeat
--- @runCommandMonitored@.
-runCommandBounded :: Paths -> Subprocess.Timeout -> Maybe FilePath -> FilePath -> [String] -> IO ()
-runCommandBounded paths budget maybeWorkingDirectory command args = do
-  result <- tryCommandBounded paths budget maybeWorkingDirectory command args
-  case result of
-    Right _ -> pure ()
-    Left err ->
-      ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
-
--- | Sprint 6.41: bounded lifecycle command returning captured output, for
--- callers (the crictl-pull retry loop) that branch on the result.
-tryCommandBounded :: Paths -> Subprocess.Timeout -> Maybe FilePath -> FilePath -> [String] -> IO (Either String String)
-tryCommandBounded paths budget maybeWorkingDirectory command args = do
-  let resolvedCommand = resolveClusterCommandWithPaths paths command
-  environment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
-  boundedCommand <-
-    either
-      (ioError . userError)
-      pure
-      ( Subprocess.compileBoundedCommand
-          Subprocess.LongRunningLifecycleOperation
-          budget
-          Subprocess.NeverRetry
-          Subprocess.FatalFailure
-          environment
-          maybeWorkingDirectory
-          resolvedCommand
-          args
-          ""
       )
-  outcome <- Subprocess.runBoundedCommand boundedCommand
-  pure $ case outcome of
-    Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
-    Subprocess.CommandFailedTransient err -> Left err
-    Subprocess.CommandFailedFatal err -> Left err
-    Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
-      Left ("command timed out after " <> show (micros `div` 1000000) <> "s")
+    pure result
+  where
+    refuseMutation reason =
+      ioError
+        ( userError
+            ( "refusing persisted cluster mutation "
+                <> show phaseName
+                <> ": "
+                <> reason
+            )
+        )
 
--- | Sprint 2.15 — bring up the cluster under a declared 'ClusterOwner'. The
--- operator's @infernix cluster up@ mints 'OperatorOwned'; the test harness mints
--- 'HarnessOwned'. The owner is persisted on the recorded 'ClusterState' so the
--- harness seizure of the single slot can fail closed on an operator cluster.
-clusterUp :: ClusterOwner -> Maybe RuntimeMode -> IO ()
-clusterUp owner maybeRuntimeMode = do
+-- | Bring up the operator-owned cluster. The owner choice is not caller
+-- constructible; harness bring-up has a separate reservation-gated entry.
+clusterUp :: Maybe RuntimeMode -> IO ()
+clusterUp = clusterUpForOwner OperatorOwned
+
+clusterUpHarness :: Maybe RuntimeMode -> IO ()
+clusterUpHarness = clusterUpForOwner HarnessOwned
+
+clusterUpForOwner :: ClusterOwner -> Maybe RuntimeMode -> IO ()
+clusterUpForOwner owner maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
   Config.ensureRepoLayout paths
-  runtimeMode <- resolveClusterRuntimeMode paths maybeRuntimeMode
-  Config.ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
-  when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
-  commandsAvailable <- platformCommandsAvailable
-  unless commandsAvailable $
-    ioError
-      ( userError
-          "cluster up requires Docker, Helm, Kind, and kubectl on the supported path; simulation is no longer available."
-      )
-  clusterUpWithPulsarBootstrapRepair owner paths runtimeMode
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    runtimeMode <- resolveClusterRuntimeMode paths maybeRuntimeMode
+    reservationAccess <- requireReservationAccess paths owner
+    Config.ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
+    when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
+    commandsAvailable <- platformCommandsAvailable
+    unless commandsAvailable $
+      ioError
+        ( userError
+            "cluster up requires Docker, Helm, Kind, and kubectl on the supported path; simulation is no longer available."
+        )
+    recordedState <- loadClusterState paths
+    presentRuntimeModes <- presentClusterRuntimeModes paths
+    teardownAuthority <-
+      requireClusterOwnership
+        lifecycleLock
+        paths
+        runtimeMode
+        ("bring up a " <> clusterOwnerLabel owner <> "-owned cluster")
+        owner
+        reservationAccess
+        presentRuntimeModes
+        recordedState
+    clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority owner paths runtimeMode
 
-clusterUpWithPulsarBootstrapRepair :: ClusterOwner -> Paths -> RuntimeMode -> IO ()
-clusterUpWithPulsarBootstrapRepair owner paths runtimeMode = go 0
+clusterUpWithPulsarBootstrapRepair ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  ClusterOwner ->
+  Paths ->
+  RuntimeMode ->
+  IO ()
+clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority owner paths runtimeMode = go 0
   where
     maxRepairAttempts = 3 :: Int
     go repairAttempts = do
+      reconcileInterruptedClusterTeardown paths runtimeMode
       -- Sprint 2.15: reconcile a persisted 'ClusterMutating' left by a SIGKILLed
-      -- @infernix test all@ before proceeding — uncordon drained nodes and clear
-      -- the dirty marker; the normal bring-up below re-applies the chart, which
-      -- scales any over-scaled deployment back to its chart replica count.
-      reconcileInterruptedClusterMutation paths runtimeMode
-      repairAttempts' <-
-        if repairAttempts >= maxRepairAttempts
-          then pure repairAttempts
-          else do
-            repaired <- repairInterruptedDirtyPulsarBootstrapState
-            pure (if repaired then repairAttempts + 1 else repairAttempts)
-      result <- try (clusterUpWithPlatform owner paths runtimeMode)
-      case result of
-        Right _ -> pure ()
-        Left err -> do
-          maybeRepairReason <-
-            if repairAttempts' < maxRepairAttempts
-              then detectDirtyPulsarBootstrapState paths runtimeMode
-              else pure Nothing
-          case maybeRepairReason of
-            Nothing -> ioError err
-            Just repairReason -> do
-              putStrLn ("cluster up detected inconsistent retained Pulsar state: " <> repairReason)
-              clusterDown (Just runtimeMode)
-              resetPulsarClaimDirectories paths runtimeMode
-              putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
-              go (repairAttempts' + 1)
+      -- @infernix test all@ before proceeding. The recovery driver uncordons
+      -- drained nodes before entering the ordinary bring-up continuation, whose
+      -- chart re-apply scales deployments back to their declared replica count.
+      reconcileInterruptedClusterMutation paths runtimeMode $ do
+        repairAttempts' <-
+          if repairAttempts >= maxRepairAttempts
+            then pure repairAttempts
+            else do
+              repaired <- repairInterruptedDirtyPulsarBootstrapState
+              pure (if repaired then repairAttempts + 1 else repairAttempts)
+        result <- try (clusterUpWithPlatform lifecycleLock teardownAuthority owner paths runtimeMode)
+        case result of
+          Right _ -> pure ()
+          Left err -> do
+            maybeRepairReason <-
+              if repairAttempts' < maxRepairAttempts
+                then detectDirtyPulsarBootstrapState paths runtimeMode
+                else pure Nothing
+            case maybeRepairReason of
+              Nothing -> ioError err
+              Just repairReason -> do
+                putStrLn ("cluster up detected inconsistent retained Pulsar state: " <> repairReason)
+                clusterDownResolved
+                  lifecycleLock
+                  teardownAuthority
+                  paths
+                  runtimeMode
+                  (`resetPulsarClaimDirectories` paths)
+                putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
+                go (repairAttempts' + 1)
     repairInterruptedDirtyPulsarBootstrapState = do
       maybeState <- loadClusterState paths
       case matchingClusterState runtimeMode maybeState >>= lifecyclePhaseOf of
@@ -582,54 +734,83 @@ clusterUpWithPulsarBootstrapRepair owner paths runtimeMode = go 0
                 Nothing -> pure False
                 Just repairReason -> do
                   putStrLn ("cluster up detected interrupted inconsistent retained Pulsar state: " <> repairReason)
-                  clusterDown (Just runtimeMode)
-                  resetPulsarClaimDirectories paths runtimeMode
+                  clusterDownResolved
+                    lifecycleLock
+                    teardownAuthority
+                    paths
+                    runtimeMode
+                    (`resetPulsarClaimDirectories` paths)
                   putStrLn "retrying cluster up after resetting retained Pulsar claim roots"
                   pure True
         _ -> pure False
 
--- | Sprint 2.15 — reconcile a persisted 'ClusterMutating' position (left by a
--- SIGKILLed @infernix test all@ mid node-drain / over-scale) on the next
--- @cluster up@: uncordon any cordoned nodes (which the chart re-apply cannot do)
--- and clear the dirty marker. Deployment replicas are reconciled by the chart
--- re-apply that follows in the same bring-up. Best-effort and idempotent: an
--- already-uncordoned node or an unreachable API does not abort the bring-up.
-reconcileInterruptedClusterMutation :: Paths -> RuntimeMode -> IO ()
-reconcileInterruptedClusterMutation paths runtimeMode = do
+reconcileInterruptedClusterTeardown :: Paths -> RuntimeMode -> IO ()
+reconcileInterruptedClusterTeardown paths runtimeMode = do
   maybeState <- loadClusterState paths
   case matchingClusterState runtimeMode maybeState of
-    Just state
-      | clusterLifecycleMutating (clusterLifecycle state) -> do
+    Just state ->
+      case clusterLifecycle state of
+        ClusterTearingDown phase -> do
           clusterExists <- kindClusterExists paths runtimeMode
           if clusterExists
             then do
+              workerNodes <- kindWorkerNodeNames paths runtimeMode
+              when (null workerNodes) $
+                ioError
+                  ( userError
+                      "interrupted cluster teardown recovery found a live Kind cluster without workers"
+                  )
               putStrLn
-                ( "cluster up reconciling interrupted cluster mutation: "
-                    <> maybe "unknown-phase" lifecyclePhaseName (lifecyclePhaseOf state)
+                ( "cluster up reconciling interrupted teardown phase "
+                    <> lifecyclePhaseName phase
+                    <> ": proving every Kind worker is unpaused"
                 )
-              -- Outer-container lanes (linux-cpu/linux-gpu) must join the Kind
-              -- Docker network before kubectl can reach the API; without this the
-              -- uncordon silently no-ops against an unreachable API on the exact
-              -- lane node-drains run on.
-              ensureOuterContainerKindNetworkAccess paths runtimeMode
-              uncordoned <- uncordonAllNodes state
-              if uncordoned
-                then do
-                  _ <- settleLifecycle paths state ClusterReady
-                  pure ()
-                else
-                  -- The API was unreachable, so the uncordon could not be
-                  -- confirmed. Leave the ClusterMutating marker in place: the
-                  -- bring-up below supersedes it with its own lifecycle phases
-                  -- and reconciles the cluster, and the marker stays detectable
-                  -- rather than being cleared to a false ClusterReady.
-                  putStrLn
-                    "cluster up could not reach the cluster API to uncordon drained nodes; leaving the mutation marker for the bring-up below to supersede"
+              unpauseSnapshotWorkers paths runtimeMode workerNodes
             else do
-              putStrLn "cluster up clearing stale ClusterMutating marker for an absent cluster"
               _ <- settleLifecycle paths state ClusterAbsent
               pure ()
-    _ -> pure ()
+        _ -> pure ()
+    Nothing -> pure ()
+
+-- | Sprint 2.15 — reconcile a persisted 'ClusterMutating' position (left by a
+-- SIGKILLed @infernix test all@ mid node-drain / over-scale) on the next
+-- @cluster up@: uncordon any cordoned nodes (which the chart re-apply cannot do)
+-- before entering the ordinary desired-state reconciliation. Deployment
+-- replicas are reconciled by the chart re-apply that follows in the same
+-- bring-up, and only successful bring-up completion publishes 'ClusterReady'.
+-- A partial or unobservable uncordon aborts bring-up and preserves the mutation
+-- evidence.
+reconcileInterruptedClusterMutation :: Paths -> RuntimeMode -> IO a -> IO a
+reconcileInterruptedClusterMutation paths runtimeMode =
+  runInterruptedMutationRecovery
+    InterruptedMutationRecoveryEffects
+      { observeMutationRecoveryState =
+          matchingClusterState runtimeMode <$> loadClusterState paths,
+        mutationRecoveryRequired =
+          clusterLifecycleMutating . clusterLifecycle,
+        mutationRecoveryClusterExists =
+          const (kindClusterExists paths runtimeMode),
+        prepareLiveMutationRecovery = \state -> do
+          putStrLn
+            ( "cluster up reconciling interrupted cluster mutation: "
+                <> maybe "unknown-phase" lifecyclePhaseName (lifecyclePhaseOf state)
+            )
+          -- Outer-container lanes (linux-cpu/linux-gpu) must join the Kind
+          -- Docker network before kubectl can reach the API; without this the
+          -- uncordon silently no-ops against an unreachable API on the exact
+          -- lane node-drains run on.
+          ensureOuterContainerKindNetworkAccess paths runtimeMode,
+        uncordonMutationNodes = uncordonAllNodes,
+        announceLiveMutationRecovered =
+          const
+            ( putStrLn
+                "cluster up uncordoned every node; continuing through chart reconciliation before publishing steady-state"
+            ),
+        settleAbsentMutation = \state -> do
+          putStrLn "cluster up clearing stale ClusterMutating marker for an absent cluster"
+          _ <- settleLifecycle paths state ClusterAbsent
+          pure ()
+      }
 
 clusterLifecycleMutating :: ClusterLifecycle -> Bool
 clusterLifecycleMutating lifecycle = case lifecycle of
@@ -640,25 +821,147 @@ clusterLifecycleMutating lifecycle = case lifecycle of
   ClusterReady -> False
   ClusterTearingDown _ -> False
 
+-- | The detached retained-state replay transaction. The unique intent phase is
+-- persisted before Kind creation and remains current until host state has been
+-- copied into every pre-workload worker. That durable fact distinguishes a
+-- restartable first bring-up from an idempotent bring-up over live writers.
+data RetainedReplayPlan
+  = StartRetainedReplay
+  | ResumeRetainedReplay
+  | RetainedReplayNotRequired
+  | RefuseAmbiguousRetainedReplay
+  deriving (Eq, Show)
+
+data KindKubeconfigRecoveryPlan
+  = RecreatePreWorkloadKind
+  | LeaveUnreadableKindUntouched
+  deriving (Eq, Show)
+
+retainedReplayPhaseName :: String
+retainedReplayPhaseName = "replay-retained-state-into-kind"
+
+retainedReplayPending :: ClusterState -> Bool
+retainedReplayPending state =
+  case clusterLifecycle state of
+    ClusterProvisioning phase -> validReplayPhase phase
+    ClusterActivating phase -> validReplayPhase phase
+    _ -> False
+  where
+    validReplayPhase phase =
+      lifecyclePhaseTransition phase == LifecycleBringUp
+        && lifecyclePhaseName phase == retainedReplayPhaseName
+
+preWorkloadRecoveryIntentMatches :: ClusterLifecycle -> ClusterState -> Bool
+preWorkloadRecoveryIntentMatches expectedLifecycle state =
+  retainedReplayPending state
+    && clusterLifecycle state == expectedLifecycle
+
+retainedReplayPlan ::
+  Bool ->
+  Bool ->
+  ClusterOwner ->
+  RuntimeMode ->
+  Maybe ClusterState ->
+  RetainedReplayPlan
+retainedReplayPlan usesHostBindMounts clusterActuallyPresent requestedOwner runtimeMode maybeState
+  | usesHostBindMounts = RetainedReplayNotRequired
+  | not clusterActuallyPresent = StartRetainedReplay
+  | otherwise =
+      case maybeState of
+        Just state
+          | clusterOwner state /= requestedOwner ->
+              RefuseAmbiguousRetainedReplay
+          | clusterRuntimeMode state /= runtimeMode ->
+              RefuseAmbiguousRetainedReplay
+          | retainedReplayPending state ->
+              ResumeRetainedReplay
+          | reservedReplayPhasePresent state ->
+              RefuseAmbiguousRetainedReplay
+          | legacyProvisioningStatePresent state ->
+              RefuseAmbiguousRetainedReplay
+          | clusterLifecycle state == ClusterAbsent ->
+              RefuseAmbiguousRetainedReplay
+          | otherwise ->
+              RetainedReplayNotRequired
+        Nothing -> RefuseAmbiguousRetainedReplay
+  where
+    reservedReplayPhasePresent state =
+      maybe
+        False
+        ((== retainedReplayPhaseName) . lifecyclePhaseName)
+        (lifecyclePhaseOf state)
+    legacyProvisioningStatePresent state =
+      case clusterLifecycle state of
+        ClusterProvisioning _ -> True
+        _ -> False
+
+retainedReplayRequired :: RetainedReplayPlan -> Bool
+retainedReplayRequired replayPlan =
+  case replayPlan of
+    StartRetainedReplay -> True
+    ResumeRetainedReplay -> True
+    RetainedReplayNotRequired -> False
+    RefuseAmbiguousRetainedReplay -> False
+
+kindKubeconfigRecoveryPlan :: RetainedReplayPlan -> KindKubeconfigRecoveryPlan
+kindKubeconfigRecoveryPlan replayPlan
+  | retainedReplayRequired replayPlan = RecreatePreWorkloadKind
+  | otherwise = LeaveUnreadableKindUntouched
+
+retainedReplayLifecyclePhaseName :: RetainedReplayPlan -> String -> String
+retainedReplayLifecyclePhaseName replayPlan ordinaryPhaseName
+  | retainedReplayRequired replayPlan = retainedReplayPhaseName
+  | otherwise = ordinaryPhaseName
+
+requireUsableRetainedReplayPlan :: RetainedReplayPlan -> IO ()
+requireUsableRetainedReplayPlan replayPlan =
+  case replayPlan of
+    RefuseAmbiguousRetainedReplay ->
+      ioError
+        ( userError
+            ( "cluster up refused an ambiguous retained-state replay: a non-bind Kind cluster is "
+                <> "present without the current replay-intent evidence; inspect the recorded "
+                <> "lifecycle and retained snapshot before retrying"
+            )
+        )
+    StartRetainedReplay -> pure ()
+    ResumeRetainedReplay -> pure ()
+    RetainedReplayNotRequired -> pure ()
+
 -- | Sprint 2.15 — uncordon every node so a node cordoned by an interrupted
 -- drain can schedule pods again. Returns whether the cluster API was reachable
 -- (the node list was obtained): 'False' means the uncordon could not be
--- confirmed and the caller must not treat the mutation as reconciled. A
--- per-node uncordon failure (already uncordoned, transient error) is logged and
--- does not fail the whole reconcile.
+-- confirmed and the caller must not treat the mutation as reconciled. Every
+-- discovered node must acknowledge the uncordon before bring-up proceeds to
+-- chart reconciliation; this function never clears the dirty marker itself.
 uncordonAllNodes :: ClusterState -> IO Bool
 uncordonAllNodes state = do
-  nodesResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["get", "nodes", "-o", "name"])
+  nodesResult <-
+    tryDiscoveredClusterCommand $ \_ ->
+      Command.kubectlGetNodeNames (clusterKubeTarget state)
   case nodesResult of
     Left _ -> pure False
     Right output -> do
-      forM_ (nodeNamesFromOutput output) $ \nodeName -> do
-        uncordonResult <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> ["uncordon", nodeName])
-        case uncordonResult of
-          Right _ -> pure ()
-          Left err ->
-            putStrLn ("cluster up uncordon " <> nodeName <> " skipped: " <> takeWhile (/= '\n') err)
-      pure True
+      uncordonResults <-
+        mapM
+          ( \nodeName -> do
+              uncordonResult <-
+                tryDiscoveredClusterCommand $ \_ ->
+                  Command.kubectlUncordon
+                    (clusterKubeTarget state)
+                    (Command.NodeName nodeName)
+              case uncordonResult of
+                Right _ -> pure ()
+                Left err ->
+                  putStrLn ("cluster up uncordon " <> nodeName <> " failed: " <> takeWhile (/= '\n') err)
+              pure uncordonResult
+          )
+          (nodeNamesFromOutput output)
+      pure (uncordonResultsProveReady uncordonResults)
+
+uncordonResultsProveReady :: [Either String String] -> Bool
+uncordonResultsProveReady results =
+  not (null results) && all isRight results
 
 nodeNamesFromOutput :: String -> [String]
 nodeNamesFromOutput output =
@@ -668,8 +971,25 @@ nodeNamesFromOutput output =
     not (null trimmed)
   ]
 
-clusterUpWithPlatform :: ClusterOwner -> Paths -> RuntimeMode -> IO ()
-clusterUpWithPlatform owner paths runtimeMode = do
+clusterUpWithPlatform ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  ClusterOwner ->
+  Paths ->
+  RuntimeMode ->
+  IO ()
+clusterUpWithPlatform lifecycleLock teardownAuthority owner paths runtimeMode = do
+  recordedStateBeforeBringUp <- loadClusterState paths
+  clusterAlreadyPresent <- kindClusterExists paths runtimeMode
+  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
+  let replayPlan =
+        retainedReplayPlan
+          usesHostBindMounts
+          clusterAlreadyPresent
+          owner
+          runtimeMode
+          recordedStateBeforeBringUp
+  requireUsableRetainedReplayPlan replayPlan
   inputs <- prepareClusterUpInputs paths runtimeMode
   claimDiscoveryTime <- getCurrentTime
   let provisionalState0 =
@@ -677,7 +997,7 @@ clusterUpWithPlatform owner paths runtimeMode = do
           owner
           inputs
           runtimeMode
-          False
+          clusterAlreadyPresent
           (clusterUpRequestedEdgePort inputs)
           (clusterUpRequestedHarborPort inputs)
           (routeInventory (clusterUpDemoUiEnabled inputs))
@@ -688,30 +1008,55 @@ clusterUpWithPlatform owner paths runtimeMode = do
       paths
       provisionalState0
       "cluster-up"
-      "discover-persistent-claims"
+      (retainedReplayLifecyclePhaseName replayPlan "discover-persistent-claims")
       "rendering Helm inputs and discovering durable claim roots"
   claimDiscoveryValuesPath <- writeHelmValuesFile paths (clusterUpControlPlane inputs) provisionalState (clusterUpPayload inputs) FinalPhase
   claimDiscoveryRenderedChartPath <- renderHelmChart paths runtimeMode [claimDiscoveryValuesPath]
   discoveredClaims <- discoverPersistentClaims paths claimDiscoveryRenderedChartPath
   discoveredRoutes <- discoverChartRoutesFile claimDiscoveryRenderedChartPath
-  scrubNonRetainedClusterDirectories paths runtimeMode
+  unless clusterAlreadyPresent $ do
+    withWriterQuiesced lifecycleLock paths runtimeMode $ \quiesced -> do
+      -- A killed non-bind teardown can leave the last committed snapshot under
+      -- @.previous@, or a fully staged initial snapshot under @.incoming@.
+      -- Recover that transaction inside the freshly rechecked absence lease,
+      -- before scrub or claim preparation can create an empty current root.
+      reconcileInterruptedRetainedSnapshot paths runtimeMode
+      scrubRetainedStateUnderLease quiesced paths
   mapM_ (ensureClaimDirectoryReady paths runtimeMode) discoveredClaims
   clusterPrepareState <-
     startLifecyclePhase
       paths
       provisionalState
       "cluster-up"
-      "prepare-kind-cluster"
+      (retainedReplayLifecyclePhaseName replayPlan "prepare-kind-cluster")
       "creating or reusing the Kind cluster and preparing retained runtime data"
   (edgePortValue, harborPortValue, pulsarHttpPortValue, kubeconfigContents, clusterCreated) <-
-    ensureKindCluster paths runtimeMode (clusterUpRequestedEdgePort inputs) (clusterUpRequestedHarborPort inputs) (clusterUpRequestedPulsarHttpPort inputs)
+    ensureKindCluster
+      lifecycleLock
+      teardownAuthority
+      paths
+      runtimeMode
+      clusterAlreadyPresent
+      replayPlan
+      (clusterUpRequestedEdgePort inputs)
+      (clusterUpRequestedHarborPort inputs)
+      (clusterUpRequestedPulsarHttpPort inputs)
   writeRegistryHostsConfig paths runtimeMode harborPortValue
   primeKindNodeRegistryHosts paths runtimeMode harborPortValue
-  usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
-  when (clusterCreated && not usesHostBindMounts) $
-    prepareKindNodeRuntimePaths paths clusterPrepareState runtimeMode
+  replayState <-
+    if retainedReplayRequired replayPlan
+      then
+        startLifecyclePhase
+          paths
+          clusterPrepareState {clusterLifecycle = ClusterReady}
+          "cluster-up"
+          retainedReplayPhaseName
+          "replaying the committed retained snapshot into the pre-workload Kind workers"
+      else pure clusterPrepareState
+  when (retainedReplayRequired replayPlan) $
+    prepareKindNodeRuntimePaths paths replayState runtimeMode
   unless usesHostBindMounts $
-    prepareKindNodeClaimDirectories paths clusterPrepareState runtimeMode discoveredClaims
+    prepareKindNodeClaimDirectories paths replayState runtimeMode discoveredClaims
   writeFile (edgePortPath paths) (show edgePortValue)
   writeFile (harborPortPath paths) (show harborPortValue)
   writeFile (pulsarHttpPortPath paths) (show pulsarHttpPortValue)
@@ -1054,114 +1399,1002 @@ matchingClusterState runtimeMode maybeState =
       | clusterRuntimeMode state == runtimeMode -> Just state
     _ -> Nothing
 
--- | Sprint 2.15 (cluster-ownership doctrine) — typed authorization to tear down
--- the persisted cluster slot. The constructor is hidden (unexported), so the
--- only ways to obtain one are the two honest mints below; a teardown that skips
--- the authority is not a constructible term outside this module. Mirrors the
--- 'MemoryGrant' / 'withCappedEngine' precedent
--- (documents/architecture/bounded_inference_memory.md).
-data ClusterTeardownAuthority = ClusterTeardownAuthority
-
--- | The operator's explicit @infernix cluster down@ is authorized to tear down
--- its own cluster regardless of owner. Reached only through the exported
--- 'clusterDown' command, never the harness path (this mint is unexported).
-operatorTeardownAuthority :: ClusterTeardownAuthority
-operatorTeardownAuthority = ClusterTeardownAuthority
-
--- | Why a harness seizure was refused: the present cluster is 'OperatorOwned'.
-newtype ClusterSeizureRefusal = ClusterSeizureRefusal ClusterOwner
+-- | Why an operation was refused: an actually-present cluster is not recorded
+-- as belonging to the requested owner. A missing owner means the live Kind
+-- cluster has no matching persisted state, which also fails closed.
+data ClusterOwnershipRefusal = ClusterOwnershipRefusal
+  { ownershipRequestedOwner :: ClusterOwner,
+    ownershipRecordedOwner :: Maybe ClusterOwner,
+    ownershipRequestedRuntimeMode :: RuntimeMode,
+    ownershipPresentRuntimeModes :: [RuntimeMode]
+  }
   deriving (Eq, Show)
 
--- | Sprint 2.15/6.43 — the single honest mint for the test harness. The harness
--- may seize (tear down) the cluster slot only when it is absent or
--- 'HarnessOwned'; an 'OperatorOwned' present cluster fails closed, so a clean
--- @infernix test all@ can never destroy an operator's running cluster.
-authorizeHarnessSeizure :: Maybe ClusterState -> Either ClusterSeizureRefusal ClusterTeardownAuthority
-authorizeHarnessSeizure maybeState
-  | harnessMaySeize maybeState = Right ClusterTeardownAuthority
-  | otherwise = Left (ClusterSeizureRefusal (maybe OperatorOwned clusterOwner maybeState))
-
--- | The harness may seize an absent or 'HarnessOwned' cluster; a present
--- 'OperatorOwned' cluster is off-limits (the seizure fails closed on it).
-harnessMaySeize :: Maybe ClusterState -> Bool
-harnessMaySeize maybeState = case maybeState of
-  Nothing -> True
-  Just state -> not (clusterPresent state) || clusterOwner state == HarnessOwned
+-- | Authorize an owner against the complete Kind inventory for this data root
+-- and the single persisted ownership record. An absent inventory is available
+-- to the first creator. Exactly one live cluster is authorized only when its
+-- runtime and owner both match; two supported runtimes being live is an
+-- invariant breach that always fails closed.
+authorizeClusterOwnership ::
+  ClusterOwner ->
+  RuntimeMode ->
+  [RuntimeMode] ->
+  Maybe ClusterState ->
+  Either ClusterOwnershipRefusal ()
+authorizeClusterOwnership requestedOwner requestedRuntimeMode presentRuntimeModes maybeState =
+  case presentRuntimeModes of
+    [] -> Right ()
+    [presentRuntimeMode] ->
+      case maybeState of
+        Just state
+          | presentRuntimeMode == requestedRuntimeMode,
+            clusterRuntimeMode state == presentRuntimeMode,
+            clusterOwner state == requestedOwner ->
+              Right ()
+        _ -> Left refusal
+    _ -> Left refusal
+  where
+    refusal =
+      ClusterOwnershipRefusal
+        { ownershipRequestedOwner = requestedOwner,
+          ownershipRecordedOwner = clusterOwner <$> maybeState,
+          ownershipRequestedRuntimeMode = requestedRuntimeMode,
+          ownershipPresentRuntimeModes = presentRuntimeModes
+        }
 
 clusterOwnerLabel :: ClusterOwner -> String
 clusterOwnerLabel OperatorOwned = "operator"
 clusterOwnerLabel HarnessOwned = "harness"
 
--- | The operator's @infernix cluster down@ command — always authorized on the
--- operator's own cluster.
+-- | The authority required by the raw teardown. Its constructor is private and
+-- the value records both the checked owner and runtime. The only mint is
+-- 'requireClusterOwnership', which evaluates the global inventory under the
+-- lifecycle lock.
+data ClusterTeardownAuthority s = ClusterTeardownAuthority
+  { teardownAuthorityOwner :: ClusterOwner,
+    teardownAuthorityRuntimeMode :: RuntimeMode,
+    teardownAuthorityReservationAccess :: ClusterReservationAccess
+  }
+
+type role ClusterTeardownAuthority nominal
+
+data PreWorkloadKindRecovery s
+  = PreWorkloadKindRecovery
+      (ClusterTeardownAuthority s)
+      RuntimeMode
+      ClusterLifecycle
+
+type role PreWorkloadKindRecovery nominal
+
+data KindDeleteAuthorization s
+  = AuthorizedClusterTeardown (ClusterTeardownAuthority s)
+  | AuthorizedPreWorkloadRecovery (PreWorkloadKindRecovery s)
+
+type role KindDeleteAuthorization nominal
+
+-- | Compile-time witness used by the capability fixtures. It mints no
+-- authority and performs no transition; its only purpose is to make the
+-- lifecycle-region equality required by every authority consumer observable
+-- to an external typecheck.
+clusterTeardownAuthorityRegionWitness ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  ()
+clusterTeardownAuthorityRegionWitness lifecycleLock authority =
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked ->
+      case authority of
+        ClusterTeardownAuthority {} -> ()
+
+requireClusterOwnership ::
+  Lease s ClusterMutationLocked ->
+  Paths ->
+  RuntimeMode ->
+  String ->
+  ClusterOwner ->
+  ClusterReservationAccess ->
+  [RuntimeMode] ->
+  Maybe ClusterState ->
+  IO (ClusterTeardownAuthority s)
+requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwner reservationAccess presentRuntimeModes maybeState = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  case (reservationAccessOwner reservationAccess == requestedOwner, authorizeClusterOwnership requestedOwner runtimeMode presentRuntimeModes maybeState) of
+    (True, Right ()) -> pure (ClusterTeardownAuthority requestedOwner runtimeMode reservationAccess)
+    (False, _) ->
+      ioError
+        ( userError
+            "cluster ownership authorization received reservation evidence for another owner"
+        )
+    (_, Left refusal) ->
+      ioError
+        ( userError
+            ( "refusing to "
+                <> action
+                <> ": requested runtime="
+                <> Text.unpack (runtimeModeId runtimeMode)
+                <> ", present Infernix runtimes="
+                <> renderRuntimeModes (ownershipPresentRuntimeModes refusal)
+                <> ", recorded owner="
+                <> maybe "unknown" clusterOwnerLabel (ownershipRecordedOwner refusal)
+                <> ", not owner="
+                <> clusterOwnerLabel (ownershipRequestedOwner refusal)
+                <> " at "
+                <> dataRoot paths
+            )
+        )
+  where
+    renderRuntimeModes runtimeModes =
+      case runtimeModes of
+        [] -> "none"
+        _ -> List.intercalate "," (map (Text.unpack . runtimeModeId) runtimeModes)
+
+reservationAccessOwner :: ClusterReservationAccess -> ClusterOwner
+reservationAccessOwner reservationAccess =
+  case reservationAccess of
+    OperatorReservationAccess -> OperatorOwned
+    HarnessReservationAccess _ -> HarnessOwned
+
+revalidateClusterTeardownAuthority ::
+  Lease s ClusterMutationLocked ->
+  String ->
+  ClusterTeardownAuthority s ->
+  Paths ->
+  RuntimeMode ->
+  IO (Maybe ClusterState, [RuntimeMode])
+revalidateClusterTeardownAuthority lifecycleLock action authority paths runtimeMode = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  unless (teardownAuthorityRuntimeMode authority == runtimeMode) $
+    ioError
+      ( userError
+          "cluster teardown authority/runtime mismatch"
+      )
+  recordedState <- loadClusterState paths
+  presentRuntimeModes <- presentClusterRuntimeModes paths
+  currentReservationAccess <-
+    requireReservationAccess paths (teardownAuthorityOwner authority)
+  unless
+    (currentReservationAccess == teardownAuthorityReservationAccess authority)
+    ( ioError
+        ( userError
+            "cluster teardown authority reservation identity changed after authorization"
+        )
+    )
+  _ <-
+    requireClusterOwnership
+      lifecycleLock
+      paths
+      runtimeMode
+      action
+      (teardownAuthorityOwner authority)
+      currentReservationAccess
+      presentRuntimeModes
+      recordedState
+  pure (recordedState, presentRuntimeModes)
+
+presentClusterRuntimeModes :: Paths -> IO [RuntimeMode]
+presentClusterRuntimeModes paths = do
+  existingClusters <-
+    lines
+      <$> captureClusterCommand
+        paths
+        Command.kindListClusters
+  pure
+    [ runtimeMode
+    | runtimeMode <- allRuntimeModes,
+      kindClusterName paths runtimeMode `elem` existingClusters
+    ]
+
+requireReservationAccess :: Paths -> ClusterOwner -> IO ClusterReservationAccess
+requireReservationAccess paths requestedOwner = do
+  maybeReservation <- readHarnessReservation paths
+  currentProcessGroup <- fromIntegral <$> getProcessGroupID
+  case (requestedOwner, maybeReservation) of
+    (OperatorOwned, Nothing) ->
+      pure OperatorReservationAccess
+    (_, maybePresentReservation) -> do
+      ownerStatus <-
+        maybe
+          (pure HarnessReservationOwnerDefinitelyDead)
+          inspectHarnessReservationOwner
+          maybePresentReservation
+      let maybeReservationProcessGroup =
+            harnessReservationProcessGroup <$> maybePresentReservation
+      case authorizeHarnessReservationAccess
+        requestedOwner
+        currentProcessGroup
+        (ownerStatus == HarnessReservationOwnerVerifiedAlive)
+        maybeReservationProcessGroup of
+        Left refusal ->
+          ioError
+            ( userError
+                ( refusal
+                    <> " at "
+                    <> harnessReservationPath paths
+                )
+            )
+        Right () ->
+          case maybePresentReservation of
+            Just reservation -> pure (HarnessReservationAccess reservation)
+            Nothing ->
+              ioError
+                ( userError
+                    "harness reservation authorization produced no evidence"
+                )
+
+authorizeHarnessReservationAccess ::
+  ClusterOwner ->
+  Integer ->
+  Bool ->
+  Maybe Integer ->
+  Either String ()
+authorizeHarnessReservationAccess requestedOwner currentProcessGroup ownerAlive maybeReservationProcessGroup =
+  case (requestedOwner, maybeReservationProcessGroup) of
+    (OperatorOwned, Nothing) -> Right ()
+    (OperatorOwned, Just _) ->
+      Left "refusing operator cluster mutation: the test harness owns the cluster slot"
+    (HarnessOwned, Nothing) ->
+      Left "refusing harness cluster mutation without a live cluster-slot reservation"
+    (HarnessOwned, Just reservationProcessGroup)
+      | ownerAlive && currentProcessGroup == reservationProcessGroup -> Right ()
+      | otherwise ->
+          Left "refusing harness cluster mutation outside the live reservation process group"
+
+authorizeRuntimeConfigWriteAccess ::
+  Integer ->
+  Bool ->
+  Maybe Integer ->
+  Either String ()
+authorizeRuntimeConfigWriteAccess currentProcessGroup ownerAlive maybeReservationProcessGroup =
+  case maybeReservationProcessGroup of
+    Nothing -> Right ()
+    Just reservationProcessGroup
+      | ownerAlive && currentProcessGroup == reservationProcessGroup -> Right ()
+      | otherwise ->
+          Left "refusing runtime-config write outside the live harness reservation process group"
+
+withRuntimeConfigWriteAccess :: IO a -> IO a
+withRuntimeConfigWriteAccess action = do
+  paths <- Config.discoverPaths
+  withRuntimeConfigWriteAccessAt paths action
+
+withRuntimeConfigWriteAccessAt :: Paths -> IO a -> IO a
+withRuntimeConfigWriteAccessAt paths action = do
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \_ -> do
+    maybeReservation <- readHarnessReservation paths
+    ownerStatus <-
+      maybe
+        (pure HarnessReservationOwnerDefinitelyDead)
+        inspectHarnessReservationOwner
+        maybeReservation
+    currentProcessGroup <- fromIntegral <$> getProcessGroupID
+    case authorizeRuntimeConfigWriteAccess
+      currentProcessGroup
+      (ownerStatus == HarnessReservationOwnerVerifiedAlive)
+      (harnessReservationProcessGroup <$> maybeReservation) of
+      Right () -> action
+      Left refusal ->
+        ioError
+          ( userError
+              ( refusal
+                  <> " at "
+                  <> harnessReservationPath paths
+              )
+          )
+
+readHarnessReservation :: Paths -> IO (Maybe HarnessReservation)
+readHarnessReservation paths = do
+  let reservationPath = harnessReservationPath paths
+  reservationPresent <- doesFileExist reservationPath
+  if reservationPresent
+    then do
+      reservationContents <- readFile reservationPath
+      case parseHarnessReservation reservationContents of
+        Just reservation -> pure (Just reservation)
+        Nothing ->
+          ioError
+            ( userError
+                ( "the harness cluster-slot reservation is unreadable at "
+                    <> reservationPath
+                    <> "; inspect it before retrying"
+                )
+            )
+    else pure Nothing
+
+parseHarnessReservation :: String -> Maybe HarnessReservation
+parseHarnessReservation reservationContents = do
+  version <- uniqueField "version"
+  "harness" <- uniqueField "owner"
+  ownerPid <- uniqueField "pid" >>= readMaybe
+  processGroup <- uniqueField "process-group" >>= readMaybe
+  ownerBirthIdentity <-
+    case version of
+      -- Version 1 remains readable so a dead pre-upgrade reservation can be
+      -- recovered. Its reusable PID/PGID is never accepted as live authority.
+      "1" -> pure Nothing
+      "2" -> do
+        bootIdentity <- uniqueField "boot-identity"
+        processStartTime <- uniqueField "process-start-time" >>= readMaybe
+        if validBootIdentity bootIdentity
+          && processStartTime > 0
+          then
+            pure
+              ( Just
+                  ProcessBirthIdentity
+                    { processBirthBootIdentity = bootIdentity,
+                      processBirthStartTime = processStartTime
+                    }
+              )
+          else Nothing
+      _ -> Nothing
+  configTransaction <- uniqueField "config-transaction" >>= parseConfigTransaction
+  if validProcessIdentifier ownerPid
+    && processGroup == ownerPid
+    then
+      pure
+        HarnessReservation
+          { harnessReservationOwnerPid = ownerPid,
+            harnessReservationProcessGroup = processGroup,
+            harnessReservationOwnerBirthIdentity = ownerBirthIdentity,
+            harnessReservationConfigTransaction = configTransaction
+          }
+    else Nothing
+  where
+    uniqueField fieldName =
+      case [ fieldValue
+           | lineValue <- lines reservationContents,
+             Just fieldValue <- [List.stripPrefix (fieldName <> "=") lineValue]
+           ] of
+        [fieldValue] -> Just fieldValue
+        _ -> Nothing
+    parseConfigTransaction value =
+      case value of
+        "untouched" -> Just HarnessConfigUntouched
+        "restore-pending" -> Just HarnessConfigRestorePending
+        "remove-pending" -> Just HarnessConfigRemovePending
+        "restored" -> Just HarnessConfigRestored
+        _ -> Nothing
+
+validProcessIdentifier :: Integer -> Bool
+validProcessIdentifier processId =
+  processId > 0 && processId <= 2147483647
+
+validBootIdentity :: String -> Bool
+validBootIdentity value =
+  not (null value)
+    && all
+      (\character -> isAlphaNum character || character `elem` ("-_" :: String))
+      value
+
+renderHarnessReservation :: HarnessReservation -> String
+renderHarnessReservation reservation =
+  case harnessReservationOwnerBirthIdentity reservation of
+    Nothing ->
+      unlines
+        ( "version=1"
+            : commonFields
+        )
+    Just birthIdentity ->
+      unlines
+        ( [ "version=2",
+            "boot-identity=" <> processBirthBootIdentity birthIdentity,
+            "process-start-time=" <> show (processBirthStartTime birthIdentity)
+          ]
+            <> commonFields
+        )
+  where
+    commonFields =
+      [ "owner=harness",
+        "pid=" <> show (harnessReservationOwnerPid reservation),
+        "process-group=" <> show (harnessReservationProcessGroup reservation),
+        "config-transaction="
+          <> renderConfigTransaction (harnessReservationConfigTransaction reservation)
+      ]
+    renderConfigTransaction transaction =
+      case transaction of
+        HarnessConfigUntouched -> "untouched"
+        HarnessConfigRestorePending -> "restore-pending"
+        HarnessConfigRemovePending -> "remove-pending"
+        HarnessConfigRestored -> "restored"
+
+writeHarnessReservation :: Paths -> HarnessReservation -> IO ()
+writeHarnessReservation paths reservation = mask $ \restore -> do
+  let reservationPath = harnessReservationPath paths
+      reservationDirectory = takeDirectory reservationPath
+  createDirectoryIfMissing True reservationDirectory
+  temporary <-
+    openBinaryTempFile reservationDirectory "harness-cluster-slot.tmp"
+  onExceptionPreservingPrimary
+    ( restore $ do
+        let (temporaryPath, handle) = temporary
+        hPutStr handle (renderHarnessReservation reservation)
+        hClose handle
+        renameFile temporaryPath reservationPath
+    )
+    (cleanupTemporaryReservation temporary)
+  where
+    cleanupTemporaryReservation (temporaryPath, handle) =
+      runCleanupsPreservingFailures
+        [ do
+            closed <- hIsClosed handle
+            unless closed (hClose handle),
+          do
+            exists <- doesFileExist temporaryPath
+            when exists (removeFile temporaryPath)
+        ]
+
+inspectHarnessReservationOwner ::
+  HarnessReservation ->
+  IO HarnessReservationOwnerStatus
+inspectHarnessReservationOwner reservation = do
+  groupProbe <-
+    try
+      ( signalProcessGroup
+          nullSignal
+          (fromIntegral (harnessReservationProcessGroup reservation))
+      ) ::
+      IO (Either IOException ())
+  case groupProbe of
+    Left failure
+      | isDoesNotExistError failure ->
+          pure HarnessReservationOwnerDefinitelyDead
+      | otherwise ->
+          pure HarnessReservationOwnerUnverifiable
+    Right () ->
+      case harnessReservationOwnerBirthIdentity reservation of
+        -- A version-1 reservation can fence the slot while its PGID exists,
+        -- but its reusable numeric identity can never authorize a caller.
+        Nothing -> pure HarnessReservationOwnerUnverifiable
+        Just expectedBirthIdentity -> do
+          observedBirthIdentity <-
+            readProcessBirthIdentity
+              (harnessReservationOwnerPid reservation)
+          -- A mismatched or missing leader identity denies authority, but the
+          -- still-populated PGID may contain descendants of the old owner.
+          -- Only ESRCH from the group probe is evidence that recovery is safe.
+          case observedBirthIdentity of
+            Just identity
+              | identity == expectedBirthIdentity ->
+                  pure HarnessReservationOwnerVerifiedAlive
+              | otherwise ->
+                  pure HarnessReservationOwnerUnverifiable
+            Nothing -> pure HarnessReservationOwnerUnverifiable
+
+beginHarnessConfigTransaction :: Paths -> Bool -> IO a -> IO a
+beginHarnessConfigTransaction paths hadExistingRuntimeConfig action =
+  withClusterLifecycleLock paths $ \_ -> do
+    access <- requireReservationAccess paths HarnessOwned
+    reservation <- harnessReservationFromAccess access
+    case harnessReservationConfigTransaction reservation of
+      HarnessConfigUntouched -> do
+        writeHarnessReservation
+          paths
+          reservation
+            { harnessReservationConfigTransaction =
+                if hadExistingRuntimeConfig
+                  then HarnessConfigRestorePending
+                  else HarnessConfigRemovePending
+            }
+        action
+      transaction ->
+        ioError
+          ( userError
+              ( "refusing to begin a second harness config transaction while the reservation is "
+                  <> show transaction
+              )
+          )
+
+completeHarnessConfigTransaction :: Paths -> IO a -> IO a
+completeHarnessConfigTransaction paths action =
+  withClusterLifecycleLock paths $ \_ -> do
+    access <- requireReservationAccess paths HarnessOwned
+    reservation <- harnessReservationFromAccess access
+    case harnessReservationConfigTransaction reservation of
+      HarnessConfigRestorePending -> complete reservation
+      HarnessConfigRemovePending -> complete reservation
+      transaction ->
+        ioError
+          ( userError
+              ( "refusing to complete a harness config transaction from state "
+                  <> show transaction
+              )
+          )
+  where
+    complete reservation = do
+      result <- action
+      writeHarnessReservation
+        paths
+        reservation {harnessReservationConfigTransaction = HarnessConfigRestored}
+      pure result
+
+harnessReservationFromAccess :: ClusterReservationAccess -> IO HarnessReservation
+harnessReservationFromAccess reservationAccess =
+  case reservationAccess of
+    HarnessReservationAccess reservation -> pure reservation
+    OperatorReservationAccess ->
+      ioError
+        ( userError
+            "harness reservation evidence was required but operator evidence was provided"
+        )
+
+reconcileInterruptedHarnessState :: IO ()
+reconcileInterruptedHarnessState = do
+  paths <- Config.discoverPaths
+  reconcileInterruptedHarnessStateAt paths
+
+reconcileInterruptedHarnessStateAt :: Paths -> IO ()
+reconcileInterruptedHarnessStateAt paths = do
+  Config.ensureRepoLayout paths
+  maybeReservation <- readHarnessReservation paths
+  case maybeReservation of
+    Nothing -> do
+      legacyBackupPresent <-
+        doesFileExist (Config.runtimeConfigPath paths <> ".harness-backup")
+      when legacyBackupPresent $
+        withClusterLifecycleLock paths $ \_ -> do
+          lockedReservation <- readHarnessReservation paths
+          case lockedReservation of
+            Nothing -> reconcileLegacyHarnessBackup paths
+            Just _ -> pure ()
+    Just reservation -> do
+      ownerStatus <- inspectHarnessReservationOwner reservation
+      case ownerStatus of
+        HarnessReservationOwnerVerifiedAlive -> pure ()
+        HarnessReservationOwnerUnverifiable ->
+          refuseUnverifiableHarnessReservation paths
+        HarnessReservationOwnerDefinitelyDead ->
+          withClusterLifecycleLock paths $ \_ -> do
+            currentReservation <- readHarnessReservation paths
+            case currentReservation of
+              Nothing -> reconcileLegacyHarnessBackup paths
+              Just lockedReservation -> do
+                lockedOwnerStatus <-
+                  inspectHarnessReservationOwner lockedReservation
+                case lockedOwnerStatus of
+                  HarnessReservationOwnerVerifiedAlive -> pure ()
+                  HarnessReservationOwnerUnverifiable ->
+                    refuseUnverifiableHarnessReservation paths
+                  HarnessReservationOwnerDefinitelyDead -> do
+                    activitiesQuiescent <-
+                      Subprocess.proveBoundedCommandActivitiesQuiescent
+                        paths
+                        (harnessReservationProcessGroup lockedReservation)
+                    restoredReservation <-
+                      recoverHarnessConfigTransaction
+                        activitiesQuiescent
+                        paths
+                        lockedReservation
+                    presentRuntimeModes <- presentClusterRuntimeModes paths
+                    recordedState <- loadClusterState paths
+                    if deadReservationCanBeRemoved restoredReservation presentRuntimeModes recordedState
+                      then
+                        removeHarnessReservation
+                          activitiesQuiescent
+                          paths
+                          lockedReservation
+                      else writeHarnessReservation paths restoredReservation
+
+deadReservationCanBeRemoved ::
+  HarnessReservation ->
+  [RuntimeMode] ->
+  Maybe ClusterState ->
+  Bool
+deadReservationCanBeRemoved reservation presentRuntimeModes maybeState =
+  null presentRuntimeModes
+    || ( harnessReservationConfigTransaction reservation == HarnessConfigUntouched
+           && operatorOwnsOnlyPresentRuntime presentRuntimeModes maybeState
+       )
+
+operatorOwnsOnlyPresentRuntime :: [RuntimeMode] -> Maybe ClusterState -> Bool
+operatorOwnsOnlyPresentRuntime presentRuntimeModes maybeState =
+  case (presentRuntimeModes, maybeState) of
+    ([presentRuntimeMode], Just state) ->
+      clusterOwner state == OperatorOwned
+        && clusterRuntimeMode state == presentRuntimeMode
+    _ -> False
+
+reconcileLegacyHarnessBackup :: Paths -> IO ()
+reconcileLegacyHarnessBackup paths = do
+  let runtimeConfig = Config.runtimeConfigPath paths
+      backupConfig = runtimeConfig <> ".harness-backup"
+  backupPresent <- doesFileExist backupConfig
+  when backupPresent $ do
+    runtimePresent <- doesFileExist runtimeConfig
+    when runtimePresent (removeFile runtimeConfig)
+    renameFile backupConfig runtimeConfig
+
+recoverHarnessConfigTransaction ::
+  Subprocess.BoundedCommandActivitiesQuiescent ->
+  Paths ->
+  HarnessReservation ->
+  IO HarnessReservation
+recoverHarnessConfigTransaction activitiesQuiescent paths reservation = do
+  requireBoundedCommandQuiescenceEvidence
+    activitiesQuiescent
+    reservation
+  let runtimeConfig = Config.runtimeConfigPath paths
+      backupConfig = runtimeConfig <> ".harness-backup"
+      markRestored =
+        reservation {harnessReservationConfigTransaction = HarnessConfigRestored}
+  runtimePresent <- doesFileExist runtimeConfig
+  backupPresent <- doesFileExist backupConfig
+  case harnessReservationConfigTransaction reservation of
+    HarnessConfigUntouched -> pure reservation
+    HarnessConfigRestored -> pure reservation
+    HarnessConfigRestorePending ->
+      case (runtimePresent, backupPresent) of
+        (_, True) -> do
+          when runtimePresent (removeFile runtimeConfig)
+          renameFile backupConfig runtimeConfig
+          pure markRestored
+        (True, False) ->
+          pure markRestored
+        (False, False) ->
+          ioError
+            ( userError
+                "cannot recover interrupted harness config takeover: both the operator config and its backup are absent"
+            )
+    HarnessConfigRemovePending ->
+      if backupPresent
+        then
+          ioError
+            ( userError
+                "cannot recover interrupted harness config takeover: an unexpected backup exists for an originally absent config"
+            )
+        else do
+          when runtimePresent (removeFile runtimeConfig)
+          pure markRestored
+
+ensureHarnessReservationAvailable :: Paths -> IO ()
+ensureHarnessReservationAvailable paths = do
+  maybeReservation <- readHarnessReservation paths
+  case maybeReservation of
+    Nothing -> pure ()
+    Just reservation -> do
+      ownerStatus <- inspectHarnessReservationOwner reservation
+      case ownerStatus of
+        HarnessReservationOwnerVerifiedAlive ->
+          ioError
+            ( userError
+                ( "test harness cluster-slot seizure refused: another live harness process group owns "
+                    <> harnessReservationPath paths
+                )
+            )
+        HarnessReservationOwnerUnverifiable ->
+          refuseUnverifiableHarnessReservation paths
+        HarnessReservationOwnerDefinitelyDead -> do
+          activitiesQuiescent <-
+            Subprocess.proveBoundedCommandActivitiesQuiescent
+              paths
+              (harnessReservationProcessGroup reservation)
+          recoveredReservation <-
+            recoverHarnessConfigTransaction
+              activitiesQuiescent
+              paths
+              reservation
+          unless
+            ( harnessReservationConfigTransaction recoveredReservation
+                `elem` [HarnessConfigUntouched, HarnessConfigRestored]
+            )
+            ( ioError
+                ( userError
+                    "test harness cluster-slot seizure refused: the interrupted config transaction could not be reconciled"
+                )
+            )
+          removeHarnessReservation
+            activitiesQuiescent
+            paths
+            reservation
+
+requireBoundedCommandQuiescenceEvidence ::
+  Subprocess.BoundedCommandActivitiesQuiescent ->
+  HarnessReservation ->
+  IO ()
+requireBoundedCommandQuiescenceEvidence activitiesQuiescent reservation =
+  unless
+    ( Subprocess.boundedCommandActivitiesOwnerProcessGroup activitiesQuiescent
+        == harnessReservationProcessGroup reservation
+    )
+    ( ioError
+        ( userError
+            "bounded-command quiescence evidence belongs to another harness reservation process group"
+        )
+    )
+
+removeHarnessReservation ::
+  Subprocess.BoundedCommandActivitiesQuiescent ->
+  Paths ->
+  HarnessReservation ->
+  IO ()
+removeHarnessReservation activitiesQuiescent paths reservation = do
+  requireBoundedCommandQuiescenceEvidence
+    activitiesQuiescent
+    reservation
+  removeFileIfExists (harnessReservationPath paths)
+
+refuseUnverifiableHarnessReservation :: Paths -> IO a
+refuseUnverifiableHarnessReservation paths =
+  ioError
+    ( userError
+        ( "refusing cluster-slot mutation because the reservation owner identity cannot be verified at "
+            <> harnessReservationPath paths
+            <> "; wait for its process group to exit or inspect the reservation before retrying"
+        )
+    )
+
+createHarnessReservation :: Paths -> IO ClusterReservationAccess
+createHarnessReservation paths = do
+  ownerPid <- getProcessID
+  existingProcessGroup <- getProcessGroupID
+  when (existingProcessGroup /= fromIntegral ownerPid) $ do
+    _ <- createProcessGroupFor ownerPid
+    pure ()
+  ownerProcessGroup <- getProcessGroupID
+  unless (ownerProcessGroup == fromIntegral ownerPid) $
+    ioError
+      ( userError
+          "test harness cluster-slot seizure refused: the reservation owner did not become its process-group leader"
+      )
+  ownerBirthIdentity <- registerCurrentProcessIdentity
+  let reservation =
+        HarnessReservation
+          { harnessReservationOwnerPid = fromIntegral ownerPid,
+            harnessReservationProcessGroup = fromIntegral ownerProcessGroup,
+            harnessReservationOwnerBirthIdentity = Just ownerBirthIdentity,
+            harnessReservationConfigTransaction = HarnessConfigUntouched
+          }
+  writeHarnessReservation paths reservation
+  pure (HarnessReservationAccess reservation)
+
+-- | The operator's @infernix cluster down@ command. It refuses a live
+-- 'HarnessOwned' cluster (and a live cluster with unknown ownership).
 clusterDown :: Maybe RuntimeMode -> IO ()
-clusterDown = clusterDownWithAuthority operatorTeardownAuthority
+clusterDown = clusterDownForOwner "tear down the operator cluster" OperatorOwned
+
+-- | Harness-only teardown. It refuses a live 'OperatorOwned' cluster, including
+-- when an operator wins the slot between harness seizure and a cleanup
+-- @finally@.
+clusterDownHarness :: Maybe RuntimeMode -> IO ()
+clusterDownHarness = clusterDownForOwner "tear down the harness cluster" HarnessOwned
 
 -- | Sprint 6.43 — the test harness's evidence-gated seizure of the single
--- cluster slot. Reads the persisted owner and fails closed loud on an
--- 'OperatorOwned' cluster; tears down only a 'HarnessOwned' or absent one.
+-- cluster slot. The presence and owner observations, authorization, and
+-- teardown all occur under the same lifecycle lock. The reservation is
+-- published before the harness swaps the operator's runtime configuration.
 seizeHarnessClusterSlot :: Maybe RuntimeMode -> IO ()
 seizeHarnessClusterSlot maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
+  seizeHarnessClusterSlotAt paths maybeRuntimeMode
+
+seizeHarnessClusterSlotAt :: Paths -> Maybe RuntimeMode -> IO ()
+seizeHarnessClusterSlotAt paths maybeRuntimeMode = do
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    ensureHarnessReservationAvailable paths
+    preauthorizeHarnessClusterSlot paths maybeRuntimeMode
+    reservationAccess <- createHarnessReservation paths
+    clusterDownForOwnerUnderLock
+      lifecycleLock
+      paths
+      "seize the cluster slot for the harness"
+      HarnessOwned
+      reservationAccess
+      maybeRuntimeMode
+
+preauthorizeHarnessClusterSlot :: Paths -> Maybe RuntimeMode -> IO ()
+preauthorizeHarnessClusterSlot paths maybeRuntimeMode = do
   recordedState <- loadClusterState paths
-  runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
-  let maybeState = matchingClusterState runtimeMode recordedState
-  case authorizeHarnessSeizure maybeState of
-    Right authority -> clusterDownWithAuthority authority maybeRuntimeMode
-    Left (ClusterSeizureRefusal owner) ->
+  requestedRuntimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  presentRuntimeModes <- presentClusterRuntimeModes paths
+  let runtimeMode =
+        teardownRuntimeMode
+          HarnessOwned
+          requestedRuntimeMode
+          presentRuntimeModes
+          recordedState
+  case authorizeClusterOwnership
+    HarnessOwned
+    runtimeMode
+    presentRuntimeModes
+    recordedState of
+    Right () -> pure ()
+    Left _ ->
       ioError
         ( userError
-            ( "refusing to seize the cluster slot: an operator cluster is up (owner="
-                <> clusterOwnerLabel owner
-                <> ") for "
+            ( "test harness cluster-slot seizure refused before reservation publication: "
+                <> "the live cluster inventory is not HarnessOwned for runtime "
                 <> Text.unpack (runtimeModeId runtimeMode)
-                <> " at "
-                <> dataRoot paths
-                <> "; run `infernix cluster down` before running tests"
             )
         )
 
+-- | Finish a harness reservation. Teardown must succeed before the reservation
+-- is removed; otherwise operator mutations remain fenced from a possibly live
+-- harness writer.
+releaseHarnessClusterSlot :: Maybe RuntimeMode -> IO ()
+releaseHarnessClusterSlot maybeRuntimeMode = do
+  paths <- discoverClusterCommandPaths
+  releaseHarnessClusterSlotAt paths maybeRuntimeMode
+
+releaseHarnessClusterSlotAt :: Paths -> Maybe RuntimeMode -> IO ()
+releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    reservationAccess <- requireReservationAccess paths HarnessOwned
+    reservation <- harnessReservationFromAccess reservationAccess
+    releasingPid <- fromIntegral <$> getProcessID
+    unless (releasingPid == harnessReservationOwnerPid reservation) $
+      ioError
+        ( userError
+            "only the harness process that seized the cluster slot may release it"
+        )
+    unless
+      ( harnessReservationConfigTransaction reservation
+          `elem` [HarnessConfigUntouched, HarnessConfigRestored]
+      )
+      ( ioError
+          ( userError
+              "refusing to release the harness cluster slot while its config transaction is incomplete"
+          )
+      )
+    clusterDownForOwnerUnderLock
+      lifecycleLock
+      paths
+      "release the cluster slot held by the harness"
+      HarnessOwned
+      reservationAccess
+      maybeRuntimeMode
+    activitiesQuiescent <-
+      Subprocess.proveBoundedCommandActivitiesQuiescent
+        paths
+        (harnessReservationProcessGroup reservation)
+    removeHarnessReservation
+      activitiesQuiescent
+      paths
+      reservation
+
 -- | The raw ownership-gated teardown. Forces its 'ClusterTeardownAuthority' (a
 -- data-constructor match is strict to WHNF), so an @undefined@-forged authority
--- is a loud crash rather than a silent unmanaged teardown. Unexported: the only
--- public paths are 'clusterDown' (operator) and 'seizeHarnessClusterSlot'
--- (harness), each supplying a minted authority.
-clusterDownWithAuthority :: ClusterTeardownAuthority -> Maybe RuntimeMode -> IO ()
-clusterDownWithAuthority ClusterTeardownAuthority maybeRuntimeMode = do
+-- is a loud crash rather than a silent unmanaged teardown. The authority is
+-- minted only after the same locked presence/owner check.
+clusterDownForOwner :: String -> ClusterOwner -> Maybe RuntimeMode -> IO ()
+clusterDownForOwner action requestedOwner maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    reservationAccess <- requireReservationAccess paths requestedOwner
+    clusterDownForOwnerUnderLock
+      lifecycleLock
+      paths
+      action
+      requestedOwner
+      reservationAccess
+      maybeRuntimeMode
+
+clusterDownForOwnerUnderLock ::
+  Lease lock ClusterMutationLocked ->
+  Paths ->
+  String ->
+  ClusterOwner ->
+  ClusterReservationAccess ->
+  Maybe RuntimeMode ->
+  IO ()
+clusterDownForOwnerUnderLock lifecycleLock paths action requestedOwner reservationAccess maybeRuntimeMode = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
   recordedState <- loadClusterState paths
-  runtimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  requestedRuntimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
+  presentRuntimeModes <- presentClusterRuntimeModes paths
+  let runtimeMode =
+        teardownRuntimeMode
+          requestedOwner
+          requestedRuntimeMode
+          presentRuntimeModes
+          recordedState
+  teardownAuthority <-
+    requireClusterOwnership
+      lifecycleLock
+      paths
+      runtimeMode
+      action
+      requestedOwner
+      reservationAccess
+      presentRuntimeModes
+      recordedState
+  clusterDownResolved
+    lifecycleLock
+    teardownAuthority
+    paths
+    runtimeMode
+    (\_ -> pure ())
+
+-- Harness cleanup follows an already-recorded HarnessOwned cluster even when a
+-- stale generated config selects another runtime. Operator teardown never
+-- retargets implicitly.
+teardownRuntimeMode ::
+  ClusterOwner ->
+  RuntimeMode ->
+  [RuntimeMode] ->
+  Maybe ClusterState ->
+  RuntimeMode
+teardownRuntimeMode requestedOwner requestedRuntimeMode presentRuntimeModes maybeState =
+  case (requestedOwner, presentRuntimeModes, maybeState) of
+    (HarnessOwned, [presentRuntimeMode], Just state)
+      | clusterOwner state == HarnessOwned,
+        clusterRuntimeMode state == presentRuntimeMode ->
+          presentRuntimeMode
+    _ -> requestedRuntimeMode
+
+-- | Execute teardown while the caller holds the cross-process lifecycle lock.
+-- The rank-2 callback can perform additional retained-state repair only inside
+-- the same 'WriterQuiesced' region used by the standard rebuildable scrub.
+clusterDownResolved ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  Paths ->
+  RuntimeMode ->
+  (forall writerRegion. Lease writerRegion WriterQuiesced -> IO ()) ->
+  IO ()
+clusterDownResolved lifecycleLock authority paths runtimeMode onQuiesced = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  unless (teardownAuthorityRuntimeMode authority == runtimeMode) $
+    ioError
+      ( userError
+          "cluster teardown authority/runtime mismatch"
+      )
+  (recordedState, presentRuntimeModes) <-
+    revalidateClusterTeardownAuthority
+      lifecycleLock
+      "perform the authorized cluster teardown"
+      authority
+      paths
+      runtimeMode
   let maybeState = matchingClusterState runtimeMode recordedState
-  clusterExists <- kindClusterExists paths runtimeMode
+      clusterExists = runtimeMode `elem` presentRuntimeModes
   when clusterExists $ do
     usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
-    case maybeState of
-      Just state
-        | not usesHostBindMounts -> do
-            replayState <-
-              startLifecyclePhase
-                paths
-                state
-                "cluster-down"
-                "replay-retained-state"
-                "replaying retained Kind runtime data back into the repo-local data root"
-            syncKindNodeRuntimePathsToHost paths runtimeMode (Just replayState)
-      _ ->
-        unless usesHostBindMounts $
-          syncKindNodeRuntimePathsToHost paths runtimeMode maybeState
-    case maybeState of
-      Just state -> do
-        deleteState <-
-          startLifecyclePhase
-            paths
-            state
-            "cluster-down"
-            "delete-kind-cluster"
-            "deleting the Kind cluster after retained runtime data handling is complete"
-        deleteKindCluster paths (clusterRuntimeMode deleteState)
-      Nothing -> deleteKindCluster paths runtimeMode
-  withWriterQuiesced paths runtimeMode $ \quiesced ->
+    if usesHostBindMounts
+      then deleteRecordedCluster maybeState
+      else do
+        frozenMaybeState <-
+          case maybeState of
+            Just state ->
+              Just
+                <$> startLifecyclePhase
+                  paths
+                  state
+                  "cluster-down"
+                  "freeze-retained-state"
+                  "pausing every retained-state worker before snapshot staging"
+            Nothing -> pure Nothing
+        withFrozenRetainedSnapshotSource
+          lifecycleLock
+          paths
+          runtimeMode
+          frozenMaybeState
+          ( \frozenSource -> do
+              withDetachedRetainedCopyTarget lifecycleLock paths runtimeMode $ \detachedTarget ->
+                case frozenMaybeState of
+                  Just state -> do
+                    replayState <-
+                      startLifecyclePhase
+                        paths
+                        state
+                        "cluster-down"
+                        "replay-retained-state"
+                        "staging a writer-frozen retained Kind snapshot before cluster deletion"
+                    syncKindNodeRuntimePathsToHost frozenSource detachedTarget paths (Just replayState)
+                  Nothing ->
+                    syncKindNodeRuntimePathsToHost frozenSource detachedTarget paths Nothing
+              -- The frozen-source lease remains live through deletion. Its
+              -- release then tolerates the now-absent worker containers.
+              deleteRecordedCluster maybeState
+          )
+  withWriterQuiesced lifecycleLock paths runtimeMode $ \quiesced -> do
     scrubRetainedStateUnderLease quiesced paths
+    onQuiesced quiesced
   case maybeState of
     Nothing -> putStrLn "cluster already absent"
     Just state
@@ -1169,6 +2402,28 @@ clusterDownWithAuthority ClusterTeardownAuthority maybeRuntimeMode = do
       | otherwise -> do
           _ <- settleLifecycle paths state ClusterAbsent
           putStrLn "cluster down complete"
+  where
+    deleteRecordedCluster stateValue =
+      case stateValue of
+        Just state -> do
+          deleteState <-
+            startLifecyclePhase
+              paths
+              state
+              "cluster-down"
+              "delete-kind-cluster"
+              "deleting the Kind cluster after retained runtime data handling is complete"
+          deleteKindCluster
+            lifecycleLock
+            (AuthorizedClusterTeardown authority)
+            paths
+            (clusterRuntimeMode deleteState)
+        Nothing ->
+          deleteKindCluster
+            lifecycleLock
+            (AuthorizedClusterTeardown authority)
+            paths
+            runtimeMode
 
 clusterStatus :: Maybe RuntimeMode -> IO ()
 clusterStatus maybeRuntimeMode = do
@@ -1192,8 +2447,14 @@ clusterStatus maybeRuntimeMode = do
       now <- getCurrentTime
       cacheEntries <- countLeafEntries (modelCacheRoot paths)
       resultCount <- countLeafEntries (resultsRoot paths)
-      nodeCount <- kubectlLineCountIfReachable state ["get", "nodes", "--no-headers"]
-      podCount <- kubectlLineCountIfReachable state ["get", "pods", "-A", "--no-headers"]
+      nodeCount <-
+        kubectlLineCountIfReachable
+          state
+          Command.kubectlGetNodeRows
+      podCount <-
+        kubectlLineCountIfReachable
+          state
+          (`Command.kubectlListPods` Command.AllPodsNoHeaders)
       putStrLn ("clusterPresent: " <> show actualPresent)
       putStrLn ("clusterOwner: " <> clusterOwnerLabel (clusterOwner state))
       putStrLn ("controlPlaneContext: " <> controlPlaneContextId (Config.controlPlaneContext paths))
@@ -1247,11 +2508,11 @@ idleLifecyclePhase actualPresent =
     else "cluster-absent"
 
 -- | Sprint 2.14 (managed-state-transition doctrine): recorded state reads fail
--- closed. An absent or empty state file is 'Nothing', but a file that exists
--- with content yet does not decode is a loud 'ClusterStateDecodeFailure' rather
--- than a silent 'Nothing' — the previous behavior masked a corrupt or residual
--- file as "no cluster", which skipped retained-state replay during teardown and
--- risked losing durable data.
+-- closed. An absent state file is 'Nothing', but empty, malformed, or
+-- unknown-version content is a loud 'ClusterStateDecodeFailure' rather than a
+-- silent 'Nothing' — the previous behavior masked a corrupt or residual file as
+-- "no cluster", which skipped retained-state replay during teardown and risked
+-- losing durable data.
 loadClusterState :: Paths -> IO (Maybe ClusterState)
 loadClusterState paths = do
   let statePath = clusterStatePath paths
@@ -1263,17 +2524,44 @@ loadClusterState paths = do
 runKubectlCompat :: [String] -> IO ()
 runKubectlCompat args = do
   paths <- discoverClusterCommandPaths
-  recordedState <- loadClusterState paths
-  runtimeMode <- resolveCommandRuntimeMode paths Nothing recordedState
-  let maybeState = matchingClusterState runtimeMode recordedState
-  case maybeState of
-    Nothing -> putStrLn "No cluster state is available. Run `infernix cluster up` first."
-    Just state
-      | not (clusterPresent state) -> putStrLn "Cluster is currently absent."
-      | otherwise -> do
-          ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
-          ensureClusterKubeconfigPresent paths state
-          putStr =<< captureHostToolCmd paths Nothing [] HostKubectl (kubeconfigArgs state <> args)
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    reservationAccess <- requireReservationAccess paths OperatorOwned
+    recordedState <- loadClusterState paths
+    runtimeMode <- resolveCommandRuntimeMode paths Nothing recordedState
+    let maybeState = matchingClusterState runtimeMode recordedState
+    presentRuntimeModes <- presentClusterRuntimeModes paths
+    _ <-
+      requireClusterOwnership
+        lifecycleLock
+        paths
+        runtimeMode
+        "run operator kubectl read-only diagnostics"
+        OperatorOwned
+        reservationAccess
+        presentRuntimeModes
+        recordedState
+    let clusterExists = runtimeMode `elem` presentRuntimeModes
+    case (clusterExists, maybeState) of
+      (False, Nothing) ->
+        putStrLn "No cluster state is available. Run `infernix cluster up` first."
+      (False, Just _) -> putStrLn "Cluster is currently absent."
+      (True, Just state) -> do
+        ensureOuterContainerKindNetworkAccess paths (clusterRuntimeMode state)
+        ensureClusterKubeconfigPresent paths state
+        operatorCommand <-
+          either
+            (ioError . userError)
+            pure
+            ( Command.operatorKubectlCommand
+                (Command.KubeTarget (kubeconfigPath state))
+                args
+            )
+        putStr =<< captureOperatorKubectlCommand paths operatorCommand
+      (True, Nothing) ->
+        ioError
+          ( userError
+              "operator kubectl ownership authorization succeeded without matching cluster state"
+          )
 
 normalizeClusterStatePaths :: Paths -> ClusterState -> ClusterState
 normalizeClusterStatePaths paths state =
@@ -1435,8 +2723,12 @@ kindRuntimeRoot paths runtimeMode =
   kindRoot paths </> Text.unpack (runtimeModeId runtimeMode)
 
 claimDirectory :: Paths -> RuntimeMode -> PersistentClaim -> FilePath
-claimDirectory paths runtimeMode persistentClaim =
-  kindRuntimeRoot paths runtimeMode
+claimDirectory paths runtimeMode =
+  claimDirectoryUnder (kindRuntimeRoot paths runtimeMode)
+
+claimDirectoryUnder :: FilePath -> PersistentClaim -> FilePath
+claimDirectoryUnder retainedRoot persistentClaim =
+  retainedRoot
     </> Text.unpack (namespace persistentClaim)
     </> Text.unpack (release persistentClaim)
     </> Text.unpack (workload persistentClaim)
@@ -1461,7 +2753,10 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
           -- is non-fatal as long as the directory is broadly writable (it is,
           -- per the `chmod a+rwX` above). Treat the chown as advisory: log
           -- the failure and continue so the lifecycle keeps moving.
-          chownResult <- tryCommand Nothing [] "chown" ["-R", owner, directoryPath]
+          chownResult <-
+            tryClusterCommand
+              paths
+              (Command.hostSetClaimOwner (Command.Owner owner) directoryPath)
           case chownResult of
             Right _ -> pure ()
             Left err ->
@@ -1477,39 +2772,27 @@ ensureClaimDirectoryReady paths runtimeMode persistentClaim = do
       | otherwise -> pure ()
 
 chmodClaimDirectory :: Paths -> FilePath -> IO ()
-chmodClaimDirectory paths directoryPath = go (5 :: Int) ""
-  where
-    go remainingAttempts lastError = do
-      createDirectoryIfMissing True directoryPath
-      result <- tryHostToolCmd paths Nothing [] HostChmod ["-R", "a+rwX", directoryPath]
-      case result of
-        Right _ -> pure ()
-        Left err
-          | chmodMissingPathRace err && remainingAttempts > 1 -> do
-              threadDelay 250000
-              go (remainingAttempts - 1) err
-          | chmodMissingPathRace err -> do
-              createDirectoryIfMissing True directoryPath
-              directoryPresent <- doesDirectoryExist directoryPath
-              unless directoryPresent $
-                ioError
-                  ( userError
-                      ( "command failed: chmod -R a+rwX "
-                          <> directoryPath
-                          <> "\n"
-                          <> chooseError err lastError
-                      )
-                  )
-          | otherwise ->
-              ioError (userError ("command failed: chmod -R a+rwX " <> directoryPath <> "\n" <> err))
-
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
-
-    chmodMissingPathRace err =
-      "No such file or directory" `List.isInfixOf` err
-        || "fts_read failed" `List.isInfixOf` err
+chmodClaimDirectory paths directoryPath = do
+  repairResult <-
+    ClaimPermissions.repairClaimPermissions
+      5
+      (createDirectoryIfMissing True directoryPath)
+      (threadDelay 250000)
+      ( tryClusterCommand
+          paths
+          (Command.hostMakeClaimWritable directoryPath)
+      )
+  case repairResult of
+    Right () -> pure ()
+    Left err ->
+      ioError
+        ( userError
+            ( "command failed: chmod -R a+rwX "
+                <> directoryPath
+                <> "\n"
+                <> err
+            )
+        )
 
 stripChownFailureNoise :: String -> String
 stripChownFailureNoise = takeWhile (/= '\n')
@@ -1524,9 +2807,27 @@ claimOwner claimSpec
   | "harbor-postgresql" `List.isPrefixOf` Text.unpack (workload claimSpec) = Just "26:26"
   | otherwise = Nothing
 
-ensureKindCluster :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Int, Int, Int, String, Bool)
-ensureKindCluster paths runtimeMode requestedPort requestedHarborPort requestedPulsarHttpPort = do
+ensureKindCluster ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  Paths ->
+  RuntimeMode ->
+  Bool ->
+  RetainedReplayPlan ->
+  Int ->
+  Int ->
+  Int ->
+  IO (Int, Int, Int, String, Bool)
+ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClusterPresence replayPlan requestedPort requestedHarborPort requestedPulsarHttpPort = do
   clusterExists <- kindClusterExists paths runtimeMode
+  unless (clusterExists == expectedClusterPresence) $
+    ioError
+      ( userError
+          ( "cluster presence changed while cluster up held the lifecycle lock for "
+              <> kindClusterName paths runtimeMode
+              <> "; refusing to act on stale replay evidence"
+          )
+      )
   (selectedPort, selectedHarborPort, selectedPulsarHttpPort, clusterCreated) <-
     if clusterExists
       then do
@@ -1546,21 +2847,113 @@ ensureKindCluster paths runtimeMode requestedPort requestedHarborPort requestedP
   case kubeconfigResult of
     Right kubeconfigContents ->
       pure (selectedPort, selectedHarborPort, selectedPulsarHttpPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) kubeconfigContents, clusterCreated)
-    Left err
-      | clusterExists -> do
-          deleteKindCluster paths runtimeMode
-          (recreatedPort, recreatedHarborPort, recreatedPulsarHttpPort) <- createKindCluster paths runtimeMode requestedPort requestedHarborPort requestedPulsarHttpPort
-          recreatedKubeconfig <- waitForKindKubeconfigOrFail paths runtimeMode
-          pure (recreatedPort, recreatedHarborPort, recreatedPulsarHttpPort, normalizeKubeconfigServer (Config.controlPlaneContext paths) recreatedKubeconfig, True)
-      | otherwise ->
+    Left firstError ->
+      case kindKubeconfigRecoveryPlan replayPlan of
+        RecreatePreWorkloadKind -> do
+          recoveryEvidence <-
+            requirePreWorkloadKindRecovery
+              lifecycleLock
+              teardownAuthority
+              paths
+              runtimeMode
+              replayPlan
+          (recreatedPort, recreatedHarborPort, recreatedPulsarHttpPort) <-
+            recreatePreWorkloadKindCluster
+              lifecycleLock
+              recoveryEvidence
+              paths
+              selectedPort
+              selectedHarborPort
+              selectedPulsarHttpPort
+          recreatedKubeconfigResult <- waitForKindKubeconfig paths runtimeMode
+          case recreatedKubeconfigResult of
+            Right kubeconfigContents ->
+              pure
+                ( recreatedPort,
+                  recreatedHarborPort,
+                  recreatedPulsarHttpPort,
+                  normalizeKubeconfigServer
+                    (Config.controlPlaneContext paths)
+                    kubeconfigContents,
+                  True
+                )
+            Left secondError ->
+              ioError
+                ( userError
+                    ( "Kind kubeconfig remained unreadable after proof-gated pre-workload recreation for "
+                        <> kindClusterName paths runtimeMode
+                        <> "; retained replay remains pending for a later retry:\n"
+                        <> secondError
+                        <> "\ninitial kubeconfig failure:\n"
+                        <> firstError
+                    )
+                )
+        LeaveUnreadableKindUntouched ->
           ioError
             ( userError
-                ( "kind cluster became visible before its kubeconfig was readable for "
+                ( "Kind kubeconfig did not become readable for "
                     <> kindClusterName paths runtimeMode
-                    <> ":\n"
-                    <> err
+                    <> "; the cluster is left untouched because no exact pre-workload replay intent authorizes deletion:\n"
+                    <> firstError
                 )
             )
+
+requirePreWorkloadKindRecovery ::
+  Lease s ClusterMutationLocked ->
+  ClusterTeardownAuthority s ->
+  Paths ->
+  RuntimeMode ->
+  RetainedReplayPlan ->
+  IO (PreWorkloadKindRecovery s)
+requirePreWorkloadKindRecovery lifecycleLock teardownAuthority paths runtimeMode replayPlan = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  unless (kindKubeconfigRecoveryPlan replayPlan == RecreatePreWorkloadKind) $
+    ioError
+      ( userError
+          "pre-workload Kind recovery requires a retained-replay plan that authorizes recreation"
+      )
+  (recordedState, _) <-
+    revalidateClusterTeardownAuthority
+      lifecycleLock
+      "recover an unreadable pre-workload Kind cluster"
+      teardownAuthority
+      paths
+      runtimeMode
+  case matchingClusterState runtimeMode recordedState of
+    Just state
+      | retainedReplayPending state ->
+          pure
+            ( PreWorkloadKindRecovery
+                teardownAuthority
+                runtimeMode
+                (clusterLifecycle state)
+            )
+    _ ->
+      ioError
+        ( userError
+            "pre-workload Kind recovery refused because the exact retained-replay lifecycle intent is no longer pending"
+        )
+
+recreatePreWorkloadKindCluster ::
+  Lease s ClusterMutationLocked ->
+  PreWorkloadKindRecovery s ->
+  Paths ->
+  Int ->
+  Int ->
+  Int ->
+  IO (Int, Int, Int)
+recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValue harborPortValue pulsarHttpPortValue = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  case recoveryEvidence of
+    PreWorkloadKindRecovery _ runtimeMode _ -> do
+      deleteKindCluster
+        lifecycleLock
+        (AuthorizedPreWorkloadRecovery recoveryEvidence)
+        paths
+        runtimeMode
+      createKindCluster paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue
 
 createKindCluster :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Int, Int, Int)
 createKindCluster paths runtimeMode = case runtimeMode of
@@ -1570,11 +2963,13 @@ createKindCluster paths runtimeMode = case runtimeMode of
     go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
       configPath <- writeGeneratedKindConfig paths runtimeMode candidatePort harborPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
-        tryCommand
-          Nothing
-          [("KUBECONFIG", scratchKubeconfig)]
-          "kind"
-          ["create", "cluster", "--name", kindClusterName paths runtimeMode, "--config", configPath]
+        tryClusterCommand
+          paths
+          ( Command.kindCreate
+              (Command.ClusterName (kindClusterName paths runtimeMode))
+              configPath
+              (Command.kindScratchKubeconfig scratchKubeconfig)
+          )
       case result of
         Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
         Left err
@@ -1589,24 +2984,15 @@ createLinuxGpuCluster paths = go
   where
     go candidatePort harborPortCandidate pulsarHttpPortCandidate = do
       ensureLinuxGpuHostPrerequisites paths
-      nvkindBinary <- ensureNvkindBinary paths
       configPath <- writeGeneratedKindConfig paths LinuxGpu candidatePort harborPortCandidate pulsarHttpPortCandidate
       result <- withKindScratchKubeconfig paths LinuxGpu $ \scratchKubeconfig ->
-        tryCommand
-          Nothing
-          [("KUBECONFIG", scratchKubeconfig)]
-          nvkindBinary
-          [ "cluster",
-            "create",
-            "--name",
-            kindClusterName paths LinuxGpu,
-            "--config-template",
-            configPath,
-            "--kubeconfig",
-            scratchKubeconfig,
-            "--wait",
-            "5m"
-          ]
+        tryClusterCommand
+          paths
+          ( Command.nvkindCreate
+              (Command.ClusterName (kindClusterName paths LinuxGpu))
+              configPath
+              (Command.kindScratchKubeconfig scratchKubeconfig)
+          )
       case result of
         Right _ -> pure (candidatePort, harborPortCandidate, pulsarHttpPortCandidate)
         Left err
@@ -1673,29 +3059,9 @@ completeLinuxGpuNodeBootstrap paths = do
   mapM_ bootstrapWorkerNode workerNodeNames
   where
     bootstrapWorkerNode nodeName =
-      runDockerNodeScript
+      runClusterCommand
         paths
-        nodeName
-        ( unlines
-            [ "set -euo pipefail",
-              "apt-get update",
-              "apt-get install -y gpg curl",
-              "curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg",
-              "curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list",
-              "apt-get update",
-              "apt-get install -y nvidia-container-toolkit",
-              "nvidia-ctk runtime configure --runtime=containerd --config-source=command",
-              "systemctl restart containerd",
-              "umount -R /proc/driver/nvidia || true",
-              "cp /proc/driver/nvidia/params /root/gpu-params",
-              "sed -i 's/^ModifyDeviceFiles: 1$/ModifyDeviceFiles: 0/' /root/gpu-params",
-              "mount --bind /root/gpu-params /proc/driver/nvidia/params"
-            ]
-        )
-
-runDockerNodeScript :: Paths -> String -> String -> IO ()
-runDockerNodeScript paths nodeName script =
-  runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "bash", "-c", script]
+        (Command.dockerBootstrapGpuNode (Command.NodeName nodeName))
 
 data LinuxGpuProbeResults = LinuxGpuProbeResults
   { hostGpuResult :: Either String String,
@@ -1717,10 +3083,22 @@ linuxGpuSupportedOnHost = do
 
 linuxGpuProbeResults :: Paths -> IO LinuxGpuProbeResults
 linuxGpuProbeResults paths = do
-  hostGpuResult <- tryHostToolCmd paths Nothing [] HostNvidiaSmi ["-L"]
-  dockerRuntimeResult <- tryHostToolCmd paths Nothing [] HostDocker dockerGpuProbeCommand
-  defaultRuntimeVolumeMountResult <- tryHostToolCmd paths Nothing [] HostDocker dockerVolumeMountProbeCommand
-  gpuVolumeMountResult <- tryHostToolCmd paths Nothing [] HostDocker dockerGpuVolumeMountProbeCommand
+  hostGpuResult <-
+    tryClusterCommand
+      paths
+      Command.hostNvidiaSmiProbe
+  dockerRuntimeResult <-
+    tryClusterCommand
+      paths
+      (Command.dockerGpuProbe Command.RuntimeGpuProbe)
+  defaultRuntimeVolumeMountResult <-
+    tryClusterCommand
+      paths
+      (Command.dockerGpuProbe Command.DefaultRuntimeDeviceMountProbe)
+  gpuVolumeMountResult <-
+    tryClusterCommand
+      paths
+      (Command.dockerGpuProbe Command.GpuRuntimeDeviceMountProbe)
   let dockerVolumeMountResult =
         firstSuccessfulCommand
           defaultRuntimeVolumeMountResult
@@ -1808,63 +3186,25 @@ linuxGpuHostFailureReport controlPlane probeResults =
       Right output -> output
       Left err -> err
 
-dockerGpuProbeCommand :: [String]
-dockerGpuProbeCommand =
-  [ "run",
-    "--rm",
-    "--gpus",
-    "all",
-    nvidiaCudaContainerImage,
-    "nvidia-smi",
-    "-L"
-  ]
-
-dockerVolumeMountProbeCommand :: [String]
-dockerVolumeMountProbeCommand =
-  [ "run",
-    "--rm",
-    "-v",
-    "/dev/null:/var/run/nvidia-container-devices/all",
-    nvidiaCudaContainerImage,
-    "nvidia-smi",
-    "-L"
-  ]
-
-dockerGpuVolumeMountProbeCommand :: [String]
-dockerGpuVolumeMountProbeCommand =
-  [ "run",
-    "--rm",
-    "--gpus",
-    "all",
-    "-v",
-    "/dev/null:/var/run/nvidia-container-devices/all",
-    nvidiaCudaContainerImage,
-    "nvidia-smi",
-    "-L"
-  ]
-
-ensureNvkindBinary :: Paths -> IO FilePath
-ensureNvkindBinary paths = do
-  maybeSystemNvkind <- existingHostToolPathForCluster paths HostNvkind
-  case maybeSystemNvkind of
-    Just executablePath -> pure executablePath
-    Nothing ->
-      ioError
-        ( userError
-            "nvkind is not available through HostConfig.toolPaths.nvkind or the fixed bootstrap fallback paths. The supported linux-gpu control-plane path runs inside the shared linux substrate image, which supplies nvkind."
-        )
-
 waitForKindKubeconfig :: Paths -> RuntimeMode -> IO (Either String String)
 waitForKindKubeconfig paths runtimeMode = do
-  let internalFlag
-        | Config.controlPlaneContext paths == OuterContainer = ["--internal"]
-        | otherwise = []
-      commandArgs = ["get", "kubeconfig", "--name", kindClusterName paths runtimeMode] <> internalFlag
+  let addressing
+        | Config.controlPlaneContext paths == OuterContainer = Command.InternalAddress
+        | otherwise = Command.ExternalAddress
+      commandArgs =
+        ["get", "kubeconfig", "--name", kindClusterName paths runtimeMode]
+          <> ["--internal" | addressing == Command.InternalAddress]
   retryCommandOutput
     30
     1000000
     ("kind " <> unwords commandArgs)
-    (tryHostToolCmd paths Nothing [] HostKind commandArgs)
+    ( tryClusterCommand
+        paths
+        ( Command.kindGetKubeconfig
+            (Command.ClusterName (kindClusterName paths runtimeMode))
+            addressing
+        )
+    )
 
 waitForKindKubeconfigOrFail :: Paths -> RuntimeMode -> IO String
 waitForKindKubeconfigOrFail paths runtimeMode = do
@@ -1894,9 +3234,11 @@ removeGeneratedKubeconfigLockFile :: Paths -> IO ()
 removeGeneratedKubeconfigLockFile = removeFileIfExists . generatedKubeconfigLockPath
 
 removeKubeconfigArtifacts :: FilePath -> IO ()
-removeKubeconfigArtifacts kubeconfigFile = do
-  removeFileIfExists kubeconfigFile
-  removeFileIfExists (kubeconfigFile <> ".lock")
+removeKubeconfigArtifacts kubeconfigFile =
+  runCleanupsPreservingFailures
+    [ removeFileIfExists kubeconfigFile,
+      removeFileIfExists (kubeconfigFile <> ".lock")
+    ]
 
 removeFileIfExists :: FilePath -> IO ()
 removeFileIfExists filePath = do
@@ -1911,22 +3253,25 @@ withKindScratchKubeconfig paths runtimeMode action = do
   -- locks off repo-visible bind mounts, then publish the durable repo-local kubeconfig ourselves.
   removeGeneratedKubeconfigLockFile paths
   removeKubeconfigArtifacts scratchKubeconfig
-  finally (action scratchKubeconfig) (removeKubeconfigArtifacts scratchKubeconfig)
+  finallyPreservingPrimary
+    (action scratchKubeconfig)
+    (removeKubeconfigArtifacts scratchKubeconfig)
 
 waitForKubernetesApi :: Paths -> RuntimeMode -> IO ()
 waitForKubernetesApi paths runtimeMode = do
   let kubeconfigFile = Config.generatedKubeconfigPath paths
       commandLabel = "kubectl --kubeconfig " <> kubeconfigFile <> " wait --for=condition=Ready node --all"
-      args =
-        [ "--kubeconfig",
-          kubeconfigFile,
-          "wait",
-          "--for=condition=Ready",
-          "node",
-          "--all",
-          "--timeout=5s"
-        ]
-  result <- retryCommandOutput 24 500000 commandLabel (tryHostToolCmd paths Nothing [] HostKubectl args)
+  result <-
+    retryCommandOutputWithDeadline
+      (Readiness.pollLimitedDeadline 500000 132 132 24)
+      commandLabel
+      ( tryClusterCommand
+          paths
+          ( Command.kubectlWaitAllNodesReady
+              (Command.KubeTarget kubeconfigFile)
+              5
+          )
+      )
   case result of
     Right _ -> pure ()
     Left err ->
@@ -1963,7 +3308,7 @@ ensureLinuxGpuNodeUserspace paths = do
       userspaceReady <- linuxGpuNodeUserspaceReady nodeName
       unless userspaceReady $ do
         putStrLn ("syncing linux-gpu NVIDIA userspace into " <> nodeName)
-        syncLinuxGpuNodeUserspace nodeName
+        syncLinuxGpuNodeUserspace paths nodeName
         userspaceReadyAfterSync <- linuxGpuNodeUserspaceReady nodeName
         unless userspaceReadyAfterSync $
           ioError
@@ -1976,90 +3321,32 @@ ensureLinuxGpuNodeUserspace paths = do
 linuxGpuNodeUserspaceReady :: String -> IO Bool
 linuxGpuNodeUserspaceReady nodeName =
   commandSucceeded
-    <$> tryCommand
-      Nothing
-      []
-      "docker"
-      ["exec", nodeName, "bash", "-lc", "nvidia-container-cli info >/dev/null 2>&1"]
+    <$> tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.dockerProbeGpuUserspace (Command.NodeName nodeName)
+      )
 
-syncLinuxGpuNodeUserspace :: String -> IO ()
-syncLinuxGpuNodeUserspace nodeName =
-  runCommand
-    Nothing
-    []
-    "bash"
-    [ "-lc",
-      unlines
-        [ "set -euo pipefail",
-          "docker run --rm --gpus all "
-            <> nvidiaCudaContainerImage
-            <> " bash -lc 'tar -C / -cf - usr/lib/x86_64-linux-gnu/libnvidia* usr/lib/x86_64-linux-gnu/libcuda* usr/bin/nvidia* 2>/dev/null' | docker exec -i "
-            <> nodeName
-            <> " tar -C / -xf -",
-          "docker exec " <> nodeName <> " bash -lc 'ldconfig'"
-        ]
-    ]
+syncLinuxGpuNodeUserspace :: Paths -> String -> IO ()
+syncLinuxGpuNodeUserspace paths nodeName =
+  runClusterCommand
+    paths
+    (Command.dockerSyncGpuUserspace (Command.NodeName nodeName))
 
 ensureLinuxGpuRuntimeClass :: Paths -> IO ()
 ensureLinuxGpuRuntimeClass paths =
-  runCommandWithInput
-    Nothing
-    [("KUBECONFIG", Config.generatedKubeconfigPath paths)]
-    "kubectl"
-    ["apply", "-f", "-"]
-    ( unlines
-        [ "apiVersion: node.k8s.io/v1",
-          "kind: RuntimeClass",
-          "metadata:",
-          "  name: nvidia",
-          "  annotations:",
-          "    meta.helm.sh/release-name: infernix",
-          "    meta.helm.sh/release-namespace: platform",
-          "  labels:",
-          "    app.kubernetes.io/managed-by: Helm",
-          "handler: nvidia"
-        ]
-    )
+  runClusterCommand
+    paths
+    (Command.kubectlApplyNvidiaRuntimeClass (generatedKubeTarget paths))
 
 installLinuxGpuDevicePlugin :: Paths -> IO ()
 installLinuxGpuDevicePlugin paths = do
   ensureHelmRepositoryDefinitions paths
-  runCommandWithInput
-    Nothing
-    (("KUBECONFIG", Config.generatedKubeconfigPath paths) : Config.helmEnvironment paths)
-    "helm"
-    [ "upgrade",
-      "-i",
-      "nvidia-device-plugin",
-      "nvdp/nvidia-device-plugin",
-      "--namespace",
-      "nvidia",
-      "--create-namespace",
-      "--version",
-      nvidiaDevicePluginVersion,
-      "--values",
-      "-",
-      "--wait",
-      "--timeout",
-      "10m"
-    ]
-    linuxGpuDevicePluginValues
-
-linuxGpuDevicePluginValues :: String
-linuxGpuDevicePluginValues =
-  unlines
-    [ "fullnameOverride: nvidia-device-plugin-daemonset",
-      "runtimeClassName: nvidia",
-      "affinity:",
-      "  nodeAffinity:",
-      "    requiredDuringSchedulingIgnoredDuringExecution:",
-      "      nodeSelectorTerms:",
-      "        - matchExpressions:",
-      "            - key: infernix.runtime/gpu",
-      "              operator: In",
-      "              values:",
-      "                - \"true\""
-    ]
+  runClusterCommand
+    paths
+    ( Command.helmUpgradeNvidiaPlugin
+        (generatedKubeTarget paths)
+        nvidiaDevicePluginVersion
+    )
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
 -- 'Readiness' kernel under the exact legacy 30-attempt × 1 s budget. Readiness is
@@ -2085,19 +3372,9 @@ waitForLinuxGpuResources paths = do
 linuxGpuAllocatableValues :: Paths -> IO [String]
 linuxGpuAllocatableValues paths =
   filter (not . null) . map trim . lines
-    <$> captureCommand
-      Nothing
-      []
-      "kubectl"
-      [ "--kubeconfig",
-        Config.generatedKubeconfigPath paths,
-        "get",
-        "nodes",
-        "-l",
-        "infernix.runtime/gpu=true",
-        "-o",
-        "jsonpath={range .items[*]}{.status.allocatable.nvidia\\.com/gpu}{\"\\n\"}{end}"
-      ]
+    <$> captureClusterCommand
+      paths
+      (Command.kubectlGetGpuAllocatable (generatedKubeTarget paths))
 
 applyBootstrapState :: Paths -> RuntimeMode -> Bool -> [PersistentClaim] -> IO ()
 applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
@@ -2127,40 +3404,33 @@ applyBootstrapState paths runtimeMode demoUiEnabledValue claimInventory = do
 
 applyNamespace :: ClusterState -> String -> IO ()
 applyNamespace state namespaceName =
-  runCommandWithInput
-    Nothing
-    []
-    "kubectl"
-    (kubeconfigArgs state <> ["apply", "-f", "-"])
-    ( unlines
-        [ "apiVersion: v1",
-          "kind: Namespace",
-          "metadata:",
-          "  name: " <> namespaceName
-        ]
+  runDiscoveredClusterCommand
+    ( \_ ->
+        Command.kubectlApplyNamespace
+          (clusterKubeTarget state)
+          (Command.Namespace namespaceName)
     )
 
 resetStorageClasses :: Paths -> ClusterState -> IO ()
 resetStorageClasses paths state = do
-  existingClasses <- lines <$> kubectlOutput state ["get", "storageclass", "-o", "name"]
-  mapM_ (\storageClassName -> runHostToolCmd paths Nothing [] HostKubectl (kubeconfigArgs state <> ["delete", storageClassName])) existingClasses
+  existingClasses <-
+    lines
+      <$> kubectlOutput
+        state
+        Command.kubectlListStorageClasses
+  mapM_
+    ( runClusterCommand paths
+        . Command.kubectlDeleteStorageClass (clusterKubeTarget state)
+        . Command.ResourceName
+    )
+    existingClasses
 
 applyStorageClass :: ClusterState -> IO ()
 applyStorageClass state =
-  runCommandWithInput
-    Nothing
-    []
-    "kubectl"
-    (kubeconfigArgs state <> ["apply", "-f", "-"])
-    ( unlines
-        [ "apiVersion: storage.k8s.io/v1",
-          "kind: StorageClass",
-          "metadata:",
-          "  name: infernix-manual",
-          "provisioner: kubernetes.io/no-provisioner",
-          "reclaimPolicy: Retain",
-          "volumeBindingMode: WaitForFirstConsumer"
-        ]
+  runDiscoveredClusterCommand
+    ( \_ ->
+        Command.kubectlApplyInfernixStorageClass
+          (clusterKubeTarget state)
     )
 
 buildClusterImages :: Paths -> ClusterState -> RuntimeMode -> IO ()
@@ -2183,27 +3453,6 @@ buildClusterImages paths state runtimeMode = do
             clusterImageBuildTargetArchitecture = targetArchitecture,
             clusterImageBuildDemoUi = True
           }
-      dockerBuildArgs targetImageRef sourceFingerprint =
-        [ "build",
-          "-f",
-          "docker/Dockerfile",
-          "--provenance=false",
-          "--label",
-          clusterImageFingerprintLabel <> "=" <> sourceFingerprint,
-          "--label",
-          clusterImageFingerprintVersionLabel <> "=" <> clusterImageFingerprintVersion,
-          "--label",
-          clusterImageRuntimeModeLabel <> "=" <> runtimeModeName,
-          "--build-arg",
-          "GO_IMAGE=" <> goImage,
-          "--build-arg",
-          "BASE_IMAGE=" <> baseImage,
-          "--build-arg",
-          "RUNTIME_MODE=" <> runtimeModeName,
-          "-t",
-          targetImageRef,
-          "."
-        ]
   sourceFingerprint <- clusterImageSourceFingerprint paths buildInputs
   imageReusable <- clusterWorkloadImageReusableForBuild paths imageRef runtimeModeName targetArchitecture sourceFingerprint
   if imageReusable
@@ -2212,12 +3461,17 @@ buildClusterImages paths state runtimeMode = do
       putStrLn ("building cluster images for " <> runtimeModeName)
       ensureDockerBuildBaseImage paths state goImage
       ensureDockerBuildBaseImage paths state baseImage
-      runCommandBounded
+      runClusterCommand
         paths
-        dockerBuildTimeout
-        (Just (repoRoot paths))
-        "docker"
-        (dockerBuildArgs imageRef sourceFingerprint)
+        ( Command.dockerBuildControlPlane
+            Command.ControlPlaneBuildSpec
+              { Command.controlPlaneTargetImage = Command.ImageRef imageRef,
+                Command.controlPlaneSourceFingerprint = sourceFingerprint,
+                Command.controlPlaneRuntimeMode = runtimeModeName,
+                Command.controlPlaneGoImage = Command.ImageRef goImage,
+                Command.controlPlaneBaseImage = Command.ImageRef baseImage
+              }
+        )
   buildPerEngineImages
     imageRef
     baseImage
@@ -2248,31 +3502,18 @@ buildClusterImages paths state runtimeMode = do
                 else do
                   ensureDockerBuildBaseImage paths state controlPlaneBaseImage
                   ensureDockerBuildBaseImage paths state engineBaseImage
-                  runCommandBounded
+                  runClusterCommand
                     paths
-                    dockerBuildTimeout
-                    (Just (repoRoot paths))
-                    "docker"
-                    [ "build",
-                      "-f",
-                      "docker/engine.Dockerfile",
-                      "--provenance=false",
-                      "--label",
-                      clusterImageFingerprintLabel <> "=" <> sourceFingerprint,
-                      "--label",
-                      clusterImageFingerprintVersionLabel <> "=" <> clusterImageFingerprintVersion,
-                      "--label",
-                      clusterImageRuntimeModeLabel <> "=" <> runtimeModeName,
-                      "--build-arg",
-                      "ENGINE=" <> Text.unpack engineName,
-                      "--build-arg",
-                      "CONTROL_PLANE_IMAGE=" <> controlPlaneImageRef,
-                      "--build-arg",
-                      "BASE_IMAGE=" <> engineBaseImage,
-                      "-t",
-                      engineImageRef,
-                      "."
-                    ]
+                    ( Command.dockerBuildEngine
+                        Command.EngineBuildSpec
+                          { Command.engineTargetImage = Command.ImageRef engineImageRef,
+                            Command.engineSourceFingerprint = sourceFingerprint,
+                            Command.engineRuntimeMode = runtimeModeName,
+                            Command.engineKind = Command.EngineName (Text.unpack engineName),
+                            Command.engineControlPlaneImage = Command.ImageRef controlPlaneImageRef,
+                            Command.engineBaseImage = Command.ImageRef engineBaseImage
+                          }
+                    )
           _ -> pure ()
 
 clusterWorkloadImageReusableForBuild :: Paths -> String -> String -> String -> String -> IO Bool
@@ -2289,10 +3530,16 @@ dockerImageReusableForHostBuild =
 dockerImageReusableWithSourceFingerprint :: String -> String -> String -> String -> IO Bool
 dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitecture sourceFingerprint = do
   pushReusable <- dockerImageReusableForHarborPush imageRef
-  architectureMatches <- dockerImageInspectValueEquals imageRef "{{.Architecture}}" targetArchitecture
-  fingerprintVersionMatches <- dockerImageLabelEquals imageRef clusterImageFingerprintVersionLabel clusterImageFingerprintVersion
-  runtimeModeMatches <- dockerImageLabelEquals imageRef clusterImageRuntimeModeLabel runtimeModeName
-  fingerprintMatches <- dockerImageLabelEquals imageRef clusterImageFingerprintLabel sourceFingerprint
+  architectureMatches <- dockerImageInspectFieldEquals imageRef Command.ImageArchitecture targetArchitecture
+  fingerprintVersionMatches <-
+    dockerImageInspectFieldEquals
+      imageRef
+      Command.ClusterFingerprintVersion
+      clusterImageFingerprintVersion
+  runtimeModeMatches <-
+    dockerImageInspectFieldEquals imageRef Command.ClusterRuntimeMode runtimeModeName
+  fingerprintMatches <-
+    dockerImageInspectFieldEquals imageRef Command.ClusterSourceFingerprint sourceFingerprint
   pure
     ( pushReusable
         && architectureMatches
@@ -2310,7 +3557,11 @@ dockerImageReusableWithSourceFingerprint imageRef runtimeModeName targetArchitec
 -- the normal inspect succeeds.
 dockerImageReusableForHarborPush :: String -> IO Bool
 dockerImageReusableForHarborPush imageRef = do
-  inspectResult <- tryCommand Nothing [] "docker" ["image", "inspect", imageRef, "--format", "{{.Descriptor.mediaType}}"]
+  inspectResult <-
+    tryDiscoveredClusterCommand $ \_ ->
+      Command.dockerInspectImageField
+        (Command.ImageRef imageRef)
+        Command.DescriptorMediaType
   case inspectResult of
     Left _ -> pure False
     Right descriptor
@@ -2318,13 +3569,17 @@ dockerImageReusableForHarborPush imageRef = do
       | "manifest.list" `List.isInfixOf` descriptor -> pure False
       | otherwise -> pure True
 
-dockerImageLabelEquals :: String -> String -> String -> IO Bool
-dockerImageLabelEquals imageRef labelName =
-  dockerImageInspectValueEquals imageRef ("{{ index .Config.Labels \"" <> labelName <> "\" }}")
-
-dockerImageInspectValueEquals :: String -> String -> String -> IO Bool
-dockerImageInspectValueEquals imageRef formatValue expectedValue = do
-  inspectResult <- tryCommand Nothing [] "docker" ["image", "inspect", imageRef, "--format", formatValue]
+dockerImageInspectFieldEquals ::
+  String ->
+  Command.ImageInspectField ->
+  String ->
+  IO Bool
+dockerImageInspectFieldEquals imageRef inspectField expectedValue = do
+  inspectResult <-
+    tryDiscoveredClusterCommand $ \_ ->
+      Command.dockerInspectImageField
+        (Command.ImageRef imageRef)
+        inspectField
   pure $
     case inspectResult of
       Left _ -> False
@@ -2334,7 +3589,7 @@ dockerImageInspectValueEquals imageRef formatValue expectedValue = do
 
 ensureDockerBuildBaseImage :: Paths -> ClusterState -> String -> IO ()
 ensureDockerBuildBaseImage paths state imageRef = do
-  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  imagePresent <- dockerImagePresent imageRef
   unless imagePresent $
     case dockerHubMirrorRef imageRef of
       Nothing -> pure ()
@@ -2346,13 +3601,17 @@ ensureDockerBuildBaseImage paths state imageRef = do
             "cluster-up"
             "build-cluster-images"
             ("pulling Docker build base image " <> imageRef <> " via " <> mirrorRef)
-        runCommandBounded paths dockerPullTimeout Nothing "docker" ["pull", mirrorRef]
-        runCommandBounded paths dockerTagTimeout Nothing "docker" ["tag", mirrorRef, imageRef]
+        runClusterCommand
+          paths
+          (Command.dockerPullImage Command.DefaultPlatform (Command.ImageRef mirrorRef))
+        runClusterCommand
+          paths
+          (Command.dockerTagImage (Command.ImageRef mirrorRef) (Command.ImageRef imageRef))
         requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
 
 requireDockerImagePresent :: String -> String -> IO ()
 requireDockerImagePresent imageRef message = do
-  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  imagePresent <- dockerImagePresent imageRef
   unless imagePresent (ioError (userError message))
 
 dockerHubMirrorRef :: String -> Maybe String
@@ -2397,8 +3656,6 @@ publishClusterImages paths state renderedChartPath runtimeMode = do
       { PublishImages.harborHost = hostHarborAddress,
         PublishImages.harborClientHost = hostHarborAddress,
         PublishImages.harborApiHost = harborApiHost paths runtimeMode (harborPort state),
-        PublishImages.harborDockerCommand = resolveHostToolForCluster paths HostDocker,
-        PublishImages.harborSkopeoCommand = resolveHostToolForCluster paths HostSkopeo,
         PublishImages.harborTargetArchitecture = targetArchitecture
       }
     ( \detail -> do
@@ -2467,7 +3724,7 @@ preloadHostCachedWarmupImage paths state workerContainer imageRef = do
 
 ensureHostWarmupImageCached :: Paths -> ClusterState -> String -> IO Bool
 ensureHostWarmupImageCached paths state imageRef = do
-  imagePresent <- maybeRun "docker" ["image", "inspect", imageRef]
+  imagePresent <- dockerImagePresent imageRef
   if imagePresent
     then pure True
     else hydrateMissingHostWarmupImage paths state imageRef
@@ -2490,12 +3747,21 @@ hydrateMissingHostWarmupImage paths state imageRef =
       -- replaced was the Docker 29.x mirror fallback added when only
       -- amd64 substrates were supported.
       targetArchitecture <- resolveClusterWorkloadArchitecture paths (clusterRuntimeMode state)
-      let platformFlagValue = "linux/" <> targetArchitecture
       hydrateResult <-
         ( try
             ( do
-                runCommandBounded paths dockerPullTimeout Nothing "docker" ["pull", "--platform", platformFlagValue, mirrorRef]
-                runCommandBounded paths dockerTagTimeout Nothing "docker" ["tag", mirrorRef, imageRef]
+                runClusterCommand
+                  paths
+                  ( Command.dockerPullImage
+                      (Command.LinuxPlatform (Command.Architecture targetArchitecture))
+                      (Command.ImageRef mirrorRef)
+                  )
+                runClusterCommand
+                  paths
+                  ( Command.dockerTagImage
+                      (Command.ImageRef mirrorRef)
+                      (Command.ImageRef imageRef)
+                  )
                 requireDockerImagePresent imageRef ("mirror pull completed for " <> mirrorRef <> ", but " <> imageRef <> " is still not inspectable locally after tagging")
             ) ::
             IO (Either IOException ())
@@ -2541,85 +3807,63 @@ harborOverlayImageRefs _paths imageOverridesPath =
   filter (not . null) <$> discoverHarborOverlayImageRefsFile imageOverridesPath
 
 preloadHarborImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
-preloadHarborImageOnNode paths state nodeContainer imageRef = go (12 :: Int) ""
-  where
-    commandArgs =
-      [ "exec",
-        nodeContainer,
-        "crictl",
-        "--runtime-endpoint",
-        "unix:///run/containerd/containerd.sock",
-        "pull",
-        "--creds",
-        harborAdminUser <> ":" <> harborAdminPassword,
-        imageRef
-      ]
-    go remainingAttempts lastFailure = do
-      result <-
-        tryCommandBounded
+preloadHarborImageOnNode paths state nodeContainer imageRef = do
+  result <-
+    tryClusterCommand
+      paths
+      ( Command.dockerCrictlPull
+          (Command.NodeName nodeContainer)
+          (Command.ImageRef imageRef)
+      )
+  case result of
+    Right _ -> pure ()
+    Left pullFailure -> do
+      putStrLn
+        ( "Anonymous Harbor-backed crictl preload failed for "
+            <> imageRef
+            <> " on "
+            <> nodeContainer
+            <> "; falling back to the host's protected Docker login and stream import"
+        )
+      fallbackState <-
+        startLifecyclePhase
           paths
-          crictlPullTimeout
-          Nothing
-          "docker"
-          commandArgs
-      case result of
+          state
+          "cluster-up"
+          "preload-harbor-images"
+          ("stream-importing Harbor-backed image " <> imageRef <> " on " <> nodeContainer)
+      fallbackResult <-
+        (try (streamImportImageOnNode paths fallbackState nodeContainer imageRef) :: IO (Either IOException ()))
+      case fallbackResult of
         Right _ -> pure ()
-        Left err
-          | remainingAttempts > 1 -> do
-              threadDelay 5000000
-              go (remainingAttempts - 1) (chooseError err lastFailure)
-          | otherwise -> do
-              let pullFailure = chooseError err lastFailure
-              putStrLn
-                ( "Harbor-backed crictl preload failed for "
+        Left fallbackErr ->
+          ioError
+            ( userError
+                ( "Kind worker could not preload Harbor-backed image "
                     <> imageRef
-                    <> " on "
-                    <> nodeContainer
-                    <> "; falling back to docker-save stream import"
+                    <> ":\ncrictl pull failure:\n"
+                    <> pullFailure
+                    <> "\nstream-import fallback failure:\n"
+                    <> displayException fallbackErr
                 )
-              fallbackState <-
-                startLifecyclePhase
-                  paths
-                  state
-                  "cluster-up"
-                  "preload-harbor-images"
-                  ("stream-importing Harbor-backed image " <> imageRef <> " on " <> nodeContainer)
-              fallbackResult <-
-                (try (streamImportImageOnNode paths fallbackState nodeContainer imageRef) :: IO (Either IOException ()))
-              case fallbackResult of
-                Right _ -> pure ()
-                Left fallbackErr ->
-                  ioError
-                    ( userError
-                        ( "Kind worker could not preload Harbor-backed image "
-                            <> imageRef
-                            <> ":\ncrictl pull failure:\n"
-                            <> pullFailure
-                            <> "\nstream-import fallback failure:\n"
-                            <> displayException fallbackErr
-                        )
-                    )
-
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
+            )
 
 streamImportImageOnNode :: Paths -> ClusterState -> String -> String -> IO ()
-streamImportImageOnNode paths _state nodeContainer imageRef = do
-  let dockerCommand = resolveClusterCommandWithPaths paths "docker"
-      streamImportScript =
-        "set -euo pipefail; \"$1\" image save \"$2\" | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
-  runCommandBounded
+streamImportImageOnNode paths _state nodeContainer imageRef =
+  runClusterCommand
     paths
-    dockerStreamImportTimeout
-    Nothing
-    "bash"
-    ["-lc", streamImportScript, "infernix-image-stream", dockerCommand, imageRef, nodeContainer]
+    ( Command.dockerStreamImportImage
+        (Command.NodeName nodeContainer)
+        (Command.ImageRef imageRef)
+    )
 
-maybeRun :: String -> [String] -> IO Bool
-maybeRun command arguments = do
-  result <- tryCommand Nothing [] command arguments
-  pure (either (const False) (const True) result)
+dockerImagePresent :: String -> IO Bool
+dockerImagePresent imageRef =
+  commandSucceeded
+    <$> tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.dockerInspectImage (Command.ImageRef imageRef)
+      )
 
 waitForHarborRegistry :: Paths -> RuntimeMode -> Int -> IO ()
 waitForHarborRegistry paths runtimeMode harborPortValue = do
@@ -2635,11 +3879,9 @@ waitForHarborRegistryResult paths runtimeMode harborPortValue attempts delayMicr
   let registryApiUrl = "http://" <> harborApiHost paths runtimeMode harborPortValue <> "/api/v2.0/health"
       probeCommand = do
         response <-
-          tryCommand
-            Nothing
-            []
-            "curl"
-            ["-sS", "-m", "30", "-o", "-", "-w", "\n%{http_code}", registryApiUrl]
+          tryClusterCommand
+            paths
+            (Command.curlHarborHealth (Command.Url registryApiUrl))
         pure $
           response >>= \payload ->
             case parseCurlBodyAndStatus payload of
@@ -2652,7 +3894,20 @@ waitForHarborRegistryResult paths runtimeMode harborPortValue attempts delayMicr
                 Left ("unexpected Harbor registry status " <> statusCode)
               Nothing ->
                 Left "failed to parse Harbor registry probe output"
-  retryCommandOutput attempts delayMicros "wait for Harbor registry" probeCommand
+  if attempts <= 1
+    then retryCommandOutput attempts delayMicros "wait for Harbor registry" probeCommand
+    else
+      let delaySeconds = max 1 ((delayMicros + 999999) `div` 1000000)
+          totalSeconds = attempts * (30 + delaySeconds)
+       in retryCommandOutputWithDeadline
+            ( Readiness.pollLimitedDeadline
+                delayMicros
+                totalSeconds
+                totalSeconds
+                attempts
+            )
+            "wait for Harbor registry"
+            probeCommand
 
 bootstrapHarborWithRepair :: Paths -> ClusterState -> [FilePath] -> IO ()
 bootstrapHarborWithRepair paths state valuesPaths = go (3 :: Int)
@@ -2694,19 +3949,10 @@ repairHarborBootstrapState _paths state _maybeError = do
 cleanupHarborMigrationJob :: ClusterState -> IO ()
 cleanupHarborMigrationJob state = do
   _ <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "-n",
-               "platform",
-               "delete",
-               "job",
-               "migration-job",
-               "--ignore-not-found=true",
-               "--wait=true"
-             ]
+    tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.kubectlDeleteHarborMigrationJob
+            (clusterKubeTarget state)
       )
   pure ()
 
@@ -2756,19 +4002,7 @@ waitForHarborRegistryOrDirty paths state = do
 
 harborRegistryMigrationDirty :: ClusterState -> IO Bool
 harborRegistryMigrationDirty state = do
-  let detectionCommand =
-        unlines
-          ( [ "set -eu"
-            ]
-              <> harborMigrationDirtyCountShell
-              <> [ "if [ \"$dirty_count\" = \"0\" ]; then",
-                   "  echo clean",
-                   "else",
-                   "  echo dirty",
-                   "fi"
-                 ]
-          )
-  result <- runHarborDatabaseCommand state detectionCommand
+  result <- runHarborDatabaseAction state Command.DetectDirtyHarborMigration
   case result of
     Right output -> pure ("dirty" `List.isInfixOf` output)
     Left _ -> pure False
@@ -2776,34 +4010,12 @@ harborRegistryMigrationDirty state = do
 repairHarborDatabaseMigrationState :: ClusterState -> IO ()
 repairHarborDatabaseMigrationState state = do
   waitForHarborDatabaseReadyWithRepair state
-  let repairCommand =
-        unlines
-          ( [ "set -eu"
-            ]
-              <> harborMigrationDirtyCountShell
-              <> [ "if [ \"$dirty_count\" != \"0\" ]; then",
-                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"DROP SCHEMA IF EXISTS " <> harborPostgresSchemaName <> " CASCADE;\"",
-                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"CREATE SCHEMA " <> harborPostgresSchemaName <> " AUTHORIZATION " <> harborPostgresUserName <> ";\"",
-                   "  psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -c \"GRANT ALL ON SCHEMA " <> harborPostgresSchemaName <> " TO " <> harborPostgresUserName <> ";\"",
-                   "fi"
-                 ]
-          )
-  repairResult <- runHarborDatabaseCommand state repairCommand
+  repairResult <- runHarborDatabaseAction state Command.RepairDirtyHarborMigration
   case repairResult of
     Right _ -> pure ()
     Left err ->
       ioError
         (userError ("failed to repair dirty Harbor database migration state:\n" <> err))
-
-harborMigrationDirtyCountShell :: [String]
-harborMigrationDirtyCountShell =
-  [ "migration_table_exists=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT CASE WHEN EXISTS (SELECT 1 FROM information_schema.tables WHERE table_schema = '" <> harborPostgresSchemaName <> "' AND table_name = 'schema_migrations') THEN 'yes' ELSE 'no' END\")",
-    "if [ \"$migration_table_exists\" = \"yes\" ]; then",
-    "  dirty_count=$(psql -h 127.0.0.1 -U " <> harborPostgresUserName <> " -d registry -v ON_ERROR_STOP=1 -Atqc \"SELECT COUNT(*)::text FROM " <> harborPostgresSchemaName <> ".schema_migrations WHERE dirty = TRUE\")",
-    "else",
-    "  dirty_count=0",
-    "fi"
-  ]
 
 waitForHarborDatabaseReadyWithRepair :: ClusterState -> IO ()
 waitForHarborDatabaseReadyWithRepair state = do
@@ -2811,19 +4023,13 @@ waitForHarborDatabaseReadyWithRepair state = do
   waitForHarborPostgresPodsReady state
   waitForWorkloadRollout state 900 ("deployment/" <> harborPostgresClusterName <> "-pgbouncer")
   primaryPodName <- waitForHarborPostgresPrimaryPod state
-  runCommand
-    Nothing
-    []
-    "kubectl"
-    ( kubeconfigArgs state
-        <> [ "-n",
-             "platform",
-             "wait",
-             "--for=condition=Ready",
-             "pod/" <> primaryPodName,
-             "--timeout",
-             "60s"
-           ]
+  runDiscoveredClusterCommand
+    ( \_ ->
+        Command.kubectlWaitPodReady
+          (clusterKubeTarget state)
+          (Command.Namespace "platform")
+          (Command.PodName primaryPodName)
+          60
     )
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
@@ -2946,12 +4152,7 @@ harborPostgresStartupPods state =
   mapMaybe parseStartupPodLine . lines
     <$> kubectlOutput
       state
-      [ "-n",
-        "platform",
-        "get",
-        "pods",
-        "--no-headers"
-      ]
+      (`Command.kubectlListPods` Command.HarborPostgresStartupPods)
   where
     parseStartupPodLine lineValue =
       case words lineValue of
@@ -2979,15 +4180,18 @@ harborPostgresStartupPods state =
 
 restartHarborPostgresStartupPodsIfStuck :: ClusterState -> Bool -> Int -> [HarborPostgresStartupPod] -> IO Bool
 restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsElapsed startupPods =
-  if shouldRestart
-    then do
-      runCommand
-        Nothing
-        []
-        "kubectl"
-        (kubeconfigArgs state <> ["-n", "platform", "delete", "pod"] <> unreadyPodNames <> ["--ignore-not-found=true", "--wait=false"])
-      pure True
-    else pure False
+  case NonEmpty.nonEmpty (map Command.PodName unreadyPodNames) of
+    Just podNames
+      | shouldRestart -> do
+          runDiscoveredClusterCommand
+            ( \_ ->
+                Command.kubectlDeletePods
+                  (clusterKubeTarget state)
+                  (Command.Namespace "platform")
+                  podNames
+            )
+          pure True
+    _ -> pure False
   where
     unreadyPodNames =
       [ harborPostgresStartupPodName startupPod
@@ -3017,30 +4221,10 @@ reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued st
         )
       ensureHarborPostgresReplicationRole state primaryPodName
       result <-
-        ( try
-            ( runCommand
-                Nothing
-                []
-                "kubectl"
-                ( kubeconfigArgs state
-                    <> [ "-n",
-                         "platform",
-                         "exec",
-                         primaryPodName,
-                         "-c",
-                         "database",
-                         "--",
-                         "patronictl",
-                         "-k",
-                         "reinit",
-                         harborPostgresPatroniClusterName
-                       ]
-                    <> replicaPodNames primaryPodName
-                    <> ["--force", "--wait", "--from-leader"]
-                )
-            ) ::
-            IO (Either IOException ())
-        )
+        runHarborPostgresReplicaReinit
+          state
+          primaryPodName
+          (NonEmpty.nonEmpty (map Command.PodName (replicaPodNames primaryPodName)))
       case result of
         Right _ -> pure ()
         Left err ->
@@ -3065,25 +4249,34 @@ reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued st
         && not (null primaryPodName)
         && not (null (replicaPodNames primaryPodName))
 
+runHarborPostgresReplicaReinit ::
+  ClusterState ->
+  String ->
+  Maybe (NonEmpty.NonEmpty Command.PodName) ->
+  IO (Either IOException ())
+runHarborPostgresReplicaReinit state primaryPodName maybeReplicaPods =
+  case maybeReplicaPods of
+    Nothing -> pure (Right ())
+    Just replicaPods ->
+      try
+        ( runDiscoveredClusterCommand
+            ( \_ ->
+                Command.kubectlReinitPostgresReplicas
+                  (clusterKubeTarget state)
+                  (Command.PodName primaryPodName)
+                  replicaPods
+            )
+        )
+
 ensureHarborPostgresReplicationRole :: ClusterState -> String -> IO ()
 ensureHarborPostgresReplicationRole state primaryPodName = do
   result <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "-n",
-               "platform",
-               "exec",
-               primaryPodName,
-               "-c",
-               "database",
-               "--",
-               "sh",
-               "-lc",
-               harborPostgresReplicationRoleRepairScript
-             ]
+    tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.kubectlRunPostgresAction
+            (clusterKubeTarget state)
+            (Command.PodName primaryPodName)
+            Command.EnsureReplicationRole
       )
   case result of
     Right _ -> pure ()
@@ -3092,29 +4285,6 @@ ensureHarborPostgresReplicationRole state primaryPodName = do
         ( "Harbor PostgreSQL replication-role repair failed; continuing rollout wait: "
             <> err
         )
-
-harborPostgresReplicationRoleRepairScript :: String
-harborPostgresReplicationRoleRepairScript =
-  unlines
-    [ "set -eu",
-      "psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'",
-      harborPostgresReplicationRoleSql,
-      "SQL"
-    ]
-
-harborPostgresReplicationRoleSql :: String
-harborPostgresReplicationRoleSql =
-  unlines
-    [ "DO $$",
-      "BEGIN",
-      "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '_crunchyrepl') THEN",
-      "    CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;",
-      "  ELSE",
-      "    ALTER ROLE _crunchyrepl WITH LOGIN REPLICATION;",
-      "  END IF;",
-      "END",
-      "$$;"
-    ]
 
 -- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
 -- 72-attempt × 5 s budget. The resolved primary pod name is the kernel's readiness
@@ -3138,16 +4308,7 @@ harborPostgresPrimaryPodNameMaybe state = do
     filter (not . null) . map trim . lines
       <$> kubectlOutput
         state
-        [ "-n",
-          "platform",
-          "get",
-          "pods",
-          "-l",
-          harborPostgresPrimarySelector,
-          "--no-headers",
-          "-o",
-          "custom-columns=:metadata.name"
-        ]
+        (`Command.kubectlListPods` Command.HarborPostgresPrimary)
   pure (firstOrEmpty podNames)
 
 firstOrEmpty :: [String] -> String
@@ -3156,30 +4317,19 @@ firstOrEmpty values =
     firstValue : _ -> firstValue
     [] -> ""
 
-runHarborDatabaseCommand :: ClusterState -> String -> IO (Either String String)
-runHarborDatabaseCommand state commandText = do
+runHarborDatabaseAction ::
+  ClusterState ->
+  (Command.Password -> Command.PostgresAction) ->
+  IO (Either String String)
+runHarborDatabaseAction state buildAction = do
   password <- harborPostgresPassword state
   primaryPodName <- waitForHarborPostgresPrimaryPod state
-  tryCommand
-    Nothing
-    []
-    "kubectl"
-    ( kubeconfigArgs state
-        <> [ "-n",
-             "platform",
-             "exec",
-             primaryPodName,
-             "-c",
-             "database",
-             "--",
-             "sh",
-             "-lc",
-             unlines
-               [ "set -eu",
-                 "export PGPASSWORD=" <> shellQuote password,
-                 commandText
-               ]
-           ]
+  tryDiscoveredClusterCommand
+    ( \_ ->
+        Command.kubectlRunPostgresAction
+          (clusterKubeTarget state)
+          (Command.PodName primaryPodName)
+          (buildAction (Command.Password password))
     )
 
 harborPostgresPassword :: ClusterState -> IO String
@@ -3187,24 +4337,16 @@ harborPostgresPassword state = do
   encodedPassword <-
     kubectlOutput
       state
-      [ "-n",
-        "platform",
-        "get",
-        "secret",
-        harborPostgresUserSecretName,
-        "-o",
-        "jsonpath={.data.password}"
-      ]
+      ( \target ->
+          Command.kubectlGetSecretField
+            target
+            (Command.Namespace "platform")
+            (Command.SecretName harborPostgresUserSecretName)
+            Command.PasswordField
+      )
   case Base64.decode (ByteString8.pack (trim encodedPassword)) of
     Left err -> ioError (userError ("failed to decode Harbor PostgreSQL password: " <> err))
     Right decodedPassword -> pure (ByteString8.unpack decodedPassword)
-
-shellQuote :: String -> String
-shellQuote value =
-  "'" <> concatMap escapeCharacter value <> "'"
-  where
-    escapeCharacter '\'' = "'\"'\"'"
-    escapeCharacter character = [character]
 
 deployChart :: Paths -> ClusterState -> [FilePath] -> Bool -> IO ()
 deployChart paths state valuesPaths waitForRollout = do
@@ -3230,42 +4372,26 @@ tryDeployChart paths state valuesPaths waitForRollout =
 
 tryDeployChartWithHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> Bool -> IO (Either String String)
 tryDeployChartWithHooks paths state valuesPaths waitForRollout =
-  tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout "30m"
+  tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout (Command.HelmMinutes 30)
 
-tryDeployChartWithTimeout :: Paths -> ClusterState -> [FilePath] -> Bool -> String -> IO (Either String String)
+tryDeployChartWithTimeout :: Paths -> ClusterState -> [FilePath] -> Bool -> Command.HelmDuration -> IO (Either String String)
 tryDeployChartWithTimeout paths state valuesPaths waitForRollout timeoutValue =
   tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout timeoutValue True
 
-tryDeployChartWithTimeoutAndHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> String -> Bool -> IO (Either String String)
+tryDeployChartWithTimeoutAndHooks :: Paths -> ClusterState -> [FilePath] -> Bool -> Command.HelmDuration -> Bool -> IO (Either String String)
 tryDeployChartWithTimeoutAndHooks paths state valuesPaths waitForRollout timeoutValue runHooks = do
   ensureHelmDependencies paths
-  tryCommand
-    (Just (repoRoot paths))
-    (Config.helmEnvironment paths)
-    "helm"
-    ( [ "upgrade",
-        "--install",
-        "infernix",
-        "chart",
-        "--namespace",
-        "platform",
-        "--create-namespace",
-        "--kubeconfig",
-        kubeconfigPath state
-      ]
-        <> timeoutArgs
-        <> hookArgs
-        <> waitArgs
-        <> concatMap (\valuesPath -> ["-f", valuesPath]) valuesPaths
+  tryClusterCommand
+    paths
+    ( Command.helmUpgradeInfernix
+        Command.HelmUpgradeSpec
+          { Command.helmUpgradeTarget = clusterKubeTarget state,
+            Command.helmUpgradeValues = valuesPaths,
+            Command.helmUpgradeWait = waitForRollout,
+            Command.helmUpgradeHooks = runHooks,
+            Command.helmUpgradeTimeout = timeoutValue
+          }
     )
-  where
-    timeoutArgs = ["--timeout", timeoutValue]
-    hookArgs
-      | runHooks = []
-      | otherwise = ["--no-hooks"]
-    waitArgs
-      | waitForRollout = ["--wait"]
-      | otherwise = []
 
 waitForHarborFinalPhaseRollouts :: ClusterState -> IO ()
 waitForHarborFinalPhaseRollouts state = do
@@ -3291,11 +4417,12 @@ waitForGatewayApiCrd state crdName = do
       60
       1000000
       ("wait for Gateway API CRD " <> crdName)
-      ( tryCommand
-          Nothing
-          []
-          "kubectl"
-          (kubeconfigArgs state <> ["get", "crd", crdName])
+      ( tryDiscoveredClusterCommand
+          ( \_ ->
+              Command.kubectlGetCrd
+                (clusterKubeTarget state)
+                (Command.ResourceName crdName)
+          )
       )
   case result of
     Right _ -> pure ()
@@ -3416,25 +4543,23 @@ readKeycloakAdminCredentials state = do
   encodedUsername <-
     kubectlOutput
       state
-      [ "-n",
-        "platform",
-        "get",
-        "secret",
-        keycloakAdminSecretName,
-        "-o",
-        "jsonpath={.data.username}"
-      ]
+      ( \target ->
+          Command.kubectlGetSecretField
+            target
+            (Command.Namespace "platform")
+            (Command.SecretName keycloakAdminSecretName)
+            Command.UsernameField
+      )
   encodedPassword <-
     kubectlOutput
       state
-      [ "-n",
-        "platform",
-        "get",
-        "secret",
-        keycloakAdminSecretName,
-        "-o",
-        "jsonpath={.data.password}"
-      ]
+      ( \target ->
+          Command.kubectlGetSecretField
+            target
+            (Command.Namespace "platform")
+            (Command.SecretName keycloakAdminSecretName)
+            Command.PasswordField
+      )
   KeycloakAdminCredentials
     <$> decodeKubernetesSecretField keycloakAdminSecretName "username" encodedUsername
     <*> decodeKubernetesSecretField keycloakAdminSecretName "password" encodedPassword
@@ -3727,25 +4852,15 @@ pulsarBootstrapLogShowsDirtyState state podName = do
 podLogsContainDirtyMarker :: ClusterState -> String -> Bool -> IO Bool
 podLogsContainDirtyMarker state podName usePreviousLogs = do
   result <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "--request-timeout=10s",
-               "-n",
-               "platform",
-               "logs",
-               podName,
-               "--tail=200"
-             ]
-          <> previousArgs
+    tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.kubectlPodLogs
+            (clusterKubeTarget state)
+            (Command.Namespace "platform")
+            (Command.PodName podName)
+            usePreviousLogs
       )
   pure (either (const False) pulsarBootstrapLogIndicatesDirtyState result)
-  where
-    previousArgs
-      | usePreviousLogs = ["--previous"]
-      | otherwise = []
 
 pulsarBootstrapLogIndicatesDirtyState :: String -> Bool
 pulsarBootstrapLogIndicatesDirtyState output =
@@ -3765,16 +4880,18 @@ pulsarBootstrapLogIndicatesDirtyState output =
       contains "is not matching with"
         && (contains "Cookie" || contains "instanceId" || contains "bookieId")
 
-resetPulsarClaimDirectories :: Paths -> RuntimeMode -> IO ()
-resetPulsarClaimDirectories paths runtimeMode = do
-  maybeState <- loadClusterState paths
-  case matchingClusterState runtimeMode maybeState of
-    Nothing -> pure ()
-    Just state -> do
-      let pulsarClaims = filter isPulsarPersistentClaim (claims state)
-      unless (null pulsarClaims) $
-        putStrLn "resetting retained Pulsar claim roots"
-      mapM_ (resetClaimDirectory state) pulsarClaims
+resetPulsarClaimDirectories :: Lease s WriterQuiesced -> Paths -> IO ()
+resetPulsarClaimDirectories quiesced paths =
+  case leasePayload quiesced of
+    WriterQuiesced runtimeMode -> do
+      maybeState <- loadClusterState paths
+      case matchingClusterState runtimeMode maybeState of
+        Nothing -> pure ()
+        Just state -> do
+          let pulsarClaims = filter isPulsarPersistentClaim (claims state)
+          unless (null pulsarClaims) $
+            putStrLn "resetting retained Pulsar claim roots"
+          mapM_ (resetClaimDirectory state) pulsarClaims
   where
     isPulsarPersistentClaim persistentClaim =
       "pulsar-" `List.isPrefixOf` Text.unpack (workload persistentClaim)
@@ -3810,9 +4927,8 @@ waitForRoutedPublicationSurface paths state = do
 waitForDirectPulsarProxySurface :: Paths -> ClusterState -> IO ()
 waitForDirectPulsarProxySurface paths state = do
   result <-
-    retryCommandOutput
-      300
-      1000000
+    retryCommandOutputWithDeadline
+      (Readiness.pollLimitedDeadline 1000000 5400 5400 300)
       "wait for direct Pulsar proxy surface"
       (probeDirectPulsarProxySurface paths state)
   case result of
@@ -3861,12 +4977,9 @@ requireConsecutiveDirectPulsarProxySuccesses paths clustersUrl requiredSuccesses
 probeDirectPulsarProxyClustersUrl :: Paths -> String -> IO (Either String String)
 probeDirectPulsarProxyClustersUrl paths clustersUrl = do
   response <-
-    tryHostToolCmd
+    tryClusterCommand
       paths
-      Nothing
-      []
-      HostCurl
-      ["-fsS", "--connect-timeout", "2", "--max-time", "5", clustersUrl]
+      (Command.curlPulsarClusters (Command.Url clustersUrl))
   pure $
     response >>= \payload ->
       case eitherDecode (LazyChar8.pack payload) of
@@ -3889,16 +5002,12 @@ directPulsarProxyEndpoint paths state
 kindControlPlaneIpv4 :: Paths -> RuntimeMode -> IO (Either String String)
 kindControlPlaneIpv4 paths runtimeMode = do
   result <-
-    tryHostToolCmd
+    tryClusterCommand
       paths
-      Nothing
-      []
-      HostDocker
-      [ "inspect",
-        kindControlPlaneNodeName paths runtimeMode,
-        "--format",
-        "{{.NetworkSettings.Networks.kind.IPAddress}}"
-      ]
+      ( Command.dockerInspectContainerField
+          (Command.ContainerName (kindControlPlaneNodeName paths runtimeMode))
+          Command.KindNetworkIpv4
+      )
   pure $
     result >>= \rawOutput ->
       let ipv4 = Text.unpack (Text.strip (Text.pack rawOutput))
@@ -3908,19 +5017,13 @@ kindControlPlaneIpv4 paths runtimeMode = do
 
 waitForWorkloadRollout :: ClusterState -> Int -> String -> IO ()
 waitForWorkloadRollout state timeoutSeconds workload =
-  runCommand
-    Nothing
-    []
-    "kubectl"
-    ( kubeconfigArgs state
-        <> [ "-n",
-             "platform",
-             "rollout",
-             "status",
-             workload,
-             "--timeout",
-             show timeoutSeconds <> "s"
-           ]
+  runDiscoveredClusterCommand
+    ( \_ ->
+        Command.kubectlRolloutStatus
+          (clusterKubeTarget state)
+          (Command.Namespace "platform")
+          (Command.WorkloadRef workload)
+          timeoutSeconds
     )
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
@@ -3938,19 +5041,13 @@ waitForPulsarStatefulSetRollout paths state timeoutSeconds workload = do
   let probe = do
         touchLifecycleProgress paths state
         result <-
-          tryCommand
-            Nothing
-            []
-            "kubectl"
-            ( kubeconfigArgs state
-                <> [ "-n",
-                     "platform",
-                     "rollout",
-                     "status",
-                     workload,
-                     "--timeout",
-                     show probeSeconds <> "s"
-                   ]
+          tryClusterCommand
+            paths
+            ( Command.kubectlRolloutStatus
+                (clusterKubeTarget state)
+                (Command.Namespace "platform")
+                (Command.WorkloadRef workload)
+                probeSeconds
             )
         case result of
           Right _ -> pure (Right ())
@@ -3972,7 +5069,15 @@ waitForPulsarStatefulSetRollout paths state timeoutSeconds workload = do
                     lastErrorRef
                     (\previous -> let kept = if null err then previous else err in (kept, kept))
                 pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
-  outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline maxPolls 1) probe
+  outcome <-
+    Readiness.awaitReadiness
+      ( Readiness.pollLimitedDeadline
+          1
+          timeoutSeconds
+          timeoutSeconds
+          maxPolls
+      )
+      probe
   Readiness.foldReadiness (const (pure ())) onTimedOut onTimedOut outcome
   where
     probeSeconds = 30
@@ -4019,25 +5124,15 @@ fetchHelmDependencyArchive :: Paths -> FilePath -> FilePath -> IO ()
 fetchHelmDependencyArchive paths archiveRelativePath destinationDirectory =
   case archiveRelativePath of
     "chart/charts/harbor-1.18.3.tgz" ->
-      fetchChartFromHelmRepository paths "harbor" "1.18.3" "https://helm.goharbor.io" destinationDirectory
+      fetchDependency Command.HarborChart
     "chart/charts/pg-operator-2.9.0.tgz" ->
-      fetchChartFromHelmRepository paths "pg-operator" "2.9.0" "https://percona.github.io/percona-helm-charts" destinationDirectory
+      fetchDependency Command.PostgresOperatorChart
     "chart/charts/pg-db-2.9.0.tgz" ->
-      fetchChartFromHelmRepository paths "pg-db" "2.9.0" "https://percona.github.io/percona-helm-charts" destinationDirectory
+      fetchDependency Command.PostgresDatabaseChart
     "chart/charts/pulsar-4.5.0.tgz" ->
-      fetchChartFromHelmRepository paths "pulsar" "4.5.0" "https://pulsar.apache.org/charts" destinationDirectory
+      fetchDependency Command.PulsarChart
     "chart/charts/gateway-helm-v1.7.2.tgz" ->
-      runCommand
-        Nothing
-        (Config.helmEnvironment paths)
-        "helm"
-        [ "pull",
-          "oci://docker.io/envoyproxy/gateway-helm",
-          "--version",
-          "v1.7.2",
-          "--destination",
-          destinationDirectory
-        ]
+      fetchDependency Command.EnvoyGatewayChart
     _ ->
       ioError
         ( userError
@@ -4045,32 +5140,19 @@ fetchHelmDependencyArchive paths archiveRelativePath destinationDirectory =
                 <> archiveRelativePath
             )
         )
-
-fetchChartFromHelmRepository :: Paths -> String -> String -> String -> FilePath -> IO ()
-fetchChartFromHelmRepository paths chartName version repositoryUrl destinationDirectory =
-  runCommand
-    Nothing
-    (Config.helmEnvironment paths)
-    "helm"
-    [ "pull",
-      chartName,
-      "--repo",
-      repositoryUrl,
-      "--version",
-      version,
-      "--destination",
-      destinationDirectory
-    ]
+  where
+    fetchDependency dependency =
+      runClusterCommand
+        paths
+        (Command.helmPullDependency dependency destinationDirectory)
 
 ensureEnvoyGatewayCrdsInstalled :: Paths -> ClusterState -> IO ()
 ensureEnvoyGatewayCrdsInstalled paths state = do
   crdPaths <-
     filter ("gateway-helm/crds/" `List.isPrefixOf`) . lines
-      <$> captureCommand
-        (Just (repoRoot paths))
-        []
-        "tar"
-        ["-tf", envoyGatewayDependencyArchive]
+      <$> captureClusterCommand
+        paths
+        (Command.tarListArchive envoyGatewayDependencyArchive)
   when (null crdPaths) $
     ioError
       ( userError
@@ -4081,26 +5163,27 @@ ensureEnvoyGatewayCrdsInstalled paths state = do
       )
   crdDocuments <-
     mapM
-      ( \crdPath ->
-          captureCommand
-            (Just (repoRoot paths))
-            []
-            "tar"
-            ["-xOf", envoyGatewayDependencyArchive, crdPath]
+      ( captureClusterCommand paths
+          . Command.tarExtractEntry envoyGatewayDependencyArchive
+          . Command.ArchiveEntry
       )
       crdPaths
   -- Helm does not install CRDs that live under dependency charts, so apply the bundle explicitly.
-  runCommandWithInput
-    Nothing
-    []
-    "kubectl"
-    (kubeconfigArgs state <> ["apply", "--server-side", "--force-conflicts", "-f", "-"])
-    (List.intercalate "\n---\n" crdDocuments)
+  crdBundle <-
+    case Command.mkCrdBundle (List.intercalate "\n---\n" crdDocuments) of
+      Left err -> ioError (userError err)
+      Right bundle -> pure bundle
+  runClusterCommand
+    paths
+    ( Command.kubectlApplyCrdBundle
+        (clusterKubeTarget state)
+        crdBundle
+    )
 
 ensureHelmRepositoryDefinitions :: Paths -> IO ()
 ensureHelmRepositoryDefinitions paths =
   mapM_
-    (\(repoName, repoUrl) -> runCommand (Just (repoRoot paths)) (Config.helmEnvironment paths) "helm" ["repo", "add", "--force-update", repoName, repoUrl])
+    (runClusterCommand paths . Command.helmRepoAdd)
     helmRepositories
 
 reconcileOperatorManagedPersistentVolumes :: Paths -> ClusterState -> IO ClusterState
@@ -4183,14 +5266,7 @@ discoverOperatorManagedPersistentClaims state = do
   pvcPayload <-
     kubectlOutput
       state
-      [ "get",
-        "pvc",
-        "-A",
-        "-l",
-        "postgres-operator.crunchydata.com/cluster",
-        "-o",
-        "json"
-      ]
+      Command.kubectlListPostgresPvcs
   claims <-
     case decodeOperatorManagedClaims pvcPayload of
       Left err -> ioError (userError err)
@@ -4319,7 +5395,9 @@ mergePersistentClaims existingClaims newClaims =
 
 probePublicationRoute :: String -> RuntimeMode -> IO (Either String String)
 probePublicationRoute publicationUrl expectedRuntimeMode = do
-  response <- tryCommand Nothing [] "curl" ["-fsS", publicationUrl]
+  response <-
+    tryDiscoveredClusterCommand $ \_ ->
+      Command.curlPublication (Command.Url publicationUrl)
   pure $
     response >>= \payload ->
       case eitherDecode (LazyChar8.pack payload) of
@@ -4382,14 +5460,12 @@ waitForPersistentClaimsBound state = mapM_ waitForPersistentClaimBound
               trim
                 <$> kubectlOutput
                   state
-                  [ "-n",
-                    claimNamespace,
-                    "get",
-                    "pvc",
-                    pvcNameValue,
-                    "-o",
-                    "jsonpath={.status.phase}"
-                  ]
+                  ( \target ->
+                      Command.kubectlGetPvcPhase
+                        target
+                        (Command.Namespace claimNamespace)
+                        (Command.PvcName pvcNameValue)
+                  )
             if phaseValue == "Bound"
               then pure (Right ())
               else do
@@ -4418,32 +5494,23 @@ reconcilePersistentVolumes state =
   mapM_ applyClaim (claims state)
   where
     applyClaim persistentClaim =
-      runCommandWithInput
-        Nothing
-        []
-        "kubectl"
-        (kubeconfigArgs state <> ["apply", "-f", "-"])
-        (renderPersistentVolume persistentClaim)
-    renderPersistentVolume persistentClaim =
-      unlines
-        [ "apiVersion: v1",
-          "kind: PersistentVolume",
-          "metadata:",
-          "  name: " <> persistentVolumeName persistentClaim,
-          "spec:",
-          "  capacity:",
-          "    storage: " <> Text.unpack (requestedStorage persistentClaim),
-          "  accessModes:",
-          "    - ReadWriteOnce",
-          "  persistentVolumeReclaimPolicy: Retain",
-          "  storageClassName: infernix-manual",
-          "  volumeMode: Filesystem",
-          "  claimRef:",
-          "    namespace: " <> Text.unpack (namespace persistentClaim),
-          "    name: " <> persistentVolumeClaimName persistentClaim,
-          "  hostPath:",
-          "    path: " <> nodeMountedClaimPath persistentClaim
-        ]
+      runDiscoveredClusterCommand
+        ( \_ ->
+            Command.kubectlApplyPersistentVolume
+              (clusterKubeTarget state)
+              Command.PersistentVolumeSpec
+                { Command.persistentVolumeName =
+                    Command.ResourceName (persistentVolumeName persistentClaim),
+                  Command.persistentVolumeStorage =
+                    Text.unpack (requestedStorage persistentClaim),
+                  Command.persistentVolumeClaimNamespace =
+                    Command.Namespace (Text.unpack (namespace persistentClaim)),
+                  Command.persistentVolumeClaimName =
+                    Command.PvcName (persistentVolumeClaimName persistentClaim),
+                  Command.persistentVolumeHostPath =
+                    nodeMountedClaimPath persistentClaim
+                }
+        )
 
 writeGeneratedKindConfig :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO FilePath
 writeGeneratedKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue = do
@@ -4522,16 +5589,12 @@ resolveHostRepoRoot paths
   | otherwise = do
       launcherContainer <- currentLauncherContainerName
       mountResult <-
-        tryHostToolCmd
+        tryClusterCommand
           paths
-          Nothing
-          []
-          HostDocker
-          [ "inspect",
-            launcherContainer,
-            "--format",
-            "{{range .Mounts}}{{if eq .Destination \"" <> repoRoot paths <> "/.data\"}}{{.Source}}{{end}}{{end}}"
-          ]
+          ( Command.dockerInspectContainerField
+              (Command.ContainerName launcherContainer)
+              (Command.MountSourceAt (repoRoot paths </> ".data"))
+          )
       case mountResult of
         Right rawSource ->
           let trimmedSource = trim rawSource
@@ -4685,12 +5748,6 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
   let localKindRoot = kindRuntimeRoot paths runtimeMode
       controlPlaneNodeName = kindControlPlaneNodeName paths runtimeMode
   createDirectoryIfMissing True localKindRoot
-  -- Phase 2 Sprint 2.13 follow-on (2026-05-29): scrub known
-  -- non-retained service state from the local kind root before the
-  -- bulk copy. Older binaries retained these trees on `cluster down`;
-  -- the current retention contract excludes them so fresh service
-  -- control planes are not replayed with stale backing data.
-  scrubNonRetainedClusterDirectories paths runtimeMode
   nodeNames <- kindNodeNames paths runtimeMode
   mapM_
     ( primeNode
@@ -4700,7 +5757,9 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
     nodeNames
   where
     primeNode localKindRoot controlPlaneNodeName nodeName = do
-      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", nodeMountedKindRoot]
+      runClusterCommand
+        paths
+        (Command.dockerMakeDirectory (Command.NodeName nodeName) nodeMountedKindRoot)
       -- Stateful platform workloads schedule on worker nodes, so replay retained runtime data only
       -- there instead of copying large claim trees into the tainted control-plane node.
       unless (nodeName == controlPlaneNodeName) $ do
@@ -4709,9 +5768,17 @@ prepareKindNodeRuntimePaths paths state runtimeMode = do
             paths
             state
             "cluster-up"
-            "prepare-kind-cluster"
-            ("syncing retained Kind runtime data into " <> nodeName)
+            retainedReplayPhaseName
+            ("copying retained Kind runtime data into " <> nodeName)
         copyDirectoryContentsToContainer paths (Just copyState) localKindRoot nodeName nodeMountedKindRoot
+        _ <-
+          startLifecyclePhase
+            paths
+            copyState
+            "cluster-up"
+            retainedReplayPhaseName
+            ("retained Kind runtime copy completed for " <> nodeName)
+        pure ()
 
 primeKindNodeRegistryHosts :: Paths -> RuntimeMode -> Int -> IO ()
 primeKindNodeRegistryHosts paths runtimeMode harborPortValue = do
@@ -4723,43 +5790,274 @@ primeKindNodeRegistryHosts paths runtimeMode harborPortValue = do
   mapM_ (primeNode registryDirectoryInNode registryHostsContents) nodeNames
   where
     primeNode registryDirectoryInNode registryHostsContents nodeName = do
-      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", registryDirectoryInNode]
-      runCommandWithInput
-        Nothing
-        []
-        "docker"
-        ["exec", "-i", nodeName, "cp", "/dev/stdin", registryDirectoryInNode </> "hosts.toml"]
-        registryHostsContents
+      runClusterCommand
+        paths
+        (Command.dockerMakeDirectory (Command.NodeName nodeName) registryDirectoryInNode)
+      runClusterCommand
+        paths
+        ( Command.dockerWriteFile
+            (Command.NodeName nodeName)
+            (registryDirectoryInNode </> "hosts.toml")
+            (Command.filePayload registryHostsContents)
+        )
 
--- | Phase 2 Sprint 2.13 follow-on (2026-05-29): defensively remove
--- any retained Patroni directory trees from the on-host kind root
--- before the next cluster up's bulk replay copies them into the
--- worker. The Patroni claim directories live at
--- @<kindRuntimeRoot>/platform/infernix/<workload>/...@ for the known
--- operator-managed PostgreSQL clusters (Harbor + Keycloak).
-scrubStalePatroniDirectories :: Paths -> RuntimeMode -> IO ()
-scrubStalePatroniDirectories paths runtimeMode =
-  mapM_ scrubDirectory patroniWorkloadDirectories
+-- | Evidence that the repo-local retained root is a detached copy target, not
+-- a bind mount currently written by a live Kind node. Apple/non-bind teardown
+-- must carry this witness while it stages and atomically replaces the snapshot.
+newtype DetachedRetainedCopyTarget = DetachedRetainedCopyTarget RuntimeMode
+
+-- | Evidence that every Kind worker which can host a stateful workload is
+-- paused and that the PVC-to-node binding map was unchanged across the pause
+-- boundary. Teardown holds this lease through the final copy and Kind delete,
+-- so no retained source can write between snapshot staging and writer removal.
+data FrozenRetainedSnapshotSource = FrozenRetainedSnapshotSource
+  { frozenSnapshotRuntimeMode :: RuntimeMode,
+    frozenSnapshotWorkerNodes :: [String],
+    frozenSnapshotClaimNodeBindings :: Map.Map String String
+  }
+
+data WorkerPauseState
+  = WorkerAlreadyPaused
+  | WorkerNeedsPause
+  deriving (Eq, Show)
+
+withFrozenRetainedSnapshotSource ::
+  Lease lock ClusterMutationLocked ->
+  Paths ->
+  RuntimeMode ->
+  Maybe ClusterState ->
+  (forall s. Lease s FrozenRetainedSnapshotSource -> IO r) ->
+  IO r
+withFrozenRetainedSnapshotSource lifecycleLock paths runtimeMode maybeState action = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  workerNodes <- kindWorkerNodeNames paths runtimeMode
+  when (null workerNodes) $
+    ioError
+      ( userError
+          ( "retained snapshot source freeze refused: no Kind worker nodes exist for "
+              <> Text.unpack (runtimeModeId runtimeMode)
+          )
+      )
+  beforeBindings <- snapshotClaimNodeBindings maybeState
+  bracketPreservingPrimary
+    (pauseSnapshotWorkers paths runtimeMode workerNodes)
+    (unpauseSnapshotWorkers paths runtimeMode)
+    ( \pausedWorkers -> do
+        afterBindings <- snapshotClaimNodeBindings maybeState
+        unless (beforeBindings == afterBindings) $
+          ioError
+            ( userError
+                "retained snapshot source freeze refused: claim/node bindings changed while the Kind workers were being paused"
+            )
+        completedBindings <-
+          either
+            (ioError . userError)
+            pure
+            ( snapshotClaimNodeBindingsForPausedWorkers
+                maybeState
+                pausedWorkers
+                afterBindings
+            )
+        withLease
+          Acquire
+            { acquireEstablish =
+                pure
+                  FrozenRetainedSnapshotSource
+                    { frozenSnapshotRuntimeMode = runtimeMode,
+                      frozenSnapshotWorkerNodes = pausedWorkers,
+                      frozenSnapshotClaimNodeBindings = completedBindings
+                    },
+              acquireRelease = \_ -> pure ()
+            }
+          action
+    )
   where
-    patroniWorkloadDirectories =
-      [ "platform" </> "infernix" </> name
-      | name <-
-          [ "harbor-postgresql-instance1",
-            "harbor-postgresql-pgbackrest",
-            "keycloak-postgresql-instance1",
-            "keycloak-postgresql-pgbackrest"
-          ]
-      ]
-    scrubDirectory relativePath = do
-      let absolutePath = kindRuntimeRoot paths runtimeMode </> relativePath
-      directoryPresent <- doesDirectoryExist absolutePath
-      when directoryPresent (removePathForcibly absolutePath)
+    snapshotClaimNodeBindings stateValue =
+      case stateValue of
+        Just state
+          | not (null (claims state)) -> discoverClaimNodeBindings state
+        _ -> pure Map.empty
 
-scrubNonRetainedClusterDirectories :: Paths -> RuntimeMode -> IO ()
-scrubNonRetainedClusterDirectories paths runtimeMode = do
-  scrubStalePatroniDirectories paths runtimeMode
-  scrubRetainedHarborRegistryCache paths runtimeMode
-  scrubRetainedHarborRegistryStorage paths runtimeMode
+pauseSnapshotWorkers :: Paths -> RuntimeMode -> [String] -> IO [String]
+pauseSnapshotWorkers paths runtimeMode workerNodes =
+  mask $ \restore -> go restore [] workerNodes
+  where
+    go _ pausedWorkers [] = pure (reverse pausedWorkers)
+    go restore pausedWorkers (workerNode : remainingWorkers) = do
+      pauseObservation <-
+        runPauseAttemptWithRollback
+          restore
+          pausedWorkers
+          workerNode
+          ( tryClusterCommand
+              paths
+              (Command.dockerContainerPaused (Command.ContainerName workerNode))
+          )
+      case classifyWorkerPauseObservation pauseObservation of
+        Right WorkerAlreadyPaused ->
+          go restore (workerNode : pausedWorkers) remainingWorkers
+        Right WorkerNeedsPause -> do
+          pauseResult <-
+            runPauseAttemptWithRollback
+              restore
+              pausedWorkers
+              workerNode
+              ( tryClusterCommand
+                  paths
+                  (Command.dockerPauseContainer (Command.ContainerName workerNode))
+              )
+          case pauseResult of
+            Right _ ->
+              go restore (workerNode : pausedWorkers) remainingWorkers
+            Left err -> failPause pausedWorkers workerNode err
+        Left err -> do
+          failPause pausedWorkers workerNode err
+    rollbackPause pausedWorkers workerNode =
+      -- An interrupted observation leaves the current state unknown, and an
+      -- interrupted pause can have applied its side effect. Mask acquisition
+      -- transitions and thaw the current plus prior candidates before allowing
+      -- cancellation to escape the bracket acquisition.
+      unpauseSnapshotWorkers
+        paths
+        runtimeMode
+        (workerNode : pausedWorkers)
+    runPauseAttemptWithRollback restore pausedWorkers workerNode attempt = do
+      attemptResult <-
+        try (restore attempt) ::
+          IO (Either SomeException (Either String String))
+      case attemptResult of
+        Right result -> pure result
+        Left primaryFailure ->
+          finallyPreservingPrimary
+            (throwIO primaryFailure)
+            (rollbackPause pausedWorkers workerNode)
+    failPause pausedWorkers workerNode err =
+      -- A failed or timed-out Docker call can still have applied its side
+      -- effect. Probe the current worker as well as every previously paused
+      -- worker so acquisition rollback does not strand an ambiguous pause.
+      finallyPreservingPrimary
+        ( ioError
+            ( userError
+                ( "retained snapshot source freeze could not pause "
+                    <> workerNode
+                    <> ":\n"
+                    <> err
+                )
+            )
+        )
+        (rollbackPause pausedWorkers workerNode)
+
+classifyWorkerPauseObservation :: Either String String -> Either String WorkerPauseState
+classifyWorkerPauseObservation observation =
+  case trim <$> observation of
+    Right "true" -> Right WorkerAlreadyPaused
+    Right "false" -> Right WorkerNeedsPause
+    Right unexpected ->
+      Left ("invalid Docker paused-state observation: " <> unexpected)
+    Left err -> Left err
+
+unpauseSnapshotWorkers :: Paths -> RuntimeMode -> [String] -> IO ()
+unpauseSnapshotWorkers paths runtimeMode workerNodes =
+  runCleanupsPreservingFailures
+    [ unpauseWorker workerNode
+    | workerNode <- workerNodes
+    ]
+  where
+    unpauseWorker workerNode = do
+      thawResult <- thawSnapshotWorker paths workerNode
+      case thawResult of
+        Right () -> pure ()
+        Left err -> do
+          presentRuntimeModes <- presentClusterRuntimeModes paths
+          when (runtimeMode `elem` presentRuntimeModes) $
+            ioError
+              ( userError
+                  ( "retained snapshot worker thaw failed while the Kind cluster is still live: "
+                      <> takeWhile (/= '\n') err
+                  )
+              )
+
+thawSnapshotWorker :: Paths -> String -> IO (Either String ())
+thawSnapshotWorker paths workerNode = do
+  pausedResult <-
+    tryClusterCommand
+      paths
+      (Command.dockerContainerPaused (Command.ContainerName workerNode))
+  case classifyWorkerPauseObservation pausedResult of
+    Right WorkerNeedsPause -> pure (Right ())
+    Right WorkerAlreadyPaused ->
+      void
+        <$> tryClusterCommand
+          paths
+          (Command.dockerUnpauseContainer (Command.ContainerName workerNode))
+    Left err -> pure (Left err)
+
+snapshotClaimNodeBindingsForPausedWorkers ::
+  Maybe ClusterState ->
+  [String] ->
+  Map.Map String String ->
+  Either String (Map.Map String String)
+snapshotClaimNodeBindingsForPausedWorkers maybeState workerNodes claimNodeBindings =
+  case maybeState of
+    Nothing -> Right claimNodeBindings
+    Just state ->
+      completeBindings
+        claimNodeBindings
+        (filter (not . isPatroniManagedClaim) (claims state))
+  where
+    completeBindings completed [] = Right completed
+    completeBindings completed (persistentClaim : remainingClaims) =
+      case Map.lookup claimName completed of
+        Just workerNode
+          | workerNode `elem` workerNodes ->
+              completeBindings completed remainingClaims
+        Just nonWorkerNode ->
+          Left
+            ( "retained snapshot source freeze refused: claim "
+                <> claimName
+                <> " is bound to non-worker node "
+                <> nonWorkerNode
+            )
+        Nothing ->
+          case workerNodes of
+            [onlyWorker] ->
+              completeBindings
+                (Map.insert claimName onlyWorker completed)
+                remainingClaims
+            _ ->
+              Left
+                ( "retained snapshot source freeze found no owning node for claim "
+                    <> claimName
+                )
+      where
+        claimName = persistentVolumeClaimName persistentClaim
+
+withDetachedRetainedCopyTarget ::
+  Lease lock ClusterMutationLocked ->
+  Paths ->
+  RuntimeMode ->
+  (forall s. Lease s DetachedRetainedCopyTarget -> IO r) ->
+  IO r
+withDetachedRetainedCopyTarget lifecycleLock paths runtimeMode =
+  withLease
+    Acquire
+      { acquireEstablish = do
+          case leasePayload lifecycleLock of
+            ClusterMutationLocked -> pure ()
+          usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
+          if usesHostBindMounts
+            then
+              ioError
+                ( userError
+                    ( "retained snapshot staging refused: "
+                        <> Text.unpack (runtimeModeId runtimeMode)
+                        <> " uses live host bind mounts"
+                    )
+                )
+            else pure (DetachedRetainedCopyTarget runtimeMode),
+        acquireRelease = \_ -> pure ()
+      }
 
 -- | Sprint 2.14 (managed-state-transition doctrine) — evidence that the Kind
 -- cluster (the live writer over the repo-local retained-state directories) has
@@ -4770,14 +6068,22 @@ newtype WriterQuiesced = WriterQuiesced RuntimeMode
 -- | Establish a 'WriterQuiesced' lease by proving the Kind cluster for
 -- @runtimeMode@ is gone. If it is still live, acquisition fails loud rather than
 -- letting the scrub run against a live writer — so a scrub against a live writer
--- is not a constructible term. The quiesce → scrub → delete ordering is: the
--- caller deletes the cluster (quiesce), this lease witnesses the deletion, and
--- 'scrubRetainedStateUnderLease' then deletes the retained directories.
-withWriterQuiesced :: Paths -> RuntimeMode -> (forall s. Lease s WriterQuiesced -> IO r) -> IO r
-withWriterQuiesced paths runtimeMode =
+-- is not a constructible term. On teardown the caller deletes the cluster, this
+-- lease witnesses its absence, and 'scrubRetainedStateUnderLease' then removes
+-- rebuildable retained directories. On bring-up the same lease proves that no
+-- existing cluster is being reused before stale local state is removed.
+withWriterQuiesced ::
+  Lease lock ClusterMutationLocked ->
+  Paths ->
+  RuntimeMode ->
+  (forall s. Lease s WriterQuiesced -> IO r) ->
+  IO r
+withWriterQuiesced lifecycleLock paths runtimeMode =
   withLease
     Acquire
       { acquireEstablish = do
+          case leasePayload lifecycleLock of
+            ClusterMutationLocked -> pure ()
           stillLive <- kindClusterExists paths runtimeMode
           if stillLive
             then
@@ -4793,48 +6099,124 @@ withWriterQuiesced paths runtimeMode =
         acquireRelease = \_ -> pure ()
       }
 
+-- | Evidence that none of the supported Kind runtimes for this data root is
+-- live. Runtime-root cleanup is shared across modes, so a mode-local absence
+-- proof is insufficient.
+data AllClusterWritersQuiesced = AllClusterWritersQuiesced
+
+withAllClusterWritersQuiesced ::
+  Lease lock ClusterMutationLocked ->
+  Paths ->
+  (forall s. Lease s AllClusterWritersQuiesced -> IO r) ->
+  IO r
+withAllClusterWritersQuiesced lifecycleLock paths =
+  withLease
+    Acquire
+      { acquireEstablish = do
+          case leasePayload lifecycleLock of
+            ClusterMutationLocked -> pure ()
+          presentRuntimeModes <- presentClusterRuntimeModes paths
+          case presentRuntimeModes of
+            [] -> pure AllClusterWritersQuiesced
+            _ ->
+              ioError
+                ( userError
+                    ( "test harness runtime cleanup refused: live Infernix Kind runtimes="
+                        <> List.intercalate
+                          ","
+                          (map (Text.unpack . runtimeModeId) presentRuntimeModes)
+                    )
+                ),
+        acquireRelease = \_ -> pure ()
+      }
+
+-- | Clear harness-owned runtime metadata only after proving globally that no
+-- Kind writer is live. A dirty operator-owned transition is preserved even if
+-- Kind has not become visible yet.
+cleanupHarnessRuntimeState :: Paths -> RuntimeMode -> IO ()
+cleanupHarnessRuntimeState paths runtimeMode =
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    _ <- requireReservationAccess paths HarnessOwned
+    maybeState <- loadClusterState paths
+    case maybeState of
+      Just state
+        | clusterOwner state == OperatorOwned,
+          clusterLifecycle state /= ClusterAbsent ->
+            ioError
+              ( userError
+                  ( "test harness runtime cleanup refused: an operator-owned "
+                      <> Text.unpack (runtimeModeId (clusterRuntimeMode state))
+                      <> " cluster transition is recorded while cleaning "
+                      <> Text.unpack (runtimeModeId runtimeMode)
+                  )
+              )
+      _ -> pure ()
+    withAllClusterWritersQuiesced lifecycleLock paths $ \quiesced ->
+      removeHarnessRuntimeStateUnderLease quiesced paths
+
+removeHarnessRuntimeStateUnderLease ::
+  Lease s AllClusterWritersQuiesced ->
+  Paths ->
+  IO ()
+removeHarnessRuntimeStateUnderLease quiesced paths =
+  case leasePayload quiesced of
+    AllClusterWritersQuiesced -> do
+      createDirectoryIfMissing True (runtimeRoot paths)
+      entries <- listDirectory (runtimeRoot paths)
+      forM_ entries $ \entry ->
+        unless
+          (entry `elem` ["bounded-command-activity", "locks", "secrets"])
+          (removePathForcibly (runtimeRoot paths </> entry))
+
 -- | Sprint 2.14 — the retained-state teardown scrub. It requires a
 -- 'WriterQuiesced' lease as evidence that no live cluster writer remains and
--- scrubs the directories for exactly the quiesced runtime mode. The raw scrub
--- stays available only for the bring-up preparation path; the teardown scrub is
--- reachable only through this lease-consuming entry.
+-- scrubs the directories for exactly the quiesced runtime mode. This is the
+-- sole retained-state scrub entry: bring-up acquires the same absence witness
+-- before cleaning a stale local root, while teardown acquires it after deleting
+-- the cluster.
 scrubRetainedStateUnderLease :: Lease s WriterQuiesced -> Paths -> IO ()
 scrubRetainedStateUnderLease lease paths =
   case leasePayload lease of
-    WriterQuiesced runtimeMode -> scrubNonRetainedClusterDirectories paths runtimeMode
-
--- Harbor's registry Redis claim is rebuildable cache state. Retaining it
--- while the registry bucket and Harbor database are reset can leave blob
--- existence keys for content that no longer exists in MinIO, causing
--- later `docker push` attempts to skip uploads and fail the final
--- manifest write with "blob ... not found".
-scrubRetainedHarborRegistryCache :: Paths -> RuntimeMode -> IO ()
-scrubRetainedHarborRegistryCache paths runtimeMode = do
-  let redisRoot = kindRuntimeRoot paths runtimeMode </> "platform" </> "infernix" </> "harbor-redis"
-  directoryPresent <- doesDirectoryExist redisRoot
-  when directoryPresent (removePathForcibly redisRoot)
-
--- Harbor's registry bucket is a rebuildable publication cache. The
--- model, engine-artifact, and demo object buckets stay durable, but
--- the Harbor database and Redis cache are recreated with the
--- non-retained state above;
--- carrying old registry blobs or incomplete multipart upload metadata
--- across that reset can leave the fresh registry pointing at incomplete
--- or missing blobs during `docker push`.
-scrubRetainedHarborRegistryStorage :: Paths -> RuntimeMode -> IO ()
-scrubRetainedHarborRegistryStorage paths runtimeMode = do
-  let minioRoot = kindRuntimeRoot paths runtimeMode </> "platform" </> "infernix" </> "minio"
-  minioPresent <- doesDirectoryExist minioRoot
-  when minioPresent $ do
-    ordinalNames <- listDirectory minioRoot
-    forM_ ordinalNames $ \ordinalName -> do
-      let dataRoot = minioRoot </> ordinalName </> "data"
-      scrubDirectory (dataRoot </> "harbor-registry")
-      scrubDirectory (dataRoot </> ".minio.sys" </> "buckets" </> "harbor-registry")
-      scrubDirectory (dataRoot </> ".minio.sys" </> "multipart")
-      scrubDirectory (dataRoot </> ".minio.sys" </> "tmp")
+    WriterQuiesced runtimeMode -> do
+      scrubStalePatroniDirectories paths runtimeMode
+      scrubRetainedHarborRegistryCache paths runtimeMode
+      scrubRetainedHarborRegistryStorage paths runtimeMode
   where
-    scrubDirectory absolutePath = do
+    -- Patroni claim trees and Harbor publication data are rebuildable. Keeping
+    -- these raw deletions local to the lease-consuming function prevents an
+    -- ungated scrub from becoming a constructible cluster transition.
+    scrubStalePatroniDirectories pathsValue runtimeMode =
+      mapM_ scrubDirectory patroniWorkloadDirectories
+      where
+        patroniWorkloadDirectories =
+          [ "platform" </> "infernix" </> name
+          | name <-
+              [ "harbor-postgresql-instance1",
+                "harbor-postgresql-pgbackrest",
+                "keycloak-postgresql-instance1",
+                "keycloak-postgresql-pgbackrest"
+              ]
+          ]
+        scrubDirectory relativePath =
+          removeDirectoryWhenPresent (kindRuntimeRoot pathsValue runtimeMode </> relativePath)
+
+    scrubRetainedHarborRegistryCache pathsValue runtimeMode =
+      removeDirectoryWhenPresent
+        (kindRuntimeRoot pathsValue runtimeMode </> "platform" </> "infernix" </> "harbor-redis")
+
+    scrubRetainedHarborRegistryStorage pathsValue runtimeMode = do
+      let minioRoot = kindRuntimeRoot pathsValue runtimeMode </> "platform" </> "infernix" </> "minio"
+      minioPresent <- doesDirectoryExist minioRoot
+      when minioPresent $ do
+        ordinalNames <- listDirectory minioRoot
+        forM_ ordinalNames $ \ordinalName -> do
+          let dataRoot = minioRoot </> ordinalName </> "data"
+          removeDirectoryWhenPresent (dataRoot </> "harbor-registry")
+          removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "buckets" </> "harbor-registry")
+          removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "multipart")
+          removeDirectoryWhenPresent (dataRoot </> ".minio.sys" </> "tmp")
+
+    removeDirectoryWhenPresent absolutePath = do
       directoryPresent <- doesDirectoryExist absolutePath
       when directoryPresent (removePathForcibly absolutePath)
 
@@ -4847,41 +6229,167 @@ prepareKindNodeClaimDirectories paths _state runtimeMode persistentClaims = do
       mapM_ (prepareOnSingleNode persistentClaim) nodeNames
     prepareOnSingleNode persistentClaim nodeName = do
       let directoryPath = nodeMountedClaimPath persistentClaim
-      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "mkdir", "-p", directoryPath]
-      runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "chmod", "-R", "a+rwX", directoryPath]
+      runClusterCommand
+        paths
+        (Command.dockerMakeDirectory (Command.NodeName nodeName) directoryPath)
+      runClusterCommand
+        paths
+        (Command.dockerMakeDirectoryWritable (Command.NodeName nodeName) directoryPath)
       case claimOwner persistentClaim of
         Nothing -> pure ()
-        Just owner -> runHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "chown", "-R", owner, directoryPath]
+        Just owner ->
+          runClusterCommand
+            paths
+            ( Command.dockerSetDirectoryOwner
+                (Command.NodeName nodeName)
+                (Command.Owner owner)
+                directoryPath
+            )
 
-syncKindNodeRuntimePathsToHost :: Paths -> RuntimeMode -> Maybe ClusterState -> IO ()
-syncKindNodeRuntimePathsToHost paths runtimeMode maybeState = do
-  let localKindRoot = kindRuntimeRoot paths runtimeMode
-  createDirectoryIfMissing True localKindRoot
-  syncedClaims <- syncClaimDirectoriesWhenAvailable paths maybeState
-  unless syncedClaims $ do
-    nodeNames <- kindNodeNames paths runtimeMode
-    mapM_
-      ( \nodeName -> do
-          maybeCopyState <-
-            case maybeState of
-              Just state ->
-                Just
-                  <$> startLifecyclePhase
-                    paths
-                    state
-                    "cluster-down"
-                    "replay-retained-state"
-                    ("copying retained Kind runtime data from " <> nodeName <> " back to the host")
-              Nothing -> pure Nothing
-          copyDirectoryContentsFromContainer paths maybeCopyState nodeName nodeMountedKindRoot localKindRoot
-      )
-      nodeNames
-  scrubNonRetainedClusterDirectories paths runtimeMode
+syncKindNodeRuntimePathsToHost ::
+  Lease source FrozenRetainedSnapshotSource ->
+  Lease s DetachedRetainedCopyTarget ->
+  Paths ->
+  Maybe ClusterState ->
+  IO ()
+syncKindNodeRuntimePathsToHost frozenSource detachedTarget paths maybeState =
+  case (leasePayload frozenSource, leasePayload detachedTarget) of
+    (FrozenRetainedSnapshotSource sourceRuntimeMode workerNodes claimNodeBindings, DetachedRetainedCopyTarget runtimeMode) -> do
+      unless (sourceRuntimeMode == runtimeMode) $
+        ioError (userError "retained snapshot source/target runtime mismatch")
+      let localKindRoot = kindRuntimeRoot paths runtimeMode
+          stagingRoot = localKindRoot <> ".incoming"
+          previousRoot = localKindRoot <> ".previous"
+      reconcileInterruptedRetainedSnapshot paths runtimeMode
+      createDirectoryIfMissing True stagingRoot
+      syncedClaims <-
+        syncClaimDirectoriesWhenAvailable
+          paths
+          stagingRoot
+          maybeState
+          claimNodeBindings
+      unless syncedClaims $ do
+        mapM_
+          ( \nodeName -> do
+              case maybeState of
+                Just state ->
+                  void $
+                    startLifecyclePhase
+                      paths
+                      state
+                      "cluster-down"
+                      "replay-retained-state"
+                      ("staging retained Kind runtime data from " <> nodeName)
+                Nothing -> pure ()
+              copyDirectoryContentsFromContainer paths nodeName nodeMountedKindRoot stagingRoot
+          )
+          workerNodes
+      writeFile
+        (snapshotCompletionMarkerPath stagingRoot)
+        "version=1\n"
+      commitRetainedSnapshot localKindRoot stagingRoot previousRoot
+      removeFileIfExists (snapshotCompletionMarkerPath localKindRoot)
 
-syncClaimDirectoriesWhenAvailable :: Paths -> Maybe ClusterState -> IO Bool
-syncClaimDirectoriesWhenAvailable paths maybeState =
+snapshotCompletionMarkerName :: FilePath
+snapshotCompletionMarkerName = ".infernix-snapshot-complete-v1"
+
+snapshotCompletionMarkerPath :: FilePath -> FilePath
+snapshotCompletionMarkerPath root = root </> snapshotCompletionMarkerName
+
+reconcileInterruptedRetainedSnapshot :: Paths -> RuntimeMode -> IO ()
+reconcileInterruptedRetainedSnapshot paths runtimeMode =
+  reconcileInterruptedSnapshotSwap
+    localKindRoot
+    (localKindRoot <> ".incoming")
+    (localKindRoot <> ".previous")
+  where
+    localKindRoot = kindRuntimeRoot paths runtimeMode
+
+reconcileInterruptedSnapshotSwap :: FilePath -> FilePath -> FilePath -> IO ()
+reconcileInterruptedSnapshotSwap currentRoot stagingRoot previousRoot = do
+  currentExists <- doesDirectoryExist currentRoot
+  stagingExists <- doesDirectoryExist stagingRoot
+  previousExists <- doesDirectoryExist previousRoot
+  stagingComplete <-
+    doesFileExist (snapshotCompletionMarkerPath stagingRoot)
+  mapM_
+    executeRecoveryAction
+    (snapshotRecoveryPlan currentExists stagingExists previousExists stagingComplete)
+  removeFileIfExists (snapshotCompletionMarkerPath currentRoot)
+  where
+    executeRecoveryAction recoveryAction =
+      case recoveryAction of
+        RestorePreviousSnapshot -> renameDirectory previousRoot currentRoot
+        PromoteIncomingSnapshot -> renameDirectory stagingRoot currentRoot
+        DeletePreviousSnapshot -> removePathForcibly previousRoot
+        DeleteIncomingSnapshot -> removePathForcibly stagingRoot
+
+data SnapshotRecoveryAction
+  = RestorePreviousSnapshot
+  | PromoteIncomingSnapshot
+  | DeletePreviousSnapshot
+  | DeleteIncomingSnapshot
+  deriving (Eq, Show)
+
+snapshotRecoveryPlan :: Bool -> Bool -> Bool -> Bool -> [SnapshotRecoveryAction]
+snapshotRecoveryPlan currentExists incomingExists previousExists incomingComplete =
+  previousAction <> incomingAction
+  where
+    previousAction
+      | previousExists && currentExists = [DeletePreviousSnapshot]
+      | previousExists = [RestorePreviousSnapshot]
+      | otherwise = []
+    incomingAction
+      | incomingExists,
+        incomingComplete,
+        not currentExists,
+        not previousExists =
+          [PromoteIncomingSnapshot]
+      | incomingExists = [DeleteIncomingSnapshot]
+      | otherwise = []
+
+commitRetainedSnapshot :: FilePath -> FilePath -> FilePath -> IO ()
+commitRetainedSnapshot currentRoot stagingRoot previousRoot =
+  mask $ \restore -> do
+    currentExists <- doesDirectoryExist currentRoot
+    promotionResult <-
+      try
+        ( do
+            when currentExists (renameDirectory currentRoot previousRoot)
+            restore (renameDirectory stagingRoot currentRoot)
+        ) ::
+        IO (Either SomeException ())
+    case promotionResult of
+      Left promotionFailure ->
+        finallyPreservingPrimary
+          (throwIO promotionFailure)
+          restorePreviousSnapshot
+      Right () -> do
+        previousExists <- doesDirectoryExist previousRoot
+        when previousExists (removePathForcibly previousRoot)
+  where
+    restorePreviousSnapshot = do
+      currentExists <- doesDirectoryExist currentRoot
+      previousExists <- doesDirectoryExist previousRoot
+      when (previousExists && not currentExists) $
+        renameDirectory previousRoot currentRoot
+
+syncClaimDirectoriesWhenAvailable ::
+  Paths ->
+  FilePath ->
+  Maybe ClusterState ->
+  Map.Map String String ->
+  IO Bool
+syncClaimDirectoriesWhenAvailable paths stagingRoot maybeState claimNodeBindings =
   case maybeState of
-    Just state | not (null (claims state)) -> syncClaimDirectoriesFromOwningNodes paths state
+    Just state
+      | not (null (claims state)) -> do
+          syncClaimDirectoriesFromOwningNodes
+            paths
+            stagingRoot
+            state
+            claimNodeBindings
+          pure True
     _ -> pure False
 
 -- | Phase 2 Sprint 2.13 follow-on (2026-05-29): operator-managed
@@ -4899,94 +6407,67 @@ isPatroniManagedClaim persistentClaim =
    in "harbor-postgresql-" `List.isPrefixOf` workloadName
         || "keycloak-postgresql-" `List.isPrefixOf` workloadName
 
-syncClaimDirectoriesFromOwningNodes :: Paths -> ClusterState -> IO Bool
-syncClaimDirectoriesFromOwningNodes paths state = do
-  claimNodeBindings <- discoverClaimNodeBindings state
+syncClaimDirectoriesFromOwningNodes ::
+  Paths ->
+  FilePath ->
+  ClusterState ->
+  Map.Map String String ->
+  IO ()
+syncClaimDirectoriesFromOwningNodes paths stagingRoot state claimNodeBindings = do
   let retainedClaims = filter (not . isPatroniManagedClaim) (claims state)
-  claimSyncResults <-
-    mapM
-      (\persistentClaim -> syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings)
-      retainedClaims
-  pure (or claimSyncResults)
+  mapM_
+    (\persistentClaim -> syncClaimDirectoryFromOwningNode paths stagingRoot state persistentClaim claimNodeBindings)
+    retainedClaims
 
 discoverClaimNodeBindings :: ClusterState -> IO (Map.Map String String)
 discoverClaimNodeBindings state = do
   result <-
-    tryCommand
-      Nothing
-      []
-      "kubectl"
-      ( kubeconfigArgs state
-          <> [ "get",
-               "pods",
-               "-A",
-               "-o",
-               claimNodeBindingsTemplate
-             ]
+    tryDiscoveredClusterCommand
+      ( \_ ->
+          Command.kubectlGetClaimNodeBindings (clusterKubeTarget state)
       )
-  pure (either (const Map.empty) parseClaimNodeBindings result)
-  where
-    claimNodeBindingsTemplate =
-      "go-template={{range .items}}{{ $node := .spec.nodeName }}{{range .spec.volumes}}{{if .persistentVolumeClaim}}{{printf \"%s\\t%s\\n\" .persistentVolumeClaim.claimName $node}}{{end}}{{end}}{{end}}"
+  case result of
+    Left err ->
+      ioError
+        ( userError
+            ( "retained snapshot staging could not discover claim/node bindings:\n"
+                <> err
+            )
+        )
+    Right output -> pure (parseClaimNodeBindings output)
 
 parseClaimNodeBindings :: String -> Map.Map String String
 parseClaimNodeBindings output =
   Map.fromList (mapMaybe parseClaimNodeBindingLine (lines output))
 
-syncClaimDirectoryFromOwningNode :: Paths -> ClusterState -> PersistentClaim -> Map.Map String String -> IO Bool
-syncClaimDirectoryFromOwningNode paths state persistentClaim claimNodeBindings =
+syncClaimDirectoryFromOwningNode ::
+  Paths ->
+  FilePath ->
+  ClusterState ->
+  PersistentClaim ->
+  Map.Map String String ->
+  IO ()
+syncClaimDirectoryFromOwningNode paths stagingRoot state persistentClaim claimNodeBindings =
   case Map.lookup (persistentVolumeClaimName persistentClaim) claimNodeBindings of
-    Nothing -> pure False
+    Nothing ->
+      ioError
+        ( userError
+            ( "retained snapshot staging found no owning node for claim "
+                <> persistentVolumeClaimName persistentClaim
+            )
+        )
     Just nodeName -> do
       let containerDirectory = nodeMountedClaimPath persistentClaim
-          localDirectory = claimDirectory paths (clusterRuntimeMode state) persistentClaim
-      scrubNonRetainedClaimStateInContainer paths nodeName persistentClaim containerDirectory
-      containerExists <- containerDirectoryExists paths nodeName containerDirectory
-      if containerExists
-        then do
-          localDirectoryExists <- doesDirectoryExist localDirectory
-          when localDirectoryExists (removePathForcibly localDirectory)
-          createDirectoryIfMissing True localDirectory
-          copyState <-
-            startLifecyclePhase
-              paths
-              state
-              "cluster-down"
-              "replay-retained-state"
-              ("copying claim " <> persistentVolumeClaimName persistentClaim <> " from " <> nodeName <> " back to the host")
-          copyDirectoryContentsFromContainer paths (Just copyState) nodeName containerDirectory localDirectory
-          pure True
-        else pure False
-
-scrubNonRetainedClaimStateInContainer :: Paths -> String -> PersistentClaim -> FilePath -> IO ()
-scrubNonRetainedClaimStateInContainer paths nodeName persistentClaim containerDirectory =
-  when (isHarborRegistryStorageClaim persistentClaim) $
-    runHostToolCmd
-      paths
-      Nothing
-      []
-      HostDocker
-      [ "exec",
-        nodeName,
-        "sh",
-        "-lc",
-        "rm -rf " <> unwords (map (containerDirectory </>) harborRegistryStorageRelativePaths)
-      ]
-
-isHarborRegistryStorageClaim :: PersistentClaim -> Bool
-isHarborRegistryStorageClaim persistentClaim =
-  namespace persistentClaim == "platform"
-    && release persistentClaim == "infernix"
-    && workload persistentClaim == "minio"
-    && claim persistentClaim == "data"
-
-harborRegistryStorageRelativePaths :: [FilePath]
-harborRegistryStorageRelativePaths =
-  [ "harbor-registry",
-    ".minio.sys" </> "buckets" </> "harbor-registry",
-    ".minio.sys" </> "multipart",
-    ".minio.sys" </> "tmp"
-  ]
+          stagedDirectory = claimDirectoryUnder stagingRoot persistentClaim
+      createDirectoryIfMissing True stagedDirectory
+      void $
+        startLifecyclePhase
+          paths
+          state
+          "cluster-down"
+          "replay-retained-state"
+          ("staging claim " <> persistentVolumeClaimName persistentClaim <> " from " <> nodeName)
+      copyDirectoryContentsFromContainer paths nodeName containerDirectory stagedDirectory
 
 parseClaimNodeBindingLine :: String -> Maybe (String, String)
 parseClaimNodeBindingLine lineValue =
@@ -4999,49 +6480,41 @@ parseClaimNodeBindingLine lineValue =
 kindNodeNames :: Paths -> RuntimeMode -> IO [String]
 kindNodeNames paths runtimeMode =
   filter (not . null) . lines
-    <$> captureCommand Nothing [] "kind" ["get", "nodes", "--name", kindClusterName paths runtimeMode]
+    <$> captureClusterCommand
+      paths
+      (Command.kindListNodes (Command.ClusterName (kindClusterName paths runtimeMode)))
 
 kindWorkerNodeNames :: Paths -> RuntimeMode -> IO [String]
 kindWorkerNodeNames paths runtimeMode =
   filter (/= kindControlPlaneNodeName paths runtimeMode) <$> kindNodeNames paths runtimeMode
 
 copyDirectoryContentsToContainer :: Paths -> Maybe ClusterState -> FilePath -> String -> FilePath -> IO ()
-copyDirectoryContentsToContainer paths maybeState localDirectory nodeName containerDirectory = do
+copyDirectoryContentsToContainer paths _maybeState localDirectory nodeName containerDirectory = do
   hasEntries <- directoryHasEntries localDirectory
-  when hasEntries $
-    case maybeState of
-      Just _ ->
-        runCommandBounded
-          paths
-          dockerCpTimeout
-          Nothing
-          "docker"
-          ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
-      Nothing ->
-        runCommand
-          Nothing
-          []
-          "docker"
-          ["cp", localDirectory </> ".", nodeName <> ":" <> containerDirectory]
+  when hasEntries copyToNode
+  where
+    copyToNode =
+      runClusterCommand
+        paths
+        ( Command.dockerCopyToNode
+            localDirectory
+            (Command.NodeName nodeName)
+            containerDirectory
+        )
 
-copyDirectoryContentsFromContainer :: Paths -> Maybe ClusterState -> String -> FilePath -> FilePath -> IO ()
-copyDirectoryContentsFromContainer paths maybeState nodeName containerDirectory localDirectory = do
-  hasEntries <- containerDirectoryHasEntries paths nodeName containerDirectory
-  when hasEntries $
-    case maybeState of
-      Just _ ->
-        runCommandBounded
-          paths
-          dockerCpTimeout
-          Nothing
-          "docker"
-          ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
-      Nothing ->
-        runCommand
-          Nothing
-          []
-          "docker"
-          ["cp", (nodeName <> ":" <> containerDirectory) </> ".", localDirectory]
+copyDirectoryContentsFromContainer :: Paths -> String -> FilePath -> FilePath -> IO ()
+copyDirectoryContentsFromContainer paths nodeName containerDirectory localDirectory = do
+  createDirectoryIfMissing True localDirectory
+  copyFromNode
+  where
+    copyFromNode =
+      runClusterCommand
+        paths
+        ( Command.dockerCopyFromNode
+            (Command.NodeName nodeName)
+            containerDirectory
+            localDirectory
+        )
 
 directoryHasEntries :: FilePath -> IO Bool
 directoryHasEntries directory = do
@@ -5049,20 +6522,6 @@ directoryHasEntries directory = do
   if exists
     then not . null <$> listDirectory directory
     else pure False
-
-containerDirectoryHasEntries :: Paths -> String -> FilePath -> IO Bool
-containerDirectoryHasEntries paths nodeName directory = do
-  result <- tryHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "sh", "-lc", "ls -A " <> directory]
-  pure (either (const False) directoryListingHasEntries result)
-
-directoryListingHasEntries :: String -> Bool
-directoryListingHasEntries output =
-  not (all (all isSpace) (lines output))
-
-containerDirectoryExists :: Paths -> String -> FilePath -> IO Bool
-containerDirectoryExists paths nodeName directory = do
-  result <- tryHostToolCmd paths Nothing [] HostDocker ["exec", nodeName, "sh", "-lc", "test -d " <> directory]
-  pure (either (const False) (const True) result)
 
 runtimeModeLabels :: RuntimeMode -> String
 runtimeModeLabels runtimeMode = case runtimeMode of
@@ -5106,7 +6565,13 @@ currentKindPulsarHttpPort paths runtimeMode = currentKindContainerPort paths run
 
 currentKindContainerPort :: Paths -> RuntimeMode -> String -> IO (Maybe Int)
 currentKindContainerPort paths runtimeMode containerSpec = do
-  result <- tryHostToolCmd paths Nothing [] HostDocker ["port", kindClusterName paths runtimeMode <> "-control-plane", containerSpec]
+  result <-
+    tryClusterCommand
+      paths
+      ( Command.dockerPortLookup
+          (Command.ContainerName (kindClusterName paths runtimeMode <> "-control-plane"))
+          (Command.ContainerPort containerSpec)
+      )
   case result of
     Left _ -> pure Nothing
     Right output ->
@@ -5120,20 +6585,12 @@ currentKindContainerPort paths runtimeMode containerSpec = do
             portText -> readMaybe portText
         [] -> Nothing
 
--- | Phase 2 Sprint 2.13: @engineCommandOverridesFromEnvironment@
--- retired. The Sprint 4.13 chart no longer renders per-binding
--- @INFERNIX_ENGINE_COMMAND_*@ env entries; engine command overrides
--- now flow through the typed @ClusterConfig.engine.commandOverrides@
--- field instead. The Helm values file therefore always renders an
--- empty override list at this layer (operators set overrides via the
--- top-level @clusterConfig.engine@ block in @chart/values.yaml@,
--- which feeds the cluster-config ConfigMap directly).
 writeHelmValuesFile :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> IO FilePath
 writeHelmValuesFile paths controlPlane state demoConfigPayload deployPhase = do
   let outputPath =
         buildRoot paths
           </> ("helm-values-" <> phaseSuffix deployPhase <> "-" <> Text.unpack (runtimeModeId (clusterRuntimeMode state)) <> ".yaml")
-  writeFile outputPath (renderHelmValues paths controlPlane state demoConfigPayload deployPhase [])
+  writeFile outputPath (renderHelmValues paths controlPlane state demoConfigPayload deployPhase)
   pure outputPath
   where
     phaseSuffix phaseValue = case phaseValue of
@@ -5151,11 +6608,9 @@ renderHelmChart paths runtimeMode valuesPaths = do
           </> ("helm-rendered-" <> Text.unpack (runtimeModeId runtimeMode) <> ".yaml")
   ensureHelmDependencies paths
   renderedChart <-
-    captureCommand
-      (Just (repoRoot paths))
-      (Config.helmEnvironment paths)
-      "helm"
-      (["template", "infernix", "chart", "--namespace", "platform"] <> concatMap (\valuesPath -> ["-f", valuesPath]) valuesPaths)
+    captureClusterCommand
+      paths
+      (Command.helmTemplateInfernix valuesPaths)
   writeFile outputPath renderedChart
   pure outputPath
 
@@ -5163,8 +6618,8 @@ discoverPersistentClaims :: Paths -> FilePath -> IO [PersistentClaim]
 discoverPersistentClaims _paths =
   discoverChartClaimsFile
 
-renderHelmValues :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> [(String, String)] -> String
-renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCommandOverrides =
+renderHelmValues :: Paths -> ControlPlaneContext -> ClusterState -> Lazy.ByteString -> HelmDeployPhase -> String
+renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
   unlines
     ( [ "runtimeMode: " <> Text.unpack (runtimeModeId (clusterRuntimeMode state)),
         "controlPlaneContext: " <> show (controlPlaneContextId controlPlane),
@@ -5230,7 +6685,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         <> perEngineImageValueLines
         <> routeHelmValues demoUiEnabledValue
         <> unsupportedMonitoringOverrides
-        <> serviceEngineAdapterOverrides
         <> clusterConfigValueLines
         <> clusterSecretsValueLines
         <> phaseChartOverrides deployPhase
@@ -5265,7 +6719,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
         ( defaultClusterConfig
             (Text.pack (controlPlaneContextId controlPlane))
             resolvedKeycloakWiring
-            (map (\(name, value) -> EngineCommandOverride (Text.pack name) (Text.pack value)) engineCommandOverrides)
         )
     clusterConfigValueLines =
       [ "clusterConfig:",
@@ -5347,7 +6800,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
             "      memory: 768Mi",
             "    limits:",
             "      cpu: \"2\"",
-            "      memory: 3584Mi"
+            "      memory: 5120Mi"
           ]
       | clusterRuntimeMode state == LinuxGpu =
           [ "  resources:",
@@ -5425,15 +6878,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase engineCo
     yamlBool value
       | value = "true"
       | otherwise = "false"
-    serviceEngineAdapterOverrides
-      | null engineCommandOverrides = []
-      | otherwise =
-          ["  engineAdapters:"] <> commandOverrideLines
-    commandOverrideLines
-      | null engineCommandOverrides = []
-      | otherwise =
-          ["    commandEnv:"]
-            <> map (\(name, value) -> "      " <> name <> ": " <> show value) engineCommandOverrides
     unsupportedMonitoringOverrides =
       [ "pulsar:",
         "  victoria-metrics-k8s-stack:",
@@ -5904,12 +7348,6 @@ harborApiHost paths runtimeMode harborPortValue
   | Config.controlPlaneContext paths == OuterContainer = kindControlPlaneNodeName paths runtimeMode <> ":30002"
   | otherwise = "127.0.0.1:" <> show harborPortValue
 
-harborAdminUser :: String
-harborAdminUser = "admin"
-
-harborAdminPassword :: String
-harborAdminPassword = "Harbor12345"
-
 persistentVolumeClaimName :: PersistentClaim -> String
 persistentVolumeClaimName persistentClaim =
   Text.unpack (pvcName persistentClaim)
@@ -5937,7 +7375,11 @@ nodeMountedClaimPath persistentClaim =
 
 kindClusterExists :: Paths -> RuntimeMode -> IO Bool
 kindClusterExists paths runtimeMode = do
-  existingClusters <- lines <$> captureCommand Nothing [] "kind" ["get", "clusters"]
+  existingClusters <-
+    lines
+      <$> captureClusterCommand
+        paths
+        Command.kindListClusters
   pure (kindClusterName paths runtimeMode `elem` existingClusters)
 
 clusterEdgeBaseUrl :: Paths -> ClusterState -> String
@@ -5957,24 +7399,35 @@ clusterEdgePort paths state
   | Config.controlPlaneContext paths == OuterContainer = 30090
   | otherwise = edgePort state
 
--- | Capture kubectl output for helpers that only carry 'ClusterState'.
--- The shared command helpers resolve the literal @"kubectl"@ through
--- the staged host manifest before spawning, so these state-only call
--- sites stay on the HostTool path without widening every helper
--- signature to carry 'Paths'.
-kubectlOutput :: ClusterState -> [String] -> IO String
-kubectlOutput state args = captureCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+-- | Capture kubectl output for helpers that only carry 'ClusterState'. The
+-- semantic constructor argument fixes the operation before the command reaches
+-- the subprocess kernel.
+kubectlOutput ::
+  ClusterState ->
+  (Command.KubeTarget -> Command.ClusterCommand) ->
+  IO String
+kubectlOutput state buildCommand =
+  captureDiscoveredClusterCommand $ \_ ->
+    buildCommand (clusterKubeTarget state)
 
-kubectlLineCountIfReachable :: ClusterState -> [String] -> IO Int
-kubectlLineCountIfReachable state args = do
-  result <- tryCommand Nothing [] "kubectl" (kubeconfigArgs state <> args)
+kubectlLineCountIfReachable ::
+  ClusterState ->
+  (Command.KubeTarget -> Command.ClusterCommand) ->
+  IO Int
+kubectlLineCountIfReachable state buildCommand = do
+  result <-
+    tryDiscoveredClusterCommand $ \_ ->
+      buildCommand (clusterKubeTarget state)
   pure $
     case result of
       Right output -> countNonEmptyLines output
       Left _ -> 0
 
-kubeconfigArgs :: ClusterState -> [String]
-kubeconfigArgs state = ["--kubeconfig", kubeconfigPath state]
+clusterKubeTarget :: ClusterState -> Command.KubeTarget
+clusterKubeTarget state = Command.KubeTarget (kubeconfigPath state)
+
+generatedKubeTarget :: Paths -> Command.KubeTarget
+generatedKubeTarget paths = Command.KubeTarget (Config.generatedKubeconfigPath paths)
 
 clusterWorkloadRuntimeMode :: RuntimeMode -> RuntimeMode
 clusterWorkloadRuntimeMode runtimeMode =
@@ -6030,40 +7483,86 @@ hostArchitectureForPaths paths =
     Just hostConfig -> HostConfig.hostArchitecture hostConfig
     Nothing -> HostConfig.normalizeHostArchitecture (Text.pack System.Info.arch)
 
-deleteKindCluster :: Paths -> RuntimeMode -> IO ()
-deleteKindCluster paths runtimeMode = go (3 :: Int) ""
+deleteKindCluster ::
+  Lease s ClusterMutationLocked ->
+  KindDeleteAuthorization s ->
+  Paths ->
+  RuntimeMode ->
+  IO ()
+deleteKindCluster lifecycleLock authorization paths runtimeMode = do
+  case leasePayload lifecycleLock of
+    ClusterMutationLocked -> pure ()
+  outcome <-
+    withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
+      do
+        revalidateKindDeleteAuthorization lifecycleLock authorization paths runtimeMode
+        invokeClusterCommand
+          paths
+          ( Command.kindDelete
+              (Command.ClusterName (kindClusterName paths runtimeMode))
+              (Command.kindScratchKubeconfig scratchKubeconfig)
+          )
+  case outcome of
+    Subprocess.CommandSucceeded _ -> pure ()
+    Subprocess.CommandFailedFatal _ -> do
+      clusterDeleted <- waitForKindClusterAbsence paths runtimeMode
+      unless clusterDeleted (failDelete outcome)
+    Subprocess.CommandFailedKernel _ -> failDelete outcome
+    Subprocess.CommandTimedOut _ -> failDelete outcome
   where
-    commandArgs = ["delete", "cluster", "--name", kindClusterName paths runtimeMode]
-    commandLabel = "kind " <> unwords commandArgs
+    failDelete failedOutcome =
+      ioError
+        ( userError
+            ( "command failed: kind delete cluster --name "
+                <> kindClusterName paths runtimeMode
+                <> "\n"
+                <> renderBoundedCommandOutcome failedOutcome
+            )
+        )
 
-    go remainingAttempts lastError = do
-      result <- withKindScratchKubeconfig paths runtimeMode $ \scratchKubeconfig ->
-        tryCommand
-          Nothing
-          [("KUBECONFIG", scratchKubeconfig)]
-          "kind"
-          commandArgs
-      case result of
-        Right _ -> pure ()
-        Left err -> do
-          clusterDeleted <- waitForKindClusterAbsence paths runtimeMode
-          if clusterDeleted
-            then pure ()
-            else
-              if remainingAttempts <= 1
-                then ioError (userError ("command failed: " <> commandLabel <> "\n" <> chooseError err lastError))
-                else do
-                  threadDelay 2000000
-                  go (remainingAttempts - 1) (chooseError err lastError)
+revalidateKindDeleteAuthorization ::
+  Lease s ClusterMutationLocked ->
+  KindDeleteAuthorization s ->
+  Paths ->
+  RuntimeMode ->
+  IO ()
+revalidateKindDeleteAuthorization lifecycleLock authorization paths runtimeMode =
+  case authorization of
+    AuthorizedClusterTeardown teardownAuthority ->
+      void
+        ( revalidateClusterTeardownAuthority
+            lifecycleLock
+            "delete the authorized Kind cluster"
+            teardownAuthority
+            paths
+            runtimeMode
+        )
+    AuthorizedPreWorkloadRecovery recoveryEvidence ->
+      case recoveryEvidence of
+        PreWorkloadKindRecovery teardownAuthority recoveryRuntimeMode expectedLifecycle -> do
+          unless (recoveryRuntimeMode == runtimeMode) $
+            ioError
+              ( userError
+                  "pre-workload Kind recovery evidence/runtime mismatch"
+              )
+          (recordedState, _) <-
+            revalidateClusterTeardownAuthority
+              lifecycleLock
+              "delete an unreadable pre-workload Kind cluster"
+              teardownAuthority
+              paths
+              runtimeMode
+          case matchingClusterState runtimeMode recordedState of
+            Just state
+              | preWorkloadRecoveryIntentMatches expectedLifecycle state -> pure ()
+            _ ->
+              ioError
+                ( userError
+                    "pre-workload Kind recovery refused because the retained-replay lifecycle intent changed after authorization"
+                )
 
-    chooseError current previous
-      | null current = previous
-      | otherwise = current
-
--- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
--- 30-attempt × 1 s budget. Absence observed is the kernel's readiness evidence;
--- a deadline-exhausted wait resolves to @False@ (still present) exactly as the
--- previous bare-recursion fall-through did.
+-- | After a terminal delete failure, observe whether the intended absence was
+-- nevertheless established before surfacing the command's original failure.
 waitForKindClusterAbsence :: Paths -> RuntimeMode -> IO Bool
 waitForKindClusterAbsence paths runtimeMode = do
   outcome <- Readiness.awaitReadiness (Readiness.budgetDeadline 30 1000000) probe
@@ -6075,230 +7574,134 @@ waitForKindClusterAbsence paths runtimeMode = do
         then pure (Left (Readiness.Progress 0 1 "kind cluster still present"))
         else pure (Right ())
 
--- | Phase 2 Sprint 2.13 — resolve an external tool's absolute path via
--- the staged host manifest when 'pathsHostConfig' is present. When the
--- manifest is absent (first-run bootstrap, unit tests without a
--- fixture), use the tool registry's deterministic absolute fallback
--- candidate instead of resolving through the caller's @PATH@.
-resolveHostToolForCluster :: Paths -> HostTool -> FilePath
-resolveHostToolForCluster paths tool =
-  case pathsHostConfig paths of
-    Just config ->
-      let candidate = HostTools.hostToolPath config tool
-       in if Text.null candidate
-            then hostToolFallbackPathOrName tool
-            else Text.unpack candidate
-    Nothing -> hostToolFallbackPathOrName tool
-
-hostToolFallbackPathOrName :: HostTool -> FilePath
-hostToolFallbackPathOrName tool =
-  fromMaybe (Text.unpack (HostTools.hostToolName tool)) (HostTools.hostToolFallbackPath tool)
-
-existingHostToolPathForCluster :: Paths -> HostTool -> IO (Maybe FilePath)
-existingHostToolPathForCluster paths tool =
-  case pathsHostConfig paths of
-    Just config -> do
-      let configured = Text.unpack (HostTools.hostToolPath config tool)
-      if null configured
-        then firstExistingPath (HostTools.hostToolFallbackCandidates tool)
-        else do
-          present <- doesFileExist configured
-          pure (if present then Just configured else Nothing)
-    Nothing -> firstExistingPath (HostTools.hostToolFallbackCandidates tool)
-
-firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
-firstExistingPath [] = pure Nothing
-firstExistingPath (candidate : rest) = do
-  present <- doesFileExist candidate
-  if present
-    then pure (Just candidate)
-    else firstExistingPath rest
-
--- | Run a typed 'HostTool' invocation. Wraps 'runCommand' after
--- resolving the absolute path through 'resolveHostToolForCluster'.
-runHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO ()
-runHostToolCmd paths maybeWorkingDirectory envOverrides tool =
-  runCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
-
--- | 'tryCommand' variant that takes a typed 'HostTool'.
-tryHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO (Either String String)
-tryHostToolCmd paths maybeWorkingDirectory envOverrides tool =
-  tryCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
-
--- | 'captureCommand' variant that takes a typed 'HostTool'.
-captureHostToolCmd :: Paths -> Maybe FilePath -> [(String, String)] -> HostTool -> [String] -> IO String
-captureHostToolCmd paths maybeWorkingDirectory envOverrides tool =
-  captureCommand maybeWorkingDirectory envOverrides (resolveHostToolForCluster paths tool)
-
-runCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO ()
-runCommand maybeWorkingDirectory envOverrides command args = do
-  result <- tryCommand maybeWorkingDirectory envOverrides command args
+-- | Run one command from the closed semantic command vocabulary. The
+-- subprocess compiler resolves its exact tool dependencies and derives
+-- process context and policy from the command plus typed environment.
+runClusterCommand ::
+  Paths ->
+  Command.ClusterCommand ->
+  IO ()
+runClusterCommand paths command = do
+  result <- tryClusterCommand paths command
   case result of
     Right _ -> pure ()
     Left err ->
-      ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
+      ioError
+        ( userError
+            ( "command failed: "
+                <> renderClusterCommand command
+                <> "\n"
+                <> err
+            )
+        )
 
--- | Phase 2 Sprint 2.13: @getEnvironment@ whole-env capture retired.
--- The supported subprocess invocation uses a fixed minimal env
--- ('clusterSubprocessBaseEnv') plus the caller-supplied
--- @envOverrides@; nothing inherits from the daemon's @environ@. Any
--- value the spawned process needs must be declared explicitly here
--- or in 'envOverrides'.
-runCommandWithInput :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> String -> IO ()
-runCommandWithInput maybeWorkingDirectory envOverrides command args inputPayload = do
-  paths <- Config.discoverPaths
-  let resolvedCommand = resolveClusterCommandWithPaths paths command
-  baseEnvironment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
-  environment <-
-    either (ioError . userError) pure (Subprocess.subprocessEnvWithOverrides envOverrides baseEnvironment)
+tryClusterCommand ::
+  Paths ->
+  Command.ClusterCommand ->
+  IO (Either String String)
+tryClusterCommand paths command =
+  commandOutcomeToEither <$> invokeClusterCommand paths command
+
+-- Keep setup, compilation, kernel, terminal-command, and timeout provenance
+-- intact until a caller explicitly chooses how each state may transition.
+invokeClusterCommand ::
+  Paths ->
+  Command.ClusterCommand ->
+  IO Subprocess.CommandOutcome
+invokeClusterCommand paths command = do
+  environmentResult <-
+    try (Subprocess.clusterSubprocessEnv paths) :: IO (Either IOException Subprocess.SubprocessEnv)
+  case environmentResult of
+    Left err ->
+      pure
+        ( Subprocess.CommandFailedKernel
+            ("command environment setup failed: " <> displayException err)
+        )
+    Right environment ->
+      case Subprocess.compileBoundedCommand command environment of
+        Left err ->
+          pure
+            ( Subprocess.CommandFailedKernel
+                ("command compilation failed: " <> err)
+            )
+        Right boundedCommand -> Subprocess.runBoundedCommand boundedCommand
+
+captureOperatorKubectlCommand ::
+  Paths ->
+  Command.OperatorKubectlCommand ->
+  IO String
+captureOperatorKubectlCommand paths command = do
+  environment <- Subprocess.clusterSubprocessEnv paths
   boundedCommand <-
     either
       (ioError . userError)
       pure
-      ( Subprocess.compileBoundedCommand
-          Subprocess.ClusterLifecycleOperation
-          clusterCommandTimeout
-          Subprocess.NeverRetry
-          Subprocess.FatalFailure
-          environment
-          maybeWorkingDirectory
-          resolvedCommand
-          args
-          inputPayload
-      )
+      (Subprocess.compileOperatorKubectlCommand command environment)
   outcome <- Subprocess.runBoundedCommand boundedCommand
-  case outcome of
-    Subprocess.CommandSucceeded _ -> pure ()
-    _ ->
+  case commandOutcomeToEither outcome of
+    Left err -> ioError (userError err)
+    Right stdoutOutput -> pure stdoutOutput
+
+captureClusterCommand ::
+  Paths ->
+  Command.ClusterCommand ->
+  IO String
+captureClusterCommand paths command = do
+  result <- tryClusterCommand paths command
+  case result of
+    Right stdoutOutput -> pure stdoutOutput
+    Left err ->
       ioError
-        (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> renderBoundedCommandOutcome outcome))
+        ( userError
+            ( "command failed: "
+                <> renderClusterCommand command
+                <> "\n"
+                <> err
+            )
+        )
 
-tryCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO (Either String String)
-tryCommand maybeWorkingDirectory envOverrides command args = do
+tryDiscoveredClusterCommand ::
+  (Paths -> Command.ClusterCommand) ->
+  IO (Either String String)
+tryDiscoveredClusterCommand buildCommand = do
   paths <- Config.discoverPaths
-  let resolvedCommand = resolveClusterCommandWithPaths paths command
-  baseEnvironment <- Subprocess.clusterSubprocessEnvWithSearchPath paths (subprocessSearchPath paths)
-  case Subprocess.subprocessEnvWithOverrides envOverrides baseEnvironment of
-    Left err -> pure (Left err)
-    Right environment -> do
-      boundedCommand <-
-        either
-          (ioError . userError)
-          pure
-          ( Subprocess.compileBoundedCommand
-              Subprocess.ClusterLifecycleOperation
-              clusterCommandTimeout
-              Subprocess.NeverRetry
-              Subprocess.FatalFailure
-              environment
-              maybeWorkingDirectory
-              resolvedCommand
-              args
-              ""
-          )
-      outcome <- Subprocess.runBoundedCommand boundedCommand
-      pure $ case outcome of
-        Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
-        _ -> Left (renderBoundedCommandOutcome outcome)
+  tryClusterCommand paths (buildCommand paths)
 
-clusterCommandTimeout :: Subprocess.Timeout
-clusterCommandTimeout = Subprocess.Timeout (10 * 60 * 1000000)
+runDiscoveredClusterCommand ::
+  (Paths -> Command.ClusterCommand) ->
+  IO ()
+runDiscoveredClusterCommand buildCommand = do
+  paths <- Config.discoverPaths
+  runClusterCommand paths (buildCommand paths)
+
+captureDiscoveredClusterCommand ::
+  (Paths -> Command.ClusterCommand) ->
+  IO String
+captureDiscoveredClusterCommand buildCommand = do
+  paths <- Config.discoverPaths
+  captureClusterCommand paths (buildCommand paths)
+
+renderClusterCommand :: Command.ClusterCommand -> String
+renderClusterCommand =
+  show . Command.clusterCommandOperation
+
+commandOutcomeToEither :: Subprocess.CommandOutcome -> Either String String
+commandOutcomeToEither outcome =
+  case outcome of
+    Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
+    Subprocess.CommandFailedFatal message -> Left message
+    Subprocess.CommandFailedKernel message -> Left message
+    Subprocess.CommandTimedOut timeoutValue ->
+      Left (renderBoundedCommandOutcome (Subprocess.CommandTimedOut timeoutValue))
 
 renderBoundedCommandOutcome :: Subprocess.CommandOutcome -> String
 renderBoundedCommandOutcome outcome =
   case outcome of
     Subprocess.CommandSucceeded stdoutOutput -> stdoutOutput
-    Subprocess.CommandFailedTransient message -> message
     Subprocess.CommandFailedFatal message -> message
+    Subprocess.CommandFailedKernel message -> message
     Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
       "command timed out after " <> show (micros `div` 1000000) <> "s"
-
--- | Phase 2 Sprint 2.13 + Phase 7 Sprint 7.17 Apple cohort closure
--- (2026-05-29): the supported base env for every cluster lifecycle
--- subprocess. The PATH entry is derived from the staged host
--- manifest's @toolPaths@ when present so nested third-party
--- invocations (most importantly @kind@ shelling out to @docker@) can
--- locate the same absolute binaries the binary itself uses, including
--- Apple Silicon Homebrew's @\/opt\/homebrew\/bin@ prefix. When the
--- manifest is absent (unit-test fixture without a 'HostConfig'), the
--- helper falls back to the minimal POSIX PATH.
--- | Sprint 3.14 (managed-state-transition doctrine): the supported base env for
--- every cluster lifecycle subprocess, constructed as a typed
--- 'Subprocess.SubprocessEnv' rather than an ad-hoc @[(String, String)]@. The
--- typed value always carries @HOME@ and @TMPDIR@ (the constructor cannot be
--- built without them) and is derived from the host manifest, so it fails closed
--- when the manifest is absent instead of falling back to an ambient environment.
--- The caller-supplied search path preserves the cluster tool-directory @PATH@
--- (skopeo / nvkind / crictl and the rest) assembled by 'subprocessSearchPath'.
-subprocessSearchPath :: Paths -> String
-subprocessSearchPath paths =
-  let fallback =
-        [ "/usr/local/sbin",
-          "/usr/local/bin",
-          "/usr/sbin",
-          "/usr/bin",
-          "/sbin",
-          "/bin"
-        ]
-      manifestDirs = maybe [] hostToolParentDirs (pathsHostConfig paths)
-   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
-
-hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
-hostToolParentDirs config =
-  let allTools =
-        [ HostDocker,
-          HostKubectl,
-          HostHelm,
-          HostKind,
-          HostCurl,
-          HostTar,
-          HostBash,
-          HostSkopeo,
-          HostHostname,
-          HostChown,
-          HostNvidiaSmi,
-          HostNvkind,
-          HostCrictl
-        ]
-      pathFor tool = Text.unpack (HostTools.hostToolPath config tool)
-      absoluteEntries =
-        [ takeDirectory entry
-        | tool <- allTools,
-          let entry = pathFor tool,
-          not (null entry)
-        ]
-   in List.nub absoluteEntries
-
-captureCommand :: Maybe FilePath -> [(String, String)] -> FilePath -> [String] -> IO String
-captureCommand maybeWorkingDirectory envOverrides command args = do
-  result <- tryCommand maybeWorkingDirectory envOverrides command args
-  case result of
-    Right stdoutOutput -> pure stdoutOutput
-    Left err ->
-      ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> err))
-
-resolveClusterCommandWithPaths :: Paths -> FilePath -> FilePath
-resolveClusterCommandWithPaths paths command =
-  case hostToolForClusterCommand command of
-    Just tool -> resolveHostToolForCluster paths tool
-    Nothing -> command
-
-hostToolForClusterCommand :: FilePath -> Maybe HostTool
-hostToolForClusterCommand command =
-  case command of
-    "docker" -> Just HostDocker
-    "kubectl" -> Just HostKubectl
-    "helm" -> Just HostHelm
-    "kind" -> Just HostKind
-    "curl" -> Just HostCurl
-    "tar" -> Just HostTar
-    "chown" -> Just HostChown
-    "hostname" -> Just HostHostname
-    "nvidia-smi" -> Just HostNvidiaSmi
-    "nvkind" -> Just HostNvkind
-    "skopeo" -> Just HostSkopeo
-    "bash" -> Just HostBash
-    _ -> Nothing
 
 normalizeKubeconfigServer :: ControlPlaneContext -> String -> String
 normalizeKubeconfigServer _controlPlane kubeconfigContents = kubeconfigContents
@@ -6308,7 +7711,10 @@ ensureOuterContainerKindNetworkAccess paths _runtimeMode
   | Config.controlPlaneContext paths /= OuterContainer = pure ()
   | otherwise = do
       launcherContainer <- currentLauncherContainerName
-      connectResult <- tryHostToolCmd paths Nothing [] HostDocker ["network", "connect", "kind", launcherContainer]
+      connectResult <-
+        tryClusterCommand
+          paths
+          (Command.dockerConnectKindNetwork (Command.ContainerName launcherContainer))
       case connectResult of
         Right _ -> pure ()
         Left err
@@ -6332,7 +7738,8 @@ currentLauncherContainerName = do
   case fileHostname of
     Just nameValue -> pure nameValue
     Nothing -> do
-      hostnameOutput <- captureCommand Nothing [] "hostname" []
+      hostnameOutput <-
+        captureDiscoveredClusterCommand (const Command.hostHostname)
       let hostnameValue = trim hostnameOutput
       if null hostnameValue
         then ioError (userError "linux outer-container control plane could not determine its container id")
@@ -6398,23 +7805,34 @@ retryCommandOutput :: Int -> Int -> String -> IO (Either String String) -> IO (E
 retryCommandOutput attempts delayMicros commandLabel action
   | attempts <= 1 =
       fmap (either (\err -> Left (commandLabel <> "\n" <> err)) Right) action
-  | otherwise = do
-      -- Retain the last non-empty error across polls (the legacy @chooseError@
-      -- semantics), so the timeout message keeps the useful diagnostic even when
-      -- the final failing poll produced empty output.
-      lastErrorRef <- newIORef ""
-      let step = do
-            result <- action
-            case result of
-              Right stdoutOutput -> pure (Right stdoutOutput)
-              Left err -> do
-                retained <-
-                  atomicModifyIORef'
-                    lastErrorRef
-                    (\previous -> let kept = if null err then previous else err in (kept, kept))
-                pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
-      outcome <- Readiness.awaitReadiness (retryDeadline attempts delayMicros) step
-      pure (Readiness.foldReadiness Right onTimedOut onTimedOut outcome)
+  | otherwise =
+      retryCommandOutputWithDeadline
+        (retryDeadline attempts delayMicros)
+        commandLabel
+        action
+
+retryCommandOutputWithDeadline ::
+  Readiness.Deadline ->
+  String ->
+  IO (Either String String) ->
+  IO (Either String String)
+retryCommandOutputWithDeadline deadline commandLabel action = do
+  -- Retain the last non-empty error across polls (the legacy @chooseError@
+  -- semantics), so the timeout message keeps the useful diagnostic even when
+  -- the final failing poll produced empty output.
+  lastErrorRef <- newIORef ""
+  let step = do
+        result <- action
+        case result of
+          Right stdoutOutput -> pure (Right stdoutOutput)
+          Left err -> do
+            retained <-
+              atomicModifyIORef'
+                lastErrorRef
+                (\previous -> let kept = if null err then previous else err in (kept, kept))
+            pure (Left (Readiness.Progress 0 1 (Text.pack retained)))
+  outcome <- Readiness.awaitReadiness deadline step
+  pure (Readiness.foldReadiness Right onTimedOut onTimedOut outcome)
   where
     onTimedOut progress =
       Left (commandLabel <> "\n" <> Text.unpack (Readiness.progressDetail progress))

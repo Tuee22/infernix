@@ -129,17 +129,19 @@ model weights sit on the cache mount before least-recently-used weights
 are evicted — and does not govern resident MEMORY. Resident inference
 memory is bounded separately by a resource-admission contract: each
 `ModelDescriptor` carries `modelRamFootprintMib`, and each substrate
-resolves an `InferenceMemoryBudget` (Apple unified host RAM, Linux CPU
-pod RAM, or Linux GPU VRAM). The budget governs whether an inference is
-ADMITTED: an over-budget model returns typed `ModelMemoryLimitExceeded {
-requiredMib, availableMib, resource, source }` before launch, while the
-disk quota governs LRU EVICTION of staged weights. The two are
-orthogonal: a model can be cache-resident on disk yet refused admission
-on memory, or admitted on memory while its weights were just evicted
-from disk and must be re-pulled. The grant-gated capped-engine execution
-contract behind this RAM admission — an engine runs only under a typed
-OS-bounded `MemoryGrant`, so a host OOM is unrepresentable — is owned
-canonically by
+compiles Apple and Linux CPU placements against the declared host or pod
+capacity. An oversized row remains an explicit `UnavailableModel`; a
+fitting row receives a resource-indexed grant that live refinement must
+pair with its matching enforcer before launch can receive an
+`ExecutableModel`. A request for an unavailable row must return typed
+`ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source
+}` without launch, while the disk quota governs LRU EVICTION of staged
+weights. The two are orthogonal: a model can be cache-resident on disk
+yet unavailable for execution, or executable while its weights were
+just evicted from disk and must be re-pulled. Linux GPU plan compilation
+currently fails closed with `GpuDualResourceBudgetRequired` until Phase
+6 supplies dual RAM/VRAM enforcement. The executable-gated
+capped-engine contract is owned canonically by
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 For real per-family artifact inference outputs (source-separation

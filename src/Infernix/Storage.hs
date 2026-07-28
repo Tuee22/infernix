@@ -22,7 +22,7 @@ module Infernix.Storage
 where
 
 import Control.Applicative ((<|>))
-import Control.Exception (evaluate, throwIO)
+import Control.Exception (IOException, bracketOnError, evaluate, throwIO, try)
 import Data.Aeson (FromJSON (parseJSON), eitherDecode, encode, object, withObject, (.:), (.=))
 import Data.Aeson.Types (Parser)
 import Data.ByteString qualified as ByteString
@@ -37,7 +37,6 @@ import Data.Text qualified as Text
 import Data.Text.IO qualified as Text
 import Data.Time (UTCTime)
 import Data.Time.Format (defaultTimeLocale, formatTime, parseTimeM)
-import Data.Word (Word8)
 import Infernix.Config (Paths (..))
 import Infernix.Error (InfernixError (ProtobufDecodeFailure))
 import Infernix.Types
@@ -46,8 +45,9 @@ import Proto.Infernix.Manifest.RuntimeManifest qualified as ProtoManifest
 import Proto.Infernix.Manifest.RuntimeManifest_Fields qualified as ProtoManifestFields
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist)
+import System.Directory (createDirectoryIfMissing, doesFileExist, removeFile, renameFile)
 import System.FilePath (takeDirectory, (</>))
+import System.IO (hClose, openBinaryTempFile)
 import Text.Read (readMaybe)
 
 edgePortPath :: Paths -> FilePath
@@ -143,19 +143,38 @@ instance FromJSON VersionedClusterState where
 -- cluster state, retiring the previous @Show@/@Read@ serialization path. The
 -- envelope carries a format version so an unrecognized or malformed on-disk
 -- document fails closed on read instead of silently decoding to "no cluster".
+-- The fully encoded payload is written to a sibling temporary file and renamed
+-- into place, so interruption cannot truncate the only ownership/lifecycle
+-- record.
 writeClusterStateFile :: FilePath -> ClusterState -> IO ()
 writeClusterStateFile filePath state = do
-  createDirectoryIfMissing True (takeDirectory filePath)
-  LazyByteString.writeFile filePath (encode envelope)
+  let outputDirectory = takeDirectory filePath
+      payload = LazyByteString.toStrict (encode envelope)
+  _ <- evaluate (ByteString.length payload)
+  createDirectoryIfMissing True outputDirectory
+  bracketOnError
+    (openBinaryTempFile outputDirectory "cluster-state.json.tmp")
+    ( \(temporaryPath, handle) -> do
+        ignoreIo (hClose handle)
+        ignoreIo (removeFile temporaryPath)
+    )
+    ( \(temporaryPath, handle) -> do
+        ByteString.hPut handle payload
+        hClose handle
+        renameFile temporaryPath filePath
+    )
   where
     envelope =
       object
         [ "version" .= clusterStatePersistenceVersion,
           "clusterState" .= state
         ]
+    ignoreIo action = do
+      _ <- try @IOException action
+      pure ()
 
 -- | Sprint 2.14 — read the recorded cluster state fail-closed. @Right Nothing@
--- means the file is absent or blank; @Right (Just state)@ is a decoded state;
+-- means the file is absent; @Right (Just state)@ is a decoded state;
 -- @Left detail@ is a present-but-undecodable document (unknown version or
 -- malformed JSON), which callers surface as a loud error rather than treating
 -- as "no cluster" (which would skip retained-state replay during teardown).
@@ -171,14 +190,10 @@ readClusterStateFile filePath = do
       pure (decodeClusterStateContents encoded)
 
 decodeClusterStateContents :: ByteString.ByteString -> Either String (Maybe ClusterState)
-decodeClusterStateContents encoded
-  | ByteString.all isWhitespaceByte encoded = Right Nothing
-  | otherwise = case eitherDecode (LazyByteString.fromStrict encoded) of
-      Left err -> Left ("not a decodable cluster-state document: " <> err)
-      Right (VersionedClusterState state) -> Right (Just state)
-
-isWhitespaceByte :: Word8 -> Bool
-isWhitespaceByte byte = byte == 32 || byte == 9 || byte == 10 || byte == 13
+decodeClusterStateContents encoded =
+  case eitherDecode (LazyByteString.fromStrict encoded) of
+    Left err -> Left ("not a decodable cluster-state document: " <> err)
+    Right (VersionedClusterState state) -> Right (Just state)
 
 writeTextFile :: FilePath -> Text -> IO ()
 writeTextFile filePath contents = do

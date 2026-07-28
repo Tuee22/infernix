@@ -21,10 +21,11 @@
   PostgreSQL backend instead of a chart-managed standalone PostgreSQL deployment
 - Harbor's PostgreSQL claims follow the same `infernix-manual` plus explicit PV-binding doctrine
   used by every other PVC-backed Helm workload
-- Harbor Redis is registry cache state, not product-durable state. Lifecycle cleanup removes the
-  retained Harbor Redis claim root together with the rebuildable `harbor-registry` MinIO bucket and
-  multipart/tmp metadata so stale cached blob-existence keys cannot survive a fresh Harbor database
-  and registry-bucket reset.
+- Harbor Redis is registry cache state, not product-durable state. Only after Kind deletion, and
+  only while holding a freshly proved `WriterQuiesced` lease, lifecycle cleanup removes its claim
+  root together with the rebuildable `harbor-registry` MinIO bucket and multipart/tmp metadata from
+  the detached local retained copy. Stale cached blob-existence keys therefore cannot survive a
+  fresh Harbor database and registry-bucket reset.
 - the Harbor bootstrap and final Helm phases keep the chart-generated Harbor secret material and
   registry credentials stable so repeat `cluster up` runs do not invalidate Harbor login or image
   publication state

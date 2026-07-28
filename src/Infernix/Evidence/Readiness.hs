@@ -9,32 +9,50 @@
 -- shape into a reusable primitive.
 module Infernix.Evidence.Readiness
   ( Readiness,
-    Deadline (..),
+    Deadline
+      ( Deadline,
+        deadlinePollMicros,
+        deadlineStallSeconds,
+        deadlineCeilingSeconds
+      ),
     Progress (..),
     PollOutcome (..),
     foldReadiness,
     awaitReadiness,
     awaitReadinessObservable,
     budgetDeadline,
+    pollLimitedDeadline,
   )
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Monad (when)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import GHC.Clock (getMonotonicTimeNSec)
+import System.Timeout (timeout)
 
 -- | A bounded wait budget. Every field is required, so a wait with no
 -- ceiling and a poll with no interval are both unrepresentable.
-data Deadline = Deadline
-  { -- | delay between polls, in microseconds.
-    deadlinePollMicros :: !Int,
-    -- | give up as 'Expired' after this many seconds with no new progress.
-    deadlineStallSeconds :: !Int,
-    -- | absolute ceiling in seconds; reaching it while still advancing
-    -- resolves as 'NotReady' (progressing but out of time) rather than
-    -- 'Expired'.
-    deadlineCeilingSeconds :: !Int
-  }
+data Deadline
+  = Deadline
+      { -- | delay between polls, in microseconds.
+        deadlinePollMicros :: !Int,
+        -- | give up as 'Expired' after this many seconds with no new progress.
+        deadlineStallSeconds :: !Int,
+        -- | absolute ceiling in seconds; reaching it while still advancing
+        -- resolves as 'NotReady' (progressing but out of time) rather than
+        -- 'Expired'.
+        deadlineCeilingSeconds :: !Int
+      }
+  | PollBudgetDeadline
+      { deadlinePollMicros :: !Int,
+        deadlineStallSeconds :: !Int,
+        deadlineCeilingSeconds :: !Int,
+        deadlineMaximumPolls :: !Int,
+        deadlineStallClockMicros :: !Integer,
+        deadlineWallClockMicros :: !Integer
+      }
   deriving (Eq, Show)
 
 -- | Observed-versus-expected progress carried by a non-ready outcome.
@@ -106,54 +124,195 @@ awaitReadiness deadline step =
 -- every recent poll was unobservable, the last real 'Progress' (or a zero
 -- baseline) rides the 'Expired' / 'NotReady' outcome.
 awaitReadinessObservable :: Deadline -> IO (PollOutcome e) -> IO (Readiness e)
-awaitReadinessObservable deadline step = go 0 0 minBound baselineProgress
+awaitReadinessObservable deadline step = do
+  startedAt <- monotonicMicros
+  go
+    startedAt
+    startedAt
+    0
+    minBound
+    False
+    baselineProgress
   where
-    pollSeconds = max 1 (deadlinePollMicros deadline `div` 1000000)
     baselineProgress = Progress 0 0 (Text.pack "no readiness measurement observed yet")
-    go elapsed stall lastObserved lastProgress = do
-      outcome <- step
+    pollDelayMicros = max 0 (deadlinePollMicros deadline)
+    totalWallClockMicros =
+      case deadline of
+        Deadline {} ->
+          secondsToMicros (deadlineCeilingSeconds deadline)
+        PollBudgetDeadline {} ->
+          deadlineWallClockMicros deadline
+    stallWallClockMicros =
+      case deadline of
+        Deadline {} ->
+          secondsToMicros (deadlineStallSeconds deadline)
+        PollBudgetDeadline {} ->
+          deadlineStallClockMicros deadline
+    maximumPolls =
+      case deadline of
+        Deadline {} -> Nothing
+        PollBudgetDeadline {} -> Just (deadlineMaximumPolls deadline)
+
+    go startedAt lastProgressAt polls lastObserved lastPollAdvanced lastProgress = do
+      beforePoll <- monotonicMicros
+      let ceilingAt = startedAt + totalWallClockMicros
+          stallAt = lastProgressAt + stallWallClockMicros
+          cutoffAt = min ceilingAt stallAt
+      if polls > 0 && beforePoll >= cutoffAt
+        then pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+        else do
+          maybeOutcome <-
+            timeout
+              (boundedTimeoutMicros (max 1 (cutoffAt - beforePoll)))
+              step
+          observedAt <- monotonicMicros
+          case maybeOutcome of
+            Nothing ->
+              pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+            Just _outcome
+              | observedAt >= cutoffAt ->
+                  pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+            Just outcome ->
+              resolveOutcome
+                startedAt
+                lastProgressAt
+                (polls + 1)
+                lastObserved
+                lastProgress
+                observedAt
+                outcome
+
+    resolveOutcome startedAt lastProgressAt polls lastObserved lastProgress observedAt outcome =
       case outcome of
-        Measured (Right evidence) -> pure (Ready evidence)
+        Measured (Right evidence) ->
+          pure (Ready evidence)
         Measured (Left progress)
           | progressObserved progress > lastObserved ->
-              if elapsed >= deadlineCeilingSeconds deadline
-                then pure (NotReady progress)
-                else
-                  delayThen
-                    (go (elapsed + pollSeconds) 0 (progressObserved progress) progress)
-          | stall + pollSeconds >= deadlineStallSeconds deadline ->
-              pure (Expired progress)
-          | elapsed >= deadlineCeilingSeconds deadline ->
-              pure (NotReady progress)
+              finishOrDelay
+                startedAt
+                observedAt
+                polls
+                (progressObserved progress)
+                True
+                progress
+                observedAt
+                (NotReady progress)
           | otherwise ->
-              delayThen
-                (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved progress)
-        Unobservable _reason
-          | stall + pollSeconds >= deadlineStallSeconds deadline ->
-              pure (Expired lastProgress)
-          | elapsed >= deadlineCeilingSeconds deadline ->
-              pure (NotReady lastProgress)
-          | otherwise ->
-              delayThen
-                (go (elapsed + pollSeconds) (stall + pollSeconds) lastObserved lastProgress)
-    delayThen continue = threadDelay (deadlinePollMicros deadline) >> continue
+              finishOrDelay
+                startedAt
+                lastProgressAt
+                polls
+                lastObserved
+                False
+                progress
+                observedAt
+                (Expired progress)
+        Unobservable _reason ->
+          finishOrDelay
+            startedAt
+            lastProgressAt
+            polls
+            lastObserved
+            False
+            lastProgress
+            observedAt
+            (Expired lastProgress)
+
+    finishOrDelay startedAt lastProgressAt polls lastObserved lastPollAdvanced lastProgress observedAt pollLimitOutcome = do
+      let ceilingAt = startedAt + totalWallClockMicros
+          stallAt = lastProgressAt + stallWallClockMicros
+          pollLimitReached = maybe False (polls >=) maximumPolls
+      if pollLimitReached
+        then pure pollLimitOutcome
+        else
+          if observedAt >= stallAt || observedAt >= ceilingAt
+            then pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+            else do
+              let remainingBudget =
+                    min
+                      (stallAt - observedAt)
+                      (ceilingAt - observedAt)
+                  delayBudget =
+                    min
+                      (toInteger pollDelayMicros)
+                      remainingBudget
+              if remainingBudget <= 0
+                then pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+                else do
+                  when (delayBudget > 0) $
+                    threadDelay (boundedTimeoutMicros delayBudget)
+                  go
+                    startedAt
+                    lastProgressAt
+                    polls
+                    lastObserved
+                    lastPollAdvanced
+                    lastProgress
+
+    -- A fast first progress sample can share the start timestamp at microsecond
+    -- resolution. Preserve its classification when stall and ceiling tie.
+    deadlineOutcome ceilingAt stallAt lastPollAdvanced progress
+      | stallAt < ceilingAt = Expired progress
+      | stallAt == ceilingAt && not lastPollAdvanced = Expired progress
+      | otherwise = NotReady progress
+
+secondsToMicros :: Int -> Integer
+secondsToMicros seconds =
+  toInteger (max 0 seconds) * 1000000
+
+boundedTimeoutMicros :: Integer -> Int
+boundedTimeoutMicros micros =
+  fromInteger (min (toInteger (maxBound :: Int)) (max 1 micros))
+
+monotonicMicros :: IO Integer
+monotonicMicros =
+  (`div` 1000) . toInteger <$> getMonotonicTimeNSec
 
 -- | Encode a legacy @attempts x delayMicros@ retry budget as a 'Deadline'. The
--- poll interval is preserved exactly; the stall and ceiling are both
--- @(attempts - 1) x pollSeconds@ so a probe that never signals progress (always
--- @Left ('Progress' 0 1 _)@) runs exactly @max 1 attempts@ polls at the real
--- @delayMicros@ cadence — matching the legacy bare-recursion count for both
--- second and sub-second intervals (the kernel floors per-poll accounting to
--- >=1 s). The @max 0@ (rather than @max 1@) budget makes the @attempts <= 1@
--- edge exact: a single-attempt budget resolves to a 0 s ceiling, so the kernel
--- runs one poll and stops, instead of rounding up to two. This is the shared
--- bridge every hand-rolled @go n@ readiness loop migrates onto (Sprint 6.41).
+-- poll interval and exact /maximum/ poll count are preserved as a cap, not a
+-- quota, while the wait also gains a real wall-clock ceiling of
+-- @attempts * delayMicros@. The extra interval bounds the final probe itself; a
+-- hung probe therefore cannot escape the budget. A slow probe can consume the
+-- wall budget before that maximum is reached. Callers whose probes
+-- intentionally consume a separate timeout must use an explicit 'Deadline'
+-- that includes that probe budget.
 budgetDeadline :: Int -> Int -> Deadline
 budgetDeadline attempts delayMicros =
-  let pollSeconds = max 1 (delayMicros `div` 1000000)
-      budgetSeconds = max 0 ((attempts - 1) * pollSeconds)
-   in Deadline
+  let boundedAttempts = max 1 attempts
+      boundedDelayMicros = max 1 delayMicros
+      wallClockMicros =
+        toInteger boundedAttempts * toInteger boundedDelayMicros
+      budgetSeconds =
+        fromInteger
+          ( min
+              (toInteger (maxBound :: Int))
+              ((wallClockMicros + 999999) `div` 1000000)
+          )
+   in PollBudgetDeadline
         { deadlinePollMicros = delayMicros,
           deadlineStallSeconds = budgetSeconds,
-          deadlineCeilingSeconds = budgetSeconds
+          deadlineCeilingSeconds = budgetSeconds,
+          deadlineMaximumPolls = boundedAttempts,
+          deadlineStallClockMicros = wallClockMicros,
+          deadlineWallClockMicros = wallClockMicros
+        }
+
+-- | Build a deadline for a probe that intentionally consumes part of the wait
+-- budget itself. The explicit stall and ceiling remain true monotonic wall-clock
+-- bounds, while @maximumPolls@ independently preserves the caller's attempt
+-- cap. This is the required shape for long-poll HTTP or subprocess probes: the
+-- ceiling must include their declared per-probe timeout as well as inter-poll
+-- delays.
+pollLimitedDeadline :: Int -> Int -> Int -> Int -> Deadline
+pollLimitedDeadline pollMicros stallSeconds ceilingSeconds maximumPolls =
+  let boundedPollMicros = max 0 pollMicros
+      boundedStallSeconds = max 0 stallSeconds
+      boundedCeilingSeconds = max 0 ceilingSeconds
+   in PollBudgetDeadline
+        { deadlinePollMicros = boundedPollMicros,
+          deadlineStallSeconds = boundedStallSeconds,
+          deadlineCeilingSeconds = boundedCeilingSeconds,
+          deadlineMaximumPolls = max 1 maximumPolls,
+          deadlineStallClockMicros = secondsToMicros boundedStallSeconds,
+          deadlineWallClockMicros = secondsToMicros boundedCeilingSeconds
         }

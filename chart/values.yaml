@@ -76,8 +76,8 @@ operatorConsole:
 # `service.{enabled,image,replicaCount,command,args,dataPvc}` keys are
 # retired together with `chart/templates/deployment-service.yaml` and
 # `chart/templates/persistentvolumeclaim-service-data.yaml`; what
-# remains is the shared MinIO + Pulsar + engine-adapter env config the
-# Deployment templates read.
+# remains is the shared MinIO + Pulsar config the Deployment templates
+# read.
 service:
   minio:
     endpoint: http://infernix-minio.platform.svc.cluster.local:9000
@@ -90,9 +90,6 @@ service:
     serviceUrl: pulsar://infernix-infernix-pulsar-proxy.platform.svc.cluster.local:6650
     tenant: infernix
     namespace: demo
-  engineAdapters:
-    commandEnv: {}
-
 # Phase 7 Sprint 7.7: the supported three-role daemon split is now the
 # default cluster topology. `daemonSplit.enabled = true` activates the
 # coordinator + engine + demo Deployment templates below. Current
@@ -188,7 +185,9 @@ engine:
       memory: 2Gi
     limits:
       cpu: "2"
-      memory: 4Gi
+      # The execution budget remains 4 GiB. The larger pod envelope keeps the
+      # Haskell daemon and watchdog polling headroom outside the child grant.
+      memory: 5Gi
   perEngine:
     enabled: false
     replicaCount: 0

@@ -1,10 +1,22 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Blocked — Sprint 6.44 (verified NVIDIA enforcement and zero raw-spawn exemptions) is blocked by Phase 4 Sprint 4.32; the Cluster-Ownership & Mutation-Position reopen (Sprint 6.43 — evidence-gated
-harness seizure, chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig`
-swap) is closed under [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus
-linux-cpu behavioral sign-off (doctrine + governance landed in Phase 0 Sprint 0.16; enforcing code
-code-side closed 2026-07-23 on the machine-independent gate set). The memory-safety-by-construction
+**Status**: Blocked — Sprint 6.43 is reopened for the owner-atomic harness teardown correction found
+while executing Phase 2 in numerical order, and Sprint 6.44 (verified NVIDIA enforcement and zero
+raw-spawn exemptions) is blocked by Phase 4 Sprint 4.32. Wave X remains valid for the narrower
+ownership/state representation it exercised, but it did not prove that the ownership decision and
+destructive teardown share one lifecycle lease. The owner-atomic implementation is landed with
+Phase 2 Sprint 2.15. Phase 2's fp16 Bark correction is also implemented with focused checks GREEN,
+and its renewed final review plus complete Stage 1 passed against `eae424…` / `a0d1…` as
+historical GREEN-as-run evidence only. The no-repo-owned-native-source correction supersedes every
+pre-correction Phase 2 source/binary digest, review, Stage 1, and cohort assertion. There is no
+reusable pre-correction evidence. Phase 0's current correction review and complete Stage 1 are
+green; Apple and `linux-cpu` evidence remain open. The lifecycle
+replacement and accepted nested supervisor/pin custody-handshake redesign are present, and the
+obsolete C/Cabal boundary is removed. Phase 6's own ordered review, machine-independent, and Wave Y
+behavioral gates remain.
+Phase 6 behavioral sign-off
+here starts only after Phase 2 and Phase 4 close. The
+memory-safety-by-construction
 reopen (2026-07-21) — Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) on the
 Phase 4 Sprint 4.30 capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md)
 (2026-07-24) with apple-silicon plus linux-cpu behavioral sign-off (code-side closed 2026-07-21 on the
@@ -15,7 +27,8 @@ capacity rejections), and the `linux-cpu` clean `test all` passed integration an
 see [Wave W](cohort-validation-waves.md) (frozen workload image
 `sha256-bcf88c23fda211a4b5f3701c1c1c66ab223462f40d709be795e8f7b2d44ccee0`). Two Playwright cohort fixes
 landed here (the budget-schema migration in `expectedModelMemoryLimitExceeded` and the browser matrix's
-runtime-ceiling-breach tolerance). The earlier lifecycle-rebinding warm-cache flake that once blocked
+then-temporary runtime-ceiling-breach tolerance); Phase 2 later removed that tolerance after
+recalibrating Bark to 8192 MiB. The earlier lifecycle-rebinding warm-cache flake that once blocked
 the clean run was diagnosed as a representable invalid state (a fault-vs-absence collapse in the
 readiness observation) and **fixed by construction** in the Observable-Readiness reopen (Phase 1 Sprint
 1.18 + Phase 8 Sprint 8.8, code-side closed 2026-07-22). Prior Done — the
@@ -50,13 +63,16 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > position, a test-mutated cluster (a drained node, an over-scaled deployment) read as a clean
 > `steady-state`, and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator
 > cluster identity let even a clean run destroy an operator's cluster. This phase reopens under
-> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-done) — the harness
+> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-blocked) — the harness
 > half — for the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the chaos-mutation
 > `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile;
 > [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half. The doctrine
-> + governance landed (Phase 0 Sprint 0.16, `Done`), and the enforcing code is closed under
-> [Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus linux-cpu behavioral
-> sign-off. Canonical
+> + governance landed (Phase 0 Sprint 0.16, `Done`). Wave X historically closed only the 2026-07-23
+> typed owner/mutation-position/config scope, but the 2026-07-25 execution audit found that
+> `runClusterOwnedValidation` released the
+> lifecycle lease between owner authorization and its eventual teardown. Sprint 6.43 is therefore
+> reopened until owner-specific teardown is enforced under the lifecycle lock and the Phase 6
+> behavioral cohort is rerun. Canonical
 > doctrine: [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
 > **Memory-safety-by-construction reopen (2026-07-21).** The memory-safety-by-construction doctrine
@@ -140,19 +156,24 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > Playwright 9/9 over the expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8
 > eager model-cache staging.
 
-> **Resource-admission validation reopen (2026-07-09).** Sprint 6.38 validates the doctrine added by
+> **Historical resource-admission validation increment (2026-07-09).** Sprint 6.38 validated the doctrine added by
 > Phase 4 Sprint 4.27 and Phase 5 Sprint 5.11. The code-side suite now proves that one over-budget
 > model does not fail daemon startup, Apple zero/negative computed budgets remain enforced without
 > hardcoded floors, Linux CPU uses the cluster engine pod memory limit, Linux GPU uses GPU VRAM, and
 > classifiers identify capacity failures by `InferenceError.ModelMemoryLimitExceeded` plus explicit
 > MiB fields. Wave T's `linux-cpu` and selected `linux-gpu` live integration/e2e evidence now proves
-> smaller models keep running in the same daemon session.
+> smaller models kept running in the same daemon session. That evidence predates and does not close
+> the current Sprint 6.44 dual RAM/VRAM enforcement construction.
 
-Phase 6 is `Done`; Sprint 6.38's selected `linux-gpu` Wave T cohort residual is closed. Wave Q Sprint 6.36
-(real-output and matrix validation hardening, opened 2026-07-06) and Sprint 6.37 (apple-silicon
-memory-bounded validation lane) remain closed for their original scope; the prior Wave O MT3 reopen
-(Sprint 6.35) is closed, proven by Wave P (2026-07-04). It
-otherwise closes around the validation entrypoints, routed coverage, governed-root-document
+Phase 6 is `Blocked`: Sprint 6.43's 2026-07-25 owner-atomic reservation/teardown correction remains
+under cross-phase implementation and source review. Its behavioral validation is ordered after
+Phase 2 closes under Wave Y and Phase 4 closes. Wave X remains historical closure only for the
+2026-07-23 typed
+owner/mutation/config scope. Sprint 6.38's selected `linux-gpu` Wave T cohort residual is closed.
+Wave Q Sprint 6.36 (real-output and matrix validation hardening, opened 2026-07-06) and Sprint 6.37
+(apple-silicon memory-bounded validation lane) remain closed for their original scope; the prior
+Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave P (2026-07-04). The phase otherwise closes
+around the validation entrypoints, routed coverage, governed-root-document
 metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
 lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
 and real Dhall substrate codec implemented in the current worktree. The validation entrypoints,
@@ -278,8 +299,8 @@ commands.
 ## Current Validation Baseline
 
 - `test unit` proves matrix typing, generated catalog rendering, and contract-generation logic
-- supported `test lint` and `test unit` commands still require a staged substrate file for
-  command-level execution-context validation, while their assertions remain static or unit scoped
+- supported `test lint` and `test unit` commands still require the initialized repo-root runtime
+  config for command-level execution-context validation, while their assertions remain static or unit scoped
   and do not claim real-cluster matrix coverage
 - `test integration` validates the active substrate's published catalog contract, routed surfaces,
   routed inference execution for every generated active-substrate catalog entry, and the
@@ -635,10 +656,10 @@ reconciliation is not an inference full-suite gate spanning accelerators).
 **Apple clean-host lane:**
 
 - validation closes when, on a clean Apple Silicon host with only Homebrew plus ghcup present,
-  `./bootstrap/apple-silicon.sh up` builds the host binaries, materializes or verifies the active
-  substrate through the binary, reconciles the remaining non-Docker Apple host prerequisites
-  through the supported package-manager path, and stops at a prerequisite boundary if the current
-  Docker daemon is unavailable or non-native
+  `./bootstrap/apple-silicon.sh up` builds the host binaries, explicitly runs
+  `./.build/infernix init --if-missing`, validates repo-root runtime config, reconciles the remaining
+  non-Docker Apple host prerequisites through the supported package-manager path, and stops at a
+  prerequisite boundary if the current Docker daemon is unavailable or non-native
 - validation closes when Apple host validation proves the supported flow can bootstrap Poetry when
   absent and then run the adapter setup path without manual Poetry installation
 
@@ -646,14 +667,14 @@ reconciliation is not an inference full-suite gate spanning accelerators).
 
 - validation closes when, on a clean Linux CPU host with Docker only,
   `./bootstrap/linux-cpu.sh test` enters the Compose-launched `infernix` binary, lets the binary
-  materialize or verify the active substrate, and passes the full supported validation lane
+  validate its repo-root runtime config, and passes the full supported validation lane
 
 **Linux GPU clean-host lane (its own CUDA cohort host):**
 
 - validation closes when, on a clean Linux GPU host with Docker plus the supported NVIDIA host
   prerequisites, the Linux GPU clean-host bootstrap enters the Compose-launched `infernix` binary
-  through the `linux-gpu` launcher image, lets the binary materialize or verify the active
-  substrate, and passes the full supported validation lane on that CUDA cohort host
+  through the `linux-gpu` launcher image, lets the binary validate its repo-root runtime config, and
+  passes the full supported validation lane on that CUDA cohort host
 
 ### Remaining Work
 
@@ -1727,7 +1748,7 @@ None. The four toolchain cleanup rows live in `legacy-tracking-for-deletion.md` 
 
 **Status**: Done
 **Code-side closure**: Complete on the recorded Linux outer-container lane - `src/Infernix/Models.hs` exports `matrixRowReadmeKeys`, `src/Infernix/Lint/Docs.hs` now parses the README model matrix and fails `infernix lint docs` when a cell drifts from the generated runnable catalog, explicit residual list, or `Not recommended` state, and `test/unit/Spec.hs` proves the README lint keys are unique and cover every matrix row id. Proven by `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- lint docs` and `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm ... infernix cabal run exe:infernix -- test unit` with live source/docs mounts.
-**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — the selected `linux-gpu` plus `linux-cpu` per-family full-suite reruns passed on 2026-06-20. The generated Apple Metal bridge smoke, installed `coreml-native` runtime-load smoke, recorded Apple full integration rerun, focused Apple e2e reruns, and the full Apple aggregate `./.build/infernix test all` have also passed on the Apple host for the host-routing and headless-materialization surfaces; Sprint 1.15 / Wave L records green Apple real-payload integration and focused routed Playwright evidence, plus the paired `linux-cpu` full gate closed on 2026-06-29. Linux native payload strict smoke passes in the CUDA image and the full routed service-path evidence is recorded in Wave I.
+**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) for the selected `linux-gpu` plus `linux-cpu` per-family scope. Sprint 1.15 / Wave L retains historical Apple real-payload integration and focused routed Playwright evidence for its then-active catalog, plus the paired `linux-cpu` full gate. The former generated Apple bridge and Objective-C Core ML smoke evidence is superseded by active Sprint 1.20 and cannot supply corrected-source Apple closure. Linux native payload strict smoke passes in the CUDA image and the routed service-path evidence is recorded in Wave I.
 **Implementation**: `src/Infernix/Models.hs`, `src/Infernix/Lint/Docs.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `README.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`
 **Docs to update**: `README.md`, `documents/development/testing_strategy.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`, `documents/architecture/model_catalog.md`, `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1754,9 +1775,9 @@ instead of the legacy Tart helper.
 - `infernix lint docs` fails on README/generated-catalog engine-cell drift
 - `infernix test unit` proves the exported README matrix lint keys are unique and cover every
   Haskell-owned matrix row id
-- Apple cohort run records the host Metal bridge probe and one Core ML/native artifact smoke under
-  the headless materialization path; the current Apple host pass records both the Metal bridge
-  probe and installed `coreml-native` runtime-load smoke
+- the historical Apple bridge/source-smoke validation is superseded; active Sprint 1.20 instead
+  records installed upstream MLX GPU-operation and coremltools compute-device observation plus
+  native-free materialized-root proof before routed model inference
 - CUDA Linux cohort reruns the native engine materialization lane and per-family real-output suite
 - legacy Tart references remain only in the deletion ledger or explicit historical notes; the
   generated CLI reference describes the retained Tart-free manifest materialization command
@@ -2093,6 +2114,9 @@ Code-side (the classification) is complete.
 
 **Status**: Done — code-side complete and Wave T full live integration/e2e validation is closed on
 `linux-cpu` plus the selected `linux-gpu` accelerator.
+**Historical-scope note**: this sprint validates the pre-audit resource-admission API only. The
+Phase 1 compiler/refiner supersedes that path, and Phase 6 Sprint 6.44 owns the current
+independently indexed Linux GPU RAM/VRAM enforcer and its new cohort evidence.
 **Code-side closure**: Complete on 2026-07-09 in the Linux outer-container lane. Unit coverage now
 exercises pure admission decisions for enforced, enforced-zero, and explicit unenforced budgets;
 config validation accepts mixed-size catalogs; protobuf/storage/result-bridge roundtrips preserve
@@ -2616,34 +2640,41 @@ linux-cpu behavioral cohort sign-off closed under [Wave W](cohort-validation-wav
 
 ---
 
-## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Done]
+## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Blocked]
 
-**Status**: Done — the doctrine + governance landed first (Phase 0 Sprint 0.16, `Done`); this sprint's
-enforcing code — the evidence-gated harness cluster seizure, the chaos-mutation `ClusterMutating`
-transitions, and the crash-safe `withTestHarnessConfig` backup reconcile — is code-side closed
-2026-07-23 on the machine-independent gate set, and the single-accelerator (apple-silicon) plus
-`linux-cpu` behavioral cohort sign-off closed under [Wave X](cohort-validation-waves.md) on 2026-07-24
-with no remaining work. It is the harness half of the Cluster-Ownership & Mutation-Position reopen;
+**Status**: Blocked by active Phase 1, then Phases 2 and 4 in numerical order. The doctrine + governance
+landed first (Phase 0 Sprint 0.16, `Done`), and Wave X remains valid for the typed
+owner/mutation-position and crash-safe config scope. The 2026-07-25
+execution audit found a remaining TOCTOU: harness seizure authorized teardown while holding the
+lifecycle lock, then released that lock before the `finally` cleanup invoked the generic
+`clusterDown`. An operator could acquire the shared cluster slot in that interval and then be torn
+down by the harness. The correction makes teardown owner-specific and rechecks ownership while
+holding the same cross-process lifecycle lock; Phase 6 behavioral validation remains open. It is the
+harness half of the Cluster-Ownership & Mutation-Position reopen;
 [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
 `ClusterOwner` / `ClusterMutating` types this sprint consumes.
-**Code-side closure**: complete (2026-07-23). Landed in `src/Infernix/CLI.hs`: `runClusterOwnedValidation`
-replaces the unconditional pre-`clusterDown` with `seizeHarnessClusterSlot`, which fails closed loud on a
-present `OperatorOwned` cluster (the do-block throws before the `finally` teardown is installed, so the
-operator cluster is never destroyed) and tears down only a `HarnessOwned`/absent one; the harness brings
-up its cluster as `HarnessOwned` (`runRuntimeModeE2E`); and `withTestHarnessConfig` calls
-`reconcileLeftoverHarnessBackup` at entry to restore an operator config stranded by a prior killed run.
-Landed in `test/integration/Spec.hs`: the node-drain/cordon and deployment-over-scale chaos mutations run
-inside `withPersistedClusterMutation`, which persists `ClusterMutating` before the `kubectl` mutation and
-restores `ClusterReady` after (on every exit path). Gate set (GREEN 2026-07-23): `cabal build all`
-(`-Wall -Werror`), `cabal test infernix-unit` (seizure fail-closed matrix; `.harness-backup` restore),
-`cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`, the
-web unit suite, and `poetry run check-code`.
-**Cohort gate**: apple-silicon + linux-cpu, [Wave X](cohort-validation-waves.md) — the behavioral proof
-that `infernix test all` fails closed on a running operator cluster, that a killed run leaves a
-mutation-incomplete cluster the next `cluster up` reconciles, and that a leftover `.harness-backup` is
-restored on the next `test`. Closed 2026-07-24.
-**Implementation**: `src/Infernix/CLI.hs`, `test/integration/Spec.hs`
-**Blocked by**: Sprint 2.15 (the `ClusterOwner` + `ClusterMutating` types), Sprint 6.42
+**Implementation status**: Landed; final cross-phase review and ordered gates remain. The
+2026-07-23 scope landed
+`seizeHarnessClusterSlot`, `HarnessOwned` cluster bring-up, reservation-aware interrupted-config
+reconcile, and `withPersistedClusterMutation`; its machine-independent gates passed on 2026-07-23.
+The 2026-07-25 correction adds owner-specific `clusterDown` / `clusterDownHarness` paths, performs
+owner observation, authorization, and destructive teardown under the same lifecycle lock, publishes
+the harness reservation before config takeover, and makes `runClusterOwnedValidation` cleanup use the
+harness-only release path. The chaos-mutation bracket now treats its caller state as an optimistic
+token: under that same lock it requires an exact freshly reread `ClusterReady` state, live runtime
+inventory, owner, and reservation before publishing `ClusterMutating`, passes only the fresh state
+to the body, and revalidates the dirty marker and live evidence before restoring `ClusterReady`.
+The owner-atomic implementation is complete. Its current machine-independent and behavioral
+validation remain ordered after Phase 2 and Phase 4.
+**Historical cohort evidence**: [Wave X](cohort-validation-waves.md) (2026-07-24,
+apple-silicon plus linux-cpu) closes only the 2026-07-23 proof that `infernix test all` fails closed
+on a running operator cluster, a killed run leaves a mutation-incomplete cluster for the next
+`cluster up`, and a leftover `.harness-backup` is restored on the next `test`.
+**Current cohort gate**: pending. Phase 6 owner-atomic validation is ordered after Phase 2 closes
+under Wave Y and Phase 4 closes.
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`,
+`test/unit/Spec.hs`
+**Blocked by**: Phase 2 Wave Y closure, Phase 4 Sprint 4.32
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`,
 `documents/engineering/testing.md`, `documents/architecture/configuration_doctrine.md`,
@@ -2666,8 +2697,9 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   cluster as `HarnessOwned`
 - chaos-mutation `ClusterMutating` transitions: each mutation in `test/integration/Spec.hs` (node drain,
   deployment over-scale, cordon) persists `ClusterMutating <phase>` before the `kubectl` mutation and
-  restores `ClusterReady` after, so a kill leaves `ClusterMutating` for the Sprint 2.15 status/reconcile
-  to catch
+  restores `ClusterReady` only from a fresh exact live ready-state match after revalidating the
+  mutation postcondition, so a kill or stale caller leaves `ClusterMutating` for the Sprint 2.15
+  status/reconcile to catch
 - crash-safe `withTestHarnessConfig`: at entry, a leftover `./infernix.dhall.harness-backup` from a prior
   killed run is reconciled (the operator config restored) before the harness takes ownership, so the
   `finally` restore is no longer the only recovery path
@@ -2679,22 +2711,17 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   `withTestHarnessConfig` restores the operator config from a planted leftover `.harness-backup`), and
   `cabal test infernix-haskell-style`, on both the apple-silicon and linux-cpu lanes
 - `infernix lint docs` stays clean
-- `infernix test all` on apple-silicon plus linux-cpu proves the behavioral contract — closed under
-  [Wave X](cohort-validation-waves.md)
+- [Wave X](cohort-validation-waves.md) remains historical apple-silicon plus linux-cpu evidence for
+  the 2026-07-23 behavioral contract; after Phases 2 and 4 close, rerun `infernix test all` on
+  apple-silicon plus linux-cpu for the 2026-07-25 owner-atomic correction
 
 ### Remaining Work
 
-None. The implementation is complete (code-side closed 2026-07-23): the evidence-gated seizure
-(`seizeHarnessClusterSlot` failing closed on `OperatorOwned`), the chaos-mutation `ClusterMutating`
-transitions (`withPersistedClusterMutation`), and the crash-safe config reconcile
-(`reconcileLeftoverHarnessBackup`) are landed on top of the Sprint 2.15 types, with unit coverage. The
-apple-silicon plus linux-cpu behavioral cohort sign-off closed under
-[Wave X](cohort-validation-waves.md) on 2026-07-24 (a full-suite `infernix test all` fails closed on a
-running operator cluster, a killed run reconciles on the next `cluster up`, and a leftover
-`.harness-backup` is restored), paired with
-[Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md); no remaining work exists. The
-superseded unconditional `clusterDown` seizure and the `finally`-only config swap are recorded in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- complete final cross-phase review for the landed 2026-07-25 owner-atomic
+  reservation/teardown correction
+- after Phase 2 closes under Wave Y and Phase 4 closes, rerun the machine-independent gates and the
+  Phase 6 apple-silicon plus linux-cpu behavioral cohort; record the new evidence without rewriting
+  Wave X's narrower historical claim
 
 ---
 
@@ -2721,14 +2748,14 @@ new engine-spawn call sites off the raw process primitives and on the Phase 4 Sp
 capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with
 apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-21 on the
 machine-independent gate set, negative-tested).
-**Sprint 6.43** (Cluster-Ownership Harness Seizure and Crash-Safe Config) — the harness half of the
-Cluster-Ownership & Mutation-Position reopen (2026-07-23): the evidence-gated cluster seizure (fail
-closed on an `OperatorOwned` cluster), the chaos-mutation `ClusterMutating` transitions, and the
-crash-safe `withTestHarnessConfig` backup reconcile — is closed under
-[Wave X](cohort-validation-waves.md) (2026-07-24) with apple-silicon plus `linux-cpu` behavioral
-sign-off: the doctrine + governance landed (Phase 0 Sprint 0.16, `Done`) and the enforcing code is
-implemented on the [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) types
-(code-side closed 2026-07-23 on the machine-independent gate set).
+**Sprint 6.43** (Cluster-Ownership Harness Seizure and Crash-Safe Config) — Wave X (2026-07-24)
+historically closes only the 2026-07-23 evidence-gated cluster seizure, chaos-mutation
+`ClusterMutating` transitions, and crash-safe `withTestHarnessConfig` backup reconcile on
+apple-silicon plus `linux-cpu`. The 2026-07-25 owner-atomic reservation/teardown implementation is
+landed with [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md). Phase 0's
+correction review and Stage 1 are green; Phase 6's own final review and
+machine-independent/behavioral gates remain, ordered after Phase 2 closes under Wave Y and Phase 4
+closes.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Blocked]
 

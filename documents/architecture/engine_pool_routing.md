@@ -23,7 +23,7 @@
 
 ## Current Status
 
-The startup-time pool-routing code-side implementation has landed. The staged substrate Dhall record
+The startup-time pool-routing code-side implementation has landed. The runtime-config Dhall record
 now carries `enginePools` and `engineMembers`; generated configs derive normal pool topics and
 pinned member topics from `(runtimeMode, poolId/memberId, modelId)`; coordinator handoff resolves a
 model to a validated pool topic; and engine daemons select a stable member id before subscribing.
@@ -41,25 +41,31 @@ Apple host-member coexistence on one real `Shared` pool subscription, and produc
 single-host logical `Shared` backlog harness by holding one Pulsar WebSocket consumer unacked and
 asserting a second request reaches a free consumer on the same service-shaped subscription.
 Current Linux CPU integration proves Kubernetes-observed pool placement and shared-subscription
-backpressure on unique derived pool/model topics; Linux GPU/CUDA cohort validation remains in
-[Wave J](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Physical Apple multi-host membership
+backpressure on unique derived pool/model topics; Wave J closed its Linux GPU/CUDA routing scope on
+2026-06-20. The new NVIDIA memory-enforcement scope belongs to Phase 6 Sprint 6.44. Physical Apple multi-host membership
 is hardware-deferred proof while no second Apple host is available.
 
 **Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog
 (each consumer's `receiverQueueSize` is fixed at 1 today) — plus the model cache (LRU in
 `python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*; `maxInflightPerMember`
 is a validated per-member invariant (see the Typed Configuration note below). Model memory is
-bounded separately by the reopened typed admission doctrine in Phase 4 Sprint 4.27 / Phase 6 Sprint
-6.38. The shared admission policy compares each model's `modelRamFootprintMib` against the active
-enforced `InferenceMemoryBudget`: Apple uses unified host RAM after the Colima pledge and reserve,
-Linux CPU uses the engine pod memory limit, and Linux GPU uses GPU VRAM. Admission failures are
-per-request `status=failed` results carrying a typed `ModelMemoryLimitExceeded` `InferenceError`
-with `requiredMib` and `availableMib`; a too-large catalog entry must not invalidate the whole
-daemon or prevent smaller models from running. The reopened memory-safety-by-construction target
-additionally bounds the admitted request's actual footprint by making admission mint a `MemoryGrant`
-the capped-engine kernel requires and OS-bounds to its ceiling, so a runtime breach is the same clean
-typed failure rather than a host OOM; canonical home
+bounded separately by the typed execution-plan compiler/refiner. Apple uses a checked unified-host
+partition and Linux CPU uses configured pod capacity plus live RSS/cgroup refinement; Linux GPU
+fails closed until independently indexed pod-RAM and VRAM enforcement exists. Capacity failures
+remain explicit unavailable models carrying typed `ModelMemoryLimitExceeded`, so one oversized
+entry does not invalidate smaller placements. A fitting model launches only through
+`ExecutableModel`, whose matching indexed grant/enforcer pair drives the capped-engine watchdog.
+Phase 4 owns Apple/Linux CPU behavioral and serialization proof, and Phase 6 owns NVIDIA
+enforcement; canonical home
 [bounded_inference_memory.md](bounded_inference_memory.md).
+
+**Closed messaging authority.** Compilation rejects a `TopicFamilyCollision` when any topic is
+reused across coordinator requests, results, model-bootstrap requests, model-bootstrap ready
+events, or engine routes. Coordinator and engine consumers use plan-derived topic capabilities;
+there is no supported raw publisher. Unavailable, empty-model, unknown-model, wrong-route, and
+malformed requests become terminal failed results before their source is removed or acknowledged.
+Model-bootstrap publication additionally requires an opaque plan-derived capability, and the
+consumer revalidates model identity, compiled URL, and canonical timestamp before side effects.
 
 ## Routing Model
 
@@ -86,9 +92,9 @@ Pinned routes are for exact-host or exact-placement requirements, not for ordina
 
 ## Typed Configuration
 
-The staged substrate file describes engine pools and durable engine members with substrate-neutral
+The runtime-config file describes engine pools and durable engine members with substrate-neutral
 fields. **The example below is illustrative of the field *shape* across substrates, not a valid
-single-substrate `infernix.dhall`:** a real staged file carries exactly one substrate's pools, gives
+single-substrate `infernix.dhall`:** a real initialized file carries exactly one substrate's pools, gives
 each pool a distinct model id, and declares every member it references in `engineMembers`
 (`validateDemoConfig` rejects a mixed-substrate list, a reused model id, or an undeclared member such
 as `mac-mini-2` below).

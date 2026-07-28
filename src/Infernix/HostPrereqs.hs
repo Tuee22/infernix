@@ -31,6 +31,9 @@ data AppleHostRequirement
   | AppleHelm
   | AppleNode
   | ApplePython
+  | ApplePython311
+  | AppleLlamaCli
+  | AppleWhisperCli
   | ApplePoetry
   deriving (Eq, Show)
 
@@ -50,7 +53,7 @@ ensureAppleHostPrerequisites maybeRuntimeMode command = do
     unless (null requirements) $ do
       let brewExecutable = "/opt/homebrew/bin/brew"
       requireBrewExecutable brewExecutable
-      mapM_ (ensureHomebrewManagedTool brewExecutable) (filter (/= ApplePoetry) requirements)
+      mapM_ (ensureHomebrewManagedTool brewExecutable) requirements
       when (requiresDockerDaemon requirements) ensureSelectedDockerDaemonReady
       when (ApplePoetry `elem` requirements) $ do
         requireHostManifest paths
@@ -87,6 +90,7 @@ commandNeedsPythonPrereqs = \case
   TestIntegrationCommand -> True
   TestE2ECommand -> True
   TestAllCommand -> True
+  InternalMaterializeMetalEnginesCommand -> True
   _ -> False
 
 clusterToolRequirements :: Command -> [AppleHostRequirement]
@@ -129,6 +133,13 @@ pythonToolRequirements runtimeMode command
         TestIntegrationCommand -> [ApplePython, ApplePoetry]
         TestE2ECommand -> [ApplePython, ApplePoetry]
         TestAllCommand -> [ApplePython, ApplePoetry]
+        InternalMaterializeMetalEnginesCommand ->
+          [ AppleLlamaCli,
+            AppleWhisperCli,
+            ApplePython,
+            ApplePython311,
+            ApplePoetry
+          ]
         _ -> []
 
 requiresDockerDaemon :: [AppleHostRequirement] -> Bool
@@ -274,7 +285,10 @@ homebrewFormula = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python@3.12"
-  ApplePoetry -> error "Poetry is not installed through Homebrew on the supported Apple path"
+  ApplePython311 -> "python@3.11"
+  AppleLlamaCli -> "llama.cpp"
+  AppleWhisperCli -> "whisper-cpp"
+  ApplePoetry -> "poetry"
 
 providedCommand :: AppleHostRequirement -> String
 providedCommand = \case
@@ -284,6 +298,9 @@ providedCommand = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python3.12"
+  ApplePython311 -> "python3.11"
+  AppleLlamaCli -> "llama-cli"
+  AppleWhisperCli -> "whisper-cli"
   ApplePoetry -> "poetry"
 
 requirementId :: AppleHostRequirement -> String
@@ -294,6 +311,9 @@ requirementId = \case
   AppleHelm -> "helm"
   AppleNode -> "node"
   ApplePython -> "python"
+  ApplePython311 -> "python3.11"
+  AppleLlamaCli -> "llama-cli"
+  AppleWhisperCli -> "whisper-cli"
   ApplePoetry -> "poetry"
 
 trimWhitespace :: String -> String

@@ -15,10 +15,15 @@ import Infernix.ClusterConfig
     defaultClusterConfigMountPath,
   )
 import Infernix.Config
-import Infernix.DemoConfig (decodeDemoConfigFile)
 import Infernix.Engines.AppleSilicon (ensureAppleSiliconRuntimeReady)
+import Infernix.ExecutionPlan
+  ( CompiledRuntimePlan,
+    compiledPlanActiveDaemonRole,
+    compiledPlanRuntimeMode,
+  )
 import Infernix.Runtime.Daemon (runProductionDaemon)
-import Infernix.Types (DaemonRole (Coordinator, Engine, Webapp), DemoConfig (..), RuntimeMode (AppleSilicon), runtimeModeId)
+import Infernix.Substrate (decodeCompiledRuntimePlanFile)
+import Infernix.Types (DaemonRole (Coordinator, Engine, Webapp), RuntimeMode (AppleSilicon), runtimeModeId)
 import Infernix.Webapp (runWebappRole)
 import System.Directory (createDirectoryIfMissing, doesFileExist)
 import System.FilePath (takeDirectory, (</>))
@@ -53,9 +58,15 @@ runService maybeRuntimeMode maybeDaemonRole maybeEngineName maybeDemoConfigPath 
   ensureRepoLayout paths
   maybeClusterConfig <- tryLoadClusterConfig
   let selectedDemoConfigPath = serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath
-  demoConfig <- decodeDemoConfigFile selectedDemoConfigPath
-  runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode demoConfig
-  let daemonRole = resolveServiceDaemonRole maybeDaemonRole demoConfig
+  compiledPlanResult <- decodeCompiledRuntimePlanFile selectedDemoConfigPath
+  compiledPlan <-
+    case compiledPlanResult of
+      Left errors ->
+        ioError
+          (userError ("generated substrate execution plan did not compile: " <> show errors))
+      Right plan -> pure plan
+  runtimeMode <- resolveServiceRuntimeMode maybeRuntimeMode compiledPlan
+  let daemonRole = resolveServiceDaemonRole maybeDaemonRole compiledPlan
   ensureServiceRuntimeSupported paths runtimeMode daemonRole
   whenAppleRuntimeReady paths runtimeMode daemonRole
   -- Phase 7 Sprint 7.23: Apple host engine singleton ownership is broker
@@ -91,31 +102,31 @@ serviceDemoConfigPath paths maybeClusterConfig maybeDemoConfigPath =
            in if null mountedPath then generatedDemoConfigPath paths else mountedPath
         Nothing -> generatedDemoConfigPath paths
 
-resolveServiceRuntimeMode :: Maybe RuntimeMode -> DemoConfig -> IO RuntimeMode
-resolveServiceRuntimeMode maybeRuntimeMode demoConfig =
+resolveServiceRuntimeMode :: Maybe RuntimeMode -> CompiledRuntimePlan -> IO RuntimeMode
+resolveServiceRuntimeMode maybeRuntimeMode compiledPlan =
   case maybeRuntimeMode of
     Just runtimeMode
-      | runtimeMode == configRuntimeMode demoConfig -> pure runtimeMode
+      | runtimeMode == compiledPlanRuntimeMode compiledPlan -> pure runtimeMode
       | otherwise ->
           ioError
             ( userError
                 ( "service runtime override "
                     <> show (runtimeModeId runtimeMode)
                     <> " does not match demo config runtime "
-                    <> show (runtimeModeId (configRuntimeMode demoConfig))
+                    <> show (runtimeModeId (compiledPlanRuntimeMode compiledPlan))
                 )
             )
-    Nothing -> pure (configRuntimeMode demoConfig)
+    Nothing -> pure (compiledPlanRuntimeMode compiledPlan)
 
 -- | Phase 4 Sprint 4.13: typed CLI override replaces the previous
 -- @lookupEnv "INFERNIX_DAEMON_ROLE"@ + 'String' parsing path. The
 -- parser is now in 'Infernix.CommandRegistry'; this function just
 -- threads the parsed value, falling back to the substrate dhall's
 -- 'activeDaemonRole' when no override is supplied.
-resolveServiceDaemonRole :: Maybe DaemonRole -> DemoConfig -> DaemonRole
-resolveServiceDaemonRole maybeDaemonRoleOverride demoConfig =
+resolveServiceDaemonRole :: Maybe DaemonRole -> CompiledRuntimePlan -> DaemonRole
+resolveServiceDaemonRole maybeDaemonRoleOverride compiledPlan =
   case maybeDaemonRoleOverride of
-    Nothing -> activeDaemonRole demoConfig
+    Nothing -> compiledPlanActiveDaemonRole compiledPlan
     Just daemonRole -> daemonRole
 
 ensureServiceRuntimeSupported :: Paths -> RuntimeMode -> DaemonRole -> IO ()

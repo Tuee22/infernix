@@ -44,12 +44,32 @@
   functions that interleave parsing, shell invocation, mutation, and rendering.
 - `Effect boundaries:` keep `IO`, process execution, filesystem mutation, and environment probing
   near the edge so the inner domain logic stays testable and easy to reason about.
+- `Native boundary:` keep repo-owned implementation in Haskell. Version-controlled native sources
+  are forbidden, including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants,
+  CUDA, assembly, Metal, Swift, C2HS, and C-- sources. Cabal `c-sources:`, `cxx-sources:`,
+  `asm-sources:`, and `cmm-sources:` declarations and CPP definitions that synthesize a native
+  boundary are likewise forbidden. Embedding native source, a native-source writer, or its
+  compiler invocation in Haskell/Python/shell/JavaScript/configuration text is an equivalent
+  violation; native
+  implementation inside upstream dependencies is allowed. Do not replace native shims with direct
+  FFI declarations, inline C, `System.Process.Internals`, or equivalent relocation. Internal
+  Haskell modules may instead encapsulate public APIs from packages such as `filelock`, `process`,
+  and `unix`. Direct `foreign import` is forbidden throughout repository-owned Haskell, including
+  read-only observers. Darwin process-birth observation uses the registry-backed Haskell
+  implementation, and Apple engine-footprint observation uses the fixed bounded
+  `/usr/bin/top` plus `/usr/bin/footprint` kernel.
 - `Typed control flow:` prefer ADTs, records, and pattern matching over stringly mode switches,
   sentinel values, or silently ignored cases. The type-driven enforcement mechanisms of the managed
   state transitions doctrine — hidden-constructor newtypes via GHC export lists, one honest mint,
   rank-2 region leases (`withLease`), and surgical `LinearTypes` — are the complement to these
   ADT-over-sentinel and `-Werror` rules; see [Managed State Transitions](../architecture/managed_state_transitions.md)
   for the canonical home.
+- `Bounded provisioning:` Apple engine materialization may select only closed adapter/operation
+  identities through the package-internal `Infernix.Engines.Provisioning` facade. Its opaque
+  nominal `ProvisioningGrant s` and indexed `ProvisioningSession s result` remain inside
+  `withProvisioningGrant`'s rank-2 region; do not add a raw executable/argv constructor, expose the
+  session interpreter, call `System.Process` from an artifact module, or delegate back to the
+  unbounded Poetry helpers.
 - `Case shape:` avoid hanging `case` expressions such as `foo <- case ...`, `bar -> case ...`, or
   `pure (case ...)`; make the `case` the outer expression or move the branch logic into a named
   helper.
@@ -72,6 +92,19 @@
   `hlint`
 - the style gate checks `infernix.cabal` by formatting a temporary copy with `cabal format` and
   comparing the result rather than rewriting the tracked manifest in place
+- the style gate rejects every direct `foreign import` in repository-owned Haskell; there is no
+  observer allowlist
+- the repo-owned files gate (`infernix lint files`) rejects the governed native-source extension
+  set, Cabal native-source fields and native-token CPP definitions, and embedded native
+  implementation/compiler markers in repository implementation languages. Lifecycle locking uses
+  the public nonblocking exclusive `filelock` API
+  while keeping the raw token inside a hidden-constructor, rank-2
+  `Lease s ClusterMutationLocked` region. Bounded subprocess supervision uses public
+  `System.Process` and `System.Posix` APIs behind its internal module: the parent starts one
+  self-exec anchor with closed inherited descriptors, an independent process group, an explicit
+  environment, and standard-stream pipes; that anchor starts and reaps the supervisor. A total
+  length-bounded typed framed protocol and hidden linear phase transitions inside a rank-2 session
+  region make durable activity publication a type-level prerequisite for target start
 - the style gate enforces the engine-runtime import boundary and the Phase 7 shared-library
   import boundary described in
   [implementation_boundaries.md](../engineering/implementation_boundaries.md)
@@ -87,10 +120,16 @@
   deliberately shrinking backoff/heartbeat exemption list), and `unboundedEngineSpawnViolations` (raw
   engine subprocess spawn — `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` —
   outside the capped-engine kernel `Infernix.Runtime.CappedEngine` and a shrinking exemption list,
-  routing a new engine spawn through `withCappedEngine` under a required `MemoryGrant` and
-  resident-memory ceiling). Their canonical doctrine is
+  routing public engine launch through an opaque `ExecutableModel` whose compiled, resource-indexed
+  grant has been paired with its matching live enforcer; the package-internal capped-engine region
+  applies the resulting resident-memory ceiling). Their canonical doctrine is
   [Managed State Transitions](../architecture/managed_state_transitions.md); the engine-spawn rule's
   canonical home is [Bounded Inference Memory](../architecture/bounded_inference_memory.md)
+- `appleArtifactProvisioningViolations` rejects `System.Process`, raw spawn/wait functions,
+  legacy `ensurePoetryExecutable` / `ensurePoetryProjectReady` delegation, and direct
+  `runBoundedCommand` use across the Apple facade, its hidden implementation, the artifact
+  transaction, and provisioning modules. Only the hidden provisioning facade may interpret its
+  closed commands through the bounded subprocess kernel
 - `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
   proto, docs, Python, and build-warning checks
 

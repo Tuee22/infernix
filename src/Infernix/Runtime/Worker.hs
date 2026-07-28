@@ -3,16 +3,11 @@
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Worker
-  ( EngineCommandOverrideMap,
-    WorkerModelCacheConfig (..),
+  ( WorkerModelCacheConfig (..),
     buildWorkerRequest,
-    lookupEngineCommandOverride,
     loadWorkerModelCacheConfig,
-    nativeEngineInstallRootCandidates,
     nativeModelCacheObjectKeys,
-    nativeRunnerArgs,
     runExecutableInferenceWorker,
-    runInferenceWorker,
     workerRequestModelCacheConfig,
   )
 where
@@ -25,8 +20,8 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
-import Data.List (dropWhileEnd, find, intercalate)
-import Data.Maybe (catMaybes, fromMaybe, listToMaybe)
+import Data.List (dropWhileEnd, intercalate)
+import Data.Maybe (fromMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
@@ -42,18 +37,38 @@ import Infernix.ExecutionPlan
   ( ExecutableModel,
     executableModelDescriptor,
     executableModelEngine,
-    executableModelGrant,
+    executableModelId,
   )
-import Infernix.Models (engineBindingForSelectedEngine, resultFamilyForDescriptor)
+import Infernix.Models (resultFamilyForDescriptor)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
-import Infernix.Python (ensurePoetryExecutable, ensurePoetryProjectInstalledWithGroups, ensurePoetryProjectReady)
 import Infernix.Runtime.CappedEngine
-  ( EngineOutcome (EngineExceededCeiling, EngineExited),
-    runCappedProcess,
-    runCappedStdioEngine,
-    runExecutableProcess,
-    runExecutableStdioEngine,
+  ( EngineOutcome
+      ( EngineEnforcementUnavailable,
+        EngineExceededCeiling,
+        EngineExited,
+        EngineOutputCaptureFailed,
+        EngineOutputLimitExceeded
+      ),
+    EngineOutputStream (EngineStandardError, EngineStandardOutput),
+    NativeArtifactCache,
+    NativeArtifactLaunchOutcome
+      ( NativeArtifactBusy,
+        NativeArtifactInvocationRejected,
+        NativeArtifactLaunched,
+        NativeArtifactRejected,
+        NativeArtifactUnavailable,
+        NativeArtifactUnsupported,
+        NativeArtifactUseValidationFailed
+      ),
+    PythonWorkerLaunchOutcome
+      ( PythonWorkerInvocationRejected,
+        PythonWorkerLaunched
+      ),
+    nativeArtifactCache,
+    nativeArtifactInvocation,
+    runExecutableNativeArtifact,
+    runExecutablePythonWorker,
   )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.SecretsConfig qualified as Secrets
@@ -64,38 +79,11 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, renameFile)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath (takeDirectory, takeExtension, (</>))
-import System.IO (hClose, openTempFile)
 import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
-import System.Process
-  ( CreateProcess (cwd, env, std_err),
-    StdStream (CreatePipe),
-    createProcess,
-    proc,
-    shell,
-    waitForProcess,
-  )
-
--- | Phase 4 Sprint 4.13 — engine-command override lookup keyed by the
--- engine binding's adapter id. The supported source is the
--- @ClusterConfig.engine.commandOverrides@ Dhall map (rendered into
--- @ConfigMap/infernix-cluster-config@). Empty list = no overrides; the
--- worker uses the default Poetry-run invocation.
-type EngineCommandOverrideMap = [(Text, Text)]
-
--- | Look up an override entry by the engine binding's adapter id.
-lookupEngineCommandOverride :: EngineCommandOverrideMap -> EngineBinding -> Maybe String
-lookupEngineCommandOverride overrides engineBinding =
-  fmap
-    (Text.unpack . snd)
-    (find (\(adapterIdKey, _) -> adapterIdKey == engineBindingAdapterId engineBinding) overrides)
-
-data WorkerInvocation
-  = DirectWorkerInvocation FilePath FilePath [String]
-  | ShellWorkerInvocation FilePath String
 
 data WorkerModelCacheConfig = WorkerModelCacheConfig
   { workerModelCacheRoot :: Text,
@@ -109,71 +97,108 @@ data WorkerModelCacheConfig = WorkerModelCacheConfig
   }
   deriving (Eq, Show)
 
--- | Phase 4 Sprint 4.30 — the engine dispatch requires a 'MemoryGrant'. The
--- grant is minted by 'admitModelMemory' in the runtime layer and threaded to the
--- capped-engine kernel, so an inference subprocess launched without an admission
--- proof is not a constructible term.
-runInferenceWorker ::
-  Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  MemoryGrant ->
-  ModelDescriptor ->
-  InferenceRequest ->
-  Maybe KVCache.KVCacheObservation ->
-  IO (Either ErrorResponse Text)
-runInferenceWorker paths runtimeMode overrides grant model request cacheObservation =
-  case engineBindingAdapterType engineBinding of
-    "python-stdio" ->
-      ensurePythonEngineSetupReady paths runtimeMode engineBinding
-        >> runPythonWorker paths runtimeMode overrides Nothing grant model engineBinding request cacheObservation
-    "native-process-runner" ->
-      runNativeWorker paths runtimeMode Nothing grant model engineBinding request cacheObservation
-    adapterType ->
-      pure (unsupportedEngineRunner engineBinding adapterType)
-  where
-    engineBinding = engineBindingForSelectedEngine runtimeMode (selectedEngine model)
-
 -- | Production engine dispatch. The selected model, engine binding, and memory
 -- grant are projected from one opaque 'ExecutableModel', so a caller cannot
 -- combine independently decoded or mismatched values at the launch boundary.
 runExecutableInferenceWorker ::
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runExecutableInferenceWorker paths runtimeMode overrides executableModel request cacheObservation =
-  case engineBindingAdapterType engineBinding of
-    "python-stdio" ->
-      ensurePythonEngineSetupReady paths runtimeMode engineBinding
-        >> runPythonWorker paths runtimeMode overrides (Just executableModel) grant model engineBinding request cacheObservation
-    "native-process-runner" ->
-      runNativeWorker paths runtimeMode (Just executableModel) grant model engineBinding request cacheObservation
-    adapterType ->
-      pure (unsupportedEngineRunner engineBinding adapterType)
+runExecutableInferenceWorker paths executableModel request cacheObservation
+  | requestModelId request /= executableModelId executableModel =
+      pure (Left (requestModelMismatchError executableModel request))
+  | otherwise =
+      case engineBindingAdapterType engineBinding of
+        "python-stdio" ->
+          ensurePythonEngineSetupReady paths modelRuntimeMode engineBinding
+            >> runPythonWorker paths executableModel request cacheObservation
+        "native-process-runner" ->
+          runNativeWorker paths executableModel request cacheObservation
+        adapterType ->
+          pure (unsupportedEngineRunner engineBinding adapterType)
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
-    grant = executableModelGrant executableModel
+    modelRuntimeMode = runtimeMode model
+
+requestModelMismatchError :: ExecutableModel -> InferenceRequest -> ErrorResponse
+requestModelMismatchError executableModel request =
+  ErrorResponse
+    { errorCode = "request_model_mismatch",
+      message =
+        "The request model "
+          <> requestModelId request
+          <> " does not match the executable model "
+          <> executableModelId executableModel
+          <> "."
+    }
 
 -- | Phase 4 Sprint 4.30 — the 'ErrorResponse' the capped-engine kernel raises on
 -- a runtime ceiling breach. The runtime rebuilds this into a typed
 -- 'ModelMemoryLimitExceeded' result; the resident footprint that breached the
 -- ceiling is named for the operator log.
-modelCeilingBreachError :: ModelDescriptor -> MemoryCeiling -> ErrorResponse
-modelCeilingBreachError model ceilingValue =
+modelCeilingBreachError :: ModelDescriptor -> Int -> ErrorResponse
+modelCeilingBreachError model ceilingMib =
   ErrorResponse
     { errorCode = modelMemoryLimitExceededErrorCode,
       message =
         "inference for "
           <> modelId model
           <> " breached its admitted resident-memory ceiling of "
-          <> Text.pack (show (memoryCeilingMib ceilingValue))
+          <> Text.pack (show ceilingMib)
           <> " MiB and was terminated by the capped-engine kernel"
     }
+
+modelEnforcementUnavailableError :: ModelDescriptor -> Text -> ErrorResponse
+modelEnforcementUnavailableError model reason =
+  ErrorResponse
+    { errorCode = "engine_memory_enforcer_unavailable",
+      message =
+        "inference for "
+          <> modelId model
+          <> " was terminated because its live memory enforcer became unavailable: "
+          <> reason
+    }
+
+modelOutputLimitExceededError ::
+  ModelDescriptor ->
+  EngineOutputStream ->
+  ErrorResponse
+modelOutputLimitExceededError model outputStream =
+  ErrorResponse
+    { errorCode = "engine_output_limit_exceeded",
+      message =
+        "inference for "
+          <> modelId model
+          <> " exceeded the capped-engine "
+          <> engineOutputStreamLabel outputStream
+          <> " capture limit and its process group was terminated"
+    }
+
+modelOutputCaptureFailedError ::
+  ModelDescriptor ->
+  EngineOutputStream ->
+  Text ->
+  ErrorResponse
+modelOutputCaptureFailedError model outputStream reason =
+  ErrorResponse
+    { errorCode = "engine_output_capture_failed",
+      message =
+        "inference for "
+          <> modelId model
+          <> " was terminated because bounded "
+          <> engineOutputStreamLabel outputStream
+          <> " capture failed: "
+          <> reason
+    }
+
+engineOutputStreamLabel :: EngineOutputStream -> Text
+engineOutputStreamLabel outputStream =
+  case outputStream of
+    EngineStandardOutput -> "standard-output"
+    EngineStandardError -> "standard-error"
 
 unsupportedEngineRunner :: EngineBinding -> Text -> Either ErrorResponse Text
 unsupportedEngineRunner engineBinding adapterType =
@@ -189,22 +214,18 @@ unsupportedEngineRunner engineBinding adapterType =
 
 runPythonWorker ::
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  Maybe ExecutableModel ->
-  MemoryGrant ->
-  ModelDescriptor ->
-  EngineBinding ->
+  ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runPythonWorker paths runtimeMode overrides maybeExecutableModel grant model engineBinding request _cacheObservation = do
-  let maybeOverride = lookupEngineCommandOverride overrides engineBinding
-  invocation <- resolvePythonInvocation paths engineBinding maybeOverride
-  maybeModelCacheConfig <- loadWorkerModelCacheConfig paths runtimeMode
-  let workerRequest = encodeMessage (buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request)
-  workerResult <- runWorkerInvocation paths maybeExecutableModel grant model invocation workerRequest
+runPythonWorker paths executableModel request _cacheObservation = do
+  maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
+  let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request)
+  workerResult <- runWorkerInvocation paths executableModel model workerRequest
   pure (workerResultToOutput workerResult)
+  where
+    model = executableModelDescriptor executableModel
+    modelRuntimeMode = runtimeMode model
 
 workerResultToOutput :: Either ErrorResponse ByteString8.ByteString -> Either ErrorResponse Text
 workerResultToOutput workerResult =
@@ -233,46 +254,46 @@ ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
 ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
   let installRoot = engineInstallRootPath paths engineBinding
       bootstrapManifest = installRoot </> "bootstrap.json"
-      projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
   bootstrapReady <- doesFileExist bootstrapManifest
-  if bootstrapReady
-    then pure ()
-    else do
-      poetryExecutable <- ensurePoetryExecutable paths
-      ensurePoetryProjectReady paths projectDirectory
-      runSetupInvocation paths poetryExecutable projectDirectory installRoot runtimeMode engineBinding
+  unless bootstrapReady $
+    ioError
+      ( userError
+          ( "prepared Python engine bootstrap manifest is missing for "
+              <> Text.unpack (engineBindingAdapterId engineBinding)
+              <> ": "
+              <> bootstrapManifest
+          )
+      )
   ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding
 
 ensurePerEngineFrameworkVenvReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
-ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding =
-  case perEngineFrameworkGroups runtimeMode engineBinding of
-    [] -> pure ()
-    groups -> do
-      let projectDirectory = perEngineProjectDirectory paths engineBinding
-          markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
-      expectedMarker <- perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups
-      markerPresent <- doesFileExist markerPath
-      markerMatches <-
+ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding = do
+  let groups = perEngineFrameworkGroups runtimeMode engineBinding
+      pythonPath = perEnginePythonPath paths engineBinding
+  maybeVenvPython <- perEngineVenvPython paths engineBinding
+  markerMatches <-
+    case groups of
+      [] -> pure True
+      _ -> do
+        let projectDirectory = perEngineProjectDirectory paths engineBinding
+            markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
+        expectedMarker <- perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups
+        markerPresent <- doesFileExist markerPath
         if markerPresent
           then (== expectedMarker) <$> readStrictUtf8File markerPath
           else pure False
-      maybeVenvPython <- perEngineVenvPython paths engineBinding
-      case maybeVenvPython of
-        Just _
-          | markerMatches -> pure ()
-        _ -> do
-          ensurePoetryProjectInstalledWithGroups paths projectDirectory groups
-          refreshedVenvPython <- perEngineVenvPython paths engineBinding
-          case refreshedVenvPython of
-            Just _ ->
-              writeStrictUtf8File markerPath expectedMarker
-            Nothing ->
-              ioError
-                ( userError
-                    ( "per-engine framework venv install completed but no python interpreter was found at "
-                        <> perEnginePythonPath paths engineBinding
-                    )
-                )
+  case maybeVenvPython of
+    Just _
+      | markerMatches -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "prepared per-engine Python environment is missing or stale for "
+                <> Text.unpack (engineBindingAdapterId engineBinding)
+                <> ": "
+                <> pythonPath
+            )
+        )
 
 perEngineFrameworkGroups :: RuntimeMode -> EngineBinding -> [String]
 perEngineFrameworkGroups runtimeMode engineBinding =
@@ -326,14 +347,6 @@ readStrictUtf8File :: FilePath -> IO String
 readStrictUtf8File path =
   ByteString8.unpack <$> ByteString.readFile path
 
-writeStrictUtf8File :: FilePath -> String -> IO ()
-writeStrictUtf8File path contents = do
-  createDirectoryIfMissing True (takeDirectory path)
-  (temporaryPath, handle) <- openTempFile (takeDirectory path) ".infernix-framework-groups.tmp"
-  hClose handle
-  ByteString.writeFile temporaryPath (ByteString8.pack contents)
-  renameFile temporaryPath path
-
 perEngineFrameworkProjectDigest :: FilePath -> IO String
 perEngineFrameworkProjectDigest projectDirectory = do
   let pyprojectPath = projectDirectory </> "pyproject.toml"
@@ -351,109 +364,11 @@ perEngineFrameworkProjectDigest projectDirectory = do
         )
     )
 
-runSetupInvocation :: Paths -> FilePath -> FilePath -> FilePath -> RuntimeMode -> EngineBinding -> IO ()
-runSetupInvocation paths poetryExecutable projectDirectory installRoot _runtimeMode engineBinding = do
-  -- Phase 5 Sprint 5.9 follow-on (May 26, 2026): @--install-root@ is
-  -- passed as a typed CLI argument to the setup entrypoint instead
-  -- of via the legacy engine-install-root env. The supported Python
-  -- adapter's @setup()@ routes through @run_setup_from_argv@ which
-  -- parses argv with argparse. The previous repo-root and active-substrate
-  -- env overrides are retired: the
-  -- adapter resolves its repo root via @Path(__file__)@-anchored
-  -- traversal (canonical Poetry invocation always runs from
-  -- @<repoRoot>/python@), and the bootstrap manifest no longer
-  -- records a @runtimeMode@ field.
-  let setupArgs =
-        [ "--directory",
-          projectDirectory,
-          "run",
-          Text.unpack (engineBindingSetupEntrypoint engineBinding),
-          "--install-root",
-          installRoot
-        ]
-  processEnvironment <- workerProcessEnvironment paths []
-  (_, _, maybeWorkerError, workerHandle) <-
-    createProcess
-      (proc poetryExecutable setupArgs)
-        { cwd = Just projectDirectory,
-          env = Just processEnvironment,
-          std_err = CreatePipe
-        }
-  stderrOutput <-
-    case maybeWorkerError of
-      Just workerError -> ByteString.hGetContents workerError
-      Nothing -> pure ""
-  exitCode <- waitForProcess workerHandle
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ( "engine setup failed: "
-                <> Text.unpack (engineBindingSetupEntrypoint engineBinding)
-                <> stderrSuffix stderrOutput
-            )
-        )
-
-resolvePythonInvocation :: Paths -> EngineBinding -> Maybe String -> IO WorkerInvocation
-resolvePythonInvocation paths engineBinding maybeOverride = do
-  let projectDirectory = repoRoot paths </> engineBindingProjectDirectory engineBinding
-  maybePerEngineVenvPython <- perEngineVenvPython paths engineBinding
-  case (trimWhitespace =<< maybeOverride, maybePerEngineVenvPython) of
-    (Nothing, Just venvPython) ->
-      -- Phase 4 Sprint 4.16: a per-engine isolated framework venv exists
-      -- (baked by the image build's `poetry install --directory
-      -- python/engines/<engine> --with <substrate>`). Invoke its venv python
-      -- with `-m adapters.<module>` rather than the console script, because
-      -- in-project venvs install console scripts with a relative shebang that
-      -- only resolves from the project directory; the venv python is an
-      -- absolute interpreter symlink that runs from any cwd. No shared-project
-      -- install and no Poetry at runtime — the venv already carries the
-      -- framework plus the shared `adapters` package via the path dependency.
-      pure
-        ( DirectWorkerInvocation
-            venvPython
-            (repoRoot paths)
-            ["-m", perEngineAdapterModule engineBinding]
-        )
-    (Just overrideCommand, _) ->
-      do
-        poetryExecutable <- ensurePoetryExecutable paths
-        ensurePoetryProjectReady paths projectDirectory
-        pure
-          ( ShellWorkerInvocation
-              projectDirectory
-              ( overrideCommand
-                  <> " "
-                  <> shellQuote poetryExecutable
-                  <> " --directory "
-                  <> shellQuote projectDirectory
-                  <> " run "
-                  <> shellQuote (Text.unpack (engineBindingAdapterEntrypoint engineBinding))
-              )
-          )
-    (Nothing, Nothing) ->
-      do
-        poetryExecutable <- ensurePoetryExecutable paths
-        ensurePoetryProjectReady paths projectDirectory
-        pure
-          ( DirectWorkerInvocation
-              poetryExecutable
-              projectDirectory
-              [ "--directory",
-                projectDirectory,
-                "run",
-                Text.unpack (engineBindingAdapterEntrypoint engineBinding)
-              ]
-          )
-
 -- | Phase 4 Sprint 4.16 — resolve the per-engine isolated framework venv's
 -- python interpreter, when present. The image build populates
 -- @python/engines/<engine>/.venv@ with the substrate's framework wheels plus
--- the shared @adapters@ package (editable path dependency). When the
--- per-engine venv is absent (e.g. the machine-independent unit environment),
--- the worker falls back to the shared framework-free project so
--- unsupported/absent frameworks fail fast.
+-- the shared @adapters@ package (editable path dependency). Runtime launch
+-- fails closed when this prepared interpreter is absent.
 perEngineVenvPython :: Paths -> EngineBinding -> IO (Maybe FilePath)
 perEngineVenvPython paths engineBinding = do
   let pythonPath = perEnginePythonPath paths engineBinding
@@ -478,12 +393,6 @@ perEngineName :: EngineBinding -> String
 perEngineName engineBinding =
   Text.unpack (Text.replace "-python" "" (engineBindingAdapterId engineBinding))
 
--- | The @adapters.<module>@ import path for an engine's adapter (run via
--- @python -m@ in the per-engine venv). @transformers-python@ -> @adapters.transformers_python@.
-perEngineAdapterModule :: EngineBinding -> String
-perEngineAdapterModule engineBinding =
-  "adapters." <> Text.unpack (Text.replace "-" "_" (engineBindingAdapterId engineBinding))
-
 -- | Phase 4 Sprints 4.2/4.12 — invoke the real native engine binary
 -- resolved from its repo-local engine install root (under @HostConfig@'s
 -- @dataRoot@) by absolute path, instead of rendering a debug-metadata
@@ -494,66 +403,141 @@ perEngineAdapterModule engineBinding =
 -- output is exercised on cohort hardware (Wave I Stage 2); here the
 -- dispatch wiring and the binary-by-absolute-path contract compile and
 -- unit-check.
-runNativeWorker :: Paths -> RuntimeMode -> Maybe ExecutableModel -> MemoryGrant -> ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
-runNativeWorker paths _runtimeMode maybeExecutableModel grant model engineBinding request _cacheObservation =
-  case nativeRunnerBinaryRelPath (engineBindingAdapterId engineBinding) of
-    Nothing ->
-      pure
-        ( Left
-            ErrorResponse
-              { errorCode = "unsupported_engine_runner",
-                message =
-                  "No supported native runner is available for "
-                    <> engineBindingAdapterId engineBinding
-                    <> "."
-              }
-        )
-    Just binaryRelPath -> do
-      maybeNativeRunner <- firstPresentNativeRunner paths engineBinding binaryRelPath
-      case maybeNativeRunner of
-        Nothing ->
-          let checkedPaths =
-                map
-                  (Text.pack . (</> binaryRelPath))
-                  (nativeEngineInstallRootCandidates paths engineBinding)
-           in pure
+runNativeWorker :: Paths -> ExecutableModel -> InferenceRequest -> Maybe KVCache.KVCacheObservation -> IO (Either ErrorResponse Text)
+runNativeWorker paths executableModel request _cacheObservation = do
+  preparation <- prepareNativeArtifactInvocation
+  case preparation of
+    Left preparationError -> pure (Left preparationError)
+    Right (maybeModelCacheConfig, invocation, processEnvironment) -> do
+      launchOutcome <-
+        runExecutableNativeArtifact
+          paths
+          executableModel
+          invocation
+          processEnvironment
+      case launchOutcome of
+        NativeArtifactUnsupported unsupportedAdapter ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "unsupported_engine_runner",
+                    message =
+                      "No supported native runner is available for "
+                        <> unsupportedAdapter
+                        <> "."
+                  }
+            )
+        NativeArtifactUnavailable ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_binary_missing",
+                    message =
+                      "no exact native engine artifact is present in any supported install root for "
+                        <> engineBindingAdapterId engineBinding
+                        <> "; materialize it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
+                  }
+            )
+        NativeArtifactRejected ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_artifact_invalid",
+                    message =
+                      "native engine artifact validation failed for "
+                        <> engineBindingAdapterId engineBinding
+                  }
+            )
+        NativeArtifactBusy ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_artifact_busy",
+                    message =
+                      "native engine artifact materialization is active for "
+                        <> engineBindingAdapterId engineBinding
+                  }
+            )
+        NativeArtifactInvocationRejected failure ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_invocation_invalid",
+                    message =
+                      "native engine invocation is invalid for "
+                        <> engineBindingAdapterId engineBinding
+                        <> ": "
+                        <> Text.pack failure
+                  }
+            )
+        NativeArtifactUseValidationFailed ->
+          pure
+            ( Left
+                ErrorResponse
+                  { errorCode = "engine_artifact_invalid",
+                    message =
+                      "native engine artifact failed exact use-boundary validation for "
+                        <> engineBindingAdapterId engineBinding
+                  }
+            )
+        NativeArtifactLaunched outcome exitCode stdoutOutput stderrOutput ->
+          case outcome of
+            EngineExceededCeiling ceilingMib ->
+              pure (Left (modelCeilingBreachError model ceilingMib))
+            EngineEnforcementUnavailable reason ->
+              pure (Left (modelEnforcementUnavailableError model reason))
+            EngineOutputLimitExceeded outputStream ->
+              pure (Left (modelOutputLimitExceededError model outputStream))
+            EngineOutputCaptureFailed outputStream reason ->
+              pure
                 ( Left
-                    ErrorResponse
-                      { errorCode = "engine_binary_missing",
-                        message =
-                          "native engine binary is not present in any supported install root for "
-                            <> engineBindingAdapterId engineBinding
-                            <> ": "
-                            <> Text.intercalate ", " checkedPaths
-                            <> "; materialize it for the active substrate (Apple: infernix internal materialize-metal-engines; Linux: bake the native runner into the substrate image under /opt/infernix/engines) before running."
-                      }
+                    (modelOutputCaptureFailedError model outputStream reason)
                 )
-        Just (installRoot, binaryPath) -> do
-          maybeModelCacheConfig <- loadWorkerModelCacheConfig paths _runtimeMode
-          ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
-          inputFileResult <- nativeRunnerInputFile model request maybeModelCacheConfig
-          case inputFileResult of
-            Left inputError -> pure (Left inputError)
-            Right maybeInputFile -> do
-              maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
-              processEnvironment <- workerProcessEnvironment paths []
-              -- Phase 4 Sprint 4.30: the native engine subprocess runs only
-              -- through the capped-engine kernel under the admitted grant, so its
-              -- resident memory is bounded to the admitted ceiling. A ceiling
-              -- breach is a clean typed terminal failure, never a host OOM.
-              let processValue =
-                    (proc binaryPath (nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir maybeInputFile))
-                      { cwd = Just installRoot,
-                        env = Just processEnvironment
-                      }
-              (outcome, exitCode, stdoutOutput, stderrOutput) <-
-                case maybeExecutableModel of
-                  Just executableModel -> runExecutableProcess executableModel processValue ""
-                  Nothing -> runCappedProcess grant processValue ""
-              case outcome of
-                EngineExceededCeiling ceilingValue -> pure (Left (modelCeilingBreachError model ceilingValue))
-                EngineExited _ ->
-                  nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput
+            EngineExited _ ->
+              nativeRunnerResult
+                model
+                engineBinding
+                request
+                maybeModelCacheConfig
+                exitCode
+                stdoutOutput
+                stderrOutput
+  where
+    model = executableModelDescriptor executableModel
+    modelRuntimeMode = runtimeMode model
+    engineBinding = executableModelEngine executableModel
+    prepareNativeArtifactInvocation = do
+      maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
+      ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
+      inputFileResult <- nativeRunnerInputFile model request maybeModelCacheConfig
+      case inputFileResult of
+        Left inputError -> pure (Left inputError)
+        Right maybeInputFile -> do
+          maybeOutputDir <- nativeRunnerOutputDir model maybeModelCacheConfig
+          processEnvironment <- Subprocess.clusterSubprocessEnv paths
+          pure $
+            case nativeArtifactInvocation
+              executableModel
+              request
+              (nativeArtifactCacheFromWorker <$> maybeModelCacheConfig)
+              maybeOutputDir
+              maybeInputFile of
+              Left failure ->
+                Left
+                  ErrorResponse
+                    { errorCode = "engine_invocation_invalid",
+                      message =
+                        "native engine invocation preparation failed for "
+                          <> engineBindingAdapterId engineBinding
+                          <> ": "
+                          <> Text.pack failure
+                    }
+              Right invocation ->
+                Right
+                  ( maybeModelCacheConfig,
+                    invocation,
+                    processEnvironment
+                  )
 
 -- | Native runners participate in the model-bootstrap protocol: the first
 -- invocation reports a cache miss, the coordinator populates MinIO, and the
@@ -655,99 +639,17 @@ nativeModelReadySentinelExists modelCacheConfig modelIdValue = do
     Right objectPresent -> pure objectPresent
     Left _ -> pure False
 
-firstPresentNativeRunner :: Paths -> EngineBinding -> FilePath -> IO (Maybe (FilePath, FilePath))
-firstPresentNativeRunner paths engineBinding binaryRelPath = do
-  candidates <-
-    mapM
-      candidateIfPresent
-      (nativeEngineInstallRootCandidates paths engineBinding)
-  pure (listToMaybe (catMaybes candidates))
-  where
-    candidateIfPresent installRoot = do
-      let binaryPath = installRoot </> binaryRelPath
-      binaryPresent <- doesFileExist binaryPath
-      pure (if binaryPresent then Just (installRoot, binaryPath) else Nothing)
-
-nativeEngineInstallRootCandidates :: Paths -> EngineBinding -> [FilePath]
-nativeEngineInstallRootCandidates paths engineBinding =
-  [ engineInstallRootPath paths engineBinding,
-    "/opt/infernix/engines" </> Text.unpack (engineBindingAdapterId engineBinding)
-  ]
-
--- | Resolve the native engine binary's path relative to its engine
--- install root. The adapter id is the closed set of native-process-runner
--- bindings; an unknown id returns 'Nothing' and the caller fails fast.
-nativeRunnerBinaryRelPath :: Text -> Maybe FilePath
-nativeRunnerBinaryRelPath adapterId =
-  case adapterId of
-    "whisper-cpp-cli" -> Just "bin/whisper-cli"
-    "llama-cpp-cli" -> Just "bin/llama-cli"
-    "onnx-runtime-native" -> Just "bin/onnx-runner"
-    "coreml-native" -> Just "bin/coreml-runner"
-    "ctranslate2-native" -> Just "bin/ct2-runner"
-    "mlx-native" -> Just "bin/mlx-runner"
-    "jvm-native" -> Just "bin/audiveris"
-    _ -> Nothing
-
--- | Pure argument vector for a native engine binary (unit-tested). Text
--- families pass @--input-text@; the audio and image input families pass
--- the @--input-object-ref@ that points into @infernix-demo-objects@.
--- Artifact-producing invocations may also receive an @--output-dir@; the
--- runner writes a local file there and prints an artifact-file marker while
--- this worker owns the credentialed MinIO upload.
-nativeRunnerArgs :: ModelDescriptor -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> Maybe FilePath -> [String]
-nativeRunnerArgs model request installRoot maybeModelCacheConfig maybeOutputDir =
-  nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir Nothing
-
-nativeRunnerArgsWithInputFile :: ModelDescriptor -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> Maybe FilePath -> Maybe FilePath -> [String]
-nativeRunnerArgsWithInputFile model request installRoot maybeModelCacheConfig maybeOutputDir maybeInputFile =
-  [ "--model",
-    Text.unpack (modelId model),
-    "--engine",
-    Text.unpack (selectedEngine model),
-    "--family",
-    Text.unpack (family model),
-    "--install-root",
-    installRoot,
-    "--require-native-payload"
-  ]
-    <> case inputObjectRef request of
-      Just ref -> ["--input-object-ref", Text.unpack ref]
-      Nothing -> ["--input-text", Text.unpack (inputText request)]
-    <> nativeRunnerModelCacheArgs maybeModelCacheConfig
-    <> nativeRunnerOutputArgs maybeOutputDir
-    <> nativeRunnerInputFileArgs maybeInputFile
-
-nativeRunnerModelCacheArgs :: Maybe WorkerModelCacheConfig -> [String]
-nativeRunnerModelCacheArgs maybeModelCacheConfig =
-  case maybeModelCacheConfig of
-    Nothing -> []
-    Just modelCacheConfig ->
-      [ "--model-cache-root",
-        Text.unpack (workerModelCacheRoot modelCacheConfig),
-        "--model-cache-quota-bytes",
-        show (workerModelCacheQuotaBytes modelCacheConfig),
-        "--minio-endpoint",
-        Text.unpack (workerMinioEndpoint modelCacheConfig),
-        "--minio-models-bucket",
-        Text.unpack (workerMinioModelsBucket modelCacheConfig),
-        "--minio-demo-artifacts-bucket",
-        Text.unpack (workerMinioDemoArtifactsBucket modelCacheConfig),
-        "--minio-region",
-        Text.unpack (workerMinioRegion modelCacheConfig)
-      ]
-
-nativeRunnerOutputArgs :: Maybe FilePath -> [String]
-nativeRunnerOutputArgs maybeOutputDir =
-  case maybeOutputDir of
-    Nothing -> []
-    Just outputDir -> ["--output-dir", outputDir]
-
-nativeRunnerInputFileArgs :: Maybe FilePath -> [String]
-nativeRunnerInputFileArgs maybeInputFile =
-  case maybeInputFile of
-    Nothing -> []
-    Just inputFile -> ["--input-file", inputFile]
+nativeArtifactCacheFromWorker ::
+  WorkerModelCacheConfig ->
+  NativeArtifactCache
+nativeArtifactCacheFromWorker modelCacheConfig =
+  nativeArtifactCache
+    (Text.unpack (workerModelCacheRoot modelCacheConfig))
+    (workerModelCacheQuotaBytes modelCacheConfig)
+    (workerMinioEndpoint modelCacheConfig)
+    (workerMinioModelsBucket modelCacheConfig)
+    (workerMinioDemoArtifactsBucket modelCacheConfig)
+    (workerMinioRegion modelCacheConfig)
 
 nativeRunnerInputFile :: ModelDescriptor -> InferenceRequest -> Maybe WorkerModelCacheConfig -> IO (Either ErrorResponse (Maybe FilePath))
 nativeRunnerInputFile _model request maybeModelCacheConfig =
@@ -852,8 +754,8 @@ nativeRunnerOutputDir model maybeModelCacheConfig =
           pure (Just outputDir)
     _ -> pure Nothing
 
-nativeRunnerResult :: ModelDescriptor -> EngineBinding -> InferenceRequest -> FilePath -> Maybe WorkerModelCacheConfig -> ExitCode -> String -> String -> IO (Either ErrorResponse Text)
-nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig exitCode stdoutOutput stderrOutput =
+nativeRunnerResult :: ModelDescriptor -> EngineBinding -> InferenceRequest -> Maybe WorkerModelCacheConfig -> ExitCode -> String -> String -> IO (Either ErrorResponse Text)
+nativeRunnerResult model engineBinding request maybeModelCacheConfig exitCode stdoutOutput stderrOutput =
   case exitCode of
     ExitSuccess ->
       case trimWhitespace stdoutOutput of
@@ -885,7 +787,7 @@ nativeRunnerResult model engineBinding request binaryPath maybeModelCacheConfig 
               { errorCode = "worker_failed",
                 message =
                   "native engine worker failed: "
-                    <> Text.pack binaryPath
+                    <> engineBindingAdapterId engineBinding
                     <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
               }
         )
@@ -1037,51 +939,53 @@ safeSegmentChar character =
 -- with the reserved 'modelMemoryLimitExceededErrorCode' marker so the runtime
 -- rebuilds a typed 'ModelMemoryLimitExceeded' result rather than a generic
 -- worker failure.
-runWorkerInvocation :: Paths -> Maybe ExecutableModel -> MemoryGrant -> ModelDescriptor -> WorkerInvocation -> ByteString.ByteString -> IO (Either ErrorResponse ByteString.ByteString)
-runWorkerInvocation paths maybeExecutableModel grant model invocation inputPayload = do
-  processEnvironment <- workerProcessEnvironment paths []
-  let processValue =
-        (processFor invocation)
-          { cwd = Just (workerInvocationCwd invocation),
-            env = Just processEnvironment
-          }
-  (outcome, _exitCode, stdoutOutput, stderrOutput) <-
-    case maybeExecutableModel of
-      Just executableModel -> runExecutableStdioEngine executableModel processValue inputPayload
-      Nothing -> runCappedStdioEngine grant processValue inputPayload
+runWorkerInvocation :: Paths -> ExecutableModel -> ModelDescriptor -> ByteString.ByteString -> IO (Either ErrorResponse ByteString.ByteString)
+runWorkerInvocation paths executableModel model inputPayload = do
+  processEnvironment <- Subprocess.clusterSubprocessEnv paths
+  launchOutcome <-
+    runExecutablePythonWorker
+      paths
+      executableModel
+      processEnvironment
+      inputPayload
   pure $
-    case outcome of
-      -- A ceiling breach carries the reserved `modelMemoryLimitExceededErrorCode`
-      -- in the `ErrorResponse` (via `modelCeilingBreachError`), exactly like the
-      -- native path, so the runtime rebuilds the typed `ModelMemoryLimitExceeded`
-      -- result rather than a generic worker failure.
-      EngineExceededCeiling ceilingValue ->
-        Left (modelCeilingBreachError model ceilingValue)
-      EngineExited ExitSuccess ->
-        Right stdoutOutput
-      EngineExited _ ->
+    case launchOutcome of
+      PythonWorkerInvocationRejected reason ->
         Left
           ErrorResponse
-            { errorCode = "worker_failed",
+            { errorCode = "engine_invocation_invalid",
               message =
-                Text.pack
-                  ( "engine worker failed: "
-                      <> describeInvocation invocation
-                      <> stderrSuffix stderrOutput
-                  )
+                "Python engine invocation was rejected for "
+                  <> modelId model
+                  <> ": "
+                  <> reason
             }
-
-processFor :: WorkerInvocation -> CreateProcess
-processFor invocation =
-  case invocation of
-    DirectWorkerInvocation command _workingDirectory args -> proc command args
-    ShellWorkerInvocation _workingDirectory command -> shell command
-
-workerInvocationCwd :: WorkerInvocation -> FilePath
-workerInvocationCwd invocation =
-  case invocation of
-    DirectWorkerInvocation _command workingDirectory _args -> workingDirectory
-    ShellWorkerInvocation workingDirectory _command -> workingDirectory
+      PythonWorkerLaunched outcome _exitCode stdoutOutput stderrOutput ->
+        case outcome of
+          -- A ceiling breach carries the reserved
+          -- `modelMemoryLimitExceededErrorCode` in the `ErrorResponse` (via
+          -- `modelCeilingBreachError`), exactly like the native path, so the
+          -- runtime rebuilds the typed `ModelMemoryLimitExceeded` result rather
+          -- than a generic worker failure.
+          EngineExceededCeiling ceilingMib ->
+            Left (modelCeilingBreachError model ceilingMib)
+          EngineEnforcementUnavailable reason ->
+            Left (modelEnforcementUnavailableError model reason)
+          EngineOutputLimitExceeded outputStream ->
+            Left (modelOutputLimitExceededError model outputStream)
+          EngineOutputCaptureFailed outputStream reason ->
+            Left (modelOutputCaptureFailedError model outputStream reason)
+          EngineExited ExitSuccess ->
+            Right stdoutOutput
+          EngineExited _ ->
+            Left
+              ErrorResponse
+                { errorCode = "worker_failed",
+                  message =
+                    "Python engine worker failed for "
+                      <> modelId model
+                      <> Text.pack (stderrSuffix stderrOutput)
+                }
 
 -- Phase 7 Sprint 7.17: Poetry virtualenv placement is owned by
 -- @python/poetry.toml@. The worker no longer injects Poetry or
@@ -1093,28 +997,17 @@ workerInvocationCwd invocation =
 -- @env = Just []@ that spawned native runners with no environment. Caller
 -- @overrides@ are appended so they take precedence. Fails closed when the host
 -- manifest is absent instead of spawning with a minimal/empty environment.
-workerProcessEnvironment :: Paths -> [(String, String)] -> IO [(String, String)]
-workerProcessEnvironment paths overrides = do
-  baseEnv <- Subprocess.clusterSubprocessEnv paths
-  pure (Subprocess.renderSubprocessEnv baseEnv <> overrides)
-
-describeInvocation :: WorkerInvocation -> String
-describeInvocation invocation =
-  case invocation of
-    DirectWorkerInvocation command _workingDirectory args -> unwords (command : args)
-    ShellWorkerInvocation _workingDirectory command -> command
-
 stderrSuffix :: ByteString.ByteString -> String
 stderrSuffix stderrOutput =
   case trimWhitespace (ByteString8.unpack stderrOutput) of
     Just message -> "\n" <> message
     Nothing -> ""
 
-buildWorkerRequest :: Paths -> RuntimeMode -> Maybe WorkerModelCacheConfig -> ModelDescriptor -> EngineBinding -> InferenceRequest -> ProtoInference.WorkerRequest
-buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding request =
-  set (field @"requestModelId") (requestModelId request) $
+buildWorkerRequest :: Paths -> Maybe WorkerModelCacheConfig -> ExecutableModel -> InferenceRequest -> ProtoInference.WorkerRequest
+buildWorkerRequest paths maybeModelCacheConfig executableModel request =
+  set (field @"requestModelId") (modelId model) $
     set (field @"inputText") (inputText request) $
-      set (field @"runtimeMode") (runtimeModeId runtimeMode) $
+      set (field @"runtimeMode") (runtimeModeId (runtimeMode model)) $
         set (field @"selectedEngine") (selectedEngine model) $
           set (field @"adapterId") (engineBindingAdapterId engineBinding) $
             set (field @"displayName") (displayName model) $
@@ -1125,6 +1018,9 @@ buildWorkerRequest paths runtimeMode maybeModelCacheConfig model engineBinding r
                       set (field @"generatedOutputObjectPrefix") (fromMaybe "" (generatedOutputObjectPrefixForRequest request)) $
                         set (field @"engineInstallRoot") (Text.pack (engineInstallRootPath paths engineBinding)) $
                           setWorkerModelCacheFields maybeModelCacheConfig defMessage
+  where
+    model = executableModelDescriptor executableModel
+    engineBinding = executableModelEngine executableModel
 
 generatedOutputObjectPrefixForRequest :: InferenceRequest -> Maybe Text
 generatedOutputObjectPrefixForRequest request = do
@@ -1305,13 +1201,6 @@ workerOutputFromResponse workerResponse =
         "Python adapter returned an error."
         Text.pack
         (trimWhitespace (Text.unpack (view ProtoInferenceFields.errorMessage workerResponse)))
-
-shellQuote :: String -> String
-shellQuote rawValue =
-  "'" <> concatMap escapeCharacter rawValue <> "'"
-  where
-    escapeCharacter '\'' = "'\\''"
-    escapeCharacter character = [character]
 
 trimWhitespace :: String -> Maybe String
 trimWhitespace rawValue =

@@ -213,18 +213,18 @@ serviceCommandFamily =
 -- env var (Phase 4 Sprint 4.13): coordinator + engine pods each pass
 -- the matching role via chart-supplied `args`, the webapp Deployment
 -- passes `--role webapp`, while host-native flows omit the flag and
--- fall back to the active substrate dhall's `daemonRole` field.
+-- fall back to the active runtime config's `daemonRole` field.
 -- Engine pods or host daemons may pass
 -- `--engine-name` to select a stable engine member id from the derived
 -- pool/member graph. `--config` is a typed path override used by
 -- targeted validation harnesses and operator diagnostics that need an
--- isolated substrate file.
+-- isolated runtime config.
 serviceCommandSpec :: CommandSpec
 serviceCommandSpec =
   CommandSpec
     { commandUsageSuffix = "service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]",
       commandDescription =
-        "starts one long-running role from the single infernix binary. Coordinator and engine roles consume the active `.dhall` request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.",
+        "starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the runtime config's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit runtime config.",
       commandParse = parseServiceCommand
     }
 
@@ -254,7 +254,7 @@ clusterCommandFamily =
     { familyTopic = "cluster",
       familyOverview = "reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces",
       familyCommands =
-        [ simpleCommand "cluster up" "reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state" ClusterUpCommand,
+        [ simpleCommand "cluster up" "requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state" ClusterUpCommand,
           simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
           simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand
         ]
@@ -282,11 +282,11 @@ kubectlCommandFamily :: CommandFamily
 kubectlCommandFamily =
   CommandFamily
     { familyTopic = "kubectl",
-      familyOverview = "proxies upstream Kubernetes access through the repo-local kubeconfig",
+      familyOverview = "proxies read-only Kubernetes diagnostics through the repo-local kubeconfig",
       familyCommands =
         [ CommandSpec
             { commandUsageSuffix = "kubectl ...",
-              commandDescription = "wraps upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context",
+              commandDescription = "wraps an allowlisted read-only subset of upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context",
               commandParse = \case
                 "kubectl" : kubectlArgs -> Just (KubectlCommand kubectlArgs)
                 _ -> Nothing
@@ -391,7 +391,7 @@ materializeSubstrateCommand :: CommandSpec
 materializeSubstrateCommand =
   CommandSpec
     { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]",
-      commandDescription = "writes the generated substrate file for one explicit substrate id into the active build root",
+      commandDescription = "writes the generated runtime config for one explicit substrate id to repo-root `./infernix.dhall`",
       commandParse = \case
         ["internal", "materialize-substrate", rawRuntimeMode] ->
           (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True False)

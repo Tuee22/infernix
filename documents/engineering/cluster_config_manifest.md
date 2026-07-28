@@ -10,11 +10,14 @@
 
 ## TL;DR
 
-The execution-related portion of this manifest is reopened under
+The execution-related portion of this manifest is governed by
 [Typed Execution Plan](../architecture/typed_execution_plan.md). The current wiring records remain
-implemented, but model placements, resource requirements, enforcers, and operation policies must
-compile into one opaque `RuntimePlan`; raw decoded records must not flow directly into routing or
-process launch.
+implemented. Startup now compiles the hidden raw decode into an opaque `CompiledRuntimePlan`;
+coordinator routing projects only compiled placements and daemon capabilities, while engine startup
+pairs live enforcer observations with compiled grants to refine a `RuntimePlan` of
+`ExecutableModel` capabilities. Raw decoded records do not flow directly into routing or process
+launch. Phase 8 owns the final proper Dhall-union and `Natural` wire schema, not this Haskell
+capability boundary.
 
 - The `ClusterConfig` Haskell type (rendered by the binary at `cluster up` from
   `defaultClusterConfig`) is the typed source of truth for every in-cluster wiring value that
@@ -71,7 +74,6 @@ let DemoBackendConfig =
 let EngineConfig =
       { modelCacheRoot : Text
       , modelCacheQuotaBytes : Natural
-      , commandOverrides : List { mapKey : Text, mapValue : Text }
       }
 
 let CoordinatorConfig =
@@ -139,8 +141,10 @@ This table records the typed input families read by each consumer.
 | Keycloak base URL, realm, client id, and JWKS URL inputs | `keycloak.*` | `src/Infernix/Demo/Auth.hs`, `src/Infernix/Demo/Api.hs` |
 | Demo bind host, bridge mode, publication state path, and demo-config path inputs | `demoBackend.*` | `src/Infernix/Webapp.hs`, `src/Infernix/Service.hs` |
 | Model-cache root and quota inputs | `engine.modelCacheRoot`, `engine.modelCacheQuotaBytes` | `python/adapters/model_cache.py` |
-| Engine command override inputs | `engine.commandOverrides` | `src/Infernix/Runtime/Worker.hs` |
 | Coordinator catalog-source, control-plane-context, daemon-location, and daemon-role inputs | `coordinator.*` plus the substrate `.dhall` role field | `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Service.hs` |
+
+Engine commands are not cluster-manifest inputs. `Runtime.Worker` derives the invocation from the
+opaque executable model's compiled engine binding; there is no arbitrary command-override field.
 
 `keycloak.baseUrl` is the issuer-facing public base URL and includes the routed `/auth` prefix
 when the local Gateway publishes Keycloak there. `keycloak.clientId` is the public SPA client id

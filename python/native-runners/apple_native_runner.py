@@ -1,14 +1,11 @@
 from __future__ import annotations
 
 import argparse
-import io
+import importlib.metadata
+import json
 import math
 import pathlib
-import shutil
-import subprocess
 import sys
-import tempfile
-import zipfile
 from dataclasses import dataclass
 
 
@@ -33,9 +30,9 @@ class RunnerArgs:
 
 def main() -> int:
     args = _parse_args()
-    if args.smoke_only:
-        return _run_smoke(args)
     try:
+        if args.smoke_only:
+            return _run_smoke(args)
         _require_model_cache_ready(args)
         output = _run_inference(args)
     except RunnerFailure as exc:
@@ -66,15 +63,19 @@ def _parse_args() -> RunnerArgs:
     parser.add_argument("--model-cache-quota-bytes", default="")
     parser.add_argument("--minio-endpoint", default="")
     parser.add_argument("--minio-models-bucket", default="")
-    parser.add_argument("--minio-demo-artifacts-bucket", default="infernix-demo-objects")
+    parser.add_argument(
+        "--minio-demo-artifacts-bucket", default="infernix-demo-objects"
+    )
     parser.add_argument("--minio-region", default="")
     parser.add_argument("--output-dir", default="")
-    parser.add_argument("--smoke", "--help", action="store_true", dest="smoke_only")
+    parser.add_argument("--smoke", action="store_true", dest="smoke_only")
     parser.add_argument("--require-native-payload", action="store_true")
     parser.add_argument("--allow-missing-native-payload", action="store_true")
-    parsed, _unknown = parser.parse_known_args()
+    parsed = parser.parse_args()
     model_id = parsed.model or parsed.adapter_id
-    install_root = pathlib.Path(parsed.install_root) if parsed.install_root else pathlib.Path.cwd()
+    install_root = (
+        pathlib.Path(parsed.install_root) if parsed.install_root else pathlib.Path.cwd()
+    )
     return RunnerArgs(
         adapter_id=parsed.adapter_id,
         engine_name=parsed.engine_name,
@@ -85,29 +86,48 @@ def _parse_args() -> RunnerArgs:
         input_text=parsed.input_text,
         input_object_ref=parsed.input_object_ref,
         input_file=parsed.input_file,
-        model_cache_root=pathlib.Path(parsed.model_cache_root) if parsed.model_cache_root else None,
+        model_cache_root=(
+            pathlib.Path(parsed.model_cache_root) if parsed.model_cache_root else None
+        ),
         output_dir=pathlib.Path(parsed.output_dir) if parsed.output_dir else None,
         smoke_only=bool(parsed.smoke_only),
     )
 
 
 def _run_smoke(args: RunnerArgs) -> int:
-    if args.adapter_id == "llama-cpp-cli":
-        _require_executable(pathlib.Path("/opt/homebrew/bin/llama-cli"))
-    elif args.adapter_id == "whisper-cpp-cli":
-        _require_executable(pathlib.Path("/opt/homebrew/bin/whisper-cli"))
-    elif args.adapter_id == "jvm-native":
-        _require_executable(_java_executable())
-        _audiveris_executable(args.install_root)
-    elif args.adapter_id in {"ctranslate2-native", "onnx-runtime-native", "mlx-native", "coreml-native"}:
-        _smoke_python_runtime(args)
+    if args.adapter_id in {
+        "ctranslate2-native",
+        "onnx-runtime-native",
+        "mlx-native",
+        "coreml-native",
+    }:
+        packages = _smoke_python_runtime(args)
+    elif args.adapter_id in {
+        "llama-cpp-cli",
+        "whisper-cpp-cli",
+        "jvm-native",
+    }:
+        raise RunnerFailure(
+            f"{args.adapter_id} smoke must use Haskell direct-target supervision",
+            70,
+        )
     else:
         raise RunnerFailure(f"unsupported Apple native adapter: {args.adapter_id}", 64)
-    print(f"infernix apple native runtime smoke ok: {args.adapter_id}")
+    print(
+        json.dumps(
+            {
+                "adapterId": args.adapter_id,
+                "packages": packages,
+                "schemaVersion": 1,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
     return 0
 
 
-def _smoke_python_runtime(args: RunnerArgs) -> None:
+def _smoke_python_runtime(args: RunnerArgs) -> dict[str, str]:
     # Phase 4 Sprint 4.25 — fail closed. The engine runtime lives in the
     # per-engine venv, so a smoke run under any other interpreter cannot
     # validate it; previously this returned green in that case, masking a
@@ -116,10 +136,10 @@ def _smoke_python_runtime(args: RunnerArgs) -> None:
     # rather than a silent pass.
     venv_root = (args.install_root / "venv").resolve()
     # Detect venv membership via sys.prefix (the venv root), not
-    # pathlib(sys.executable).resolve(): the engine venv is created with
-    # --symlinks, so resolving the interpreter follows the symlink out of the
-    # venv to the base framework python and spuriously fails this check.
-    # sys.prefix points at the venv root regardless of symlink-vs-copy mode.
+    # pathlib(sys.executable).resolve(): the interpreter path is not the venv
+    # identity, and upstream packages may still contain contained links even
+    # though provisioning creates the interpreter with --copies. sys.prefix
+    # points at the venv root independently of either representation.
     prefix = pathlib.Path(sys.prefix).resolve()
     if not _path_is_under(prefix, venv_root):
         raise RunnerFailure(
@@ -133,13 +153,54 @@ def _smoke_python_runtime(args: RunnerArgs) -> None:
         if adapter_id == "ctranslate2-native":
             import ctranslate2  # noqa: F401
             import faster_whisper  # noqa: F401
+
+            return {
+                "ctranslate2": importlib.metadata.version("ctranslate2"),
+                "faster-whisper": importlib.metadata.version("faster-whisper"),
+            }
         elif adapter_id == "onnx-runtime-native":
             import onnxruntime  # noqa: F401
+
+            return {"onnxruntime": importlib.metadata.version("onnxruntime")}
         elif adapter_id == "mlx-native":
+            import mlx.core as mx
             import mlx_lm  # noqa: F401
+
+            previous_device = mx.default_device()
+            try:
+                mx.set_default_device(mx.gpu)
+                observed = mx.array([41], dtype=mx.int32) + 1
+                mx.eval(observed)
+                mx.synchronize()
+                if observed.item() != 42:
+                    raise RunnerFailure(
+                        f"upstream MLX GPU smoke produced {observed.item()}, expected 42",
+                        70,
+                    )
+                return {
+                    "mlx": importlib.metadata.version("mlx"),
+                    "mlx-lm": importlib.metadata.version("mlx-lm"),
+                }
+            finally:
+                mx.set_default_device(previous_device)
         elif adapter_id == "coreml-native":
             import basic_pitch  # noqa: F401
+            import coremltools as ct
             import python_coreml_stable_diffusion.pipeline  # noqa: F401
+
+            devices = ct.models.MLModel.get_available_compute_devices()
+            if not devices:
+                raise RunnerFailure(
+                    "upstream coremltools reported no available Core ML compute devices",
+                    70,
+                )
+            return {
+                "apple-ml-stable-diffusion": importlib.metadata.version(
+                    "python-coreml-stable-diffusion"
+                ),
+                "basic-pitch": importlib.metadata.version("basic-pitch"),
+                "coremltools": ct.__version__,
+            }
         else:
             raise RunnerFailure(f"unsupported Python smoke adapter: {adapter_id}", 64)
     except ImportError as import_error:
@@ -166,10 +227,6 @@ def _require_model_cache_ready(args: RunnerArgs) -> None:
 
 
 def _run_inference(args: RunnerArgs) -> str:
-    if args.adapter_id == "llama-cpp-cli":
-        return _run_llama_cpp(args)
-    if args.adapter_id == "whisper-cpp-cli":
-        return _run_whisper_cpp(args)
     if args.adapter_id == "ctranslate2-native":
         return _run_ctranslate2(args)
     if args.adapter_id == "onnx-runtime-native":
@@ -178,14 +235,23 @@ def _run_inference(args: RunnerArgs) -> str:
         return _run_mlx_lm(args)
     if args.adapter_id == "coreml-native":
         return _run_coreml(args)
-    if args.adapter_id == "jvm-native":
-        return _run_audiveris(args)
+    if args.adapter_id in {
+        "llama-cpp-cli",
+        "whisper-cpp-cli",
+        "jvm-native",
+    }:
+        raise RunnerFailure(
+            f"{args.adapter_id} inference must use Haskell direct-target supervision",
+            70,
+        )
     raise RunnerFailure(f"unsupported Apple native adapter: {args.adapter_id}", 64)
 
 
 def _model_dir(args: RunnerArgs) -> pathlib.Path:
     if args.model_cache_root is None:
-        raise RunnerFailure("native model-cache root is required for real Apple inference", 70)
+        raise RunnerFailure(
+            "native model-cache root is required for real Apple inference", 70
+        )
     return args.model_cache_root / args.model_id
 
 
@@ -195,12 +261,6 @@ def _model_payload(args: RunnerArgs) -> pathlib.Path:
 
 def _require_file(path: pathlib.Path) -> pathlib.Path:
     if not path.is_file():
-        raise RunnerFailure(f"native_payload_missing: {path}", 70)
-    return path
-
-
-def _require_executable(path: pathlib.Path) -> pathlib.Path:
-    if not path.is_file() or not path.stat().st_mode & 0o111:
         raise RunnerFailure(f"native_payload_missing: {path}", 70)
     return path
 
@@ -218,100 +278,54 @@ def _require_output_dir(args: RunnerArgs) -> pathlib.Path:
     return args.output_dir
 
 
-def _native_runner_child_env() -> dict[str, str]:
-    """Sprint 4.28 (managed-state-transition doctrine): give child subprocesses a
-    real environment carrying HOME and TMPDIR, rather than an empty ``env={}``.
-
-    Adapters must not read the process environment (the no-env-vars doctrine), so
-    HOME is a fresh writable temp directory and TMPDIR is the system temp
-    directory that ``tempfile`` already resolves. A minimal absolute PATH lets the
-    child locate standard system tools without inheriting the operator's ambient
-    PATH.
-    """
-    home_dir = tempfile.mkdtemp(prefix="infernix-native-home-")
-    return {
-        "HOME": home_dir,
-        "TMPDIR": tempfile.gettempdir(),
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
-    }
-
-
-def _run_subprocess(
-    command: list[str],
-    *,
-    cwd: pathlib.Path | None = None,
-    timeout_seconds: int | None = None,
-    require_output: bool = True,
-) -> str:
-    try:
-        result = subprocess.run(
-            command,
-            cwd=str(cwd) if cwd is not None else None,
-            env=_native_runner_child_env(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
+def _require_nonempty_output(
+    output_dir: pathlib.Path, artifact_path: pathlib.Path, description: str
+) -> pathlib.Path:
+    if output_dir.is_symlink():
+        raise RunnerFailure(
+            f"{description} output root may not be a symbolic link: {output_dir}",
+            70,
         )
-    except subprocess.TimeoutExpired as exc:
-        detail = (exc.stderr or exc.stdout or "").strip()
-        message = detail or f"command timed out after {timeout_seconds}s: {' '.join(command)}"
-        raise RunnerFailure(message, 70) from exc
-    if result.returncode != 0:
-        raise RunnerFailure(result.stderr.strip() or f"command failed: {' '.join(command)}", 70)
-    rendered = " ".join(result.stdout.split())
-    if require_output and not rendered:
-        raise RunnerFailure(f"command returned no output: {' '.join(command)}", 70)
-    return rendered
-
-
-def _run_llama_cpp(args: RunnerArgs) -> str:
-    llama_cli = _require_executable(pathlib.Path("/opt/homebrew/bin/llama-cli"))
-    model_path = _require_file(_model_payload(args))
-    prompt = args.input_text or "Hello from Infernix"
-    return _run_subprocess(
-        [
-            str(llama_cli),
-            "-m",
-            str(model_path),
-            "-p",
-            prompt,
-            "-n",
-            "8",
-            "--ctx-size",
-            "128",
-            "--threads",
-            "8",
-            "--threads-batch",
-            "8",
-            "--no-warmup",
-            "--gpu-layers",
-            "all",
-            "--no-display-prompt",
-            "--single-turn",
-            "--log-disable",
-            "--simple-io",
-        ],
-        timeout_seconds=120,
-    )
-
-
-def _run_whisper_cpp(args: RunnerArgs) -> str:
-    whisper_cli = _require_executable(pathlib.Path("/opt/homebrew/bin/whisper-cli"))
-    model_path = _require_file(_model_payload(args))
-    input_file = _require_input_file(args)
-    return _run_subprocess(
-        [
-            str(whisper_cli),
-            "-m",
-            str(model_path),
-            "-f",
-            str(input_file),
-            "-nt",
-            "-np",
-        ]
-    )
+    resolved_output_dir = output_dir.resolve()
+    absolute_artifact = artifact_path.absolute()
+    try:
+        relative_artifact = absolute_artifact.relative_to(output_dir.absolute())
+    except ValueError as exc:
+        raise RunnerFailure(
+            f"{description} produced an artifact outside {output_dir.absolute()}: "
+            f"{absolute_artifact}",
+            70,
+        ) from exc
+    current_path = output_dir.absolute()
+    for component in relative_artifact.parts:
+        current_path /= component
+        if current_path.is_symlink():
+            raise RunnerFailure(
+                f"{description} artifact path contains a symbolic link: {current_path}",
+                70,
+            )
+    resolved_artifact = artifact_path.resolve()
+    if not _path_is_under(resolved_artifact, resolved_output_dir):
+        raise RunnerFailure(
+            f"{description} produced an artifact outside {resolved_output_dir}: "
+            f"{resolved_artifact}",
+            70,
+        )
+    try:
+        artifact_size = resolved_artifact.stat().st_size
+    except OSError as exc:
+        raise RunnerFailure(
+            f"{description} did not produce the expected artifact "
+            f"{resolved_artifact}: {exc}",
+            70,
+        ) from exc
+    if not resolved_artifact.is_file() or artifact_size <= 0:
+        raise RunnerFailure(
+            f"{description} produced an empty or non-regular artifact: "
+            f"{resolved_artifact}",
+            70,
+        )
+    return resolved_artifact
 
 
 def _run_ctranslate2(args: RunnerArgs) -> str:
@@ -350,27 +364,31 @@ def _run_coreml(args: RunnerArgs) -> str:
 
 
 def _run_basic_pitch_coreml(args: RunnerArgs) -> str:
+    from basic_pitch import ICASSP_2022_MODEL_PATH
+    from basic_pitch.inference import predict_and_save
+
     input_file = _require_input_file(args)
     output_dir = _require_output_dir(args)
-    basic_pitch_cli = pathlib.Path(sys.executable).parent / "basic-pitch"
-    _require_executable(basic_pitch_cli)
-    result = subprocess.run(
-        [str(basic_pitch_cli), str(output_dir), str(input_file)],
-        env=_native_runner_child_env(),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        check=False,
+    predict_and_save(
+        [input_file],
+        output_dir,
+        save_midi=True,
+        sonify_midi=False,
+        save_model_outputs=False,
+        save_notes=False,
+        model_or_model_path=ICASSP_2022_MODEL_PATH,
     )
-    if result.returncode != 0:
-        raise RunnerFailure(result.stderr.strip() or "basic-pitch Core ML invocation failed", 70)
-    midi_path = _first_existing(output_dir, ["*.mid", "*/*.mid", "*.midi", "*/*.midi"])
-    if midi_path is None:
-        raise RunnerFailure("basic-pitch Core ML produced no MIDI artifact", 70)
+    midi_path = _require_nonempty_output(
+        output_dir,
+        output_dir / f"{input_file.stem}_basic_pitch.mid",
+        "basic-pitch Core ML",
+    )
     return NATIVE_ARTIFACT_PREFIX + str(midi_path)
 
 
 def _run_coreml_stable_diffusion(args: RunnerArgs) -> str:
+    from python_coreml_stable_diffusion import pipeline
+
     model_dir = _model_dir(args)
     model_root = _first_existing_dir(
         model_dir,
@@ -378,29 +396,28 @@ def _run_coreml_stable_diffusion(args: RunnerArgs) -> str:
     )
     output_dir = _require_output_dir(args)
     prompt = args.input_text or "a small red cube on a white table"
-    command = [
-        sys.executable,
-        "-m",
-        "python_coreml_stable_diffusion.pipeline",
-        "--prompt",
-        prompt,
-        "-i",
-        str(model_root),
-        "-o",
-        str(output_dir),
-        "--model-version",
-        "runwayml/stable-diffusion-v1-5",
-        "--compute-unit",
-        "CPU_AND_GPU",
-        "--seed",
-        "93",
-        "--num-inference-steps",
-        "2",
-    ]
-    _run_subprocess(command, timeout_seconds=900, require_output=False)
-    image_path = _first_existing(output_dir, ["*.png", "*/*.png"])
-    if image_path is None:
-        raise RunnerFailure("Core ML Stable Diffusion produced no PNG artifact", 70)
+    pipeline_args = argparse.Namespace(
+        prompt=prompt,
+        i=str(model_root),
+        o=str(output_dir),
+        seed=93,
+        model_version="runwayml/stable-diffusion-v1-5",
+        compute_unit="CPU_AND_GPU",
+        scheduler=None,
+        num_inference_steps=2,
+        guidance_scale=7.5,
+        controlnet=None,
+        controlnet_inputs=None,
+        negative_prompt=None,
+        unet_batch_one=False,
+        model_sources=None,
+    )
+    pipeline.main(pipeline_args)
+    image_path = _require_nonempty_output(
+        output_dir,
+        pathlib.Path(pipeline.get_image_path(pipeline_args)),
+        "Core ML Stable Diffusion",
+    )
     return NATIVE_ARTIFACT_PREFIX + str(image_path)
 
 
@@ -439,9 +456,7 @@ def _run_basic_pitch_onnx(args: RunnerArgs) -> str:
     original_len = int(audio.shape[0])
     if original_len <= 0:
         raise RunnerFailure("basic-pitch: empty audio after decode", 70)
-    audio = np.concatenate(
-        [np.zeros(overlap_samples // 2, dtype="float32"), audio]
-    )
+    audio = np.concatenate([np.zeros(overlap_samples // 2, dtype="float32"), audio])
 
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
@@ -523,7 +538,9 @@ def _run_basic_pitch_onnx(args: RunnerArgs) -> str:
         if i_end - i_start <= min_note_len:
             continue
         amplitude = float(np.mean(frames[i_start:i_end, freq_idx]))
-        events.append((int(i_start), int(i_end), int(freq_idx + midi_offset), amplitude))
+        events.append(
+            (int(i_start), int(i_end), int(freq_idx + midi_offset), amplitude)
+        )
 
     if not events:
         raise RunnerFailure("basic-pitch: produced no notes", 70)
@@ -604,81 +621,10 @@ def _basic_pitch_frame_times(
 
     base = np.arange(count) * fft_hop / sample_rate
     window_numbers = np.floor(np.arange(count) / annot_n_frames)
-    window_offset = (fft_hop / sample_rate) * (annot_n_frames - ((sample_rate * 2 - fft_hop) / fft_hop)) + 0.0018
+    window_offset = (fft_hop / sample_rate) * (
+        annot_n_frames - ((sample_rate * 2 - fft_hop) / fft_hop)
+    ) + 0.0018
     return base - window_offset * window_numbers
-
-
-def _run_audiveris(args: RunnerArgs) -> str:
-    audiveris_cli = _audiveris_executable(args.install_root)
-    input_file = _require_input_file(args)
-    output_dir = _require_output_dir(args)
-    with tempfile.TemporaryDirectory(prefix="infernix-audiveris-home-") as home:
-        result = subprocess.run(
-            [
-                str(audiveris_cli),
-                "-batch",
-                "-export",
-                "-option",
-                "org.audiveris.omr.sheet.BookManager.useCompression=false",
-                "-output",
-                str(output_dir),
-                str(input_file),
-            ],
-            env={"HOME": home, "TMPDIR": home, "PATH": "/usr/local/bin:/usr/bin:/bin"},
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-        )
-    if result.returncode != 0:
-        raise RunnerFailure(result.stderr.strip() or "audiveris failed", 70)
-    artifact_path = _first_existing(
-        output_dir,
-        ["*.musicxml", "*/*.musicxml", "*.xml", "*/*.xml", "*.mxl", "*/*.mxl"],
-    )
-    if artifact_path is None:
-        raise RunnerFailure("audiveris produced no MusicXML artifact", 70)
-    return NATIVE_ARTIFACT_PREFIX + str(artifact_path)
-
-
-def _audiveris_executable(install_root: pathlib.Path) -> pathlib.Path:
-    candidates = [
-        install_root / "Audiveris.app" / "Contents" / "MacOS" / "Audiveris",
-        pathlib.Path("/Applications/Audiveris.app/Contents/MacOS/Audiveris"),
-    ]
-    for candidate in candidates:
-        if candidate.is_file():
-            return _require_executable(candidate)
-    java_path = _java_executable()
-    jar_path = install_root / "lib" / "audiveris.jar"
-    if jar_path.is_file():
-        wrapper = install_root / "bin" / "audiveris-java-wrapper"
-        wrapper.parent.mkdir(parents=True, exist_ok=True)
-        wrapper.write_text(
-            "#!/bin/sh\n"
-            "set -eu\n"
-            f"exec {java_path} -jar {jar_path} \"$@\"\n",
-            encoding="utf-8",
-        )
-        wrapper.chmod(0o755)
-        return wrapper
-    raise RunnerFailure(
-        "native_payload_missing: Audiveris.app or lib/audiveris.jar under "
-        f"{install_root}",
-        70,
-    )
-
-
-def _java_executable() -> pathlib.Path:
-    return _require_executable(pathlib.Path("/opt/homebrew/opt/openjdk/bin/java"))
-
-
-def _first_existing(root: pathlib.Path, patterns: list[str]) -> pathlib.Path | None:
-    for pattern in patterns:
-        for candidate in sorted(root.glob(pattern)):
-            if candidate.is_file() and candidate.stat().st_size > 0:
-                return candidate
-    return None
 
 
 def _first_existing_dir(root: pathlib.Path, relative_paths: list[str]) -> pathlib.Path:
@@ -686,19 +632,9 @@ def _first_existing_dir(root: pathlib.Path, relative_paths: list[str]) -> pathli
         candidate = root / relative_path
         if candidate.is_dir():
             return candidate
-    raise RunnerFailure(f"native_payload_missing: Core ML model directory under {root}", 70)
-
-
-def _zip_directory(output_path: pathlib.Path, root: pathlib.Path) -> None:
-    with zipfile.ZipFile(output_path, "w") as archive:
-        for path in sorted(root.rglob("*")):
-            if path.is_file():
-                archive.write(path, path.relative_to(root).as_posix())
-
-
-def _copy_file(source: pathlib.Path, destination: pathlib.Path) -> None:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copyfile(source, destination)
+    raise RunnerFailure(
+        f"native_payload_missing: Core ML model directory under {root}", 70
+    )
 
 
 if __name__ == "__main__":

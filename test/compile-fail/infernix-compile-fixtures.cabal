@@ -1,0 +1,608 @@
+cabal-version: 3.8
+name: infernix-compile-fixtures
+version: 0.1.0.0
+build-type: Simple
+
+common fixture
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Werror
+        -fdiagnostics-color=never
+    build-depends:
+        base >=4.18 && <4.23,
+        infernix,
+        text >=2.0 && <2.2
+
+common protocol-fixture
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Werror
+        -fdiagnostics-color=never
+    build-depends:
+        aeson >=2.1 && <2.3,
+        base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
+        bytestring >=0.11 && <0.13,
+        directory >=1.3 && <1.4,
+        entropy >=0.4.1.11 && <0.5,
+        filelock >=0.1.1.9 && <0.2,
+        filepath >=1.4 && <1.6,
+        text >=2.0 && <2.2,
+        unix >=2.8 && <2.9
+    other-modules:
+        Infernix.Cluster.Subprocess.Activity
+        Infernix.Cluster.Subprocess.Protocol
+        Infernix.Error
+        Infernix.ProcessIdentity
+        Infernix.ProcessIdentity.Internal
+
+common artifact-fixture
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Werror
+        -fdiagnostics-color=never
+    build-depends:
+        aeson >=2.1 && <2.3,
+        base >=4.18 && <4.23,
+        base16-bytestring >=1.0 && <1.1,
+        bytestring >=0.11 && <0.13,
+        cryptohash-sha256 >=0.11 && <0.12,
+        directory >=1.3 && <1.4,
+        filelock >=0.1.1.9 && <0.2,
+        filepath >=1.4 && <1.6,
+        text >=2.0 && <2.2,
+        unix >=2.8 && <2.9
+    other-modules:
+        Infernix.Cluster.LifecycleLock
+        Infernix.Engines.Artifact
+        Infernix.Engines.Artifact.Capability
+        Infernix.Engines.Artifact.Identity
+        Infernix.Engines.Artifact.Internal
+        Infernix.Engines.Artifact.Recipe
+        Infernix.Engines.Artifact.Snapshot
+        Infernix.Engines.Artifact.Target
+        Infernix.Engines.MaterializationLock
+        Infernix.Engines.MaterializationLock.Internal
+        Infernix.Error
+
+common artifact-capability-fixture
+    default-language: GHC2021
+    ghc-options:
+        -Wall
+        -Werror
+        -fdiagnostics-color=never
+    build-depends:
+        base >=4.18 && <4.23,
+        bytestring >=0.11 && <0.13,
+        text >=2.0 && <2.2
+    other-modules:
+        Infernix.Engines.Artifact.Capability
+
+executable pass-matching-host
+    import: fixture
+    main-is: MatchingHost.hs
+    hs-source-dirs:
+        pass
+        support
+    other-modules: DesiredApi
+
+executable pass-matching-pod
+    import: fixture
+    main-is: MatchingPod.hs
+    hs-source-dirs:
+        pass
+        support
+    other-modules: DesiredApi
+
+executable pass-refined-route
+    import: fixture
+    main-is: RefinedRoute.hs
+    hs-source-dirs:
+        pass
+        support
+    other-modules: DesiredApi
+
+executable pass-compiled-route
+    import: fixture
+    main-is: CompiledRoute.hs
+    hs-source-dirs: pass
+
+executable pass-ordered-subprocess-protocol
+    import: protocol-fixture
+    main-is: OrderedSubprocessProtocol.hs
+    hs-source-dirs:
+        pass
+        ../../src
+
+executable pass-ordered-artifact-program
+    import: artifact-capability-fixture
+    main-is: OrderedArtifactProgram.hs
+    hs-source-dirs:
+        pass
+        ../../src
+
+executable fail-cannot-construct-memory-ceiling
+    import: fixture
+    main-is: CannotConstructMemoryCeiling.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-construct-memory-grant
+    import: fixture
+    main-is: CannotConstructMemoryGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-read-memory-ceiling
+    import: fixture
+    main-is: CannotReadMemoryCeiling.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-read-memory-grant
+    import: fixture
+    main-is: CannotReadMemoryGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-read-engine-route
+    import: fixture
+    main-is: CannotReadEngineRoute.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-read-host-memory-partition
+    import: fixture
+    main-is: CannotReadHostMemoryPartition.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-read-model-memory-footprint
+    import: fixture
+    main-is: CannotReadModelMemoryFootprint.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-coerce-memory-ceiling-resource
+    import: fixture
+    main-is: CannotCoerceMemoryCeilingResource.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-coerce-memory-grant-resource
+    import: fixture
+    main-is: CannotCoerceMemoryGrantResource.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-coerce-enforcer-resource
+    import: fixture
+    main-is: CannotCoerceEnforcerResource.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-coerce-enforcer-plan-resource
+    import: fixture
+    main-is: CannotCoerceEnforcerPlanResource.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-construct-executable-model
+    import: fixture
+    main-is: CannotConstructExecutableModel.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-construct-raw-runtime-config
+    import: fixture
+    main-is: CannotConstructRawRuntimeConfig.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-import-cluster-command
+    import: fixture
+    main-is: CannotImportClusterCommand.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cluster-lifecycle-lock
+    import: fixture
+    main-is: CannotImportClusterLifecycleLock.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cluster-subprocess
+    import: fixture
+    main-is: CannotImportClusterSubprocess.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cli-internal-subprocess-dispatch
+    import: fixture
+    main-is: CannotImportCliInternalSubprocessDispatch.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-execution-plan-internal
+    import: fixture
+    main-is: CannotImportExecutionPlanInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-process-identity-internal
+    import: fixture
+    main-is: CannotImportProcessIdentityInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-substrate-internal
+    import: fixture
+    main-is: CannotImportSubstrateInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-apple-silicon-internal
+    import: fixture
+    main-is: CannotImportAppleSiliconInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-engine-artifact
+    import: fixture
+    main-is: CannotImportEngineArtifact.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-engine-artifact-capability
+    import: fixture
+    main-is: CannotImportEngineArtifactCapability.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-engine-provisioning
+    import: fixture
+    main-is: CannotImportEngineProvisioning.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-engine-provisioning-internal
+    import: fixture
+    main-is: CannotImportEngineProvisioningInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-capped-engine-internal
+    import: fixture
+    main-is: CannotImportCappedEngineInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-apple-installer
+    import: fixture
+    main-is: CannotImportRawAppleInstaller.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-construct-linux-native-artifact
+    import: fixture
+    main-is: CannotConstructLinuxNativeArtifact.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-linux-native-materializer
+    import: fixture
+    main-is: CannotImportRawLinuxNativeMaterializer.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-read-raw-linux-native-artifact-fields
+    import: fixture
+    main-is: CannotReadRawLinuxNativeArtifactFields.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-demo-config
+    import: fixture
+    main-is: CannotImportRawDemoConfig.hs
+    hs-source-dirs: fail
+
+executable fail-removed-worker-native-args
+    import: fixture
+    main-is: RemovedWorkerNativeArgs.hs
+    hs-source-dirs: fail
+
+executable fail-removed-worker-native-roots
+    import: fixture
+    main-is: RemovedWorkerNativeRoots.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-pulsar-routing
+    import: fixture
+    main-is: CannotImportRawPulsarRouting.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-removed-models-routing
+    import: fixture
+    main-is: CannotImportRemovedModelsRouting.hs
+    hs-source-dirs: fail
+
+executable fail-raw-pulsar-publish
+    import: fixture
+    main-is: RawPulsarPublish.hs
+    hs-source-dirs: fail
+
+executable fail-raw-pulsar-drain
+    import: fixture
+    main-is: RawPulsarDrain.hs
+    hs-source-dirs: fail
+
+executable fail-raw-model-bootstrap-publish
+    import: fixture
+    main-is: RawModelBootstrapPublish.hs
+    hs-source-dirs: fail
+
+executable fail-host-enforcer-pod-grant
+    import: fixture
+    main-is: HostEnforcerPodGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-vram-enforcer-host-grant
+    import: fixture
+    main-is: VramEnforcerHostGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-compiled-plan-is-not-runtime-plan
+    import: fixture
+    main-is: CompiledPlanIsNotRuntimePlan.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-planned-enforcer-is-not-live
+    import: fixture
+    main-is: PlannedEnforcerIsNotLive.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-raw-worker-route
+    import: fixture
+    main-is: RawWorkerRoute.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-coerce-cluster-teardown-authority
+    import: fixture
+    main-is: CannotCoerceClusterTeardownAuthority.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-coerce-cluster-lifecycle-lease
+    import: fixture
+    main-is: CannotCoerceClusterLifecycleLease.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-escape-cluster-teardown-authority
+    import: fixture
+    main-is: CannotEscapeClusterTeardownAuthority.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-reuse-cluster-teardown-authority
+    import: fixture
+    main-is: CannotReuseClusterTeardownAuthority.hs
+    hs-source-dirs: fail
+
+executable fail-skip-subprocess-lease-phase
+    import: protocol-fixture
+    main-is: SkipSubprocessLeasePhase.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-subprocess-supervisor-observation
+    import: protocol-fixture
+    main-is: SkipSubprocessSupervisorObservation.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-subprocess-pin-custody-observation
+    import: protocol-fixture
+    main-is: SkipSubprocessPinCustodyObservation.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-subprocess-final-ready-observation
+    import: protocol-fixture
+    main-is: SkipSubprocessFinalReadyObservation.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-subprocess-durable-publication
+    import: protocol-fixture
+    main-is: SkipSubprocessDurablePublication.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-escape-subprocess-session
+    import: protocol-fixture
+    main-is: EscapeSubprocessSession.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-reuse-subprocess-start-authority
+    import: protocol-fixture
+    main-is: ReuseSubprocessStartAuthority.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-subprocess-anchor-control
+    import: protocol-fixture
+    main-is: CannotConstructSubprocessAnchorControl.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-supervisor-ready-evidence
+    import: protocol-fixture
+    main-is: CannotConstructSupervisorReadyEvidence.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-supervisor-custody-evidence
+    import: protocol-fixture
+    main-is: CannotConstructSupervisorCustodyEvidence.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-pin-custody-evidence
+    import: protocol-fixture
+    main-is: CannotConstructPinCustodyEvidence.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-activity-publication
+    import: protocol-fixture
+    main-is: CannotConstructActivityPublication.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-reuse-artifact-session
+    import: artifact-capability-fixture
+    main-is: ReuseArtifactSession.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-artifact-reap
+    import: artifact-capability-fixture
+    main-is: SkipArtifactReap.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-skip-artifact-phase
+    import: artifact-capability-fixture
+    main-is: SkipArtifactPhase.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-escape-artifact-nested-io
+    import: artifact-capability-fixture
+    main-is: EscapeArtifactNestedIO.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-escape-materialization-authority
+    import: artifact-fixture
+    main-is: EscapeMaterializationAuthority.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-capture-materialization-authority-in-closure
+    import: artifact-fixture
+    main-is: CaptureMaterializationAuthorityInClosure.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-construct-materialization-authority
+    import: artifact-fixture
+    main-is: CannotConstructMaterializationAuthority.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-write-artifact-without-authority
+    import: artifact-fixture
+    main-is: WriteArtifactWithoutAuthority.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-arbitrary-installed-artifact-validation
+    import: artifact-fixture
+    main-is: ArbitraryInstalledArtifactValidation.hs
+    hs-source-dirs:
+        fail
+        ../../src
+
+executable fail-cannot-import-apple-materialization-transaction
+    import: fixture
+    main-is: CannotImportAppleMaterializationTransaction.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-construct-apple-materialization-request
+    import: fixture
+    main-is: CannotConstructAppleMaterializationRequest.hs
+    hs-source-dirs: fail
+
+executable fail-removed-apple-phase-transition
+    import: fixture
+    main-is: RemovedApplePhaseTransition.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-artifact-transaction-kernel
+    import: fixture
+    main-is: CannotImportArtifactTransactionKernel.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-materialization-lock-kernel
+    import: fixture
+    main-is: CannotImportMaterializationLockKernel.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-download-cache-lock-kernel
+    import: fixture
+    main-is: CannotImportDownloadCacheLockKernel.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-python-mutation-lock-kernel
+    import: fixture
+    main-is: CannotImportPythonMutationLockKernel.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cluster-subprocess-protocol
+    import: fixture
+    main-is: CannotImportClusterSubprocessProtocol.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-cluster-subprocess-activity
+    import: fixture
+    main-is: CannotImportClusterSubprocessActivity.hs
+    hs-source-dirs: fail
+
+executable fail-raw-capped-launch
+    import: fixture
+    main-is: RawCappedLaunch.hs
+    hs-source-dirs: fail

@@ -8,27 +8,58 @@
 
 ## Architecture Baseline
 
-The repository target closes around the staged-substrate architecture: the one-binary role model,
+The repository target closes around the explicit-init runtime-config architecture: the one-binary role model,
 mandatory local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific
 validation, and a daemon-role model where the coordinator owns Pulsar routing while
 substrate-neutral engine pools run inference on Kubernetes workloads or Apple host daemons.
 
+> **No-native-source correction and evidence reset (2026-07-26).** Repository-owned native
+> implementation source is forbidden in native files or embedded/generated payloads, as are Cabal
+> native-source declarations. The audit found pre-existing Objective-C/C/Metal source embedded in
+> `AppleSilicon.hs`; Phase 1 Sprint 1.20 has deleted that fixed bridge/Clang topology and replaced
+> its smoke with a public upstream package API. Its code-side materializer now uses a hidden
+> rank-2 bounded provisioning/session region plus fully hydrated, relocated, authoritatively
+> smoked, exact-provenance/payload-digest candidates and fsynced rollback/crash reconciliation.
+> Phase 0 closed its correction gate on 2026-07-27. Sprint 1.20 remains under active correction
+> after five rejected source reviews; all earlier focused inventories and results are superseded.
+> The live correction audit also found that capped-engine cleanup reaped its process-group leader
+> before later numeric group cleanup, leaving a PID/PGID-reuse window. Phase 1 now additionally
+> requires an exact retained helper-owned group identity through termination, group-absence proof,
+> and designated-owner reap.
+> Settled focused proof, final review, fresh exact-source complete Stage 1, and real Apple
+> rematerialization/runtime plus paired `linux-cpu` cohort proof remain. Every
+> Phase 2 source/binary digest, final
+> review, Stage 1, and current-cohort statement
+> below that predates this correction is historical GREEN-as-run evidence only, superseded and
+> nonreusable. The accepted post-correction Phase 0 identity is pre-evidence worktree
+> `sha256:93a9c053bbe5d41feaba3c10fae8f55c9c42e2c566ebcacbc187747f6b87a4d9` and installed Apple
+> binary `sha256:da62304fdec82bb5e2c1a8d3d0c3fc0fe66a9aa7c77c3d1023de8572a8095fcf`;
+> final review and the complete correction Stage 1 passed without changing the source digest;
+> subsequent evidence-only plan edits do not change executable source.
+> Apple and `linux-cpu` cohort evidence remains open. The lifecycle C/FFI/Cabal boundary is removed
+> and passed the correction-wide focused and aggregate gate. Affected Phase 1 Apple-bridge evidence
+> is still superseded. The all-Haskell
+> subprocess correction and its nested supervisor/pin custody-handshake redesign are implemented
+> after source review rejected the forked target-group candidate's inherited-descriptor window.
+> The obsolete subprocess C file and Cabal declaration are removed code-side. Phase 0's focused and
+> aggregate post-correction proof passed on 2026-07-27; later phase-owned and cohort proof remains.
+
 ## Current Repo Assessment
 
-The repository implements the substrate-file architecture, bootstrap responsibility boundary, and
+The repository implements the runtime-config architecture, bootstrap responsibility boundary, and
 Harbor-first image-boundary doctrine described in this overview. The governed validation surface
-now splits cleanly between focused substrate-file-independent lint or
-docs checks and test commands that validate the active staged substrate before running:
-`infernix lint docs` and `infernix docs check` validate documentation without reading the staged
-substrate file, `infernix test unit` validates module behavior after command-level substrate
+now splits cleanly between focused config-independent lint or
+docs checks and test commands that validate the initialized runtime config before running:
+`infernix lint docs` and `infernix docs check` validate documentation without reading the runtime
+config, `infernix test unit` validates module behavior after command-level substrate
 context is present, and `infernix test integration`, `infernix test e2e`, and `infernix test all`
-run the complete relevant suites for the currently staged substrate instead of implying a default
+run the complete relevant suites for the configured substrate instead of implying a default
 cross-substrate rerun.
 The worktree omits the direct tool-route compatibility payloads and persists Linux cluster state
 before later rollout phases. Bootstrap shell entrypoints build or enter the active launcher only;
-the binary command materializes or verifies the active substrate file before lifecycle and
-validation commands rely on it. The current Apple split-executor shape is implemented, and the
+`infernix init` creates repo-root `./infernix.dhall`; ordinary config-dependent binary commands
+validate it and fail fast naming the init when it is absent. The current Apple split-executor shape is implemented, and the
 code-side routing target now uses a substrate-neutral engine-pool graph instead of single Apple
 host-topic routing or Linux-only per-engine topic special cases. `apple-silicon` keeps Apple-native inference
 execution host-side for performance while Kind continues to host Harbor, MinIO, Pulsar, PostgreSQL,
@@ -38,12 +69,13 @@ daemons identified by stable host ids. The generated final-phase Helm values use
 coordinator and engine knobs instead of the legacy `service.replicaCount` surface. The coordinator
 publishes batch work to topics derived from `(runtimeMode, pool id, model id, optional member id)`:
 normal pools use Pulsar `Shared` subscriptions and broker-native backpressure, while pinned routes
-use derived per-member topics with `Exclusive`. The staged `.dhall` tells each daemon the substrate
+use derived per-member topics with `Exclusive`. The initialized `.dhall` tells each daemon the substrate
 and whether its role is `Coordinator`, `Engine`, or `Webapp`; host-role Apple metadata also
 includes the Pulsar connection mode plus pool membership. Publication reports the cluster coordinator location
 separately from the inference executor location. The runtime worker uses explicit Python or native
-adapter harnesses selected from the staged substrate file. Each harness dispatches to the selected
-engine entrypoint, fetches model weights lazily from the `infernix-models` MinIO bucket, and
+adapter harnesses selected from the runtime config. Each harness dispatches to the selected
+engine entrypoint after the coordinator eagerly stages every configured model in the
+`infernix-models` MinIO bucket behind the `warm-model-cache` barrier, and
 publishes the typed per-family result surface. Realness is guaranteed by construction — the engine
 code cannot fabricate a result (enforced by the realness lint). Waves K/L delivered real per-family
 output for their then-active catalogs, and the MT3 rows added on 2026-06-30 closed under Wave P on 2026-07-04. On Apple Silicon
@@ -57,25 +89,34 @@ Phase 4/6 `linux-gpu` plus `linux-cpu` real-output reopen is closed for the then
 Wave K, with realness enforced by the lint. The 2026-06-30 MT3 catalog expansion closed under Wave P
 on 2026-07-04. The Wave Q matrix substrate-accuracy reopen (Sprints 4.25/6.36) and the original
 apple-silicon inference RAM-safety reopen (Sprints 4.26/6.37) closed under Waves R/S for their
-original scopes. On 2026-07-09, Phases 4, 5, and 6 reopened for typed resource admission; the
-code-side implementation is now complete. Runtime admission uses pure `InferenceMemoryBudget` and
-`InferenceError` types, rejects only oversized requests with
-`ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }`, keeps smaller configured
-models runnable, removes hardcoded Apple budget floors, uses Linux CPU pod memory, and uses Linux
-GPU VRAM. Wave T closed on 2026-07-12 with `linux-cpu` image
+original scopes. On 2026-07-09, Phases 4, 5, and 6 reopened for the first typed resource-admission
+increment. That historical implementation used pure `InferenceMemoryBudget` and `InferenceError`
+types, returned `ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` for an
+oversized request, kept smaller configured models runnable, removed hardcoded Apple budget floors,
+and used the Linux CPU pod-memory and reported GPU-VRAM quantities. Wave T closed that increment on
+2026-07-12 with `linux-cpu` image
 `sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f` plus selected
 `linux-gpu` image `sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896`.
-On 2026-07-21, Phases 0, 4, and 6 reopened for an earlier memory-safety increment: an inference engine
-subprocess runs only under a typed `MemoryGrant` minted by `admitModelMemory`, the capped-engine kernel
-bounds resident memory to the admitted `MemoryCeiling`, and an over-budget model is a clean
-`status=failed` `ModelMemoryLimitExceeded` rather than a host OOM. Phase 0 Sprint 0.15 landed the
-`bounded_inference_memory.md` doctrine doc + governance mirror (doc-only, machine-independent, Done);
-the enforcing code is **code-side closed (2026-07-21)** — Phase 4 Sprints 4.30/4.31 (grant-gated kernel
-`Infernix.Runtime.CappedEngine`, checked `HostMemoryPartition`, required `ModelMemoryFootprint`,
-budget-enforcer split dropping `UnenforcedMemoryBudget`) and Phase 6 Sprint 6.42
-(`unboundedEngineSpawnViolations` lint), machine-independent gate set GREEN — with the behavioral
-single-accelerator (apple-silicon) plus `linux-cpu` cohort sign-off **closed under
-[Wave W](cohort-validation-waves.md) on 2026-07-24 (apple-silicon plus linux-cpu full-suite GREEN)** for that narrower scope. The 2026-07-25 Typed Execution Plan audit reopens Phases 0/1/2/4/6/8 because Linux did not enforce each grant, GPU VRAM lacked a verified enforcer, and production raw-spawn exemptions remained. On 2026-07-22 the
+On 2026-07-21, Phases 0, 4, and 6 reopened for a second historical memory-safety increment:
+`admitModelMemory` minted an unindexed `MemoryGrant` and the capped-engine kernel bounded resident
+memory to its `MemoryCeiling`. Phase 0 Sprint 0.15 landed the doctrine and governance mirror; Phase 4
+Sprints 4.30/4.31 and Phase 6 Sprint 6.42 passed their recorded machine-independent gates, and
+[Wave W](cohort-validation-waves.md) recorded apple-silicon plus `linux-cpu` full-suite evidence on
+2026-07-24 for that narrower construction.
+
+The 2026-07-25 Typed Execution Plan audit superseded the public admission API and reopened Phases
+0/1/2/4/6/8. Phase 1 now implements the Haskell boundary: `compileRuntimePlan` mints
+resource-indexed grants and retains oversized rows as `UnavailableModel`; package-owned live
+observations refine matching grant/enforcer pairs into `RuntimePlan` / `ExecutableModel`;
+coordinators route through compiled placements and daemon capabilities; and engine launch accepts
+only the opaque executable and derives its command from the compiled binding. Phase 1 Sprint 1.19
+passed its complete source-matched machine-independent gate and final adversarial source review on
+2026-07-25, including normal coordinator delivery of typed rejection for an unavailable row. Phase
+0 Sprint 0.18 closed on 2026-07-27, Phase 1 Sprint 1.20 is Active, and Phase 2 remains blocked by
+Phase 1. Phase 4 retains Apple/Linux
+CPU adversarial enforcement and encapsulated serialization, Phase 6 retains independently indexed
+Linux GPU RAM/VRAM enforcement and lint closure, and Phase 8 retains the final proper Dhall-union
+and `Natural` wire schema. On 2026-07-22 the
 lifecycle-rebinding warm-cache flake that blocked a clean single-invocation `infernix test all` (the
 remaining Wave W residual) was, per operator directive, treated as evidence of a representable invalid
 state and fixed by construction rather than worked around: the **Observable-Readiness reopen** (Phase 1
@@ -83,17 +124,66 @@ Sprint 1.18 + Phase 8 Sprint 8.8, code-side closed 2026-07-22) makes the readine
 three-valued — the kernel `PollOutcome = Measured | Unobservable` channel and the tri-state
 `SentinelObservation` (present / absent / unobservable) plus a Python `CacheValidity` verdict — so a
 transient MinIO fault can no longer masquerade as a definitive absence and stall the warm-model-cache
-barrier at "11/16". Phases 1 and 8 are now Done (closed under [Wave W](cohort-validation-waves.md) on
-2026-07-24 with apple-silicon plus linux-cpu full-suite GREEN). On 2026-07-23 a further reopen closed a related DSL smell an externally-killed
+barrier at "11/16". The Phase 1/8 Observable-Readiness scope closed under
+[Wave W](cohort-validation-waves.md) on 2026-07-24 with apple-silicon plus linux-cpu full-suite
+GREEN; the later Typed Execution Plan audit reopened Phase 8 Sprint 8.9 behind Phase 6. On
+2026-07-23 a further reopen closed a related DSL smell an externally-killed
 `infernix test all` exposed — because `ClusterState` had no owner and `ClusterLifecycle` had no mutating
 position, a test-mutated cluster read as a clean `steady-state`, and the unconditional test-harness
 `clusterDown` could destroy an operator's cluster: the **Cluster-Ownership & Mutation-Position reopen**
 adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`, evidence-gated seizure) and a first-class
 `ClusterMutating` position (a killed test leaves a detectable + reconcilable dirty cluster). The
-doctrine + governance landed first (Phase 0 Sprint 0.16, `Done`) and the enforcing code is now
-**code-side closed (2026-07-23)** (Phase 2 Sprint 2.15 + Phase 6 Sprint 6.43) with the
-machine-independent gate set GREEN and the [Wave X](cohort-validation-waves.md) behavioral proof
-**closed on 2026-07-24 with apple-silicon plus linux-cpu full-suite GREEN** for that narrower scope.
+doctrine + governance landed first (Phase 0 Sprint 0.16, `Done`). Wave X closed the original typed
+owner/mutation-position and config-recovery scope on 2026-07-24 with apple-silicon plus linux-cpu
+full-suite GREEN. The 2026-07-25 owner-atomic audit then reopened Phase 2 Sprint 2.15 and Phase 6
+Sprint 6.43: the first Apple behavioral attempt reopened the Phase 2 correction after its
+2026-07-26 machine-independent pass, while Wave X remains historical evidence for the narrower
+scope. The
+2026-07-25 typed-execution-plan closure audit also
+reopened Phase 1 Sprint 1.19
+after finding that the then-current plan was minted before live-enforcer refinement and erased its
+resource index at launch. Sprint 1.19 replaced that construction and passed its complete
+source-matched gate on 2026-07-25. Phase 2's first source identity passed a complete source-matched
+gate on 2026-07-26 after closing the command supervision/provenance, real readiness deadline, stale
+mutation-state, claim-permission, and operator-kubectl corrections, but its first Apple behavioral
+attempt exposed an unowned-PVC snapshot-cleanup gap plus cleanup exception masking. That identity
+is rejected. That then-corrected source closed podless sole-worker claim inference,
+preserving/exhaustive lifecycle and supervisor cleanup, exact reap/absence-gated lease retirement,
+and combined protocol/terminal/output/cleanup diagnostics; final source review and the complete
+Apple-host Stage 1 gate initially passed on 2026-07-26. The Apple retry proved production dead-owner
+recovery and exhaustive cleanup, then failed in Linux-image `DockerBuildOperation` at 77/87
+`Infernix.Runtime.Cache` with `Cabal-7125` and no underlying diagnostic. BuildKit records later
+exposed deterministic Linux `-Wunused-top-binds`/`-Werror` at the unguarded Darwin-only
+`continueIfRunning`; the cache line was parallel drain and resources were exonerated. The helper is
+CPP-guarded, and the next Stage 1 passed. The latest Apple attempt then proved that
+`audio-bark-small`'s 5120 MiB footprint under-estimated real peak resident memory. The diagnosed
+correction is implemented: Bark now declares 8192 MiB, strict integration still requires every
+admitted placement to complete, the Playwright catalog-matrix runtime-ceiling escape hatch is
+removed, and exact Apple/Linux admission unit tests cover 8192 <= 10240 MiB on Apple and
+8192 > 4096 MiB on `linux-cpu`. Final adversarial review then found that cached Docker content
+could satisfy the old Harbor verify pull without independently reading the registry. The
+implemented replacement uses bounded authenticated platform-selected skopeo copy from the Harbor
+API authority into a fresh birth-identity-owned mode-0700 `dir:` store, with primary-preserving
+cleanup, dead-owner auth-directory reconciliation, and focused command/redaction/path coverage.
+The pre-correction final combined-source review was GREEN as run with no High/Medium findings after Bark's exact 10240 MiB
+test and the Harbor correction. Complete Stage 1 was GREEN against worktree
+`sha256:d57823179d2749a884dfa5b8258070ec2579023fc5b12bd14274c2a6b5f7a487` and installed binary
+`sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`; the skopeo auth
+scratch root was empty. Apple attempt 4 rejects that freeze for closure: registry-only skopeo
+verification passed for the workload and every support image; cluster/routes and all 16 cache
+stages passed; both 12288>10240 MiB image rows remained correctly unavailable; then Bark again
+breached the live capped-engine ceiling at required=available=8192 MiB. Exhaustive claim staging
+and cluster deletion preserved the primary diagnostic. The follow-on fp16 Bark correction passed
+renewed final review and complete Stage 1 against worktree `sha256:eae424db…c10228` / binary
+`sha256:a0d1b9fb…d9c70c7c`. Those review and Stage 1 results are historical GREEN-as-run,
+superseded, and nonreusable. Apple attempt 5 was interrupted by the architectural correction after
+initial gates, retained replay, workload build, and registry verification; cancellation exposed
+same-process lifecycle-lock contention (`errno 35`), and supported recovery observed Kind absent,
+retired the reservation, and restored operator config. The all-Haskell lock and supervision
+implementations are present, including the version-3 exact-identity lease and hidden rank-2 linear
+session, and the obsolete C/Cabal boundary is removed. Phase 0's focused proof and fresh
+review/Stage 1 are green. Phase 2's own closure after Phase 1, Apple, and then `linux-cpu` are
+outstanding. Phase 6 remains blocked.
 The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
 and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
 entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
@@ -110,12 +200,12 @@ when one passes the implemented version check. Routed Apple Playwright validatio
 host-native `npm exec` against the published
 `127.0.0.1` edge port. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Harbor-backed
-final-image preload, and Apple retained-state replay steps; explicit substrate-file
-materialization is atomic so concurrent readers do not observe truncated payloads; and
+final-image preload, and Apple retained-state replay steps; explicit runtime-config
+writes are atomic so concurrent readers do not observe truncated payloads; and
 retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas from the
-current Patroni leader when timeline drift leaves replicas unready after promotion; all lanes scrub
-non-retained Harbor and Keycloak Patroni claim roots before recreating claim directories and after
-retained-state sync. The shared lifecycle skips broad
+current Patroni leader when timeline drift leaves replicas unready after promotion. On detached
+snapshot lanes, the explicit rebuildable Harbor/Keycloak scrub set is removed only from the local
+retained copy after Kind deletion under `WriterQuiesced`. The shared lifecycle skips broad
 pre-Harbor support-image preloads and performs binary-owned Harbor-first image preparation, where
 supported lanes hydrate and stream only the narrow Harbor warmup dependency set into Kind before
 Helm warmup, only Harbor-required services may pull upstream before Harbor is responsive, and
@@ -134,19 +224,34 @@ so retry recovery does not depend on a previously retained target tag. The under
 they exercised still describe supported behavior; revalidation on the new host is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md).
 
-**Cohort validation status (present development host = CUDA Linux).** Consistent with the
-single-accelerator doctrine — implement and run code-side closure on whichever single machine is
-present, and validate each phase on **one** accelerator (`apple-silicon` or `linux-gpu`) plus
-`linux-cpu`, never both — the current workspace is a real Linux CUDA host. Phase 1 Wave L's paired
-`linux-cpu` gate closed here on 2026-06-29 with rebuilt image
+**Historical cohort validation record.** Consistent with the single-accelerator doctrine, the
+recorded closures below validate their frozen historical source identities; they are not current
+evidence for reopened Phase 2. Phase 2's first 2026-07-26 Stage 1 and Apple attempt were rejected
+for closure. The later identity's Stage 1 result is also rejected: its Apple retry proved recovery
+and cleanup, but BuildKit diagnosed its `DockerBuildOperation` failure as a deterministic Linux
+`-Werror` source defect. The later Bark and registry-only Harbor verification corrections passed
+final review and corrected-source Stage 1 for `d578…` / `a0d1…`, but Apple attempt 4 rejected that
+freeze after Bark's 8192 MiB live-ceiling breach. Bark's fp16 accelerator-load correction is
+implemented with focused checks GREEN; its renewed review and Stage 1 were GREEN as run before the
+no-native-source correction superseded them. The lifecycle replacement and nested-custody
+self-exec anchor/supervisor/pin implementation are present, and the obsolete C/Cabal boundary is
+removed. Phase 0's focused correction proof and Stage 1 are green; Phase 2's ordered validation
+after Phase 1 and both Wave Y behavioral lanes remain open.
+Phase 1 Wave L's paired `linux-cpu` gate
+closed on 2026-06-29 with
+rebuilt image
 `sha256:f243cf3a7c5199746321bffba87639e30fda959e2be80c7d3b15a413fb9e9ca8`:
 `./bootstrap/linux-cpu.sh test` passed style, Python `check-code`, unit, web `71/71`, full integration with all real
 `linux-cpu` outputs plus the HA/chaos tail, and routed Playwright `9/9`. The Apple Sprint 1.15 pass
 on the Apple host builds the host binaries, materializes the `apple-silicon` substrate and real
-Apple native engine roots, proves the generated Metal runtime bridge smoke, smoke-loads the
+Apple native engine roots, historically proves the now-deleted generated Metal runtime bridge smoke, smoke-loads the
 installed Core ML/CTranslate2/MLX/ONNX/Audiveris runner roots, verifies the Core ML venv imports
 Basic Pitch plus Apple's Stable Diffusion pipeline, and passes Apple integration plus focused
-routed Playwright. The earlier CUDA Linux real-output reopen is closed under Wave K for the
+routed Playwright. The bridge-dependent portion of that pass is superseded and nonreusable under
+Sprint 1.20. Its code-side bounded candidate transaction is implemented, while the fresh accepted
+Stage 1 and real corrected-root Apple rematerialization/runtime/cohort evidence remain open; the
+exact capped-engine helper-owned group cleanup identified by the live audit is also still open. The
+earlier CUDA Linux real-output reopen is closed under Wave K for the
 then-active Linux catalogs, and the post-replacement MT3 rows added on 2026-06-30 closed under Wave P on 2026-07-04.
 The Apple integration rerun passed after rebuilding the changed repo-owned
 image once, then reusing the stamped `infernix-linux-cpu:local` image on the edge-port rediscovery
@@ -178,7 +283,7 @@ then-active Linux catalogs, and the post-replacement MT3 rows added on 2026-06-3
 dated proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) under "Retired Historical
 Validation Evidence". The underlying contracts they exercised still describe supported behavior,
-but the proof points themselves are not current. Revalidation is tracked by
+but the proof points themselves are not current. Historical evidence is tracked by
 [cohort-validation-waves.md](cohort-validation-waves.md): [Wave A](cohort-validation-waves.md)
 (Apple cohort) closed on the recorded validation with `cabal test infernix-integration` full PASS plus 5/6
 Playwright e2e PASS; Waves A.1 and A.2 subsequently closed the routed
@@ -200,20 +305,20 @@ Playwright `9/9`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
-| Root-document governance | the governed docs, root docs, and plan describe the same staged-substrate doctrine and Apple daemon-role topology | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) |
+| Root-document governance | the governed docs, root docs, and plan describe the same explicit-init runtime-config doctrine and Apple daemon-role topology | Sprint 0.18 Done on 2026-07-27 for the no-repo-owned-native-source mirror, evidence reset, focused proof, final review, and correction Stage 1; Sprint 1.20 is Active |
 | CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
-| Substrate selection | one staged substrate file beside the active build root is the primary source of truth for substrate identity and generated catalog selection | implemented |
-| Staged substrate-file format | the substrate file and its mirrors use one explicit and consistent file format and filename contract | implemented; the current contract is a shared `infernix.dhall` filename carrying a typed Dhall record on local and cluster-mounted paths, decoded in-process by the `dhall` Haskell library |
+| Substrate selection | repo-root `./infernix.dhall`, created explicitly by `infernix init` or temporarily by the test harness from `infernix test init`, is the runtime source of truth for substrate identity and generated catalog selection | implemented; ordinary config-dependent commands fail fast naming the required init |
+| Runtime-config format | the operator runtime config and its deployment mirrors use a reflected typed Dhall contract | implemented; repo-root `./infernix.dhall` is decoded in-process by the `dhall` Haskell library, while cluster publication may retain a compatibility mount filename |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster runs the coordinator role for Pulsar ingress and derived pool-topic handoff, and Apple-native inference batches are delegated to same-binary host engine daemons through Pulsar | implemented |
-| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md) |
-| Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented; `cluster status` reports in-progress lifecycle phase, detail, and heartbeat fields during monitored long-running phases; Apple cohort gate closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort gate closed in [Wave C](cohort-validation-waves.md) |
-| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented; CUDA Linux cohort and portable `linux-cpu` gates closed in [Wave C](cohort-validation-waves.md) on a native Linux/CUDA host |
+| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; Wave A is historical evidence |
+| Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; Waves A/C are historical evidence and do not close reopened Phase 2 |
+| Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented before the correction; attempt 5 exposed same-process lifecycle-lock cleanup contention (`errno 35`). The all-Haskell lock replacement and its focused adversarial and correction Stage 1 proof are green on the 2026-07-27 identity; Phase 2 remains blocked by Phase 1 and has no post-correction behavioral evidence |
+| Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented; Wave C is historical native Linux/CUDA evidence |
 | Linux GPU naming | the NVIDIA-backed Linux substrate is standardized as `linux-gpu` | implemented |
-| Serialized substrate naming | the generated substrate file, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
-| Demo UI gating | the staged substrate file can disable the clustered demo surface | implemented; the supported materialization path accepts `--demo-ui false` |
-| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands (routed Pulsar checks require the real Gateway-backed upstream; the repo-local topic spool under `./.data/runtime/pulsar/` is a harness-only unit/endpoint-absent path). The no-fabrication invariant is enforced by construction — the realness lint is a mechanical tripwire rejecting the named fabrication patterns (a regression guard, not an exhaustive proof), and the engine code is fail-closed so missing-weights/load/engine failures raise → `failed`. Typed resource admission is implemented and validated: over-budget models fail as typed `ModelMemoryLimitExceeded`, not as daemon startup failures or parsed strings; Wave T closed on `linux-cpu` plus selected `linux-gpu`. The memory-safety-by-construction target (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42, **code-side closed 2026-07-21**) hardens this further so a host OOM is unrepresentable: an engine subprocess runs only under a typed `MemoryGrant` and the capped-engine kernel bounds its resident memory to the admitted `MemoryCeiling`, with the budget naming its enforcer (`HostEnforcedBudget HostMemoryPartition` \| `SubstrateEnforcedBudget PodMemoryLimit`); the behavioral cohort sign-off closed under [Wave W](cohort-validation-waves.md) on 2026-07-24 (apple-silicon plus linux-cpu full-suite GREEN). Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one built substrate at a time | the suite structure (one DRY `.dhall`-driven integration suite + substrate-agnostic E2E) is implemented and stands. The per-row inference **real-output** assertions are fail-closed by the Phase 0 realness lint (Sprint 0.12) plus the Phase 4 real fixtures + fail-closed per-row tests (Sprint 4.23), with the Phase 6 HA/service-loop assertions (Sprint 6.33) on top — proven on the Linux lanes. Sprint 6.38 has typed resource-admission validation: mixed-size catalogs start, capacity failures classify by `InferenceError.ModelMemoryLimitExceeded` fields, and substrate budget sources are covered for Apple, Linux CPU, and Linux GPU. Wave T's `linux-cpu` plus selected `linux-gpu` full-suite proof closed on 2026-07-12. Architecture closures in [Wave A/A.2](cohort-validation-waves.md) / [Wave C](cohort-validation-waves.md) stand, Waves K/L re-attested their then-active catalogs, and the post-replacement MT3 rows closed under Wave P (2026-07-04). |
+| Serialized substrate naming | the initialized runtime config, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
+| Demo UI gating | the initialized runtime config can disable the clustered demo surface | implemented; `infernix init` accepts `--demo-ui false` |
+| Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands; the repo-local topic spool is a harness-only endpoint-absent path. The realness lint remains a regression tripwire and engine failures remain fail-closed. The historical Waves T/W validate their recorded pre-audit admission scopes only. Phase 1 now compiles resource-indexed grants, retains oversized Apple/Linux CPU rows as `UnavailableModel`, refines matching live enforcers into `ExecutableModel`, and restricts public engine launch to that capability. Coordinator/engine request handling returns terminal failed results for unavailable, empty, unknown, wrong-route, and malformed inputs before source removal/acknowledgement; the complete source-matched Phase 1 gate passed on 2026-07-25. Phase 4 owns Apple/Linux CPU adversarial enforcement plus encapsulated serialization, Phase 6 owns the currently fail-closed Linux GPU RAM/VRAM path and raw-spawn exemption closure, and Phase 8 owns the final wire schema. |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one initialized substrate at a time | Phase 0's fresh correction review/Stage 1 is green; all pre-correction identities remain superseded and nonreusable. Phase 1 is Active, Phase 2 remains blocked, and Apple plus `linux-cpu` remain |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
@@ -222,13 +327,22 @@ general observability stack (metrics, tracing, log aggregation) is deployed.
 Monitoring is not a supported first-class surface.
 
 Phase 7 adds the multi-user durable-context demo application on top of this platform.
-The platform contract above is implemented in the worktree. Real-cluster validation is tracked by
-[cohort-validation-waves.md](cohort-validation-waves.md): the Apple cohort gate closed in
-[Wave A](cohort-validation-waves.md) on the recorded validation, the CUDA Linux cohort gate closed in
-[Wave C](cohort-validation-waves.md) with `linux-cpu` passing on the recorded validation and
-`linux-gpu` passing on the recorded validation, and the webapp-mediated object-proxy / Files /
-in-browser-rendering reopen closed in [Wave M](cohort-validation-waves.md) on 2026-06-29 with
-`linux-cpu` plus the selected `linux-gpu` full-suite gates. The product-agnostic primitives live at
+The platform contract above is implemented in the worktree. Historical real-cluster validation is
+tracked by [cohort-validation-waves.md](cohort-validation-waves.md): Wave A records its Apple source
+identity, Wave C records its CUDA Linux plus `linux-cpu` source identity, and the webapp-mediated
+object-proxy / Files / in-browser-rendering reopen closed in
+[Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu`
+full-suite gates. Those earlier waves do not validate the reopened Phase 2 source; its first Stage 1
+and Apple attempt were rejected, and the later Apple retry added recovery/cleanup evidence but
+exposed a deterministic Linux `-Werror` defect, invalidating that Stage 1 identity. The later Bark
+and Harbor corrections passed final review and Stage 1 for `d578…` / `a0d1…`, but Apple attempt 4
+reproduced Bark's live ceiling breach at required=available=8192 MiB and rejected that freeze.
+The follow-on fp16 Bark correction is implemented and focused checks are GREEN. Renewed final
+review plus complete Stage 1 were GREEN as run against `eae424…` / `a0d1…`, but are superseded and
+nonreusable after the no-native-source interjection. The implemented all-Haskell correction passed
+Phase 0's focused proof and fresh review/Stage 1 on 2026-07-27; Phase 2's own closure after Phase 1
+and both Wave Y behavioral lanes remain. The
+product-agnostic primitives live at
 [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md);
 the demo's concrete bindings live at
 [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md);
@@ -290,22 +404,19 @@ the execution-ordered buildout lives at
   canonical CLI reference, and the final command surface carries no `--runtime-mode` override
 - the product standardizes three substrates:
   `apple-silicon`, `linux-cpu`, and `linux-gpu`
-- the staged `infernix.dhall` file beside the active build root is the primary source of
+- the initialized repo-root `./infernix.dhall` is the primary source of
   truth for substrate identity, generated catalog content, daemon role, inference placement,
   Pulsar topics, and validation scope
-- the generated substrate file, routed publication surface, `cluster status` output, and generated
+- the initialized runtime config, routed publication surface, `cluster status` output, and generated
   browser contracts currently serialize that active substrate under `runtimeMode` field names even
   though the supported selection contract is substrate-based
-- the supported operator staging flow is binary-owned rather than shell-owned:
-  Apple host-native lifecycle and validation commands materialize or verify
-  `./.build/infernix.dhall`, Linux outer-container lifecycle and validation commands
-  materialize or verify `/workspace/.build/outer-container/build/infernix.dhall`
-  inside the launcher image, and `infernix internal materialize-substrate ...` remains
-  the explicit restaging or inspection helper
-- the Linux substrate Dockerfile also materializes a build-arg-selected substrate file inside the
-  image overlay during image build; supported Compose runs keep that active build root
-  image-local, so lifecycle and aggregate test commands rely on binary-owned preflight inside the
-  launcher
+- the supported operator config flow is explicit and binary-owned: `infernix init` creates
+  `./infernix.dhall` plus `./infernix-host.dhall`, `infernix test init` creates
+  `./infernix.test.dhall`, and ordinary config-dependent commands fail fast naming the required
+  init rather than auto-materializing a missing file
+- the Apple stage-0 `up` wrapper is the deliberate convenience exception: it calls
+  `./.build/infernix init --if-missing` before `cluster up`; the Linux image build may use internal
+  binary generation for its image-local defaults, but that is not an operator preflight path
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface, which may
   reconcile supported host prerequisites and build or enter the active substrate launcher before
   handing off to the direct `infernix` command surface; shell code must not own Kind, Kubernetes
@@ -316,11 +427,12 @@ the execution-ordered buildout lives at
   selected, and they stop at explicit new-shell or reboot boundaries so the operator reruns the
   same bootstrap command instead of jumping ahead to a later direct command
 - supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints own substrate-file preflight and fail if the file
-  cannot be materialized or validated for the active execution context; focused `infernix lint ...`
-  and `infernix docs check` remain substrate-file independent
-- the staged file is a typed Dhall record named `infernix.dhall`, generated by
-  Haskell helpers and decoded in-process by the `dhall` library; the schema is reflected from the
+  aggregate `infernix test ...` entrypoints validate the initialized runtime config and fail fast
+  naming the required init if it is absent; focused `infernix lint ...` and `infernix docs check`
+  remain config-independent
+- the runtime config is a typed Dhall record named `infernix.dhall`, generated by
+  `infernix init` or the reservation-gated test harness and decoded in-process by the `dhall`
+  library; the schema is reflected from the
   substrate decoder type (`infernix internal dhall-schema substrate`)
 - Apple Silicon is the only supported host-native build path outside a container
 - on Apple Silicon, the host-built binary manages Kind, deploys the mandatory cluster support
@@ -351,8 +463,8 @@ the execution-ordered buildout lives at
 - the routed demo app remains cluster-resident when enabled, and the Apple routed path closes
   around an explicit cluster-daemon-to-host-daemon inference batch bridge rather than
   cluster-resident Apple inference execution
-- the supported materialization path can emit `demo_ui = false` with `--demo-ui false`; omitting
-  that flag keeps the default demo-enabled output
+- `infernix init --demo-ui false` can emit `demo_ui = false`; omitting that flag keeps the default
+  demo-enabled output
 - Harbor-first bootstrap, Gateway-owned routing, mandatory local HA platform services,
   operator-managed Patroni PostgreSQL, manual `infernix-manual` storage, Haskell-owned frontend
   contracts, the shared Python adapter project, and untracked generated outputs all remain
@@ -614,26 +726,22 @@ The plan keeps control-plane execution context separate from substrate.
 ### 3. Three Supported Substrates
 
 - `apple-silicon`, `linux-cpu`, and `linux-gpu` are the canonical substrate ids
-- the built substrate selects the README matrix column
+- the substrate selected in the initialized runtime config chooses the README matrix column
 - control-plane execution context and substrate remain separate concepts
 - `linux-cpu` is the only substrate that remains meaningfully portable across unrelated host
   hardware
 
-### 4. Staged Substrate File SSoT
+### 4. Explicit Runtime Config SSoT
 
-- the repo stages one `infernix.dhall` file under the active build root
-- the supported operator implementation materializes or verifies that file through the
-  binary-owned lifecycle or validation command rather than through shell bootstrap
-- `infernix internal materialize-substrate ...` remains the explicit restaging or inspection
-  helper for Apple host-native and Linux outer-container workflows
-- the Linux substrate image also creates a build-arg-selected copy during image build, but the
-  supported Compose bind mount hides that image-local copy from host-launched operator commands
-- supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints own substrate-file preflight; focused `infernix lint ...`
-  and `infernix docs check` do not require it
-- the staged file records the active substrate explicitly
-- the staged file also carries the generated demo catalog for that substrate
-- the staged file is a typed Dhall record at `infernix.dhall`, decoded in-process by the
+- `infernix init` creates the operator runtime config at repo-root `./infernix.dhall` plus
+  `./infernix-host.dhall`
+- `infernix test init` creates `./infernix.test.dhall`; the harness uses it to generate and own a
+  temporary `./infernix.dhall` during integration, E2E, and aggregate validation
+- ordinary config-dependent commands validate the file and fail fast naming the required init when
+  it is absent; focused `infernix lint ...` and `infernix docs check` remain config-independent
+- the runtime config records the active substrate explicitly
+- the runtime config also carries the generated demo catalog for that substrate
+- the runtime config is a typed Dhall record at `infernix.dhall`, decoded in-process by the
   `dhall` Haskell library; the schema is reflected from the substrate decoder type
 - the current daemon reads that file at startup; automatic file-watching or reload is not part of
   the supported contract
@@ -659,8 +767,8 @@ The plan keeps control-plane execution context separate from substrate.
 ### 6. Cluster Daemon With Host-Owned Apple Inference
 
 - the demo UI is served only by `infernix-demo`
-- when `demo_ui` is false in the active staged file, no demo UI or demo API route is published;
-  the supported materialization path can emit that production-off value with `--demo-ui false`
+- when `demo_ui` is false in the initialized runtime config, no demo UI or demo API route is
+  published; `infernix init --demo-ui false` emits that production-off value
 - when `demo_ui` is true, the demo app is cluster-resident across substrates
 - every substrate deploys cluster `infernix` daemon Deployments under the supported three-role
   split landed by Phase 7 Sprint 7.7: `infernix-coordinator` (stateless, Pulsar coordination +
@@ -708,16 +816,16 @@ The plan keeps control-plane execution context separate from substrate.
   port selection
 - `infernix cluster down` preserves durable state under `./.data/`
 
-### 8b. Integration and E2E Cover The Built Substrate Only
+### 8b. Integration and E2E Cover The Initialized Substrate Only
 
-- `infernix test integration` validates the built substrate's generated catalog contract, routed
+- `infernix test integration` validates the initialized substrate's generated catalog contract, routed
   surfaces, and routed inference execution for every generated catalog entry on that substrate
 - the comprehensive model, format, and engine matrix in `README.md` is the authoritative
   integration-test coverage ledger
 - one substrate-aware integration suite reads the active substrate from `.dhall`, selects the
   corresponding engine binding for each supported README row or reference, and carries at least one
   integration assertion for every such row
-- `infernix test e2e` exercises the routed browser surface for that same built substrate without
+- `infernix test e2e` exercises the routed browser surface for that same initialized substrate without
   branching on substrate or engine in browser code
 - validation reports the substrate it exercised and does not imply cross-substrate coverage from a
   single run
@@ -746,20 +854,18 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 11. Container Build Output Stays in the Launcher Image
 
-- Linux outer-container build output stays in the launcher image overlay; the staged substrate
-  file lives under `/workspace/.build/outer-container/build/` while cabal builddir, cabal package
-  cache, and the source snapshot manifest stay in the image overlay
+- Linux outer-container build output stays in the launcher image overlay; cabal builddir, cabal
+  package cache, and the source snapshot manifest stay in the image overlay
 - the outer-container launcher does not rely on a live repo bind mount for source code; the only
   bind mounts are `./.data/` and the Docker socket
-- the staged outer-container substrate `.dhall` sits at
-  `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher and is
-  the source material for cluster ConfigMap publication, which mounts the file at
-  `/opt/build/infernix-substrate.dhall` inside cluster-resident pods
+- the launcher reads repo-root `./infernix.dhall`; `cluster up` derives a ConfigMap deployment
+  mirror that remains mounted at `/opt/build/infernix-substrate.dhall` inside cluster-resident pods
 
 ### 12. Apple Host Build Output Stays Under `./.build`
 
 - host-native compiled artifacts stay under `./.build/`
-- the Apple substrate `.dhall` sits beside `./.build/infernix`
+- Apple operator config stays at repo-root `./infernix.dhall` and `./infernix-host.dhall`; it is not
+  a build output
 - `cluster up` writes the repo-local kubeconfig to `./.build/infernix.kubeconfig`
 - on every supported substrate, Kind or `nvkind` create or delete uses a transient
   execution-local scratch kubeconfig under the system temp directory, and the lifecycle publishes
@@ -796,6 +902,7 @@ The plan keeps control-plane execution context separate from substrate.
 
 The supported operator surface is:
 
+- `infernix init`
 - `infernix service`
 - `infernix cluster up`
 - `infernix cluster down`
@@ -808,6 +915,7 @@ The supported operator surface is:
 - `infernix lint docs`
 - `infernix lint proto`
 - `infernix lint chart`
+- `infernix test init`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -815,10 +923,9 @@ The supported operator surface is:
 - `infernix test all`
 - `infernix docs check`
 
-Internal helper commands may exist in the implementation — for example
-`infernix internal materialize-substrate ...` and legacy or replacement Apple engine
-materialization helpers — but the supported command contract closes through the registry-backed
-surface above.
+Internal helper commands may exist for image/test generation and engine materialization, but
+operator runtime-config creation closes through `infernix init` and test-harness config creation
+through `infernix test init`.
 
 ## Completion Rules
 

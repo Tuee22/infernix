@@ -25,14 +25,13 @@ has no non-Python binding on that path.
 ## Toolchain
 
 - the shared Poetry project lives at `python/pyproject.toml`
-- on the intended Apple clean-host path, `infernix` may reconcile the Homebrew-managed
-  `python@3.12` formula and `python3.12` command and then bootstrap the `poetry` executable when
-  adapter setup or validation first needs it; the Poetry bootstrap may reuse an already available
-  compatible Python 3.12+ executable when one passes the implemented version check
+- on the intended Apple clean-host path, `infernix` reconciles the Homebrew-managed
+  `python@3.12` and `poetry` tools when adapter setup or validation first needs them; Core ML
+  artifact materialization separately requires the typed Homebrew `python@3.11` tool
 - outside the cluster, `poetry install --directory python` materializes the repo-local
   `python/.venv/` environment for adapter validation on the Apple host path
 - concurrent host-daemon setup for the shared `python/` project serializes `poetry install` with
-  the repo-local `python/.infernix-poetry-install.lock` directory so multiple `infernix service`
+  the repo-local `python/.infernix-poetry-install.lock` kernel filelock so multiple `infernix service`
   processes do not mutate `python/.venv/` at the same time
 - Linux substrate image builds run `poetry install --directory python` during the image build and
   then execute adapters from the shared `python/` project root through `poetry run ...`
@@ -41,13 +40,11 @@ has no non-Python binding on that path.
 
 Current status:
 
-- on the Apple host-native path, `infernix` reconciles the Homebrew-managed `python@3.12` formula
-  and `python3.12` command and bootstraps a user-local `poetry` executable when adapter setup or
-  validation first needs it; the Poetry bootstrap may reuse an already available compatible
-  Python 3.12+ executable when one passes the implemented version check
+- on the Apple host-native path, `infernix` reconciles the typed Homebrew
+  `python3.12`, `python3.11`, and `poetry` tools required by the selected command
 - once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
 - concurrent materialization attempts for the same shared project are serialized by
-  `python/.infernix-poetry-install.lock`
+  kernel-managed `python/.infernix-poetry-install.lock`
 
 ## Quality Gate
 
@@ -189,24 +186,25 @@ Current state:
   for the selected binding — the Python adapter transform over a prebuilt host wheel for
   python-stdio bindings, or the real native runner binary resolved from a typed HostConfig data root
   or Linux image-owned `/opt/infernix/engines/<adapterId>/` root for native-process-runner bindings —
-  fetches model weights lazily from the infernix-models MinIO bucket via
-  `adapters.model_cache.get_model_path`, and publishes a per-family real result: inline text for the
-  LLM and speech families, and a typed object reference into the infernix-demo-objects MinIO bucket
-  for the source-separation, audio-to-MIDI, music-transcription, image, video, audio-generation, and
-  OMR artifact families. The shared `run_context_adapter` boundary is unchanged; an artifact-adapter
-  seam returns an object reference for the non-text families rather than acting as a raw stdin echo
-  path.
-- Current Linux native roots are runtime-backed wrappers produced by `infernix internal
-  materialize-linux-native-engines` and baked into the Linux images with the native payload layer.
-  They use the same cache-readiness contract as the worker: when `--model-cache-root` is present,
-  they return exit 75 until `<model-cache-root>/<model-id>/.ready` exists, then invoke the baked
-  llama.cpp, whisper.cpp, ONNX Runtime/CTranslate2, faster-whisper, or Audiveris payload as
-  appropriate. Native artifact-producing processes receive non-secret cache and bucket hints plus
-  an optional `--output-dir`; if they print `infernix-native-artifact-file:<path>`, the Haskell
-  worker performs the credentialed MinIO upload and returns the object reference. The reopened
-  Phases 4/6 own routed full-suite real-output delivery against live MinIO; Wave K covers its
-  then-active catalog, and Wave P closed post-replacement proof for the MT3 rows added on 2026-06-30.
-  Realness is enforced in the engine code by the realness lint.
+  hydrates its derived local cache from the model objects eagerly staged in `infernix-models` behind
+  the `warm-model-cache` barrier via `adapters.model_cache.get_model_path`, and publishes a
+  per-family real result: inline text for the LLM and speech families, and a typed object reference
+  into the infernix-demo-objects MinIO bucket for the source-separation, audio-to-MIDI,
+  music-transcription, image, video, audio-generation, and OMR artifact families. The shared
+  `run_context_adapter` boundary is unchanged; an artifact-adapter seam returns an object reference
+  for the non-text families rather than acting as a raw stdin echo path.
+- Linux native roots produced by `infernix internal materialize-linux-native-engines` contain a
+  typed manifest and metadata only; generated `bin/*` wrappers are forbidden. A hidden Haskell
+  catalog launches the exact image-owned CLI, the fixed image Python interpreter plus the
+  in-process native runner, or the fixed JRE/classpath directly. The target executable and complete
+  immutable interpreter/library/script closure are descriptor-observed into the manifest and
+  revalidated before launch. The Python native runner uses strict argument parsing, never spawns a
+  child process, and returns only bounded direct-owned output. Native artifact-producing processes
+  receive non-secret cache and bucket hints plus an invocation-owned output directory; the Haskell
+  worker accepts an output only after descriptor validation proves it is the expected bounded
+  regular file. The reopened Phases 4/6 own fresh routed full-suite real-output delivery against
+  live MinIO for this topology. Historical Wave K and Wave P evidence does not close the active
+  correction. Realness is enforced in the engine code by the realness lint.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

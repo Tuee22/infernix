@@ -108,8 +108,19 @@ assertions also pass on Apple. Current Apple integration executes the single-hos
 backlog harness by holding one service-shaped WebSocket consumer unacked and asserting a second
 request reaches a free consumer on the same subscription. Current Linux CPU integration proves
 Kubernetes-observed pool placement and shared-subscription backlog/backpressure on unique derived
-pool/model topics. Wave J still owns Linux GPU/CUDA cohort validation. Physical Apple multi-host
-routing is hardware-deferred proof while no second Apple host is available.
+pool/model topics. Historical Wave J closed its then-active Linux GPU/CUDA routing cohort; the
+current Linux GPU typed-execution-plan residual is owned by Phase 6 and fails plan compilation
+closed until dual RAM/VRAM enforcement exists. Physical Apple multi-host routing is
+hardware-deferred proof while no second Apple host is available.
+
+All inference and model-bootstrap publication topology is plan-derived. The supported raw topic
+publisher has been removed; bootstrap publication consumes an opaque capability prepared from the
+compiled plan, and the consumer revalidates model identity, compiled download URL, and canonical
+timestamp before download/upload/ready-event side effects. Compilation rejects cross-family topic
+reuse among coordinator requests, results, bootstrap requests, bootstrap ready events, and engine
+routes. Coordinator and engine consumers publish terminal failed results for unavailable,
+empty-model, unknown-model, wrong-route, and malformed inputs before acknowledging the source
+message.
 
 ## Demo Conversation and Metadata Topics
 

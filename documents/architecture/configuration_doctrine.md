@@ -26,15 +26,39 @@
 - **Everything fails fast when its config is missing**, naming the init to run
   (e.g. `runtime config missing at ./infernix.dhall; run \`infernix init\``), unless the operator
   entered through that Apple bootstrap wrapper.
-- **The test harness owns the runtime config during a run**: driven by `./infernix.test.dhall`, it
-  generates `./infernix.dhall`, runs the suites, and deletes it (self-created-only guard); it fails
-  fast if `./infernix.dhall` already exists. The swap is **crash-safe**: any existing
-  `./infernix.dhall` is backed up to `./infernix.dhall.harness-backup`, and `withTestHarnessConfig`
-  reconciles a leftover backup on entry, so a killed run cannot leave the operator's config clobbered
-  by the test config (see [Why](#why)).
+- **The test harness reserves the cluster slot before touching runtime config.** Under the lifecycle
+  lock it publishes a process-group reservation with a verified owner birth identity, refuses an
+  operator-owned cluster or second live harness, then backs up any existing `./infernix.dhall`.
+  The library-internal lock wrapper uses `filelock`'s nonblocking exclusive API and hides the package
+  token inside the existing rank-2 `Lease s ClusterMutationLocked` region, so thread/process
+  contention and kernel release survive without a residue protocol. The harness then
+  installs the generated test config, runs, and restores the backup. A later harness may reclaim a
+  definitely dead reservation and reconcile a leftover `.harness-backup` on entry, but only after
+  every birth-verified bounded-command activity lease for that reservation owner proves all recorded
+  process groups absent. Through public `System.Process`, the kernel self-execs one separately
+  grouped anchor with an explicit environment, closed unrelated descriptors, and ordinary
+  standard-stream pipes. The supervisor begins inside the anchor group and the self-exec pin begins
+  inside the supervisor group; each provisional PID/group/birth identity reaches parent custody
+  before that helper may detach. This isolation prevents concurrent parent commands from sharing
+  protocol handles. All helper links use a total, maximum-bounded JSON protocol with
+  eight-hex-digit length-prefixed frames over standard streams and base64 input/output. A hidden
+  rank-2, linear session requires durable version-3 activity publication before the retained pin can
+  acknowledge the one-shot start authority and the supervisor may fork the target. The target
+  begins behind an inner gate and cannot execute until its supervisor-owned PID is observed in the
+  exact pin group. It is owned as an unreaped child, not persisted as an exact birth identity. The
+  record retains `command*` (anchor) and `watchdog*` (supervisor) compatibility keys and stores the
+  exact self-exec pin under compatibility `targetGroupLeader*` keys. Recovery decodes versions 1
+  and 2 but retires any record only after every recorded anchor, supervisor, and pin-led target
+  group is proven absent. Before the version-3 payload write, a bounded, fsynced incoming-intent
+  basename carries the same exact owner/anchor/supervisor/pin identities. Common-boot names use the
+  version-3 encoding and fixed-width distinct-boot names use version 4, so recovery of an empty or
+  truncated prewrite does not rely on PID-only inference.
 - The `dhall` Haskell library is the only Dhall reader. There is no `dhall-to-json` bridge.
 - Every external command the project ever invokes is named in the host manifest by absolute path;
   no `proc "<bare-name>"` / `findExecutable` discovery in Haskell, no bare-name invocations in shell.
+- The generated host manifest also contains exactly 36 production command-policy fields. Retry and
+  failure modes are proper Dhall unions, not text tags, and Haskell refines every timeout, bounded
+  attempt count, and backoff to a positive machine-sized value before a command can compile.
 - No Haskell module calls `lookupEnv` / `getEnv` / `getEnvironment` / `setEnv` / `unsetEnv`; no
   infernix-owned `chart/templates/deployment-*.yaml` carries an `env:` block.
 
@@ -44,15 +68,32 @@ The codebase previously accumulated 87 distinct env var names across dozens of H
 call sites, chart-template `env:` injections, and bootstrap-shell references — plus pervasive
 implicit reliance on `PATH` / `HOME` / `KUBECONFIG` / `DOCKER_HOST`. The configuration doctrine
 collapses that to one substrate (typed Dhall) and one tool-discovery surface (absolute paths in the
-host manifest). The typed `SubprocessEnv` (with required `HOME` and `TMPDIR` fields) and the
-`CommandOutcome` ADT (no unbounded exec) are the positive process-execution counterpart to these
-banned environment reads, whose canonical home is the
+host manifest). The hidden-constructor `SubprocessEnv` owns its manifest-derived `PATH`, absolute
+`HOME` and `TMPDIR`, and repo-local Helm config/cache/data homes. A closed renderer, rather than a
+caller override, selects repository cwd and emits the only command-specific environment values:
+the typed scratch `KUBECONFIG` used by Kind create/delete and nvkind create, plus fixed
+`KUBERC=off` for nvkind's nested kubectl calls. The opaque
+`BoundedCommand` compiler and total
+`CommandSucceeded | CommandFailedFatal | CommandFailedKernel | CommandTimedOut` outcome are the
+positive process-execution counterpart to these banned environment reads, whose canonical home is the
 [Managed State Transitions](managed_state_transitions.md) doctrine. That same doctrine makes the
 harness config swap crash-safe: `withTestHarnessConfig` restores the operator's config through a
 `./infernix.dhall.harness-backup` that it reconciles on **entry**, not only through a `finally`
 restore a SIGKILL would bypass — so an externally-killed run cannot leave the operator's runtime
-config replaced by the test config. The crash-safe entry reconcile is implemented and closed under
-Wave X (Phase 6 Sprint 6.43, 2026-07-24).
+config replaced by the test config. Wave X covers the earlier backup-reconcile scope. The 2026-07-25
+pre-takeover reservation and owner-atomic correction now includes the all-Haskell lifecycle-lock and
+typed supervision implementation. Its focused adversarial validation, fresh source review, complete
+source-matched Stage 1, and Wave Y cohort gate remain in progress; evidence from before the
+all-Haskell correction is superseded.
+
+One deliberately narrow migration exception remains: a `.harness-backup` created by a pre-v2
+harness may exist without any reservation record. Because that format recorded no owner identity,
+no command-activity proof can be associated with it. Entry reconciliation handles that legacy shape
+only while holding the lifecycle lock; every current transaction publishes its current-format
+reservation
+before touching config. The compatibility path is tracked explicitly in
+[legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md) and is not
+part of the v2 quiescence guarantee.
 
 A second source of drift was **hand-maintained `.dhall` schema files** committed alongside the
 Haskell renderers that generate them, plus `.dhall` *values* rendered by Helm templating from
@@ -67,7 +108,7 @@ existence and nothing to check in.
 
 | Config | Haskell owner | Created by | Consumed by |
 |---|---|---|---|
-| **runtime `infernix.dhall`** (substrate: runtime mode, daemon roles, model set, topics) | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | coordinator/engine/webapp daemons via `decodeDemoConfigFile` |
+| **runtime `infernix.dhall`** (substrate: runtime mode, daemon roles, model set, topics) | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
 | **host manifest `infernix-host.dhall`** (tool paths, host context, filesystem) | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution |
 | **cluster config `cluster.dhall`** (in-cluster wiring) | `Infernix.ClusterConfig` (`defaultClusterConfig`) | the binary at `cluster up`, injected into Helm as an `nindent`'d string | pods via `decodeClusterConfigFile` |
 | **secrets `InfernixSecrets.dhall`** (paths to secret files, never values) | `Infernix.SecretsConfig` | the binary (host) / `cluster up` (cluster), injected into Helm as a string | secret-path resolution |
@@ -103,19 +144,44 @@ model set) is volume-mounted **over** the baked file; only the deployed coordina
 
 ### Execution plans are closed and refined
 
-The runtime config is being tightened from descriptive records into the closed execution language
-defined by [Typed Execution Plan](typed_execution_plan.md). The target schema uses Dhall unions for
-memory enforcers, accelerators, retry policies, and failure classes; it does not encode alternatives
-as text tags with unused fields zeroed. Each model is bound to its pool, resource requirements, and
-enforcer in one executable placement.
+The runtime and host configs feed the closed execution language defined by
+[Typed Execution Plan](typed_execution_plan.md). The current Haskell core uses indexed ADTs for
+resource/enforcer alternatives, while Phase 8 Sprint 8.9 owns the remaining generated-wire migration
+to proper Dhall unions and `Natural` quantities. The final schema must not encode alternatives as text
+tags with unused fields zeroed.
 
 The new execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
-validates the placement graph and
-live runtime refinement verifies that the named OS enforcer exists and matches the chart or host
-limit. Only the resulting opaque `RuntimePlan` may feed routing or process execution. This target is
-partially implemented: `DhallInferenceMemoryBudget` is now a proper `HostEnforced |
-SubstrateEnforced` union and the opaque compiler/capability core is present. Legacy direct
-decoded-config consumers remain until the owning Phase 4 routing migration closes.
+validates model placements, routes, engine bindings, daemon wiring, and admission accounting into
+`CompiledRuntimePlan`. Coordinators route only through compiled placements and `CompiledDaemon`
+capabilities. Package-owned live observations then verify the named OS enforcer and configured
+host/cgroup envelope before refining engine work into `RuntimePlan` / `ExecutableModel`; engine
+subscription and launch accept only those refined capabilities. Phase 1 Sprint 1.19 has implemented
+that core; its 2026-07-25 gate and review remain historical evidence for that source, not reusable
+evidence for the current worktree after the all-Haskell lifecycle/subprocess correction. The fresh
+complete Stage 1 must cover it again. Phase 8 Sprint 8.9 owns the final generated-schema migration.
+
+The same compiled plan owns messaging authority. There is no supported raw topic publisher;
+coordinator and engine consumers turn unavailable, empty-model, unknown-model, wrong-route, and
+malformed requests into terminal failed results before source removal or acknowledgement.
+Model-bootstrap publication requires an opaque plan-derived capability, and the consumer
+revalidates model identity, the compiled download URL, and the canonical request timestamp before
+side effects. Compilation rejects topic reuse across coordinator-request, result,
+model-bootstrap-request, model-bootstrap-ready, and engine-route families. Binary substrate
+materialization emits the generated Dhall bytes with explicit UTF-8 encoding.
+
+The command-policy side is also implemented in the generated host manifest:
+`retry` is `< Never | Bounded : { attempts : Natural, backoffMicros : Natural } >`,
+`failureClass` is `< Fatal | TransientThenFatal | IdempotentAbsence >`, and the
+`commandPolicies` record has exactly 36 fields covering Kind, kubectl, Helm, Docker, host probes and
+mutations, archive/curl work, GPU userspace synchronization, and image publication. The
+hidden-constructor `CommandPolicyPlan` refines that complete record, and each abstract
+`ClusterCommand` selects its policy exhaustively through `ClusterOperation`. The command substrate
+and all production caller migration are implemented but remain part of the blocked Phase 2
+correction scope. Every earlier Phase 2 preflight and Phase 1 Stage 1 predates the all-Haskell
+lifecycle/subprocess correction and is superseded as current-worktree evidence. Phase 2 must finish
+focused adversarial validation and fresh source review before freezing one source for the complete
+Stage 1 and cohort lanes. Raw runtime-config consumers are confined to hidden
+configuration/presentation modules and cannot authorize routing or engine launch.
 
 ### Host manifest (`infernix-host.dhall`)
 
@@ -124,8 +190,10 @@ command the project invokes (`docker`, `kubectl`, `helm`, `kind`, `cabal`, `ghc`
 `hlint`, `npm`, `node`, `python3`, `poetry`, `protoc`, `git`, `tar`, `curl`, `apt-get`, `brew`,
 `sudo`, `systemctl`, `mkdir`, `chmod`, `ln`, `install`), **filesystem conventions** (`repoRoot`,
 `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), and the
-**host execution context / native architecture**. Written by `infernix init`; the binary decodes it
-at startup into a `HostConfig` record. See
+**host execution context / native architecture**. It also carries the generated 36-field
+`commandPolicies` record; test-only kernel probes are deliberately absent from operator
+configuration. Written by `infernix init`; the binary decodes it at startup into a `HostConfig`
+record. See
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md). The retained Apple
 materialization command is configured through typed engine-artifact records, never inherited host
 process state — see
@@ -136,7 +204,7 @@ process state — see
 Typed record of in-cluster wiring that previously lived in pod-spec `env:` blocks — Pulsar
 (HTTP/WS/service URLs, tenant, namespace), MinIO (endpoint, region, presign expiry, buckets),
 Keycloak (base URL, realm, client id, JWKS URL), demo backend (bind host, bridge mode, publication
-state path), engine (model cache root, quota, per-binding command overrides), coordinator
+state path), engine (model cache root and quota), coordinator
 (control-plane context, daemon location). These are deterministic derived values, so they carry **no
 `init`**: the binary renders `cluster.dhall` from `ClusterConfig.defaultClusterConfig` at `cluster
 up` and hands the string to Helm, which embeds it verbatim into `ConfigMap/infernix-cluster-config`
@@ -183,9 +251,10 @@ mounts two volumes and carries **no `env:` block**:
   `cluster.dhall` string) at `/opt/infernix/cluster.dhall`
 - `cluster-secrets` (from `Secret/infernix-cluster-secrets`, binary-rendered) at `/etc/infernix/secrets/`
 
-The coordinator additionally mounts `ConfigMap/infernix-demo-config` (the binary-rendered runtime
-`infernix.dhall`, with the real model set) **over** the image-baked config path. The daemon decodes
-the Dhall natively, reads secret files by absolute path, and never consults `env`.
+Each coordinator, engine, and webapp role pod additionally mounts
+`ConfigMap/infernix-demo-config` (the binary-rendered runtime `infernix.dhall`, with the real model
+set) **over** the image-baked config path. Service startup compiles that Dhall before role-specific
+work begins, reads secret files by absolute path, and never consults `env`.
 
 ## Third-party-upstream exceptions
 
@@ -200,6 +269,10 @@ The lint gates carry an explicit exception list naming this and any future upstr
   `proc "<bare-name>"` and `findExecutable` / `findExecutables` discovery outside the lint module's
   own token list and the documented exception list. `infernix lint files` rejects `os.environ` /
   `os.getenv` reads under `python/`, `process.env` reads under `web/`, and any tracked `.dhall`.
+- Host-manifest schema tests round-trip all 36 command policies and both proper unions. Subprocess
+  refinement tests reject zero/overflowing timeouts, attempts, and backoffs; command compilation
+  rejects empty, relative, missing, or nonexecutable paths for every exact domain `HostTool`, while
+  commands outside the two fixed Bash pipelines do not acquire a universal Bash dependency.
 - `infernix lint chart` rejects any `env:` block in the infernix-owned
   `deployment-{coordinator,engine,demo}.yaml`, and any Dhall `let …`/schema body inside a chart
   template (Helm must only `nindent` a binary-produced payload string).

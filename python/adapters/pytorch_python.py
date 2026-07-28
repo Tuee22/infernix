@@ -141,23 +141,32 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
             "transformers/scipy are not installed in this engine venv; "
             "install the prebuilt host wheels for the Bark audio engine."
         ) from exc
-    # Wave I real-output fix: run Bark on the GPU/MPS accelerator instead of
-    # the default CPU placement so generation completes within the routed
-    # result-publish budget. Move the model and every tensor input to the
-    # device, leaving non-tensor processor entries (e.g. voice presets) intact.
+    # Run Bark on the GPU/MPS accelerator in half precision. Bark's cached
+    # configuration defaults to fp32, which needlessly doubles accelerator
+    # model storage and breached the capped Apple engine's 8 GiB resident
+    # ceiling. CPU retains fp32. Move every tensor input to the selected device,
+    # leaving non-tensor processor entries (e.g. voice presets) intact.
     device = _preferred_torch_device(torch)
+    dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
     processor = AutoProcessor.from_pretrained(str(weights_dir), local_files_only=True)
-    model = BarkModel.from_pretrained(str(weights_dir), local_files_only=True)
+    model = BarkModel.from_pretrained(
+        str(weights_dir),
+        local_files_only=True,
+        torch_dtype=dtype,
+    )
     model = model.to(device)
+    model.eval()
     inputs = processor(context.input_text)
     inputs = {
         key: (value.to(device) if hasattr(value, "to") else value)
         for key, value in inputs.items()
     }
-    audio = model.generate(**inputs)
+    with torch.inference_mode():
+        audio = model.generate(**inputs)
     sample_rate = int(model.generation_config.sample_rate)
     buffer = io.BytesIO()
-    scipy.io.wavfile.write(buffer, sample_rate, audio.cpu().numpy().squeeze())
+    audio_array = audio.to(device="cpu", dtype=torch.float32).numpy().squeeze()
+    scipy.io.wavfile.write(buffer, sample_rate, audio_array)
     return ArtifactResult(
         data=buffer.getvalue(), content_type="audio/wav", suffix=".wav"
     )

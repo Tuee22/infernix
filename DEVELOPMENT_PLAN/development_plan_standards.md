@@ -266,8 +266,9 @@ Rules:
 - On the Linux outer-container path, `cluster up` writes the repo-local kubeconfig to
   `./.data/runtime/infernix.kubeconfig` so fresh launcher containers can reuse the same durable
   cluster handle without depending on ephemeral `/opt/build` state.
-- `infernix kubectl ...` is the supported operator wrapper for Kubernetes access and automatically
-  targets the repo-local kubeconfig in the current execution context's durable location.
+- `infernix kubectl ...` is the supported read-only operator diagnostic wrapper for Kubernetes
+  access and automatically targets the repo-local kubeconfig in the current execution context's
+  durable location; lifecycle mutations remain owned by `cluster up` and `cluster down`.
 - On Apple Silicon, the intended minimal pre-existing host prerequisites are Homebrew plus ghcup.
 - Docker-backed Apple work requires the operator's current Docker context to already point at a
   native arm64 Docker daemon. Infernix must not create or switch Docker contexts, create a Colima
@@ -353,12 +354,12 @@ Rules:
 - The outer control-plane container does not require direct NVIDIA runtime access. The supported
   Compose launcher never requests the NVIDIA container runtime for its own process.
 - `--runtime-mode` and `INFERNIX_RUNTIME_MODE` are not part of the supported final contract. The
-  staged substrate file beside the active build root is the primary and only supported source of
-  truth for commands that need an active substrate. Supported runtime, cluster, cache,
+  initialized repo-root `./infernix.dhall` is the primary and only supported source of truth for
+  commands that need an active substrate. `infernix init` creates operator config and
+  `infernix test init` creates the test-harness input. Supported runtime, cluster, cache,
   Kubernetes-wrapper, frontend-contract generation, and aggregate `infernix test ...` entrypoints
-  own substrate-file preflight and fail with a substrate-specific diagnostic if it cannot be
-  materialized or validated. Focused `infernix lint ...` and `infernix docs check` entrypoints
-  remain substrate-file independent.
+  validate that config and fail fast naming the required init when it is absent. Focused
+  `infernix lint ...` and `infernix docs check` entrypoints remain config-independent.
 - `docker compose up` and `docker compose exec` are not supported outer-control-plane workflows.
 
 ### L. Substrate Contract
@@ -367,11 +368,11 @@ The plan distinguishes control-plane execution context from supported substrate.
 
 Substrates are the product-facing inference lanes:
 
-| Substrate | Canonical substrate id | Current staging rule |
+| Substrate | Canonical substrate id | Current config rule |
 |-----------|------------------------|----------------------|
-| Apple Silicon / Metal | `apple-silicon` | host-native lifecycle and validation commands materialize or verify `./.build/infernix.dhall`; `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]` remains the explicit restaging helper |
-| Linux / CPU | `linux-cpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-cpu --demo-ui <true|false>` remains the explicit restaging helper |
-| Linux / NVIDIA GPU | `linux-gpu` | outer-container lifecycle and validation commands materialize or verify `/workspace/.build/outer-container/build/infernix.dhall` inside the launcher image; `docker compose run --rm infernix infernix internal materialize-substrate linux-gpu --demo-ui <true|false>` remains the explicit restaging helper |
+| Apple Silicon / Metal | `apple-silicon` | `infernix init` creates repo-root `./infernix.dhall` plus `./infernix-host.dhall`; ordinary config-dependent commands validate them and fail fast naming the init when absent |
+| Linux / CPU | `linux-cpu` | the launcher reads repo-root `./infernix.dhall`; image/test generation remains binary-owned, while ordinary config-dependent commands never auto-materialize a missing file |
+| Linux / NVIDIA GPU | `linux-gpu` | the launcher reads repo-root `./infernix.dhall`; image/test generation remains binary-owned, while ordinary config-dependent commands never auto-materialize a missing file |
 
 Rules:
 
@@ -412,11 +413,11 @@ Rules:
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
   must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
   pretending the rename is already complete.
-- The staged substrate file beside the active build root is the primary substrate selector.
-  Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` commands own substrate-file preflight, read the resulting file,
-  and fail if it cannot be materialized or validated for the requested deployment path. Focused
-  `infernix lint ...` and `infernix docs check` commands remain substrate-file independent.
+- Repo-root `./infernix.dhall` is the primary substrate selector. Supported runtime, cluster,
+  cache, Kubernetes-wrapper, frontend-contract generation, and aggregate `infernix test ...`
+  commands validate that initialized file and fail fast naming `infernix init` when it is absent.
+  The test harness similarly names `infernix test init` when `./infernix.test.dhall` is absent.
+  Focused `infernix lint ...` and `infernix docs check` commands remain config-independent.
 - `linux-cpu` is the only substrate that remains meaningfully portable across unrelated native
   Linux CPU hardware. Native amd64 Linux hosts and native arm64 Linux execution through an already
   selected native arm64 Docker daemon are first-class citizens for that CPU-only lane so long as the
@@ -434,31 +435,28 @@ Rules:
 
 ### M. Generated Substrate File and ConfigMap Contract
 
-The supported build or explicit restaging flow stages one substrate file under the active build
-root, and cluster deployment republishes a cluster-role payload through a ConfigMap for
-cluster-resident consumers. Linux outer-container staging already uses the cluster role; Apple
-host-native staging uses the host role and `cluster up` renders the matching cluster-role payload
-for Kind consumers.
+The supported initialization flow creates one operator runtime config at repo-root
+`./infernix.dhall`, and cluster deployment republishes a cluster-role payload through a ConfigMap
+for cluster-resident consumers. `infernix init` creates operator config;
+`infernix test init` creates the input for the reservation-gated harness config transaction.
 
 Rules:
 
-- Phase documents must state whether the current implementation stages the substrate file during
-  Cabal compile time, during image build, or through an explicit helper command. Claiming
-  compile-time generation requires an implementation path that actually does so before runtime
-  entrypoints execute.
-- A supported Apple host workflow materializes or verifies the substrate file under `./.build/`
-  through the binary-owned lifecycle or validation command; the explicit helper remains
-  `./.build/infernix internal materialize-substrate apple-silicon [--demo-ui true|false]`.
-- A supported outer-container workflow materializes or verifies the Linux substrate file under
-  `/workspace/.build/outer-container/build/` inside the launcher image from the binary-owned
-  lifecycle or validation command; the explicit helper remains
-  `docker compose run --rm infernix infernix internal materialize-substrate <runtime-mode> --demo-ui <true|false>`.
+- Phase documents must distinguish operator initialization, test-harness generation, image-build
+  defaults, and ConfigMap deployment mirrors. No current instruction may present a build-root file
+  as the operator runtime-config authority.
+- A supported Apple host workflow uses `infernix init` to create repo-root
+  `./infernix.dhall` and `./infernix-host.dhall`; the stage-0 `up` wrapper explicitly invokes
+  `init --if-missing` before `cluster up`.
+- A supported outer-container workflow reads repo-root `./infernix.dhall`. Image-build defaults
+  remain binary-generated, but ordinary lifecycle and validation commands never auto-materialize a
+  missing runtime config.
 - Supported runtime, cluster, cache, Kubernetes-wrapper, frontend-contract generation, and
-  aggregate `infernix test ...` entrypoints own the substrate-file preflight for their execution
-  context and fail with a substrate-specific diagnostic if the file cannot be materialized or
-  validated. Focused `infernix lint ...` and `infernix docs check` entrypoints remain
-  substrate-file independent unless their implementation is changed together with this plan.
-- The generated filename stays stable for a given build artifact, for example
+  aggregate `infernix test ...` entrypoints validate the initialized config and fail fast naming the
+  required init when it is absent. Focused `infernix lint ...` and `infernix docs check`
+  entrypoints remain config-independent unless their implementation is changed together with this
+  plan.
+- The generated runtime filename stays stable for a given workspace, for example
   `infernix.dhall`, rather than encoding a user-selected runtime flag.
 - The generated file records the active substrate explicitly and enumerates every demo-visible model
   or workload supported by that substrate together with the matrix row identity, artifact or format
@@ -469,27 +467,26 @@ Rules:
   member id, and pool/member assignment the host daemon consumes. Cluster-role configs include the
   substrate, request and result topics, and the validated engine-pool graph used to derive legal
   handoff topics.
-- The supported materialization path accepts `--demo-ui true|false`, and phase docs must keep the
-  chosen default versus explicit override behavior honest.
+- `infernix init` accepts `--demo-ui true|false`, and phase docs must keep the chosen default versus
+  explicit override behavior honest.
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from a cluster-role payload
-  rendered from the active staged substrate metadata whenever the active deployment path includes
-  cluster-resident consumers of the generated catalog, including Linux daemon workloads, Apple
-  cluster daemons, and any Apple cluster-resident demo or support workload. On Linux this is the
-  same role as the staged outer-container payload; on Apple it intentionally differs from the
-  host-role payload under `./.build/`.
+  rendered from the initialized repo-root runtime config whenever the active deployment path
+  includes cluster-resident consumers of the generated catalog, including Linux daemon workloads,
+  Apple cluster daemons, and any Apple cluster-resident demo or support workload. The ConfigMap is
+  a deployment mirror, not a second operator config authority.
 - Cluster-resident consumers mount that ConfigMap read-only beside the relevant runtime entrypoint
   at `/opt/build/infernix-substrate.dhall`.
-- Apple host daemon consumers read host-role config from `./.build/`, even when the Apple topology
+- Apple host daemon consumers read repo-root `./infernix.dhall`, even when the Apple topology
   also republishes cluster-role payloads into the cluster for service daemons, routed demo, or
   other support surfaces.
-- Each daemon reads its staged substrate `.dhall` at startup; automatic file-watching or reload is
+- Each daemon reads its effective runtime-config `.dhall` at startup; automatic file-watching or reload is
   not part of the supported contract unless the implementation, validation, and governed docs are
   updated together.
 - Rows whose active-substrate engine cell is `Not recommended` are omitted from that substrate's
   generated catalog.
 - Across the full set of generated substrate `.dhall` files, every row in the README matrix
   appears in at least one generated catalog.
-- The mounted or colocated substrate `.dhall` is the exact source of truth for which models appear
+- The effective runtime-config `.dhall` is the exact source of truth for which models appear
   in the demo UI, which engine binding they use, which launcher and daemon-role contract applies,
   which substrate the binary reports, and which engine binding the integration suite and demo app
   select for a given README row.
@@ -565,16 +562,17 @@ Rules:
 - `infernix cache status`, `infernix cache evict`, and `infernix cache rebuild` operate only on
   manifest-backed derived cache state and do not rewrite the generated catalog or publication
   contract.
-- `infernix kubectl ...` is a scoped wrapper around upstream `kubectl`, automatically injecting the
-  repo-local kubeconfig from the active build-output location; it is not a separate lifecycle
-  orchestration surface.
+- `infernix kubectl ...` is a scoped wrapper around the allowlisted read-only diagnostic subset of
+  upstream `kubectl`, automatically injecting the repo-local kubeconfig from the active build-output
+  location; mutating verbs and `exec` are rejected, so it is not a separate lifecycle orchestration
+  surface.
 - Supported CLI behavior never accepts `--runtime-mode` or `INFERNIX_RUNTIME_MODE`. Commands that
-  need an active substrate read it from the staged substrate file after binary-owned preflight;
-  `infernix internal materialize-substrate ...` remains the explicit helper, not a shell-owned
-  bootstrap fallback path.
+  need an active substrate read it from the initialized repo-root `./infernix.dhall` after
+  binary-owned preflight; `infernix internal materialize-substrate ...` remains an internal helper,
+  not an ordinary-command auto-generation path or shell-owned bootstrap fallback.
 - Focused `infernix lint files`, `infernix lint docs`, `infernix lint proto`,
   `infernix lint chart`, and `infernix docs check` remain substrate-file independent; aggregate
-  `infernix test ...` commands still validate the active staged substrate before running so lane
+  `infernix test ...` commands still validate the active initialized substrate before running so lane
   mismatches fail early.
 - `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
   prerequisites, but they do not depend on alternate imperative setup commands outside the
@@ -586,7 +584,7 @@ Rules:
 
 Substrate-specific validation is explicit.
 
-- `infernix test integration` for a given built substrate validates only that substrate's published
+- `infernix test integration` for a given initialized substrate validates only that substrate's published
   catalog contract, routed surfaces, cache lifecycle, every generated active-substrate catalog
   entry, and the supported service-loop roundtrip for that substrate.
 - The comprehensive model, format, and engine matrix in the root `README.md` is the authoritative
@@ -601,7 +599,7 @@ Substrate-specific validation is explicit.
 - when an owning phase calls out real-cluster HA or lifecycle assertions, the supported
   non-Apple-cluster lane also owns those pod-replacement, durability, failover, or rebinding
   checks on the deployed substrate rather than any simulated fallback.
-- `infernix test e2e` for a given built substrate exercises every demo-visible catalog entry
+- `infernix test e2e` for a given initialized substrate exercises every demo-visible catalog entry
   present in that same generated file through the routed web surface unless a narrower exception is
   called out explicitly in the owning phase document.
 - Playwright is substrate-agnostic at the browser layer. The browser suite does not branch on
@@ -621,7 +619,7 @@ Substrate-specific validation is explicit.
   `.dhall`, which must match the appropriate substrate column from the README matrix. E2E checks
   rely on the demo app to honor that same file rather than selecting engines in browser code.
 - `infernix test all` aggregates lint, unit, integration, and E2E as the full supported suite for
-  the built substrate. Repository closure requires separate substrate-specific reruns instead of
+  the initialized substrate. Repository closure requires separate substrate-specific reruns instead of
   one default matrix run that silently covers Apple, CPU, and GPU together.
 
 ### Q. Single-Accelerator Phase Validation and Forward-Only Cohorts

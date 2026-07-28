@@ -14,11 +14,11 @@
 
 ### `service`
 
-- `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the active `.dhall` request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the substrate dhall's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit substrate file.
+- `infernix service [--role coordinator|engine|webapp] [--engine-name NAME] [--config PATH]` - starts one long-running role from the single infernix binary. Coordinator and engine roles consume the effective runtime-config request and result topics; the webapp role serves the demo HTTP/WebSocket surface. The optional `--role` arg overrides the runtime config's `daemonRole` field for split Deployments, `--engine-name` selects a stable engine member id, and `--config` points the daemon at an explicit runtime config.
 
 ### `cluster`
 
-- `infernix cluster up` - reconciles Kind, Harbor-first bootstrap, the generated substrate file, and routed publication state
+- `infernix cluster up` - requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
 - `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation
 
@@ -30,7 +30,7 @@
 
 ### `kubectl`
 
-- `infernix kubectl ...` - wraps upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context
+- `infernix kubectl ...` - wraps an allowlisted read-only subset of upstream `kubectl` and injects the repo-local kubeconfig for the active control-plane context
 
 ### `lint`
 
@@ -59,7 +59,7 @@
 - `infernix internal discover claims RENDERED_CHART` - prints the persistent-claim inventory discovered in a rendered chart manifest
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
-- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]` - writes the generated substrate file for one explicit substrate id into the active build root
+- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]` - writes the generated runtime config for one explicit substrate id to repo-root `./infernix.dhall`
 - `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
 - `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
@@ -75,8 +75,9 @@
   generated section drifts
 - `infernix internal materialize-metal-engines` remains in the generated inventory as the explicit
   Apple materialization helper. Its implementation is Tart-free and writes typed engine-artifact
-  manifests under `./.data/engines/<adapterId>/`; the Apple hardware cohort still owns the host
-  Metal runtime bridge smoke and native artifact load evidence named in
+  manifests under `./.data/engines/<adapterId>/`; it emits no repository-owned native source.
+  The Apple hardware cohort owns the upstream MLX GPU-operation, coremltools device-observation,
+  materialized-artifact load, and routed real-output evidence named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
   `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` is the
@@ -86,12 +87,11 @@
   owner/state read, not a mutation; on the Linux outer-container path it may idempotently run
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
   control plane over Docker's private `kind` network
-- `infernix internal materialize-substrate ...` remains the explicit restaging and inspection
-  helper for `infernix.dhall`; substrate-aware entrypoints such as `cluster up`,
-  `service`, `cache ...`, `kubectl ...`, frontend-contract generation, and aggregate
-  `infernix test ...` commands own substrate-file preflight for their execution context, materialize
-  or validate the file before relying on it, and fail with a substrate-specific diagnostic if that
-  preflight cannot complete
+- operator config is created explicitly by `infernix init` at repo-root `./infernix.dhall`;
+  ordinary substrate-aware entrypoints such as `cluster up`, `service`, `cache ...`, `kubectl ...`,
+  frontend-contract generation, and aggregate `infernix test ...` commands do not auto-materialize
+  it and fail fast naming the required init when config is absent. `infernix test init` creates the
+  harness input `./infernix.test.dhall`.
 - `infernix service` starts the selected role. Coordinator and engine roles bind no HTTP port,
   consume the active `.dhall` request/result topics, engine bindings, and engine-pool assignment
   metadata, and use the Pulsar transport configured for the active substrate. `--engine-name NAME`
@@ -101,10 +101,11 @@
   normally deployed as the demo-gated `infernix-demo` workload
 - `infernix cache status` reports the manifest-backed cache inventory for the active runtime
   mode; `cache evict` and `cache rebuild` only affect derived cache state
-- `infernix kubectl ...` wraps upstream `kubectl` and injects the repo-local kubeconfig
-- `cluster up` renders adapter-specific engine command prefixes from
-  `ClusterConfig.engine.commandOverrides` into the cluster ConfigMap so the cluster path can
-  configure adapter wrappers without rebuilding the image
+- `infernix kubectl ...` wraps the allowlisted read-only diagnostic subset of upstream `kubectl`
+  and injects the repo-local kubeconfig; mutating verbs and `exec` are rejected
+- `cluster up` publishes the closed engine bindings generated in `infernix.dhall`; engine
+  commands are derived from each compiled binding, and the cluster manifest has no arbitrary
+  command-override field
 - on the Linux outer-container cluster path, `cluster up`, `cluster status`, and `kubectl` keep
   host-published Kind and edge ports on `127.0.0.1` while reaching Kubernetes through the private
   Docker `kind` network and the internal kubeconfig
@@ -156,11 +157,13 @@
 - the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a
   first-class `ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty
   reading) alongside the persisted `ClusterOwner` — whose canonical home is
-  [Managed State Transitions](../architecture/managed_state_transitions.md). The enforcing
-  `ClusterMutating` / `ClusterOwner` code is code-side closed (2026-07-23; Phase 2 Sprint 2.15 and
-  Phase 6 Sprint 6.43) — `cluster status` renders the `clusterOwner` and a `ClusterMutating` dirty
-  phase — with behavioral cohort sign-off pending
-  [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
+  [Managed State Transitions](../architecture/managed_state_transitions.md). The 2026-07-23
+  `ClusterMutating` / `ClusterOwner` scope — including `cluster status` rendering the `clusterOwner`
+  and a `ClusterMutating` dirty phase — is historically closed by
+  [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Wave X does not close the 2026-07-25
+  owner-atomic reservation/teardown correction. That correction remains under Phase 2 implementation
+  and source review; its new source-matched Stage 1 and Wave Y have not started, and Phase 6
+  validation is ordered after Phases 2 and 4.
 
 ## Cross-References
 

@@ -60,8 +60,6 @@ requiredPhrases =
         "enabled:",
         "catalogPayload:",
         "publication:",
-        "engineAdapters:",
-        "commandEnv:",
         "service:",
         "enabled:",
         "30002",

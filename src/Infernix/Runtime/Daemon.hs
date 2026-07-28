@@ -7,16 +7,14 @@ where
 
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Concurrent.MVar (newMVar)
-import Control.Monad (forM_, forever, unless, when)
-import Data.List (find, intercalate)
-import Data.Maybe (fromMaybe)
+import Control.Monad (forM_, forever, when)
+import Data.List (intercalate)
+import Data.Maybe (fromMaybe, listToMaybe)
 import Data.Text qualified as Text
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
     DemoBackendWiring (..),
-    EngineCommandOverride (..),
-    EngineWiring (..),
   )
 import Infernix.Config
   ( ControlPlaneContext,
@@ -27,35 +25,48 @@ import Infernix.Config
     parseControlPlaneContext,
     watchedDemoConfigPath,
   )
-import Infernix.Conversation.Topic qualified as ConversationTopic
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.ExecutionPlan
-  ( CompiledRuntimePlan,
-    executableModelDescriptor,
-    runtimePlanConfig,
+  ( CompiledDaemon,
+    CompiledRuntimePlan,
+    RuntimePlan,
+    compiledDaemonLocation,
+    compiledDaemonMemberId,
+    compiledDaemonRequestTopics,
+    compiledDaemonResultTopic,
+    compiledDaemonRole,
+    compiledPlanAvailableModels,
+    compiledPlanCoordinatorDaemon,
+    compiledPlanEngineDaemons,
+    compiledPlanRuntimeMode,
+    compiledPlanWebappDaemon,
+    lookupCompiledEngineDaemon,
+    runtimePlanCompiledPlan,
     runtimePlanModels,
   )
+import Infernix.Runtime.Enforcer (refineCompiledRuntimePlan)
 import Infernix.Runtime.KVCache qualified as KVCache
-import Infernix.Runtime.CappedEngine (verifyPhysicalFootprintSampler)
 import Infernix.Runtime.Pulsar
-  ( PulsarTransport,
+  ( DaemonTopicCapability,
+    PulsarTransport,
     clearServiceReadinessMarker,
     consumeTopicForever,
+    coordinatorTopicCapabilities,
     discoverPulsarTransport,
     drainTopicWithKVCache,
-    ensureRegisteredSchemasWithRetry,
-    ensureSchemaMarkers,
+    engineTopicCapabilities,
+    ensureRegisteredSchemasForPlanWithRetry,
+    ensureSchemaMarkersForPlan,
     pulsarWebSocketBase,
-    reconcileStartupTopicsWithRetry,
-    reconcileSupportedNamespacesWithRetry,
+    reconcileStartupTopicsForPlanWithRetry,
+    reconcileSupportedNamespacesForPlanWithRetry,
     renderPulsarWebSocketBase,
     runDispatcherLoop,
     runModelBootstrapLoop,
     runResultBridgeLoop,
-    sweepEagerModelCache,
+    sweepEagerModelCacheForPlan,
     writeServiceReadinessMarker,
   )
-import Infernix.Runtime.Worker (EngineCommandOverrideMap)
 import Infernix.Substrate (decodeCompiledRuntimePlanFile)
 import Infernix.Types hiding (generatedDemoConfigPath)
 
@@ -63,6 +74,10 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- Pulsar transport module. The daemon layer decides which role starts
 -- coordinator loops, which role owns engine execution, and which
 -- process-local engine KV cache is threaded into request handling.
+data DaemonExecutionPlan
+  = RoutingDaemonPlan CompiledRuntimePlan
+  | ExecutingDaemonPlan Text.Text RuntimePlan
+
 runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> Maybe FilePath -> DaemonRole -> Maybe Text.Text -> IO ()
 runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName = do
   maybeTransport <- discoverPulsarTransport paths runtimeMode maybeClusterConfig
@@ -81,7 +96,6 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
               let demoPath = Text.unpack (demoConfigFilePath (clusterDemoBackend clusterConfig))
                in if null demoPath then generatedDemoConfigPath paths else demoPath
             Nothing -> generatedDemoConfigPath paths
-      engineOverrides = engineOverridesFromClusterConfig maybeClusterConfig
   compiledPlanResult <- decodeCompiledRuntimePlanFile selectedDemoConfigPath
   compiledPlan <-
     case compiledPlanResult of
@@ -89,127 +103,191 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
         ioError
           (userError ("generated substrate execution plan did not compile: " <> show errors))
       Right plan -> pure plan
-  let demoConfig = runtimePlanConfig compiledPlan
-  daemonConfig <- requireDaemonConfig daemonRole maybeEngineName demoConfig
+  when (compiledPlanRuntimeMode compiledPlan /= runtimeMode) $
+    ioError
+      ( userError
+          ( "generated substrate runtime does not match the requested daemon runtime: compiled "
+              <> Text.unpack (runtimeModeId (compiledPlanRuntimeMode compiledPlan))
+              <> ", requested "
+              <> Text.unpack (runtimeModeId runtimeMode)
+          )
+      )
+  compiledDaemon <- requireCompiledDaemon daemonRole maybeEngineName compiledPlan
+  daemonExecutionPlan <-
+    case compiledDaemonRole compiledDaemon of
+      Engine -> do
+        refinementResult <- refineCompiledRuntimePlan paths compiledPlan
+        case refinementResult of
+          Left errors ->
+            ioError
+              (userError ("generated substrate runtime plan could not be refined against live enforcement: " <> show errors))
+          Right runtimePlan -> do
+            memberIdValue <-
+              case compiledDaemonMemberId compiledDaemon of
+                Nothing ->
+                  ioError
+                    (userError "compiled engine daemon has no member identity")
+                Just memberId -> pure memberId
+            pure (ExecutingDaemonPlan memberIdValue runtimePlan)
+      Coordinator -> pure (RoutingDaemonPlan compiledPlan)
+      Webapp ->
+        ioError
+          (userError "webapp role does not run the inference topic daemon")
+  topicCapabilities <-
+    case daemonTopicCapabilities daemonExecutionPlan of
+      Left err -> ioError (userError err)
+      Right [] ->
+        ioError
+          (userError "compiled daemon capability does not authorize any request topics")
+      Right capabilities -> pure capabilities
   let daemonLocation = case maybeClusterConfig of
         Just clusterConfig ->
           let mounted = Text.unpack (coordinatorDaemonLocation (clusterCoordinator clusterConfig))
-           in if null mounted then Text.unpack (daemonConfigLocation daemonConfig) else mounted
-        Nothing -> Text.unpack (daemonConfigLocation daemonConfig)
+           in if null mounted then Text.unpack (compiledDaemonLocation compiledDaemon) else mounted
+        Nothing -> Text.unpack (compiledDaemonLocation compiledDaemon)
   putStrLn ("serviceControlPlaneContext: " <> controlPlaneContextId controlPlane)
-  putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId daemonRole))
+  putStrLn ("serviceDaemonRole: " <> Text.unpack (daemonRoleId (compiledDaemonRole compiledDaemon)))
   forM_ maybeEngineName $ \engineName ->
     putStrLn ("serviceEngineName: " <> Text.unpack engineName)
-  forM_ (daemonConfigMemberId daemonConfig) $ \memberId ->
+  forM_ (compiledDaemonMemberId compiledDaemon) $ \memberId ->
     putStrLn ("serviceEngineMemberId: " <> Text.unpack memberId)
   putStrLn ("serviceDaemonLocation: " <> daemonLocation)
   putStrLn ("serviceCatalogSource: " <> catalogSource)
   putStrLn ("serviceRuntimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
   putStrLn ("serviceDemoConfigPath: " <> selectedDemoConfigPath)
   putStrLn ("serviceMountedDemoConfigPath: " <> watchedDemoConfigPath)
-  putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (daemonConfigRequestTopics daemonConfig)))
-  putStrLn ("serviceResultTopic: " <> Text.unpack (daemonConfigResultTopic daemonConfig))
-  putStrLn ("serviceExecutableModelCount: " <> show (length (runtimePlanModels compiledPlan)))
+  putStrLn ("serviceRequestTopics: " <> intercalate "," (map Text.unpack (compiledDaemonRequestTopics compiledDaemon)))
+  putStrLn ("serviceResultTopic: " <> Text.unpack (compiledDaemonResultTopic compiledDaemon))
+  putStrLn ("serviceExecutableModelCount: " <> show (daemonExecutableModelCount daemonExecutionPlan))
   putStrLn "serviceHttpListener: disabled"
-  when (runtimeMode == AppleSilicon) $ do
-    samplerAvailable <- verifyPhysicalFootprintSampler
-    unless samplerAvailable $
-      ioError
-        ( userError
-            "apple-silicon engine readiness failed: proc_pid_rusage physical-footprint sampling is unavailable"
-        )
   clearServiceReadinessMarker paths
   case maybeTransport of
     Nothing ->
-      runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig compiledPlan engineKVCache
+      runFilesystemTopicSpool paths daemonExecutionPlan topicCapabilities engineKVCache
     Just transport ->
-      runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig compiledPlan daemonRole engineKVCache transport
+      runWebSocketPulsarDaemon paths daemonExecutionPlan topicCapabilities engineKVCache transport
 
-engineOverridesFromClusterConfig :: Maybe ClusterConfig -> EngineCommandOverrideMap
-engineOverridesFromClusterConfig maybeClusterConfig =
-  case maybeClusterConfig of
-    Just clusterConfig ->
-      map
-        (\override -> (engineOverrideKey override, engineOverrideValue override))
-        (engineCommandOverrides (clusterEngine clusterConfig))
-    Nothing -> []
+daemonExecutableModelCount :: DaemonExecutionPlan -> Int
+daemonExecutableModelCount daemonPlan =
+  case daemonPlan of
+    RoutingDaemonPlan compiledPlan ->
+      length (compiledPlanAvailableModels compiledPlan)
+    ExecutingDaemonPlan _ runtimePlan ->
+      length (runtimePlanModels runtimePlan)
+
+daemonCompiledPlan :: DaemonExecutionPlan -> CompiledRuntimePlan
+daemonCompiledPlan daemonPlan =
+  case daemonPlan of
+    RoutingDaemonPlan compiledPlan -> compiledPlan
+    ExecutingDaemonPlan _ runtimePlan -> runtimePlanCompiledPlan runtimePlan
+
+daemonTopicCapabilities ::
+  DaemonExecutionPlan ->
+  Either String [DaemonTopicCapability]
+daemonTopicCapabilities daemonPlan =
+  case daemonPlan of
+    RoutingDaemonPlan compiledPlan ->
+      Right (coordinatorTopicCapabilities compiledPlan)
+    ExecutingDaemonPlan memberIdValue runtimePlan ->
+      engineTopicCapabilities memberIdValue runtimePlan
 
 runFilesystemTopicSpool ::
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  DaemonConfig ->
-  CompiledRuntimePlan ->
+  DaemonExecutionPlan ->
+  [DaemonTopicCapability] ->
   KVCache.EngineKVCache ->
   IO ()
-runFilesystemTopicSpool paths runtimeMode engineOverrides daemonConfig compiledPlan engineKVCache = do
-  let demoConfig = runtimePlanConfig compiledPlan
-  ensureSchemaMarkers paths demoConfig
+runFilesystemTopicSpool paths daemonPlan topicCapabilities engineKVCache = do
+  let compiledPlan = daemonCompiledPlan daemonPlan
+  ensureSchemaMarkersForPlan paths compiledPlan
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: filesystem-topic-spool"
   forever $ do
     forM_
-      (daemonConfigRequestTopics daemonConfig)
-      (drainTopicWithKVCache paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache))
+      topicCapabilities
+      (\capability -> drainTopicWithKVCache paths capability (Just engineKVCache))
     threadDelay 500000
 
 runWebSocketPulsarDaemon ::
   Paths ->
-  RuntimeMode ->
-  EngineCommandOverrideMap ->
-  DaemonConfig ->
-  CompiledRuntimePlan ->
-  DaemonRole ->
+  DaemonExecutionPlan ->
+  [DaemonTopicCapability] ->
   KVCache.EngineKVCache ->
   PulsarTransport ->
   IO ()
-runWebSocketPulsarDaemon paths runtimeMode engineOverrides daemonConfig compiledPlan daemonRole engineKVCache transport = do
-  let demoConfig = runtimePlanConfig compiledPlan
-  ensureSchemaMarkers paths demoConfig
-  reconcileSupportedNamespacesWithRetry transport demoConfig
-  reconcileStartupTopicsWithRetry transport demoConfig
-  ensureRegisteredSchemasWithRetry paths transport demoConfig
+runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transport = do
+  let compiledPlan = daemonCompiledPlan daemonPlan
+  ensureSchemaMarkersForPlan paths compiledPlan
+  reconcileSupportedNamespacesForPlanWithRetry transport compiledPlan
+  reconcileStartupTopicsForPlanWithRetry transport compiledPlan
+  ensureRegisteredSchemasForPlanWithRetry paths transport compiledPlan
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: websocket-pulsar"
   putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
   engineExecutionLock <- newMVar ()
-  case (runtimeMode, daemonRole, daemonConfigRequestTopics daemonConfig) of
-    (AppleSilicon, Engine, primaryTopic : extraTopics) -> do
+  case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
+    (ExecutingDaemonPlan _ _, AppleSilicon, primaryCapability : extraCapabilities) -> do
       forM_
-        extraTopics
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock)
-      consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock primaryTopic
-    _ -> do
+        extraCapabilities
+        ( \capability ->
+            forkIO
+              ( consumeTopicForever
+                  transport
+                  paths
+                  capability
+                  (Just engineKVCache)
+                  engineExecutionLock
+              )
+        )
+      consumeTopicForever transport paths primaryCapability (Just engineKVCache) engineExecutionLock
+    (ExecutingDaemonPlan _ _, _, capabilities) -> do
       forM_
-        (daemonConfigRequestTopics daemonConfig)
-        (forkIO . consumeTopicForever transport paths runtimeMode engineOverrides daemonConfig compiledPlan (Just engineKVCache) engineExecutionLock)
-      when (daemonRole == Coordinator) $
-        startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan
+        capabilities
+        ( \capability ->
+            forkIO
+              ( consumeTopicForever
+                  transport
+                  paths
+                  capability
+                  (Just engineKVCache)
+                  engineExecutionLock
+              )
+        )
+      forever (threadDelay 60000000)
+    (RoutingDaemonPlan routingPlan, _, capabilities) -> do
+      forM_
+        capabilities
+        ( \capability ->
+            forkIO
+              ( consumeTopicForever
+                  transport
+                  paths
+                  capability
+                  (Just engineKVCache)
+                  engineExecutionLock
+              )
+        )
+      startCoordinatorLoops transport routingPlan
       forever (threadDelay 60000000)
 
 startCoordinatorLoops ::
   PulsarTransport ->
-  RuntimeMode ->
-  DaemonConfig ->
   CompiledRuntimePlan ->
   IO ()
-startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan = do
-  let demoConfig = runtimePlanConfig compiledPlan
+startCoordinatorLoops transport compiledPlan = do
   putStrLn "serviceResultBridgeMode: failover-subscription"
   _ <-
     forkIO
       ( runResultBridgeLoop
           transport
-          runtimeMode
-          (daemonConfigResultTopic daemonConfig)
-          ConversationTopic.defaultDemoTopicNamespace
+          compiledPlan
       )
   putStrLn "serviceModelBootstrapMode: failover-subscription"
   _ <-
     forkIO
       ( runModelBootstrapLoop
           transport
-          ConversationTopic.systemTopicNamespace
+          compiledPlan
       )
   -- Phase 8 Sprint 8.5: eager model-cache staging. Begin staging every model
   -- in the mounted substrate config the moment the coordinator comes up, so no
@@ -219,10 +297,9 @@ startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan = do
   putStrLn "serviceEagerModelCacheMode: startup-sweep"
   _ <-
     forkIO
-      ( sweepEagerModelCache
+      ( sweepEagerModelCacheForPlan
           transport
-          ConversationTopic.systemTopicNamespace
-          demoConfig
+          compiledPlan
       )
   putStrLn "serviceDispatcherMode: per-context-failover"
   contextModelMap <- ContextModelMap.newContextModelMap
@@ -230,17 +307,10 @@ startCoordinatorLoops transport runtimeMode daemonConfig compiledPlan = do
     forkIO
       ( runDispatcherLoop
           transport
-          runtimeMode
-          (firstOrEmpty (daemonConfigRequestTopics daemonConfig))
-          ConversationTopic.defaultDemoTopicNamespace
+          compiledPlan
           contextModelMap
-          (map executableModelDescriptor (runtimePlanModels compiledPlan))
       )
   pure ()
-
-firstOrEmpty :: [Text.Text] -> Text.Text
-firstOrEmpty [] = ""
-firstOrEmpty (topic : _) = topic
 
 resolveClusterControlPlaneContext :: ClusterConfig -> ControlPlaneContext -> ControlPlaneContext
 resolveClusterControlPlaneContext clusterConfig fallback =
@@ -250,24 +320,18 @@ resolveClusterControlPlaneContext clusterConfig fallback =
 demoConfigCatalogSource :: String
 demoConfigCatalogSource = "generated-build-root"
 
-requireDaemonConfig :: DaemonRole -> Maybe Text.Text -> DemoConfig -> IO DaemonConfig
-requireDaemonConfig daemonRole maybeEngineName demoConfig
-  | daemonConfigRole (coordinatorDaemon demoConfig) == daemonRole =
-      pure (coordinatorDaemon demoConfig)
-  | daemonRole == Engine =
-      maybe missingDaemonConfig pure selectEngineDaemon
-  | otherwise = missingDaemonConfig
+requireCompiledDaemon :: DaemonRole -> Maybe Text.Text -> CompiledRuntimePlan -> IO CompiledDaemon
+requireCompiledDaemon daemonRole maybeEngineName compiledPlan =
+  case daemonRole of
+    Coordinator -> pure (compiledPlanCoordinatorDaemon compiledPlan)
+    Webapp -> pure (compiledPlanWebappDaemon compiledPlan)
+    Engine -> maybe missingCompiledDaemon pure selectEngineDaemon
   where
     selectEngineDaemon =
-      maybe firstEngineDaemon engineDaemonForName maybeEngineName
-    firstEngineDaemon =
-      find ((== Engine) . daemonConfigRole) (engineDaemons demoConfig)
-    engineDaemonForName engineName =
-      find (engineDaemonMatches engineName) (engineDaemons demoConfig)
-    engineDaemonMatches selector daemonConfig =
-      daemonConfigRole daemonConfig == Engine
-        && daemonConfigMemberId daemonConfig == Just selector
-    missingDaemonConfig =
+      case maybeEngineName of
+        Nothing -> listToMaybe (compiledPlanEngineDaemons compiledPlan)
+        Just engineName -> lookupCompiledEngineDaemon engineName compiledPlan
+    missingCompiledDaemon =
       ioError
         ( userError
             ( "generated substrate file does not contain daemon metadata for role "

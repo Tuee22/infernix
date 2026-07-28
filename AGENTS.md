@@ -47,6 +47,37 @@ Read first:
   `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
   is reopened, not closed. Canonical target:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- no repo-owned native implementation source: version-controlled native sources are forbidden,
+  including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants, CUDA, assembly,
+  Metal, Swift, C2HS, and C-- sources. Cabal `c-sources:`, `cxx-sources:`, `asm-sources:`, and
+  `cmm-sources:` declarations and Cabal CPP definitions that synthesize a native boundary are
+  likewise forbidden.
+  Embedding native implementation source or compiler invocations inside Haskell, Python, shell,
+  JavaScript, configuration, or generated payload text is the same violation. `infernix lint files`
+  enforces these rules; native implementation inside upstream dependencies is allowed. Lifecycle
+  locking and bounded subprocess creation/control use public APIs from `filelock`, `process`, and
+  `unix` behind internal Haskell modules, never direct FFI declarations, inline C,
+  `System.Process.Internals`, or a cosmetic relocation of those unsafe boundaries. Direct
+  `foreign import` is forbidden throughout repo-owned Haskell, including observer code. Darwin
+  process birth identity is registry-backed Haskell state protected by `filelock`; Apple footprint
+  observation is a fixed, bounded public-tool kernel over `/usr/bin/top` and
+  `/usr/bin/footprint`, with no caller-supplied command specification. The nonblocking
+  exclusive `filelock` token remains enclosed by the rank-2 `Lease s ClusterMutationLocked` region.
+  For bounded commands, the parent starts one self-exec anchor through public `System.Process` with
+  `close_fds = True`, `create_group = True`, an explicit environment, and ordinary standard-stream
+  pipes; the anchor starts and reaps the supervisor, and a total length-bounded typed framed
+  protocol plus hidden constructors, a rank-2 session region, and linear phase transitions prevent
+  target start before durable activity evidence or reuse and escape of start authority. Canonical:
+  [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
+- Apple engine materialization is not a process-spawn exemption: every Poetry, Python/venv,
+  exact-package, Audiveris image, installed-smoke, and provenance operation must use the closed
+  package-internal provisioning language. Its opaque nominal `ProvisioningGrant s` and indexed
+  `ProvisioningSession s result` remain inside a rank-2 region, and only that facade may invoke the
+  bounded self-exec kernel. A candidate root must be hydrated, relocated, smoke-validated,
+  provenance-recorded, and hashed from its actual payload before the fsynced sibling activation
+  transaction; failure, cancellation, and crash reconciliation preserve a complete prior root or
+  fail closed. Canonical:
+  [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md)
 - no raw unbounded HTTP for upstream model download: the coordinator's upstream model fetch runs only
   through the bounded-HTTP wrapper in `Infernix.Runtime.Pulsar` (a required response timeout and a
   classified `DownloadOutcome`), and raw `withResponse` is forbidden in production `src/Infernix/`
@@ -62,18 +93,16 @@ Read first:
   `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
   entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- memory-safety by construction is reopened around the generated typed execution plan: an inference engine subprocess must run only under a resource-indexed typed `MemoryGrant`
-  minted by the `admitModelMemory` admission policy, and the capped-engine kernel bounds its actual
-  resident memory to the admitted `MemoryCeiling`. The raw engine spawn
-  (`readCreateProcessWithExitCode` / `createProcess`) is unexported, so launching an engine without an
-  admission proof does not typecheck; a ceiling breach is a clean `status=failed`
-  `ModelMemoryLimitExceeded` rather than a host OOM-kill. Current Linux pod-wide capacity and
-  unverified GPU VRAM paths do not yet satisfy the exact per-grant ceiling (`apple-silicon` enforces the ceiling with a
-  `proc_pid_rusage` physical-footprint watchdog plus process-group kill, `linux-cpu`/`linux-gpu` by the
-  pod cgroup / VRAM limit). Physical host RAM is a checked `HostMemoryPartition` (no oversubscription;
-  headroom covers the OS and the routed-E2E browser), every model declares a required positive
-  `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer. Raw engine spawn outside
-  the capped-engine kernel is forbidden, enforced by the `unboundedEngineSpawnViolations` lint.
+- memory-safety by construction is reopened around the generated typed execution plan: compilation
+  mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
+  `Enforcer`, and an inference subprocess can launch only from the resulting opaque
+  `ExecutableModel`. The capped-engine kernel bounds actual resident memory to its
+  `MemoryCeiling`; a measured breach is a clean `status=failed` `ModelMemoryLimitExceeded`, not a
+  fabricated result. Apple and Linux CPU watchdog implementations are present, but their adversarial
+  proof and an execution authority that makes concurrent reuse unrepresentable remain Phase 4 work.
+  NVIDIA per-process VRAM enforcement and broad raw-spawn exemption removal remain Phase 6 work.
+  Physical host RAM is a checked `HostMemoryPartition`, every model declares a required positive
+  `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
@@ -87,12 +116,12 @@ Read first:
   is the Apple Silicon host-native reference path only
 - do not install Xcode on the Apple host and do not rely on Tart for new Apple engine work. The
   target Apple Metal/Core ML materialization path is headless without VM startup, user keychain
-  state, or Xcode UI flows: use the host Metal runtime bridge and typed engine-artifact manifests
-  described in
+  state, Xcode UI flows, or repo-owned native source: use typed engine-artifact manifests and
+  upstream-owned MLX/Core ML package APIs as described in
   [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md).
   The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed; the retained
   `materialize-metal-engines` helper is the Tart-free manifest materialization surface, with Apple
-  hardware smoke evidence still tracked under Phase 1 Sprint 1.14
+  hardware smoke evidence tracked under active Phase 1 Sprint 1.20
 - never use cross-architecture emulation for development or validation. Do not run amd64 Linux
   through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
   VM on Apple Silicon

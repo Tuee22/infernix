@@ -59,6 +59,9 @@ data HostTool
   | HostNpm
   | HostNode
   | HostPython3
+  | HostPython311
+  | HostLlamaCli
+  | HostWhisperCli
   | HostPoetry
   | HostProtoc
   | HostGit
@@ -104,6 +107,9 @@ hostToolName tool = case tool of
   HostNpm -> "npm"
   HostNode -> "node"
   HostPython3 -> "python3"
+  HostPython311 -> "python3.11"
+  HostLlamaCli -> "llama-cli"
+  HostWhisperCli -> "whisper-cli"
   HostPoetry -> "poetry"
   HostProtoc -> "protoc"
   HostGit -> "git"
@@ -163,7 +169,10 @@ hostToolFallbackCandidates tool = case tool of
   HostNpm -> ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"]
   HostNode -> ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
   HostPython3 -> ["/opt/homebrew/bin/python3.12", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
-  HostPoetry -> ["/opt/poetry/bin/poetry", "/usr/local/bin/poetry", "/usr/bin/poetry"]
+  HostPython311 -> ["/opt/homebrew/bin/python3.11"]
+  HostLlamaCli -> ["/opt/homebrew/bin/llama-cli"]
+  HostWhisperCli -> ["/opt/homebrew/bin/whisper-cli"]
+  HostPoetry -> ["/opt/homebrew/bin/poetry", "/opt/poetry/bin/poetry", "/usr/local/bin/poetry", "/usr/bin/poetry"]
   HostProtoc -> ["/opt/homebrew/bin/protoc", "/usr/local/bin/protoc", "/usr/bin/protoc"]
   HostGit -> ["/opt/homebrew/bin/git", "/usr/bin/git"]
   HostTar -> ["/usr/bin/tar"]
@@ -233,6 +242,9 @@ pickToolPath tool paths = case tool of
   HostNpm -> hostNpm paths
   HostNode -> hostNode paths
   HostPython3 -> hostPython3 paths
+  HostPython311 -> hostPython311 paths
+  HostLlamaCli -> hostLlamaCli paths
+  HostWhisperCli -> hostWhisperCli paths
   HostPoetry -> hostPoetry paths
   HostProtoc -> hostProtoc paths
   HostGit -> hostGit paths

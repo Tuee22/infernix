@@ -79,8 +79,11 @@ owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2
 generates the harness config from the test config, runs the suites, and restores the backup (or
 removes the generated file when there was none). That backup is held at
 `./infernix.dhall.harness-backup` and reconciled on entry, so a killed run cannot leave your
-`./infernix.dhall` clobbered by the test config (Phase 6 Sprint 6.43, code-side closed 2026-07-23,
-closed under Wave X (2026-07-24); canonical home
+`./infernix.dhall` clobbered by the test config (the 2026-07-23 Phase 6 Sprint 6.43 scope is
+historically closed under Wave X (2026-07-24), while the 2026-07-25 owner-atomic
+reservation/teardown correction now includes the all-Haskell lifecycle-lock/supervision
+implementation; focused validation, fresh source review, complete source-matched Stage 1, and Wave Y
+remain in progress, and Phase 6 validation runs after Phases 2 and 4; canonical home
 [Configuration Doctrine](../architecture/configuration_doctrine.md)). The Linux
 launcher image bakes both files at build time so the containerized `infernix test all` runs without a
 manual init step.
@@ -126,8 +129,8 @@ The supported workflow keeps day-to-day phase work local to one hardware cohort 
 > next action for any open phase is always its remaining code-side closure on the machine you
 > already have; do not switch machines to "validate the open phase." The machine switch happens only
 > at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the Apple-only Metal runtime bridge probe and Core ML materialization
-> smoke of Phase 1 Sprint 1.14 — is named as
+> hardware-bound — for example the upstream MLX GPU-operation and coremltools/materialized-root
+> smoke of Phase 1 Sprint 1.20 after its fresh exact-source complete Stage 1 — is named as
 > such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
 > as machine-independent.
 
@@ -153,11 +156,10 @@ the shared adapter project:
 
 ## Rules
 
-- the active substrate comes from the generated `.dhall` beside the binary rather than a CLI flag
-- supported staging is binary-owned: the active lifecycle or validation command materializes or
-  verifies the substrate file under the active build root, and
-  `infernix internal materialize-substrate <runtime-mode>` remains the direct repair or inspection
-  helper for operators and tests that need to stage the file explicitly
+- the active substrate comes from repo-root `./infernix.dhall` rather than a CLI flag
+- supported config creation is explicit and binary-owned: `infernix init` creates operator runtime
+  config and `infernix test init` creates the test-harness input; ordinary lifecycle and validation
+  commands validate those files and fail fast naming the required init when one is absent
 - supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 entrypoints; they prepare
   the host, build the Apple host binary or enter the Linux Compose launcher, and then hand off to
   the direct `infernix` command surface; they do not run `kind`, `kubectl`, `helm`, manifest
@@ -176,6 +178,11 @@ the shared adapter project:
   VMs; Docker-backed Apple paths require the current Docker context to already point at a native
   arm64 Docker daemon
 - cross-architecture emulation is not a supported development or validation path
+- repository-owned native implementation source is forbidden: do not add
+  C/C++/Objective-C/CUDA/assembly/Metal/Swift/C2HS/HSC/C-- sources or headers, Cabal native-source fields or
+  native-token CPP definitions, or embedded native source/writers/compiler invocations in another
+  implementation language. `infernix lint files` enforces this boundary; native implementation
+  inside upstream packages remains allowed
 - on Linux, routed E2E runs Playwright inside the substrate image on Docker's private `kind`
   network against the Kind control-plane DNS instead of `host.docker.internal`; Apple host-native
   routed E2E uses host `npm exec` with the same typed fixture and is covered by the Apple cohort
@@ -193,9 +200,11 @@ the shared adapter project:
   context's system temp directory, then publishes the supported repo-local kubeconfig at
   `./.build/infernix.kubeconfig` on Apple or `./.data/runtime/infernix.kubeconfig` on Linux;
   stale repo-local `*.lock` files are disposable lifecycle byproducts
-- container mode keeps the staged substrate file under the image-local
-  `/workspace/.build/outer-container/build/` path, while cabal-home and the cabal builddir live at
-  the toolchain's natural in-image locations rather than on any bind-mounted host path
+- container mode keeps build artifacts under the image-local
+  `/workspace/.build/outer-container/build/` path and uses binary-generated image defaults; the
+  operator runtime-config authority remains repo-root `./infernix.dhall`, while cabal-home and the
+  cabal builddir live at the toolchain's natural in-image locations rather than on any
+  bind-mounted host path
 - container mode runs against a baked image snapshot and bind-mounts only `./.data/` plus the
   Docker socket; no docker-managed named volumes back the outer-container build root, and the
   substrate image uses `tini` as its entrypoint for clean signal handling

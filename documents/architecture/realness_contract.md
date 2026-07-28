@@ -13,11 +13,12 @@
   successful (`status=completed`) result is the output of a real model run; every missing-weights,
   model-load, or engine-runtime failure **raises / exits non-zero** and surfaces as `status=failed`.
   This is an *engine-logic* guarantee for in-band failures the adapter/runner can raise or exit on,
-  and it also covers model-memory capacity through typed runtime admission: an over-budget request
-  is rejected as a clean `status=failed` with `InferenceError.ModelMemoryLimitExceeded` before its
-  subprocess or worker is launched. That pre-execution rejection is the realness half of the
-  memory contract; the enforcement half — bounding the admitted request's *actual* resident memory so
-  a host OOM is unrepresentable — is owned by [bounded_inference_memory.md](bounded_inference_memory.md).
+  and it extends to model-memory capacity through the typed execution plan: an over-capacity model
+  remains `UnavailableModel` and its request must become a clean `status=failed`
+  `InferenceError.ModelMemoryLimitExceeded` before any subprocess or worker launch. That normal
+  coordinator result path passed the complete Phase 1 source-matched gate on 2026-07-25. The
+  enforcement half and its remaining proof obligations are owned by
+  [bounded_inference_memory.md](bounded_inference_memory.md).
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
 - A lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the Python
@@ -44,12 +45,14 @@ native runner has **no fabrication branch**:
   re-encoding the *input*; any `_validation_*` / `*_smoke*` / `*_fallback*` / `*_placeholder*` helper.
   `ImportError → raise` and `ModelCacheNotPopulated` propagation are allowed (both surface as a visible
   failure or bootstrap retry).
-- **Native runner** (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs` generated shell): a success
-  (exit 0) prints only a real engine continuation or `infernix-native-artifact-file:<path>` for a file
-  the real binary just wrote. Every other case **exits non-zero** (no print-and-`exit 0`). Forbidden:
+- **Native target** (the hidden Haskell catalog plus an upstream CLI, in-process Python runner, or
+  JVM application): a success (exit 0) contains only real engine output or names the single
+  descriptor-validated regular artifact written beneath the invocation-owned output directory.
+  Every other case **exits non-zero** (no print-and-`exit 0`). Generated `bin/*` command wrappers are
+  forbidden. Forbidden:
   hardcoded artifact/base64/MIDI/PNG/MusicXML constants, `np.zeros`→`session.run`, per-family default
-  emits, failure-masking branches, and the `infernix_emit_validation_result` validation wrapper. The
-  `--smoke` probes are install-time only and never an inference result.
+  emits, failure-masking branches, and the `infernix_emit_validation_result` validation wrapper.
+  Source-specific provisioning smoke operations are install-time only and never an inference result.
 
 ## Enforcement (lint)
 
@@ -79,23 +82,22 @@ fabricated pass.
 
 **Reopened: realness-by-construction extends to typed resource admission.** Phase 4 Sprint 4.27,
 Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38 generalized the earlier Apple host-RAM guard into a DRY
-admission doctrine across substrates: each substrate resolves a typed `InferenceMemoryBudget`, and
-admission is now the grant-minting `admitModelMemory :: InferenceMemoryBudget -> ModelDescriptor ->
-Either InferenceError MemoryGrant`. On success it mints an opaque `MemoryGrant` that the capped-engine
-kernel requires and whose `MemoryCeiling` it enforces; a request whose model footprint does not fit
-returns `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource,
-source }` — a closed ADT branch in `ResultPayload`, not successful inline output and not a parsed
-string — published as `status=failed` **before** its subprocess is launched, while smaller configured
-models continue to run (no catalog-wide capacity fail-fast). A runtime breach of the admitted ceiling
-is the same fail-clean `status=failed` shape. That pre-execution rejection is the realness half of the
-memory contract: an over-budget model fails clean, the same guarantee the engine-logic invariant gives.
+admission doctrine across substrates. The Phase 1 capability correction now makes
+`compileRuntimePlan` the only grant mint: a fitting placement carries `MemoryGrant resource`, while
+an oversized configured model remains an explicit `UnavailableModel` with
+`InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`.
+Package-owned live observations pair the grant with its matching enforcer inside
+`ExecutableModel`; public engine launch accepts only that capability. The typed rejection is a
+closed ADT branch in `ResultPayload`, not successful inline output or a parsed string, and must be
+published without launching the engine while smaller compiled placements continue to run.
 
-The **enforcement half** — that the admitted request's *actual* resident memory is bounded to what
-admitted it, so a host OOM-kill is structurally unrepresentable — is owned by
-[bounded_inference_memory.md](bounded_inference_memory.md): admission mints a `MemoryGrant` that the
-capped-engine kernel requires and OS-bounds to its `MemoryCeiling`, over a checked `HostMemoryPartition`
-with a required `ModelMemoryFootprint` and an enforcer-typed budget. See that doctrine for the full
-contract.
+The **enforcement half** targets making an admitted request's actual resident memory and aggregate
+execution authority incapable of causing a host OOM-kill. It is owned by
+[bounded_inference_memory.md](bounded_inference_memory.md): compilation and live refinement create an
+`ExecutableModel` carrying a matching resource-indexed grant/enforcer pair, and the package-internal
+capped-engine kernel OS-bounds its `MemoryCeiling`, over a checked `HostMemoryPartition` with a
+required `ModelMemoryFootprint` and an enforcer-typed budget. Phase 4 retains adversarial
+Apple/Linux CPU proof and encapsulated serialization; Phase 6 retains GPU enforcement.
 
 ## Validation
 
@@ -116,5 +118,5 @@ contract.
 - [Managed State Transitions](managed_state_transitions.md) — the sibling doctrine that generalizes
   this contract from inference results to system state transitions.
 - [bounded_inference_memory.md](bounded_inference_memory.md) — the enforcement half of the memory
-  contract: a required `MemoryGrant` bounds the admitted request's actual footprint, making a host OOM
-  unrepresentable.
+  contract: an executable capability carries the matching indexed grant/enforcer pair; Phases 4 and
+  6 own the remaining behavioral proof required to make a host OOM unrepresentable.
