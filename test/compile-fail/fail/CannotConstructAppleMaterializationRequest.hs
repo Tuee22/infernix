@@ -1,6 +1,6 @@
 module Main (main) where
 
-import Infernix.Engines.AppleSilicon
+import Infernix.Engines.AppleSilicon (MaterializationRequest)
 
 main :: IO ()
-main = MaterializationRequest `seq` pure ()
+main = print (show MaterializationRequest)

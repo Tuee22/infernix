@@ -67,17 +67,7 @@ ensurePoetryExecutable paths = do
       configuredPresent <- doesFileExist configuredPath
       if configuredPresent
         then pure configuredPath
-        else case pathsHostConfig paths of
-          Just hostConfig
-            | os == "darwin"
-                && controlPlaneContext paths == HostNative
-                && configuredPath
-                  == poetryHomeFromConfig hostConfig
-                    </> "venv"
-                    </> "bin"
-                    </> "poetry" ->
-                bootstrapPoetryOnAppleHost paths
-          _ -> throwIO PoetryUnavailable
+        else bootstrapConfiguredDefault configuredPath (pathsHostConfig paths)
     Nothing -> do
       candidate <-
         findFirstM doesFileExist (HostTools.hostToolFallbackCandidates HostTools.HostPoetry)
@@ -87,6 +77,21 @@ ensurePoetryExecutable paths = do
           | os == "darwin" && controlPlaneContext paths == HostNative ->
               bootstrapPoetryOnAppleHost paths
           | otherwise -> throwIO PoetryUnavailable
+  where
+    -- A configured Poetry path may be bootstrapped only when it is exactly the
+    -- fixed Apple-host default; any other missing configured path is fatal.
+    bootstrapConfiguredDefault configuredPath hostConfigValue =
+      case hostConfigValue of
+        Just hostConfig
+          | os == "darwin"
+              && controlPlaneContext paths == HostNative
+              && configuredPath
+                == poetryHomeFromConfig hostConfig
+                  </> "venv"
+                  </> "bin"
+                  </> "poetry" ->
+              bootstrapPoetryOnAppleHost paths
+        _ -> throwIO PoetryUnavailable
 
 ensurePoetryProjectReady :: Paths -> FilePath -> IO ()
 ensurePoetryProjectReady paths projectDirectory =

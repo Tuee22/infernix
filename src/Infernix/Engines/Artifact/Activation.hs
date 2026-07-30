@@ -18,13 +18,13 @@ import Control.Exception
 import Control.Monad (unless)
 import Data.ByteString qualified as ByteString
 import Data.Text (Text)
-import Data.Text qualified as Text
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Engines.Artifact.Identity
   ( NativeArtifactIdentity,
     nativeArtifactAdapterId,
   )
 import Infernix.Engines.Artifact.Internal qualified as Artifact
+import Infernix.Engines.Artifact.Target (NativeArtifactTargetEvidence)
 import Infernix.Engines.MaterializationLock.Internal
   ( ArtifactGenerationLease,
     MaterializationAuthority,
@@ -41,6 +41,7 @@ import System.FilePath (normalise, takeDirectory)
 
 activateAppleEngineArtifactWithInstalledSmoke ::
   MaterializationAuthority w ->
+  Artifact.ArtifactRootMutator w ->
   Subprocess.AbandonedActivitiesRecovered ->
   ArtifactGenerationLease ->
   Subprocess.SubprocessEnv ->
@@ -52,6 +53,7 @@ activateAppleEngineArtifactWithInstalledSmoke ::
   IO (Either String Subprocess.NativeArtifactCommandOutcome)
 activateAppleEngineArtifactWithInstalledSmoke
   authority
+  mutator
   recovered
   generationLease
   environment
@@ -67,6 +69,7 @@ activateAppleEngineArtifactWithInstalledSmoke
         (Provisioning.nativeArtifactIdentity adapter)
     activateEngineArtifactWithInstalledSmoke
       authority
+      mutator
       recovered
       generationLease
       identity
@@ -82,29 +85,34 @@ activateAppleEngineArtifactWithInstalledSmoke
 
 activateLinuxEngineArtifactWithInstalledSmoke ::
   MaterializationAuthority w ->
+  Artifact.ArtifactRootMutator w ->
   Subprocess.AbandonedActivitiesRecovered ->
   ArtifactGenerationLease ->
   Subprocess.SubprocessEnv ->
   Provisioning.PositiveProvisioningTimeout ->
   NativeArtifactIdentity ->
   Provisioning.LinuxNativeSmokePolicy ->
+  NativeArtifactTargetEvidence ->
   FilePath ->
   FilePath ->
   Text ->
   IO (Either String Subprocess.NativeArtifactCommandOutcome)
 activateLinuxEngineArtifactWithInstalledSmoke
   authority
+  mutator
   recovered
   generationLease
   environment
   smokeTimeout
   identity
   smokePolicy
+  expectedTargetEvidence
   installRoot
   tempRoot
   expectedDigest =
     activateEngineArtifactWithInstalledSmoke
       authority
+      mutator
       recovered
       generationLease
       identity
@@ -116,6 +124,7 @@ activateLinuxEngineArtifactWithInstalledSmoke
             identity
             generationLease
             retainedRoot
+            expectedTargetEvidence
             smokePolicy
             activeEnvironment
             timeout
@@ -125,6 +134,7 @@ activateLinuxEngineArtifactWithInstalledSmoke
 
 activateEngineArtifactWithInstalledSmoke ::
   MaterializationAuthority w ->
+  Artifact.ArtifactRootMutator w ->
   Subprocess.AbandonedActivitiesRecovered ->
   ArtifactGenerationLease ->
   NativeArtifactIdentity ->
@@ -141,6 +151,7 @@ activateEngineArtifactWithInstalledSmoke ::
   IO (Either String Subprocess.NativeArtifactCommandOutcome)
 activateEngineArtifactWithInstalledSmoke
   authority
+  mutator
   recovered
   generationLease
   identity
@@ -175,6 +186,7 @@ activateEngineArtifactWithInstalledSmoke
               Artifact.beginEngineArtifactActivationUnderGeneration
                 authority
                 generationAuthority
+                mutator
                 installRoot
                 tempRoot
                 expectedDigest
@@ -252,19 +264,7 @@ activateEngineArtifactWithInstalledSmoke
                   case rollbackResult of
                     Left failure -> throwIO failure
                     Right () ->
-                      pure
-                        ( case outcome of
-                            Right
-                              ( Subprocess.NativeArtifactCommandExited
-                                  ExitSuccess
-                                  output
-                                  _
-                                )
-                                | ByteString.null output ->
-                                    Left
-                                      "installed artifact smoke returned empty standard output"
-                            _ -> outcome
-                        )
+                      pure (rejectEmptySmokeOutput outcome)
     where
       validateCurrentGenerationLease =
         let (enginesRoot, leaseAdapter, _leaseFingerprint, leasePayloadDigest) =
@@ -414,18 +414,38 @@ retirePriorGeneration
                           priorAuthority
                           priorLease
                     )
-                pure
-                  ( case retirement of
-                      Just () -> Right ()
-                      Nothing ->
-                        Left
-                          "obsolete artifact generation sidecar remains contended and was retained"
-                  )
+                pure (obsoleteSidecarRetirementOutcome retirement)
     where
       (enginesRoot, _, _, _) =
         artifactGenerationLeaseFields currentLease
       currentManifest =
         Artifact.committedArtifactActivationManifest committed
+
+-- | A rolled-back activation still fails closed when its installed smoke
+-- exited cleanly but produced no standard output.
+rejectEmptySmokeOutput ::
+  Either String Subprocess.NativeArtifactCommandOutcome ->
+  Either String Subprocess.NativeArtifactCommandOutcome
+rejectEmptySmokeOutput outcome =
+  case outcome of
+    Right
+      ( Subprocess.NativeArtifactCommandExited
+          ExitSuccess
+          output
+          _
+        )
+        | ByteString.null output ->
+            Left "installed artifact smoke returned empty standard output"
+    _ -> outcome
+
+-- | A contended obsolete sidecar is retained, not silently discarded.
+obsoleteSidecarRetirementOutcome :: Maybe () -> Either String ()
+obsoleteSidecarRetirementOutcome retirement =
+  case retirement of
+    Just () -> Right ()
+    Nothing ->
+      Left
+        "obsolete artifact generation sidecar remains contended and was retained"
 
 provisioningSubprocessTimeout ::
   Provisioning.PositiveProvisioningTimeout ->

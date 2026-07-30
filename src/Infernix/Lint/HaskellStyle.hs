@@ -242,18 +242,23 @@ moduleImportLines moduleName sanitizedLines =
       ]
 
     findImports ((lineNumber, "import") : remainingTokens) =
-      let afterModifiers =
-            dropWhile
-              ((`elem` ["qualified", "safe"]) . snd)
-              remainingTokens
-       in case afterModifiers of
-            (_, moduleToken) : _
-              | isExactModuleToken moduleName moduleToken ->
-                  lineNumber : findImports remainingTokens
-            _ -> findImports remainingTokens
+      importMatches
+        lineNumber
+        remainingTokens
+        ( dropWhile
+            ((`elem` ["qualified", "safe"]) . snd)
+            remainingTokens
+        )
     findImports (_ : remainingTokens) =
       findImports remainingTokens
     findImports [] = []
+
+    importMatches lineNumber remainingTokens afterModifiers =
+      case afterModifiers of
+        (_, moduleToken) : _
+          | isExactModuleToken moduleName moduleToken ->
+              lineNumber : findImports remainingTokens
+        _ -> findImports remainingTokens
 
 isExactModuleToken :: String -> String -> Bool
 isExactModuleToken moduleName token =

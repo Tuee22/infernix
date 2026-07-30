@@ -50,9 +50,6 @@ import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (dataRoot, repoRoot))
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.Engines.Artifact qualified as Artifact
-import Infernix.Engines.Artifact.Capability
-  ( ValidatedEngineArtifact (..),
-  )
 import Infernix.ExecutionPlan.Internal
   ( EnforcedGrant (EnforcedGrant),
     Enforcer
@@ -346,11 +343,11 @@ runExecutableNativeArtifact
                 identity
                 runtimeExpectation
                 (nativeArtifactInstallRoots paths executableModel)
-                ( Artifact.reapArtifact
-                    ( \validatedArtifact ->
-                        runArtifactRuntimeSession
+                ( Artifact.artifactLauncher
+                    ( \launchRequest ->
+                        runArtifactLaunchRequest
                           executableModel
-                          validatedArtifact
+                          launchRequest
                           invocation
                           processEnvironment
                     )
@@ -479,59 +476,53 @@ resolvePythonWorkerCommand paths engineBinding processEnvironment = do
     renderedEnvironment =
       Subprocess.renderSubprocessEnv processEnvironment
 
-runArtifactRuntimeSession ::
+-- | Interpret one runner-issued launch request. The artifact runner has
+-- already revalidated the sealed root under its shared lock; this launcher
+-- holds no artifact capability, only the closed request it was handed.
+runArtifactLaunchRequest ::
   ExecutableModel ->
-  ValidatedEngineArtifact s ->
+  Artifact.ArtifactLaunchRequest ->
   NativeArtifactInvocation ->
   Subprocess.SubprocessEnv ->
   IO Artifact.ArtifactTerminalOutcome
-runArtifactRuntimeSession
+runArtifactLaunchRequest
   executableModel
-  validatedArtifact
+  launchRequest
   invocation
   processEnvironment = do
-    validation <-
-      try @IOException
-        (Artifact.revalidateValidatedEngineArtifact validatedArtifact)
-    case validation of
-      Left _ ->
-        pure Artifact.ArtifactTerminalRejected
-      Right () -> do
-        artifactEnvironment <-
-          closedNativeArtifactEnvironment
-            validatedArtifact
-            invocation
-            processEnvironment
-        (outcome, exitCode, stdoutOutput, stderrOutput) <-
-          runExecutableProcess
-            executableModel
-            ( DirectEngineCommand
-                (validatedArtifactEntrypoint validatedArtifact)
-                ( renderNativeArtifactArguments
-                    (validatedArtifactInstallRoot validatedArtifact)
-                    invocation
-                )
-                (validatedArtifactInstallRoot validatedArtifact)
-                artifactEnvironment
-            )
-            ""
-        pure
-          ( Artifact.ArtifactTerminalProcess
-              (artifactProcessOutcome outcome)
-              exitCode
-              (ByteString8.pack stdoutOutput)
-              (ByteString8.pack stderrOutput)
-          )
+    let installRoot = Artifact.artifactLaunchInstallRoot launchRequest
+        entrypoint = Artifact.artifactLaunchEntrypoint launchRequest
+    artifactEnvironment <-
+      closedNativeArtifactEnvironment
+        installRoot
+        invocation
+        processEnvironment
+    (outcome, exitCode, stdoutOutput, stderrOutput) <-
+      runExecutableProcess
+        executableModel
+        ( DirectEngineCommand
+            entrypoint
+            (renderNativeArtifactArguments installRoot invocation)
+            installRoot
+            artifactEnvironment
+        )
+        ""
+    pure
+      ( Artifact.ArtifactTerminalProcess
+          (artifactProcessOutcome outcome)
+          exitCode
+          (ByteString8.pack stdoutOutput)
+          (ByteString8.pack stderrOutput)
+      )
 
 closedNativeArtifactEnvironment ::
-  ValidatedEngineArtifact s ->
+  FilePath ->
   NativeArtifactInvocation ->
   Subprocess.SubprocessEnv ->
   IO [(String, String)]
-closedNativeArtifactEnvironment validatedArtifact invocation processEnvironment =
+closedNativeArtifactEnvironment installRoot invocation processEnvironment =
   case nativeInvocationRuntimeMode invocation of
     AppleSilicon -> do
-      let installRoot = validatedArtifactInstallRoot validatedArtifact
       unless (isAbsolute installRoot) $
         ioError
           (userError "validated Apple engine artifact has a non-absolute install root")

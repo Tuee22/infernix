@@ -62,6 +62,22 @@ python/.venv/
 python/engines/*/.venv/
 tools/generated_proto/
 
+# Lock files.
+#
+# Dependency locks are already excluded individually above (`**/poetry.lock`,
+# `web/spago.lock`, `Chart.lock`): this repository pins in the manifests
+# themselves — `pyproject.toml`, `spago.yaml`, `infernix.cabal` — for the same
+# reason it version-controls no `.dhall`. This pattern generalizes that, and also
+# covers the runtime mutual-exclusion sidecars the binary creates outside the
+# already-ignored `.data/` and `.build/` roots: `.infernix-poetry-install.lock`,
+# `.infernix-generated-proto.lock`, `.infernix-download-cache.lock`,
+# `.materialization.lock`, `.generation-lease-*.lock`, and
+# `cluster-lifecycle.lock`. A lock is live process state, never source.
+#
+# An unanchored pattern matches at every depth in git, so this needs no `**/`.
+# `web/package-lock.json` is deliberately kept above: it does not end in `.lock`.
+*.lock
+
 # Logs and temporary files
 *.log
 .DS_Store

@@ -194,14 +194,15 @@ failingFixtures =
       "fail-cannot-construct-activity-publication"
       "CannotConstructActivityPublication.hs"
       "ActivityPublication",
-    linearityFixture
+    typeMismatchFixture
       "fail-reuse-artifact-session"
       "ReuseArtifactSession.hs"
-      "session",
-    typeMismatchFixture
+      "ValidatedEngineArtifact",
+    FailingFixture
       "fail-skip-artifact-reap"
       "SkipArtifactReap.hs"
-      "Program",
+      typeMismatchDiagnostics
+      ["ArtifactReady", "ArtifactReaped"],
     FailingFixture
       "fail-skip-artifact-phase"
       "SkipArtifactPhase.hs"

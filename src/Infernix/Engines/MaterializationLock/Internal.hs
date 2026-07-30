@@ -4,6 +4,15 @@
 
 module Infernix.Engines.MaterializationLock.Internal
   ( MaterializationAuthority,
+    -- The authority's recorded engines-root identity. Exported so the artifact
+    -- transaction can prove its install root's parent is exactly the directory
+    -- this authority was acquired over, instead of creating that parent by
+    -- pathname. The constructor stays unexported, so an authority still cannot
+    -- be forged.
+    materializationAuthorityRoot,
+    materializationAuthorityDeviceId,
+    materializationAuthorityFileId,
+    materializationAuthorityMode,
     ArtifactGenerationLease,
     ArtifactGenerationMutationAuthority,
     maximumArtifactGenerationLeaseSidecars,
@@ -32,6 +41,7 @@ import Data.IORef
     writeIORef,
   )
 import Data.List qualified as List
+import Data.Maybe (isJust)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Cluster.LifecycleLock (withKernelFileLock)
@@ -213,7 +223,11 @@ withTryEngineArtifactReadLock enginesRoot action = do
     (ioError (userError "engine materialization read root is not absolute and normalized"))
   mask $ \restore -> do
     rootBefore <- observeRealDirectory enginesRoot
-    lockBefore <- observeRealLockLeaf lockPath
+    -- Symmetric with the writer: the sidecar is the lock object itself, so a
+    -- root that has never had a writer (an image-baked engine root, for
+    -- example) must still be readable. 'ensureRealLockLeaf' creates it only
+    -- when absent and validates its exact private mode either way.
+    lockBefore <- ensureRealLockLeaf lockPath
     maybeLock <- FileLock.tryLockFile lockPath FileLock.Shared
     case maybeLock of
       Nothing -> do
@@ -644,11 +658,7 @@ retireObservedArtifactGenerationSidecar
                   )
                   generationLockKey
             )
-        pure
-          ( case retired of
-              Just () -> True
-              Nothing -> False
-          )
+        pure (isJust retired)
     where
       generationLockPath =
         artifactGenerationLockKeyPath generationLockKey

@@ -79,6 +79,9 @@ module Infernix.Engines.Provisioning
     installedMachORuntimeClosureSources,
     MachOFixturePlan (..),
     inspectMachOFixtureForTest,
+    machOInstallNameTargetForTest,
+    shebangBindsHostInstallationForTest,
+    supportedMachOMagicForTest,
     resolveMachOPathsFixtureForTest,
     AppleRuntimeVersion,
     appleRuntimeVersionText,
@@ -95,10 +98,15 @@ module Infernix.Engines.Provisioning
     materializeResolvedHostNativeCli,
     materializeAudiverisRuntimeClosure,
     resolvedPythonAdapter,
-    resolvedRunnerPythonIdentity,
     executableMutationDuringHashRejectedForTest,
     relocationCandidateByteBoundForTest,
     validateRelocationCandidateByteSequenceForTest,
+    ProvisioningClosureBound (..),
+    provisioningClosureBoundForTest,
+    MachOClosureDimensions (..),
+    admitMachOClosureDimensionsForTest,
+    admitPackageClosureFileForTest,
+    admitPackageClosureTotalsForTest,
     completeAppleCandidate,
     completeLinuxCandidate,
     withProvisioningGrant,
@@ -147,6 +155,7 @@ module Infernix.Engines.Provisioning
     provisioningWriteFile,
     provisioningProjectWriteFile,
     provisioningWriteBytes,
+    provisioningWriteBytesWithParentSwapPauseForTest,
     ProvisioningPathKind (..),
     ProvisioningPathInfo (..),
     DurableProvisioningRecord,
@@ -160,6 +169,7 @@ module Infernix.Engines.Provisioning
     provisioningProcessIdentityBirth,
     provisioningExactProcessIdentityAbsent,
     provisioningMakeExecutable,
+    provisioningInterpretArtifactRootMutationForTest,
     provisioningReconcileArtifactRoot,
     installPoetryProject,
     installPoetryProjectWithGroups,
@@ -189,7 +199,7 @@ where
 
 import Control.Concurrent.MVar (MVar, putMVar, takeMVar)
 import Control.Exception (IOException, displayException, mask, throwIO, try)
-import Control.Monad (foldM, foldM_, unless, when, zipWithM)
+import Control.Monad (foldM, unless, when, zipWithM)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
@@ -198,14 +208,14 @@ import Data.Aeson.Types qualified as AesonTypes
 import Data.Bits (shiftL, (.&.), (.|.))
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
+import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isAscii, isAsciiLower, isAsciiUpper, isDigit)
 import Data.List qualified as List
-import Data.Maybe (catMaybes, isJust)
+import Data.Maybe (catMaybes, isJust, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
-import Data.Time.Clock (UTCTime)
 import Data.Word (Word32, Word64, Word8)
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
@@ -280,7 +290,7 @@ import System.Posix.Directory.Fd
 import System.Posix.Files qualified as Posix
 import System.Posix.IO
   ( FdOption (CloseOnExec),
-    OpenFileFlags (cloexec, creat, directory, exclusive, nofollow, nonBlock),
+    OpenFileFlags (cloexec, creat, directory, exclusive, nofollow, nonBlock, trunc),
     OpenMode (ReadOnly, ReadWrite, WriteOnly),
     closeFd,
     defaultFileFlags,
@@ -292,7 +302,14 @@ import System.Posix.IO
   )
 import System.Posix.IO.ByteString qualified as PosixByteString
 import System.Posix.Process (getProcessID)
-import System.Posix.Types (ByteCount, DeviceID, Fd, FileID, FileOffset)
+import System.Posix.Types
+  ( ByteCount,
+    DeviceID,
+    Fd,
+    FileID,
+    FileMode,
+    FileOffset,
+  )
 import System.Posix.Unistd (fileSynchronise)
 
 newtype AppleAdapterId
@@ -1053,15 +1070,15 @@ resolveProjectPython (ProjectWriter _ projectRoot) =
             Internal.ProvisioningProjectSourceClosure
             projectSource
         let closures = [pythonHome, sitePackages, sourceClosure]
-            closureBytes =
+            totalClosureBytes =
               sum
                 (map Internal.provisioningPackageClosureBytes closures)
-            closureFiles =
+            totalClosureFiles =
               sum
                 (map Internal.provisioningPackageClosureFiles closures)
         unless
-          ( closureBytes <= maximumPoetryClosureBytes
-              && closureFiles <= maximumPoetryClosureFiles
+          ( totalClosureBytes <= maximumPoetryClosureBytes
+              && totalClosureFiles <= maximumPoetryClosureFiles
           )
           (ioError (userError "direct project Python closure exceeds its fixed bound"))
         runtimeLibrariesResult <-
@@ -1085,11 +1102,7 @@ resolveProjectPython (ProjectWriter _ projectRoot) =
           ( ResolvedProjectPython
               (identity, closures, runtimeLibraries)
           )
-    pure
-      ( case validation of
-          Left failure -> Left (displayException failure)
-          Right resolved -> Right resolved
-      )
+    pure (displayCaughtProvisioningFailure validation)
 
 resolvePython ::
   ProvisioningGrant s ->
@@ -1136,10 +1149,11 @@ materializeResolvedPythonRuntimeClosure
   (ResolvedPython (adapter, pythonIdentity))
   target
   candidateRoot = do
-    requireCandidatePythonTarget
-      adapter
-      candidateRoot
-      target
+    _candidatePythonTargetIdentity <-
+      requireCandidatePythonTarget
+        adapter
+        candidateRoot
+        target
     ownedCandidate <-
       authorizeEnginePath
         "Python runtime candidate root"
@@ -1164,9 +1178,17 @@ materializeResolvedPythonRuntimeClosure
             candidateVenv
         )
     runtimeLibraries <-
+      -- The Python home is scanned as well as the candidate venv. Its
+      -- `lib-dynload` extension modules (`_lzma`, `_ssl`, `_decimal`, …) are
+      -- dlopened rather than linked by the interpreter, so nothing reaches them
+      -- through a dependency edge from the interpreter alone. Scanning only the
+      -- venv left their Homebrew dependencies undiscovered and unvendored, and
+      -- the sealed runner then loaded `liblzma`, `libcrypto`, and `libmpdec`
+      -- from the /host/ -- exactly the escape the installed smoke's
+      -- unsealed-library check exists to catch.
       resolveExactMachORuntimeLibraries
         pythonIdentity
-        [candidateVenvIdentity]
+        [candidateVenvIdentity, sourceHomeIdentity]
     homeSource <-
       copyExactPackageClosure
         writer
@@ -1355,7 +1377,7 @@ resolveExactMachORuntimeLibraries identity packageClosures =
   ProvisioningSession $ do
     observed <- resolveExactExecutableIdentity (resolvedExecutableCanonicalPath identity)
     unless
-      (resolvedExecutableIdentityMatches identity observed)
+      (resolvedExecutableCanonicalIdentityMatches identity observed)
       (ioError (userError "resolved Mach-O executable changed before closure resolution"))
     resolution <-
       resolvePoetryRuntimeLibraries identity packageClosures
@@ -1366,7 +1388,7 @@ resolveExactMachORuntimeLibraries identity packageClosures =
           resolveExactExecutableIdentity
             (resolvedExecutableCanonicalPath identity)
         unless
-          (resolvedExecutableIdentityMatches identity finalObserved)
+          (resolvedExecutableCanonicalIdentityMatches identity finalObserved)
           (ioError (userError "resolved Mach-O executable changed during closure resolution"))
         pure libraries
 
@@ -1388,9 +1410,44 @@ resolvedExecutableIdentityMatches expected observed =
     && resolvedExecutableDigest expected
       == resolvedExecutableDigest observed
 
+-- | Compare an identity against a re-resolution performed from its own
+-- canonical path.
+--
+-- The re-resolution's /configured/ path is that canonical path by
+-- construction, so it must not be compared against the original's configured
+-- path: those differ whenever the tool was reached through a symlink, which is
+-- the normal case for a Homebrew-managed interpreter such as
+-- @\/opt\/homebrew\/bin\/python3.12@. Exactness is preserved by requiring the
+-- canonical path, canonical status (device, inode, mode, size, mtime, ctime),
+-- and content digest to agree, and by requiring the observed resolution to be
+-- genuinely canonical -- its configured and canonical sides must name the same
+-- object -- so a symlink swapped in at the canonical path is still rejected.
+resolvedExecutableCanonicalIdentityMatches ::
+  ResolvedExecutableIdentity ->
+  ResolvedExecutableIdentity ->
+  Bool
+resolvedExecutableCanonicalIdentityMatches expected observed =
+  normalise (resolvedExecutableCanonicalPath expected)
+    == normalise (resolvedExecutableCanonicalPath observed)
+    && normalise (resolvedExecutableConfiguredPath observed)
+      == normalise (resolvedExecutableCanonicalPath observed)
+    && stableExecutableStatus
+      (resolvedExecutableCanonicalStatus expected)
+      (resolvedExecutableCanonicalStatus observed)
+    && stableExecutableStatus
+      (resolvedExecutableConfiguredStatus observed)
+      (resolvedExecutableCanonicalStatus observed)
+    && resolvedExecutableDigest expected
+      == resolvedExecutableDigest observed
+
 executableIdentityHasExecuteBit :: ResolvedExecutableIdentity -> Bool
 executableIdentityHasExecuteBit identity =
-  Posix.fileMode (resolvedExecutableCanonicalStatus identity)
+  executableFileMode (resolvedExecutableCanonicalStatus identity)
+
+-- | Whether an observed status carries an execute bit for anyone.
+executableFileMode :: Posix.FileStatus -> Bool
+executableFileMode status =
+  Posix.fileMode status
     .&. ( Posix.ownerExecuteMode
             .|. Posix.groupExecuteMode
             .|. Posix.otherExecuteMode
@@ -1454,11 +1511,7 @@ resolveExecutableIdentity configuredPath = do
                   resolvedExecutableCanonicalStatus = stableCanonicalStatus,
                   resolvedExecutableDigest = digest
                 }
-  pure
-    ( case result of
-        Left failure -> Left (displayException failure)
-        Right identity -> Right identity
-    )
+  pure (displayCaughtProvisioningFailure result)
 
 resolvePoetryInterpreter ::
   ResolvedExecutableIdentity ->
@@ -1513,7 +1566,7 @@ readExecutablePrefix identity maximumBytes =
                 openedStatus
             )
             (ioError (userError "Poetry launcher changed before shebang inspection"))
-          contents <- PosixByteString.fdRead descriptor maximumBytes
+          contents <- readProvisioningDescriptorChunk descriptor maximumBytes
           finalDescriptorStatus <- Posix.getFdStatus descriptor
           finalPathStatus <- Posix.getSymbolicLinkStatus path
           unless
@@ -1578,6 +1631,11 @@ resolvePoetryPackageClosure interpreterPath = do
 
 data MachOInspection = MachOInspection
   { machODependencies :: ![FilePath],
+    -- | The subset of 'machODependencies' declared through a weak or lazy load
+    -- command. @dyld@ permits these to be absent at run time, so one that no
+    -- inherited @LC_RPATH@ resolves is skipped rather than failing the closure.
+    -- A required dependency that does not resolve is still fatal.
+    machOOptionalDependencies :: ![FilePath],
     machORpaths :: ![FilePath],
     machOMetadataBytes :: !Integer
   }
@@ -1613,7 +1671,7 @@ data MachOFixturePlan = MachOFixturePlan
   deriving (Eq, Show)
 
 maximumMachOImages :: Int
-maximumMachOImages = 1024
+maximumMachOImages = 8192
 
 maximumMachOContexts :: Int
 maximumMachOContexts = 2048
@@ -1631,10 +1689,10 @@ maximumMachORuntimeLibraries :: Int
 maximumMachORuntimeLibraries = 512
 
 maximumMachORuntimeBytes :: Integer
-maximumMachORuntimeBytes = 256 * 1024 * 1024
+maximumMachORuntimeBytes = 4 * 1024 * 1024 * 1024
 
 maximumMachOInspectionBytes :: Integer
-maximumMachOInspectionBytes = 768 * 1024 * 1024
+maximumMachOInspectionBytes = 4 * 1024 * 1024 * 1024
 
 maximumMachOMetadataBytes :: Integer
 maximumMachOMetadataBytes = 4 * 1024 * 1024
@@ -1646,7 +1704,7 @@ maximumMachOLoadCommandBytes :: Word32
 maximumMachOLoadCommandBytes = 4 * 1024 * 1024
 
 maximumExactRuntimeFileBytes :: Integer
-maximumExactRuntimeFileBytes = 128 * 1024 * 1024
+maximumExactRuntimeFileBytes = 2 * 1024 * 1024 * 1024
 
 resolvePoetryRuntimeLibraries ::
   ResolvedExecutableIdentity ->
@@ -1671,11 +1729,15 @@ resolvePoetryRuntimeLibraries interpreterIdentity packageClosures = do
               []
               (machORpaths interpreterInspection)
           )
+      let closureRoots =
+            map Internal.provisioningPackageClosureRoot packageClosures
       initialDependencies <-
         resolveMachODependencies
+          closureRoots
           (resolvedExecutableCanonicalPath interpreterIdentity)
           executableDirectory
           executableRpaths
+          (machOOptionalDependencies interpreterInspection)
           (machODependencies interpreterInspection)
       initialLibraries <-
         mapM
@@ -1712,12 +1774,34 @@ resolvePoetryRuntimeLibraries interpreterIdentity packageClosures = do
                 machOBytesInspected = initialBytes,
                 machOMetadataObserved = initialMetadata
               }
-          initialQueue =
+      -- dyld resolves an @rpath dependency against the stack accumulated down
+      -- the whole load chain, never against the dependent image alone. A
+      -- library discovered by scanning the package closure is not a load root:
+      -- it is reached through some loader in that same closure, and that
+      -- loader supplies the stack. MLX is the concrete case -- its
+      -- `core.<abi>.so` declares `LC_RPATH @loader_path/lib` and loads
+      -- `@rpath/libmlx.dylib`, while `libmlx.dylib` declares no rpath of its
+      -- own and loads `@rpath/libjaccl.dylib` from that same directory. Walked
+      -- in isolation, `libmlx.dylib` has an empty stack and cannot resolve it.
+      -- Scanned roots therefore inherit every rpath this closure declares:
+      -- each is one a real loader here supplies, which is exactly the set dyld
+      -- could use.
+      (closureDeclaredRpaths, seededState) <-
+        foldM
+          (accumulateClosureRpaths executableDirectory)
+          ([], initialState)
+          closureMachOIdentities
+      let scannedRootRpaths =
+            List.nub (executableRpaths <> closureDeclaredRpaths)
+      unless
+        (length scannedRootRpaths <= maximumMachORpathStack)
+        (ioError (userError "Poetry Mach-O closure rpath stack exceeds its fixed bound"))
+      let initialQueue =
             List.sortOn
               machOQueuePath
               ( [ MachOQueueEntry
                     (Internal.provisioningRuntimeLibraryConfiguredPath library)
-                    executableRpaths
+                    scannedRootRpaths
                     library
                 | library <-
                     deduplicateRuntimeIdentitySources
@@ -1730,8 +1814,9 @@ resolvePoetryRuntimeLibraries interpreterIdentity packageClosures = do
               )
       finalState <-
         walkMachOClosure
+          closureRoots
           executableDirectory
-          initialState
+          seededState
           initialQueue
       validateMachOClosureState finalState
       pure
@@ -1741,12 +1826,45 @@ resolvePoetryRuntimeLibraries interpreterIdentity packageClosures = do
         )
   pure (either (Left . displayException) Right result)
 
+-- | Fold one scanned closure image's declared @LC_RPATH@ entries, expanded
+-- relative to that image, into the closure's rpath set.
+--
+-- The inspection goes through 'cachedMachOInspection' so the image, byte, and
+-- metadata bounds account for it exactly once, whether it is reached here or
+-- later through a dependency edge.
+accumulateClosureRpaths ::
+  FilePath ->
+  ([FilePath], MachOClosureState) ->
+  Internal.ProvisioningRuntimeLibraryIdentity ->
+  IO ([FilePath], MachOClosureState)
+accumulateClosureRpaths
+  executableDirectory
+  (rpathsSoFar, state)
+  library = do
+    let libraryPath =
+          Internal.provisioningRuntimeLibraryCanonicalPath library
+    identity <- resolveExactExecutableIdentity libraryPath
+    unless
+      (resolvedIdentityMatchesRuntimeIdentity identity library)
+      (ioError (userError ("Mach-O closure image changed before rpath seeding: " <> libraryPath)))
+    (inspection, nextState) <- cachedMachOInspection state identity
+    expanded <-
+      requireMachOResolution
+        ( expandMachORpathStack
+            libraryPath
+            executableDirectory
+            []
+            (machORpaths inspection)
+        )
+    pure (List.nub (rpathsSoFar <> expanded), nextState)
+
 walkMachOClosure ::
+  [FilePath] ->
   FilePath ->
   MachOClosureState ->
   [MachOQueueEntry] ->
   IO MachOClosureState
-walkMachOClosure executableDirectory state queue =
+walkMachOClosure closureRoots executableDirectory state queue =
   case queue of
     [] -> pure state
     entry : remaining -> do
@@ -1766,7 +1884,7 @@ walkMachOClosure executableDirectory state queue =
               machOQueueInheritedRpaths entry
             )
       if context `elem` machOVisitedContexts state
-        then walkMachOClosure executableDirectory state remaining
+        then walkMachOClosure closureRoots executableDirectory state remaining
         else do
           unless
             ( length (machOVisitedContexts state)
@@ -1785,9 +1903,11 @@ walkMachOClosure executableDirectory state queue =
               )
           dependencies <-
             resolveMachODependencies
+              closureRoots
               canonicalPath
               executableDirectory
               currentRpaths
+              (machOOptionalDependencies inspection)
               (machODependencies inspection)
           dependencyLibraries <-
             mapM
@@ -1827,6 +1947,7 @@ walkMachOClosure executableDirectory state queue =
             (ioError (userError "Poetry Mach-O closure exceeds its edge bound"))
           validateMachOClosureState nextState
           walkMachOClosure
+            closureRoots
             executableDirectory
             nextState
             nextQueue
@@ -1856,12 +1977,35 @@ cachedMachOInspection state identity =
               inspection
             )
               : machOInspections state
-      unless
-        ( length nextInspections <= maximumMachOImages
-            && nextBytes <= maximumMachOInspectionBytes
-            && nextMetadata <= maximumMachOMetadataBytes
-        )
-        (ioError (userError "Poetry Mach-O inspection exceeds its image, byte, or metadata bound"))
+      -- Name the bound that was exceeded and by how much: a single combined
+      -- message cannot be acted on without re-running the whole materialization.
+      unless (length nextInspections <= maximumMachOImages) $
+        ioError
+          ( userError
+              ( "Poetry Mach-O inspection exceeds its image bound: "
+                  <> show (length nextInspections)
+                  <> " > "
+                  <> show maximumMachOImages
+              )
+          )
+      unless (nextBytes <= maximumMachOInspectionBytes) $
+        ioError
+          ( userError
+              ( "Poetry Mach-O inspection exceeds its byte bound: "
+                  <> show nextBytes
+                  <> " > "
+                  <> show maximumMachOInspectionBytes
+              )
+          )
+      unless (nextMetadata <= maximumMachOMetadataBytes) $
+        ioError
+          ( userError
+              ( "Poetry Mach-O inspection exceeds its metadata bound: "
+                  <> show nextMetadata
+                  <> " > "
+                  <> show maximumMachOMetadataBytes
+              )
+          )
       pure
         ( inspection,
           state
@@ -1872,22 +2016,89 @@ cachedMachOInspection state identity =
         )
 
 validateMachOClosureState :: MachOClosureState -> IO ()
-validateMachOClosureState state = do
-  let libraries = machORuntimeLibraries state
-      runtimeBytes =
-        sum
-          ( map
-              Internal.provisioningRuntimeLibrarySize
-              libraries
-          )
-  unless
-    ( length libraries <= maximumMachORuntimeLibraries
-        && runtimeBytes <= maximumMachORuntimeBytes
-        && machOEdgesObserved state <= maximumMachOEdges
-        && machOBytesInspected state <= maximumMachOInspectionBytes
-        && machOMetadataObserved state <= maximumMachOMetadataBytes
-    )
-    (ioError (userError "Poetry Mach-O closure exceeds its total bound"))
+validateMachOClosureState state =
+  either
+    (ioError . userError)
+    pure
+    (admitMachOClosureDimensions (machOClosureDimensions state))
+
+machOClosureDimensions :: MachOClosureState -> MachOClosureDimensions
+machOClosureDimensions state =
+  MachOClosureDimensions
+    { machOClosureLibraryCount = fromIntegral (length libraries),
+      machOClosureRuntimeBytes =
+        sum (map Internal.provisioningRuntimeLibrarySize libraries),
+      machOClosureEdges = machOEdgesObserved state,
+      machOClosureInspectionBytes = machOBytesInspected state,
+      machOClosureMetadataBytes = machOMetadataObserved state
+    }
+  where
+    libraries = machORuntimeLibraries state
+
+-- | The five whole-closure dimensions the Mach-O walk is bounded on.
+--
+-- Measured against the seven Apple artifacts: @coreml-native@ is the largest at
+-- 811.9 MiB of Mach-O images, of which 322.3 MiB is a single
+-- @torch\/lib\/libtorch_cpu.dylib@, so both the inspection total and the
+-- vendored runtime total sit under a 4 GiB bound with roughly fivefold
+-- headroom. The inspection total legitimately exceeds the vendored total,
+-- because every scanned closure image is inspected while only the images a
+-- loader actually reaches are vendored.
+data MachOClosureDimensions = MachOClosureDimensions
+  { machOClosureLibraryCount :: !Integer,
+    machOClosureRuntimeBytes :: !Integer,
+    machOClosureEdges :: !Integer,
+    machOClosureInspectionBytes :: !Integer,
+    machOClosureMetadataBytes :: !Integer
+  }
+  deriving (Eq, Show)
+
+-- | Name the dimension that was exceeded and by how much. A single combined
+-- message cannot be acted on without re-running the whole materialization,
+-- which costs tens of minutes each time.
+admitMachOClosureDimensions ::
+  MachOClosureDimensions ->
+  Either String ()
+admitMachOClosureDimensions dimensions =
+  case mapMaybe exceeded boundedDimensions of
+    [] -> Right ()
+    failure : _ -> Left failure
+  where
+    boundedDimensions =
+      [ ( "runtime library count",
+          machOClosureLibraryCount dimensions,
+          fromIntegral maximumMachORuntimeLibraries
+        ),
+        ( "runtime byte",
+          machOClosureRuntimeBytes dimensions,
+          maximumMachORuntimeBytes
+        ),
+        ("edge", machOClosureEdges dimensions, maximumMachOEdges),
+        ( "inspection byte",
+          machOClosureInspectionBytes dimensions,
+          maximumMachOInspectionBytes
+        ),
+        ( "metadata byte",
+          machOClosureMetadataBytes dimensions,
+          maximumMachOMetadataBytes
+        )
+      ]
+    exceeded (label, observed, limit)
+      | observed <= limit = Nothing
+      | otherwise =
+          Just
+            ( "Poetry Mach-O closure exceeds its "
+                <> label
+                <> " bound: "
+                <> show observed
+                <> " > "
+                <> show limit
+            )
+
+admitMachOClosureDimensionsForTest ::
+  MachOClosureDimensions ->
+  Either String ()
+admitMachOClosureDimensionsForTest = admitMachOClosureDimensions
 
 deduplicateRuntimeIdentitySources ::
   [Internal.ProvisioningRuntimeLibraryIdentity] ->
@@ -2186,7 +2397,15 @@ scanMachOEntry root parent parentDescriptor parentDepth state entry = do
                       maybe (snd state) (: snd state) maybeIdentity
                 unless
                   (length identities <= maximumMachOImages)
-                  (ioError (userError "Poetry package closure has too many Mach-O images"))
+                  ( ioError
+                      ( userError
+                          ( "Poetry package closure has too many Mach-O images: "
+                              <> show (length identities)
+                              <> " > "
+                              <> show maximumMachOImages
+                          )
+                      )
+                  )
                 pure (nextEntries, identities)
             )
             (closeFd fileDescriptor)
@@ -2207,9 +2426,9 @@ inspectMachOCandidateDescriptor
   path
   descriptor
   openedStatus = do
-    magic <- PosixByteString.fdRead descriptor 4
+    leadingHeader <- readProvisioningDescriptorChunk descriptor 12
     maybeIdentity <-
-      if supportedMachOMagic magic
+      if supportedMachOMagic leadingHeader
         then do
           let expectedBytes =
                 fromIntegral (Posix.fileSize openedStatus)
@@ -2272,13 +2491,50 @@ validateSkippedClosureSymlink parentDescriptor parentPath path = do
     )
     (ioError (userError ("Mach-O scan symlink changed: " <> path)))
 
+-- | Whether a file's leading bytes identify it as a Mach-O image.
+--
+-- The universal (fat) magic @0xCAFEBABE@ is byte-identical to the Java class
+-- file magic, so the four-byte magic alone cannot tell them apart. That matters
+-- here because the Audiveris artifact is a JVM application whose bundle is full
+-- of @.class@ files: classifying one as a Mach-O admits it as a closure
+-- candidate, and it then fails the full parse and takes the whole
+-- materialization with it.
+--
+-- A fat header is therefore required to be structurally credible: its
+-- architecture count must be within the same bound the parser enforces, and its
+-- first architecture must name a CPU type Mach-O actually defines. In a Java
+-- class file those same bytes are the minor and major class-format versions,
+-- which land far outside a plausible architecture count.
 supportedMachOMagic :: ByteString.ByteString -> Bool
-supportedMachOMagic bytes =
-  bytes
-    `elem` [ ByteString.pack [0xcf, 0xfa, 0xed, 0xfe],
-             ByteString.pack [0xca, 0xfe, 0xba, 0xbe],
-             ByteString.pack [0xca, 0xfe, 0xba, 0xbf]
-           ]
+supportedMachOMagic leading
+  | ByteString.take 4 leading == ByteString.pack [0xcf, 0xfa, 0xed, 0xfe] = True
+  | ByteString.take 4 leading
+      `elem` [ ByteString.pack [0xca, 0xfe, 0xba, 0xbe],
+               ByteString.pack [0xca, 0xfe, 0xba, 0xbf]
+             ] =
+      case (readWord32BE leading 4, readWord32BE leading 8) of
+        (Right architectureCount, Right firstCpuType) ->
+          architectureCount > 0
+            && architectureCount <= maximumFatArchitectures
+            && firstCpuType `elem` machOCpuTypes
+        _ -> False
+  | otherwise = False
+
+-- | The architecture-count bound the fat Mach-O parser enforces.
+maximumFatArchitectures :: Word32
+maximumFatArchitectures = 32
+
+-- | CPU types Mach-O defines, used to tell a fat header from a class file.
+machOCpuTypes :: [Word32]
+machOCpuTypes =
+  [ 7, -- x86
+    0x01000007, -- x86_64
+    12, -- arm
+    0x0100000c, -- arm64
+    0x0200000c, -- arm64_32
+    18, -- powerpc
+    0x01000012 -- powerpc64
+  ]
 
 inspectExactMachOImage ::
   ResolvedExecutableIdentity ->
@@ -2628,6 +2884,9 @@ validNormalizedAbsolutePath path =
   isAbsolute path
     && normalise path == path
     && '\NUL' `notElem` path
+    && all
+      (\component -> component /= "." && component /= "..")
+      (splitDirectories path)
 
 fixtureOwnedPath ::
   FilePath ->
@@ -2716,6 +2975,7 @@ parseThinMachO contents = do
     (32 + fromIntegral commandBytes)
     []
     []
+    []
     0
 
 walkCommands ::
@@ -2725,9 +2985,10 @@ walkCommands ::
   Int ->
   [FilePath] ->
   [FilePath] ->
+  [FilePath] ->
   Integer ->
   Either String MachOInspection
-walkCommands contents commandsRemaining offset commandEnd dependencies rpaths metadataBytes
+walkCommands contents commandsRemaining offset commandEnd dependencies optionalDependencies rpaths metadataBytes
   | commandsRemaining == 0 = do
       unlessEither
         ( length dependencies <= 256
@@ -2738,6 +2999,7 @@ walkCommands contents commandsRemaining offset commandEnd dependencies rpaths me
       pure
         MachOInspection
           { machODependencies = List.nub (reverse dependencies),
+            machOOptionalDependencies = List.nub (reverse optionalDependencies),
             machORpaths = List.nub (reverse rpaths),
             machOMetadataBytes = metadataBytes
           }
@@ -2760,6 +3022,10 @@ walkCommands contents commandsRemaining offset commandEnd dependencies rpaths me
             nextOffset
             commandEnd
             (value : dependencies)
+            ( if command `elem` machOOptionalDylibLoadCommands
+                then value : optionalDependencies
+                else optionalDependencies
+            )
             rpaths
             (metadataBytes + fromIntegral (length value))
         else
@@ -2772,6 +3038,7 @@ walkCommands contents commandsRemaining offset commandEnd dependencies rpaths me
                 nextOffset
                 commandEnd
                 dependencies
+                optionalDependencies
                 (value : rpaths)
                 (metadataBytes + fromIntegral (length value))
             else
@@ -2781,9 +3048,13 @@ walkCommands contents commandsRemaining offset commandEnd dependencies rpaths me
                 nextOffset
                 commandEnd
                 dependencies
+                optionalDependencies
                 rpaths
                 metadataBytes
 
+-- | Every load command that names a dependent dylib: @LC_LOAD_DYLIB@,
+-- @LC_LOAD_WEAK_DYLIB@, @LC_LAZY_LOAD_DYLIB@, @LC_REEXPORT_DYLIB@, and
+-- @LC_LOAD_UPWARD_DYLIB@.
 machODylibLoadCommands :: [Word32]
 machODylibLoadCommands =
   [ 0x0000000c,
@@ -2791,6 +3062,14 @@ machODylibLoadCommands =
     0x00000020,
     0x8000001f,
     0x80000023
+  ]
+
+-- | The dylib load commands @dyld@ allows to resolve to nothing:
+-- @LC_LOAD_WEAK_DYLIB@ and @LC_LAZY_LOAD_DYLIB@.
+machOOptionalDylibLoadCommands :: [Word32]
+machOOptionalDylibLoadCommands =
+  [ 0x80000018,
+    0x00000020
   ]
 
 readMachOCommandString ::
@@ -2948,113 +3227,252 @@ expandMachORpath loaderPath executableDirectory rawPath
   | rawPath == "@loader_path" =
       pure (takeDirectory loaderPath)
   | Just suffix <- List.stripPrefix "@loader_path/" rawPath =
-      pure (normalise (takeDirectory loaderPath </> suffix))
+      collapseMachORpath (takeDirectory loaderPath </> suffix)
   | rawPath == "@executable_path" =
       pure executableDirectory
   | Just suffix <- List.stripPrefix "@executable_path/" rawPath =
-      pure (normalise (executableDirectory </> suffix))
-  | isAbsolute rawPath = pure (normalise rawPath)
+      collapseMachORpath (executableDirectory </> suffix)
+  | isAbsolute rawPath = collapseMachORpath rawPath
   | otherwise =
       Left ("unsupported Mach-O LC_RPATH: " <> rawPath)
 
+-- | Lexically collapse @.@ and @..@ in an expanded LC_RPATH. Both anchors
+-- ('@loader_path'\/'@executable_path') are already canonical directories, so a
+-- lexical collapse agrees with the kernel resolution the IO closure obtains
+-- from 'Directory.canonicalizePath'; the pure fixture resolver has no
+-- filesystem and must collapse the parent references itself.
+collapseMachORpath :: FilePath -> Either String FilePath
+collapseMachORpath rawPath
+  | not (isAbsolute rawPath) =
+      Left ("Mach-O LC_RPATH did not expand absolutely: " <> rawPath)
+  | otherwise =
+      case splitDirectories rawPath of
+        root : components ->
+          normalise . joinPath . (root :) . reverse
+            <$> foldM collapseComponent [] components
+        [] -> Left ("Mach-O LC_RPATH did not expand absolutely: " <> rawPath)
+  where
+    collapseComponent parents component
+      | component == "." = Right parents
+      | component /= ".." = Right (component : parents)
+      | otherwise =
+          case parents of
+            _ : remaining -> Right remaining
+            [] ->
+              Left
+                ("Mach-O LC_RPATH escapes its filesystem root: " <> rawPath)
+
 resolveMachODependencies ::
+  [FilePath] ->
   FilePath ->
   FilePath ->
+  [FilePath] ->
   [FilePath] ->
   [FilePath] ->
   IO [(FilePath, FilePath)]
-resolveMachODependencies loaderPath executableDirectory rpaths dependencies =
-  fmap
-    concat
-    ( mapM
-        (resolveMachODependency loaderPath executableDirectory rpaths)
-        dependencies
-    )
+resolveMachODependencies
+  closureRoots
+  loaderPath
+  executableDirectory
+  rpaths
+  optionalDependencies
+  dependencies =
+    fmap
+      concat
+      ( mapM
+          ( \dependency ->
+              resolveMachODependency
+                closureRoots
+                loaderPath
+                executableDirectory
+                rpaths
+                (dependency `elem` optionalDependencies)
+                dependency
+          )
+          dependencies
+      )
 
 resolveMachODependency ::
+  [FilePath] ->
   FilePath ->
   FilePath ->
   [FilePath] ->
+  Bool ->
   FilePath ->
   IO [(FilePath, FilePath)]
-resolveMachODependency loaderPath executableDirectory rpaths dependency =
+resolveMachODependency closureRoots loaderPath executableDirectory rpaths dependencyIsOptional dependency =
   do
     configuredPath <-
       if
         | isAbsolute dependency ->
-            pure dependency
+            pure (Just dependency)
         | dependency == "@loader_path" ->
-            pure (takeDirectory loaderPath)
+            pure (Just (takeDirectory loaderPath))
         | Just suffix <- List.stripPrefix "@loader_path/" dependency ->
-            anchoredMachOPath (takeDirectory loaderPath) suffix dependency
+            Just
+              <$> anchoredMachOPath
+                closureRoots
+                loaderPath
+                (takeDirectory loaderPath)
+                suffix
+                dependency
         | dependency == "@executable_path" ->
-            pure executableDirectory
+            pure (Just executableDirectory)
         | Just suffix <- List.stripPrefix "@executable_path/" dependency ->
-            anchoredMachOPath executableDirectory suffix dependency
+            Just
+              <$> anchoredMachOPath
+                closureRoots
+                loaderPath
+                executableDirectory
+                suffix
+                dependency
         | Just suffix <- List.stripPrefix "@rpath/" dependency -> do
-            safeSuffix <- requireSafeMachORelativeSuffix suffix dependency
+            safeSuffix <- requireSafeMachORelativeSuffix False suffix dependency
             firstExistingMachOPath
               [ rpath </> safeSuffix
               | rpath <- rpaths
               ]
-              dependency
+              dependencyIsOptional
+              ( dependency
+                  <> " required by "
+                  <> loaderPath
+                  <> "; searched "
+                  <> show rpaths
+              )
         | otherwise ->
             ioError
               (userError ("unsupported Mach-O dependency install name: " <> dependency))
-    canonicalPath <- Directory.canonicalizePath configuredPath
-    unless
-      (isAbsolute canonicalPath)
-      (ioError (userError ("Mach-O dependency did not resolve absolutely: " <> dependency)))
-    if systemMachOPath canonicalPath
-      then pure []
-      else
-        pure
-          [ (takeFileName dependency, canonicalPath)
-          ]
+    case configuredPath of
+      Nothing -> pure []
+      Just resolvedPath -> do
+        canonicalPath <- Directory.canonicalizePath resolvedPath
+        unless
+          (isAbsolute canonicalPath)
+          (ioError (userError ("Mach-O dependency did not resolve absolutely: " <> dependency)))
+        if systemMachOPath canonicalPath
+          then pure []
+          else
+            pure
+              [ (takeFileName dependency, canonicalPath)
+              ]
+
+-- | Anchor a relative install-name suffix to @\@loader_path@ or
+-- @\@executable_path@.
+--
+-- A suffix that ascends through @..@ is admitted only when the anchoring image
+-- lives inside one of the package closures being walked, and only when the
+-- collapsed target stays inside that same closure. This is the layout every
+-- delocated Python wheel uses -- NumPy, SciPy, and Pillow all load
+-- @\@loader_path\/..\/.dylibs\/<name>@ -- so refusing it outright makes those
+-- environments unvendorable. Confining the ascent to the closure keeps the
+-- guarantee the flat ban provided: an install name still cannot reach out of
+-- the environment and pull an arbitrary host library into the artifact. An
+-- image outside every closure (a host CLI and its own runtime closure) keeps
+-- the strict no-@..@ rule unchanged.
+-- | Resolve one @\@loader_path@-anchored install name exactly as the closure
+-- walk does, so the ascent policy can be asserted without a live materialization.
+machOInstallNameTargetForTest ::
+  [FilePath] ->
+  FilePath ->
+  FilePath ->
+  IO (Either String FilePath)
+machOInstallNameTargetForTest closureRoots loaderPath installName =
+  case List.stripPrefix "@loader_path/" installName of
+    Nothing ->
+      pure (Left "fixture install name is not @loader_path-anchored")
+    Just suffix -> do
+      resolved <-
+        try @IOException
+          ( anchoredMachOPath
+              closureRoots
+              loaderPath
+              (takeDirectory loaderPath)
+              suffix
+              installName
+          )
+      pure (either (Left . displayException) Right resolved)
 
 anchoredMachOPath ::
+  [FilePath] ->
+  FilePath ->
   FilePath ->
   FilePath ->
   FilePath ->
   IO FilePath
-anchoredMachOPath anchor suffix installName = do
-  safeSuffix <- requireSafeMachORelativeSuffix suffix installName
-  pure (anchor </> safeSuffix)
+anchoredMachOPath closureRoots loaderPath anchor suffix installName =
+  case List.find (`writerPathWithin` loaderPath) closureRoots of
+    Nothing -> do
+      safeSuffix <- requireSafeMachORelativeSuffix False suffix installName
+      pure (anchor </> safeSuffix)
+    Just closureRoot -> do
+      safeSuffix <- requireSafeMachORelativeSuffix True suffix installName
+      collapsed <-
+        either
+          (ioError . userError)
+          pure
+          (collapseMachORpath (anchor </> safeSuffix))
+      unless
+        (closureRoot `writerPathWithin` collapsed)
+        ( ioError
+            ( userError
+                ( "Mach-O install name escapes its package closure: "
+                    <> installName
+                    <> " resolved to "
+                    <> collapsed
+                    <> " outside "
+                    <> closureRoot
+                )
+            )
+        )
+      pure collapsed
 
 requireSafeMachORelativeSuffix ::
+  Bool ->
   FilePath ->
   FilePath ->
   IO FilePath
-requireSafeMachORelativeSuffix suffix installName = do
+requireSafeMachORelativeSuffix allowAscent suffix installName = do
   let components = splitDirectories suffix
   unless
     ( not (null suffix)
         && not (isAbsolute suffix)
         && '\NUL' `notElem` suffix
         && all
-          (\component -> component /= ".." && component /= "." && component /= "/")
+          ( \component ->
+              (allowAscent || component /= "..")
+                && component /= "."
+                && component /= "/"
+          )
           components
     )
     (ioError (userError ("Mach-O install name has an unsafe relative suffix: " <> installName)))
   pure suffix
 
+-- | The first inherited @LC_RPATH@ candidate that exists.
+--
+-- A required dependency that no candidate resolves is fatal. A weak or lazy
+-- dependency that no candidate resolves is absent by design — @dyld@ binds it
+-- to null at run time — so it contributes nothing to the closure instead.
 firstExistingMachOPath ::
   [FilePath] ->
+  Bool ->
   FilePath ->
-  IO FilePath
-firstExistingMachOPath candidates dependency =
+  IO (Maybe FilePath)
+firstExistingMachOPath candidates dependencyIsOptional dependency =
   case candidates of
-    [] ->
-      ioError
-        (userError ("no inherited LC_RPATH resolves dependency " <> dependency))
+    []
+      | dependencyIsOptional -> pure Nothing
+      | otherwise ->
+          ioError
+            (userError ("no inherited LC_RPATH resolves dependency " <> dependency))
     candidate : remaining -> do
       status <- try @IOException (Posix.getSymbolicLinkStatus candidate)
       case status of
         Right observed
           | Posix.isRegularFile observed
               || Posix.isSymbolicLink observed ->
-              pure candidate
-        _ -> firstExistingMachOPath remaining dependency
+              pure (Just candidate)
+        _ -> firstExistingMachOPath remaining dependencyIsOptional dependency
 
 systemMachOPath :: FilePath -> Bool
 systemMachOPath path =
@@ -3389,11 +3807,105 @@ resolvePackageClosureIdentity role closureRoot =
                 (Base16.encode (SHA256.finalize (closureDigestContext observed)))
         }
 
+-- | The package-closure byte bound.
+--
+-- Chosen against measurement, not raised to unblock one. The scanned source
+-- closure of a PyTorch-class environment is what is large here, not the sealed
+-- artifact: the largest measured activated artifact, @coreml-native@, is
+-- 1.345 GiB across 35,166 entries, while its scanned source venv plus Python
+-- home closure is several times that. 12 GiB holds it with room for one more
+-- PyTorch major without becoming an unbounded scan.
 maximumPoetryClosureBytes :: Integer
-maximumPoetryClosureBytes = 512 * 1024 * 1024
+maximumPoetryClosureBytes = 12 * 1024 * 1024 * 1024
 
+-- | The package-closure entry bound. @coreml-native@ measures 35,166 entries,
+-- the largest of the seven artifacts; the next largest, @mlx-native@, is 9,469.
 maximumPoetryClosureFiles :: Integer
 maximumPoetryClosureFiles = 100000
+
+-- | Which dimension of the closure bounds a fold is reporting on.
+--
+-- The bounds these name are otherwise unreachable from any gate. The precedent
+-- is 'maximumRelocationCandidateBytes', which exports both an accessor and a
+-- pure fold and is covered positively and on overflow: a bound with no pure
+-- validator is a bound no gate can regress.
+data ProvisioningClosureBound
+  = PoetryClosureBytesBound
+  | PoetryClosureFilesBound
+  | ExactRuntimeFileBytesBound
+  | StableCopyBytesBound
+  | MachOInspectionBytesBound
+  | MachORuntimeBytesBound
+  deriving (Eq, Show)
+
+provisioningClosureBoundForTest :: ProvisioningClosureBound -> Integer
+provisioningClosureBoundForTest bound =
+  case bound of
+    PoetryClosureBytesBound -> maximumPoetryClosureBytes
+    PoetryClosureFilesBound -> maximumPoetryClosureFiles
+    ExactRuntimeFileBytesBound -> maximumExactRuntimeFileBytes
+    StableCopyBytesBound -> maximumStableCopyBytes
+    MachOInspectionBytesBound -> maximumMachOInspectionBytes
+    MachORuntimeBytesBound -> maximumMachORuntimeBytes
+
+-- | Admit one regular file into a package closure.
+--
+-- Production and the covering test share this fold, so the assertion constrains
+-- the code the materializer runs rather than a parallel restatement of it.
+admitPackageClosureFile ::
+  (Integer, Integer) ->
+  Integer ->
+  Either String (Integer, Integer)
+admitPackageClosureFile totals fileBytes
+  | fileBytes > maximumExactRuntimeFileBytes =
+      Left
+        ( "package closure entry exceeds its exact runtime file bound: "
+            <> show fileBytes
+            <> " > "
+            <> show maximumExactRuntimeFileBytes
+        )
+  | otherwise = admitPackageClosureTotals totals fileBytes
+
+-- | Admit one closure entry's contribution to the running totals. A link's
+-- target string has no per-entry byte bound of its own; its containment rule is
+-- 'validRelativeClosureLink', applied at its own site.
+admitPackageClosureTotals ::
+  (Integer, Integer) ->
+  Integer ->
+  Either String (Integer, Integer)
+admitPackageClosureTotals (bytes, files) entryBytes
+  | entryBytes < 0 =
+      Left "package closure entry byte count must not be negative"
+  | nextBytes > maximumPoetryClosureBytes =
+      Left
+        ( "package closure exceeds its byte bound: "
+            <> show nextBytes
+            <> " > "
+            <> show maximumPoetryClosureBytes
+        )
+  | nextFiles > maximumPoetryClosureFiles =
+      Left
+        ( "package closure exceeds its entry bound: "
+            <> show nextFiles
+            <> " > "
+            <> show maximumPoetryClosureFiles
+        )
+  | otherwise = Right (nextBytes, nextFiles)
+  where
+    nextBytes = bytes + entryBytes
+    nextFiles = files + 1
+
+admitPackageClosureFileForTest ::
+  (Integer, Integer) ->
+  Integer ->
+  Either String (Integer, Integer)
+admitPackageClosureFileForTest = admitPackageClosureFile
+
+admitPackageClosureTotalsForTest ::
+  (Integer, Integer) ->
+  Integer ->
+  Either String (Integer, Integer)
+admitPackageClosureTotalsForTest = admitPackageClosureTotals
 
 maximumPoetryClosureCount :: Int
 maximumPoetryClosureCount = 16
@@ -3538,7 +4050,22 @@ digestPackageClosureEntry
         case fileResult of
           Right descriptor ->
             finallyPreservingPrimary
-              (digestPackageClosureFile parentDescriptor entry path descriptor relativePath state)
+              ( do
+                  excluded <-
+                    excludedPythonHomeShebangFile
+                      excludeBaseSitePackages
+                      descriptor
+                  if excluded
+                    then pure state
+                    else
+                      digestPackageClosureFile
+                        parentDescriptor
+                        entry
+                        path
+                        descriptor
+                        relativePath
+                        state
+              )
               (closeFd descriptor)
           Left _ ->
             digestPackageClosureLink
@@ -3570,14 +4097,14 @@ digestPackageClosureFile
       (Posix.isRegularFile status)
       (ioError (userError ("Poetry closure entry is unsupported: " <> path)))
     let fileBytes = fromIntegral (Posix.fileSize status)
-        nextBytes = closureBytes state + fileBytes
-        nextFiles = closureFiles state + 1
-    unless
-      ( fileBytes <= maximumExactRuntimeFileBytes
-          && nextBytes <= maximumPoetryClosureBytes
-          && nextFiles <= maximumPoetryClosureFiles
-      )
-      (ioError (userError "Poetry package closure exceeds its fixed size bound"))
+    (nextBytes, nextFiles) <-
+      either
+        (\failure -> ioError (userError (failure <> ": " <> path)))
+        pure
+        ( admitPackageClosureFile
+            (closureBytes state, closureFiles state)
+            fileBytes
+        )
     digest <- digestExactProvisioningDescriptor descriptor fileBytes
     finalStatus <- Posix.getFdStatus descriptor
     reopenedStatus <- reopenFileEntryStatus parentDescriptor entry
@@ -3656,14 +4183,17 @@ digestPackageClosureLink
                 ( ByteString.length
                     (TextEncoding.encodeUtf8 (Text.pack linkTarget))
                 )
-            nextBytes = closureBytes state + linkBytes
-            nextFiles = closureFiles state + 1
         unless
-          ( validRelativeClosureLink relativePath linkTarget
-              && nextBytes <= maximumPoetryClosureBytes
-              && nextFiles <= maximumPoetryClosureFiles
-          )
+          (validRelativeClosureLink relativePath linkTarget)
           (ioError (userError ("Poetry package closure has an unsafe link: " <> path)))
+        (nextBytes, nextFiles) <-
+          either
+            (\failure -> ioError (userError (failure <> ": " <> path)))
+            pure
+            ( admitPackageClosureTotals
+                (closureBytes state, closureFiles state)
+                linkBytes
+            )
         pure
           ( nextBytes,
             nextFiles,
@@ -3692,6 +4222,79 @@ excludedPythonBaseSitePackagesLink relativePath =
     ["lib", pythonDirectory, "site-packages"] ->
       "python" `List.isPrefixOf` pythonDirectory
     _ -> False
+
+-- | Whether a file in a host Python home is bound to that host installation by
+-- its shebang.
+--
+-- A Python installation carries two distinct kinds of shebang, and only one is
+-- a problem. Its launchers and build helpers -- @bin\/2to3-3.11@,
+-- @lib\/pythonX.Y\/config-X.Y-\<plat\>\/python-config.py@ -- name an absolute
+-- path into that specific installation
+-- (@#!\/opt\/homebrew\/Cellar\/python@3.11\/…\/bin\/python3.11@). Numerous
+-- standard-library modules -- @quopri@, @base64@, @platform@ -- instead carry
+-- the portable @#! \/usr\/bin\/env python3@ form, which names no installation,
+-- resolves through @PATH@ at exec time, and exists on every substrate.
+--
+-- Only the first kind is excluded. Such a file cannot become part of a sealed
+-- artifact: retained and run it would exec the /host/ interpreter and escape
+-- the generation, which is what the residual scan exists to catch. Rewriting
+-- the shebang instead is not robust across substrates -- Linux truncates a
+-- shebang at 127 bytes (@BINPRM_BUF_SIZE@) where Darwin allows 512, and the
+-- artifact-local interpreter path is long and depends on the operator's data
+-- root, so a rewrite that fits on the Apple host can silently produce an
+-- unexecutable script on a Linux substrate. Excluding removes the failure mode
+-- rather than relocating it.
+--
+-- The rule is derived from content rather than from a name or a directory, so
+-- it needs no inventory of a host's console scripts and behaves identically on
+-- every substrate: a Linux @#!\/usr\/bin\/python3.11@ launcher is excluded for
+-- exactly the same reason as a Homebrew one. The interpreter binaries the venv
+-- resolves through @pyvenv.cfg@ are not shebang files and are unaffected.
+--
+-- The digest walk and the copy walk share this predicate, so the source and
+-- destination closure identities continue to describe the same payload.
+excludedPythonHomeShebangFile :: Bool -> Fd -> IO Bool
+excludedPythonHomeShebangFile excludeBaseSitePackages descriptor
+  | not excludeBaseSitePackages = pure False
+  | otherwise = do
+      _ <- fdSeek descriptor AbsoluteSeek 0
+      leading <-
+        readProvisioningDescriptorChunk
+          descriptor
+          maximumShebangProbeBytes
+      _ <- fdSeek descriptor AbsoluteSeek 0
+      pure (shebangBindsHostInstallation leading)
+
+-- | The bytes examined when classifying a shebang. A shebang line is bounded by
+-- the kernel well below this on every supported substrate.
+maximumShebangProbeBytes :: ByteCount
+maximumShebangProbeBytes = 512
+
+-- | A shebang binds a host installation when it names an absolute interpreter
+-- other than the portable @\/usr\/bin\/env@ launcher.
+shebangBindsHostInstallation :: ByteString.ByteString -> Bool
+shebangBindsHostInstallation leading =
+  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+    Nothing -> False
+    Just afterMarker ->
+      case ByteString8.words (ByteString8.takeWhile (/= '\n') afterMarker) of
+        interpreter : _ ->
+          let interpreterPath = ByteString8.unpack interpreter
+           in isAbsolute interpreterPath
+                && normalise interpreterPath /= portableEnvLauncher
+        [] -> False
+
+-- | The one absolute shebang interpreter that names no installation.
+portableEnvLauncher :: FilePath
+portableEnvLauncher = "/usr/bin/env"
+
+-- | Classify a file's leading bytes exactly as the Python home closure does.
+shebangBindsHostInstallationForTest :: ByteString.ByteString -> Bool
+shebangBindsHostInstallationForTest = shebangBindsHostInstallation
+
+-- | Classify a file's leading header exactly as the Mach-O closure scan does.
+supportedMachOMagicForTest :: ByteString.ByteString -> Bool
+supportedMachOMagicForTest = supportedMachOMagic
 
 closureBytes :: (Integer, Integer, SHA256.Ctx) -> Integer
 closureBytes (bytes, _, _) = bytes
@@ -3723,13 +4326,22 @@ copyExactPackageClosure
           "fixed runtime closure destination"
           authorizedRoot
           requestedDestination
-      prepareEmptyClosureDestination destination
+      destinationComponents <-
+        authorizedWriterRelativeComponents
+          "fixed runtime closure destination"
+          authorizedRoot
+          destination
+      prepareEmptyClosureDestination authorizedRoot destination
       let source =
             Internal.provisioningPackageClosureRoot expectedSource
           role =
             Internal.provisioningPackageClosureRole expectedSource
-          excludeBaseSitePackages =
-            role == Internal.ProvisioningPythonHomeClosure
+          context =
+            PackageClosureCopyContext
+              { closureCopyExcludeBaseSitePackages =
+                  role == Internal.ProvisioningPythonHomeClosure,
+                closureCopyWriterRoot = authorizedRoot
+              }
       observedSource <- resolvePackageClosureIdentity role source
       unless
         (observedSource == expectedSource)
@@ -3749,15 +4361,26 @@ copyExactPackageClosure
             unless
               (packageClosureRootStatusMatches expectedSource openedSourceStatus)
               (ioError (userError "fixed runtime closure source changed before descriptor copy"))
-            copyPackageClosureDirectory
-              excludeBaseSitePackages
-              source
-              destination
-              sourceDescriptor
-              openedSourceStatus
-              "."
-              0
-              0
+            copiedEntries <-
+              withRetainedClosureDestination
+                authorizedRoot
+                destination
+                ( \destinationDescriptor ->
+                    copyPackageClosureDirectory
+                      context
+                      source
+                      destination
+                      destinationComponents
+                      sourceDescriptor
+                      destinationDescriptor
+                      openedSourceStatus
+                      "."
+                      0
+                      0
+                )
+            unless
+              (copiedEntries <= maximumPoetryClosureFiles)
+              (ioError (userError "fixed runtime closure copy exceeded its entry bound"))
             finalSourceStatus <- Posix.getFdStatus sourceDescriptor
             finalSourcePathStatus <- Posix.getSymbolicLinkStatus source
             unless
@@ -3805,49 +4428,113 @@ packageClosurePayloadMatches expected observed =
     && Internal.provisioningPackageClosureDigest observed
       == Internal.provisioningPackageClosureDigest expected
 
-prepareEmptyClosureDestination :: FilePath -> IO ()
-prepareEmptyClosureDestination destination = do
-  observed <- try @IOException (Posix.getSymbolicLinkStatus destination)
+-- | Ensure a package-closure destination exists and is stably empty.
+--
+-- Creation goes through the mutation kernel and the emptiness proof is taken
+-- through the retained parent descriptor, so neither step re-resolves the
+-- destination pathname.
+prepareEmptyClosureDestination ::
+  AuthorizedWriterRoot ->
+  FilePath ->
+  IO ()
+prepareEmptyClosureDestination authorizedRoot destination = do
+  observed <-
+    observeAuthorizedPathStatus
+      "fixed runtime closure destination"
+      authorizedRoot
+      destination
   case observed of
-    Left failure
-      | isDoesNotExistError failure ->
-          Directory.createDirectory destination
-      | otherwise -> throwIO failure
-    Right listedStatus -> do
+    Nothing ->
+      ensureAuthorizedDirectoryTree
+        "fixed runtime closure destination"
+        authorizedRoot
+        destination
+    Just listedStatus ->
       unless
         ( Posix.isDirectory listedStatus
             && not (Posix.isSymbolicLink listedStatus)
         )
         (ioError (userError "fixed runtime closure destination is not a real directory"))
-      descriptor <-
-        openFd
-          destination
-          ReadOnly
-          defaultFileFlags
-            { nofollow = True,
-              directory = True,
-              cloexec = True
-            }
-      finallyPreservingPrimary
-        ( do
-            openedStatus <- Posix.getFdStatus descriptor
-            entries <- listDirectoryBoundedFromDescriptor descriptor 1
-            finalStatus <- Posix.getFdStatus descriptor
-            finalPathStatus <- Posix.getSymbolicLinkStatus destination
-            unless
-              ( null entries
-                  && stableExecutableStatus listedStatus openedStatus
-                  && stableExecutableStatus openedStatus finalStatus
-                  && stableExecutableStatus finalStatus finalPathStatus
-              )
-              (ioError (userError "fixed runtime closure destination is not stably empty"))
-        )
-        (closeFd descriptor)
+  withRetainedClosureDestination
+    authorizedRoot
+    destination
+    ( \descriptor -> do
+        openedStatus <- Posix.getFdStatus descriptor
+        entries <- listDirectoryBoundedFromDescriptor descriptor 1
+        finalStatus <- Posix.getFdStatus descriptor
+        unless
+          ( null entries
+              && stableExecutableStatus openedStatus finalStatus
+          )
+          (ioError (userError "fixed runtime closure destination is not stably empty"))
+    )
+
+-- | Retain a descriptor on a directory inside an authorized writer root, reached
+-- through that root's retained ancestry rather than by re-resolving its
+-- pathname.
+--
+-- This is the entry point for every traversal whose interior is already
+-- descriptor-anchored: it replaces the single full-path @openFd@ that made the
+-- root of such a traversal swappable while everything below it was safe.
+withRetainedAuthorizedDirectory ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  (Fd -> IO result) ->
+  IO result
+withRetainedAuthorizedDirectory label authorizedRoot directory action =
+  withAuthorizedLeafParent
+    label
+    authorizedRoot
+    directory
+    ( \parentDescriptor leaf -> do
+        descriptor <-
+          openFdAt
+            (Just parentDescriptor)
+            leaf
+            ReadOnly
+            defaultFileFlags
+              { nofollow = True,
+                directory = True,
+                cloexec = True
+              }
+        finallyPreservingPrimary
+          ( do
+              status <- Posix.getFdStatus descriptor
+              unless
+                (Posix.isDirectory status)
+                (ioError (userError (label <> " is not a directory")))
+              result <- action descriptor
+              finalStatus <- Posix.getFdStatus descriptor
+              unless
+                (sameFileObject status finalStatus)
+                (ioError (userError (label <> " changed during traversal")))
+              pure result
+          )
+          (closeFd descriptor)
+    )
+
+-- | The closure destination's retained directory descriptor.
+withRetainedClosureDestination ::
+  AuthorizedWriterRoot ->
+  FilePath ->
+  (Fd -> IO result) ->
+  IO result
+withRetainedClosureDestination =
+  withRetainedAuthorizedDirectory "fixed runtime closure destination"
+
+-- | The context a package-closure copy carries unchanged down its recursion.
+data PackageClosureCopyContext = PackageClosureCopyContext
+  { closureCopyExcludeBaseSitePackages :: !Bool,
+    closureCopyWriterRoot :: !AuthorizedWriterRoot
+  }
 
 copyPackageClosureDirectory ::
-  Bool ->
+  PackageClosureCopyContext ->
   FilePath ->
   FilePath ->
+  [FilePath] ->
+  Fd ->
   Fd ->
   Posix.FileStatus ->
   FilePath ->
@@ -3855,10 +4542,12 @@ copyPackageClosureDirectory ::
   Integer ->
   IO Integer
 copyPackageClosureDirectory
-  excludeBaseSitePackages
+  context
   sourceDirectory
   destinationDirectory
+  destinationComponents
   sourceDescriptor
+  destinationDescriptor
   listedSourceStatus
   relativeDirectory
   depth
@@ -3873,10 +4562,12 @@ copyPackageClosureDirectory
     finalEntries <-
       foldM
         ( copyPackageClosureEntry
-            excludeBaseSitePackages
+            context
             sourceDirectory
             destinationDirectory
+            destinationComponents
             sourceDescriptor
+            destinationDescriptor
             relativeDirectory
             depth
         )
@@ -3886,13 +4577,15 @@ copyPackageClosureDirectory
     unless
       (stableExecutableStatus listedSourceStatus finalSourceStatus)
       (ioError (userError "fixed runtime closure directory changed during copy"))
-    synchroniseProvisioningDirectory destinationDirectory
+    synchroniseProvisioningDescriptor destinationDescriptor
     pure finalEntries
 
 copyPackageClosureEntry ::
-  Bool ->
+  PackageClosureCopyContext ->
   FilePath ->
   FilePath ->
+  [FilePath] ->
+  Fd ->
   Fd ->
   FilePath ->
   Int ->
@@ -3900,16 +4593,21 @@ copyPackageClosureEntry ::
   FilePath ->
   IO Integer
 copyPackageClosureEntry
-  excludeBaseSitePackages
+  context
   sourceDirectory
   destinationDirectory
+  destinationComponents
   sourceParentDescriptor
+  destinationParentDescriptor
   parentRelative
   parentDepth
   entriesSeen
   entry = do
-    let source = sourceDirectory </> entry
+    let excludeBaseSitePackages = closureCopyExcludeBaseSitePackages context
+        authorizedRoot = closureCopyWriterRoot context
+        source = sourceDirectory </> entry
         destination = destinationDirectory </> entry
+        entryComponents = destinationComponents <> [entry]
         relativePath =
           if parentRelative == "."
             then entry
@@ -3938,17 +4636,31 @@ copyPackageClosureEntry
               unless
                 (Posix.isDirectory childStatus)
                 (ioError (userError "fixed runtime closure child is not a directory"))
-              Directory.createDirectory destination
+              runAuthorizedFilesystemMutation
+                "fixed runtime closure directory"
+                authorizedRoot
+                ( Subprocess.provisioningCreateDirectoryLeaf
+                    (authorizedWriterMutationRoot authorizedRoot)
+                    destinationComponents
+                    entry
+                )
               copied <-
-                copyPackageClosureDirectory
-                  excludeBaseSitePackages
-                  source
-                  destination
-                  childDescriptor
-                  childStatus
-                  relativePath
-                  (parentDepth + 1)
-                  nextEntries
+                withRetainedClosureChildDirectory
+                  destinationParentDescriptor
+                  entry
+                  ( \destinationChildDescriptor ->
+                      copyPackageClosureDirectory
+                        context
+                        source
+                        destination
+                        entryComponents
+                        childDescriptor
+                        destinationChildDescriptor
+                        childStatus
+                        relativePath
+                        (parentDepth + 1)
+                        nextEntries
+                  )
               reopenedStatus <-
                 reopenDirectoryEntryStatus sourceParentDescriptor entry
               finalChildStatus <- Posix.getFdStatus childDescriptor
@@ -3981,11 +4693,21 @@ copyPackageClosureEntry
                   unless
                     (Posix.isRegularFile sourceFileStatus)
                     (ioError (userError "fixed runtime closure entry is unsupported"))
-                  _ <-
-                    copyRegularFileStable
-                      maximumExactRuntimeFileBytes
-                      source
-                      destination
+                  excluded <-
+                    excludedPythonHomeShebangFile
+                      excludeBaseSitePackages
+                      sourceFileDescriptor
+                  unless excluded $ do
+                    _ <-
+                      copyRegularFileStableIntoRetainedParent
+                        (StableCopySourceInRoot authorizedRoot)
+                        authorizedRoot
+                        destinationParentDescriptor
+                        entry
+                        maximumExactRuntimeFileBytes
+                        source
+                        destination
+                    pure ()
                   finalFileStatus <- Posix.getFdStatus sourceFileDescriptor
                   reopenedStatus <-
                     reopenFileEntryStatus sourceParentDescriptor entry
@@ -3994,22 +4716,52 @@ copyPackageClosureEntry
                         && stableExecutableStatus finalFileStatus reopenedStatus
                     )
                     (ioError (userError "fixed runtime closure file changed during copy"))
-                  pure nextEntries
+                  pure (if excluded then entriesSeen else nextEntries)
               )
               (closeFd sourceFileDescriptor)
           Left _ ->
             copyPackageClosureLink
-              excludeBaseSitePackages
+              context
               sourceParentDescriptor
+              destinationComponents
+              entry
               sourceDirectory
               source
-              destination
               relativePath
               nextEntries
 
-copyPackageClosureLink ::
-  Bool ->
+-- | Retain a descriptor on a freshly created closure child directory, reached
+-- through the parent descriptor the recursion already holds.
+withRetainedClosureChildDirectory ::
   Fd ->
+  FilePath ->
+  (Fd -> IO result) ->
+  IO result
+withRetainedClosureChildDirectory parentDescriptor entry action = do
+  descriptor <-
+    openFdAt
+      (Just parentDescriptor)
+      entry
+      ReadOnly
+      defaultFileFlags
+        { nofollow = True,
+          directory = True,
+          cloexec = True
+        }
+  finallyPreservingPrimary
+    ( do
+        status <- Posix.getFdStatus descriptor
+        unless
+          (Posix.isDirectory status)
+          (ioError (userError "fixed runtime closure child destination is not a directory"))
+        action descriptor
+    )
+    (closeFd descriptor)
+
+copyPackageClosureLink ::
+  PackageClosureCopyContext ->
+  Fd ->
+  [FilePath] ->
   FilePath ->
   FilePath ->
   FilePath ->
@@ -4017,13 +4769,16 @@ copyPackageClosureLink ::
   Integer ->
   IO Integer
 copyPackageClosureLink
-  excludeBaseSitePackages
+  context
   sourceParentDescriptor
+  destinationComponents
+  entry
   sourceParent
   source
-  destination
   relativePath
   nextEntries = do
+    let excludeBaseSitePackages = closureCopyExcludeBaseSitePackages context
+        authorizedRoot = closureCopyWriterRoot context
     parentStatus <- Posix.getFdStatus sourceParentDescriptor
     parentPathStatus <- Posix.getSymbolicLinkStatus sourceParent
     sourceStatus <- Posix.getSymbolicLinkStatus source
@@ -4040,23 +4795,33 @@ copyPackageClosureLink
         unless
           (validRelativeClosureLink relativePath target)
           (ioError (userError "fixed runtime closure link escapes its source root"))
-        Posix.createSymbolicLink target destination
-        installedStatus <- Posix.getSymbolicLinkStatus destination
-        installedTarget <- Posix.readSymbolicLink destination
+        -- The kernel creates the link with the retained parent as its working
+        -- directory, then reads it back and requires the recorded target before
+        -- fsyncing that parent. That read-back is the installed-link
+        -- confirmation, and it is the only one available: a symbolic link cannot
+        -- be opened @O_NOFOLLOW@ in process, so any parent-side re-read would
+        -- have to re-resolve the destination pathname -- exactly the effect this
+        -- conversion removes.
+        runAuthorizedFilesystemMutation
+          "fixed runtime closure link"
+          authorizedRoot
+          ( Subprocess.provisioningCreateSymbolicLinkLeaf
+              (authorizedWriterMutationRoot authorizedRoot)
+              destinationComponents
+              entry
+              target
+          )
         finalSourceStatus <- Posix.getSymbolicLinkStatus source
         finalSourceTarget <- Posix.readSymbolicLink source
         finalParentStatus <- Posix.getFdStatus sourceParentDescriptor
         finalParentPathStatus <- Posix.getSymbolicLinkStatus sourceParent
         unless
-          ( Posix.isSymbolicLink installedStatus
-              && installedTarget == target
-              && stableExecutableStatus sourceStatus finalSourceStatus
+          ( stableExecutableStatus sourceStatus finalSourceStatus
               && finalSourceTarget == target
               && stableExecutableStatus parentStatus finalParentStatus
               && stableExecutableStatus finalParentStatus finalParentPathStatus
           )
           (ioError (userError "fixed runtime closure link changed during copy"))
-        synchroniseProvisioningDirectory (takeDirectory destination)
         pure nextEntries
 
 materializePythonFrameworkLinks ::
@@ -4145,46 +4910,21 @@ createFixedOwnedDirectoryTree writer root requestedDirectory = do
         && ".." `notElem` components
     )
     (failProvisioningSession "fixed runtime directory escaped its candidate root")
-  foldM_
-    ( \parent component -> do
-        let child = parent </> component
-        createFixedOwnedDirectory writer child
-        pure child
-    )
-    authorizedRoot
-    components
-
-createFixedOwnedDirectory ::
-  EngineWriter w s q ->
-  FilePath ->
-  ProvisioningSession s ()
-createFixedOwnedDirectory
-  (EngineWriter _ _ authorizedRoot)
-  requestedDirectory =
-    ProvisioningSession $ do
-      directory <-
-        authorizedWriterPath
-          "fixed runtime directory"
-          authorizedRoot
-          requestedDirectory
-      observed <- try @IOException (Posix.getSymbolicLinkStatus directory)
-      case observed of
-        Left failure
-          | isDoesNotExistError failure ->
-              Directory.createDirectory directory
-          | otherwise -> throwIO failure
-        Right status ->
-          unless
-            ( Posix.isDirectory status
-                && not (Posix.isSymbolicLink status)
-            )
-            (ioError (userError "fixed runtime directory is not a real directory"))
-      finalStatus <- Posix.getSymbolicLinkStatus directory
-      unless
-        (Posix.isDirectory finalStatus && not (Posix.isSymbolicLink finalStatus))
-        (ioError (userError "fixed runtime directory publication is invalid"))
-      synchroniseProvisioningDirectory (takeDirectory directory)
-      validateWriterRootIdentity "fixed runtime directory" authorizedRoot
+  -- The containment check above is what this function adds: the requested
+  -- directory must lie under the /candidate/ root, not merely under the writer
+  -- root. Creation itself is delegated, because the superseded per-component
+  -- loop was a weaker duplicate of 'ensureAuthorizedDirectoryTree' -- it created
+  -- and fsynced each component by pathname, while the retained form observes
+  -- each level through the writer root's descriptor and creates it through the
+  -- mutation kernel.
+  case writer of
+    EngineWriter _ _ writerRoot ->
+      ProvisioningSession
+        ( ensureAuthorizedDirectoryTree
+            "fixed runtime directory"
+            writerRoot
+            authorizedDirectory
+        )
 
 createFixedOwnedLink ::
   EngineWriter w s q ->
@@ -4201,6 +4941,11 @@ createFixedOwnedLink
           "fixed runtime link"
           authorizedRoot
           requestedLink
+      linkComponents <-
+        authorizedWriterRelativeComponents
+          "fixed runtime link"
+          authorizedRoot
+          link
       let relativeLink =
             makeRelative
               (authorizedWriterCanonicalRoot authorizedRoot)
@@ -4208,13 +4953,20 @@ createFixedOwnedLink
       unless
         (validRelativeClosureLink relativeLink target)
         (ioError (userError "fixed runtime link escapes its artifact root"))
-      Posix.createSymbolicLink target link
-      status <- Posix.getSymbolicLinkStatus link
-      observedTarget <- Posix.readSymbolicLink link
-      unless
-        (Posix.isSymbolicLink status && observedTarget == target)
-        (ioError (userError "fixed runtime link publication disagreed"))
-      synchroniseProvisioningDirectory (takeDirectory link)
+      -- The kernel creates the link with the retained parent as its working
+      -- directory and confirms the recorded target before fsyncing that parent,
+      -- which is the only descriptor-anchored link creation available: there is
+      -- no public @symlinkat@, and a symbolic link cannot be opened
+      -- @O_NOFOLLOW@ for a parent-side re-read.
+      runAuthorizedFilesystemMutation
+        "fixed runtime link"
+        authorizedRoot
+        ( Subprocess.provisioningCreateSymbolicLinkLeaf
+            (authorizedWriterMutationRoot authorizedRoot)
+            (init linkComponents)
+            (last linkComponents)
+            target
+        )
       validateWriterRootIdentity "fixed runtime link" authorizedRoot
       let encodedTarget =
             TextEncoding.encodeUtf8 (Text.pack target)
@@ -4323,10 +5075,14 @@ copyResolvedExecutableFile
         resolveExactExecutableIdentity
           (resolvedExecutableCanonicalPath expected)
       unless
-        (resolvedExecutableIdentityMatches expected observed)
+        (resolvedExecutableCanonicalIdentityMatches expected observed)
         (ioError (userError "fixed executable source changed before copy"))
       copied <-
         copyRegularFileStable
+          ( StableCopySourceExactContent
+              (resolvedExecutableDigest expected)
+          )
+          authorizedRoot
           maximumExactRuntimeFileBytes
           (resolvedExecutableCanonicalPath expected)
           destination
@@ -4334,7 +5090,7 @@ copyResolvedExecutableFile
         resolveExactExecutableIdentity
           (resolvedExecutableCanonicalPath expected)
       unless
-        ( resolvedExecutableIdentityMatches expected finalObserved
+        ( resolvedExecutableCanonicalIdentityMatches expected finalObserved
             && stableFileCopyDigest copied
               == resolvedExecutableDigest expected
             && fromIntegral
@@ -4387,6 +5143,10 @@ copyRuntimeLibraryFile
         (ioError (userError "fixed runtime library changed before copy"))
       copied <-
         copyRegularFileStable
+          ( StableCopySourceExactContent
+              (Internal.provisioningRuntimeLibraryDigest expected)
+          )
+          authorizedRoot
           maximumExactRuntimeFileBytes
           (Internal.provisioningRuntimeLibraryCanonicalPath expected)
           destination
@@ -4605,7 +5365,7 @@ digestExactProvisioningDescriptor descriptor expectedBytes =
           let remaining = expectedBytes - observedBytes
               requested =
                 fromIntegral (min (64 * 1024) (remaining + 1))
-          chunk <- PosixByteString.fdRead descriptor requested
+          chunk <- readProvisioningDescriptorChunk descriptor requested
           if ByteString.null chunk
             then do
               unless
@@ -4643,7 +5403,7 @@ readExactProvisioningDescriptorBytes descriptor expectedBytes
           let remaining = expectedBytes - observedBytes
               requested =
                 fromIntegral (min (64 * 1024) (remaining + 1))
-          chunk <- PosixByteString.fdRead descriptor requested
+          chunk <- readProvisioningDescriptorChunk descriptor requested
           if ByteString.null chunk
             then do
               unless
@@ -4658,61 +5418,6 @@ readExactProvisioningDescriptorBytes descriptor expectedBytes
                 (nextBytes <= expectedBytes)
                 (ioError (userError "exact descriptor read observed growth"))
               go nextBytes (chunk : chunks)
-
-listDirectoryBoundedNoFollow ::
-  FilePath ->
-  Posix.FileStatus ->
-  Integer ->
-  IO [FilePath]
-listDirectoryBoundedNoFollow path expectedStatus maximumEntries
-  | maximumEntries < 0 =
-      ioError (userError "directory entry budget is already exhausted")
-  | otherwise =
-      mask $ \restore -> do
-        descriptor <-
-          openFd
-            path
-            ReadOnly
-            defaultFileFlags
-              { nofollow = True,
-                directory = True,
-                cloexec = True
-              }
-        _ <-
-          onExceptionPreservingPrimary
-            ( do
-                openedStatus <- Posix.getFdStatus descriptor
-                unless
-                  ( Posix.isDirectory openedStatus
-                      && stableExecutableStatus
-                        expectedStatus
-                        openedStatus
-                  )
-                  (ioError (userError ("directory changed before descriptor enumeration: " <> path)))
-                pure openedStatus
-            )
-            (closeFd descriptor)
-        stream <-
-          onExceptionPreservingPrimary
-            (unsafeOpenDirStreamFd descriptor)
-            (closeFd descriptor)
-        finallyPreservingPrimary
-          (restore (readEntries stream 0 []))
-          (closeDirStream stream)
-  where
-    readEntries stream observed entries = do
-      entry <- readDirStream stream
-      if null entry
-        then pure (List.sort entries)
-        else
-          if entry == "." || entry == ".."
-            then readEntries stream observed entries
-            else do
-              let nextObserved = observed + 1
-              unless
-                (nextObserved <= maximumEntries)
-                (ioError (userError ("directory exceeds its fixed entry budget: " <> path)))
-              readEntries stream nextObserved (entry : entries)
 
 revalidateExecutableIdentity ::
   ResolvedExecutableIdentity ->
@@ -4747,11 +5452,46 @@ revalidateExecutableIdentity expected = do
         | digest /= resolvedExecutableDigest expected ->
             pure (Left "configured executable content digest changed")
         | otherwise -> pure (Right ())
-  pure
-    ( case result of
-        Left failure -> Left (displayException failure)
-        Right validation -> validation
-    )
+  pure (flattenCaughtProvisioningFailure result)
+
+-- | A real directory, never a symlink to one.
+realDirectoryStatus :: Posix.FileStatus -> Bool
+realDirectoryStatus status =
+  Posix.isDirectory status && not (Posix.isSymbolicLink status)
+
+-- | A real regular file, never a symlink to one.
+realRegularFileStatus :: Posix.FileStatus -> Bool
+realRegularFileStatus status =
+  Posix.isRegularFile status && not (Posix.isSymbolicLink status)
+
+-- | A regular file carrying at least one execute bit.
+executableRegularFileStatus :: Posix.FileStatus -> Bool
+executableRegularFileStatus status =
+  Posix.isRegularFile status
+    && Posix.fileMode status
+      .&. ( Posix.ownerExecuteMode
+              .|. Posix.groupExecuteMode
+              .|. Posix.otherExecuteMode
+          )
+      /= 0
+
+-- | Fold a caught provisioning failure into its rendered error string.
+displayCaughtProvisioningFailure ::
+  Either IOException value ->
+  Either String value
+displayCaughtProvisioningFailure caught =
+  case caught of
+    Left failure -> Left (displayException failure)
+    Right value -> Right value
+
+-- | Fold a caught provisioning failure into an already-classified result.
+flattenCaughtProvisioningFailure ::
+  Either IOException (Either String value) ->
+  Either String value
+flattenCaughtProvisioningFailure caught =
+  case caught of
+    Left failure -> Left (displayException failure)
+    Right value -> value
 
 stableExecutableStatus :: Posix.FileStatus -> Posix.FileStatus -> Bool
 stableExecutableStatus expected observed =
@@ -4815,6 +5555,25 @@ digestExecutableWithObserver path listedStatus observeOpened =
                 (userError ("resolved executable changed while hashing: " <> path))
       )
       (closeFd descriptor)
+
+-- | Read one chunk from a descriptor, mapping end-of-file to an empty result.
+--
+-- 'PosixByteString.fdRead' throws an EOF 'IOError' at end of file rather than
+-- returning an empty 'ByteString', so every loop below — each of which reads
+-- one byte past the declared size to detect growth — must translate that throw
+-- into the ordinary end-of-stream it is written against.
+readProvisioningDescriptorChunk ::
+  Fd ->
+  ByteCount ->
+  IO ByteString.ByteString
+readProvisioningDescriptorChunk descriptor requested = do
+  observed <-
+    try @IOException (PosixByteString.fdRead descriptor requested)
+  case observed of
+    Right chunk -> pure chunk
+    Left failure
+      | isEOFError failure -> pure ByteString.empty
+      | otherwise -> ioError failure
 
 hashExecutableDescriptor :: SHA256.Ctx -> Fd -> IO SHA256.Ctx
 hashExecutableDescriptor digestContext descriptor = do
@@ -4918,59 +5677,77 @@ parseAppleRuntimeVersion adapter rawOutput = do
     "Apple runtime smoke produced an invalid normalized version"
   pure (AppleRuntimeVersion version)
 
+-- | Read llama.cpp's exact build provenance out of the runner's diagnostics.
+--
+-- The sealed artifact sets @GGML_BACKEND_PATH@, so ggml reports each backend it
+-- loads on stderr before the version banner. Those lines are legitimate runner
+-- output, so the banner is located rather than assumed to stand alone. Exactly
+-- one @version:@ line must appear and the line immediately after it must be the
+-- build-provenance line, so an ambiguous or truncated banner still fails.
 parseLlamaRuntimeVersion :: [Text] -> Either String Text
 parseLlamaRuntimeVersion outputLines =
-  case outputLines of
-    [versionLine, buildLine] -> do
-      payload <-
-        maybe
-          (Left "llama-cli smoke omitted its exact version line")
-          Right
-          (Text.stripPrefix "version: " versionLine)
-      unlessEither
-        ( maybe
-            False
-            validLlamaBuildProvenance
-            (Text.stripPrefix "built with " buildLine)
-        )
-        "llama-cli smoke has an invalid build-provenance line"
-      case Text.words payload of
-        [build, parenthesizedHash] -> do
-          commit <-
-            maybe
-              (Left "llama-cli smoke version has an invalid commit hash")
-              Right
-              ( Text.stripSuffix ")"
-                  =<< Text.stripPrefix "(" parenthesizedHash
-              )
-          unlessEither
-            ( validPositiveDecimal build
-                && Text.length commit >= 8
-                && Text.length commit <= 64
-                && Text.all isAsciiLowerHexDigit commit
-            )
-            "llama-cli smoke version has an invalid build or commit"
-          pure ("llama.cpp-b" <> build <> "-" <> commit)
-        _ ->
-          Left "llama-cli smoke version has an invalid token cardinality"
+  case break (Text.isPrefixOf "version: ") outputLines of
+    (_, versionLine : buildLine : remaining)
+      | not (any (Text.isPrefixOf "version: ") remaining) ->
+          parseLlamaVersionPair versionLine buildLine
     _ ->
-      Left "llama-cli smoke must emit exactly two lines"
+      Left "llama-cli smoke did not emit exactly one version and build-provenance line pair"
 
+parseLlamaVersionPair :: Text -> Text -> Either String Text
+parseLlamaVersionPair versionLine buildLine = do
+  payload <-
+    maybe
+      (Left "llama-cli smoke omitted its exact version line")
+      Right
+      (Text.stripPrefix "version: " versionLine)
+  unlessEither
+    ( maybe
+        False
+        validLlamaBuildProvenance
+        (Text.stripPrefix "built with " buildLine)
+    )
+    "llama-cli smoke has an invalid build-provenance line"
+  case Text.words payload of
+    [build, parenthesizedHash] -> do
+      commit <-
+        maybe
+          (Left "llama-cli smoke version has an invalid commit hash")
+          Right
+          ( Text.stripSuffix ")"
+              =<< Text.stripPrefix "(" parenthesizedHash
+          )
+      unlessEither
+        ( validPositiveDecimal build
+            && Text.length commit >= 8
+            && Text.length commit <= 64
+            && Text.all isAsciiLowerHexDigit commit
+        )
+        "llama-cli smoke version has an invalid build or commit"
+      pure ("llama.cpp-b" <> build <> "-" <> commit)
+    _ ->
+      Left "llama-cli smoke version has an invalid token cardinality"
+
+-- | As with llama.cpp, whisper.cpp reports each ggml backend it loads before
+-- its version banner, so exactly one banner line is located within the runner's
+-- diagnostics rather than assumed to be the only line.
 parseWhisperRuntimeVersion :: [Text] -> Either String Text
 parseWhisperRuntimeVersion outputLines =
-  case outputLines of
+  case filter (Text.isPrefixOf whisperVersionPrefix) outputLines of
     [versionLine] -> do
       version <-
         maybe
           (Left "whisper-cli smoke omitted its exact version line")
           Right
-          (Text.stripPrefix "whisper.cpp version: " versionLine)
+          (Text.stripPrefix whisperVersionPrefix versionLine)
       unlessEither
         (validVersionAtom version)
         "whisper-cli smoke emitted an invalid version"
       pure version
     _ ->
-      Left "whisper-cli smoke must emit exactly one line"
+      Left "whisper-cli smoke did not emit exactly one version line"
+
+whisperVersionPrefix :: Text
+whisperVersionPrefix = "whisper.cpp version: "
 
 parsePythonRuntimeVersion ::
   Internal.AppleAdapterId ->
@@ -5292,7 +6069,7 @@ completeLinuxCandidate ::
   LinuxManifestBuilder ->
   ProvisioningSession s ()
 completeLinuxCandidate
-  (EngineWriter authority recovered authorizedRoot)
+  writer@(EngineWriter authority recovered authorizedRoot)
   (ProvisioningGrant environment)
   deadline@(ProvisioningDeadline timeout)
   identity
@@ -5349,6 +6126,7 @@ completeLinuxCandidate
                   sharedReaped
               publishLinuxCompletionState
                 generationAuthority
+                authorizedRoot
                 revalidated
           )
       published <-
@@ -5358,6 +6136,7 @@ completeLinuxCandidate
           publication
       activateLinuxCompletionState
         authority
+        (provisioningArtifactRootMutator writer)
         recovered
         environment
         timeout
@@ -5689,10 +6468,12 @@ revalidateLinuxCompletionState
 
 publishLinuxCompletionState ::
   ArtifactGenerationMutationAuthority w g ->
+  AuthorizedWriterRoot ->
   LinuxCompletionState s 'LinuxGenerationExclusiveRevalidated ->
   IO (LinuxCompletionState s 'LinuxPublished)
 publishLinuxCompletionState
   _generationAuthority
+  authorizedRoot
   ( LinuxGenerationExclusiveRevalidatedCompletionState
       identity
       smokePolicy
@@ -5706,7 +6487,7 @@ publishLinuxCompletionState
       _standardOutput
       _standardError
     ) = do
-    publishCandidateManifestFile candidateRoot expectedManifest
+    publishCandidateManifestFile authorizedRoot candidateRoot expectedManifest
     validated <-
       Artifact.validateEngineArtifactRootAt installRoot candidateRoot
     unless
@@ -5725,6 +6506,7 @@ publishLinuxCompletionState
 
 activateLinuxCompletionState ::
   MaterializationAuthority w ->
+  ArtifactInternal.ArtifactRootMutator w ->
   Subprocess.AbandonedActivitiesRecovered ->
   Subprocess.SubprocessEnv ->
   Internal.PositiveProvisioningTimeout ->
@@ -5732,6 +6514,7 @@ activateLinuxCompletionState ::
   IO ()
 activateLinuxCompletionState
   authority
+  mutator
   recovered
   environment
   timeout
@@ -5741,18 +6524,29 @@ activateLinuxCompletionState
       installRoot
       candidateRoot
       payloadDigest
-      _manifest
+      manifest
       lease
     ) = do
+    expectedTargetEvidence <-
+      maybe
+        ( ioError
+            ( userError
+                "published Linux artifact manifest carries no exact image-target evidence"
+            )
+        )
+        pure
+        (Artifact.manifestImageTargetEvidence manifest)
     result <-
       ArtifactActivation.activateLinuxEngineArtifactWithInstalledSmoke
         authority
+        mutator
         recovered
         lease
         environment
         timeout
         identity
         (internalLinuxNativeSmokePolicy smokePolicy)
+        expectedTargetEvidence
         installRoot
         candidateRoot
         payloadDigest
@@ -5995,7 +6789,7 @@ completeAppleCandidate ::
   AppleManifestBuilder ->
   ProvisioningSession s ()
 completeAppleCandidate
-  (EngineWriter authority recovered authorizedRoot)
+  writer@(EngineWriter authority recovered authorizedRoot)
   (ProvisioningGrant environment)
   deadline@(ProvisioningDeadline timeout)
   (AppleAdapterId adapter)
@@ -6054,6 +6848,7 @@ completeAppleCandidate
                   sharedReaped
               publishAppleCompletionState
                 generationAuthority
+                authorizedRoot
                 buildManifest
                 revalidated
           )
@@ -6064,6 +6859,7 @@ completeAppleCandidate
           publication
       activateAppleCompletionState
         authority
+        (provisioningArtifactRootMutator writer)
         recovered
         environment
         timeout
@@ -6310,6 +7106,7 @@ revalidateAppleCompletionState
 
 publishAppleCompletionState ::
   ArtifactGenerationMutationAuthority w g ->
+  AuthorizedWriterRoot ->
   ( AppleRuntimeVersion ->
     Text ->
     Either String Artifact.EngineArtifactManifest
@@ -6321,6 +7118,7 @@ publishAppleCompletionState ::
     )
 publishAppleCompletionState
   _generationAuthority
+  authorizedRoot
   buildManifest
   ( GenerationExclusiveRevalidatedCompletionState
       adapter
@@ -6353,7 +7151,7 @@ publishAppleCompletionState
     unless
       (observedDigest == digest)
       (ioError (userError "smoked candidate changed before manifest publication"))
-    publishCandidateManifestFile candidateRoot manifest
+    publishCandidateManifestFile authorizedRoot candidateRoot manifest
     validated <-
       Artifact.validateEngineArtifactRootAt installRoot candidateRoot
     unless
@@ -6372,6 +7170,7 @@ publishAppleCompletionState
 
 activateAppleCompletionState ::
   MaterializationAuthority w ->
+  ArtifactInternal.ArtifactRootMutator w ->
   Subprocess.AbandonedActivitiesRecovered ->
   Subprocess.SubprocessEnv ->
   Internal.PositiveProvisioningTimeout ->
@@ -6380,6 +7179,7 @@ activateAppleCompletionState ::
   IO ()
 activateAppleCompletionState
   authority
+  mutator
   recovered
   environment
   timeout
@@ -6395,6 +7195,7 @@ activateAppleCompletionState
     result <-
       ArtifactActivation.activateAppleEngineArtifactWithInstalledSmoke
         authority
+        mutator
         recovered
         lease
         environment
@@ -6420,41 +7221,46 @@ activateAppleCompletionState
               )
           )
 
+-- | Publish a candidate's manifest through the retained parent descriptor of its
+-- authorized writer root.
+--
+-- The superseded form took no writer root at all: it created the manifest with a
+-- full-path @openFd@, unlinked it by pathname on failure, and fsynced
+-- @candidateRoot@ by pathname. A candidate root swapped between any two of those
+-- steps redirected the manifest write, the rollback, or the durability proof.
+-- The manifest is one leaf directly under the candidate root, so
+-- 'writeAuthorizedRegularFile' -- which retains the parent, opens the leaf
+-- @O_NOFOLLOW@ on it, and fsyncs both -- is the exact shape needed.
 publishCandidateManifestFile ::
+  AuthorizedWriterRoot ->
   FilePath ->
   Artifact.EngineArtifactManifest ->
   IO ()
-publishCandidateManifestFile candidateRoot manifest =
-  mask $ \restore -> do
-    let manifestPath = Artifact.engineArtifactManifestPath candidateRoot
-        contents =
-          LazyByteString.toStrict
-            (Artifact.renderEngineArtifactManifest manifest)
-    unless
-      (ByteString.length contents <= 1024 * 1024)
-      (ioError (userError "candidate manifest exceeds its fixed byte bound"))
-    descriptor <-
-      openFd
+publishCandidateManifestFile authorizedRoot candidateRoot manifest = do
+  let manifestPath = Artifact.engineArtifactManifestPath candidateRoot
+      contents =
+        LazyByteString.toStrict
+          (Artifact.renderEngineArtifactManifest manifest)
+  unless
+    (ByteString.length contents <= maximumCandidateManifestBytes)
+    (ioError (userError "candidate manifest exceeds its fixed byte bound"))
+  onExceptionPreservingPrimary
+    ( writeAuthorizedRegularFile
+        "candidate manifest publication"
+        authorizedRoot
         manifestPath
-        WriteOnly
-        defaultFileFlags
-          { exclusive = True,
-            nofollow = True,
-            creat =
-              Just
-                (Posix.ownerReadMode .|. Posix.ownerWriteMode),
-            cloexec = True
-          }
-    onExceptionPreservingPrimary
-      ( finallyPreservingPrimary
-          ( restore $ do
-              writeProvisioningDescriptor descriptor contents
-              fileSynchronise descriptor
-          )
-          (closeFd descriptor)
-      )
-      (Directory.removeFile manifestPath)
-    synchroniseProvisioningDirectory candidateRoot
+        contents
+    )
+    ( removeAuthorizedLeafThroughKernel
+        "candidate manifest rollback"
+        authorizedRoot
+        manifestPath
+    )
+  validateWriterRootIdentity "candidate manifest publication" authorizedRoot
+
+-- | The fixed bound on a published candidate manifest.
+maximumCandidateManifestBytes :: Int
+maximumCandidateManifestBytes = 1024 * 1024
 
 validateHydratedCandidate ::
   Internal.AppleAdapterId ->
@@ -6545,29 +7351,21 @@ validateHydratedCandidate adapter installRoot candidateRoot
     regularDirectory path = do
       statusResult <-
         tryPathStatus path
-      pure
-        ( case statusResult of
-            Just status ->
-              Posix.isDirectory status && not (Posix.isSymbolicLink status)
-            Nothing -> False
-        )
+      pure (maybe False realDirectoryStatus statusResult)
     regularExecutable path = do
       statusResult <- tryPathStatus path
       case statusResult of
         Just status
           | Posix.isRegularFile status
               && not (Posix.isSymbolicLink status) ->
-              Directory.executable <$> Directory.getPermissions path
+              -- The mode is already in the status just observed, so asking
+              -- @Directory.getPermissions@ only re-resolved the same pathname a
+              -- second time and could answer about a different file.
+              pure (executableFileMode status)
         _ -> pure False
     regularFile path = do
       statusResult <- tryPathStatus path
-      pure
-        ( case statusResult of
-            Just status ->
-              Posix.isRegularFile status
-                && not (Posix.isSymbolicLink status)
-            Nothing -> False
-        )
+      pure (maybe False realRegularFileStatus statusResult)
     tryPathStatus path = do
       present <- Directory.doesPathExist path
       if present
@@ -6610,18 +7408,6 @@ provisioningDoesDirectoryExist :: FilePath -> ProvisioningSession s Bool
 provisioningDoesDirectoryExist =
   ProvisioningSession . Directory.doesDirectoryExist
 
-provisioningDoesPathExist :: FilePath -> ProvisioningSession s Bool
-provisioningDoesPathExist =
-  ProvisioningSession . Directory.doesPathExist
-
-provisioningDoesFileExist :: FilePath -> ProvisioningSession s Bool
-provisioningDoesFileExist =
-  ProvisioningSession . Directory.doesFileExist
-
-provisioningGetModificationTime :: FilePath -> ProvisioningSession s UTCTime
-provisioningGetModificationTime =
-  ProvisioningSession . Directory.getModificationTime
-
 provisioningPoetryProjectReady ::
   ProjectWriter p s q ->
   ProvisioningSession s Bool
@@ -6647,17 +7433,9 @@ provisioningPoetryBootstrapExecutable
           homeRoot
           executable
       pure
-        ( case observed of
-            Just status
-              | Posix.isRegularFile status
-                  && Posix.fileMode status
-                    .&. ( Posix.ownerExecuteMode
-                            .|. Posix.groupExecuteMode
-                            .|. Posix.otherExecuteMode
-                        )
-                    /= 0 ->
-                  Just executable
-            _ -> Nothing
+        ( if maybe False executableRegularFileStatus observed
+            then Just executable
+            else Nothing
         )
 
 provisioningGeneratedBindingsRequired ::
@@ -6731,13 +7509,7 @@ provisioningAppleSetupReady
               manifestPath
               (fromIntegral (ByteString.length expected))
           )
-      pure
-        ( case observed of
-            Right contents -> contents == expected
-            Left failure
-              | isDoesNotExistError failure -> False
-              | otherwise -> False
-        )
+      pure (either (const False) (== expected) observed)
 
 -- | Publish the complete Python-adapter bootstrap evidence without spawning
 -- a nested Poetry child. The adapter id is closed, the payload is canonical,
@@ -6840,8 +7612,14 @@ provisioningPublishAppleSetupManifestInternal
                             finalStatus <- Posix.getFdStatus descriptor
                             reopenedStatus <-
                               reopenFileEntryStatus parentDescriptor leaf
+                            -- The write legitimately changes size and mtime,
+                            -- so the pre/post comparison is object identity and
+                            -- mode; the sealed comparison against the reopened
+                            -- entry stays exact.
                             unless
-                              ( stableExecutableStatus status finalStatus
+                              ( sameFileObject status finalStatus
+                                  && Posix.fileMode status
+                                    == Posix.fileMode finalStatus
                                   && stableExecutableStatus
                                     finalStatus
                                     reopenedStatus
@@ -7295,9 +8073,16 @@ withAuthorizedLeafParent
             parentStatus <- Posix.getFdStatus parentDescriptor
             result <- action parentDescriptor leaf
             finalParentStatus <- Posix.getFdStatus parentDescriptor
+            -- The authorized action mutates this directory, so its size and
+            -- timestamps legitimately change. The invariant is that the
+            -- retained descriptor still names the same directory object with
+            -- the same mode, not that the directory was left untouched.
             unless
               ( Posix.isDirectory parentStatus
-                  && stableExecutableStatus parentStatus finalParentStatus
+                  && Posix.isDirectory finalParentStatus
+                  && sameFileObject parentStatus finalParentStatus
+                  && Posix.fileMode parentStatus
+                    == Posix.fileMode finalParentStatus
               )
               (ioError (userError (label <> " parent changed during descriptor use")))
             validateWriterRootIdentity label authorizedRoot
@@ -7363,31 +8148,6 @@ authorizeEnginePath ::
 authorizeEnginePath label (EngineWriter _ _ authorizedRoot) path =
   ProvisioningSession
     (authorizedWriterPath label authorizedRoot path)
-
-authorizeProjectPath ::
-  String ->
-  ProjectWriter p s q ->
-  FilePath ->
-  ProvisioningSession s FilePath
-authorizeProjectPath label (ProjectWriter _ authorizedRoot) path =
-  ProvisioningSession
-    (authorizedWriterPath label authorizedRoot path)
-
-authorizeGeneratedBindingsPath ::
-  String ->
-  GeneratedBindingsWriter g s q ->
-  FilePath ->
-  ProvisioningSession s FilePath
-authorizeGeneratedBindingsPath
-  label
-  (GeneratedBindingsWriter _ authorizedRoot outputRoot)
-  path
-    | writerPathWithin outputRoot path =
-        ProvisioningSession
-          (authorizedWriterPath label authorizedRoot path)
-    | otherwise =
-        failProvisioningSession
-          (label <> " escaped the fixed generated bindings root")
 
 provisioningCreateDirectory ::
   EngineWriter w s q ->
@@ -7554,6 +8314,164 @@ ensureAuthorizedDirectoryTree label authorizedRoot requestedPath = do
         (ioError (userError (label <> " did not publish a real directory")))
       createComponents (parentComponents <> [leaf]) remaining
 
+-- | Create or replace one owned leaf through its retained parent descriptor.
+--
+-- @authorizedWriterPath@ validates a path's ancestry and then returns a
+-- @FilePath@, closing every descriptor it opened. Any effect performed on that
+-- result re-resolves the whole path through the namespace, so an adversary can
+-- swap an intermediate parent between the check and the effect. This helper
+-- closes that window: the leaf is opened with @openFdAt@ relative to the parent
+-- descriptor @withAuthorizedLeafParent@ retains, the bytes go to that
+-- descriptor, and both the file and the retained parent are fsynced. Nothing
+-- between the ancestry check and the effect names a path.
+--
+-- @nofollow@ makes a symlink planted at the leaf a failure rather than a
+-- redirect, and @trunc@ gives create-or-replace semantics without a separate
+-- unlink step that would reopen the same window.
+writeAuthorizedRegularFile ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  ByteString.ByteString ->
+  IO ()
+writeAuthorizedRegularFile =
+  writeAuthorizedRegularFileWithParentSwapPause Nothing
+
+-- | The retained-parent write with an explicitly named adversarial checkpoint.
+--
+-- The optional cells are signalled after 'withAuthorizedLeafParent' has walked
+-- and retained the destination parent and before the leaf is opened on that
+-- descriptor. That is exactly the window in which a pathname-resolving writer
+-- would be redirected by an intermediate-parent swap, so it is the only window
+-- in which a deterministic test can prove the retained descriptor is what the
+-- effect actually follows.
+--
+-- The seam can only signal and await already-created synchronization cells. It
+-- grants the caller no raw IO, filesystem, process, or writer authority, which
+-- is the same bound 'pauseProvisioningSessionForTest' observes.
+writeAuthorizedRegularFileWithParentSwapPause ::
+  Maybe (MVar (), MVar ()) ->
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  ByteString.ByteString ->
+  IO ()
+writeAuthorizedRegularFileWithParentSwapPause
+  pauseBeforeLeaf
+  label
+  authorizedRoot
+  requestedPath
+  contents =
+    withAuthorizedLeafParent
+      label
+      authorizedRoot
+      requestedPath
+      (writeAuthorizedLeafAfterPause label pauseBeforeLeaf contents)
+
+writeAuthorizedLeafAfterPause ::
+  String ->
+  Maybe (MVar (), MVar ()) ->
+  ByteString.ByteString ->
+  Fd ->
+  FilePath ->
+  IO ()
+writeAuthorizedLeafAfterPause
+  label
+  pauseBeforeLeaf
+  contents
+  parentDescriptor
+  leaf = do
+    mapM_ awaitParentSwapCheckpoint pauseBeforeLeaf
+    writeAuthorizedLeafContents label contents parentDescriptor leaf
+
+awaitParentSwapCheckpoint :: (MVar (), MVar ()) -> IO ()
+awaitParentSwapCheckpoint (entered, resume) = do
+  putMVar entered ()
+  takeMVar resume
+
+writeAuthorizedLeafContents ::
+  String ->
+  ByteString.ByteString ->
+  Fd ->
+  FilePath ->
+  IO ()
+writeAuthorizedLeafContents label contents parentDescriptor leaf =
+  mask $ \restore -> do
+    descriptor <-
+      openFdAt
+        (Just parentDescriptor)
+        leaf
+        WriteOnly
+        defaultFileFlags
+          { nofollow = True,
+            trunc = True,
+            creat =
+              Just
+                ( Posix.ownerReadMode
+                    .|. Posix.ownerWriteMode
+                ),
+            cloexec = True
+          }
+    finallyPreservingPrimary
+      ( restore $ do
+          status <- Posix.getFdStatus descriptor
+          unless
+            (Posix.isRegularFile status)
+            (ioError (userError (label <> " destination is not a regular file")))
+          writeProvisioningDescriptor descriptor contents
+          fileSynchronise descriptor
+          fileSynchronise parentDescriptor
+      )
+      (closeFd descriptor)
+
+-- | Add the owner-execute bit to one owned leaf through its retained parent
+-- descriptor.
+--
+-- The mode is set on the descriptor rather than on a pathname, so the file
+-- whose ancestry was validated is the file whose mode changes. The previous
+-- @Directory.getPermissions@ / @Directory.setPermissions@ pair re-resolved the
+-- path twice after the probe.
+setAuthorizedLeafExecutable ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  IO ()
+setAuthorizedLeafExecutable label authorizedRoot requestedPath =
+  withAuthorizedLeafParent
+    label
+    authorizedRoot
+    requestedPath
+    (setAuthorizedLeafExecutableMode label)
+
+setAuthorizedLeafExecutableMode ::
+  String ->
+  Fd ->
+  FilePath ->
+  IO ()
+setAuthorizedLeafExecutableMode label parentDescriptor leaf =
+  mask $ \restore -> do
+    descriptor <-
+      openFdAt
+        (Just parentDescriptor)
+        leaf
+        ReadOnly
+        defaultFileFlags
+          { nofollow = True,
+            cloexec = True
+          }
+    finallyPreservingPrimary
+      ( restore $ do
+          status <- Posix.getFdStatus descriptor
+          unless
+            (Posix.isRegularFile status)
+            (ioError (userError (label <> " target is not a regular file")))
+          Posix.setFdMode
+            descriptor
+            (Posix.fileMode status .|. Posix.ownerExecuteMode)
+          fileSynchronise parentDescriptor
+      )
+      (closeFd descriptor)
+
 ensureAuthorizedEmptyRegularFile ::
   String ->
   AuthorizedWriterRoot ->
@@ -7618,6 +8536,82 @@ ensureAuthorizedEmptyRegularFile label authorizedRoot requestedPath = do
         finalStatus
     )
     (ioError (userError (label <> " publication was not durable")))
+
+-- | The one interpreter for the artifact transaction's closed parent-level
+-- mutation language.
+--
+-- The transaction lives in @Engines.Artifact.Internal@, which cannot import the
+-- mutation kernel without closing an import cycle through
+-- @Cluster.Subprocess@. It therefore requests the two effects it needs and this
+-- function -- the only place that holds both the writer root and the kernel --
+-- performs them through a retained parent descriptor.
+--
+-- Every operand is revalidated here, beside the effect rather than at some
+-- earlier boundary: both operands must resolve inside this writer root, a
+-- rename's two paths must share a parent so it is genuinely a sibling rename,
+-- and the components handed to the kernel are re-derived from the authorized
+-- path rather than carried from the caller.
+-- | Interpret exactly one root mutation through the production interpreter
+-- under a real engine writer.
+--
+-- @infernix-artifact-transaction@ exercises the pathname test interpreter by
+-- design, so it proves the transaction's ordering and nothing about
+-- 'provisioningArtifactRootMutator'. This is the only seam that reaches the
+-- production interpreter and the descriptor-anchored kernel it drives. The
+-- interpreter value itself never escapes: the effect is confined to the
+-- session, and the authority still comes only from an 'EngineWriter' obtained
+-- inside 'withEngineProvisioningSession'.
+provisioningInterpretArtifactRootMutationForTest ::
+  EngineWriter w s q ->
+  ArtifactInternal.ArtifactRootMutation ->
+  ProvisioningSession s ()
+provisioningInterpretArtifactRootMutationForTest writer mutation =
+  ProvisioningSession
+    ( ArtifactInternal.runArtifactRootMutation
+        (provisioningArtifactRootMutator writer)
+        mutation
+    )
+
+provisioningArtifactRootMutator ::
+  EngineWriter w s q ->
+  ArtifactInternal.ArtifactRootMutator w
+provisioningArtifactRootMutator (EngineWriter _ _ authorizedRoot) =
+  ArtifactInternal.ArtifactRootMutator interpret
+  where
+    interpret mutation =
+      case mutation of
+        ArtifactInternal.RemoveArtifactRootSibling path ->
+          removeAuthorizedLeafThroughKernel
+            "artifact root retirement"
+            authorizedRoot
+            path
+        ArtifactInternal.RenameArtifactRootSibling source destination -> do
+          sourceComponents <-
+            authorizedWriterRelativeComponents
+              "artifact root rename source"
+              authorizedRoot
+              source
+          destinationComponents <-
+            authorizedWriterRelativeComponents
+              "artifact root rename destination"
+              authorizedRoot
+              destination
+          unless
+            (init sourceComponents == init destinationComponents)
+            ( ioError
+                ( userError
+                    "artifact root rename operands are not siblings"
+                )
+            )
+          runAuthorizedFilesystemMutation
+            "artifact root rename"
+            authorizedRoot
+            ( Subprocess.provisioningRenameSiblingDirectory
+                (authorizedWriterMutationRoot authorizedRoot)
+                (init sourceComponents)
+                (last sourceComponents)
+                (last destinationComponents)
+            )
 
 runAuthorizedFilesystemMutation ::
   String ->
@@ -7720,6 +8714,8 @@ provisioningCopyFileStableBounded
               destination
           copied <-
             copyRegularFileStable
+              (StableCopySourceInRoot authorizedRoot)
+              authorizedRoot
               maximumBytes
               authorizedSource
               authorizedDestination
@@ -7729,171 +8725,421 @@ provisioningCopyFileStableBounded
 maximumStableCopyBytes :: Integer
 maximumStableCopyBytes = 2 * 1024 * 1024 * 1024
 
+-- | The bound on the repo-owned Apple native runner library. It is one Python
+-- module, measured well under this.
+appleNativeRunnerLibraryBytes :: Int
+appleNativeRunnerLibraryBytes = 1024 * 1024
+
+-- | Where a stable copy reads its bytes from.
+--
+-- A source inside an authorized writer root is read through that root's
+-- retained parent descriptor, so an intermediate parent swapped at the read
+-- boundary is a failure rather than a redirect.
+--
+-- A source outside every owned root cannot have a retained parent, because this
+-- module holds no authority over it -- a host CLI or runtime library lives under
+-- a Homebrew or system prefix. Such a source is instead bound by the exact
+-- content digest its caller already resolved. For a /read/ that is the stronger
+-- binding: it constrains the bytes actually copied rather than the directory
+-- they were reached through, so a source swapped mid-copy fails on content even
+-- when the pathname still resolves.
+data StableCopySource
+  = StableCopySourceInRoot !AuthorizedWriterRoot
+  | StableCopySourceExactContent !Text
+
+-- | Copy one regular file into an authorized writer root, descriptor-anchored
+-- on both sides.
+--
+-- The destination is created, written, mode-set, verified, and -- on failure --
+-- removed entirely through the parent descriptor 'withAuthorizedLeafParent'
+-- retains, and that same descriptor is the one fsynced. The superseded form
+-- opened both sides by full pathname and fsynced @takeDirectory destination@,
+-- so every one of those effects re-resolved the path and an intermediate parent
+-- swapped between them redirected the write.
 copyRegularFileStable ::
+  StableCopySource ->
+  AuthorizedWriterRoot ->
   Integer ->
   FilePath ->
   FilePath ->
   IO (StableFileCopyEvidence s)
-copyRegularFileStable maximumBytes source destination =
-  mask $ \restore -> do
-    listedStatus <- Posix.getSymbolicLinkStatus source
-    unless
-      ( Posix.isRegularFile listedStatus
-          && not (Posix.isSymbolicLink listedStatus)
-          && fromIntegral (Posix.fileSize listedStatus)
-            <= maximumBytes
+copyRegularFileStable
+  sourceAuthority
+  destinationRoot
+  maximumBytes
+  source
+  destination =
+    withStableCopySourceDescriptor
+      sourceAuthority
+      maximumBytes
+      source
+      ( \sourceDescriptor listedStatus recheckSource ->
+          withAuthorizedLeafParent
+            "stable copy destination"
+            destinationRoot
+            destination
+            ( \destinationParent destinationLeaf ->
+                copyIntoRetainedDestination
+                  destinationRoot
+                  destinationParent
+                  destinationLeaf
+                  destination
+                  maximumBytes
+                  sourceDescriptor
+                  listedStatus
+                  recheckSource
+                  (stableCopyExpectedDigest sourceAuthority)
+            )
       )
-      (ioError (userError ("stable copy source is invalid: " <> source)))
-    sourceDescriptor <-
-      openFd
+
+-- | Copy one regular file into a destination parent the caller already retains.
+--
+-- The recursive package-closure walk holds a descriptor on each destination
+-- directory as it descends, so re-deriving that parent from the writer root for
+-- every one of tens of thousands of entries would both re-resolve the pathname
+-- and re-walk the whole ancestry. This form consumes the descriptor the walk
+-- already holds.
+copyRegularFileStableIntoRetainedParent ::
+  StableCopySource ->
+  AuthorizedWriterRoot ->
+  Fd ->
+  FilePath ->
+  Integer ->
+  FilePath ->
+  FilePath ->
+  IO (StableFileCopyEvidence s)
+copyRegularFileStableIntoRetainedParent
+  sourceAuthority
+  destinationRoot
+  destinationParent
+  destinationLeaf
+  maximumBytes
+  source
+  destination =
+    withStableCopySourceDescriptor
+      sourceAuthority
+      maximumBytes
+      source
+      ( \sourceDescriptor listedStatus recheckSource ->
+          copyIntoRetainedDestination
+            destinationRoot
+            destinationParent
+            destinationLeaf
+            destination
+            maximumBytes
+            sourceDescriptor
+            listedStatus
+            recheckSource
+            (stableCopyExpectedDigest sourceAuthority)
+      )
+
+-- | The content digest a source authority binds its bytes to, if any.
+stableCopyExpectedDigest :: StableCopySource -> Maybe Text
+stableCopyExpectedDigest sourceAuthority =
+  case sourceAuthority of
+    StableCopySourceInRoot _ -> Nothing
+    StableCopySourceExactContent expected -> Just expected
+
+-- | Open a stable copy's source and hand its descriptor, its initial status, and
+-- an unchanged-since-open recheck to the copy.
+withStableCopySourceDescriptor ::
+  StableCopySource ->
+  Integer ->
+  FilePath ->
+  (Fd -> Posix.FileStatus -> IO () -> IO result) ->
+  IO result
+withStableCopySourceDescriptor sourceAuthority maximumBytes source action =
+  case sourceAuthority of
+    StableCopySourceInRoot sourceRoot ->
+      withAuthorizedLeafParent
+        "stable copy source"
+        sourceRoot
         source
-        ReadOnly
+        ( \sourceParent sourceLeaf -> do
+            descriptor <-
+              openFdAt
+                (Just sourceParent)
+                sourceLeaf
+                ReadOnly
+                defaultFileFlags
+                  { nofollow = True,
+                    cloexec = True
+                  }
+            finallyPreservingPrimary
+              ( do
+                  openedStatus <- Posix.getFdStatus descriptor
+                  requireStableCopySource source maximumBytes openedStatus
+                  action
+                    descriptor
+                    openedStatus
+                    ( do
+                        finalStatus <- Posix.getFdStatus descriptor
+                        reopenedStatus <-
+                          reopenFileEntryStatus sourceParent sourceLeaf
+                        unless
+                          ( stableExecutableStatus openedStatus finalStatus
+                              && stableExecutableStatus finalStatus reopenedStatus
+                          )
+                          (ioError (userError ("stable copy source changed while copying: " <> source)))
+                    )
+              )
+              (closeFd descriptor)
+        )
+    StableCopySourceExactContent _ -> mask $ \restore -> do
+      listedStatus <- Posix.getSymbolicLinkStatus source
+      requireStableCopySource source maximumBytes listedStatus
+      descriptor <-
+        openFd
+          source
+          ReadOnly
+          defaultFileFlags
+            { nofollow = True,
+              cloexec = True
+            }
+      finallyPreservingPrimary
+        ( restore $ do
+            openedStatus <- Posix.getFdStatus descriptor
+            unless
+              (stableExecutableStatus listedStatus openedStatus)
+              (ioError (userError ("stable copy source changed before open: " <> source)))
+            action
+              descriptor
+              openedStatus
+              ( do
+                  finalStatus <- Posix.getFdStatus descriptor
+                  finalPathStatus <- Posix.getSymbolicLinkStatus source
+                  unless
+                    ( stableExecutableStatus openedStatus finalStatus
+                        && stableExecutableStatus finalStatus finalPathStatus
+                    )
+                    (ioError (userError ("stable copy source changed while copying: " <> source)))
+              )
+        )
+        (closeFd descriptor)
+
+-- | A stable copy source must be a bounded real regular file.
+requireStableCopySource ::
+  FilePath ->
+  Integer ->
+  Posix.FileStatus ->
+  IO ()
+requireStableCopySource source maximumBytes status =
+  unless
+    ( Posix.isRegularFile status
+        && not (Posix.isSymbolicLink status)
+        && fromIntegral (Posix.fileSize status) <= maximumBytes
+    )
+    (ioError (userError ("stable copy source is invalid: " <> source)))
+
+-- | Create, write, verify, and make durable one copy destination under a
+-- retained parent descriptor.
+copyIntoRetainedDestination ::
+  AuthorizedWriterRoot ->
+  Fd ->
+  FilePath ->
+  FilePath ->
+  Integer ->
+  Fd ->
+  Posix.FileStatus ->
+  IO () ->
+  Maybe Text ->
+  IO (StableFileCopyEvidence s)
+copyIntoRetainedDestination
+  destinationRoot
+  destinationParent
+  destinationLeaf
+  destination
+  maximumBytes
+  sourceDescriptor
+  listedStatus
+  recheckSource
+  expectedDigest = mask $ \restore -> do
+    destinationDescriptor <-
+      openFdAt
+        (Just destinationParent)
+        destinationLeaf
+        ReadWrite
         defaultFileFlags
-          { nofollow = True,
+          { exclusive = True,
+            nofollow = True,
+            creat =
+              Just
+                ( Posix.ownerReadMode
+                    .|. Posix.ownerWriteMode
+                ),
             cloexec = True
           }
-    finallyPreservingPrimary
-      ( do
-          openedStatus <- Posix.getFdStatus sourceDescriptor
-          unless
-            (stableExecutableStatus listedStatus openedStatus)
-            (ioError (userError ("stable copy source changed before open: " <> source)))
-          destinationDescriptor <-
-            openFd
-              destination
-              ReadWrite
-              defaultFileFlags
-                { exclusive = True,
-                  nofollow = True,
-                  creat =
-                    Just
-                      ( Posix.ownerReadMode
-                          .|. Posix.ownerWriteMode
-                      ),
-                  cloexec = True
-                }
-          destinationOpenedStatus <-
-            onExceptionPreservingPrimary
-              (Posix.getFdStatus destinationDescriptor)
-              (closeFd destinationDescriptor)
-          let cleanupDestination = do
-                _ <- try @IOException (closeFd destinationDescriptor)
-                removeStableDestinationIfOwned
+    destinationOpenedStatus <-
+      onExceptionPreservingPrimary
+        (Posix.getFdStatus destinationDescriptor)
+        (closeFd destinationDescriptor)
+    let cleanupDestination = do
+          _ <- try @IOException (closeFd destinationDescriptor)
+          removeStableDestinationIfOwned
+            destinationRoot
+            destinationParent
+            destinationLeaf
+            destination
+            destinationOpenedStatus
+    onExceptionPreservingPrimary
+      ( finallyPreservingPrimary
+          ( restore
+              ( finishStableCopy
+                  destinationParent
+                  destinationLeaf
                   destination
+                  maximumBytes
+                  sourceDescriptor
+                  listedStatus
+                  recheckSource
+                  expectedDigest
+                  destinationDescriptor
                   destinationOpenedStatus
-                synchroniseProvisioningDirectory (takeDirectory destination)
-          onExceptionPreservingPrimary
-            ( finallyPreservingPrimary
-                ( do
-                    unless
-                      (Posix.isRegularFile destinationOpenedStatus)
-                      (ioError (userError ("stable copy destination is not regular: " <> destination)))
-                    (copiedBytes, sourceContext) <-
-                      restore $ do
-                        copyProvisioningDescriptor
-                          sourceDescriptor
-                          destinationDescriptor
-                          0
-                          SHA256.init
-                          maximumBytes
-                    finalSourceStatus <-
-                      Posix.getFdStatus sourceDescriptor
-                    finalPathStatus <-
-                      Posix.getSymbolicLinkStatus source
-                    let sourceDigest =
-                          "sha256:"
-                            <> TextEncoding.decodeUtf8
-                              (Base16.encode (SHA256.finalize sourceContext))
-                        sourceExecutable =
-                          Posix.fileMode listedStatus
-                            .&. ( Posix.ownerExecuteMode
-                                    .|. Posix.groupExecuteMode
-                                    .|. Posix.otherExecuteMode
-                                )
-                            /= 0
-                        destinationMode =
-                          Posix.ownerReadMode
-                            .|. ( if sourceExecutable
-                                    then Posix.ownerExecuteMode
-                                    else 0
-                                )
-                    unless
-                      ( copiedBytes
-                          == fromIntegral (Posix.fileSize listedStatus)
-                          && stableExecutableStatus
-                            openedStatus
-                            finalSourceStatus
-                          && stableExecutableStatus
-                            finalSourceStatus
-                            finalPathStatus
-                      )
-                      (ioError (userError ("stable copy source changed while copying: " <> source)))
-                    Posix.setFdMode destinationDescriptor destinationMode
-                    fileSynchronise destinationDescriptor
-                    _ <- fdSeek destinationDescriptor AbsoluteSeek 0
-                    destinationContext <-
-                      restore
-                        (hashExecutableDescriptor SHA256.init destinationDescriptor)
-                    stableDestinationStatus <-
-                      Posix.getFdStatus destinationDescriptor
-                    destinationStatus <-
-                      Posix.getSymbolicLinkStatus destination
-                    finalDestinationStatus <-
-                      Posix.getFdStatus destinationDescriptor
-                    let destinationDigest =
-                          "sha256:"
-                            <> TextEncoding.decodeUtf8
-                              (Base16.encode (SHA256.finalize destinationContext))
-                    unless
-                      ( Posix.isRegularFile stableDestinationStatus
-                          && sameFileObject
-                            destinationOpenedStatus
-                            stableDestinationStatus
-                          && stableExecutableStatus
-                            stableDestinationStatus
-                            destinationStatus
-                          && stableExecutableStatus
-                            destinationStatus
-                            finalDestinationStatus
-                          && Posix.fileMode stableDestinationStatus
-                            .&. Posix.accessModes
-                            == destinationMode
-                          && Posix.fileSize stableDestinationStatus
-                            == Posix.fileSize listedStatus
-                          && destinationDigest == sourceDigest
-                      )
-                      (ioError (userError ("stable copy destination disagreed: " <> destination)))
-                    synchroniseProvisioningDirectory
-                      (takeDirectory destination)
-                    pure
-                      StableFileCopyEvidence
-                        { stableFileCopyDigest = destinationDigest,
-                          stableFileCopyInfo =
-                            pathInfoFromStatus stableDestinationStatus
-                        }
-                )
-                (closeFd destinationDescriptor)
-            )
-            cleanupDestination
+              )
+          )
+          (closeFd destinationDescriptor)
       )
-      (closeFd sourceDescriptor)
+      cleanupDestination
+
+-- | Copy the bytes, verify both sides, and fsync the retained parent.
+finishStableCopy ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  Integer ->
+  Fd ->
+  Posix.FileStatus ->
+  IO () ->
+  Maybe Text ->
+  Fd ->
+  Posix.FileStatus ->
+  IO (StableFileCopyEvidence s)
+finishStableCopy
+  destinationParent
+  destinationLeaf
+  destination
+  maximumBytes
+  sourceDescriptor
+  listedStatus
+  recheckSource
+  expectedDigest
+  destinationDescriptor
+  destinationOpenedStatus = do
+    unless
+      (Posix.isRegularFile destinationOpenedStatus)
+      (ioError (userError ("stable copy destination is not regular: " <> destination)))
+    (copiedBytes, sourceContext) <-
+      copyProvisioningDescriptor
+        sourceDescriptor
+        destinationDescriptor
+        0
+        SHA256.init
+        maximumBytes
+    recheckSource
+    let sourceDigest =
+          "sha256:"
+            <> TextEncoding.decodeUtf8
+              (Base16.encode (SHA256.finalize sourceContext))
+        destinationMode = stableCopyDestinationMode listedStatus
+    unless
+      ( copiedBytes == fromIntegral (Posix.fileSize listedStatus)
+          && maybe True (== sourceDigest) expectedDigest
+      )
+      (ioError (userError ("stable copy did not reproduce its exact source: " <> destination)))
+    Posix.setFdMode destinationDescriptor destinationMode
+    fileSynchronise destinationDescriptor
+    _ <- fdSeek destinationDescriptor AbsoluteSeek 0
+    destinationContext <-
+      hashExecutableDescriptor SHA256.init destinationDescriptor
+    stableDestinationStatus <- Posix.getFdStatus destinationDescriptor
+    destinationStatus <-
+      reopenFileEntryStatus destinationParent destinationLeaf
+    finalDestinationStatus <- Posix.getFdStatus destinationDescriptor
+    let destinationDigest =
+          "sha256:"
+            <> TextEncoding.decodeUtf8
+              (Base16.encode (SHA256.finalize destinationContext))
+    unless
+      ( Posix.isRegularFile stableDestinationStatus
+          && sameFileObject
+            destinationOpenedStatus
+            stableDestinationStatus
+          && stableExecutableStatus
+            stableDestinationStatus
+            destinationStatus
+          && stableExecutableStatus
+            destinationStatus
+            finalDestinationStatus
+          && Posix.fileMode stableDestinationStatus
+            .&. Posix.accessModes
+            == destinationMode
+          && Posix.fileSize stableDestinationStatus
+            == Posix.fileSize listedStatus
+          && destinationDigest == sourceDigest
+      )
+      (ioError (userError ("stable copy destination disagreed: " <> destination)))
+    synchroniseProvisioningDescriptor destinationParent
+    pure
+      StableFileCopyEvidence
+        { stableFileCopyDigest = destinationDigest,
+          stableFileCopyInfo =
+            pathInfoFromStatus stableDestinationStatus
+        }
+
+-- | The mode a stable copy's destination carries: owner-readable, and
+-- owner-executable exactly when the source was executable by anyone.
+stableCopyDestinationMode :: Posix.FileStatus -> FileMode
+stableCopyDestinationMode listedStatus =
+  Posix.ownerReadMode
+    .|. ( if sourceExecutable
+            then Posix.ownerExecuteMode
+            else 0
+        )
+  where
+    sourceExecutable =
+      Posix.fileMode listedStatus
+        .&. ( Posix.ownerExecuteMode
+                .|. Posix.groupExecuteMode
+                .|. Posix.otherExecuteMode
+            )
+        /= 0
 
 sameFileObject :: Posix.FileStatus -> Posix.FileStatus -> Bool
 sameFileObject expected observed =
   Posix.deviceID expected == Posix.deviceID observed
     && Posix.fileID expected == Posix.fileID observed
 
+-- | Remove a failed copy's destination, but only while the entry under the
+-- retained parent is still the exact file object this copy created.
+--
+-- The entry is re-observed through the retained parent descriptor rather than by
+-- re-resolving the pathname, so a parent swapped after the failure cannot
+-- redirect the removal onto an unrelated file. The removal itself goes through
+-- the mutation kernel, which is the only descriptor-anchored unlink available.
 removeStableDestinationIfOwned ::
+  AuthorizedWriterRoot ->
+  Fd ->
+  FilePath ->
   FilePath ->
   Posix.FileStatus ->
   IO ()
-removeStableDestinationIfOwned destination expected = do
-  observed <- try @IOException (Posix.getSymbolicLinkStatus destination)
-  case observed of
-    Right status
-      | sameFileObject expected status ->
-          Directory.removeFile destination
-    _ -> pure ()
+removeStableDestinationIfOwned
+  destinationRoot
+  destinationParent
+  destinationLeaf
+  destination
+  expected = do
+    observed <-
+      try @IOException (reopenFileEntryStatus destinationParent destinationLeaf)
+    case observed of
+      Right status
+        | sameFileObject expected status -> do
+            removeAuthorizedLeafThroughKernel
+              "stable copy rollback"
+              destinationRoot
+              destination
+            synchroniseProvisioningDescriptor destinationParent
+      _ -> pure ()
 
 copyProvisioningDescriptor ::
   Fd ->
@@ -7903,7 +9149,7 @@ copyProvisioningDescriptor ::
   Integer ->
   IO (Integer, SHA256.Ctx)
 copyProvisioningDescriptor source destination copiedBytes context maximumBytes = do
-  chunk <- PosixByteString.fdRead source (64 * 1024)
+  chunk <- readProvisioningDescriptorChunk source (64 * 1024)
   if ByteString.null chunk
     then pure (copiedBytes, context)
     else do
@@ -7931,10 +9177,6 @@ writeProvisioningDescriptor descriptor contents
       writeProvisioningDescriptor
         descriptor
         (ByteString.drop (fromIntegral written) contents)
-
-provisioningCanonicalizePath :: FilePath -> ProvisioningSession s FilePath
-provisioningCanonicalizePath =
-  ProvisioningSession . Directory.canonicalizePath
 
 provisioningInstallAppleNativeRunnerLibrary ::
   EngineWriter w s q ->
@@ -7966,9 +9208,25 @@ provisioningInstallAppleNativeRunnerLibrary
               "Apple native runner library destination"
               authorizedRoot
               destinationPath
+          -- The runner library is repo-owned and lies outside every writer root,
+          -- so it has no retained parent. Digesting it first and requiring the
+          -- copy to reproduce that digest binds the copied bytes: a source
+          -- swapped between the two reads fails closed rather than being
+          -- installed.
+          sourceBytes <-
+            readRegularFileNoFollowBounded
+              sourcePath
+              appleNativeRunnerLibraryBytes
           _ <-
             copyRegularFileStable
-              (1024 * 1024)
+              ( StableCopySourceExactContent
+                  ( "sha256:"
+                      <> TextEncoding.decodeUtf8
+                        (Base16.encode (SHA256.hash sourceBytes))
+                  )
+              )
+              authorizedRoot
+              (fromIntegral appleNativeRunnerLibraryBytes)
               sourcePath
               authorizedDestination
           validateWriterRootIdentity
@@ -8634,49 +9892,6 @@ copyAudiverisDmgReceipt cacheRoot engineRoot receipt destination = do
     )
     cleanupDestination
 
-digestRegularFileNoFollowExact ::
-  FilePath ->
-  Integer ->
-  IO Text
-digestRegularFileNoFollowExact path expectedBytes =
-  mask $ \restore -> do
-    listedStatus <- Posix.getSymbolicLinkStatus path
-    unless
-      ( Posix.isRegularFile listedStatus
-          && not (Posix.isSymbolicLink listedStatus)
-          && fromIntegral (Posix.fileSize listedStatus)
-            == expectedBytes
-      )
-      (ioError (userError ("exact digest source is invalid: " <> path)))
-    descriptor <-
-      openFd
-        path
-        ReadOnly
-        defaultFileFlags
-          { nofollow = True,
-            cloexec = True
-          }
-    finallyPreservingPrimary
-      ( restore $ do
-          openedStatus <- Posix.getFdStatus descriptor
-          unless
-            (stableExecutableStatus listedStatus openedStatus)
-            (ioError (userError ("exact digest source changed before open: " <> path)))
-          digest <-
-            digestExactProvisioningDescriptor
-              descriptor
-              expectedBytes
-          finalStatus <- Posix.getFdStatus descriptor
-          finalPathStatus <- Posix.getSymbolicLinkStatus path
-          unless
-            ( stableExecutableStatus openedStatus finalStatus
-                && stableExecutableStatus finalStatus finalPathStatus
-            )
-            (ioError (userError ("exact digest source changed while hashing: " <> path)))
-          pure digest
-      )
-      (closeFd descriptor)
-
 maximumRelocationBinEntries :: Integer
 maximumRelocationBinEntries = 4096
 
@@ -8735,6 +9950,7 @@ provisioningRelocateCandidateVenv
           "candidate relocation roots exceed their fixed byte bound"
     | otherwise =
         do
+          let EngineWriter _ _ authorizedRoot = writer
           authorizedInstallRoot <-
             authorizeEnginePath
               "candidate relocation install root"
@@ -8760,6 +9976,7 @@ provisioningRelocateCandidateVenv
             )
           ProvisioningSession
             ( relocateCandidateVenvExact
+                authorizedRoot
                 authorizedInstallRoot
                 authorizedCandidateRoot
                 authorizedOldRootBytes
@@ -8771,97 +9988,76 @@ provisioningRelocateCandidateVenv
       newRootBytes =
         TextEncoding.encodeUtf8 (Text.pack installRoot)
 
+-- | Rewrite a candidate venv's launchers and configuration to their final root.
+--
+-- Everything below the candidate root was already descriptor-anchored; the root
+-- itself was reached by a single full-path @openFd@, which made it the one
+-- swappable point in the whole traversal. It is now reached through the writer
+-- root's retained ancestry.
 relocateCandidateVenvExact ::
+  AuthorizedWriterRoot ->
   FilePath ->
   FilePath ->
   ByteString.ByteString ->
   ByteString.ByteString ->
   IO ()
 relocateCandidateVenvExact
+  authorizedRoot
   installRoot
   candidateRoot
   oldRootBytes
   newRootBytes =
-    mask $ \restore -> do
-      listedRootStatus <- Posix.getSymbolicLinkStatus candidateRoot
-      unless
-        ( Posix.isDirectory listedRootStatus
-            && not (Posix.isSymbolicLink listedRootStatus)
-        )
-        (ioError (userError "candidate relocation root is not a real directory"))
-      rootDescriptor <-
-        openFd
-          candidateRoot
-          ReadOnly
-          defaultFileFlags
-            { nofollow = True,
-              directory = True,
-              cloexec = True
-            }
-      finallyPreservingPrimary
-        ( restore $ do
-            openedRootStatus <- Posix.getFdStatus rootDescriptor
-            unless
-              (stableExecutableStatus listedRootStatus openedRootStatus)
-              (ioError (userError "candidate relocation root changed before traversal"))
-            withProvisioningDirectoryAt
-              rootDescriptor
-              candidateRoot
-              "venv"
-              ( \venvPath venvDescriptor _venvStatus -> do
-                  withProvisioningDirectoryAt
-                    venvDescriptor
-                    venvPath
-                    "bin"
-                    ( \binPath binDescriptor _binStatus -> do
-                        entries <-
-                          listDirectoryBoundedFromDescriptor
+    withRetainedAuthorizedDirectory
+      "candidate relocation root"
+      authorizedRoot
+      candidateRoot
+      ( \rootDescriptor -> do
+          openedRootStatus <- Posix.getFdStatus rootDescriptor
+          withProvisioningDirectoryAt
+            rootDescriptor
+            candidateRoot
+            "venv"
+            ( \venvPath venvDescriptor _venvStatus -> do
+                withProvisioningDirectoryAt
+                  venvDescriptor
+                  venvPath
+                  "bin"
+                  ( \binPath binDescriptor _binStatus -> do
+                      entries <-
+                        listDirectoryBoundedFromDescriptor
+                          binDescriptor
+                          maximumRelocationBinEntries
+                      mapM_
+                        ( rewriteRelocationEntry
+                            binPath
                             binDescriptor
-                            maximumRelocationBinEntries
-                        mapM_
-                          ( rewriteRelocationEntry
-                              binPath
-                              binDescriptor
-                              maximumRelocationBinFileBytes
-                              oldRootBytes
-                              newRootBytes
-                          )
-                          entries
-                    )
-                  rewriteRelocationEntry
-                    venvPath
-                    venvDescriptor
-                    maximumRelocationConfigBytes
-                    oldRootBytes
-                    newRootBytes
-                    "pyvenv.cfg"
-                  sourcePythonPaths <-
-                    rewritePyvenvConfigExact
-                      installRoot
-                      candidateRoot
-                      venvPath
-                      venvDescriptor
-                  requireNoRelocationResidual
+                            maximumRelocationBinFileBytes
+                            oldRootBytes
+                            newRootBytes
+                        )
+                        entries
+                  )
+                rewriteRelocationEntry
+                  venvPath
+                  venvDescriptor
+                  maximumRelocationConfigBytes
+                  oldRootBytes
+                  newRootBytes
+                  "pyvenv.cfg"
+                sourcePythonPaths <-
+                  rewritePyvenvConfigExact
+                    installRoot
                     candidateRoot
-                    rootDescriptor
-                    openedRootStatus
-                    (oldRootBytes : sourcePythonPaths)
-              )
-            finalRootStatus <- Posix.getFdStatus rootDescriptor
-            finalRootPathStatus <-
-              Posix.getSymbolicLinkStatus candidateRoot
-            unless
-              ( stableExecutableStatus openedRootStatus finalRootStatus
-                  && stableExecutableStatus
-                    finalRootStatus
-                    finalRootPathStatus
-              )
-              (ioError (userError "candidate relocation root changed during traversal"))
-        )
-        (closeFd rootDescriptor)
+                    venvDescriptor
+                requireNoRelocationResidual
+                  candidateRoot
+                  rootDescriptor
+                  openedRootStatus
+                  (oldRootBytes : sourcePythonPaths)
+            )
+      )
 
 rewritePyvenvConfigExact ::
-  FilePath ->
   FilePath ->
   FilePath ->
   Fd ->
@@ -8869,7 +10065,6 @@ rewritePyvenvConfigExact ::
 rewritePyvenvConfigExact
   installRoot
   candidateRoot
-  venvPath
   venvDescriptor =
     mask $ \restore -> do
       descriptor <-
@@ -8938,18 +10133,19 @@ rewritePyvenvConfigExact
                 descriptor
                 (fromIntegral (ByteString.length rewrittenBytes))
             finalStatus <- Posix.getFdStatus descriptor
-            finalPathStatus <-
-              Posix.getSymbolicLinkStatus (venvPath </> "pyvenv.cfg")
+            -- The reopen goes through the retained venv descriptor, which is
+            -- what makes it evidence. The superseded chain also stat'ed
+            -- @venvPath \<\/\> "pyvenv.cfg"@ by pathname, which re-resolved the
+            -- whole ancestry the retained descriptor exists to pin.
             reopenedStatus <-
               reopenFileEntryStatus venvDescriptor "pyvenv.cfg"
             unless
               ( observed == rewrittenBytes
                   && sameFileObject openedStatus finalStatus
-                  && stableExecutableStatus finalStatus finalPathStatus
-                  && stableExecutableStatus finalPathStatus reopenedStatus
+                  && stableExecutableStatus finalStatus reopenedStatus
               )
               (ioError (userError "rewritten pyvenv.cfg did not seal"))
-            synchroniseProvisioningDirectory venvPath
+            synchroniseProvisioningDescriptor venvDescriptor
             pure
               ( List.nub
                   [ TextEncoding.encodeUtf8 (Text.pack path)
@@ -9248,7 +10444,7 @@ rewriteRelocationDescriptor
             && sameFileObject parentStatus parentPathStatus
         )
         (ioError (userError ("candidate relocation rewrite did not seal: " <> path)))
-      synchroniseProvisioningDirectory parentPath
+      synchroniseProvisioningDescriptor parentDescriptor
 
 replaceProvisioningBytes ::
   ByteString.ByteString ->
@@ -9301,13 +10497,26 @@ validateSkippedRelocationEntry parentPath parentDescriptor path entry = do
               (ioError (userError ("candidate relocation directory changed: " <> path)))
         )
         (closeFd descriptor)
-    Left _ -> do
-      _ <-
-        validateStableProvisioningSymlink
-          parentPath
-          parentDescriptor
-          path
-      pure ()
+    Left openFailure -> do
+      -- A candidate entry the rewrite pass could not open for writing is not
+      -- necessarily a directory or a symlink. A copied interpreter such as
+      -- `venv/bin/infernix-python` is a read-and-execute regular file, so the
+      -- rewrite open fails with EACCES and the directory probe then fails with
+      -- ENOTDIR. Skipping it here is safe because nothing is assumed about its
+      -- contents: the residual scan reads every regular file in the activated
+      -- candidate and fails closed if any still carries the pre-relocation
+      -- root, so a file that genuinely needed rewriting cannot pass unnoticed.
+      entryStatus <- Posix.getSymbolicLinkStatus path
+      if Posix.isRegularFile entryStatus
+        then pure ()
+        else do
+          _ <-
+            validateStableProvisioningSymlink
+              parentPath
+              parentDescriptor
+              path
+              openFailure
+          pure ()
 
 data RelocatedCandidateScan = RelocatedCandidateScan
   { relocatedCandidateEntries :: !Integer,
@@ -9504,12 +10713,13 @@ scanRelocatedCandidateFile
                 )
           )
           (closeFd descriptor)
-      Left _ -> do
+      Left openFailure -> do
         target <-
           validateStableProvisioningSymlink
             parentPath
             parentDescriptor
             path
+            openFailure
         let nextState =
               state
                 { relocatedCandidateBytes =
@@ -9550,7 +10760,7 @@ descriptorHasShebang descriptor expectedBytes
   | expectedBytes < 2 = pure False
   | otherwise = do
       _ <- fdSeek descriptor AbsoluteSeek 0
-      prefix <- PosixByteString.fdRead descriptor 2
+      prefix <- readProvisioningDescriptorChunk descriptor 2
       _ <- fdSeek descriptor AbsoluteSeek 0
       pure (prefix == ByteString.pack [35, 33])
 
@@ -9580,14 +10790,26 @@ validateStableProvisioningSymlink ::
   FilePath ->
   Fd ->
   FilePath ->
+  IOException ->
   IO ByteString.ByteString
-validateStableProvisioningSymlink parentPath parentDescriptor path = do
+validateStableProvisioningSymlink parentPath parentDescriptor path openFailure = do
   parentStatus <- Posix.getFdStatus parentDescriptor
   parentPathStatus <- Posix.getSymbolicLinkStatus parentPath
   status <- Posix.getSymbolicLinkStatus path
+  -- Carry the open failure: without it a caller cannot tell a permission
+  -- problem from an unsupported entry kind, and the candidate that produced it
+  -- is retired before it can be inspected.
   unless
     (Posix.isSymbolicLink status)
-    (ioError (userError ("provisioning entry is neither openable nor a symlink: " <> path)))
+    ( ioError
+        ( userError
+            ( "provisioning entry is neither openable nor a symlink: "
+                <> path
+                <> "; open failed with "
+                <> displayException openFailure
+            )
+        )
+    )
   target <- Posix.readSymbolicLink path
   finalStatus <- Posix.getSymbolicLinkStatus path
   finalTarget <- Posix.readSymbolicLink path
@@ -9639,7 +10861,7 @@ descriptorContainsProvisioningBytes descriptor expectedBytes needle
           let remaining = expectedBytes - observedBytes
               requested =
                 fromIntegral (min (64 * 1024) (remaining + 1))
-          chunk <- PosixByteString.fdRead descriptor requested
+          chunk <- readProvisioningDescriptorChunk descriptor requested
           if ByteString.null chunk
             then do
               unless
@@ -9669,9 +10891,11 @@ provisioningWriteFile ::
   ProvisioningSession s ()
 provisioningWriteFile (EngineWriter _ _ authorizedRoot) path contents =
   ProvisioningSession $ do
-    authorizedPath <-
-      authorizedWriterPath "engine text write" authorizedRoot path
-    writeFile authorizedPath contents
+    writeAuthorizedRegularFile
+      "engine text write"
+      authorizedRoot
+      path
+      (TextEncoding.encodeUtf8 (Text.pack contents))
     validateWriterRootIdentity "engine text write" authorizedRoot
 
 provisioningProjectWriteFile ::
@@ -9681,9 +10905,11 @@ provisioningProjectWriteFile ::
   ProvisioningSession s ()
 provisioningProjectWriteFile (ProjectWriter _ authorizedRoot) path contents =
   ProvisioningSession $ do
-    authorizedPath <-
-      authorizedWriterPath "project text write" authorizedRoot path
-    writeFile authorizedPath contents
+    writeAuthorizedRegularFile
+      "project text write"
+      authorizedRoot
+      path
+      (TextEncoding.encodeUtf8 (Text.pack contents))
     validateWriterRootIdentity "project text write" authorizedRoot
 
 provisioningWriteBytes ::
@@ -9691,12 +10917,51 @@ provisioningWriteBytes ::
   FilePath ->
   ByteString.ByteString ->
   ProvisioningSession s ()
-provisioningWriteBytes (EngineWriter _ _ authorizedRoot) path contents =
-  ProvisioningSession $ do
-    authorizedPath <-
-      authorizedWriterPath "engine byte write" authorizedRoot path
-    ByteString.writeFile authorizedPath contents
-    validateWriterRootIdentity "engine byte write" authorizedRoot
+provisioningWriteBytes =
+  provisioningWriteBytesWithPause Nothing
+
+-- | The engine byte write with the adversarial parent-swap checkpoint of
+-- 'writeAuthorizedRegularFileWithParentSwapPause' exposed to a deterministic
+-- test. Named for what it is: the seam a swap fixture plants its substitute
+-- through.
+provisioningWriteBytesWithParentSwapPauseForTest ::
+  EngineWriter w s q ->
+  FilePath ->
+  ByteString.ByteString ->
+  MVar () ->
+  MVar () ->
+  ProvisioningSession s ()
+provisioningWriteBytesWithParentSwapPauseForTest
+  writer
+  path
+  contents
+  entered
+  resume =
+    provisioningWriteBytesWithPause
+      (Just (entered, resume))
+      writer
+      path
+      contents
+
+provisioningWriteBytesWithPause ::
+  Maybe (MVar (), MVar ()) ->
+  EngineWriter w s q ->
+  FilePath ->
+  ByteString.ByteString ->
+  ProvisioningSession s ()
+provisioningWriteBytesWithPause
+  pauseBeforeLeaf
+  (EngineWriter _ _ authorizedRoot)
+  path
+  contents =
+    ProvisioningSession $ do
+      writeAuthorizedRegularFileWithParentSwapPause
+        pauseBeforeLeaf
+        "engine byte write"
+        authorizedRoot
+        path
+        contents
+      validateWriterRootIdentity "engine byte write" authorizedRoot
 
 data ProvisioningPathKind
   = ProvisioningDirectory
@@ -9712,12 +10977,6 @@ data ProvisioningPathInfo = ProvisioningPathInfo
     provisioningPathFileId :: !FileID
   }
   deriving (Eq, Show)
-
-provisioningPathInfo :: FilePath -> ProvisioningSession s ProvisioningPathInfo
-provisioningPathInfo path =
-  ProvisioningSession $ do
-    status <- Posix.getSymbolicLinkStatus path
-    pure (pathInfoFromStatus status)
 
 pathInfoFromStatus :: Posix.FileStatus -> ProvisioningPathInfo
 pathInfoFromStatus status =
@@ -9754,16 +11013,25 @@ provisioningPublishDurableRecord
       authorizedPath <-
         authorizedWriterPath "durable record publication" authorizedRoot path
       validateDurableRecordPayload authorizedPath contents
-      reconcileDurableRecordStaging authorizedPath
-      existing <- try @IOException (Posix.getSymbolicLinkStatus authorizedPath)
+      reconcileDurableRecordStaging
+        "durable record publication"
+        authorizedRoot
+        authorizedPath
+      existing <-
+        observeAuthorizedPathStatus
+          "durable record publication"
+          authorizedRoot
+          authorizedPath
       case existing of
-        Right _ ->
+        Just _ ->
           ioError
             (userError ("durable provisioning record already exists: " <> authorizedPath))
-        Left failure
-          | isDoesNotExistError failure ->
-              publishDurableRecordBytes False authorizedPath contents
-          | otherwise -> ioError failure
+        Nothing ->
+          publishDurableRecordBytes
+            DurableRecordFirstPublication
+            authorizedRoot
+            authorizedPath
+            contents
       validateWriterRootIdentity "durable record publication" authorizedRoot
       pure (DurableProvisioningRecord authorizedPath)
 
@@ -9779,20 +11047,26 @@ provisioningRecoverDurableRecord
     ProvisioningSession $ do
       authorizedPath <-
         authorizedWriterPath "durable record recovery" authorizedRoot path
-      reconcileDurableRecordStaging authorizedPath
-      statusResult <-
-        try @IOException (Posix.getSymbolicLinkStatus authorizedPath)
-      case statusResult of
-        Left failure
-          | isDoesNotExistError failure -> pure Nothing
-          | otherwise -> ioError failure
-        Right status
+      reconcileDurableRecordStaging
+        "durable record recovery"
+        authorizedRoot
+        authorizedPath
+      observed <-
+        observeAuthorizedPathStatus
+          "durable record recovery"
+          authorizedRoot
+          authorizedPath
+      case observed of
+        Nothing -> pure Nothing
+        Just status
           | Posix.isRegularFile status
               && not (Posix.isSymbolicLink status) -> do
               contents <-
-                readRegularFileNoFollowBounded
+                readAuthorizedRegularFile
+                  "durable record recovery"
+                  authorizedRoot
                   authorizedPath
-                  maximumDurableProvisioningRecordBytes
+                  (fromIntegral maximumDurableProvisioningRecordBytes)
               pure
                 (Just (contents, DurableProvisioningRecord authorizedPath))
           | otherwise ->
@@ -9816,9 +11090,19 @@ provisioningReplaceDurableRecord
       authorizedPath <-
         authorizedWriterPath "durable record replacement" authorizedRoot path
       validateDurableRecordPayload authorizedPath contents
-      requireDurableRecordPath authorizedPath
-      reconcileDurableRecordStaging authorizedPath
-      publishDurableRecordBytes True authorizedPath contents
+      requireDurableRecordEntry
+        "durable record replacement"
+        authorizedRoot
+        authorizedPath
+      reconcileDurableRecordStaging
+        "durable record replacement"
+        authorizedRoot
+        authorizedPath
+      publishDurableRecordBytes
+        DurableRecordReplacement
+        authorizedRoot
+        authorizedPath
+        contents
       validateWriterRootIdentity "durable record replacement" authorizedRoot
       pure (DurableProvisioningRecord authorizedPath)
 
@@ -9832,23 +11116,19 @@ provisioningRetireDurableRecord
     ProvisioningSession $ do
       authorizedPath <-
         authorizedWriterPath "durable record retirement" authorizedRoot path
-      requireDurableRecordPath authorizedPath
-      Directory.removeFile authorizedPath
-      synchroniseProvisioningDirectory (takeDirectory authorizedPath)
-      reconcileDurableRecordStaging authorizedPath
+      requireDurableRecordEntry
+        "durable record retirement"
+        authorizedRoot
+        authorizedPath
+      removeAuthorizedLeafThroughKernel
+        "durable record retirement"
+        authorizedRoot
+        authorizedPath
+      reconcileDurableRecordStaging
+        "durable record retirement"
+        authorizedRoot
+        authorizedPath
       validateWriterRootIdentity "durable record retirement" authorizedRoot
-
-provisioningReadBoundedNoFollow ::
-  FilePath ->
-  Int ->
-  ProvisioningSession s ByteString.ByteString
-provisioningReadBoundedNoFollow path maximumBytes
-  | maximumBytes <= 0 || maximumBytes > 1024 * 1024 =
-      failProvisioningSession
-        "bounded nofollow read requires a limit between 1 and 1048576 bytes"
-  | otherwise =
-      ProvisioningSession
-        (readRegularFileNoFollowBounded path maximumBytes)
 
 validateDurableRecordPayload ::
   FilePath ->
@@ -9866,68 +11146,170 @@ validateDurableRecordPayload path contents =
 durableRecordStagingPath :: FilePath -> FilePath
 durableRecordStagingPath path = path <> ".incoming"
 
-reconcileDurableRecordStaging :: FilePath -> IO ()
-reconcileDurableRecordStaging path = do
+-- | Whether a durable record is being published for the first time or is
+-- replacing an existing one.
+--
+-- The two differ in the precondition the atomic publish step enforces at the
+-- destination, so naming them keeps that choice at the call site instead of in
+-- a positional 'Bool'.
+data DurableRecordPublication
+  = DurableRecordFirstPublication
+  | DurableRecordReplacement
+  deriving (Eq, Show)
+
+-- | Discard a leftover staging entry beside a durable record.
+--
+-- The staging leaf is derived from the record's own validated leaf by
+-- appending a suffix that introduces no path separator, so it is a sibling of
+-- the record under the same retained parent. The superseded form appended the
+-- suffix to a full pathname and then unlinked and fsynced by pathname with no
+-- writer root in scope at all.
+reconcileDurableRecordStaging ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  IO ()
+reconcileDurableRecordStaging label authorizedRoot path = do
   let stagingPath = durableRecordStagingPath path
-  statusResult <-
-    try @IOException (Posix.getSymbolicLinkStatus stagingPath)
-  case statusResult of
-    Left failure
-      | isDoesNotExistError failure -> pure ()
-      | otherwise -> ioError failure
-    Right status
+  observed <-
+    observeAuthorizedPathStatus
+      (label <> " staging")
+      authorizedRoot
+      stagingPath
+  case observed of
+    Nothing -> pure ()
+    Just status
       | Posix.isRegularFile status
-          && not (Posix.isSymbolicLink status) -> do
-          Directory.removeFile stagingPath
-          synchroniseProvisioningDirectory (takeDirectory path)
+          && not (Posix.isSymbolicLink status) ->
+          removeAuthorizedLeafThroughKernel
+            (label <> " staging")
+            authorizedRoot
+            stagingPath
       | otherwise ->
           ioError
             (userError ("durable record staging path is unsafe: " <> stagingPath))
 
+-- | Write a durable record's bytes to a staging sibling and publish it
+-- atomically.
+--
+-- Both the staging create and its failure-path removal are anchored on the
+-- retained parent descriptor, and the publish step is the kernel's sibling
+-- rename, which is the only descriptor-anchored rename available. The staging
+-- file is fsynced before the rename and the parent afterwards, so the record
+-- is durable at the name a reader will look for.
 publishDurableRecordBytes ::
-  Bool ->
+  DurableRecordPublication ->
+  AuthorizedWriterRoot ->
   FilePath ->
   ByteString.ByteString ->
   IO ()
-publishDurableRecordBytes replacing path contents =
-  mask $ \restore -> do
-    let stagingPath = durableRecordStagingPath path
-        recordMode =
-          Posix.ownerReadMode .|. Posix.ownerWriteMode
-    descriptor <-
-      openFd
-        stagingPath
-        WriteOnly
-        defaultFileFlags
-          { exclusive = True,
-            nofollow = True,
-            creat = Just recordMode,
-            cloexec = True
-          }
-    onExceptionPreservingPrimary
-      ( do
-          finallyPreservingPrimary
-            ( restore $ do
-                writeProvisioningDescriptor descriptor contents
-                fileSynchronise descriptor
-            )
-            (closeFd descriptor)
-          when replacing (requireDurableRecordPath path)
-          Directory.renameFile stagingPath path
-          synchroniseProvisioningDirectory (takeDirectory path)
-      )
-      ( do
-          _ <- try @IOException (closeFd descriptor)
-          _ <- try @IOException (Directory.removeFile stagingPath)
-          synchroniseProvisioningDirectory (takeDirectory path)
-      )
-
-requireDurableRecordPath :: FilePath -> IO ()
-requireDurableRecordPath path = do
-  status <- Posix.getSymbolicLinkStatus path
+publishDurableRecordBytes publication authorizedRoot path contents = do
+  let stagingPath = durableRecordStagingPath path
+  recordComponents <-
+    authorizedWriterRelativeComponents
+      (label <> " record")
+      authorizedRoot
+      path
+  stagingComponents <-
+    authorizedWriterRelativeComponents
+      (label <> " staging")
+      authorizedRoot
+      stagingPath
   unless
-    (Posix.isRegularFile status && not (Posix.isSymbolicLink status))
+    (init recordComponents == init stagingComponents)
+    (ioError (userError (label <> " staging is not a sibling of its record")))
+  onExceptionPreservingPrimary
+    ( do
+        writeAuthorizedRegularFile
+          (label <> " staging")
+          authorizedRoot
+          stagingPath
+          contents
+        case publication of
+          DurableRecordFirstPublication -> pure ()
+          DurableRecordReplacement ->
+            requireDurableRecordEntry label authorizedRoot path
+        runAuthorizedFilesystemMutation
+          (label <> " publication")
+          authorizedRoot
+          ( durableRecordPublishMutation
+              publication
+              (authorizedWriterMutationRoot authorizedRoot)
+              (init stagingComponents)
+              (last stagingComponents)
+              (last recordComponents)
+          )
+    )
+    ( removeAuthorizedLeafThroughKernel
+        (label <> " staging rollback")
+        authorizedRoot
+        stagingPath
+    )
+  where
+    label = "durable record"
+
+-- | The atomic publish step for each publication kind.
+durableRecordPublishMutation ::
+  DurableRecordPublication ->
+  Subprocess.ProvisioningMutationRoot ->
+  [FilePath] ->
+  FilePath ->
+  FilePath ->
+  Either
+    Subprocess.ProvisioningFilesystemMutationOutcome
+    Subprocess.ProvisioningFilesystemMutation
+durableRecordPublishMutation publication mutationRoot parentComponents =
+  case publication of
+    DurableRecordFirstPublication ->
+      Subprocess.provisioningRenameSiblingRegularFile
+        mutationRoot
+        parentComponents
+    DurableRecordReplacement ->
+      Subprocess.provisioningReplaceSiblingRegularFile
+        mutationRoot
+        parentComponents
+
+-- | Require that an authorized path names a real regular file, observed through
+-- the retained parent descriptor rather than by re-resolving the pathname.
+requireDurableRecordEntry ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  IO ()
+requireDurableRecordEntry label authorizedRoot path = do
+  observed <- observeAuthorizedPathStatus label authorizedRoot path
+  unless
+    ( maybe
+        False
+        (\status -> Posix.isRegularFile status && not (Posix.isSymbolicLink status))
+        observed
+    )
     (ioError (userError ("durable provisioning record is unsafe: " <> path)))
+
+-- | Remove one leaf under an authorized writer root through the mutation
+-- kernel.
+--
+-- @unix-2.8.8.0@ exposes no public @unlinkat@ and @foreign import@ is
+-- forbidden, so the kernel -- which @fchdir@s into the retained parent and
+-- names one CWD-relative leaf -- is the only descriptor-anchored removal
+-- available. Removing an absent leaf succeeds, so this is idempotent and safe
+-- on a rollback path.
+removeAuthorizedLeafThroughKernel ::
+  String ->
+  AuthorizedWriterRoot ->
+  FilePath ->
+  IO ()
+removeAuthorizedLeafThroughKernel label authorizedRoot path = do
+  components <-
+    authorizedWriterRelativeComponents label authorizedRoot path
+  runAuthorizedFilesystemMutation
+    label
+    authorizedRoot
+    ( Subprocess.provisioningRemoveTreeLeaf
+        (authorizedWriterMutationRoot authorizedRoot)
+        (init components)
+        (last components)
+    )
 
 readRegularFileNoFollowBounded ::
   FilePath ->
@@ -9983,7 +11365,7 @@ readProvisioningDescriptorBounded ::
   IO ByteString.ByteString
 readProvisioningDescriptorBounded descriptor maximumBytes bytesRead chunks = do
   chunk <-
-    PosixByteString.fdRead
+    readProvisioningDescriptorChunk
       descriptor
       (fromIntegral (maximumBytes + 1 - bytesRead))
   if ByteString.null chunk
@@ -9999,41 +11381,21 @@ readProvisioningDescriptorBounded descriptor maximumBytes bytesRead chunks = do
         nextBytes
         (chunk : chunks)
 
-synchroniseProvisioningDirectory :: FilePath -> IO ()
-synchroniseProvisioningDirectory path =
-  mask $ \restore -> do
-    descriptor <-
-      openFd
-        path
-        ReadOnly
-        defaultFileFlags
-          { nofollow = True,
-            cloexec = True
-          }
-    finallyPreservingPrimary
-      ( restore $ do
-          status <- Posix.getFdStatus descriptor
-          unless
-            (Posix.isDirectory status)
-            (ioError (userError ("fsync path is not a directory: " <> path)))
-          fileSynchronise descriptor
-      )
-      (closeFd descriptor)
-
-synchroniseProvisioningFile :: FilePath -> IO ()
-synchroniseProvisioningFile path =
-  mask $ \restore -> do
-    descriptor <-
-      openFd
-        path
-        ReadOnly
-        defaultFileFlags
-          { nofollow = True,
-            cloexec = True
-          }
-    finallyPreservingPrimary
-      (restore (fileSynchronise descriptor))
-      (closeFd descriptor)
+-- | Make one already-retained directory descriptor durable.
+--
+-- This is the only fsync form in this module. The superseded @FilePath@ form
+-- re-resolved the directory it was asked to make durable, so a parent swapped
+-- at that moment was fsynced instead of the directory the caller had just
+-- mutated -- the effect and its durability proof named different objects. Every
+-- caller now holds the descriptor it mutated through and hands that exact
+-- object here.
+synchroniseProvisioningDescriptor :: Fd -> IO ()
+synchroniseProvisioningDescriptor descriptor = do
+  status <- Posix.getFdStatus descriptor
+  unless
+    (Posix.isDirectory status)
+    (ioError (userError "fsync descriptor is not a directory"))
+  fileSynchronise descriptor
 
 data ProvisioningProcessIdentity s = ProvisioningProcessIdentity
   { provisioningProcessIdentityPid :: !Integer,
@@ -10071,23 +11433,16 @@ provisioningExactProcessIdentityAbsent processId renderedBirth =
             current <- readProcessBirthIdentity processId
             pure (Right (current /= Just expected))
 
-provisioningFileExecutable :: FilePath -> ProvisioningSession s Bool
-provisioningFileExecutable path =
-  ProvisioningSession
-    (Directory.executable <$> Directory.getPermissions path)
-
 provisioningMakeExecutable ::
   EngineWriter w s q ->
   FilePath ->
   ProvisioningSession s ()
 provisioningMakeExecutable (EngineWriter _ _ authorizedRoot) path =
   ProvisioningSession $ do
-    authorizedPath <-
-      authorizedWriterPath "engine executable mutation" authorizedRoot path
-    permissions <- Directory.getPermissions authorizedPath
-    Directory.setPermissions
-      authorizedPath
-      (Directory.setOwnerExecutable True permissions)
+    setAuthorizedLeafExecutable
+      "engine executable mutation"
+      authorizedRoot
+      path
     validateWriterRootIdentity "engine executable mutation" authorizedRoot
 
 provisioningReconcileArtifactRoot ::
@@ -10095,7 +11450,7 @@ provisioningReconcileArtifactRoot ::
   FilePath ->
   ProvisioningSession s ()
 provisioningReconcileArtifactRoot
-  (EngineWriter authority _recovered authorizedRoot)
+  writer@(EngineWriter authority _recovered authorizedRoot)
   installRoot =
     ProvisioningSession $ do
       authorizedInstallRoot <-
@@ -10105,6 +11460,7 @@ provisioningReconcileArtifactRoot
           installRoot
       ArtifactInternal.reconcileEngineArtifactRoot
         authority
+        (provisioningArtifactRootMutator writer)
         authorizedInstallRoot
       validateWriterRootIdentity "artifact reconciliation" authorizedRoot
 
@@ -10369,6 +11725,8 @@ materializeFixedVenvPython label authorizedRoot venvOwnerRoot hostIdentity = do
           ioError (userError (label <> " is not a regular file"))
   _ <-
     copyRegularFileStable
+      (StableCopySourceExactContent (resolvedExecutableDigest venvIdentity))
+      authorizedRoot
       maximumExactRuntimeFileBytes
       (resolvedExecutableCanonicalPath venvIdentity)
       installedTarget
@@ -10801,42 +12159,6 @@ audiverisPinnedDmgUrl :: String
 audiverisPinnedDmgUrl =
   Internal.audiverisDmgUrl
 
-runProvisioningCommandWithExecutable ::
-  ProvisioningGrant s ->
-  ProvisioningDeadline ->
-  ResolvedExecutableIdentity ->
-  [Internal.ProvisioningPackageClosureIdentity] ->
-  [Internal.ProvisioningRuntimeLibraryIdentity] ->
-  Internal.ProvisioningCommand ->
-  ProvisioningSession s ProvisioningOutcome
-runProvisioningCommandWithExecutable
-  grant
-  deadline
-  identity
-  packageClosures
-  runtimeLibraries
-  command = do
-    validation <-
-      ProvisioningSession (revalidateExecutableIdentity identity)
-    case validation of
-      Left failure ->
-        pure
-          ( ProvisioningRejected
-              ( "resolved executable identity changed before bounded launch: "
-                  <> failure
-              )
-          )
-      Right () ->
-        runProvisioningCommandWithIdentity
-          grant
-          deadline
-          ( toKernelExecutableIdentity
-              identity
-              packageClosures
-              runtimeLibraries
-          )
-          command
-
 runProvisioningCommandWithExecutableInWriter ::
   AuthorizedWriterRoot ->
   [FilePath] ->
@@ -10907,33 +12229,6 @@ toKernelExecutableIdentity identity packageClosures runtimeLibraries =
             runtimeLibraries
         }
 
-runProvisioningCommandWithIdentity ::
-  ProvisioningGrant s ->
-  ProvisioningDeadline ->
-  Internal.ProvisioningExecutableIdentity ->
-  Internal.ProvisioningCommand ->
-  ProvisioningSession s ProvisioningOutcome
-runProvisioningCommandWithIdentity
-  (ProvisioningGrant environment)
-  deadline@(ProvisioningDeadline timeout)
-  identity
-  command =
-    ProvisioningSession execution
-    where
-      execution =
-        case Subprocess.compileProvisioningCommandWithExecutable
-          command
-          identity
-          environment
-          ( Subprocess.Timeout
-              (Internal.positiveProvisioningTimeoutMicros timeout)
-          ) of
-          Left failure ->
-            pure (ProvisioningRejected failure)
-          Right boundedCommand ->
-            toProvisioningOutcome deadline
-              <$> Subprocess.runBoundedCommand boundedCommand
-
 runProvisioningCommandWithIdentityInWriter ::
   AuthorizedWriterRoot ->
   [FilePath] ->
@@ -10970,48 +12265,6 @@ runProvisioningCommandWithIdentityInWriter
             "bounded provisioning working directory"
             authorizedRoot
           pure (toProvisioningOutcome deadline outcome)
-
-runProvisioningCommand ::
-  ProvisioningGrant s ->
-  ProvisioningDeadline ->
-  Internal.ProvisioningCommand ->
-  ProvisioningSession s ProvisioningOutcome
-runProvisioningCommand
-  (ProvisioningGrant environment)
-  deadline@(ProvisioningDeadline timeout)
-  command =
-    ProvisioningSession execution
-    where
-      execution =
-        case Subprocess.resolveProvisioningCommandExecutable
-          command
-          environment of
-          Left failure ->
-            pure (ProvisioningRejected failure)
-          Right executablePath -> do
-            identityResolution <-
-              resolveExecutableIdentity executablePath
-            case identityResolution of
-              Left failure ->
-                pure
-                  ( ProvisioningRejected
-                      ( "could not mint exact executable authority: "
-                          <> failure
-                      )
-                  )
-              Right identity ->
-                case Subprocess.compileProvisioningCommandWithExecutable
-                  command
-                  (toKernelExecutableIdentity identity [] [])
-                  environment
-                  ( Subprocess.Timeout
-                      (Internal.positiveProvisioningTimeoutMicros timeout)
-                  ) of
-                  Left failure ->
-                    pure (ProvisioningRejected failure)
-                  Right boundedCommand ->
-                    toProvisioningOutcome deadline
-                      <$> Subprocess.runBoundedCommand boundedCommand
 
 runProvisioningCommandInWriter ::
   AuthorizedWriterRoot ->

@@ -1,21 +1,21 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Main (main) where
 
 import Infernix.Engines.Artifact.Capability
-  ( ArtifactPhase (..),
-    ArtifactTerminalOutcome,
-    Program,
-    Session,
-    reapArtifact,
+  ( ArtifactLaunchRequest,
+    ArtifactLauncher,
+    artifactLauncher,
   )
 
-escapeArtifactNestedIO ::
-  Session s 'ArtifactReady %1 ->
-  Program s 'ArtifactReaped (IO ())
+-- | The launcher result is a fixed, closed classification. It must not be able
+-- to carry a nested 'IO' action back out of the shared-lock region.
+escapeArtifactNestedIO :: ArtifactLauncher
 escapeArtifactNestedIO =
-  reapArtifact (const (pure (pure ())))
+  artifactLauncher nestedAction
+
+nestedAction :: ArtifactLaunchRequest -> IO (IO ())
+nestedAction _request = pure (pure ())
 
 main :: IO ()
 main = pure ()

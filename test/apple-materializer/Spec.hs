@@ -31,6 +31,7 @@ import Data.Either (isLeft)
 import Data.List qualified as List
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
+import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..), discoverPaths)
 import Infernix.Engines.AppleSilicon.Internal qualified as AppleInternal
 import Infernix.Engines.Artifact qualified as Artifact
@@ -46,13 +47,14 @@ import System.Directory
   )
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.FilePath (takeDirectory, (</>))
+import System.FilePath ((</>))
 import System.Info (os)
 import System.Posix.Process (getProcessID)
 import System.Timeout qualified as Timeout
 
 main :: IO ()
 main = do
+  Subprocess.dispatchInternalSubprocessMode
   arguments <- getArgs
   case arguments of
     [] -> runMachineIndependentTests
@@ -105,7 +107,10 @@ testCases =
     ("Apple runtime smoke parsing is exact for all seven targets", exactAppleRuntimeSmokeParsingTest),
     ("Mach-O fixture copies recursive inherited-rpath closure", recursiveMachOClosureTest),
     ("Mach-O fixture rejects missing, unresolved, and colliding closure input", rejectedMachOClosureTest),
-    ("Mach-O production hard bounds reject every excess dimension", machOClosureBoundsTest)
+    ("Mach-O production hard bounds reject every excess dimension", machOClosureBoundsTest),
+    ("Mach-O install-name ascent is admitted only inside its package closure", machOInstallNameAscentTest),
+    ("only a host-bound shebang leaves the Python home closure", shebangHostBindingTest),
+    ("the Mach-O fat magic does not admit a Java class file", machOFatMagicCollisionTest)
   ]
 
 syntheticBoundaryFailureTest :: IO ()
@@ -756,6 +761,144 @@ rejectedMachOClosureTest = do
         )
     )
 
+-- | Sprint 1.20 Apple cohort: the delocated-wheel install-name policy.
+--
+-- Every delocated Python wheel loads its vendored libraries through
+-- @\@loader_path\/..\/.dylibs\/<name>@, so refusing @..@ outright makes those
+-- environments unvendorable. The ascent is admitted only inside a package
+-- closure and only while it stays there, so an install name still cannot reach
+-- out of the environment and vendor an arbitrary host library.
+machOInstallNameAscentTest :: IO ()
+machOInstallNameAscentTest = do
+  let closureRoot = "/infernix-fixture/venv"
+      loader =
+        closureRoot
+          </> "lib/python3.11/site-packages/numpy/core/_multiarray.so"
+  admitted <-
+    AppleInternal.machOInstallNameTargetForTest
+      [closureRoot]
+      loader
+      "@loader_path/../.dylibs/libopenblas64_.0.dylib"
+  assertEqual
+    "a delocated wheel's vendored library resolves inside its closure"
+    ( Right
+        ( closureRoot
+            </> "lib/python3.11/site-packages/numpy/.dylibs/libopenblas64_.0.dylib"
+        )
+    )
+    admitted
+  escaped <-
+    AppleInternal.machOInstallNameTargetForTest
+      [closureRoot]
+      loader
+      "@loader_path/../../../../../../../opt/homebrew/lib/libevil.dylib"
+  assertEqual
+    "an install name that ascends out of its closure is refused"
+    True
+    (isLeft escaped)
+  unscoped <-
+    AppleInternal.machOInstallNameTargetForTest
+      []
+      loader
+      "@loader_path/../.dylibs/libopenblas64_.0.dylib"
+  assertEqual
+    "an image outside every package closure keeps the strict no-ascent rule"
+    True
+    (isLeft unscoped)
+  descending <-
+    AppleInternal.machOInstallNameTargetForTest
+      [closureRoot]
+      loader
+      "@loader_path/nested/libplain.dylib"
+  assertEqual
+    "a descending install name is unaffected by the ascent policy"
+    ( Right
+        ( closureRoot
+            </> "lib/python3.11/site-packages/numpy/core/nested/libplain.dylib"
+        )
+    )
+    descending
+
+-- | Sprint 1.20 Apple cohort: which shebangs bind a host Python installation.
+--
+-- The forms below are the ones a real CPython installation actually ships, taken
+-- from a Homebrew @python@3.11@ on the Apple host: standard-library modules use
+-- the portable @\/usr\/bin\/env@ launcher, while @bin@ console scripts and the
+-- @config-*@ build helper name an absolute path into that exact installation.
+shebangHostBindingTest :: IO ()
+shebangHostBindingTest = do
+  mapM_
+    ( \(label, leading) ->
+        assertEqual
+          ("a host-bound shebang is excluded: " <> label)
+          True
+          ( AppleInternal.shebangBindsHostInstallationForTest
+              (ByteStringChar8.pack leading)
+          )
+    )
+    [ ( "homebrew console script",
+        "#!/opt/homebrew/Cellar/python@3.11/3.11.15_3/Frameworks/Python.framework/Versions/3.11/bin/python3.11\n"
+      ),
+      ( "linux system interpreter",
+        "#!/usr/bin/python3.11\n"
+      ),
+      ( "local build interpreter",
+        "#!/usr/local/bin/python3\n"
+      )
+    ]
+  mapM_
+    ( \(label, leading) ->
+        assertEqual
+          ("a portable or absent shebang is retained: " <> label)
+          False
+          ( AppleInternal.shebangBindsHostInstallationForTest
+              (ByteStringChar8.pack leading)
+          )
+    )
+    [ ("stdlib env launcher with space", "#! /usr/bin/env python3\nimport sys\n"),
+      ("stdlib env launcher", "#!/usr/bin/env python3\n"),
+      ("no shebang at all", "s = \"\"\"Gur Mra bs Clguba\"\"\"\n"),
+      ("a Mach-O magic prefix", "\207\250\237\254\SOH\NUL\NUL\SOH")
+    ]
+
+-- | Sprint 1.20 Apple cohort: the Mach-O fat magic collides with Java's.
+--
+-- @0xCAFEBABE@ is both the Mach-O universal magic and the Java class file
+-- magic. The Audiveris artifact is a JVM application whose bundle is full of
+-- @.class@ files, so classifying one as a Mach-O admits it as a closure
+-- candidate and then fails the whole materialization on its full parse.
+machOFatMagicCollisionTest :: IO ()
+machOFatMagicCollisionTest = do
+  let fatMagic = ByteString.pack [0xca, 0xfe, 0xba, 0xbe]
+      fatHeader count cpuType =
+        ByteString.concat [fatMagic, word32BE count, word32BE cpuType]
+  assertEqual
+    "a genuine arm64 universal binary is a Mach-O candidate"
+    True
+    (AppleInternal.supportedMachOMagicForTest (fatHeader (2 :: Int) (0x0100000c :: Int)))
+  assertEqual
+    "a thin arm64 image is a Mach-O candidate"
+    True
+    ( AppleInternal.supportedMachOMagicForTest
+        (ByteString.pack [0xcf, 0xfa, 0xed, 0xfe, 0x0c, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00])
+    )
+  -- A class file's bytes 4..7 are its minor and major format versions. Java 17
+  -- is major 61, Java 8 is major 52; both are implausible architecture counts.
+  mapM_
+    ( \major ->
+        assertEqual
+          ("a Java class file is not a Mach-O candidate: major " <> show major)
+          False
+          ( AppleInternal.supportedMachOMagicForTest
+              (ByteString.concat [fatMagic, word32BE major, word32BE (0 :: Int)])
+          )
+    )
+    [52 :: Int, 61, 65]
+  assertEqual
+    "a fat header naming an unknown CPU type is not a Mach-O candidate"
+    False
+    (AppleInternal.supportedMachOMagicForTest (fatHeader (1 :: Int) (0x00badbad :: Int)))
+
 machOClosureBoundsTest :: IO ()
 machOClosureBoundsTest = do
   let dependency = "/infernix-fixture/lib/libRuntime.dylib"
@@ -779,16 +922,21 @@ machOClosureBoundsTest = do
       primary = [fixtureRoot </> "lib" </> ("lib" <> show index <> ".dylib") | index <- [1 .. 256 :: Int]]
       secondary = [fixtureRoot </> "lib" </> ("lib" <> show index <> ".dylib") | index <- [257 .. 512 :: Int]]
       finalLibrary = fixtureRoot </> "lib" </> "lib513.dylib"
+      (firstPrimary, secondPrimary) =
+        case primary of
+          first : second : _ -> (first, second)
+          _ ->
+            error "Mach-O oversized fixture requires at least two primary images"
       oversizedGraph =
         ( executable,
           machOImage primary []
         )
-          : (head primary, machOImage secondary [])
-          : (primary !! 1, machOImage [finalLibrary] [])
+          : (firstPrimary, machOImage secondary [])
+          : (secondPrimary, machOImage [finalLibrary] [])
           : [ (path, machOImage [] [])
             | path <- primary <> secondary <> [finalLibrary],
-              path /= head primary,
-              path /= primary !! 1
+              path /= firstPrimary,
+              path /= secondPrimary
             ]
   assertEqual
     "more than 512 copied runtime images is refused"
@@ -1010,11 +1158,6 @@ requireRight label result =
   case result of
     Left failure -> fail (label <> ": " <> failure)
     Right value -> pure value
-
-pause :: MVar () -> MVar () -> IO ()
-pause entered resume = do
-  putMVar entered ()
-  takeMVar resume
 
 assertThreadCancellation :: String -> MVar () -> IO () -> IO ()
 assertThreadCancellation label entered action = do

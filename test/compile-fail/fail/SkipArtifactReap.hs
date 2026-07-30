@@ -1,20 +1,22 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Main (main) where
 
 import Infernix.Engines.Artifact.Capability
   ( ArtifactPhase (..),
-    ArtifactTerminalOutcome,
-    Program,
-    Session,
+    ArtifactRun,
+    readyArtifactRun,
   )
 
+-- | A caller must not be able to present a ready run where the runner-owned
+-- reaped phase is required. Only 'reapArtifactRun' produces the reaped phase,
+-- and it is not reachable without a validated artifact.
 skipArtifactReap ::
-  Session s 'ArtifactReady %1 ->
-  Program s 'ArtifactReaped ArtifactTerminalOutcome
-skipArtifactReap session =
-  session
+  ArtifactRun s 'ArtifactReady ->
+  ArtifactRun s 'ArtifactReaped
+skipArtifactReap run =
+  run
 
 main :: IO ()
-main = pure ()
+main =
+  readyArtifactRun `seq` pure ()

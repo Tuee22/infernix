@@ -1,25 +1,23 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Main (main) where
 
 import Infernix.Engines.Artifact.Capability
-  ( ArtifactPhase (..),
+  ( ArtifactLaunchRequest,
     ArtifactTerminalOutcome (ArtifactTerminalCompleted),
-    Program,
-    Session,
-    reapArtifact,
+    ValidatedEngineArtifact,
+    artifactLauncher,
   )
 
-reuseArtifactSession ::
-  Session s 'ArtifactReady %1 ->
-  ( Program s 'ArtifactReaped ArtifactTerminalOutcome,
-    Program s 'ArtifactReaped ArtifactTerminalOutcome
-  )
-reuseArtifactSession session =
-  ( reapArtifact (const (pure ArtifactTerminalCompleted)) session,
-    reapArtifact (const (pure ArtifactTerminalCompleted)) session
-  )
+-- | A launcher is handed only the closed launch request, so it must not be
+-- able to receive, retain, or reuse the validated artifact capability.
+reuseArtifactCapability ::
+  (ValidatedEngineArtifact s -> IO ArtifactTerminalOutcome) ->
+  ArtifactLaunchRequest ->
+  IO ArtifactTerminalOutcome
+reuseArtifactCapability retain =
+  case artifactLauncher retain of
+    _launcher -> const (pure ArtifactTerminalCompleted)
 
 main :: IO ()
 main = pure ()

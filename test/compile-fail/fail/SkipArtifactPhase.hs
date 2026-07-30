@@ -1,21 +1,21 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Main (main) where
 
 import Infernix.Engines.Artifact.Capability
   ( ArtifactPhase (..),
-    ArtifactTerminalOutcome (ArtifactTerminalCompleted),
-    Program,
-    Session,
-    reapArtifact,
+    ArtifactRun,
+    ArtifactTerminalOutcome,
+    artifactRunOutcome,
   )
 
+-- | The terminal result must be readable only from the reaped phase. Reading
+-- it out of a ready run would skip the runner-owned revalidation and launch.
 skipArtifactPhase ::
-  Session s 'ArtifactReady %1 ->
-  Program s 'ArtifactReady ArtifactTerminalOutcome
+  ArtifactRun s 'ArtifactReady ->
+  ArtifactTerminalOutcome
 skipArtifactPhase =
-  reapArtifact (const (pure ArtifactTerminalCompleted))
+  artifactRunOutcome
 
 main :: IO ()
 main = pure ()

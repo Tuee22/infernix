@@ -586,7 +586,9 @@ nativeArtifactTargetEvidenceFingerprint evidence =
               targetClosurePath
               (targetEvidenceClosures evidence)
           )
-        <> maybe ["loader", "none"] loaderFields
+        <> maybe
+          ["loader", "none"]
+          loaderFields
           (targetEvidenceLoader evidence)
         <> [""]
 
@@ -626,7 +628,9 @@ loaderFields evidence =
     Text.pack (loaderEvidenceEntryObject evidence),
     decimal (loaderEvidenceMaximumDepth evidence)
   ]
-    <> maybe ["cache", "none"] loaderFileFields
+    <> maybe
+      ["cache", "none"]
+      loaderFileFields
       (loaderEvidenceCache evidence)
     <> concatMap
       loaderObjectFields

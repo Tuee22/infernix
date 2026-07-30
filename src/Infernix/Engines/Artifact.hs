@@ -1,5 +1,4 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 -- | Public engine-artifact validation and runtime-use facade.
 --
@@ -23,6 +22,8 @@ module Infernix.Engines.Artifact
     digestEngineArtifactPayload,
     digestEngineArtifactPayloadWithObserver,
     validateEngineArtifactRootAt,
+    validateArtifactGenerationPayloadLease,
+    validateEngineArtifactHelperLease,
     ArtifactResolution (..),
     NativeArtifactIdentity,
     parseNativeArtifactIdentity,
@@ -35,10 +36,16 @@ module Infernix.Engines.Artifact
     ArtifactOutputStream (..),
     ArtifactProcessOutcome (..),
     ArtifactTerminalOutcome (..),
-    Session,
-    Program,
-    reapArtifact,
+    ArtifactLaunchRequest,
+    artifactLaunchInstallRoot,
+    artifactLaunchEntrypoint,
+    ArtifactLauncher,
+    artifactLauncher,
+    ArtifactPreLaunchFixture,
+    noArtifactPreLaunchFixture,
+    overwriteFileBeforeLaunch,
     withFirstValidatedEngineArtifact,
+    withFirstValidatedEngineArtifactUnderPreLaunchFixture,
     revalidateValidatedEngineArtifact,
   )
 where

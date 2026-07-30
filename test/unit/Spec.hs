@@ -16,7 +16,7 @@ import Crypto.PubKey.RSA.PKCS15 qualified
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
-import Data.Bits ((.&.))
+import Data.Bits (shiftR, (.&.))
 import Data.ByteString qualified as BS
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Base64 qualified
@@ -36,7 +36,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX qualified
-import Data.Word (Word64)
+import Data.Word (Word64, Word8)
 import GHC.Clock (getMonotonicTimeNSec)
 import GHC.Conc (BlockReason (BlockedOnException), ThreadStatus (ThreadBlocked), threadStatus)
 import Infernix.Auth.Jwt qualified as Jwt
@@ -111,16 +111,11 @@ import Infernix.DhallSchema
 import Infernix.Dispatch.ContextModelMap qualified as ContextModelMap
 import Infernix.Dispatch.SingleFlight qualified as Dispatch
 import Infernix.Engines.AppleSilicon
-  ( engineArtifactManifestPath,
-    engineArtifactPreviousRoot,
-    engineArtifactTempRoot,
-    ensureAppleSiliconRuntimeReady,
+  ( ensureAppleSiliconRuntimeReady,
     manifestAdapterId,
     manifestDigest,
     manifestImageTargetEvidence,
-    manifestMinioObjectKey,
     manifestRecipeFingerprint,
-    manifestSubstrate,
     manifestTargetContractFingerprint,
     metalEngineAdapterId,
     metalEngineArtifactAdapterIds,
@@ -130,14 +125,15 @@ import Infernix.Engines.AppleSilicon
   )
 import Infernix.Engines.AppleSilicon.Internal qualified as AppleSiliconInternal
 import Infernix.Engines.Artifact qualified as EngineArtifact
+import Infernix.Engines.Artifact.Internal qualified as ArtifactInternal
+import Infernix.Engines.Artifact.Loader qualified as ArtifactLoader
 import Infernix.Engines.Artifact.Recipe qualified as ArtifactRecipe
 import Infernix.Engines.Artifact.Target qualified as ArtifactTarget
 import Infernix.Engines.LinuxNative
-  ( linuxNativeEngineAdapterId,
-    linuxNativeEngineArtifactAdapterIds,
-    linuxNativeEngineBuildPlan,
+  ( linuxNativeEngineArtifactAdapterIds,
   )
 import Infernix.Engines.Provisioning qualified as Provisioning
+import Infernix.Engines.Provisioning.Internal qualified as ProvisioningInternal
 import Infernix.Error
   ( bracketPreservingPrimary,
     finallyPreservingPrimary,
@@ -243,7 +239,7 @@ import System.Directory
 import System.Exit (ExitCode (..))
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
-import System.IO.Error (catchIOError, isDoesNotExistError)
+import System.IO.Error (catchIOError, isDoesNotExistError, isPermissionError)
 import System.Info qualified
 import System.Posix.Files (createNamedPipe, createSymbolicLink, fileMode, getFileStatus, removeLink, setFileMode)
 import System.Posix.IO qualified as PosixIO
@@ -1685,14 +1681,27 @@ main = do
 
       appleSetupResult <-
         try @SomeException (ensureAppleSiliconRuntimeReady paths)
+      let missingPoetryPath = "/tmp/infernix-unit-missing-poetry"
+          appleSetupDiagnostic =
+            either displayException (const "<succeeded>") appleSetupResult
+          missingConfiguredPoetryFailure failure =
+            "resolve configured Poetry"
+              `isInfixOf` displayException failure
+              && "is not an executable file for poetry"
+                `isInfixOf` displayException failure
+              && missingPoetryPath `isInfixOf` displayException failure
+      -- The configured tool path is validated at resolution, before any
+      -- bounded-command launch, so a missing configured Poetry is a hard
+      -- failure that never reaches the kernel.
       assert
-        ( case appleSetupResult of
-            Left failure ->
-              "kernel failed" `isInfixOf` displayException failure
-                && "target setup/exec failed" `isInfixOf` displayException failure
-            Right () -> False
+        ( either
+            missingConfiguredPoetryFailure
+            (const False)
+            appleSetupResult
         )
-        "Sprint 1.20: Apple setup fails closed with a kernel outcome when the typed Poetry executable is absent"
+        ( "Sprint 1.20: Apple setup fails closed with a kernel outcome when the typed Poetry executable is absent; observed: "
+            <> appleSetupDiagnostic
+        )
 
       let request =
             InferenceRequest
@@ -1913,6 +1922,12 @@ main = do
         "compiled native placement retains the closed MLX engine binding"
 
       ExecutionPlanProperties.runExecutableLaunchBoundaryProperties paths
+      runAppleCohortRegressionAssertions
+      runElfLoaderClosureAssertions
+      runElfSealedRunAuditAssertions
+      runClosureBoundAssertions
+      runWriterEffectParentSwapAssertions
+        (unitTestRoot </> "writer-effect-parent-swap")
       assert
         ( modelCacheBootstrapRetryableError
             ErrorResponse
@@ -3791,8 +3806,14 @@ main = do
             (not (null ready))
             (label <> " interrupted executable snapshot gate published empty evidence")
           when cancelRunner (killThread runner)
+          -- The command budget is only part of the wall clock here: the
+          -- kernel's own cleanup bounds (helper protocol close, designated
+          -- reap, anchor group-absence proof, and the anchor stderr capture)
+          -- sum to roughly nine further seconds. This bound must exceed that
+          -- contractual worst case, not the observed typical runtime, or the
+          -- assertion reports a load-induced timeout as a cleanup defect.
           observed <-
-            timeout 7000000 (MVar.takeMVar result)
+            timeout 20000000 (MVar.takeMVar result)
           executed <- doesFileExist executedPath
           snapshotEntries <-
             do
@@ -4753,7 +4774,11 @@ main = do
   let targetSetupFailureWasContained =
         case targetSetupFailureOutcome of
           Subprocess.CommandFailedKernel message ->
-            "bounded-command target setup failed before its start gate"
+            -- The forced fault is injected after the target's birth event and
+            -- identity gate but before its start gate, so the supervisor
+            -- observes it while awaiting the exact identity. That stage, not
+            -- the earlier pre-birth stage, is this injection's provenance.
+            "bounded-command target setup failed before exact identity"
               `isInfixOf` message
               && "forced pre-gate target setup failure"
                 `isInfixOf` message
@@ -4940,8 +4965,13 @@ main = do
       100
       subprocessPaths
       stoppedGroupOwnerProcessGroup
+  -- As with the interrupted-snapshot cases, this bound must exceed the
+  -- kernel's contractual cleanup worst case (sigCONT of the stopped group, the
+  -- designated reap, and the group-absence proofs) on top of the five-second
+  -- command budget -- not the observed typical runtime -- so that a loaded
+  -- host reports a real cleanup defect rather than a scheduling delay.
   stoppedGroupOutcome <-
-    timeout 8000000 (MVar.takeMVar stoppedGroupResult)
+    timeout 20000000 (MVar.takeMVar stoppedGroupResult)
   assert
     ( stoppedGroupWasObserved
         && stoppedGroupOutcome
@@ -9252,7 +9282,7 @@ data RecordedProcessIdentity = RecordedProcessIdentity
   deriving (Eq, Show)
 
 newtype ReapedChildIdentity
-  = ReapedRegisteredIdentity !RecordedProcessIdentity
+  = ReapedRegisteredIdentity RecordedProcessIdentity
   deriving (Eq, Show)
 
 data ReapEvidence = ReapEvidence
@@ -9456,6 +9486,15 @@ waitForPidExit attemptsRemaining processId = do
           threadDelay 50000
           waitForPidExit (attemptsRemaining - 1) processId
 
+-- | Poll until a process group holds no signalable member.
+--
+-- Darwin answers @kill(-pgid, 0)@ with @EPERM@, not @ESRCH@, while the only
+-- remaining member is an unreaped zombie -- the ordinary transient state after
+-- a group's owner is killed and its children are reparented. @EPERM@ is
+-- therefore neither absence evidence nor a defect: the probe keeps waiting for
+-- the group to disappear outright, and exhausting the budget reports @False@ so
+-- the caller's assertion names the real invariant instead of dying inside the
+-- probe.
 waitForProcessGroupAbsent :: Int -> Integer -> IO Bool
 waitForProcessGroupAbsent attemptsRemaining processGroup = do
   groupProbe <-
@@ -9464,8 +9503,8 @@ waitForProcessGroupAbsent attemptsRemaining processGroup = do
   case groupProbe of
     Left failure
       | isDoesNotExistError failure -> pure True
-      | otherwise -> ioError failure
-    Right ()
+      | not (isPermissionError failure) -> ioError failure
+    _
       | attemptsRemaining <= 0 -> pure False
       | otherwise -> do
           threadDelay 50000
@@ -9764,6 +9803,182 @@ waitForFileContents attemptsRemaining filePath = do
 assert :: Bool -> String -> IO ()
 assert True _ = pure ()
 assert False message = fail message
+
+-- | Sprint 1.20 Apple-cohort regressions.
+--
+-- Every assertion below covers a defect that the first Apple cohort attempt
+-- found on live hardware and that no machine-independent gate could reach. They
+-- exist so a regression fails here rather than only during an Apple
+-- materialization run.
+runAppleCohortRegressionAssertions :: IO ()
+runAppleCohortRegressionAssertions = do
+  runDyldAuditRegressionAssertions
+  runSealedArtifactEnvironmentRegressionAssertions
+  putStrLn "Sprint 1.20 Apple-cohort regressions passed"
+
+-- | macOS 26 emits more than load records under the @dyld[<pid>]:@ prefix.
+runDyldAuditRegressionAssertions :: IO ()
+runDyldAuditRegressionAssertions = do
+  assert
+    ( Subprocess.parseDyldAuditLineForTest
+        "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> /opt/x/lib/libz.dylib"
+        == Right (Subprocess.DyldLoadedPath "/opt/x/lib/libz.dylib")
+    )
+    "a uuid-prefixed dyld frame is exact loader provenance"
+  -- dyld emits a great deal of commentary under the same prefix. None of it
+  -- carries a path, and enumerating the message shapes proved brittle: two
+  -- separate rounds of this smoke were broken by a form not yet listed. Any
+  -- frame that does not announce itself as a load record is commentary.
+  mapM_
+    ( \frame ->
+        assert
+          ( Subprocess.parseDyldAuditLineForTest frame
+              == Right Subprocess.DyldSchedulingFrame
+          )
+          ("a dyld commentary frame is not loader provenance: " <> frame)
+    )
+    [ "dyld[4321]: move loaded to delayed: Accounts",
+      "dyld[4321]: move delayed to loaded: Accounts",
+      "dyld[4321]: libgcc_s.1.1.dylib has weak-def (or flat lookup) symbol used by libgfortran.5.dylib, so cannot be delayed",
+      "dyld[4321]: something this kernel has never seen /opt/x/lib/libz.dylib"
+    ]
+  assert
+    ( Subprocess.parseDyldAuditLineForTest "version: 9870 (2d973636e)"
+        == Right Subprocess.NotDyldAuditLine
+    )
+    "a runner's own diagnostic line is not a dyld frame"
+  -- A frame that claims to be a load record but violates the shape still fails
+  -- closed, so commentary can never be laundered into a loaded path.
+  mapM_
+    ( \frame ->
+        assert
+          (isLeft (Subprocess.parseDyldAuditLineForTest frame))
+          ("a malformed dyld load record fails closed: " <> frame)
+    )
+    [ "dyld[4321]: <not-a-uuid> /opt/x/lib/libz.dylib",
+      "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> relative/libz.dylib",
+      "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> /opt/../etc/libz.dylib",
+      "dyld[4321]: loaded: relative/libz.dylib"
+    ]
+
+-- | The sealed artifact runtime environment must survive every validator, and
+-- loader frames must never be mistaken for the runner's own output.
+runSealedArtifactEnvironmentRegressionAssertions :: IO ()
+runSealedArtifactEnvironmentRegressionAssertions = do
+  let artifactRoot = "/data/engines/llama-cpp-cli.tmp"
+      nativeEnvironment =
+        Subprocess.sealedArtifactRuntimeEnvironmentForTest
+          artifactRoot
+          "native/bin/llama-cli"
+      audiverisEnvironment =
+        Subprocess.sealedArtifactRuntimeEnvironmentForTest
+          artifactRoot
+          "Audiveris.app/Contents/MacOS/Audiveris"
+  -- Without DYLD_PRINT_LIBRARIES the smoke cannot emit the provenance its own
+  -- validator demands.
+  assert
+    ( lookup "DYLD_PRINT_LIBRARIES" nativeEnvironment == Just "1"
+        && lookup "GGML_BACKEND_PATH" nativeEnvironment
+          == Just (artifactRoot </> "native" </> "libexec")
+        && lookup "DYLD_PRINT_LIBRARIES" audiverisEnvironment == Just "1"
+    )
+    "a sealed artifact target carries its loader-provenance runtime environment"
+  -- These entries name artifact-root-relative paths, so the rendered-command
+  -- contract must admit them structurally, not by literal enumeration.
+  assert
+    ( isRight
+        ( Subprocess.renderedEnvironmentContractForTest
+            (("PYTHONDONTWRITEBYTECODE", "1") : nativeEnvironment)
+        )
+    )
+    "the rendered-environment contract admits a sealed artifact runtime environment"
+  assert
+    ( isLeft
+        ( Subprocess.renderedEnvironmentContractForTest
+            ( ("PYTHONDONTWRITEBYTECODE", "1")
+                : ("DYLD_PRINT_LIBRARIES", "0")
+                : filter ((/= "DYLD_PRINT_LIBRARIES") . fst) nativeEnvironment
+            )
+        )
+    )
+    "the rendered-environment contract still rejects an unfixed guard value"
+  assert
+    ( isLeft
+        ( Subprocess.renderedEnvironmentContractForTest
+            [("DYLD_PRINT_LIBRARIES", "1"), ("UNEXPECTED", "value")]
+        )
+    )
+    "the rendered-environment contract still rejects an unknown name set"
+  let baseEnvironment =
+        [ ("PATH", "/usr/bin"),
+          ("HOME", "/tmp/home"),
+          ("TMPDIR", "/tmp/tmp"),
+          ("LANG", "C"),
+          ("LC_ALL", "C"),
+          ("HELM_CONFIG_HOME", "/tmp/helm/config"),
+          ("HELM_CACHE_HOME", "/tmp/helm/cache"),
+          ("HELM_DATA_HOME", "/tmp/helm/data")
+        ]
+      targetEnvironment =
+        baseEnvironment
+          <> (("PYTHONDONTWRITEBYTECODE", "1") : nativeEnvironment)
+  -- The installed smoke runs from the sealed artifact root, and pre-activation
+  -- that root is the candidate sibling the lease does not name.
+  assert
+    ( isRight
+        ( Subprocess.supervisorTargetEnvironmentContractForTest
+            "/data/runtime/command-executable-snapshots"
+            [artifactRoot]
+            baseEnvironment
+            targetEnvironment
+        )
+    )
+    "a supervised target may resolve its closure inside an owned artifact root"
+  assert
+    ( isLeft
+        ( Subprocess.supervisorTargetEnvironmentContractForTest
+            "/data/runtime/command-executable-snapshots"
+            []
+            baseEnvironment
+            targetEnvironment
+        )
+    )
+    "a supervised target with no owned artifact root is still confined to its snapshot"
+  -- A runner that reports through stderr leaves stdout empty; loader frames of
+  -- either kind must be excluded from the diagnostics used as its output.
+  let loaderStderr =
+        ByteString8.pack
+          ( unlines
+              [ "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> " <> artifactRoot <> "/native/lib/libllama.dylib",
+                "dyld[4321]: <CACC182C-0F51-3D79-890C-D32EC0F5802E> /usr/lib/libSystem.B.dylib",
+                "dyld[4321]: move loaded to delayed: Accounts",
+                "dyld[4321]: move delayed to loaded: Accounts",
+                "version: 9870 (2d973636e)",
+                "built with AppleClang 21.0.0 for Darwin arm64"
+              ]
+          )
+  assert
+    ( Subprocess.installedRunnerApplicationOutputForTest artifactRoot loaderStderr
+        == Right
+          ( ByteString8.pack
+              ( unlines
+                  [ "version: 9870 (2d973636e)",
+                    "built with AppleClang 21.0.0 for Darwin arm64"
+                  ]
+              )
+          )
+    )
+    "installed runner diagnostics exclude every dyld frame kind"
+  assert
+    ( isLeft
+        ( Subprocess.installedRunnerApplicationOutputForTest
+            artifactRoot
+            ( ByteString8.pack
+                "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> /opt/elsewhere/lib/libz.dylib\n"
+            )
+        )
+    )
+    "an unsealed non-system library still fails the installed runner smoke"
 
 assertJsonRoundtrip :: (Eq a, Show a, Aeson.ToJSON a, Aeson.FromJSON a) => String -> a -> IO ()
 assertJsonRoundtrip label value =
@@ -14142,7 +14357,8 @@ assertHostConfig testRoot = do
               "Core ML native runner"
               coreMlTarget
       assert
-        ( coreMlExecutable == coreMlInstallRoot </> "venv" </> "bin" </> "python"
+        ( coreMlExecutable
+            == coreMlInstallRoot </> "venv" </> "bin" </> "infernix-python"
             && take 1 coreMlPrefix
               == [coreMlInstallRoot </> "lib" </> "apple_native_runner.py"]
             && "--adapter-id" `elem` coreMlPrefix
@@ -14159,13 +14375,15 @@ assertHostConfig testRoot = do
         )
         "Sprint 1.20: public Core ML observation and synchronized MLX GPU execution replace the native bridge"
       assert
-        ( "--model-version" `isInfixOf` appleRunnerLibrary
-            && "runwayml/stable-diffusion-v1-5" `isInfixOf` appleRunnerLibrary
-            && "CPU_AND_GPU" `isInfixOf` appleRunnerLibrary
-            && "require_output=False" `isInfixOf` appleRunnerLibrary
-            && "timeout_seconds=900" `isInfixOf` appleRunnerLibrary
+        ( "from python_coreml_stable_diffusion import pipeline"
+            `isInfixOf` appleRunnerLibrary
+            && "model_version=\"runwayml/stable-diffusion-v1-5\""
+              `isInfixOf` appleRunnerLibrary
+            && "compute_unit=\"CPU_AND_GPU\"" `isInfixOf` appleRunnerLibrary
+            && "pipeline.main(pipeline_args)" `isInfixOf` appleRunnerLibrary
+            && "\"Core ML Stable Diffusion\"" `isInfixOf` appleRunnerLibrary
         )
-        "Phase 1 Sprint 1.15: Core ML Stable Diffusion retains the real upstream execution contract"
+        "Sprint 1.20: Core ML Stable Diffusion runs the upstream pipeline in process and fails closed on empty output"
   case find ((== "llama-cpp-cli") . metalEngineAdapterId) metalEngineBuildPlan of
     Nothing ->
       assert False "Sprint 1.20: the Apple materialization plan includes llama-cpp-cli"
@@ -14175,7 +14393,7 @@ assertHostConfig testRoot = do
           (fail "closed native identity omitted llama-cpp-cli")
           pure
           (EngineArtifact.parseNativeArtifactIdentity "llama-cpp-cli")
-      llamaTarget <-
+      appleLlamaTarget <-
         expectRight
           "resolve Apple llama direct target"
           ( ArtifactTarget.nativeArtifactTarget
@@ -14188,17 +14406,17 @@ assertHostConfig testRoot = do
       assert
         ( ArtifactTarget.nativeArtifactTargetExecutable
             llamaInstallRoot
-            llamaTarget
+            appleLlamaTarget
             == llamaInstallRoot </> "native" </> "bin" </> "llama-cli"
             && null
               ( ArtifactTarget.nativeArtifactTargetLeadingArguments
                   llamaInstallRoot
                   "llama.cpp Metal"
-                  llamaTarget
+                  appleLlamaTarget
               )
             && ArtifactTarget.nativeArtifactTargetImmutableClosureRoots
               llamaInstallRoot
-              llamaTarget
+              appleLlamaTarget
               == [llamaInstallRoot </> "."]
         )
         "architectural correction: Apple llama directly executes the retained artifact binary"
@@ -14219,20 +14437,46 @@ assertHostConfig testRoot = do
       assert
         (length provenance == 2)
         "Sprint 1.20: Python provenance parser records exact package and source versions"
-  let relocationRoot = testRoot </> "apple-venv-relocation"
+  let relocationRoot =
+        dataRoot linuxMaterializationPaths
+          </> "engines"
+          </> "apple-venv-relocation"
       relocationTempRoot = relocationRoot <> ".tmp"
       relocationBinRoot = relocationTempRoot </> "venv" </> "bin"
       relocationConfigPath = relocationTempRoot </> "venv" </> "pyvenv.cfg"
       relocationScriptPath = relocationBinRoot </> "engine-tool"
       residualPath = relocationTempRoot </> "venv" </> "lib" </> "residual.pth"
+      relocationPythonHomeBin =
+        relocationTempRoot </> "python-home" </> "bin"
+      relocationCandidateInterpreter =
+        relocationPythonHomeBin </> "python3.12"
+      relocationSourceHome =
+        "/opt/homebrew/opt/python@3.12/Frameworks/Python.framework/Versions/3.12/bin"
+      relocationSourceExecutable =
+        relocationSourceHome </> "python3.12"
   createDirectoryIfMissing True (takeDirectory residualPath)
   createDirectoryIfMissing True relocationBinRoot
+  createDirectoryIfMissing True relocationPythonHomeBin
+  writeFile relocationCandidateInterpreter "#!/bin/sh\nexit 0\n"
+  interpreterPermissions <- getPermissions relocationCandidateInterpreter
+  setPermissions
+    relocationCandidateInterpreter
+    interpreterPermissions {executable = True}
   writeFile
     relocationScriptPath
     ("#!" <> relocationTempRoot </> "venv" </> "bin" </> "python" <> "\n")
   writeFile
     relocationConfigPath
-    ("command = python -m venv " <> relocationTempRoot </> "venv" <> "\n")
+    ( "home = "
+        <> relocationSourceHome
+        <> "\nexecutable = "
+        <> relocationSourceExecutable
+        <> "\ncommand = "
+        <> relocationSourceExecutable
+        <> " -m venv --copies "
+        <> (relocationTempRoot </> "venv")
+        <> "\n"
+    )
   relocationEnvironment <-
     Subprocess.clusterSubprocessEnv linuxMaterializationPaths
   let relocateFixture =
@@ -14256,6 +14500,19 @@ assertHostConfig testRoot = do
         && not (relocationTempRoot `isInfixOf` relocatedConfig)
     )
     "Sprint 1.20: candidate venv paths are rewritten to the final sibling root before smoke and hashing"
+  assert
+    ( ("home = " <> relocationRoot </> "python-home" </> "bin")
+        `isInfixOf` relocatedConfig
+        && ( "executable = "
+               <> relocationRoot
+               </> "python-home"
+               </> "bin"
+               </> "python3.12"
+           )
+          `isInfixOf` relocatedConfig
+        && not ("/opt/homebrew" `isInfixOf` relocatedConfig)
+    )
+    "Sprint 1.20: pyvenv.cfg names the artifact-local Python home and retains no source runtime path"
   writeFile residualPath ("residual=" <> relocationTempRoot)
   residualResult <-
     try relocateFixture ::
@@ -14263,6 +14520,14 @@ assertHostConfig testRoot = do
   assert
     (isLeft residualResult)
     "Sprint 1.20: candidate relocation fails closed when any temp-root byte sequence remains"
+  writeFile residualPath ("residual=" <> relocationSourceHome)
+  sourceResidualResult <-
+    try relocateFixture ::
+      IO (Either IOError ())
+  removeFile residualPath
+  assert
+    (isLeft sourceResidualResult)
+    "Sprint 1.20: candidate relocation fails closed when any source Python runtime path remains"
   let relocationByteBound =
         Provisioning.relocationCandidateByteBoundForTest
   assert
@@ -14292,6 +14557,13 @@ assertHostConfig testRoot = do
         testRoot </> "setup-manifest-external"
       expectedSetupManifest =
         "{\"adapterId\":\"transformers-python\",\"schemaVersion\":1}\n"
+      withSetupWriter ::
+        forall setupResult.
+        ( forall w s q.
+          Provisioning.EngineWriter w s q ->
+          Provisioning.ProvisioningSession s setupResult
+        ) ->
+        IO setupResult
       withSetupWriter action =
         Provisioning.withEngineProvisioningSession
           linuxMaterializationPaths
@@ -14409,3 +14681,1018 @@ assertClusterConfig testRoot demoConfigPathValue = do
   assert
     (not ("commandOverrides" `isInfixOf` rendered))
     "ClusterConfig has no command-override binding surface"
+
+-- | Sprint 1.20 Linux ELF/loader closure evidence.
+--
+-- The loader closure producer runs only on Linux, but every part of it that
+-- decides what the evidence says is pure: the ELF parse, the dynamic-token
+-- expansion, and the @ld.so.cache@ parse. Those are pinned here against
+-- hand-built images and caches so the producer is provable without a Linux
+-- host, which is what the closure bounds and the resolution order actually
+-- turn on.
+runElfLoaderClosureAssertions :: IO ()
+runElfLoaderClosureAssertions = do
+  runElfImageParseAssertions
+  runElfExpansionAssertions
+  runLdSoCacheAssertions
+
+runElfImageParseAssertions :: IO ()
+runElfImageParseAssertions = do
+  inspection <-
+    either
+      (fail . ("synthetic ELF image did not parse: " <>))
+      pure
+      (ArtifactLoader.parseElfImageInspection syntheticElf64Image)
+  assert
+    (ArtifactLoader.elfInspectionClass inspection == ArtifactLoader.Elf64)
+    "synthetic ELF image parses as 64-bit"
+  assert
+    ( ArtifactLoader.elfInspectionEndian inspection
+        == ArtifactLoader.ElfLittleEndian
+    )
+    "synthetic ELF image parses as little-endian"
+  assert
+    (ArtifactLoader.elfInspectionMachine inspection == 183)
+    "synthetic ELF image reports its declared machine"
+  assert
+    ( ArtifactLoader.elfInspectionInterpreter inspection
+        == Just "/lib/ld-linux-aarch64.so.1"
+    )
+    "synthetic ELF image binds its PT_INTERP loader"
+  assert
+    (ArtifactLoader.elfInspectionSoname inspection == Just "libfoo.so.1")
+    "synthetic ELF image reports its DT_SONAME"
+  assert
+    ( ArtifactLoader.elfInspectionNeeded inspection
+        == ["libc.so.6", "libm.so.6"]
+    )
+    "synthetic ELF image reports its DT_NEEDED entries in declaration order"
+  assert
+    ( ArtifactLoader.elfInspectionRunPath inspection
+        == ["$ORIGIN/../lib", "/opt/extra"]
+    )
+    "synthetic ELF image splits DT_RUNPATH on colons without expanding it"
+  assert
+    (null (ArtifactLoader.elfInspectionRPath inspection))
+    "synthetic ELF image declaring only DT_RUNPATH reports no DT_RPATH"
+  assert
+    (ArtifactLoader.elfImageMagicPresent (BS.take 6 syntheticElf64Image))
+    "ELF candidacy accepts a well-formed leading header"
+  assert
+    ( not
+        ( ArtifactLoader.elfImageMagicPresent
+            (ByteString8.pack "\x7f" <> ByteString8.pack "ELF\x09\x01")
+        )
+    )
+    "ELF candidacy rejects an undefined class byte"
+  assert
+    ( not
+        ( ArtifactLoader.elfImageMagicPresent
+            (ByteString8.pack "\xca\xfe\xba\xbe\x00\x34")
+        )
+    )
+    "ELF candidacy rejects a Java class file header"
+  assert
+    ( isLeftResult
+        ( ArtifactLoader.parseElfImageInspection
+            (BS.drop 1 syntheticElf64Image)
+        )
+    )
+    "ELF parse rejects an image without the ELF magic"
+  assert
+    ( isLeftResult
+        ( ArtifactLoader.parseElfImageInspection
+            (replaceByteAt 18 0x00 (replaceByteAt 19 0x00 syntheticElf64Image))
+        )
+        || elfMachineRejected
+          (ArtifactLoader.parseElfImageInspection (replaceByteAt 18 0x00 (replaceByteAt 19 0x00 syntheticElf64Image)))
+    )
+    "ELF parse surfaces an unsupported machine rather than guessing a platform"
+  assert
+    (isLeftResult (ArtifactLoader.parseElfImageInspection (replaceByteAt 4 0x09 syntheticElf64Image)))
+    "ELF parse rejects an undefined class byte"
+  assert
+    (isLeftResult (ArtifactLoader.parseElfImageInspection (replaceByteAt 5 0x09 syntheticElf64Image)))
+    "ELF parse rejects an undefined data encoding"
+  assert
+    (isLeftResult (ArtifactLoader.parseElfImageInspection (BS.take 400 syntheticElf64Image)))
+    "ELF parse rejects an image whose dynamic string table is truncated"
+
+-- | The machine byte is only consulted during expansion, so an unsupported
+-- machine is allowed to parse and must fail at the platform token instead.
+elfMachineRejected ::
+  Either String ArtifactLoader.ElfImageInspection ->
+  Bool
+elfMachineRejected parsed =
+  case parsed of
+    Left _ -> True
+    Right inspection ->
+      isLeftResult
+        (ArtifactLoader.elfPlatformToken (ArtifactLoader.elfInspectionMachine inspection))
+
+runElfExpansionAssertions :: IO ()
+runElfExpansionAssertions = do
+  assert
+    ( ArtifactLoader.expandElfSearchPath elfTestContext "$ORIGIN/../lib"
+        == Right "/opt/app/lib"
+    )
+    "ELF expansion resolves $ORIGIN against the object's own directory"
+  assert
+    ( ArtifactLoader.expandElfSearchPath elfTestContext "${ORIGIN}/plugins"
+        == Right "/opt/app/bin/plugins"
+    )
+    "ELF expansion resolves the braced ${ORIGIN} spelling"
+  assert
+    ( ArtifactLoader.expandElfSearchPath elfTestContext "/usr/lib/$PLATFORM"
+        == Right "/usr/lib/aarch64"
+    )
+    "ELF expansion resolves $PLATFORM"
+  assert
+    ( ArtifactLoader.expandElfSearchPath elfTestContext "/usr/$LIB"
+        == Right "/usr/lib64"
+    )
+    "ELF expansion resolves $LIB"
+  assert
+    (isLeftResult (ArtifactLoader.expandElfSearchPath elfTestContext "relative/lib"))
+    "ELF expansion rejects a search element that is not absolute"
+  assert
+    (isLeftResult (ArtifactLoader.expandElfSearchPath elfTestContext "$UNSUPPORTED/lib"))
+    "ELF expansion rejects an unsupported dynamic token"
+  assert
+    (isLeftResult (ArtifactLoader.expandElfSearchPath elfTestContext "$LIB"))
+    "ELF expansion rejects a bare $LIB, which expands to a relative element"
+  assert
+    (ArtifactLoader.elfLibToken ArtifactLoader.Elf64 == "lib64")
+    "$LIB is lib64 for a 64-bit object"
+  assert
+    (ArtifactLoader.elfLibToken ArtifactLoader.Elf32 == "lib")
+    "$LIB is lib for a 32-bit object"
+  assert
+    (ArtifactLoader.elfPlatformToken 62 == Right "x86_64")
+    "$PLATFORM is x86_64 for EM_X86_64"
+  assert
+    (ArtifactLoader.elfPlatformToken 183 == Right "aarch64")
+    "$PLATFORM is aarch64 for EM_AARCH64"
+  assert
+    (isLeftResult (ArtifactLoader.elfPlatformToken 40))
+    "$PLATFORM fails closed for a machine this lane does not support"
+  assert
+    ( "/lib/aarch64-linux-gnu"
+        `elem` ArtifactLoader.elfDefaultSearchDirectories ArtifactLoader.Elf64 "aarch64"
+    )
+    "the default search stack includes the multiarch directory"
+
+elfTestContext :: ArtifactLoader.ElfExpansionContext
+elfTestContext =
+  ArtifactLoader.ElfExpansionContext
+    { ArtifactLoader.elfExpansionOrigin = "/opt/app/bin",
+      ArtifactLoader.elfExpansionLib = "lib64",
+      ArtifactLoader.elfExpansionPlatform = "aarch64"
+    }
+
+runLdSoCacheAssertions :: IO ()
+runLdSoCacheAssertions = do
+  assert
+    ( ArtifactLoader.parseLdSoCache newFormatLdSoCache
+        == Right
+          [ ArtifactLoader.LdSoCacheEntry
+              "libc.so.6"
+              "/lib/aarch64-linux-gnu/libc.so.6",
+            ArtifactLoader.LdSoCacheEntry
+              "libm.so.6"
+              "/lib/aarch64-linux-gnu/libm.so.6"
+          ]
+    )
+    "a standalone new-format ld.so.cache resolves every entry"
+  assert
+    ( ArtifactLoader.parseLdSoCache oldFormatLdSoCache
+        == Right
+          [ArtifactLoader.LdSoCacheEntry "libz.so.1" "/usr/lib/libz.so.1"]
+    )
+    "an old-format ld.so.cache resolves its entry against its own string base"
+  assert
+    ( ArtifactLoader.parseLdSoCache embeddedNewFormatLdSoCache
+        == ArtifactLoader.parseLdSoCache newFormatLdSoCache
+    )
+    "a new-format cache embedded after an old-format one is read as the new one"
+  assert
+    (isLeftResult (ArtifactLoader.parseLdSoCache (ByteString8.pack "not a cache")))
+    "an unrecognised ld.so.cache magic fails closed"
+
+-- Synthetic ELF and cache fixtures ----------------------------------------
+
+-- | A complete little-endian AArch64 @ET_DYN@ image. @PT_LOAD@ maps the whole
+-- file at virtual address zero, so a virtual address and a file offset are the
+-- same number and the fixture stays readable.
+syntheticElf64Image :: BS.ByteString
+syntheticElf64Image =
+  BS.concat
+    [ elfIdentBytes,
+      elfLe 2 3, -- e_type = ET_DYN
+      elfLe 2 183, -- e_machine = EM_AARCH64
+      elfLe 4 1, -- e_version
+      elfLe 8 0, -- e_entry
+      elfLe 8 64, -- e_phoff
+      elfLe 8 0, -- e_shoff
+      elfLe 4 0, -- e_flags
+      elfLe 2 64, -- e_ehsize
+      elfLe 2 56, -- e_phentsize
+      elfLe 2 3, -- e_phnum
+      elfLe 2 0, -- e_shentsize
+      elfLe 2 0, -- e_shnum
+      elfLe 2 0, -- e_shstrndx
+      elfProgramHeader 1 0 0 elfImageTotalBytes,
+      elfProgramHeader 2 elfDynamicOffset elfDynamicOffset elfDynamicBytes,
+      elfProgramHeader 3 elfInterpreterOffset elfInterpreterOffset elfInterpreterBytes,
+      elfInterpreterString,
+      BS.replicate elfInterpreterPadding 0,
+      elfDynamicTable,
+      elfStringTable
+    ]
+
+elfIdentBytes :: BS.ByteString
+elfIdentBytes =
+  BS.pack [0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]
+    <> BS.replicate 8 0
+
+elfProgramHeader :: Integer -> Integer -> Integer -> Integer -> BS.ByteString
+elfProgramHeader segmentType fileOffset virtualAddress fileSize =
+  BS.concat
+    [ elfLe 4 segmentType,
+      elfLe 4 4, -- p_flags = PF_R
+      elfLe 8 fileOffset,
+      elfLe 8 virtualAddress,
+      elfLe 8 virtualAddress, -- p_paddr
+      elfLe 8 fileSize,
+      elfLe 8 fileSize, -- p_memsz
+      elfLe 8 8 -- p_align
+    ]
+
+elfInterpreterOffset :: Integer
+elfInterpreterOffset = 232
+
+elfInterpreterString :: BS.ByteString
+elfInterpreterString =
+  ByteString8.pack "/lib/ld-linux-aarch64.so.1" <> BS.singleton 0
+
+elfInterpreterBytes :: Integer
+elfInterpreterBytes = fromIntegral (BS.length elfInterpreterString)
+
+elfInterpreterPadding :: Int
+elfInterpreterPadding =
+  fromIntegral elfDynamicOffset
+    - fromIntegral elfInterpreterOffset
+    - BS.length elfInterpreterString
+
+elfDynamicOffset :: Integer
+elfDynamicOffset = 264
+
+elfDynamicTable :: BS.ByteString
+elfDynamicTable =
+  BS.concat
+    [ elfDynamicEntry 1 1, -- DT_NEEDED libc.so.6
+      elfDynamicEntry 1 11, -- DT_NEEDED libm.so.6
+      elfDynamicEntry 14 21, -- DT_SONAME libfoo.so.1
+      elfDynamicEntry 29 33, -- DT_RUNPATH
+      elfDynamicEntry 5 elfStringTableOffset, -- DT_STRTAB
+      elfDynamicEntry 10 elfStringTableBytes, -- DT_STRSZ
+      elfDynamicEntry 0 0 -- DT_NULL
+    ]
+
+elfDynamicEntry :: Integer -> Integer -> BS.ByteString
+elfDynamicEntry tag value = elfLe 8 tag <> elfLe 8 value
+
+-- | Seven sixteen-byte entries. Stated rather than measured, because the table
+-- itself names the string table's offset, which is derived from this size.
+elfDynamicBytes :: Integer
+elfDynamicBytes = 7 * 16
+
+elfStringTableOffset :: Integer
+elfStringTableOffset = elfDynamicOffset + elfDynamicBytes
+
+elfStringTable :: BS.ByteString
+elfStringTable =
+  BS.concat
+    [ BS.singleton 0,
+      nulTerminated "libc.so.6",
+      nulTerminated "libm.so.6",
+      nulTerminated "libfoo.so.1",
+      nulTerminated "$ORIGIN/../lib:/opt/extra"
+    ]
+
+elfStringTableBytes :: Integer
+elfStringTableBytes = fromIntegral (BS.length elfStringTable)
+
+elfImageTotalBytes :: Integer
+elfImageTotalBytes = elfStringTableOffset + elfStringTableBytes
+
+nulTerminated :: String -> BS.ByteString
+nulTerminated value = ByteString8.pack value <> BS.singleton 0
+
+elfLe :: Int -> Integer -> BS.ByteString
+elfLe width value =
+  BS.pack
+    [ fromIntegral ((value `shiftR` (8 * index)) .&. 0xff)
+    | index <- [0 .. width - 1]
+    ]
+
+replaceByteAt :: Int -> Word8 -> BS.ByteString -> BS.ByteString
+replaceByteAt offset replacement bytes =
+  BS.take offset bytes
+    <> BS.singleton replacement
+    <> BS.drop (offset + 1) bytes
+
+isLeftResult :: Either failure value -> Bool
+isLeftResult = either (const True) (const False)
+
+-- | Sprint 1.20: the Linux sealed-run loader observation.
+--
+-- Every frame below is a verbatim glibc 2.39 @LD_DEBUG=libs@ line, captured
+-- from a native @linux\/arm64@ container rather than written from the
+-- documentation. Two rounds of the Apple smoke were broken by assuming a loader
+-- frame shape, so these are measured.
+runElfSealedRunAuditAssertions :: IO ()
+runElfSealedRunAuditAssertions = do
+  assert
+    ( Subprocess.parseElfAuditLineForTest
+        "         7:\tcalling init: /lib/aarch64-linux-gnu/libc.so.6"
+        == Right
+          (Subprocess.ElfLoadedPath "/lib/aarch64-linux-gnu/libc.so.6")
+    )
+    "Sprint 1.20: an ld.so load record yields its loaded path"
+  assert
+    ( Subprocess.parseElfAuditLineForTest
+        "         7:\tcalling init: /usr/local/bin/../lib/libpython3.12.so.1.0"
+        == Right (Subprocess.ElfLoadedPath "/usr/local/lib/libpython3.12.so.1.0")
+    )
+    "Sprint 1.20: a load record carrying .. is collapsed rather than refused, because glibc reports the path it opened"
+  -- `trying file=` also names candidates the loader rejected, so admitting it
+  -- would launder a path that was never loaded. `initialize program:` and
+  -- `transferring control:` carry argv[0] -- measured as the bare `python3` --
+  -- so neither can be a load record either.
+  assert
+    ( all
+        ( \frame ->
+            Subprocess.parseElfAuditLineForTest frame
+              == Right Subprocess.ElfLoaderFrame
+        )
+        [ "         7:\tfind library=libc.so.6 [0]; searching",
+          "         7:\t search cache=/etc/ld.so.cache",
+          "         7:\t  trying file=/lib/aarch64-linux-gnu/libc.so.6",
+          "         7:\tinitialize program: python3",
+          "         7:\ttransferring control: python3",
+          "         7:\t"
+        ]
+    )
+    "Sprint 1.20: every non-load ld.so frame is loader commentary carrying no path"
+  assert
+    ( Subprocess.parseElfAuditLineForTest "version: 9870 (2d973636e)"
+        == Right Subprocess.NotElfAuditLine
+        && Subprocess.parseElfAuditLineForTest "  not a frame: /some/path"
+          == Right Subprocess.NotElfAuditLine
+    )
+    "Sprint 1.20: a runner's own stderr is not mistaken for an ld.so frame"
+  assert
+    ( isLeftResult
+        ( Subprocess.parseElfAuditLineForTest
+            "         7:\tcalling init: lib/relative.so"
+        )
+        && isLeftResult
+          (Subprocess.parseElfAuditLineForTest "         7:\tcalling init:")
+        && isLeftResult
+          ( Subprocess.parseElfAuditLineForTest
+              "         7:\tcalling init: /../escaped.so"
+          )
+    )
+    "Sprint 1.20: a frame that claims to be a load record but is relative, empty, or ascends past the root fails closed"
+  let artifactRoot = "/data/engines/llama-cpp-cli"
+      sealedFrames =
+        [ "         7:\tfind library=libllama.so [0]; searching",
+          "         7:\t  trying file=" <> artifactRoot <> "/lib/libllama.so",
+          "         7:\tcalling init: /lib/ld-linux-aarch64.so.1",
+          "         7:\tcalling init: /lib/aarch64-linux-gnu/libc.so.6",
+          "         7:\tcalling init: " <> artifactRoot <> "/lib/libllama.so",
+          "         7:\tinitialize program: llama-cli",
+          "version: 9870 (2d973636e)"
+        ]
+  assert
+    ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
+        artifactRoot
+        (ByteString8.pack (unlines sealedFrames))
+        == Right (ByteString8.pack "version: 9870 (2d973636e)\n")
+    )
+    "Sprint 1.20: a sealed Linux run that loads from its own generation is admitted and yields only the runner's own diagnostics"
+  assert
+    ( isLeftResult
+        ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
+            artifactRoot
+            (ByteString8.pack "version: 9870 (2d973636e)\n")
+        )
+    )
+    "Sprint 1.20: a sealed Linux run emitting no loader provenance fails closed"
+  assert
+    ( isLeftResult
+        ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
+            artifactRoot
+            ( ByteString8.pack
+                ( unlines
+                    [ "         7:\tcalling init: /lib/aarch64-linux-gnu/libc.so.6"
+                    ]
+                )
+            )
+        )
+    )
+    "Sprint 1.20: a sealed Linux run that loads nothing from its own generation fails closed"
+  -- The Apple lane's most consequential finding, in its Linux form: a `dlopen`ed
+  -- extension module pulling a host library in. `LD_DEBUG=libs` reports it.
+  assert
+    ( isLeftResult
+        ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
+            artifactRoot
+            ( ByteString8.pack
+                ( unlines
+                    ( sealedFrames
+                        <> [ "         7:\tcalling init: /opt/host/lib/liblzma.so.5"
+                           ]
+                    )
+                )
+            )
+        )
+    )
+    "Sprint 1.20: a sealed Linux run loading an unsealed non-system library fails closed"
+  llamaIdentity <-
+    maybe
+      (fail "closed native identity omitted llama-cpp-cli")
+      pure
+      (EngineArtifact.parseNativeArtifactIdentity "llama-cpp-cli")
+  assert
+    ( Subprocess.sealedRunLoaderAuditForTest
+        ( ProvisioningInternal.LinuxNativeArtifactSmokeOperation
+            llamaIdentity
+        )
+        == Just Subprocess.ElfSealedRunAudit
+        && Subprocess.sealedRunLoaderAuditForTest
+          ( ProvisioningInternal.InstalledRunnerSmokeOperation
+              ProvisioningInternal.LlamaCppCliAdapter
+          )
+          == Just Subprocess.DyldSealedRunAudit
+        && isNothing
+          ( Subprocess.sealedRunLoaderAuditForTest
+              ProvisioningInternal.AudiverisDownloadOperation
+          )
+    )
+    "Sprint 1.20: the sealed-run loader audit is selected from the command's closed operation, so a Linux smoke can never be audited against dyld"
+
+-- | Sprint 1.20: the settled closure bounds, covered positively and on
+-- overflow through the same folds the materializer runs.
+--
+-- Before this, none of the four bounds was exported or had a pure validator, so
+-- none was reachable from any gate — a bound that no test can reach is a bound
+-- that can silently drift back to "raised to unblock a measurement".
+runClosureBoundAssertions :: IO ()
+runClosureBoundAssertions = do
+  let poetryClosureBytes =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.PoetryClosureBytesBound
+      poetryClosureFiles =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.PoetryClosureFilesBound
+      exactRuntimeFileBytes =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.ExactRuntimeFileBytesBound
+      stableCopyBytes =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.StableCopyBytesBound
+      machOInspectionBytes =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.MachOInspectionBytesBound
+      machORuntimeBytes =
+        Provisioning.provisioningClosureBoundForTest
+          Provisioning.MachORuntimeBytesBound
+  assert
+    ( poetryClosureBytes == 12 * 1024 * 1024 * 1024
+        && poetryClosureFiles == 100000
+        && exactRuntimeFileBytes == 2 * 1024 * 1024 * 1024
+        && machOInspectionBytes == 4 * 1024 * 1024 * 1024
+        && machORuntimeBytes == 4 * 1024 * 1024 * 1024
+    )
+    "Sprint 1.20: the closure bounds are the settled measured values"
+  -- 'provisioningCopyFileStableBounded' refuses any bound greater than
+  -- 'maximumStableCopyBytes', so the exact-runtime-file bound cannot be chosen
+  -- independently of it. Pinning the equality is what keeps them moving
+  -- together.
+  assert
+    (stableCopyBytes == exactRuntimeFileBytes)
+    "Sprint 1.20: the exact-runtime-file bound and the stable-copy bound are the same value and must move together"
+  -- The largest artifact measured on the Apple host, `coreml-native`: 1.345 GiB
+  -- across 35,166 entries, 811.9 MiB of Mach-O images, largest single file
+  -- 322.3 MiB. Every measured artifact must be admissible.
+  assert
+    ( Provisioning.admitPackageClosureFileForTest
+        (1_444_000_000, 35_165)
+        338_000_000
+        == Right (1_782_000_000, 35_166)
+    )
+    "Sprint 1.20: the measured coreml-native closure and its largest single file are admitted"
+  assert
+    ( isLeft
+        ( Provisioning.admitPackageClosureFileForTest
+            (0, 0)
+            (exactRuntimeFileBytes + 1)
+        )
+    )
+    "Sprint 1.20: a single closure entry over the exact-runtime-file bound is refused"
+  assert
+    ( Provisioning.admitPackageClosureTotalsForTest
+        (poetryClosureBytes - 1, 0)
+        1
+        == Right (poetryClosureBytes, 1)
+        && isLeft
+          ( Provisioning.admitPackageClosureTotalsForTest
+              (poetryClosureBytes, 0)
+              1
+          )
+    )
+    "Sprint 1.20: the package-closure byte bound admits its exact total and refuses one byte more"
+  assert
+    ( Provisioning.admitPackageClosureTotalsForTest
+        (0, poetryClosureFiles - 1)
+        0
+        == Right (0, poetryClosureFiles)
+        && isLeft
+          ( Provisioning.admitPackageClosureTotalsForTest
+              (0, poetryClosureFiles)
+              0
+          )
+    )
+    "Sprint 1.20: the package-closure entry bound admits its exact total and refuses one entry more"
+  assert
+    (isLeft (Provisioning.admitPackageClosureTotalsForTest (0, 0) (-1)))
+    "Sprint 1.20: a negative closure entry byte count is refused"
+  let measuredCoreMlClosure =
+        Provisioning.MachOClosureDimensions
+          { Provisioning.machOClosureLibraryCount = 480,
+            Provisioning.machOClosureRuntimeBytes = 494_000_000,
+            Provisioning.machOClosureEdges = 4000,
+            Provisioning.machOClosureInspectionBytes = 852_000_000,
+            Provisioning.machOClosureMetadataBytes = 3_000_000
+          }
+  assert
+    ( Provisioning.admitMachOClosureDimensionsForTest measuredCoreMlClosure
+        == Right ()
+    )
+    "Sprint 1.20: the measured coreml-native Mach-O closure is admitted on every dimension"
+  assert
+    ( refusedDimension
+        "inspection byte"
+        measuredCoreMlClosure
+          { Provisioning.machOClosureInspectionBytes =
+              machOInspectionBytes + 1
+          }
+        && refusedDimension
+          "runtime byte"
+          measuredCoreMlClosure
+            { Provisioning.machOClosureRuntimeBytes = machORuntimeBytes + 1
+            }
+        && refusedDimension
+          "runtime library count"
+          measuredCoreMlClosure
+            { Provisioning.machOClosureLibraryCount = 513
+            }
+    )
+    "Sprint 1.20: each Mach-O closure dimension refuses its own overflow and names which dimension it was"
+
+refusedDimension :: String -> Provisioning.MachOClosureDimensions -> Bool
+refusedDimension dimension dimensions =
+  case Provisioning.admitMachOClosureDimensionsForTest dimensions of
+    Left failure -> dimension `isInfixOf` failure
+    Right () -> False
+
+-- | Require a refusal and pin /why/ it was refused. An assertion that accepts
+-- any failure passes for the wrong reason as readily as the right one.
+refusedBecause :: String -> Either SomeException value -> Bool
+refusedBecause expected outcome =
+  case outcome of
+    Left failure -> expected `isInfixOf` displayException failure
+    Right _ -> False
+
+-- | The observed refusal, quoted into the assertion message. A boundary
+-- fixture that fails without naming what it saw cannot be diagnosed.
+refusalDiagnostic :: Either SomeException value -> String
+refusalDiagnostic outcome =
+  case outcome of
+    Left failure -> displayException failure
+    Right _ -> "the effect was not refused at all"
+
+-- | Sprint 1.20 writer-effect audit item 11 — the deterministic parent-swap
+-- fixtures, at both effect boundaries the audit enumerates.
+--
+-- Every production writer effect is anchored on a parent descriptor that
+-- 'withAuthorizedLeafParent' retains, rather than on the @FilePath@
+-- @authorizedWriterPath@ returns. These assertions prove that anchoring by
+-- planting an intermediate-parent swap in the exact window between the ancestry
+-- check and the effect, and they include a pathname control so the
+-- descriptor-anchored assertion is load-bearing rather than a tautology about
+-- an untouched directory.
+--
+-- The excluded attack is redirection of an effect /outside/ the authority the
+-- writer holds. A substitute that is itself a real directory inside the pinned
+-- root is not that: mutating there is inside the writer's authority, and
+-- concurrent writers are excluded by the exclusive materialization lock, not by
+-- this boundary.
+runWriterEffectParentSwapAssertions :: FilePath -> IO ()
+runWriterEffectParentSwapAssertions testRoot = do
+  let swapPaths =
+        Paths
+          { repoRoot = testRoot,
+            buildRoot = testRoot </> ".build",
+            dataRoot = testRoot </> ".data",
+            runtimeRoot = testRoot </> ".data" </> "runtime",
+            kindRoot = testRoot </> ".data" </> "kind",
+            helmConfigRoot = testRoot </> ".data" </> "helm" </> "config",
+            helmCacheRoot = testRoot </> ".data" </> "helm" </> "cache",
+            helmDataRoot = testRoot </> ".data" </> "helm" </> "data",
+            resultsRoot = testRoot </> ".data" </> "results",
+            modelCacheRoot = testRoot </> ".data" </> "model-cache",
+            pathsHostConfig =
+              Just (HostConfig.defaultLinuxOuterContainerHostConfig "/root")
+          }
+      enginesRoot = dataRoot swapPaths </> "engines"
+  removePathForcibly testRoot
+  createDirectoryIfMissing True enginesRoot
+  swapEnvironment <- Subprocess.clusterSubprocessEnv swapPaths
+  let withSwapWriter ::
+        forall swapResult.
+        ( forall w s q.
+          Provisioning.EngineWriter w s q ->
+          Provisioning.ProvisioningSession s swapResult
+        ) ->
+        IO swapResult
+      withSwapWriter action =
+        Provisioning.withEngineProvisioningSession
+          swapPaths
+          enginesRoot
+          swapEnvironment
+          (\writer _grant -> action writer)
+  runDirectWriteParentSwapAssertions testRoot enginesRoot withSwapWriter
+  runRootMutationInterpreterAssertions testRoot enginesRoot withSwapWriter
+  runExternalToolParentSwapAssertions testRoot swapEnvironment
+
+-- | Boundary one: a direct in-process write effect.
+runDirectWriteParentSwapAssertions ::
+  FilePath ->
+  FilePath ->
+  ( forall swapResult.
+    ( forall w s q.
+      Provisioning.EngineWriter w s q ->
+      Provisioning.ProvisioningSession s swapResult
+    ) ->
+    IO swapResult
+  ) ->
+  IO ()
+runDirectWriteParentSwapAssertions testRoot enginesRoot withSwapWriter = do
+  let fixtureRoot = enginesRoot </> "direct-write-swap"
+      retainedParent = fixtureRoot </> "parent"
+      detachedParent = fixtureRoot </> "parent-detached"
+      substituteParent = fixtureRoot </> "parent-substitute"
+      leafName = "target"
+      anchoredBytes = ByteString8.pack "descriptor-anchored"
+  createDirectoryIfMissing True retainedParent
+  swapEntered <- MVar.newEmptyMVar
+  swapResume <- MVar.newEmptyMVar
+  swapResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO $
+      ( try @SomeException $
+          withSwapWriter $ \writer ->
+            Provisioning.provisioningWriteBytesWithParentSwapPauseForTest
+              writer
+              (retainedParent </> leafName)
+              anchoredBytes
+              swapEntered
+              swapResume
+      )
+        >>= MVar.putMVar swapResult
+  -- The writer has validated the ancestry and is holding the retained parent
+  -- descriptor. This is the window a pathname-resolving writer loses.
+  MVar.takeMVar swapEntered
+  renameDirectory retainedParent detachedParent
+  createDirectoryIfMissing True substituteParent
+  renameDirectory substituteParent retainedParent
+  MVar.putMVar swapResume ()
+  anchoredOutcome <- MVar.takeMVar swapResult
+  detachedContents <-
+    try @IOException (BS.readFile (detachedParent </> leafName))
+  substituteLeafPresent <- doesPathExist (retainedParent </> leafName)
+  assert
+    ( isRight anchoredOutcome
+        && detachedContents == Right anchoredBytes
+        && not substituteLeafPresent
+    )
+    "Sprint 1.20 item 11: a direct writer effect follows its retained parent descriptor across an intermediate-parent swap and never reaches the substitute"
+  let controlRoot = testRoot </> "pathname-control"
+      controlParent = controlRoot </> "parent"
+      controlDetached = controlRoot </> "parent-detached"
+      controlSubstitute = controlRoot </> "parent-substitute"
+      controlBytes = ByteString8.pack "pathname-resolved"
+  createDirectoryIfMissing True controlParent
+  controlAncestryValid <- doesDirectoryExist controlParent
+  renameDirectory controlParent controlDetached
+  createDirectoryIfMissing True controlSubstitute
+  renameDirectory controlSubstitute controlParent
+  BS.writeFile (controlParent </> leafName) controlBytes
+  controlSubstituteContents <- BS.readFile (controlParent </> leafName)
+  controlDetachedPresent <- doesPathExist (controlDetached </> leafName)
+  assert
+    ( controlAncestryValid
+        && controlSubstituteContents == controlBytes
+        && not controlDetachedPresent
+    )
+    "Sprint 1.20 item 11: the same swap redirects a pathname-resolving write into the substitute, so the retained-descriptor assertion is load-bearing"
+  let escapeFixtureRoot = enginesRoot </> "direct-write-escape"
+      escapedParent = escapeFixtureRoot </> "parent"
+      escapeTarget = testRoot </> "direct-write-escape-target"
+  createDirectoryIfMissing True escapeFixtureRoot
+  createDirectoryIfMissing True escapeTarget
+  createSymbolicLink escapeTarget escapedParent
+  escapeOutcome <-
+    try @SomeException $
+      withSwapWriter $ \writer ->
+        Provisioning.provisioningWriteBytes
+          writer
+          (escapedParent </> leafName)
+          (ByteString8.pack "escaped")
+  escapeTargetPresent <- doesPathExist (escapeTarget </> leafName)
+  -- The refusal must come from resolving the swapped component /through the
+  -- retained parent descriptor/ with @nofollow@, not from a pathname probe.
+  -- Darwin answers @ENOTDIR@ and Linux answers @ELOOP@ for the same open, so
+  -- the mechanism and the component are pinned rather than the errno text.
+  assert
+    ( refusedBecause "openFdAt" escapeOutcome
+        && refusedBecause "parent" escapeOutcome
+        && not escapeTargetPresent
+    )
+    ( "Sprint 1.20 item 11: an intermediate parent replaced by a symbolic link out of the writer root is refused without touching its target; observed: "
+        <> refusalDiagnostic escapeOutcome
+    )
+
+-- | Boundary one, continued: the production root-mutation interpreter, which
+-- @infernix-artifact-transaction@ deliberately does not exercise.
+runRootMutationInterpreterAssertions ::
+  FilePath ->
+  FilePath ->
+  ( forall swapResult.
+    ( forall w s q.
+      Provisioning.EngineWriter w s q ->
+      Provisioning.ProvisioningSession s swapResult
+    ) ->
+    IO swapResult
+  ) ->
+  IO ()
+runRootMutationInterpreterAssertions testRoot enginesRoot withSwapWriter = do
+  let mutationFixtureRoot = enginesRoot </> "root-mutation"
+      mutationSource = mutationFixtureRoot </> "generation.tmp"
+      mutationDestination = mutationFixtureRoot </> "generation"
+      mutationNested = mutationFixtureRoot </> "nested"
+      outsideRoot = testRoot </> "root-mutation-outside"
+  createDirectoryIfMissing True mutationSource
+  createDirectoryIfMissing True (mutationNested </> "generation.tmp")
+  createDirectoryIfMissing True outsideRoot
+  withSwapWriter $ \writer ->
+    Provisioning.provisioningInterpretArtifactRootMutationForTest
+      writer
+      ( ArtifactInternal.RenameArtifactRootSibling
+          mutationSource
+          mutationDestination
+      )
+  renamedPresent <- doesDirectoryExist mutationDestination
+  renameSourcePresent <- doesPathExist mutationSource
+  assert
+    (renamedPresent && not renameSourcePresent)
+    "Sprint 1.20 item 11: the production root-mutation interpreter renames an authorized sibling through the descriptor-anchored kernel"
+  nonSiblingOutcome <-
+    try @SomeException $
+      withSwapWriter $ \writer ->
+        Provisioning.provisioningInterpretArtifactRootMutationForTest
+          writer
+          ( ArtifactInternal.RenameArtifactRootSibling
+              (mutationNested </> "generation.tmp")
+              mutationDestination
+          )
+  assert
+    ( refusedBecause
+        "artifact root rename operands are not siblings"
+        nonSiblingOutcome
+    )
+    ( "Sprint 1.20 item 11: the production root-mutation interpreter refuses a rename whose operands do not share a parent; observed: "
+        <> refusalDiagnostic nonSiblingOutcome
+    )
+  escapedOutcome <-
+    try @SomeException $
+      withSwapWriter $ \writer ->
+        Provisioning.provisioningInterpretArtifactRootMutationForTest
+          writer
+          ( ArtifactInternal.RemoveArtifactRootSibling
+              (outsideRoot </> "generation")
+          )
+  outsideStillPresent <- doesDirectoryExist outsideRoot
+  assert
+    ( refusedBecause "escaped its authorized" escapedOutcome
+        && outsideStillPresent
+    )
+    ( "Sprint 1.20 item 11: the production root-mutation interpreter refuses an operand outside its authorized writer root; observed: "
+        <> refusalDiagnostic escapedOutcome
+    )
+  let linkedParent = mutationFixtureRoot </> "linked"
+  createSymbolicLink outsideRoot linkedParent
+  createDirectoryIfMissing True (outsideRoot </> "generation")
+  linkedOutcome <-
+    try @SomeException $
+      withSwapWriter $ \writer ->
+        Provisioning.provisioningInterpretArtifactRootMutationForTest
+          writer
+          ( ArtifactInternal.RemoveArtifactRootSibling
+              (linkedParent </> "generation")
+          )
+  linkedTargetPresent <- doesDirectoryExist (outsideRoot </> "generation")
+  -- @authorizedWriterRelativeComponents@ validates containment /lexically/, so
+  -- @linked/generation@ is inside the root by string and passes it. The escape
+  -- is refused one layer down, by the isolated mutation target's own
+  -- @nofollow@ component walk. That is the layer this audit item is about, so
+  -- it is the layer the assertion pins.
+  assert
+    ( refusedBecause
+        "provisioning mutation parent component is not a real directory"
+        linkedOutcome
+        && linkedTargetPresent
+    )
+    ( "Sprint 1.20 item 11: the production root-mutation interpreter refuses an intermediate parent swapped for a symbolic link out of the writer root; observed: "
+        <> refusalDiagnostic linkedOutcome
+    )
+  withSwapWriter $ \writer ->
+    Provisioning.provisioningInterpretArtifactRootMutationForTest
+      writer
+      (ArtifactInternal.RemoveArtifactRootSibling mutationDestination)
+  removedPresent <- doesPathExist mutationDestination
+  assert
+    (not removedPresent)
+    "Sprint 1.20 item 11: the production root-mutation interpreter retires an authorized root through one bounded descriptor-anchored kernel call"
+
+-- | Boundary two: an external-tool effect, whose target enters a retained
+-- descriptor by @fchdir@ and then names only relative operands.
+runExternalToolParentSwapAssertions ::
+  FilePath ->
+  Subprocess.SubprocessEnv ->
+  IO ()
+runExternalToolParentSwapAssertions testRoot swapEnvironment = do
+  let kernelRoot = testRoot </> "kernel-root"
+      kernelDetached = testRoot </> "kernel-root-detached"
+      kernelSubstitute = testRoot </> "kernel-root-substitute"
+      linkRoot = testRoot </> "kernel-link-root"
+      linkOutside = testRoot </> "kernel-link-outside"
+      mutationTimeout = Subprocess.Timeout (120 * 1000 * 1000)
+  createDirectoryIfMissing True kernelRoot
+  observedRoot <-
+    Subprocess.observeProvisioningMutationRoot kernelRoot
+      >>= either
+        (\outcome -> fail ("mutation root observation failed: " <> show outcome))
+        pure
+  -- The exact device, inode, and mode are now pinned. Swap the pathname the
+  -- isolated mutation target will open.
+  renameDirectory kernelRoot kernelDetached
+  createDirectoryIfMissing True kernelSubstitute
+  renameDirectory kernelSubstitute kernelRoot
+  rootSwapOutcome <-
+    either
+      (\outcome -> fail ("mutation spec rejected: " <> show outcome))
+      (Subprocess.runProvisioningFilesystemMutation swapEnvironment mutationTimeout)
+      ( Subprocess.provisioningCreateDirectoryLeaf
+          observedRoot
+          []
+          "leaf"
+      )
+  substituteLeafPresent <- doesPathExist (kernelRoot </> "leaf")
+  detachedLeafPresent <- doesPathExist (kernelDetached </> "leaf")
+  assert
+    ( rootSwapOutcome /= Subprocess.ProvisioningMutationSucceeded
+        && not substituteLeafPresent
+        && not detachedLeafPresent
+    )
+    "Sprint 1.20 item 11: the external-tool mutation kernel refuses a root swapped after its exact identity was observed"
+  createDirectoryIfMissing True linkRoot
+  createDirectoryIfMissing True linkOutside
+  createSymbolicLink linkOutside (linkRoot </> "parent")
+  observedLinkRoot <-
+    Subprocess.observeProvisioningMutationRoot linkRoot
+      >>= either
+        (\outcome -> fail ("mutation root observation failed: " <> show outcome))
+        pure
+  componentSwapOutcome <-
+    either
+      (\outcome -> fail ("mutation spec rejected: " <> show outcome))
+      (Subprocess.runProvisioningFilesystemMutation swapEnvironment mutationTimeout)
+      ( Subprocess.provisioningCreateDirectoryLeaf
+          observedLinkRoot
+          ["parent"]
+          "leaf"
+      )
+  linkOutsideLeafPresent <- doesPathExist (linkOutside </> "leaf")
+  assert
+    ( componentSwapOutcome /= Subprocess.ProvisioningMutationSucceeded
+        && not linkOutsideLeafPresent
+    )
+    "Sprint 1.20 item 11: the external-tool mutation kernel refuses an intermediate component swapped for a symbolic link and leaves its target untouched"
+  assert
+    ( Subprocess.safeRelativeOperandForTest
+        "/work/dir"
+        "/work/dir/Audiveris.dmg"
+        == Right "Audiveris.dmg"
+        && Subprocess.safeRelativeOperandForTest
+          "/work/dir"
+          "/work/dir/mount/Audiveris.dmg"
+          == Right ("mount" </> "Audiveris.dmg")
+        && isLeft
+          ( Subprocess.safeRelativeOperandForTest
+              "/work/dir"
+              "/work/other/Audiveris.dmg"
+          )
+        && isLeft (Subprocess.safeRelativeOperandForTest "/work/dir" "/work")
+        && isLeft (Subprocess.safeRelativeOperandForTest "/work/dir" "/work/dir")
+        && isLeft
+          ( Subprocess.safeRelativeOperandForTest
+              "/work/dir"
+              "Audiveris.dmg"
+          )
+        && isLeft
+          ( Subprocess.safeRelativeOperandForTest
+              "work/dir"
+              "/work/dir/Audiveris.dmg"
+          )
+    )
+    "Sprint 1.20 item 11: a rendered external-tool operand must be a safe descendant of its descriptor-derived working directory"
+
+-- | A standalone new-format cache with two entries. The forty-eight byte
+-- header and twenty-four byte entries are the layout glibc writes, and the
+-- string offsets are relative to the start of that header.
+newFormatLdSoCache :: BS.ByteString
+newFormatLdSoCache =
+  BS.concat
+    [ ByteString8.pack "glibc-ld.so.cache1.1",
+      elfLe 4 2, -- nlibs
+      elfLe 4 (fromIntegral (BS.length newCacheStrings)),
+      BS.replicate 20 0, -- flags, padding, extension offset, unused
+      -- Offsets are relative to this header, not to the file, which is what
+      -- makes the embedded arrangement below work unchanged.
+      newCacheEntry 96 106,
+      newCacheEntry 139 149,
+      newCacheStrings
+    ]
+
+newCacheEntry :: Integer -> Integer -> BS.ByteString
+newCacheEntry key value =
+  BS.concat
+    [ elfLe 4 1, -- flags
+      elfLe 4 key,
+      elfLe 4 value,
+      elfLe 4 0, -- osversion
+      elfLe 8 0 -- hwcap
+    ]
+
+newCacheStrings :: BS.ByteString
+newCacheStrings =
+  BS.concat
+    [ nulTerminated "libc.so.6",
+      nulTerminated "/lib/aarch64-linux-gnu/libc.so.6",
+      nulTerminated "libm.so.6",
+      nulTerminated "/lib/aarch64-linux-gnu/libm.so.6"
+    ]
+
+oldFormatLdSoCache :: BS.ByteString
+oldFormatLdSoCache =
+  BS.concat
+    [ ByteString8.pack "ld.so-1.7.0",
+      BS.singleton 0,
+      elfLe 4 1, -- nlibs
+      elfLe 4 1, -- flags
+      elfLe 4 0, -- key offset, relative to the string base
+      elfLe 4 10, -- value offset
+      nulTerminated "libz.so.1",
+      nulTerminated "/usr/lib/libz.so.1"
+    ]
+
+-- | The arrangement modern glibc actually writes: an old-format cache whose
+-- entries are followed, at the next eight-byte boundary, by a complete
+-- new-format cache. The new cache's own offsets are relative to its header,
+-- which is why the embedded case cannot reuse the file start.
+embeddedNewFormatLdSoCache :: BS.ByteString
+embeddedNewFormatLdSoCache =
+  BS.concat
+    [ ByteString8.pack "ld.so-1.7.0",
+      BS.singleton 0,
+      elfLe 4 1, -- nlibs
+      elfLe 4 1,
+      elfLe 4 0,
+      elfLe 4 10,
+      BS.replicate 4 0, -- pad 28 -> 32
+      newFormatLdSoCache
+    ]

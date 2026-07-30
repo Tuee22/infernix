@@ -12,8 +12,7 @@ import System.FilePath (normalise)
 -- be acquired. The package lock token and its raw acquire/release operations
 -- remain confined to this module.
 withLifecycleFileLock :: FilePath -> IO a -> IO a
-withLifecycleFileLock lockPath action =
-  withKernelFileLock "cluster lifecycle" lockPath action
+withLifecycleFileLock = withKernelFileLock "cluster lifecycle"
 
 -- | Shared non-blocking, kernel-managed exclusion for internal state
 -- transitions that need a persistent pathname but no residue-based ownership

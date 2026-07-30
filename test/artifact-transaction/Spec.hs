@@ -10,7 +10,8 @@
 module Main (main) where
 
 import Control.Concurrent
-  ( forkFinally,
+  ( MVar,
+    forkFinally,
     newEmptyMVar,
     putMVar,
     takeMVar,
@@ -23,7 +24,6 @@ import Control.Exception
     bracket,
     displayException,
     fromException,
-    throwIO,
     try,
   )
 import Control.Monad (forM, unless, when)
@@ -33,12 +33,13 @@ import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List qualified as List
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Engines.Artifact
-  ( ArtifactPhase (..),
+  ( ArtifactLauncher,
     ArtifactProcessOutcome (..),
     ArtifactResolution (..),
     ArtifactRuntimeExpectation,
@@ -46,10 +47,9 @@ import Infernix.Engines.Artifact
     ArtifactTerminalOutcome (..),
     EngineArtifactManifest (..),
     NativeArtifactIdentity,
-    Program,
     ResolvedArtifactProvenance (..),
-    Session,
     appleArtifactRuntimeExpectation,
+    artifactLauncher,
     currentArtifactRecipeFingerprint,
     decodeEngineArtifactManifest,
     digestEngineArtifactPayload,
@@ -61,18 +61,19 @@ import Infernix.Engines.Artifact
     maximumArtifactSnapshotBytes,
     maximumArtifactSnapshotDepth,
     maximumArtifactSnapshotEntries,
+    overwriteFileBeforeLaunch,
     parseNativeArtifactIdentity,
-    reapArtifact,
     renderArtifactSnapshotRecord,
     renderEngineArtifactManifest,
-    revalidateValidatedEngineArtifact,
     validateArtifactSnapshotBounds,
     validateEngineArtifactRootAt,
     withFirstValidatedEngineArtifact,
+    withFirstValidatedEngineArtifactUnderPreLaunchFixture,
   )
 import Infernix.Engines.Artifact.Internal
   ( ArtifactActivationBoundary (..),
     ArtifactCleanupBoundary (..),
+    artifactRootMutatorForTest,
     installEngineArtifactRoot,
     installEngineArtifactRootWithCleanupObserverForTest,
     installEngineArtifactRootWithExpectedDigest,
@@ -651,7 +652,7 @@ artifactTamperTest =
         identity
         expectation
         [payloadRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     assertArtifactRejected
       "payload tamper"
       payloadRoot
@@ -661,7 +662,7 @@ artifactTamperTest =
       writeExactArtifactRoot manifestRoot manifestRoot "manifest"
     let changedIdentity =
           case parseNativeArtifactIdentity "onnx-runtime-native" of
-            Just identity -> identity
+            Just parsedIdentity -> parsedIdentity
             Nothing ->
               error "closed native artifact catalog omitted onnx-runtime-native"
         changedManifest =
@@ -690,7 +691,7 @@ artifactTamperTest =
         identity
         expectation
         [manifestRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     assertArtifactRejected
       "manifest adapter tamper"
       manifestRoot
@@ -716,7 +717,7 @@ runtimeBindingTest =
         identity
         expectation
         [targetRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     assertArtifactRejected
       "canonical direct-target contract mismatch"
       targetRoot
@@ -728,7 +729,7 @@ runtimeBindingTest =
         identity
         linuxArtifactRuntimeExpectation
         [runtimeRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     assertArtifactRejected
       "runtime substrate mismatch"
       runtimeRoot
@@ -748,7 +749,7 @@ runtimeResolutionTest =
         identity
         expectation
         [missingRoot, validRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     case fallbackResolution of
       ArtifactResolved ArtifactTerminalCompleted -> pure ()
       _ -> failTest "missing first root did not resolve the exact fallback root"
@@ -760,7 +761,7 @@ runtimeResolutionTest =
         identity
         expectation
         [corruptRoot, validRoot]
-        completedArtifactProgram
+        completedArtifactLauncher
     assertArtifactRejected
       "corrupt priority root"
       corruptRoot
@@ -778,7 +779,7 @@ runtimeBusyTest =
           identity
           testRuntimeExpectation
           [installRoot]
-          completedArtifactProgram
+          completedArtifactLauncher
     case resolution of
       ArtifactBusy busyRoot ->
         assertEqual
@@ -1015,27 +1016,22 @@ nestedPayloadUseBoundaryTest =
     writeFile nestedPayload "original nested payload"
     _ <- refreshExactManifest installRoot manifest
     resolution <-
-      withFirstValidatedEngineArtifact
+      withFirstValidatedEngineArtifactUnderPreLaunchFixture
         identity
         testRuntimeExpectation
         [installRoot]
-        ( reapArtifact
-            ( \validatedArtifact -> do
-                writeFile nestedPayload "tampered nested payload"
-                revalidation <-
-                  try @IOException
-                    (revalidateValidatedEngineArtifact validatedArtifact)
-                pure $
-                  case revalidation of
-                    Left _ -> ArtifactTerminalCompleted
-                    Right () -> ArtifactTerminalRejected
-            )
+        ( overwriteFileBeforeLaunch
+            nestedPayload
+            (ByteString8.pack "tampered nested payload")
+        )
+        ( artifactLauncher
+            (const (pure ArtifactTerminalCompleted))
         )
     case resolution of
-      ArtifactResolved ArtifactTerminalCompleted -> pure ()
+      ArtifactResolved ArtifactTerminalRejected -> pure ()
       _ ->
         failTest
-          "full use-boundary validation accepted nested payload tampering"
+          "runner-owned use-boundary revalidation accepted nested payload tampering"
 
 runtimeReadLockTest :: IO ()
 runtimeReadLockTest =
@@ -1048,8 +1044,8 @@ runtimeReadLockTest =
         identity
         testRuntimeExpectation
         [installRoot]
-        ( reapArtifact
-            ( \_validatedArtifact -> do
+        ( artifactLauncher
+            ( \_launchRequest -> do
                 writerResult <-
                   try @IOException
                     (withEngineMaterializationLock workspace (\_authority -> pure ()))
@@ -1085,8 +1081,8 @@ runtimeProgramLockLifetimeTest =
             identity
             testRuntimeExpectation
             [installRoot]
-            ( reapArtifact
-                ( \_validatedArtifact -> do
+            ( artifactLauncher
+                ( \_launchRequest -> do
                     putMVar actionEntered ()
                     takeMVar actionResume
                     delayedBytes <-
@@ -1147,7 +1143,7 @@ runtimeProgramLockLifetimeTest =
       =<< tryWriter
 
     cancellationEntered <- newEmptyMVar
-    cancellationBlock <- newEmptyMVar
+    cancellationBlock <- newEmptyMVar :: IO (MVar ())
     cancellationResult <- newEmptyMVar
     cancellationThread <-
       forkFinally
@@ -1155,10 +1151,10 @@ runtimeProgramLockLifetimeTest =
             identity
             testRuntimeExpectation
             [installRoot]
-            ( reapArtifact
-                ( \_validatedArtifact -> do
+            ( artifactLauncher
+                ( \_launchRequest -> do
                     putMVar cancellationEntered ()
-                    takeMVar cancellationBlock
+                    () <- takeMVar cancellationBlock
                     pure ArtifactTerminalCompleted
                 )
             )
@@ -1541,6 +1537,7 @@ activationCleanupFailureReconciliationTest =
       ( withArtifactWriter installRoot $ \authority ->
           installEngineArtifactRootWithCleanupObserverForTest
             authority
+            artifactRootMutatorForTest
             installRoot
             tempRoot
             (manifestDigest candidateManifest)
@@ -1868,7 +1865,11 @@ withArtifactWriter installRoot =
 installArtifactRoot :: FilePath -> FilePath -> IO ()
 installArtifactRoot installRoot tempRoot =
   withArtifactWriter installRoot $ \authority ->
-    installEngineArtifactRoot authority installRoot tempRoot
+    installEngineArtifactRoot
+      authority
+      artifactRootMutatorForTest
+      installRoot
+      tempRoot
 
 installArtifactRootWithExpectedDigest ::
   FilePath ->
@@ -1879,6 +1880,7 @@ installArtifactRootWithExpectedDigest installRoot tempRoot expectedDigest =
   withArtifactWriter installRoot $ \authority ->
     installEngineArtifactRootWithExpectedDigest
       authority
+      artifactRootMutatorForTest
       installRoot
       tempRoot
       expectedDigest
@@ -1897,6 +1899,7 @@ installArtifactRootWithInstalledValidation
     withArtifactWriter installRoot $ \authority ->
       installEngineArtifactRootWithPendingActionForTest
         authority
+        artifactRootMutatorForTest
         installRoot
         tempRoot
         expectedDigest
@@ -1911,6 +1914,7 @@ installArtifactRootWithObserver installRoot tempRoot observer =
   withArtifactWriter installRoot $ \authority ->
     installEngineArtifactRootWithObserverForTest
       authority
+      artifactRootMutatorForTest
       installRoot
       tempRoot
       observer
@@ -1918,7 +1922,10 @@ installArtifactRootWithObserver installRoot tempRoot observer =
 reconcileArtifactRoot :: FilePath -> IO ()
 reconcileArtifactRoot installRoot =
   withArtifactWriter installRoot $ \authority ->
-    reconcileEngineArtifactRoot authority installRoot
+    reconcileEngineArtifactRoot
+      authority
+      artifactRootMutatorForTest
+      installRoot
 
 writeExactArtifactRoot ::
   FilePath ->
@@ -1960,7 +1967,8 @@ writeLegacyArtifactRoot expectedInstallRoot actualRoot payload = do
           }
       manifest =
         legacyManifest
-          { manifestDigest = legacyDeclarativeTestDigest legacyManifest
+          { manifestDigest = legacyDeclarativeTestDigest legacyManifest,
+            manifestGenerationFingerprint = ""
           }
   writeManifest actualRoot manifest
 
@@ -1970,7 +1978,7 @@ writeTestAppleRuntimeLayout installRoot actualRoot = do
       frameworkRoot =
         actualRoot </> "python-frameworks" </> "Python.framework"
       venvRoot = actualRoot </> "venv"
-      pythonPath = venvRoot </> "bin" </> "python"
+      pythonPath = venvRoot </> "bin" </> "infernix-python"
   createDirectoryIfMissing True pythonHome
   createDirectoryIfMissing True frameworkRoot
   createDirectoryIfMissing True (actualRoot </> "native" </> "lib")
@@ -2078,6 +2086,7 @@ refreshExactManifest root manifest = do
   let refreshedManifest =
         manifest
           { manifestDigest = digest,
+            manifestGenerationFingerprint = digest,
             manifestMinioObjectKey =
               exactObjectKey
                 (manifestSubstrate manifest)
@@ -2130,11 +2139,9 @@ testTargetFingerprintFor identity substrate architecture =
     Right target -> nativeArtifactTargetFingerprint target
     Left failure -> error failure
 
-completedArtifactProgram ::
-  Session s 'ArtifactReady %1 ->
-  Program s 'ArtifactReaped ArtifactTerminalOutcome
-completedArtifactProgram =
-  reapArtifact (const (pure ArtifactTerminalCompleted))
+completedArtifactLauncher :: ArtifactLauncher
+completedArtifactLauncher =
+  artifactLauncher (const (pure ArtifactTerminalCompleted))
 
 assertArtifactRejected ::
   String ->

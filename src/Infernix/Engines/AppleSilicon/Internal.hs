@@ -25,6 +25,9 @@ module Infernix.Engines.AppleSilicon.Internal
     retireLegacyAppleMetalRuntimeBridgeForTest,
     MachOFixturePlan (..),
     inspectMachOFixtureForTest,
+    machOInstallNameTargetForTest,
+    shebangBindsHostInstallationForTest,
+    supportedMachOMagicForTest,
     resolveMachOPathsFixtureForTest,
     AudiverisMountRecoveryFixture (..),
     recoverAudiverisMountRecordFixtureForTest,
@@ -76,7 +79,6 @@ import System.FilePath
     makeRelative,
     normalise,
     splitDirectories,
-    takeDirectory,
     (</>),
   )
 import System.Info (os)
@@ -703,7 +705,6 @@ materializeMetalEngineArtifactWith
               cacheWriter
               writer
               hook
-              paths
               grant
               deadlines
               installRoot
@@ -778,7 +779,6 @@ completeMetalEngineCandidate ::
   Provisioning.DownloadCacheWriter d s q ->
   Provisioning.EngineWriter w s q ->
   AppleMaterializationHook ->
-  Paths ->
   Provisioning.ProvisioningGrant s ->
   AppleProvisioningDeadlines ->
   FilePath ->
@@ -792,7 +792,6 @@ completeMetalEngineCandidate
   cacheWriter
   writer
   hook
-  paths
   grant
   deadlines
   installRoot
@@ -804,12 +803,21 @@ completeMetalEngineCandidate
         cacheWriter
         writer
         hook
-        paths
         grant
         deadlines
         tempRoot
         artifact
-    relocateCandidateVenvInSession writer installRoot tempRoot
+    -- Only a Python-backed candidate owns a venv whose launchers and
+    -- configuration must be rewritten to the final root before smoke. A
+    -- native-binary or Audiveris JVM candidate has no `venv` directory at all,
+    -- so relocating one unconditionally fails closed on an artifact that is
+    -- correctly hydrated. The hydration witness, not a tolerant filesystem
+    -- probe, decides: an absent venv under a Python candidate is still fatal.
+    case hydration of
+      PythonHydration {} ->
+        relocateCandidateVenvInSession writer installRoot tempRoot
+      HostBinaryHydration {} -> pure ()
+      AudiverisHydration {} -> pure ()
     metadataSeed <-
       collectHydratedMetadataSeed
         writer
@@ -936,7 +944,6 @@ hydrateMetalEngineArtifact ::
   Provisioning.DownloadCacheWriter d s q ->
   Provisioning.EngineWriter w s q ->
   AppleMaterializationHook ->
-  Paths ->
   Provisioning.ProvisioningGrant s ->
   AppleProvisioningDeadlines ->
   FilePath ->
@@ -946,7 +953,6 @@ hydrateMetalEngineArtifact
   cacheWriter
   writer
   hook
-  paths
   grant
   deadlines
   tempRoot
@@ -1054,6 +1060,22 @@ inspectMachOFixtureForTest ::
   Either String ([FilePath], [FilePath])
 inspectMachOFixtureForTest =
   Provisioning.inspectMachOFixtureForTest
+
+machOInstallNameTargetForTest ::
+  [FilePath] ->
+  FilePath ->
+  FilePath ->
+  IO (Either String FilePath)
+machOInstallNameTargetForTest =
+  Provisioning.machOInstallNameTargetForTest
+
+shebangBindsHostInstallationForTest :: ByteString.ByteString -> Bool
+shebangBindsHostInstallationForTest =
+  Provisioning.shebangBindsHostInstallationForTest
+
+supportedMachOMagicForTest :: ByteString.ByteString -> Bool
+supportedMachOMagicForTest =
+  Provisioning.supportedMachOMagicForTest
 
 resolveMachOPathsFixtureForTest ::
   FilePath ->
@@ -2237,12 +2259,15 @@ finalizeHydratedMetadata ::
   Provisioning.AppleRuntimeVersion ->
   HydratedMetadataSeed ->
   HydratedMetadata
-finalizeHydratedMetadata artifact runtimeVersion metadataSeed =
-  let smokeVersion =
-        Provisioning.appleRuntimeVersionText runtimeVersion
-      withSmokeProvenance provenance =
-        provenance <> [smokeProvenance artifact smokeVersion]
-   in case metadataSeed of
+finalizeHydratedMetadata artifact runtimeVersion =
+  finalizeSeed
+  where
+    smokeVersion =
+      Provisioning.appleRuntimeVersionText runtimeVersion
+    withSmokeProvenance provenance =
+      provenance <> [smokeProvenance artifact smokeVersion]
+    finalizeSeed seed =
+      case seed of
         PythonHydratedMetadataSeed
           engineVersion
           pythonVersion

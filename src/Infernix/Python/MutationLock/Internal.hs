@@ -12,6 +12,7 @@ module Infernix.Python.MutationLock.Internal
 where
 
 import Infernix.Cluster.LifecycleLock (withKernelFileLock)
+import System.Directory (createDirectoryIfMissing)
 import System.FilePath ((</>))
 
 data PoetryProjectMutationAuthority p
@@ -55,6 +56,11 @@ withGeneratedBindingsMutationLockInternal ::
   IO a
 withGeneratedBindingsMutationLockInternal repositoryRoot action = do
   let toolsRoot = repositoryRoot </> "tools"
+  -- The lock leaf is created on demand by 'tryLockFile', but its parent is
+  -- untracked and is otherwise created only later inside the session, so a
+  -- fresh checkout would fail ENOENT before the body ran. Own the parent here,
+  -- exactly as the engine materialization lock owns its engines root.
+  createDirectoryIfMissing True toolsRoot
   withKernelFileLock
     "generated Python bindings mutation"
     (toolsRoot </> ".infernix-generated-proto.lock")

@@ -1,22 +1,29 @@
 {-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LinearTypes #-}
 
 module Main (main) where
 
 import Infernix.Engines.Artifact.Capability
-  ( ArtifactPhase (..),
+  ( ArtifactLaunchRequest,
+    ArtifactLauncher,
     ArtifactTerminalOutcome (ArtifactTerminalCompleted),
-    Program,
-    Session,
-    reapArtifact,
+    artifactLaunchEntrypoint,
+    artifactLaunchInstallRoot,
+    artifactLauncher,
   )
 
-orderedArtifactProgram ::
-  Session s 'ArtifactReady %1 ->
-  Program s 'ArtifactReaped ArtifactTerminalOutcome
-orderedArtifactProgram =
-  reapArtifact (const (pure ArtifactTerminalCompleted))
+-- | The supported shape: an unprivileged launcher over the closed, first-order
+-- launch request. It never names a validated artifact, an artifact run, or a
+-- next-phase continuation.
+orderedArtifactLauncher :: ArtifactLauncher
+orderedArtifactLauncher =
+  artifactLauncher describeAndComplete
+
+describeAndComplete :: ArtifactLaunchRequest -> IO ArtifactTerminalOutcome
+describeAndComplete request =
+  artifactLaunchInstallRoot request `seq`
+    artifactLaunchEntrypoint request `seq`
+      pure ArtifactTerminalCompleted
 
 main :: IO ()
 main =
-  orderedArtifactProgram `seq` pure ()
+  orderedArtifactLauncher `seq` pure ()

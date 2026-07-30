@@ -63,6 +63,19 @@ python/.venv
 python/engines/*/.venv
 tools/generated_proto
 
+# Lock files — dependency locks and the binary's runtime mutual-exclusion
+# sidecars. Neither belongs in an image build context: a lock carried into the
+# context is stale process state that can only mislead.
+#
+# Both forms are listed deliberately. Docker matches each pattern against the
+# whole context-relative path and `*` does not cross `/`, so a bare `*.lock`
+# excludes only root-level locks — which is exactly why `**/poetry.lock` and
+# `**/__pycache__` above carry an explicit `**/`. Listing both is unambiguous
+# across pattern-matcher versions rather than relying on `**` matching zero
+# segments. `web/package-lock.json` is kept above: it does not end in `.lock`.
+*.lock
+**/*.lock
+
 # Temporary files
 *.log
 .DS_Store

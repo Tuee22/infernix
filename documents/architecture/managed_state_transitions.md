@@ -457,6 +457,20 @@ implemented, and the obsolete subprocess C file and Cabal declaration are remove
 validation, source review, the fresh complete machine-independent gate, and cohort validation
 remain open. Wave X remains evidence only for the earlier scope.
 
+An image-owned Linux engine artifact now carries loader-closure evidence as part of its generation
+identity (**Phase 1**, Sprint 1.20). The payload-root digests an image target already recorded said
+nothing about the loader named by `PT_INTERP`, the resolution metadata in `/etc/ld.so.cache`, or the
+system libraries reached through `DT_NEEDED`, all of which live outside those roots — so two images
+with different `/lib` contents produced the same generation. `Infernix.Engines.Artifact.Loader`
+observes that closure through retained descriptors and
+`engineArtifactGenerationFingerprint` binds it, and the Linux installed smoke revalidates the
+complete recorded closure immediately before launch, failing closed on a manifest carrying none.
+`LD_LIBRARY_PATH` is never consulted: reading it would be an ambient environment read the
+configuration doctrine forbids, and an identity that depended on it would not be reproducible. This
+is a derivation of what the loader would resolve, not yet an observation of what it did — the
+`LD_DEBUG=libs` analogue of the Apple lane's `DYLD_PRINT_LIBRARIES` audit is not wired into the
+Linux smoke, and that gap remains open.
+
 ## Validation
 
 - `cabal build all` under `-Wall -Werror` is the primary proof: an operation reachable without its

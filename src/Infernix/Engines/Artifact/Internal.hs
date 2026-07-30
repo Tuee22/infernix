@@ -1,6 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE ImportQualifiedPost #-}
-{-# LANGUAGE LinearTypes #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
@@ -44,10 +44,16 @@ module Infernix.Engines.Artifact.Internal
     ArtifactOutputStream (..),
     ArtifactProcessOutcome (..),
     ArtifactTerminalOutcome (..),
-    Session,
-    Program,
-    reapArtifact,
+    ArtifactLaunchRequest,
+    artifactLaunchInstallRoot,
+    artifactLaunchEntrypoint,
+    ArtifactLauncher,
+    artifactLauncher,
+    ArtifactPreLaunchFixture,
+    noArtifactPreLaunchFixture,
+    overwriteFileBeforeLaunch,
     withFirstValidatedEngineArtifact,
+    withFirstValidatedEngineArtifactUnderPreLaunchFixture,
     revalidateValidatedEngineArtifact,
     validateEngineArtifactHelperLease,
     validateArtifactGenerationPayloadLease,
@@ -56,6 +62,10 @@ module Infernix.Engines.Artifact.Internal
     ArtifactCleanupBoundary (..),
     PendingArtifactActivation,
     CommittedArtifactActivation,
+    ArtifactRootMutation (..),
+    ArtifactRootMutator (..),
+    runArtifactRootMutation,
+    artifactRootMutatorForTest,
     beginEngineArtifactActivationUnderGeneration,
     pendingArtifactActivationManifest,
     pendingArtifactActivationPriorManifest,
@@ -106,14 +116,20 @@ import Data.Text.Encoding qualified as TextEncoding
 import Foreign.C.Error (Errno (Errno), eLOOP)
 import GHC.IO.Exception qualified as GHCIOException
 import Infernix.Engines.Artifact.Capability
-  ( ArtifactOutputStream (..),
+  ( ArtifactLaunchRequest,
+    ArtifactLauncher,
+    ArtifactOutputStream (..),
     ArtifactPhase (..),
+    ArtifactPreLaunchFixture,
     ArtifactProcessOutcome (..),
+    ArtifactRun,
     ArtifactTerminalOutcome (..),
-    Program,
-    Session,
     ValidatedEngineArtifact (..),
-    reapArtifact,
+    artifactLaunchEntrypoint,
+    artifactLaunchInstallRoot,
+    artifactLauncher,
+    noArtifactPreLaunchFixture,
+    overwriteFileBeforeLaunch,
   )
 import Infernix.Engines.Artifact.Capability qualified as Capability
 import Infernix.Engines.Artifact.Identity
@@ -121,19 +137,21 @@ import Infernix.Engines.Artifact.Identity
     nativeArtifactAdapterId,
     parseNativeArtifactIdentity,
   )
+import Infernix.Engines.Artifact.Loader qualified as Loader
 import Infernix.Engines.Artifact.Recipe
   ( nativeArtifactRecipeFingerprint,
   )
 import Infernix.Engines.Artifact.Snapshot qualified as Snapshot
 import Infernix.Engines.Artifact.Target
-  ( NativeArtifactTarget,
+  ( NativeArtifactLoaderEvidence,
+    NativeArtifactTarget,
     NativeArtifactTargetClosureEvidence (..),
     NativeArtifactTargetEvidence (..),
     NativeArtifactTargetExecutableEvidence (..),
     nativeArtifactTarget,
+    nativeArtifactTargetEvidenceFingerprint,
     nativeArtifactTargetExecutable,
     nativeArtifactTargetFingerprint,
-    nativeArtifactTargetEvidenceFingerprint,
     nativeArtifactTargetImmutableClosureRoots,
     nativeArtifactTargetIsInstalled,
   )
@@ -144,14 +162,18 @@ import Infernix.Engines.MaterializationLock.Internal
   ( ArtifactGenerationMutationAuthority,
     MaterializationAuthority,
     artifactGenerationLease,
+    materializationAuthorityDeviceId,
+    materializationAuthorityFileId,
+    materializationAuthorityMode,
+    materializationAuthorityRoot,
   )
 import Infernix.Error
   ( finallyPreservingPrimary,
   )
 import System.Directory
   ( canonicalizePath,
-    createDirectoryIfMissing,
     makeAbsolute,
+    removeDirectoryRecursive,
     renameDirectory,
   )
 import System.FilePath
@@ -169,7 +191,6 @@ import System.Info qualified as SystemInfo
 import System.Posix.Directory
   ( closeDirStream,
     readDirStream,
-    removeDirectory,
     rewindDirStream,
   )
 import System.Posix.Directory.Fd (unsafeOpenDirStreamFd)
@@ -184,10 +205,8 @@ import System.Posix.Files
     isDirectory,
     isRegularFile,
     isSymbolicLink,
-    linkCount,
     modificationTimeHiRes,
     readSymbolicLink,
-    removeLink,
     statusChangeTimeHiRes,
   )
 import System.Posix.IO
@@ -288,7 +307,7 @@ instance FromJSON EngineArtifactManifest where
         <*> value .:? "resolvedProvenance" .!= []
         <*> value .: "recipeFingerprint"
         <*> value .: "digest"
-        <*> value .: "generationFingerprint"
+        <*> value .:? "generationFingerprint" .!= ""
         <*> value .: "minioObjectKey"
         <*> value .: "localInstallRoot"
         <*> value .: "targetContractFingerprint"
@@ -394,14 +413,43 @@ observeNativeArtifactTargetEvidence installRoot target = do
     (ioError (userError "native artifact target closure roots are invalid"))
   closureEvidence <-
     mapM observeNativeArtifactTargetClosure closureRoots
+  loaderEvidence <-
+    observeTargetLoaderEvidence target executableEvidence closureRoots
   pure
     NativeArtifactTargetEvidence
       { targetEvidenceContractFingerprint =
           nativeArtifactTargetFingerprint target,
         targetEvidenceExecutable = executableEvidence,
         targetEvidenceClosures = closureEvidence,
-        targetEvidenceLoader = Nothing
+        targetEvidenceLoader = loaderEvidence
       }
+
+-- | The loader closure for an image target.
+--
+-- An installed Apple target carries none: its payload root is copied whole and
+-- already digested, its runtime closure is vendored into that root during
+-- hydration, and its loader provenance is proven at run time by the installed
+-- smoke's @DYLD_PRINT_LIBRARIES@ audit. @validateEngineArtifactRootAt@ rejects
+-- an Apple manifest that carries image-target evidence at all, so producing it
+-- here would make every Apple root unvalidatable.
+--
+-- An image target is the opposite case. Its executable and closure roots live
+-- in the immutable image, but the loader it names through @PT_INTERP@, the
+-- resolution metadata in @\/etc\/ld.so.cache@, and every system library it
+-- reaches through @DT_NEEDED@ live outside those roots and were previously
+-- bound by nothing at all.
+observeTargetLoaderEvidence ::
+  NativeArtifactTarget ->
+  NativeArtifactTargetExecutableEvidence ->
+  [FilePath] ->
+  IO (Maybe NativeArtifactLoaderEvidence)
+observeTargetLoaderEvidence target executableEvidence closureRoots
+  | nativeArtifactTargetIsInstalled target = pure Nothing
+  | otherwise =
+      Just
+        <$> Loader.observeNativeArtifactLoaderEvidence
+          (targetExecutableCanonicalPath executableEvidence)
+          closureRoots
 
 validateNativeArtifactTargetEvidence ::
   FilePath ->
@@ -1358,6 +1406,7 @@ validateEngineArtifactRootAt expectedInstallRoot actualRoot = do
                 )
             )
         validateManifestContract
+          ExactManifestContract
           expectedInstallRoot
           absoluteActualRoot
           rootDescriptor
@@ -1383,17 +1432,40 @@ validateEngineArtifactRootAt expectedInstallRoot actualRoot = do
 maximumManifestBytes :: Int
 maximumManifestBytes = 1024 * 1024
 
+-- | Which generation contract a manifest is being validated against. A
+-- pre-correction declarative root predates the generation fingerprint, so the
+-- legacy mode requires its absence instead of its exactness. A legacy root is
+-- only ever a migration predecessor or a rollback root, never an exact one.
+data ManifestContractMode
+  = ExactManifestContract
+  | LegacyDeclarativeManifestContract
+  deriving (Eq)
+
 validateManifestContract ::
+  ManifestContractMode ->
   FilePath ->
   FilePath ->
   Fd ->
   EngineArtifactManifest ->
   IO ()
 validateManifestContract
+  contractMode
   expectedInstallRoot
   actualRoot
   rootDescriptor
   manifest = do
+    case contractMode of
+      ExactManifestContract ->
+        requireNonemptyManifestField
+          ("generationFingerprint", manifestGenerationFingerprint manifest)
+      LegacyDeclarativeManifestContract ->
+        unless
+          (Text.null (manifestGenerationFingerprint manifest))
+          ( ioError
+              ( userError
+                  "pre-correction declarative artifact claims a generation fingerprint"
+              )
+          )
     mapM_
       requireNonemptyManifestField
       [ ("adapterId", manifestAdapterId manifest),
@@ -1406,7 +1478,6 @@ validateManifestContract
         ("runtimeVersion", manifestRuntimeVersion manifest),
         ("recipeFingerprint", manifestRecipeFingerprint manifest),
         ("digest", manifestDigest manifest),
-        ("generationFingerprint", manifestGenerationFingerprint manifest),
         ("minioObjectKey", manifestMinioObjectKey manifest),
         ( "targetContractFingerprint",
           manifestTargetContractFingerprint manifest
@@ -1461,9 +1532,10 @@ validateManifestContract
             (manifestTargetContractFingerprint manifest)
             (manifestImageTargetEvidence manifest)
         )
-    unless
-      (manifestGenerationFingerprint manifest == expectedGenerationFingerprint)
-      (ioError (userError "engine artifact generation fingerprint changed"))
+    when (contractMode == ExactManifestContract) $
+      unless
+        (manifestGenerationFingerprint manifest == expectedGenerationFingerprint)
+        (ioError (userError "engine artifact generation fingerprint changed"))
     when (manifestSubstrate manifest == "apple-silicon") $ do
       let adapterId = nativeArtifactAdapterId identity
           requireRuntimeDirectories =
@@ -1704,8 +1776,9 @@ engineArtifactGenerationFingerprint
         requireCanonicalFingerprint
           ("target evidence fingerprint", evidenceFingerprint)
         unless
-          (targetEvidenceContractFingerprint targetEvidence
-              == targetContractFingerprint)
+          ( targetEvidenceContractFingerprint targetEvidence
+              == targetContractFingerprint
+          )
           (Left "Linux target evidence disagrees with its closed target contract")
         Right
           ( "sha256:"
@@ -1733,86 +1806,123 @@ engineArtifactGenerationFingerprint
         Left "Linux generation lacks complete image-target evidence"
       _ ->
         Left "engine artifact generation substrate is unsupported"
-  where
-    requireCanonicalFingerprint (label, value) =
-      unless
-        (case canonicalSha256Hex value of Just _ -> True; Nothing -> False)
-        (Left ("engine artifact " <> label <> " is not canonical sha256"))
+    where
+      requireCanonicalFingerprint (label, value) =
+        unless
+          (case canonicalSha256Hex value of Just _ -> True; Nothing -> False)
+          (Left ("engine artifact " <> label <> " is not canonical sha256"))
 
 -- | Resolve candidates in declared order. A missing candidate falls through,
 -- while the first present but invalid root fails closed instead of allowing a
--- lower-priority root to mask corruption. The callback runs under the matching
--- shared materialization lock.
+-- lower-priority root to mask corruption. This runner owns the whole phase
+-- sequence — validate, revalidate, launch, reap — under the matching shared
+-- materialization lock. The caller supplies only an unprivileged
+-- 'ArtifactLauncher' over the closed 'ArtifactLaunchRequest', so it never holds
+-- a validated capability, a phase value, or a next-phase continuation.
 withFirstValidatedEngineArtifact ::
   NativeArtifactIdentity ->
   ArtifactRuntimeExpectation ->
   [FilePath] ->
-  ( forall s.
-    Session s 'ArtifactReady %1 ->
-    Program s 'ArtifactReaped ArtifactTerminalOutcome
-  ) ->
+  ArtifactLauncher ->
   IO (ArtifactResolution ArtifactTerminalOutcome)
-withFirstValidatedEngineArtifact identity runtimeExpectation installRoots action =
-  resolveCandidates [] installRoots
-  where
-    resolveCandidates missingRoots [] =
-      pure (ArtifactUnavailable (reverse missingRoots))
-    resolveCandidates missingRoots (installRoot : remainingRoots) = do
-      candidateStatus <- pathStatus installRoot
-      case candidateStatus of
-        Nothing ->
-          resolveCandidates
-            (installRoot : missingRoots)
-            remainingRoots
-        Just _ -> do
-          maybeCandidateResolution <-
-            withTryEngineArtifactReadLock (takeDirectory installRoot) $ do
-              lockedStatus <- pathStatus installRoot
-              case lockedStatus of
-                Nothing -> pure CandidateDisappeared
-                Just _ -> do
-                  validation <-
-                    try @IOException
-                      ( mintValidatedEngineArtifact
-                          identity
-                          runtimeExpectation
-                          installRoot
-                      )
-                  case validation of
-                    Left failure ->
-                      pure
-                        ( CandidateCompleted
-                            ( ArtifactRejected
-                                installRoot
-                                (show failure)
-                            )
+withFirstValidatedEngineArtifact identity runtimeExpectation installRoots =
+  withFirstValidatedEngineArtifactUnderPreLaunchFixture
+    identity
+    runtimeExpectation
+    installRoots
+    noArtifactPreLaunchFixture
+
+-- | The same runner under a fixed, first-order pre-launch fixture. The fixture
+-- pins the use-boundary window between minting the ready run and the runner's
+-- own revalidation; it carries data only and never an effect or an authority.
+withFirstValidatedEngineArtifactUnderPreLaunchFixture ::
+  NativeArtifactIdentity ->
+  ArtifactRuntimeExpectation ->
+  [FilePath] ->
+  ArtifactPreLaunchFixture ->
+  ArtifactLauncher ->
+  IO (ArtifactResolution ArtifactTerminalOutcome)
+withFirstValidatedEngineArtifactUnderPreLaunchFixture
+  identity
+  runtimeExpectation
+  installRoots
+  preLaunchFixture
+  launcher =
+    resolveCandidates [] installRoots
+    where
+      resolveCandidates missingRoots [] =
+        pure (ArtifactUnavailable (reverse missingRoots))
+      resolveCandidates missingRoots (installRoot : remainingRoots) = do
+        candidateStatus <- pathStatus installRoot
+        case candidateStatus of
+          Nothing ->
+            resolveCandidates
+              (installRoot : missingRoots)
+              remainingRoots
+          Just _ -> do
+            maybeCandidateResolution <-
+              withTryEngineArtifactReadLock (takeDirectory installRoot) $ do
+                lockedStatus <- pathStatus installRoot
+                case lockedStatus of
+                  Nothing -> pure CandidateDisappeared
+                  Just _ -> do
+                    validation <-
+                      try @IOException
+                        ( mintValidatedEngineArtifact
+                            identity
+                            runtimeExpectation
+                            installRoot
                         )
-                    Right validatedArtifact ->
-                      CandidateCompleted . ArtifactResolved
-                        <$> runArtifactProgram
-                          ( action
-                              (Capability.ArtifactReadySession validatedArtifact)
+                    case validation of
+                      Left failure ->
+                        pure
+                          ( CandidateCompleted
+                              ( ArtifactRejected
+                                  installRoot
+                                  (show failure)
+                              )
                           )
-          case maybeCandidateResolution of
-            Nothing -> pure (ArtifactBusy installRoot)
-            Just candidateResolution ->
-              case candidateResolution of
-                CandidateDisappeared ->
-                  resolveCandidates
-                    (installRoot : missingRoots)
-                    remainingRoots
-                CandidateCompleted resolution -> pure resolution
+                      Right validatedArtifact ->
+                        CandidateCompleted . ArtifactResolved
+                          <$> runArtifactRun
+                            ( Capability.reapArtifactRun
+                                revalidatedArtifactIsExact
+                                preLaunchFixture
+                                launcher
+                                (Capability.readyArtifactRun validatedArtifact)
+                            )
+            case maybeCandidateResolution of
+              Nothing -> pure (ArtifactBusy installRoot)
+              Just candidateResolution ->
+                case candidateResolution of
+                  CandidateDisappeared ->
+                    resolveCandidates
+                      (installRoot : missingRoots)
+                      remainingRoots
+                  CandidateCompleted resolution -> pure resolution
 
 data CandidateResolution a
   = CandidateDisappeared
   | CandidateCompleted !(ArtifactResolution a)
 
-runArtifactProgram ::
-  Program s 'ArtifactReaped ArtifactTerminalOutcome ->
+runArtifactRun ::
+  IO (ArtifactRun s 'ArtifactReaped) ->
   IO ArtifactTerminalOutcome
-runArtifactProgram (Capability.ArtifactReapedProgram terminalAction) = do
-  terminalOutcome <- terminalAction
-  evaluate (forceArtifactTerminalOutcome terminalOutcome)
+runArtifactRun reapedAction = do
+  reaped <- reapedAction
+  evaluate
+    (forceArtifactTerminalOutcome (Capability.artifactRunOutcome reaped))
+
+-- | The runner-owned revalidation spent by 'Capability.reapArtifactRun'
+-- immediately before the launch request is derived. A caller cannot skip it
+-- because it never reaches the transition.
+revalidatedArtifactIsExact ::
+  ValidatedEngineArtifact s ->
+  IO Bool
+revalidatedArtifactIsExact validatedArtifact = do
+  revalidation <-
+    try @IOException (revalidateValidatedEngineArtifact validatedArtifact)
+  pure (either (const False) (const True) revalidation)
 
 forceArtifactTerminalOutcome ::
   ArtifactTerminalOutcome ->
@@ -2063,27 +2173,29 @@ validateResolvedProvenance provenance =
 
 reconcileEngineArtifactRoot ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   IO ()
-reconcileEngineArtifactRoot _authority installRoot = mask $ \_ -> do
+reconcileEngineArtifactRoot authority mutator installRoot = mask $ \_ -> do
   validateInstallRootPath installRoot
   let tempRoot = engineArtifactTempRoot installRoot
       previousRoot = engineArtifactPreviousRoot installRoot
-      parent = takeDirectory installRoot
-  createDirectoryIfMissing True parent
+  -- The parent is the engines root the authority was minted over, and the
+  -- materialization lock created it before this authority existed, so it is
+  -- validated against the authority's exact identity rather than created here.
+  -- The superseded `createDirectoryIfMissing` was a pathname write above the
+  -- very directory whose identity the authority exists to pin.
+  requireAuthorityParent authority installRoot
   finalState <- inspectArtifactRoot installRoot installRoot
   previousState <- inspectArtifactRoot installRoot previousRoot
   tempState <- inspectExactArtifactRoot installRoot tempRoot
   case finalState of
     ExactPayloadRoot -> do
-      removeOwnedRootIfPresent previousRoot
-      removeOwnedRootIfPresent tempRoot
-      synchroniseDirectory parent
+      removeOwnedRootIfPresent mutator previousRoot
+      removeOwnedRootIfPresent mutator tempRoot
     LegacyDeclarativeRoot ->
       case previousState of
-        MissingRoot -> do
-          removeOwnedRootIfPresent tempRoot
-          synchroniseDirectory parent
+        MissingRoot -> removeOwnedRootIfPresent mutator tempRoot
         _ ->
           ioError
             ( userError
@@ -2095,12 +2207,14 @@ reconcileEngineArtifactRoot _authority installRoot = mask $ \_ -> do
       case previousState of
         ExactPayloadRoot ->
           restorePreviousArtifactRoot
+            mutator
             installRoot
             tempRoot
             previousRoot
             ExactPriorArtifact
         LegacyDeclarativeRoot ->
           restorePreviousArtifactRoot
+            mutator
             installRoot
             tempRoot
             previousRoot
@@ -2109,14 +2223,11 @@ reconcileEngineArtifactRoot _authority installRoot = mask $ \_ -> do
           case tempState of
             ExactPayloadRoot -> do
               synchroniseArtifactTree tempRoot
-              renameDirectory tempRoot installRoot
-              synchroniseDirectory parent
+              renameArtifactRoot mutator tempRoot installRoot
               _ <- validateEngineArtifactRootAt installRoot installRoot
               pure ()
             MissingRoot -> pure ()
-            InvalidRoot _ -> do
-              removeOwnedRootIfPresent tempRoot
-              synchroniseDirectory parent
+            InvalidRoot _ -> removeOwnedRootIfPresent mutator tempRoot
             LegacyDeclarativeRoot ->
               ioError
                 ( userError
@@ -2134,15 +2245,17 @@ reconcileEngineArtifactRoot _authority installRoot = mask $ \_ -> do
     InvalidRoot finalFailure ->
       case previousState of
         ExactPayloadRoot -> do
-          removeOwnedRootIfPresent installRoot
+          removeOwnedRootIfPresent mutator installRoot
           restorePreviousArtifactRoot
+            mutator
             installRoot
             tempRoot
             previousRoot
             ExactPriorArtifact
         LegacyDeclarativeRoot -> do
-          removeOwnedRootIfPresent installRoot
+          removeOwnedRootIfPresent mutator installRoot
           restorePreviousArtifactRoot
+            mutator
             installRoot
             tempRoot
             previousRoot
@@ -2219,13 +2332,63 @@ inspectExactArtifactRoot expectedInstallRoot candidateRoot = do
               Right _ -> ExactPayloadRoot
               Left failure -> InvalidRoot (show failure)
 
+-- | Require that an install root's containing directory is exactly the engines
+-- root this authority was minted over.
+--
+-- The authority records that directory's device, inode, and mode at acquisition
+-- under the materialization lock, so this both pins the parent identity and
+-- proves the transaction is operating where its authority applies. Every
+-- parent-level effect in the transaction is a sibling operation in this
+-- directory, which is why one check covers all of them.
+requireAuthorityParent ::
+  MaterializationAuthority w ->
+  FilePath ->
+  IO ()
+requireAuthorityParent authority installRoot = do
+  let parent = takeDirectory installRoot
+      expected = materializationAuthorityRoot authority
+  unless
+    (normalise parent == normalise expected)
+    ( ioError
+        ( userError
+            ( "engine artifact install root is not a child of its authority root: "
+                <> installRoot
+            )
+        )
+    )
+  observed <- pathStatus parent
+  case observed of
+    Nothing ->
+      ioError
+        ( userError
+            ("engine artifact authority root is absent: " <> parent)
+        )
+    Just status ->
+      unless
+        ( isDirectory status
+            && not (isSymbolicLink status)
+            && fromIntegral (deviceID status)
+              == materializationAuthorityDeviceId authority
+            && fromIntegral (fileID status)
+              == materializationAuthorityFileId authority
+            && fromIntegral (fileMode status)
+              == materializationAuthorityMode authority
+        )
+        ( ioError
+            ( userError
+                ("engine artifact authority root identity changed: " <> parent)
+            )
+        )
+
 installEngineArtifactRoot ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   IO ()
-installEngineArtifactRoot authority installRoot tempRoot = do
+installEngineArtifactRoot authority mutator installRoot tempRoot = do
   runEngineArtifactActivation
+    mutator
     authority
     installRoot
     tempRoot
@@ -2236,16 +2399,19 @@ installEngineArtifactRoot authority installRoot tempRoot = do
 
 installEngineArtifactRootWithExpectedDigest ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   Text ->
   IO ()
 installEngineArtifactRootWithExpectedDigest
   authority
+  mutator
   installRoot
   tempRoot
   expectedDigest = do
     runEngineArtifactActivation
+      mutator
       authority
       installRoot
       tempRoot
@@ -2253,6 +2419,109 @@ installEngineArtifactRootWithExpectedDigest
       (const (pure ()))
       (const (pure ()))
       (pure (CommitArtifactActivation, ()))
+
+-- | The closed set of parent-level effects an engine-artifact transaction
+-- performs on its install root's containing directory.
+--
+-- Both operands are absolute paths under the writer root that mints the
+-- interpreter; a rename's two paths must be siblings. The transaction can
+-- request nothing else, which is what makes this a language rather than an
+-- effect hook.
+data ArtifactRootMutation
+  = -- | Rename one directory over an absent sibling name.
+    RenameArtifactRootSibling !FilePath !FilePath
+  | -- | Remove one owned directory tree, succeeding when it is already absent.
+    RemoveArtifactRootSibling !FilePath
+  deriving (Eq, Show)
+
+-- | The fixed interpreter for 'ArtifactRootMutation'.
+--
+-- The mutation kernel that can perform these effects through a retained parent
+-- descriptor lives in @Infernix.Cluster.Subprocess@, which already imports the
+-- public @Infernix.Engines.Artifact@ facade -- so this module cannot reach it
+-- without closing an import cycle. The transaction therefore /requests/ its
+-- parent-level effects and the provisioning facade, which holds both the writer
+-- root and the kernel, interprets them.
+--
+-- This is not a caller-supplied effect hook. The constructor is exported from
+-- this @.Internal@ module only and is never re-exported by the public
+-- @Infernix.Engines.Artifact@ facade, so a value can be minted only by
+-- package-internal engine code, and the transaction can express only the two
+-- effects above.
+newtype ArtifactRootMutator w
+  = ArtifactRootMutator (ArtifactRootMutation -> IO ())
+
+type role ArtifactRootMutator nominal
+
+-- | Request one parent-level effect through the transaction's interpreter.
+runArtifactRootMutation ::
+  ArtifactRootMutator w ->
+  ArtifactRootMutation ->
+  IO ()
+runArtifactRootMutation (ArtifactRootMutator interpret) = interpret
+
+-- | Pathname interpreter for the artifact transaction test suite.
+--
+-- That suite proves the transaction's /ordering/ -- which root moves when, what
+-- a rollback restores, which residue a crash reconciliation accepts -- against
+-- synthetic roots in a temporary directory, and is deliberately
+-- machine-independent: it requires neither a host manifest nor the self-exec
+-- mutation kernel. This interpreter therefore performs the two effects by
+-- pathname, which is exactly what the transaction did before its effects were
+-- separated from their interpretation, so the suite's coverage is unchanged by
+-- that separation.
+--
+-- It is emphatically not the production interpreter and proves nothing about
+-- descriptor anchoring; that is the parent-swap tests' job.
+artifactRootMutatorForTest :: ArtifactRootMutator w
+artifactRootMutatorForTest =
+  ArtifactRootMutator
+    ( \case
+        RenameArtifactRootSibling source destination -> do
+          renameDirectory source destination
+          synchroniseDirectoryForTest (takeDirectory destination)
+        RemoveArtifactRootSibling path -> do
+          removeDirectoryRecursive path
+          synchroniseDirectoryForTest (takeDirectory path)
+    )
+
+-- | The pathname directory fsync the test interpreter uses.
+synchroniseDirectoryForTest :: FilePath -> IO ()
+synchroniseDirectoryForTest directoryPath =
+  mask $ \restore -> do
+    descriptor <-
+      openFd
+        directoryPath
+        ReadOnly
+        defaultFileFlags
+          { nofollow = True,
+            cloexec = True,
+            directory = True
+          }
+    finallyPreservingPrimary
+      ( do
+          observedStatus <- getFdStatus descriptor
+          unless (isDirectory observedStatus) $
+            ioError
+              ( userError
+                  ( "engine artifact path changed while synchronising directory: "
+                      <> directoryPath
+                  )
+              )
+          restore (fileSynchronise descriptor)
+      )
+      (closeFd descriptor)
+
+-- | Rename one owned root over its absent sibling.
+renameArtifactRoot ::
+  ArtifactRootMutator w ->
+  FilePath ->
+  FilePath ->
+  IO ()
+renameArtifactRoot mutator source destination =
+  runArtifactRootMutation
+    mutator
+    (RenameArtifactRootSibling source destination)
 
 data ArtifactActivationBoundary
   = PreviousRootMoved
@@ -2268,6 +2537,12 @@ data ArtifactActivationDecision
   | RollbackArtifactActivation
   deriving (Eq, Show)
 
+-- | A pending artifact transaction.
+--
+-- The interpreter is retained on the token rather than supplied again at
+-- commit or rollback, so a rollback provably uses the same parent-level
+-- interpreter the forward transaction used. Handing a different one to the
+-- rollback is not representable.
 data ArtifactActivation w
   = ArtifactActivation
       !FilePath
@@ -2278,6 +2553,7 @@ data ArtifactActivation w
       !(Maybe Text)
       !ArtifactActivationState
       !(ArtifactCleanupBoundary -> IO ())
+      !(ArtifactRootMutator w)
 
 type role ArtifactActivation nominal
 
@@ -2300,6 +2576,7 @@ type role CommittedArtifactActivation nominal
 beginEngineArtifactActivationUnderGeneration ::
   MaterializationAuthority w ->
   ArtifactGenerationMutationAuthority w g ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   Text ->
@@ -2307,11 +2584,13 @@ beginEngineArtifactActivationUnderGeneration ::
 beginEngineArtifactActivationUnderGeneration
   authority
   _generationAuthority
+  mutator
   installRoot
   tempRoot
   expectedDigest =
     PendingArtifactActivation
       <$> beginEngineArtifactActivationWithObserver
+        mutator
         authority
         installRoot
         tempRoot
@@ -2324,7 +2603,7 @@ pendingArtifactActivationManifest ::
   EngineArtifactManifest
 pendingArtifactActivationManifest
   ( PendingArtifactActivation
-      (ArtifactActivation _ _ _ manifest _ _ _ _)
+      (ArtifactActivation _ _ _ manifest _ _ _ _ _)
     ) =
     manifest
 
@@ -2333,7 +2612,7 @@ pendingArtifactActivationPriorManifest ::
   Maybe EngineArtifactManifest
 pendingArtifactActivationPriorManifest
   ( PendingArtifactActivation
-      (ArtifactActivation _ _ _ _ priorManifest _ _ _)
+      (ArtifactActivation _ _ _ _ priorManifest _ _ _ _)
     ) =
     priorManifest
 
@@ -2351,6 +2630,7 @@ commitEngineArtifactActivationUnderGeneration
           previousRoot
           candidateManifest
           priorManifest
+          _
           _
           _
           _ = activation
@@ -2397,6 +2677,7 @@ committedArtifactActivationManifest
 -- back before it is rethrown, and a returned decision is consumed exactly
 -- once before the result can leave this bracket.
 runEngineArtifactActivation ::
+  ArtifactRootMutator w ->
   MaterializationAuthority w ->
   FilePath ->
   FilePath ->
@@ -2406,6 +2687,7 @@ runEngineArtifactActivation ::
   IO (ArtifactActivationDecision, result) ->
   IO result
 runEngineArtifactActivation
+  mutator
   authority
   installRoot
   tempRoot
@@ -2416,6 +2698,7 @@ runEngineArtifactActivation
     mask $ \restore -> do
       activation <-
         beginEngineArtifactActivationWithObserver
+          mutator
           authority
           installRoot
           tempRoot
@@ -2441,6 +2724,7 @@ runEngineArtifactActivation
 -- back before control leaves this function.
 activateEngineArtifactAfterCheck ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   Text ->
@@ -2448,11 +2732,13 @@ activateEngineArtifactAfterCheck ::
   IO result
 activateEngineArtifactAfterCheck
   authority
+  mutator
   installRoot
   tempRoot
   expectedDigest
   check =
     runEngineArtifactActivation
+      mutator
       authority
       installRoot
       tempRoot
@@ -2473,16 +2759,19 @@ activateEngineArtifactAfterCheck
 -- suite. Production modules are forbidden from importing this raw kernel.
 installEngineArtifactRootWithObserverForTest ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   (ArtifactActivationBoundary -> IO ()) ->
   IO ()
 installEngineArtifactRootWithObserverForTest
   authority
+  mutator
   installRoot
   tempRoot
   observeBoundary = do
     runEngineArtifactActivation
+      mutator
       authority
       installRoot
       tempRoot
@@ -2496,6 +2785,7 @@ installEngineArtifactRootWithObserverForTest
 -- test suite through the package-internal module boundary.
 installEngineArtifactRootWithPendingActionForTest ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   Text ->
@@ -2503,11 +2793,13 @@ installEngineArtifactRootWithPendingActionForTest ::
   IO ()
 installEngineArtifactRootWithPendingActionForTest
   authority
+  mutator
   installRoot
   tempRoot
   expectedDigest
   pendingAction =
     runEngineArtifactActivation
+      mutator
       authority
       installRoot
       tempRoot
@@ -2522,6 +2814,7 @@ installEngineArtifactRootWithPendingActionForTest
 -- | Deterministic commit-retirement hook for recovery tests.
 installEngineArtifactRootWithCleanupObserverForTest ::
   MaterializationAuthority w ->
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   Text ->
@@ -2529,11 +2822,13 @@ installEngineArtifactRootWithCleanupObserverForTest ::
   IO ()
 installEngineArtifactRootWithCleanupObserverForTest
   authority
+  mutator
   installRoot
   tempRoot
   expectedDigest
   observeCleanup =
     runEngineArtifactActivation
+      mutator
       authority
       installRoot
       tempRoot
@@ -2543,6 +2838,7 @@ installEngineArtifactRootWithCleanupObserverForTest
       (pure (CommitArtifactActivation, ()))
 
 beginEngineArtifactActivationWithObserver ::
+  ArtifactRootMutator w ->
   MaterializationAuthority w ->
   FilePath ->
   FilePath ->
@@ -2551,7 +2847,8 @@ beginEngineArtifactActivationWithObserver ::
   (ArtifactCleanupBoundary -> IO ()) ->
   IO (ArtifactActivation w)
 beginEngineArtifactActivationWithObserver
-  _authority
+  mutator
+  authority
   installRoot
   tempRoot
   expectedDigest
@@ -2559,9 +2856,9 @@ beginEngineArtifactActivationWithObserver
   observeCleanup =
     mask $ \restore -> do
       validateInstallRootPath installRoot
+      requireAuthorityParent authority installRoot
       let expectedTempRoot = engineArtifactTempRoot installRoot
           previousRoot = engineArtifactPreviousRoot installRoot
-          parent = takeDirectory installRoot
       unless (tempRoot == expectedTempRoot) $
         ioError
           ( userError
@@ -2611,6 +2908,7 @@ beginEngineArtifactActivationWithObserver
                 expectedDigest
                 IdempotentArtifactActivation
                 observeCleanup
+                mutator
             )
         else do
           priorArtifact <-
@@ -2628,11 +2926,9 @@ beginEngineArtifactActivationWithObserver
           activation <-
             try @SomeException $ do
               when (priorArtifact /= NoPriorArtifact) $ do
-                renameDirectory installRoot previousRoot
-                synchroniseDirectory parent
+                renameArtifactRoot mutator installRoot previousRoot
                 restore (observeBoundary PreviousRootMoved)
-              renameDirectory tempRoot installRoot
-              synchroniseDirectory parent
+              renameArtifactRoot mutator tempRoot installRoot
               restore (observeBoundary CandidateRootMoved)
               validateActivatedArtifact
                 installRoot
@@ -2650,11 +2946,13 @@ beginEngineArtifactActivationWithObserver
                     expectedDigest
                     (MovedArtifactActivation priorArtifact)
                     observeCleanup
+                    mutator
                 )
             Left failure ->
               finallyPreservingPrimary
                 (throwIO failure)
                 ( rollbackActivation
+                    mutator
                     installRoot
                     tempRoot
                     previousRoot
@@ -2679,6 +2977,7 @@ finishEngineArtifactActivation
       expectedDigest
       activationState
       observeCleanup
+      mutator
     ) =
     mask $ \restore ->
       case decision of
@@ -2687,6 +2986,7 @@ finishEngineArtifactActivation
             IdempotentArtifactActivation -> pure ()
             MovedArtifactActivation priorArtifact ->
               rollbackActivation
+                mutator
                 installRoot
                 tempRoot
                 previousRoot
@@ -2710,6 +3010,7 @@ finishEngineArtifactActivation
                   finallyPreservingPrimary
                     (throwIO failure)
                     ( rollbackActivation
+                        mutator
                         installRoot
                         tempRoot
                         previousRoot
@@ -2720,12 +3021,11 @@ finishEngineArtifactActivation
                 IdempotentArtifactActivation -> do
                   observeCleanup
                     (BeforeOwnedArtifactRetirement tempRoot)
-                  removeOwnedRootIfPresent tempRoot
+                  removeOwnedRootIfPresent mutator tempRoot
                 MovedArtifactActivation _ -> do
                   observeCleanup
                     (BeforeOwnedArtifactRetirement previousRoot)
-                  removeOwnedRootIfPresent previousRoot
-              synchroniseDirectory (takeDirectory installRoot)
+                  removeOwnedRootIfPresent mutator previousRoot
 
 validateActivatedArtifact ::
   FilePath ->
@@ -2786,13 +3086,13 @@ validateInstallRootPath installRoot =
         )
 
 rollbackActivation ::
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   FilePath ->
   PriorArtifactRoot ->
   IO ()
-rollbackActivation installRoot tempRoot previousRoot priorArtifact = do
-  let parent = takeDirectory installRoot
+rollbackActivation mutator installRoot tempRoot previousRoot priorArtifact = do
   currentFinal <- ownedDirectoryPresent "engine artifact final root" installRoot
   tempExists <- ownedDirectoryPresent "engine artifact candidate" tempRoot
   previousExists <-
@@ -2806,15 +3106,14 @@ rollbackActivation installRoot tempRoot previousRoot priorArtifact = do
               ( userError
                   "engine artifact rollback found both a final root and candidate"
               )
-          when currentFinal (renameDirectory installRoot tempRoot)
-          renameDirectory previousRoot installRoot
+          when currentFinal (renameArtifactRoot mutator installRoot tempRoot)
+          renameArtifactRoot mutator previousRoot installRoot
         else
           unless (currentFinal && tempExists) $
             ioError
               ( userError
                   "engine artifact rollback cannot prove that the prior root remained final"
               )
-      synchroniseDirectory parent
       _ <- validateEngineArtifactRootAt installRoot installRoot
       pure ()
     LegacyMigrationPriorArtifact -> do
@@ -2825,15 +3124,14 @@ rollbackActivation installRoot tempRoot previousRoot priorArtifact = do
               ( userError
                   "engine artifact rollback found both a final root and candidate"
               )
-          when currentFinal (renameDirectory installRoot tempRoot)
-          renameDirectory previousRoot installRoot
+          when currentFinal (renameArtifactRoot mutator installRoot tempRoot)
+          renameArtifactRoot mutator previousRoot installRoot
         else
           unless (currentFinal && tempExists) $
             ioError
               ( userError
                   "engine artifact rollback cannot prove that the legacy migration root remained final"
               )
-      synchroniseDirectory parent
       validateLegacyArtifactRootAt installRoot installRoot
     NoPriorArtifact -> do
       when previousExists $
@@ -2851,32 +3149,34 @@ rollbackActivation installRoot tempRoot previousRoot priorArtifact = do
           ( userError
               "engine artifact rollback cannot find the uncommitted candidate"
           )
-      when currentFinal (renameDirectory installRoot tempRoot)
-      synchroniseDirectory parent
+      when currentFinal (renameArtifactRoot mutator installRoot tempRoot)
 
 restorePreviousArtifactRoot ::
+  ArtifactRootMutator w ->
   FilePath ->
   FilePath ->
   FilePath ->
   PriorArtifactRoot ->
   IO ()
-restorePreviousArtifactRoot installRoot tempRoot previousRoot priorArtifact = do
-  let parent = takeDirectory installRoot
-  renameDirectory previousRoot installRoot
-  synchroniseDirectory parent
-  case priorArtifact of
-    ExactPriorArtifact -> do
-      _ <- validateEngineArtifactRootAt installRoot installRoot
-      pure ()
-    LegacyMigrationPriorArtifact ->
-      validateLegacyArtifactRootAt installRoot installRoot
-    NoPriorArtifact ->
-      ioError
-        ( userError
-            "internal error: restore requested without a previous artifact"
-        )
-  removeOwnedRootIfPresent tempRoot
-  synchroniseDirectory parent
+restorePreviousArtifactRoot
+  mutator
+  installRoot
+  tempRoot
+  previousRoot
+  priorArtifact = do
+    renameArtifactRoot mutator previousRoot installRoot
+    case priorArtifact of
+      ExactPriorArtifact -> do
+        _ <- validateEngineArtifactRootAt installRoot installRoot
+        pure ()
+      LegacyMigrationPriorArtifact ->
+        validateLegacyArtifactRootAt installRoot installRoot
+      NoPriorArtifact ->
+        ioError
+          ( userError
+              "internal error: restore requested without a previous artifact"
+          )
+    removeOwnedRootIfPresent mutator tempRoot
 
 ownedDirectoryPresent :: String -> FilePath -> IO Bool
 ownedDirectoryPresent label path = do
@@ -3040,90 +3340,43 @@ pathStatus path = do
       | isDoesNotExistError failure -> pure Nothing
       | otherwise -> ioError failure
 
-removeOwnedRootIfPresent :: FilePath -> IO ()
-removeOwnedRootIfPresent path =
-  mask $ \_ -> do
-    status <- pathStatus path
-    case status of
-      Nothing -> pure ()
-      Just listedStatus
-        | isDirectory listedStatus && not (isSymbolicLink listedStatus) -> do
-            descriptor <-
-              openFd
-                path
-                ReadOnly
-                defaultFileFlags
-                  { nofollow = True,
-                    cloexec = True,
-                    directory = True
-                  }
-            finallyPreservingPrimary
-              ( do
-                  openedStatus <- getFdStatus descriptor
-                  unless
-                    ( stableFileStatusMatches listedStatus openedStatus
-                        && isDirectory openedStatus
-                    )
-                    ( ioError
-                        ( userError
-                            ( "engine artifact retirement root changed while opening: "
-                                <> path
-                            )
-                        )
-                    )
-                  _ <-
-                    removeArtifactDirectoryContents
-                      descriptor
-                      path
-                      ""
-                      0
-                      emptyArtifactTreeTraversal
-                  finalDescriptorStatus <- getFdStatus descriptor
-                  finalPathStatus <- getSymbolicLinkStatus path
-                  unless
-                    ( sameFileObjectStatus
-                        openedStatus
-                        finalDescriptorStatus
-                        && sameFileObjectStatus
-                          finalDescriptorStatus
-                          finalPathStatus
-                        && isDirectory finalPathStatus
-                        && not (isSymbolicLink finalPathStatus)
-                    )
-                    ( ioError
-                        ( userError
-                            ( "engine artifact retirement root changed before removal: "
-                                <> path
-                            )
-                        )
-                    )
-                  removeDirectory path
-                  requirePathAbsentAfterRemoval path
-                  afterRemovalStatus <- getFdStatus descriptor
-                  unless
-                    ( sameFileObjectStatus
-                        finalDescriptorStatus
-                        afterRemovalStatus
-                        && linkCount afterRemovalStatus
-                          < linkCount finalDescriptorStatus
-                    )
-                    ( ioError
-                        ( userError
-                            ( "engine artifact retirement root lost identity: "
-                                <> path
-                            )
-                        )
-                    )
-                  synchroniseDirectory (takeDirectory path)
-              )
-              (closeFd descriptor)
-        | otherwise ->
-            ioError
-              ( userError
-                  ( "refusing to remove non-directory engine artifact path: "
-                      <> path
-                  )
-              )
+-- | Retire one owned artifact root.
+--
+-- The whole recursive removal is one request on the transaction's interpreter.
+-- The superseded form emptied the tree with a local walk and then asked the
+-- interpreter to remove the emptied root -- but that walk removed each entry
+-- with @removeDirectory (parentPath \<\/\> entryName)@, resolving the entire
+-- prefix once per entry. Routing each of those through the kernel individually
+-- would cost one subprocess per directory entry, which is not viable for a
+-- 35,000-entry artifact. The kernel already performs a bounded recursive
+-- descriptor-anchored removal in a single call, opening every level
+-- @O_NOFOLLOW@ from its retained parent and identity-checking it, so delegating
+-- the whole tree is both cheaper and strictly better anchored.
+--
+-- The root's kind is still established here before anything is removed, so a
+-- non-directory or a symlink at the root is refused rather than removed, and
+-- absence is still proven afterwards.
+removeOwnedRootIfPresent ::
+  ArtifactRootMutator w ->
+  FilePath ->
+  IO ()
+removeOwnedRootIfPresent mutator path = do
+  status <- pathStatus path
+  case status of
+    Nothing -> pure ()
+    Just listedStatus
+      | isDirectory listedStatus && not (isSymbolicLink listedStatus) -> do
+          runArtifactRootMutation
+            mutator
+            (RemoveArtifactRootSibling path)
+          requirePathAbsentAfterRemoval path
+      | otherwise ->
+          ioError
+            ( userError
+                ( "refusing to remove non-directory engine artifact path: "
+                    <> path
+                )
+            )
 
 synchroniseArtifactTree :: FilePath -> IO ()
 synchroniseArtifactTree root =
@@ -3314,269 +3567,6 @@ synchroniseArtifactEntry
           )
           traversal
 
-removeArtifactDirectoryContents ::
-  Fd ->
-  FilePath ->
-  FilePath ->
-  Int ->
-  ArtifactTreeTraversal ->
-  IO ArtifactTreeTraversal
-removeArtifactDirectoryContents
-  directoryDescriptor
-  directoryPath
-  relativeDirectory
-  depth
-  traversal = do
-    requireArtifactTreeTraversalBounds depth traversal
-    initialStatus <- getFdStatus directoryDescriptor
-    entries <-
-      readDirectoryEntriesFromDescriptor
-        (maximumArtifactSnapshotEntries - artifactTreeEntryCount traversal)
-        directoryDescriptor
-    reservedTraversal <-
-      reserveArtifactTreeEntries depth (length entries) traversal
-    finalTraversal <-
-      foldM
-        ( removeArtifactEntry
-            directoryDescriptor
-            directoryPath
-            relativeDirectory
-            depth
-        )
-        reservedTraversal
-        entries
-    finalStatus <- getFdStatus directoryDescriptor
-    finalPathStatus <- getSymbolicLinkStatus directoryPath
-    unless
-      ( sameFileObjectStatus initialStatus finalStatus
-          && sameFileObjectStatus finalStatus finalPathStatus
-          && isDirectory finalStatus
-      )
-      ( ioError
-          ( userError
-              ( "engine artifact directory changed while retiring: "
-                  <> displayRelativeArtifactPath relativeDirectory
-              )
-          )
-      )
-    pure finalTraversal
-
-removeArtifactEntry ::
-  Fd ->
-  FilePath ->
-  FilePath ->
-  Int ->
-  ArtifactTreeTraversal ->
-  FilePath ->
-  IO ArtifactTreeTraversal
-removeArtifactEntry
-  parentDescriptor
-  parentPath
-  relativeDirectory
-  depth
-  traversal
-  entryName = do
-    validateEntryName entryName
-    let relativePath =
-          if null relativeDirectory
-            then entryName
-            else relativeDirectory </> entryName
-        entryPath = parentPath </> entryName
-    parentStatus <- requireStableDeletionParent parentDescriptor parentPath
-    listedStatus <- getSymbolicLinkStatus entryPath
-    nextTraversal <-
-      if isSymbolicLink listedStatus
-        then do
-          (stableStatus, target) <-
-            readStableArtifactSymlink
-              parentDescriptor
-              parentPath
-              relativePath
-              entryName
-          unless (stableFileStatusMatches listedStatus stableStatus) $
-            ioError
-              (userError ("engine artifact symlink changed before retirement: " <> relativePath))
-          accounted <-
-            accountArtifactTreeBytes
-              depth
-              ( toInteger
-                  (ByteString.length (TextEncoding.encodeUtf8 (Text.pack target)))
-              )
-              traversal
-          removeLink entryPath
-          requirePathAbsentAfterRemoval entryPath
-          pure accounted
-        else
-          if isDirectory listedStatus
-            then
-              removeOpenedArtifactDirectory
-                parentDescriptor
-                parentPath
-                relativePath
-                entryName
-                depth
-                traversal
-                listedStatus
-            else
-              if isRegularFile listedStatus
-                then
-                  removeOpenedArtifactFile
-                    parentDescriptor
-                    parentPath
-                    relativePath
-                    entryName
-                    depth
-                    traversal
-                    listedStatus
-                else do
-                  finalStatus <- getSymbolicLinkStatus entryPath
-                  unless (stableFileStatusMatches listedStatus finalStatus) $
-                    ioError
-                      (userError ("engine artifact special entry changed before retirement: " <> relativePath))
-                  removeLink entryPath
-                  requirePathAbsentAfterRemoval entryPath
-                  pure traversal
-    finalParentStatus <- requireStableDeletionParent parentDescriptor parentPath
-    unless (sameFileObjectStatus parentStatus finalParentStatus) $
-      ioError
-        (userError ("engine artifact parent changed during retirement: " <> parentPath))
-    pure nextTraversal
-
-removeOpenedArtifactDirectory ::
-  Fd ->
-  FilePath ->
-  FilePath ->
-  FilePath ->
-  Int ->
-  ArtifactTreeTraversal ->
-  FileStatus ->
-  IO ArtifactTreeTraversal
-removeOpenedArtifactDirectory
-  parentDescriptor
-  parentPath
-  relativePath
-  entryName
-  depth
-  traversal
-  listedStatus =
-    mask $ \_ -> do
-      descriptor <-
-        openFdAt
-          (Just parentDescriptor)
-          entryName
-          ReadOnly
-          defaultFileFlags
-            { nofollow = True,
-              cloexec = True,
-              directory = True
-            }
-      finallyPreservingPrimary
-        ( do
-            openedStatus <- getFdStatus descriptor
-            unless
-              ( stableFileStatusMatches listedStatus openedStatus
-                  && isDirectory openedStatus
-              )
-              (ioError (userError ("engine artifact directory changed while opening: " <> relativePath)))
-            nextTraversal <-
-              removeArtifactDirectoryContents
-                descriptor
-                (parentPath </> entryName)
-                relativePath
-                (depth + 1)
-                traversal
-            beforeRemovalStatus <- getFdStatus descriptor
-            namedStatus <- getSymbolicLinkStatus (parentPath </> entryName)
-            unless
-              ( sameFileObjectStatus beforeRemovalStatus namedStatus
-                  && isDirectory namedStatus
-                  && not (isSymbolicLink namedStatus)
-              )
-              (ioError (userError ("engine artifact directory changed before removal: " <> relativePath)))
-            removeDirectory (parentPath </> entryName)
-            requirePathAbsentAfterRemoval (parentPath </> entryName)
-            afterRemovalStatus <- getFdStatus descriptor
-            unless
-              ( sameFileObjectStatus beforeRemovalStatus afterRemovalStatus
-                  && linkCount afterRemovalStatus < linkCount beforeRemovalStatus
-              )
-              (ioError (userError ("engine artifact directory retirement lost identity: " <> relativePath)))
-            pure nextTraversal
-        )
-        (closeFd descriptor)
-
-removeOpenedArtifactFile ::
-  Fd ->
-  FilePath ->
-  FilePath ->
-  FilePath ->
-  Int ->
-  ArtifactTreeTraversal ->
-  FileStatus ->
-  IO ArtifactTreeTraversal
-removeOpenedArtifactFile
-  parentDescriptor
-  parentPath
-  relativePath
-  entryName
-  depth
-  traversal
-  listedStatus =
-    mask $ \_ -> do
-      descriptor <-
-        openFdAt
-          (Just parentDescriptor)
-          entryName
-          ReadOnly
-          defaultFileFlags
-            { nofollow = True,
-              cloexec = True,
-              nonBlock = True
-            }
-      finallyPreservingPrimary
-        ( do
-            openedStatus <- getFdStatus descriptor
-            unless
-              ( stableFileStatusMatches listedStatus openedStatus
-                  && isRegularFile openedStatus
-              )
-              (ioError (userError ("engine artifact file changed while opening: " <> relativePath)))
-            nextTraversal <-
-              accountArtifactTreeBytes
-                depth
-                (toInteger (fileSize openedStatus))
-                traversal
-            finalStatus <- getFdStatus descriptor
-            namedStatus <- getSymbolicLinkStatus (parentPath </> entryName)
-            unless
-              ( stableFileStatusMatches openedStatus finalStatus
-                  && stableFileStatusMatches finalStatus namedStatus
-              )
-              (ioError (userError ("engine artifact file changed before removal: " <> relativePath)))
-            removeLink (parentPath </> entryName)
-            requirePathAbsentAfterRemoval (parentPath </> entryName)
-            afterRemovalStatus <- getFdStatus descriptor
-            unless
-              ( sameFileObjectStatus finalStatus afterRemovalStatus
-                  && linkCount afterRemovalStatus + 1 == linkCount finalStatus
-              )
-              (ioError (userError ("engine artifact file retirement lost identity: " <> relativePath)))
-            pure nextTraversal
-        )
-        (closeFd descriptor)
-
-requireStableDeletionParent :: Fd -> FilePath -> IO FileStatus
-requireStableDeletionParent parentDescriptor parentPath = do
-  descriptorStatus <- getFdStatus parentDescriptor
-  pathStatus' <- getSymbolicLinkStatus parentPath
-  unless
-    ( sameFileObjectStatus descriptorStatus pathStatus'
-        && isDirectory pathStatus'
-        && not (isSymbolicLink pathStatus')
-    )
-    (ioError (userError ("engine artifact deletion parent changed: " <> parentPath)))
-  pure descriptorStatus
-
 requirePathAbsentAfterRemoval :: FilePath -> IO ()
 requirePathAbsentAfterRemoval path = do
   remainingStatus <- pathStatus path
@@ -3585,48 +3575,6 @@ requirePathAbsentAfterRemoval path = do
     Just _ ->
       ioError
         (userError ("engine artifact path was replaced during retirement: " <> path))
-
-sameFileObjectStatus :: FileStatus -> FileStatus -> Bool
-sameFileObjectStatus expected observed =
-  deviceID expected == deviceID observed
-    && fileID expected == fileID observed
-
-synchroniseDirectory :: FilePath -> IO ()
-synchroniseDirectory directoryPath =
-  synchroniseOpenedPath
-    directoryPath
-    defaultFileFlags
-      { nofollow = True,
-        cloexec = True,
-        directory = True
-      }
-    isDirectory
-    "directory"
-
-synchroniseOpenedPath ::
-  FilePath ->
-  OpenFileFlags ->
-  (FileStatus -> Bool) ->
-  String ->
-  IO ()
-synchroniseOpenedPath path flags expectedType typeName =
-  mask $ \restore -> do
-    descriptor <- openFd path ReadOnly flags
-    finallyPreservingPrimary
-      ( do
-          observedStatus <- getFdStatus descriptor
-          unless (expectedType observedStatus) $
-            ioError
-              ( userError
-                  ( "engine artifact path changed while synchronising "
-                      <> typeName
-                      <> ": "
-                      <> path
-                  )
-              )
-          restore (fileSynchronise descriptor)
-      )
-      (closeFd descriptor)
 
 -- Pre-correction roots used a declarative digest and did not carry resolved
 -- provenance. This validator is intentionally disjoint from exact payload
@@ -3651,6 +3599,7 @@ validateLegacyArtifactRootAt expectedInstallRoot actualRoot = do
             pure
             (decodeEngineArtifactManifest (LazyByteString.fromStrict manifestBytes))
         validateManifestContract
+          LegacyDeclarativeManifestContract
           expectedInstallRoot
           absoluteActualRoot
           rootDescriptor

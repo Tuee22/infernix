@@ -56,10 +56,14 @@ module Infernix.Cluster.Subprocess
     ProvisioningFilesystemMutationOutcome (..),
     observeProvisioningMutationRoot,
     provisioningCreateDirectoryLeaf,
+    provisioningCreateSymbolicLinkLeaf,
     provisioningRemoveTreeLeaf,
     provisioningRenameSiblingDirectory,
     provisioningRenameSiblingRegularFile,
+    provisioningReplaceSiblingRegularFile,
     runProvisioningFilesystemMutation,
+    safeProvisioningMutationLinkTargetForTest,
+    safeRelativeOperandForTest,
     NativeArtifactCachePlan,
     nativeArtifactCachePlan,
     NativeArtifactInvocationPlan,
@@ -70,6 +74,20 @@ module Infernix.Cluster.Subprocess
     runClosedLinuxNativeArtifactSmoke,
     ProvisioningContractObservation (..),
     provisioningContractForTest,
+    -- Sprint 1.20 Apple-cohort regression surfaces. Each names a defect the
+    -- machine-independent gates could not reach and the first Apple cohort
+    -- attempt found live.
+    DyldAuditLine (..),
+    parseDyldAuditLineForTest,
+    installedRunnerApplicationOutputForTest,
+    ElfAuditLine (..),
+    SealedRunLoaderAudit (..),
+    parseElfAuditLineForTest,
+    sealedLinuxRunnerApplicationOutputForTest,
+    sealedRunLoaderAuditForTest,
+    sealedArtifactRuntimeEnvironmentForTest,
+    renderedEnvironmentContractForTest,
+    supervisorTargetEnvironmentContractForTest,
     runBoundedCommand,
     dispatchInternalSubprocessMode,
     BoundedCommandActivitiesQuiescent,
@@ -131,7 +149,7 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isDigit, isHexDigit, isSpace, toLower)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.List qualified as List
-import Data.Maybe (fromMaybe, isNothing)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word64)
@@ -148,14 +166,15 @@ import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Subprocess.Activity qualified as Activity
 import Infernix.Cluster.Subprocess.Protocol qualified as Protocol
 import Infernix.Config (Paths (..))
+import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.Engines.Artifact.Identity qualified as ArtifactIdentity
-import Infernix.Engines.Artifact.Internal qualified as ArtifactInternal
 import Infernix.Engines.Artifact.Target qualified as ArtifactTarget
 import Infernix.Engines.MaterializationLock
   ( ArtifactGenerationLease,
+    artifactGenerationLease,
+    artifactGenerationLeaseFields,
     withTryArtifactGenerationReadLock,
   )
-import Infernix.Engines.MaterializationLock.Internal qualified as MaterializationLockInternal
 import Infernix.Engines.Provisioning.Internal qualified as Provisioning
 import Infernix.Error
   ( finallyPreservingPrimary,
@@ -163,22 +182,6 @@ import Infernix.Error
     runCleanupsPreservingFailures,
   )
 import Infernix.Evidence.Readiness qualified as Readiness
-import Infernix.ExecutionPlan.Internal
-  ( EnforcedGrant (EnforcedGrant),
-    Enforcer
-      ( HostFootprintWatchdogEnforcer,
-        LinuxProcessGroupRssWatchdogEnforcer,
-        NvidiaVramAccountingEnforcer
-      ),
-    ExecutableModel (ExecutableModel),
-    MemoryCeiling (MemoryCeiling),
-    MemoryGrant (MemoryGrant),
-    RuntimeResources
-      ( RuntimeGpuResources,
-        RuntimeHostResources,
-        RuntimePodResources
-      ),
-  )
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools qualified as HostTools
 import Infernix.ProcessIdentity
@@ -190,11 +193,7 @@ import Infernix.ProcessIdentity
     renderProcessBirthIdentity,
   )
 import Infernix.ProcessIdentity.Internal qualified as ProcessIdentityInternal
-import Infernix.Types
-  ( EngineBinding (engineBindingAdapterId),
-    ModelDescriptor (family, modelId, runtimeMode, selectedEngine),
-    RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu),
-  )
+import Infernix.Types (RuntimeMode)
 import Numeric (readHex, showHex)
 import Numeric.Natural (Natural)
 import System.Directory
@@ -216,6 +215,7 @@ import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (..))
 import System.FilePath
   ( isAbsolute,
+    joinPath,
     makeRelative,
     normalise,
     splitDirectories,
@@ -853,6 +853,31 @@ data ProvisioningFilesystemMutation
       ![FilePath]
       !FilePath
       !FilePath
+  | -- | Atomically rename one regular file over an existing regular-file
+    -- sibling.
+    --
+    -- 'ProvisioningRenameSiblingRegularFile' refuses an existing destination,
+    -- which is the right precondition for a first publication. A durable
+    -- record's /replacement/ needs the opposite: the destination must already
+    -- be a regular file and must be replaced in one step, so that a crash
+    -- leaves either the previous record or the new one and never neither.
+    -- Splitting it into unlink-then-rename would open exactly that window.
+    ProvisioningReplaceSiblingRegularFile
+      !ProvisioningMutationRoot
+      ![FilePath]
+      !FilePath
+      !FilePath
+  | -- | Create one symbolic link at a single safe leaf under a retained parent.
+    --
+    -- @unix-2.8.8.0@ exposes no public @symlinkat@ and @foreign import@ is
+    -- forbidden throughout repo-owned Haskell, so a descriptor-anchored
+    -- symbolic link can only be created by this kernel, which @fchdir@s into
+    -- the retained parent and then names one CWD-relative leaf.
+    ProvisioningCreateSymbolicLinkLeaf
+      !ProvisioningMutationRoot
+      ![FilePath]
+      !FilePath
+      !FilePath
   deriving (Eq, Show)
 
 data ProvisioningMutationWorkingDirectory
@@ -933,17 +958,24 @@ observeProvisioningMutationRoot rootPath
                       )
                 )
                 (ignoreIOException (closeFd descriptor))
-      pure
-        ( case observed of
-            Left failure ->
-              Left
-                ( ProvisioningMutationKernelFailure
-                    (Text.pack (displayException failure))
-                )
-            Right (Left rejection) ->
-              Left (ProvisioningMutationRejectedSpec rejection)
-            Right (Right root) -> Right root
+      pure (classifyObservedProvisioningMutationRoot observed)
+
+-- | Fold one mutation-root observation into its typed outcome.
+classifyObservedProvisioningMutationRoot ::
+  Either IOException (Either Text.Text ProvisioningMutationRoot) ->
+  Either
+    ProvisioningFilesystemMutationOutcome
+    ProvisioningMutationRoot
+classifyObservedProvisioningMutationRoot observed =
+  case observed of
+    Left failure ->
+      Left
+        ( ProvisioningMutationKernelFailure
+            (Text.pack (displayException failure))
         )
+    Right (Left rejection) ->
+      Left (ProvisioningMutationRejectedSpec rejection)
+    Right (Right root) -> Right root
 
 provisioningCreateDirectoryLeaf ::
   ProvisioningMutationRoot ->
@@ -968,6 +1000,58 @@ provisioningRemoveTreeLeaf root parentComponents leaf = do
   validateProvisioningMutationRelativePath parentComponents leaf
   pure
     (ProvisioningRemoveTreeLeaf root parentComponents leaf)
+
+-- | Create one symbolic link named by a single safe leaf under the retained
+-- parent that @parentComponents@ locates within @root@.
+--
+-- The target is held to the same containment rule the package-closure link
+-- validator applies: it must be relative and must still resolve inside the
+-- mutation root once collapsed against the link's own directory. A link is the
+-- one entry kind whose /content/ can redirect a later effect, so admitting an
+-- ascending target here would reintroduce exactly the escape the retained
+-- parent descriptor exists to prevent.
+provisioningCreateSymbolicLinkLeaf ::
+  ProvisioningMutationRoot ->
+  [FilePath] ->
+  FilePath ->
+  FilePath ->
+  Either
+    ProvisioningFilesystemMutationOutcome
+    ProvisioningFilesystemMutation
+provisioningCreateSymbolicLinkLeaf root parentComponents leaf target = do
+  validateProvisioningMutationRelativePath parentComponents leaf
+  unless
+    (safeProvisioningMutationLinkTarget parentComponents target)
+    ( Left
+        ( ProvisioningMutationRejectedSpec
+            "provisioning mutation link target escaped its mutation root"
+        )
+    )
+  pure
+    (ProvisioningCreateSymbolicLinkLeaf root parentComponents leaf target)
+
+-- | Whether a symbolic-link target stays inside the mutation root when
+-- collapsed against the directory the link itself lives in.
+--
+-- @parentComponents@ is the link's directory relative to the mutation root, so
+-- the collapsed target is @joinPath parentComponents \<\/\> target@. This is the
+-- same rule the package-closure walk applies to a copied link, stated against
+-- the kernel's component vocabulary rather than a rebuilt pathname.
+safeProvisioningMutationLinkTarget :: [FilePath] -> FilePath -> Bool
+safeProvisioningMutationLinkTarget parentComponents target =
+  not (null target)
+    && not (isAbsolute target)
+    && '\NUL' `notElem` target
+    && length (splitDirectories target) <= maximumProvisioningMutationDepth
+    && case splitDirectories
+      (normalise (joinPath parentComponents </> target)) of
+      ".." : _ -> False
+      _ -> True
+
+-- | Test access to 'safeProvisioningMutationLinkTarget'.
+safeProvisioningMutationLinkTargetForTest :: [FilePath] -> FilePath -> Bool
+safeProvisioningMutationLinkTargetForTest =
+  safeProvisioningMutationLinkTarget
 
 provisioningRenameSiblingDirectory ::
   ProvisioningMutationRoot ->
@@ -1035,6 +1119,46 @@ provisioningRenameSiblingRegularFile
       )
     pure
       ( ProvisioningRenameSiblingRegularFile
+          root
+          parentComponents
+          sourceLeaf
+          destinationLeaf
+      )
+
+-- | Atomically replace an existing regular-file sibling.
+--
+-- Identical validation to 'provisioningRenameSiblingRegularFile'; the two
+-- differ only in the destination precondition the executor enforces.
+provisioningReplaceSiblingRegularFile ::
+  ProvisioningMutationRoot ->
+  [FilePath] ->
+  FilePath ->
+  FilePath ->
+  Either
+    ProvisioningFilesystemMutationOutcome
+    ProvisioningFilesystemMutation
+provisioningReplaceSiblingRegularFile
+  root
+  parentComponents
+  sourceLeaf
+  destinationLeaf = do
+    validateProvisioningMutationRelativePath parentComponents sourceLeaf
+    unless
+      (safeProvisioningMutationLeaf destinationLeaf)
+      ( Left
+          ( ProvisioningMutationRejectedSpec
+              "provisioning mutation destination is not one safe leaf"
+          )
+      )
+    unless
+      (sourceLeaf /= destinationLeaf)
+      ( Left
+          ( ProvisioningMutationRejectedSpec
+              "provisioning mutation sibling names must differ"
+          )
+      )
+    pure
+      ( ProvisioningReplaceSiblingRegularFile
           root
           parentComponents
           sourceLeaf
@@ -1113,7 +1237,11 @@ data ProvisioningMutationWireRequest = ProvisioningMutationWireRequest
     mutationWireRoot :: !ProvisioningMutationWireRoot,
     mutationWireParentComponents :: ![FilePath],
     mutationWireSourceLeaf :: !FilePath,
-    mutationWireDestinationLeaf :: !(Maybe FilePath)
+    mutationWireDestinationLeaf :: !(Maybe FilePath),
+    -- | The symbolic-link target, present only for the link operation. It is a
+    -- relative path rather than one leaf, so it cannot share
+    -- 'mutationWireDestinationLeaf', whose decoder requires a safe leaf.
+    mutationWireLinkTarget :: !(Maybe FilePath)
   }
 
 data ProvisioningMutationWorkingDirectoryWire
@@ -1144,20 +1272,21 @@ instance Aeson.FromJSON ProvisioningMutationWireRoot where
 instance Aeson.ToJSON ProvisioningMutationWireRequest where
   toJSON request =
     Aeson.object
-      [ "version" Aeson..= (1 :: Int),
+      [ "version" Aeson..= provisioningMutationWireVersion,
         "operation" Aeson..= mutationWireOperation request,
         "root" Aeson..= mutationWireRoot request,
         "parentComponents"
           Aeson..= mutationWireParentComponents request,
         "sourceLeaf" Aeson..= mutationWireSourceLeaf request,
-        "destinationLeaf" Aeson..= mutationWireDestinationLeaf request
+        "destinationLeaf" Aeson..= mutationWireDestinationLeaf request,
+        "linkTarget" Aeson..= mutationWireLinkTarget request
       ]
 
 instance Aeson.FromJSON ProvisioningMutationWireRequest where
   parseJSON =
     Aeson.withObject "ProvisioningMutationWireRequest" $ \value -> do
       version <- value Aeson..: "version"
-      unless (version == (1 :: Int)) $
+      unless (version == provisioningMutationWireVersion) $
         fail "unknown provisioning mutation request version"
       ProvisioningMutationWireRequest
         <$> value Aeson..: "operation"
@@ -1165,6 +1294,14 @@ instance Aeson.FromJSON ProvisioningMutationWireRequest where
         <*> value Aeson..: "parentComponents"
         <*> value Aeson..: "sourceLeaf"
         <*> value Aeson..: "destinationLeaf"
+        <*> value Aeson..: "linkTarget"
+
+-- | The provisioning mutation request version. The parent and the helper are
+-- the same self-exec'd binary, so this is an internal coherence marker rather
+-- than a compatibility boundary; it moved to 2 when the link operation added
+-- its own target field.
+provisioningMutationWireVersion :: Int
+provisioningMutationWireVersion = 2
 
 instance Aeson.ToJSON ProvisioningMutationWorkingDirectoryWire where
   toJSON
@@ -1234,9 +1371,15 @@ provisioningMutationWireRequest ::
 provisioningMutationWireRequest mutation =
   case mutation of
     ProvisioningCreateDirectoryLeaf root parentComponents leaf ->
-      wireRequest "create-directory-leaf" root parentComponents leaf Nothing
+      wireRequest
+        "create-directory-leaf"
+        root
+        parentComponents
+        leaf
+        Nothing
+        Nothing
     ProvisioningRemoveTreeLeaf root parentComponents leaf ->
-      wireRequest "remove-tree-leaf" root parentComponents leaf Nothing
+      wireRequest "remove-tree-leaf" root parentComponents leaf Nothing Nothing
     ProvisioningRenameSiblingDirectory
       root
       parentComponents
@@ -1248,6 +1391,7 @@ provisioningMutationWireRequest mutation =
           parentComponents
           sourceLeaf
           (Just destinationLeaf)
+          Nothing
     ProvisioningRenameSiblingRegularFile
       root
       parentComponents
@@ -1259,25 +1403,57 @@ provisioningMutationWireRequest mutation =
           parentComponents
           sourceLeaf
           (Just destinationLeaf)
+          Nothing
+    ProvisioningReplaceSiblingRegularFile
+      root
+      parentComponents
+      sourceLeaf
+      destinationLeaf ->
+        wireRequest
+          "replace-sibling-regular-file"
+          root
+          parentComponents
+          sourceLeaf
+          (Just destinationLeaf)
+          Nothing
+    ProvisioningCreateSymbolicLinkLeaf
+      root
+      parentComponents
+      leaf
+      target ->
+        wireRequest
+          "create-symbolic-link-leaf"
+          root
+          parentComponents
+          leaf
+          Nothing
+          (Just target)
   where
-    wireRequest operation root parentComponents sourceLeaf destinationLeaf =
-      ProvisioningMutationWireRequest
-        { mutationWireOperation = operation,
-          mutationWireRoot =
-            ProvisioningMutationWireRoot
-              { mutationWireRootPath =
-                  provisioningMutationRootPath root,
-                mutationWireRootDeviceId =
-                  provisioningMutationRootDeviceId root,
-                mutationWireRootFileId =
-                  provisioningMutationRootFileId root,
-                mutationWireRootMode =
-                  provisioningMutationRootMode root
-              },
-          mutationWireParentComponents = parentComponents,
-          mutationWireSourceLeaf = sourceLeaf,
-          mutationWireDestinationLeaf = destinationLeaf
-        }
+    wireRequest
+      operation
+      root
+      parentComponents
+      sourceLeaf
+      destinationLeaf
+      linkTarget =
+        ProvisioningMutationWireRequest
+          { mutationWireOperation = operation,
+            mutationWireRoot =
+              ProvisioningMutationWireRoot
+                { mutationWireRootPath =
+                    provisioningMutationRootPath root,
+                  mutationWireRootDeviceId =
+                    provisioningMutationRootDeviceId root,
+                  mutationWireRootFileId =
+                    provisioningMutationRootFileId root,
+                  mutationWireRootMode =
+                    provisioningMutationRootMode root
+                },
+            mutationWireParentComponents = parentComponents,
+            mutationWireSourceLeaf = sourceLeaf,
+            mutationWireDestinationLeaf = destinationLeaf,
+            mutationWireLinkTarget = linkTarget
+          }
 
 provisioningMutationFromWire ::
   ProvisioningMutationWireRequest ->
@@ -1289,17 +1465,20 @@ provisioningMutationFromWire request = do
   case mutationWireOperation request of
     "create-directory-leaf" -> do
       rejectUnexpectedDestination
+      rejectUnexpectedLinkTarget
       provisioningCreateDirectoryLeaf
         root
         (mutationWireParentComponents request)
         (mutationWireSourceLeaf request)
     "remove-tree-leaf" -> do
       rejectUnexpectedDestination
+      rejectUnexpectedLinkTarget
       provisioningRemoveTreeLeaf
         root
         (mutationWireParentComponents request)
         (mutationWireSourceLeaf request)
-    "rename-sibling-directory" ->
+    "rename-sibling-directory" -> do
+      rejectUnexpectedLinkTarget
       maybe
         ( Left
             ( ProvisioningMutationRejectedSpec
@@ -1312,7 +1491,8 @@ provisioningMutationFromWire request = do
             (mutationWireSourceLeaf request)
         )
         (mutationWireDestinationLeaf request)
-    "rename-sibling-regular-file" ->
+    "rename-sibling-regular-file" -> do
+      rejectUnexpectedLinkTarget
       maybe
         ( Left
             ( ProvisioningMutationRejectedSpec
@@ -1325,6 +1505,34 @@ provisioningMutationFromWire request = do
             (mutationWireSourceLeaf request)
         )
         (mutationWireDestinationLeaf request)
+    "replace-sibling-regular-file" -> do
+      rejectUnexpectedLinkTarget
+      maybe
+        ( Left
+            ( ProvisioningMutationRejectedSpec
+                "provisioning mutation rename has no destination leaf"
+            )
+        )
+        ( provisioningReplaceSiblingRegularFile
+            root
+            (mutationWireParentComponents request)
+            (mutationWireSourceLeaf request)
+        )
+        (mutationWireDestinationLeaf request)
+    "create-symbolic-link-leaf" -> do
+      rejectUnexpectedDestination
+      maybe
+        ( Left
+            ( ProvisioningMutationRejectedSpec
+                "provisioning mutation link has no target"
+            )
+        )
+        ( provisioningCreateSymbolicLinkLeaf
+            root
+            (mutationWireParentComponents request)
+            (mutationWireSourceLeaf request)
+        )
+        (mutationWireLinkTarget request)
     _ ->
       Left
         ( ProvisioningMutationRejectedSpec
@@ -1337,6 +1545,14 @@ provisioningMutationFromWire request = do
         ( Left
             ( ProvisioningMutationRejectedSpec
                 "provisioning mutation operation has an unexpected destination"
+            )
+        )
+    rejectUnexpectedLinkTarget =
+      unless
+        (isNothing (mutationWireLinkTarget request))
+        ( Left
+            ( ProvisioningMutationRejectedSpec
+                "provisioning mutation operation has an unexpected link target"
             )
         )
 
@@ -1478,12 +1694,12 @@ nativeArtifactInvocationPlan
       ]
     unless
       ( safeNativeArtifactPathSegment modelIdentifier
-          && ArtifactIdentity.parseNativeArtifactIdentity adapterIdentifier
-            /= Nothing
+          && isJust
+            (ArtifactIdentity.parseNativeArtifactIdentity adapterIdentifier)
       )
       (Left "native artifact invocation is outside the closed model/adapter catalog")
-    unless
-      (not (Text.any (== '\0') inlineInput))
+    when
+      (Text.any (== '\0') inlineInput)
       (Left "native artifact inline input contains NUL")
     mapM_ validateNativeArtifactCachePlan maybeCache
     mapM_
@@ -2152,7 +2368,7 @@ compileExactExecutableSnapshotTestCommand
   environment
     | timeoutMicroseconds <= 0 =
         pure (Left "exact executable snapshot test timeout must be positive")
-    | any (not . isAbsolute) [executablePath, readyPath, releasePath] =
+    | not (all isAbsolute [executablePath, readyPath, releasePath]) =
         pure
           (Left "exact executable snapshot test paths must all be absolute")
     | otherwise = do
@@ -2491,7 +2707,7 @@ runClosedInstalledRunnerSmoke
         Provisioning.installedSmokeExecutableRelativePath adapter
       compileClosedInstalledRunnerSmoke = do
         let (enginesRoot, leaseAdapterId, _generationFingerprint, _payloadDigest) =
-              MaterializationLockInternal.artifactGenerationLeaseFields
+              artifactGenerationLeaseFields
                 generationLease
             expectedAdapterId =
               Text.pack (Provisioning.appleAdapterSlug adapter)
@@ -2548,106 +2764,147 @@ runClosedInstalledRunnerSmoke
 
 runClosedLinuxNativeArtifactSmoke ::
   ArtifactIdentity.NativeArtifactIdentity ->
-  FilePath ->
+  ArtifactGenerationLease ->
+  ProvisioningMutationRoot ->
+  ArtifactTarget.NativeArtifactTargetEvidence ->
   Provisioning.LinuxNativeSmokePolicy ->
   SubprocessEnv ->
   Timeout ->
-  IO (Either String CommandOutcome)
+  IO (Either String NativeArtifactCommandOutcome)
 runClosedLinuxNativeArtifactSmoke
   identity
-  artifactRoot
+  generationLease
+  artifactRootAuthority
+  expectedTargetEvidence
   policy
   environment
   commandTimeout =
-    runClosedProvisioningSmoke
-      "installed Linux native artifact"
-      ( Provisioning.SmokeLinuxNativeArtifact
-          identity
-          artifactRoot
-          policy
-      )
-      environment
-      commandTimeout
-
-runClosedProvisioningSmoke ::
-  String ->
-  Provisioning.ProvisioningCommand ->
-  SubprocessEnv ->
-  Timeout ->
-  IO (Either String CommandOutcome)
-runClosedProvisioningSmoke label command environment commandTimeout =
-  case resolveProvisioningCommandExecutable command environment of
-    Left failure -> pure (Left failure)
-    Right configuredPath -> do
-      identityResult <-
-        observeClosedProvisioningExecutable configuredPath
-      case identityResult of
-        Left failure -> pure (Left failure)
-        Right identity -> do
-          case closedSmokeArtifactRoot command of
-            Left failure -> pure (Left failure)
-            Right artifactRoot -> do
-              closureResult <-
-                observeClosedArtifactRoot artifactRoot
-              case closureResult of
-                Left failure -> pure (Left failure)
-                Right artifactClosure ->
-                  case compileProvisioningCommandWithExecutable
+    case compileClosedLinuxNativeArtifactSmoke of
+      Left failure -> pure (Left failure)
+      Right bounded -> do
+        revalidation <-
+          revalidateLinuxNativeTargetEvidence expectedTargetEvidence
+        case revalidation of
+          Left failure -> pure (Left failure)
+          Right () ->
+            Right <$> runBoundedCommandExactCapture bounded
+    where
+      artifactRoot = provisioningMutationRootPath artifactRootAuthority
+      command =
+        Provisioning.SmokeLinuxNativeArtifact identity artifactRoot policy
+      targetRelativePath =
+        Provisioning.linuxNativeArtifactEntrypoint identity
+      compileClosedLinuxNativeArtifactSmoke = do
+        let (enginesRoot, leaseAdapterId, _generationFingerprint, _payloadDigest) =
+              artifactGenerationLeaseFields
+                generationLease
+            expectedAdapterId =
+              ArtifactIdentity.nativeArtifactAdapterId identity
+        unless
+          ( enginesRoot == takeDirectory artifactRoot
+              && leaseAdapterId == expectedAdapterId
+          )
+          ( Left
+              "Linux native artifact generation lease does not match its exact artifact root and adapter"
+          )
+        unless
+          (safeProvisioningMutationRelativeExecutable targetRelativePath)
+          ( Left
+              "Linux native artifact target is not one closed relative executable"
+          )
+        case commandTimeout of
+          Timeout micros
+            | micros <= 0 ->
+                Left
+                  "Linux native artifact smoke requires a positive total deadline"
+            | otherwise -> do
+                validateProvisioningCommand command
+                rendered <- renderProvisioningCommand environment command
+                let expectedExecutable = artifactRoot </> targetRelativePath
+                unless
+                  ( renderedExecutable rendered == expectedExecutable
+                      && renderedWorkingDirectory rendered == Just artifactRoot
+                  )
+                  ( Left
+                      "Linux native artifact rendering disagrees with its retained root authority"
+                  )
+                bounded <-
+                  compileRenderedCommand
                     command
-                    identity
-                      { Provisioning.provisioningExecutablePackageClosures =
-                          [artifactClosure]
-                      }
+                    ( ClosedArtifactSmokeCommandIdentity
+                        (Provisioning.provisioningCommandOperation command)
+                    )
+                    (CommandPolicy (PositiveTimeout micros) NeverRetry FatalFailure)
                     environment
-                    commandTimeout of
-                    Left failure -> pure (Left failure)
-                    Right bounded -> do
-                      outcome <- runBoundedCommand bounded
-                      pure
-                        ( Right
-                            ( case outcome of
-                                CommandSucceeded output
-                                  | null output ->
-                                      CommandFailedFatal
-                                        (label <> " smoke returned empty output")
-                                _ -> outcome
-                            )
-                        )
+                    rendered
+                      { renderedWorkingDirectory = Nothing,
+                        renderedExecutableIdentity = Nothing
+                      }
+                pure
+                  bounded
+                    { boundedArtifactGenerationLeaseExpectation =
+                        Just
+                          (artifactGenerationLeaseExpectation generationLease),
+                      boundedProvisioningMutationWorkingDirectory =
+                        Just
+                          ( ProvisioningMutationWorkingDirectory
+                              artifactRootAuthority
+                              []
+                              (Just targetRelativePath)
+                          )
+                    }
 
-closedSmokeArtifactRoot ::
-  Provisioning.ProvisioningCommand ->
-  Either String FilePath
-closedSmokeArtifactRoot command =
-  case command of
-    Provisioning.SmokeInstalledRunner _ artifactRoot ->
-      Right artifactRoot
-    Provisioning.SmokeLinuxNativeArtifact _ artifactRoot _ ->
-      Right artifactRoot
-    _ ->
-      Left "closed smoke helper received a non-smoke command"
-
-observeClosedProvisioningExecutable ::
-  FilePath ->
-  IO (Either String Provisioning.ProvisioningExecutableIdentity)
-observeClosedProvisioningExecutable configuredPath = do
+-- | Exact parent-side revalidation of a direct native target immediately
+-- before its bounded launch: the live configured entry, canonical entry, and
+-- canonical bytes must still match the recorded identity.
+--
+-- Two Sprint 1.20 obligations are deliberately NOT claimed here and remain
+-- open: helper-side revalidation of this evidence inside the supervisor, and
+-- retirement of the wrapper-shaped @bin\/*@ entrypoint contract so the rendered
+-- executable and the recorded direct target are the same path. Until that
+-- second correction lands, this revalidation is anchored on the evidence's own
+-- recorded configured path rather than on the rendered command.
+revalidateNativeArtifactTargetExecutable ::
+  ArtifactTarget.NativeArtifactTargetExecutableEvidence ->
+  IO (Either String ())
+revalidateNativeArtifactTargetExecutable evidence = do
   result <-
     try @IOException $ mask $ \restore -> do
+      let configuredPath =
+            ArtifactTarget.targetExecutableConfiguredPath evidence
+      unless
+        (isAbsolute configuredPath)
+        (ioError (userError "native target evidence configured path is not absolute"))
       configuredStatus <- getSymbolicLinkStatus configuredPath
       unless
-        ( isRegularFile configuredStatus
-            || isSymbolicLink configuredStatus
+        ( exactTargetEntryMatches
+            configuredStatus
+            (ArtifactTarget.targetExecutableConfiguredDeviceId evidence)
+            (ArtifactTarget.targetExecutableConfiguredFileId evidence)
+            (ArtifactTarget.targetExecutableConfiguredMode evidence)
+            (ArtifactTarget.targetExecutableConfiguredSize evidence)
         )
-        (ioError (userError "closed smoke executable path is not a file"))
+        (ioError (userError "native target configured entry disagreed with its evidence"))
       canonicalPath <- restore (canonicalizePath configuredPath)
-      listedCanonicalStatus <- getSymbolicLinkStatus canonicalPath
       unless
         ( isAbsolute canonicalPath
-            && isRegularFile listedCanonicalStatus
-            && not (isSymbolicLink listedCanonicalStatus)
-            && fromIntegral (PosixFiles.fileSize listedCanonicalStatus)
-              <= maximumExecutableSnapshotBytes
+            && normalise canonicalPath
+              == normalise
+                (ArtifactTarget.targetExecutableCanonicalPath evidence)
         )
-        (ioError (userError "closed smoke executable canonical target is invalid"))
+        (ioError (userError "native target canonical path disagreed with its evidence"))
+      canonicalStatus <- getSymbolicLinkStatus canonicalPath
+      unless
+        ( isRegularFile canonicalStatus
+            && not (isSymbolicLink canonicalStatus)
+            && exactTargetEntryMatches
+              canonicalStatus
+              (ArtifactTarget.targetExecutableCanonicalDeviceId evidence)
+              (ArtifactTarget.targetExecutableCanonicalFileId evidence)
+              (ArtifactTarget.targetExecutableCanonicalMode evidence)
+              (ArtifactTarget.targetExecutableCanonicalSize evidence)
+        )
+        (ioError (userError "native target canonical entry disagreed with its evidence"))
       descriptor <-
         openFd
           canonicalPath
@@ -2660,127 +2917,347 @@ observeClosedProvisioningExecutable configuredPath = do
         ( restore $ do
             openedStatus <- getFdStatus descriptor
             unless
-              (exactFileStatusMatches listedCanonicalStatus openedStatus)
-              (ioError (userError "closed smoke executable changed before exact hashing"))
+              (exactFileStatusMatches canonicalStatus openedStatus)
+              (ioError (userError "native target changed before exact rehashing"))
             context <-
               hashSnapshotDescriptor
                 descriptor
                 (fromIntegral (PosixFiles.fileSize openedStatus))
                 SHA256.init
+            let digest =
+                  "sha256:"
+                    <> TextEncoding.decodeUtf8
+                      (Base16.encode (SHA256.finalize context))
             finalStatus <- getFdStatus descriptor
             finalCanonicalStatus <- getSymbolicLinkStatus canonicalPath
-            finalConfiguredStatus <- getSymbolicLinkStatus configuredPath
-            finalCanonicalPath <- canonicalizePath configuredPath
+            finalConfiguredStatus <-
+              getSymbolicLinkStatus configuredPath
             unless
-              ( exactFileStatusMatches openedStatus finalStatus
+              ( digest == ArtifactTarget.targetExecutableDigest evidence
+                  && exactFileStatusMatches openedStatus finalStatus
                   && exactFileStatusMatches
                     finalStatus
                     finalCanonicalStatus
                   && exactFileStatusMatches
                     configuredStatus
                     finalConfiguredStatus
-                  && normalise finalCanonicalPath
-                    == normalise canonicalPath
               )
-              (ioError (userError "closed smoke executable changed during exact hashing"))
-            pure
-              Provisioning.ProvisioningExecutableIdentity
-                { Provisioning.provisioningExecutableConfiguredPath =
-                    configuredPath,
-                  Provisioning.provisioningExecutableCanonicalPath =
-                    canonicalPath,
-                  Provisioning.provisioningExecutableDeviceId =
-                    fromIntegral (PosixFiles.deviceID finalStatus),
-                  Provisioning.provisioningExecutableFileId =
-                    fromIntegral (PosixFiles.fileID finalStatus),
-                  Provisioning.provisioningExecutableMode =
-                    fromIntegral (PosixFiles.fileMode finalStatus),
-                  Provisioning.provisioningExecutableSize =
-                    fromIntegral (PosixFiles.fileSize finalStatus),
-                  Provisioning.provisioningExecutableDigest =
-                    "sha256:"
-                      <> TextEncoding.decodeUtf8
-                        (Base16.encode (SHA256.finalize context)),
-                  Provisioning.provisioningExecutablePackageClosures = [],
-                  Provisioning.provisioningExecutableRuntimeLibraries = []
-                }
+              (ioError (userError "native target changed during exact rehashing"))
         )
         (ignoreIOException (closeFd descriptor))
   pure (either (Left . displayException) Right result)
 
-observeClosedArtifactRoot ::
-  FilePath ->
-  IO (Either String Provisioning.ProvisioningPackageClosureIdentity)
-observeClosedArtifactRoot artifactRoot = do
+exactTargetEntryMatches ::
+  FileStatus ->
+  Integer ->
+  Integer ->
+  Integer ->
+  Integer ->
+  Bool
+exactTargetEntryMatches status deviceId fileId mode size =
+  fromIntegral (PosixFiles.deviceID status) == deviceId
+    && fromIntegral (PosixFiles.fileID status) == fileId
+    && fromIntegral (PosixFiles.fileMode status) == mode
+    && fromIntegral (PosixFiles.fileSize status) == size
+
+-- | Revalidate every part of an image target's recorded evidence that names
+-- live bytes: the entry executable, and the loader closure when the record
+-- carries one.
+--
+-- An image target whose manifest carries no loader closure is refused. The
+-- producer emits one for every image target, so an absent closure means the
+-- manifest predates that producer and its generation identity does not bind
+-- the loader, resolution metadata, or system libraries the target will load.
+revalidateLinuxNativeTargetEvidence ::
+  ArtifactTarget.NativeArtifactTargetEvidence ->
+  IO (Either String ())
+revalidateLinuxNativeTargetEvidence evidence = do
+  executable <-
+    revalidateNativeArtifactTargetExecutable
+      (ArtifactTarget.targetEvidenceExecutable evidence)
+  case (executable, ArtifactTarget.targetEvidenceLoader evidence) of
+    (Left failure, _) -> pure (Left failure)
+    (Right (), Nothing) ->
+      pure
+        ( Left
+            "Linux native artifact evidence carries no loader closure"
+        )
+    (Right (), Just loaderEvidence) ->
+      revalidateNativeArtifactTargetLoaderEvidence loaderEvidence
+
+-- | The recorded identity of one loader-closure file, flattened so the object
+-- and cache records — which carry the same ten fields under different names —
+-- share one revalidator.
+data LoaderFileExpectation = LoaderFileExpectation
+  { loaderExpectationConfiguredPath :: !FilePath,
+    loaderExpectationConfiguredDeviceId :: !Integer,
+    loaderExpectationConfiguredFileId :: !Integer,
+    loaderExpectationConfiguredMode :: !Integer,
+    loaderExpectationConfiguredSize :: !Integer,
+    loaderExpectationCanonicalPath :: !FilePath,
+    loaderExpectationCanonicalDeviceId :: !Integer,
+    loaderExpectationCanonicalFileId :: !Integer,
+    loaderExpectationCanonicalMode :: !Integer,
+    loaderExpectationCanonicalSize :: !Integer,
+    loaderExpectationDigest :: !Text.Text
+  }
+
+loaderCacheExpectation ::
+  ArtifactTarget.NativeArtifactLoaderFileEvidence ->
+  LoaderFileExpectation
+loaderCacheExpectation evidence =
+  LoaderFileExpectation
+    { loaderExpectationConfiguredPath =
+        ArtifactTarget.loaderFileConfiguredPath evidence,
+      loaderExpectationConfiguredDeviceId =
+        ArtifactTarget.loaderFileConfiguredDeviceId evidence,
+      loaderExpectationConfiguredFileId =
+        ArtifactTarget.loaderFileConfiguredFileId evidence,
+      loaderExpectationConfiguredMode =
+        ArtifactTarget.loaderFileConfiguredMode evidence,
+      loaderExpectationConfiguredSize =
+        ArtifactTarget.loaderFileConfiguredSize evidence,
+      loaderExpectationCanonicalPath =
+        ArtifactTarget.loaderFileCanonicalPath evidence,
+      loaderExpectationCanonicalDeviceId =
+        ArtifactTarget.loaderFileCanonicalDeviceId evidence,
+      loaderExpectationCanonicalFileId =
+        ArtifactTarget.loaderFileCanonicalFileId evidence,
+      loaderExpectationCanonicalMode =
+        ArtifactTarget.loaderFileCanonicalMode evidence,
+      loaderExpectationCanonicalSize =
+        ArtifactTarget.loaderFileCanonicalSize evidence,
+      loaderExpectationDigest = ArtifactTarget.loaderFileDigest evidence
+    }
+
+loaderObjectExpectation ::
+  ArtifactTarget.NativeArtifactLoaderObjectEvidence ->
+  LoaderFileExpectation
+loaderObjectExpectation evidence =
+  LoaderFileExpectation
+    { loaderExpectationConfiguredPath =
+        ArtifactTarget.loaderObjectConfiguredPath evidence,
+      loaderExpectationConfiguredDeviceId =
+        ArtifactTarget.loaderObjectConfiguredDeviceId evidence,
+      loaderExpectationConfiguredFileId =
+        ArtifactTarget.loaderObjectConfiguredFileId evidence,
+      loaderExpectationConfiguredMode =
+        ArtifactTarget.loaderObjectConfiguredMode evidence,
+      loaderExpectationConfiguredSize =
+        ArtifactTarget.loaderObjectConfiguredSize evidence,
+      loaderExpectationCanonicalPath =
+        ArtifactTarget.loaderObjectCanonicalPath evidence,
+      loaderExpectationCanonicalDeviceId =
+        ArtifactTarget.loaderObjectCanonicalDeviceId evidence,
+      loaderExpectationCanonicalFileId =
+        ArtifactTarget.loaderObjectCanonicalFileId evidence,
+      loaderExpectationCanonicalMode =
+        ArtifactTarget.loaderObjectCanonicalMode evidence,
+      loaderExpectationCanonicalSize =
+        ArtifactTarget.loaderObjectCanonicalSize evidence,
+      loaderExpectationDigest = ArtifactTarget.loaderObjectDigest evidence
+    }
+
+-- | Revalidate the complete recorded loader closure immediately before a
+-- bounded launch.
+--
+-- The executable revalidation above proves only that the entry object is
+-- unchanged. An image target additionally binds the @PT_INTERP@ loader, the
+-- resolution metadata in @\/etc\/ld.so.cache@, and every system library it
+-- reaches through @DT_NEEDED@ — none of which lies inside the payload roots the
+-- closure digests cover. Each recorded file is therefore re-stat'ed and
+-- re-digested against its recorded identity, so a system library replaced
+-- between activation and launch fails closed instead of being loaded.
+revalidateNativeArtifactTargetLoaderEvidence ::
+  ArtifactTarget.NativeArtifactLoaderEvidence ->
+  IO (Either String ())
+revalidateNativeArtifactTargetLoaderEvidence evidence = do
   result <-
-    try @IOException $ mask $ \restore -> do
-      listedStatus <- getSymbolicLinkStatus artifactRoot
-      unless
-        ( isDirectory listedStatus
-            && not (isSymbolicLink listedStatus)
-        )
-        (ioError (userError "closed smoke artifact root is not a real directory"))
-      descriptor <-
-        openFd
-          artifactRoot
-          ReadOnly
-          defaultFileFlags
-            { nofollow = True,
-              directory = True,
-              cloexec = True
-            }
-      finallyPreservingPrimary
-        ( restore $ do
-            openedStatus <- getFdStatus descriptor
-            unless
-              (exactFileStatusMatches listedStatus openedStatus)
-              (ioError (userError "closed smoke artifact root changed before observation"))
-            observed <-
-              digestSealedPackageClosureDirectory
-                artifactRoot
-                artifactRoot
-                descriptor
-                openedStatus
-                "."
-                0
-                ( SnapshotClosureState
-                    0
-                    0
-                    (SHA256.update SHA256.init "infernix-poetry-closure-v2\NUL")
-                )
-            finalStatus <- getFdStatus descriptor
-            finalPathStatus <- getSymbolicLinkStatus artifactRoot
-            unless
-              ( exactFileStatusMatches openedStatus finalStatus
-                  && exactFileStatusMatches finalStatus finalPathStatus
-              )
-              (ioError (userError "closed smoke artifact root changed during observation"))
-            pure
-              Provisioning.ProvisioningPackageClosureIdentity
-                { Provisioning.provisioningPackageClosureRole =
-                    Provisioning.ProvisioningArtifactRootClosure,
-                  Provisioning.provisioningPackageClosureRoot =
-                    artifactRoot,
-                  Provisioning.provisioningPackageClosureDeviceId =
-                    fromIntegral (PosixFiles.deviceID finalStatus),
-                  Provisioning.provisioningPackageClosureFileId =
-                    fromIntegral (PosixFiles.fileID finalStatus),
-                  Provisioning.provisioningPackageClosureMode =
-                    fromIntegral (PosixFiles.fileMode finalStatus),
-                  Provisioning.provisioningPackageClosureBytes =
-                    snapshotClosureBytesCopied observed,
-                  Provisioning.provisioningPackageClosureFiles =
-                    snapshotClosureFilesCopied observed,
-                  Provisioning.provisioningPackageClosureDigest =
-                    "sha256:"
-                      <> TextEncoding.decodeUtf8
-                        ( Base16.encode
-                            (SHA256.finalize (snapshotClosureContext observed))
-                        )
-                }
-        )
-        (ignoreIOException (closeFd descriptor))
+    try @IOException $ do
+      mapM_
+        (revalidateLoaderFileExpectation . loaderCacheExpectation)
+        (ArtifactTarget.loaderEvidenceCache evidence)
+      mapM_
+        (revalidateLoaderFileExpectation . loaderObjectExpectation)
+        (ArtifactTarget.loaderEvidenceObjects evidence)
   pure (either (Left . displayException) Right result)
+
+revalidateLoaderFileExpectation :: LoaderFileExpectation -> IO ()
+revalidateLoaderFileExpectation expectation = mask $ \restore -> do
+  let configuredPath = loaderExpectationConfiguredPath expectation
+  unless
+    (isAbsolute configuredPath)
+    (ioError (userError "loader closure evidence path is not absolute"))
+  configuredStatus <- getSymbolicLinkStatus configuredPath
+  unless
+    ( exactTargetEntryMatches
+        configuredStatus
+        (loaderExpectationConfiguredDeviceId expectation)
+        (loaderExpectationConfiguredFileId expectation)
+        (loaderExpectationConfiguredMode expectation)
+        (loaderExpectationConfiguredSize expectation)
+    )
+    ( ioError
+        ( userError
+            ("loader closure entry disagreed with its evidence: " <> configuredPath)
+        )
+    )
+  canonicalPath <- restore (canonicalizePath configuredPath)
+  unless
+    ( isAbsolute canonicalPath
+        && normalise canonicalPath
+          == normalise (loaderExpectationCanonicalPath expectation)
+    )
+    ( ioError
+        ( userError
+            ( "loader closure canonical path disagreed with its evidence: "
+                <> configuredPath
+            )
+        )
+    )
+  canonicalStatus <- getSymbolicLinkStatus canonicalPath
+  unless
+    ( isRegularFile canonicalStatus
+        && not (isSymbolicLink canonicalStatus)
+        && exactTargetEntryMatches
+          canonicalStatus
+          (loaderExpectationCanonicalDeviceId expectation)
+          (loaderExpectationCanonicalFileId expectation)
+          (loaderExpectationCanonicalMode expectation)
+          (loaderExpectationCanonicalSize expectation)
+    )
+    ( ioError
+        ( userError
+            ( "loader closure canonical entry disagreed with its evidence: "
+                <> canonicalPath
+            )
+        )
+    )
+  descriptor <-
+    openFd
+      canonicalPath
+      ReadOnly
+      defaultFileFlags {nofollow = True, cloexec = True}
+  finallyPreservingPrimary
+    ( restore
+        ( revalidateLoaderFileDigest
+            expectation
+            configuredPath
+            canonicalPath
+            configuredStatus
+            canonicalStatus
+            descriptor
+        )
+    )
+    (ignoreIOException (closeFd descriptor))
+
+revalidateLoaderFileDigest ::
+  LoaderFileExpectation ->
+  FilePath ->
+  FilePath ->
+  FileStatus ->
+  FileStatus ->
+  Fd ->
+  IO ()
+revalidateLoaderFileDigest
+  expectation
+  configuredPath
+  canonicalPath
+  configuredStatus
+  canonicalStatus
+  descriptor = do
+    openedStatus <- getFdStatus descriptor
+    unless
+      (exactFileStatusMatches canonicalStatus openedStatus)
+      ( ioError
+          ( userError
+              ("loader closure file changed before rehashing: " <> canonicalPath)
+          )
+      )
+    context <-
+      hashSnapshotDescriptor
+        descriptor
+        (fromIntegral (PosixFiles.fileSize openedStatus))
+        SHA256.init
+    let digest =
+          "sha256:"
+            <> TextEncoding.decodeUtf8 (Base16.encode (SHA256.finalize context))
+    finalStatus <- getFdStatus descriptor
+    finalCanonicalStatus <- getSymbolicLinkStatus canonicalPath
+    finalConfiguredStatus <- getSymbolicLinkStatus configuredPath
+    unless
+      ( digest == loaderExpectationDigest expectation
+          && exactFileStatusMatches openedStatus finalStatus
+          && exactFileStatusMatches finalStatus finalCanonicalStatus
+          && exactFileStatusMatches configuredStatus finalConfiguredStatus
+      )
+      ( ioError
+          ( userError
+              ("loader closure file changed during rehashing: " <> canonicalPath)
+          )
+      )
+
+-- | Classify one captured stderr line exactly as the installed-runner loader
+-- audit does.
+parseDyldAuditLineForTest :: String -> Either String DyldAuditLine
+parseDyldAuditLineForTest = parseDyldAuditLine
+
+parseElfAuditLineForTest :: String -> Either String ElfAuditLine
+parseElfAuditLineForTest = parseElfAuditLine
+
+-- | Validate a sealed Linux generation's @LD_DEBUG=libs@ provenance and return
+-- the runner's own diagnostics, exactly as the Linux native smoke does.
+sealedLinuxRunnerApplicationOutputForTest ::
+  FilePath ->
+  ByteString.ByteString ->
+  Either Text.Text ByteString.ByteString
+sealedLinuxRunnerApplicationOutputForTest =
+  validateRetainedElfArtifactLoaderEvidence
+
+-- | Which loader a smoke's own run is audited against, derived from its closed
+-- provisioning operation. An Apple installed runner and a Linux native artifact
+-- must never share an audit.
+sealedRunLoaderAuditForTest ::
+  Provisioning.ProvisioningOperation ->
+  Maybe SealedRunLoaderAudit
+sealedRunLoaderAuditForTest =
+  sealedRunLoaderAuditFor . ClosedArtifactSmokeCommandIdentity
+
+-- | Validate a sealed generation's loader provenance and return the runner's
+-- own diagnostics, exactly as the installed smoke does.
+installedRunnerApplicationOutputForTest ::
+  FilePath ->
+  ByteString.ByteString ->
+  Either Text.Text ByteString.ByteString
+installedRunnerApplicationOutputForTest =
+  validateRetainedArtifactLoaderEvidence
+
+-- | The fixed runtime environment a sealed artifact target requires, selected
+-- by that target's exact relative position inside its generation.
+sealedArtifactRuntimeEnvironmentForTest ::
+  FilePath ->
+  FilePath ->
+  [(String, String)]
+sealedArtifactRuntimeEnvironmentForTest =
+  artifactSnapshotRuntimeEnvironment
+
+-- | The closed contract a rendered command's extra environment must satisfy.
+renderedEnvironmentContractForTest ::
+  [(String, String)] ->
+  Either String ()
+renderedEnvironmentContractForTest = validateRenderedEnvironment
+
+-- | The closed contract a supervised target's environment must satisfy, given
+-- the executable snapshot root and any install roots the command's own lease
+-- expectations authorize.
+supervisorTargetEnvironmentContractForTest ::
+  FilePath ->
+  [FilePath] ->
+  [(String, String)] ->
+  [(String, String)] ->
+  Either String ()
+supervisorTargetEnvironmentContractForTest =
+  validateSupervisorTargetEnvironment
 
 provisioningContractForTest ::
   HostConfig.HostConfig ->
@@ -2924,18 +3401,99 @@ validateRenderedEnvironment environment =
       validateKubeconfigPath kubeconfigPath
     [("KUBECONFIG", kubeconfigPath), ("KUBERC", "off")] ->
       validateKubeconfigPath kubeconfigPath
+    _
+      | Right () <- validateSealedArtifactRuntimeEnvironment environment ->
+          Right ()
     _ ->
       Left "bounded command generated an unsupported command environment"
+
+-- | The runtime environment a sealed artifact's own smoke carries — the three
+-- Apple installed-runner shapes and the Linux sealed-run shape.
+--
+-- Unlike the fixed shapes above, the Apple entries name artifact-root-relative
+-- paths, so they are validated structurally: the name set must be exactly one
+-- of the closed shapes 'validateSupervisorTargetEnvironment' admits, the fixed
+-- guards must hold, and every search-path element must be absolute.
+validateSealedArtifactRuntimeEnvironment ::
+  [(String, String)] ->
+  Either String ()
+validateSealedArtifactRuntimeEnvironment environment = do
+  unless
+    (List.sort (map fst environment) `elem` sealedArtifactRuntimeNameSets)
+    (Left "bounded command generated an unsupported command environment")
+  unless
+    (uniqueEnvironmentNames environment)
+    (Left "sealed artifact runtime environment repeats a name")
+  mapM_
+    requireFixedGuard
+    [ ("PYTHONDONTWRITEBYTECODE", "1"),
+      ("PYTHONNOUSERSITE", "1"),
+      ("DYLD_PRINT_LIBRARIES", "1"),
+      ("LD_DEBUG", "libs")
+    ]
+  mapM_
+    requireAbsoluteSearchPath
+    ["DYLD_FRAMEWORK_PATH", "DYLD_LIBRARY_PATH", "GGML_BACKEND_PATH", "PYTHONHOME"]
   where
-    validateKubeconfigPath kubeconfigPath
-      | null kubeconfigPath =
-          Left "bounded command generated an empty KUBECONFIG path"
-      | not (isAbsolute kubeconfigPath) =
-          Left
-            ( "bounded command KUBECONFIG path must be absolute: "
-                <> kubeconfigPath
-            )
-      | otherwise = Right ()
+    requireFixedGuard (name, expected) =
+      case lookup name environment of
+        Nothing -> Right ()
+        Just value
+          | value == expected -> Right ()
+          | otherwise ->
+              Left ("sealed artifact runtime " <> name <> " must be " <> expected)
+    requireAbsoluteSearchPath name =
+      case lookup name environment of
+        Nothing -> Right ()
+        Just value
+          | not (null elements)
+              && all (\element -> isAbsolute element && '\NUL' `notElem` element) elements ->
+              Right ()
+          | otherwise ->
+              Left ("sealed artifact runtime " <> name <> " is not an absolute search path")
+          where
+            elements = filter (not . null) (splitSearchPathElements value)
+
+splitSearchPathElements :: String -> [String]
+splitSearchPathElements value =
+  case break (== ':') value of
+    (element, []) -> [element]
+    (element, _ : remaining) -> element : splitSearchPathElements remaining
+
+sealedArtifactRuntimeNameSets :: [[String]]
+sealedArtifactRuntimeNameSets =
+  map
+    List.sort
+    [ [ "DYLD_FRAMEWORK_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_PRINT_LIBRARIES",
+        "GGML_BACKEND_PATH",
+        "PYTHONDONTWRITEBYTECODE"
+      ],
+      [ "DYLD_FRAMEWORK_PATH",
+        "DYLD_LIBRARY_PATH",
+        "DYLD_PRINT_LIBRARIES",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONHOME",
+        "PYTHONNOUSERSITE"
+      ],
+      [ "DYLD_PRINT_LIBRARIES",
+        "PYTHONDONTWRITEBYTECODE"
+      ],
+      -- The Linux sealed run: only the loader audit.
+      ["LD_DEBUG"]
+    ]
+
+validateKubeconfigPath :: FilePath -> Either String ()
+validateKubeconfigPath kubeconfigPath
+  | null kubeconfigPath =
+      Left "bounded command generated an empty KUBECONFIG path"
+  | not (isAbsolute kubeconfigPath) =
+      Left
+        ( "bounded command KUBECONFIG path must be absolute: "
+            <> kubeconfigPath
+        )
+  | otherwise = Right ()
 
 configuredToolPath :: HostConfig.HostConfig -> HostTools.HostTool -> FilePath
 configuredToolPath config =
@@ -3190,7 +3748,7 @@ renderProvisioningCommand environment command =
                 "venv",
                 "--clear",
                 "--copies",
-                provisioningVenvRoot workingDirectory
+                provisioningVenvLeaf
               ]
               ""
               ("create Python venv for " <> Provisioning.applePythonAdapterSlug adapter)
@@ -3230,7 +3788,8 @@ renderProvisioningCommand environment command =
             )
             artifactRoot
         )
-    Provisioning.DownloadAudiverisDmg workingDirectory dmgPath ->
+    Provisioning.DownloadAudiverisDmg workingDirectory dmgPath -> do
+      relativeDmg <- safeRelativeOperand workingDirectory dmgPath
       pure
         ( fixedProvisioningProcess
             "/usr/bin/curl"
@@ -3238,14 +3797,16 @@ renderProvisioningCommand environment command =
               "--retry",
               "3",
               "--output",
-              dmgPath,
+              relativeDmg,
               Provisioning.audiverisDmgUrl
             ]
             ""
             "download pinned Audiveris DMG"
             workingDirectory
         )
-    Provisioning.MountAudiverisDmg workingDirectory dmgPath mountRoot ->
+    Provisioning.MountAudiverisDmg workingDirectory dmgPath mountRoot -> do
+      relativeMount <- safeRelativeOperand workingDirectory mountRoot
+      relativeDmg <- safeRelativeOperand workingDirectory dmgPath
       pure
         ( fixedProvisioningProcess
             "/usr/bin/hdiutil"
@@ -3253,25 +3814,31 @@ renderProvisioningCommand environment command =
               "-nobrowse",
               "-readonly",
               "-mountpoint",
-              mountRoot,
-              dmgPath
+              relativeMount,
+              relativeDmg
             ]
             "Y\n"
             "mount pinned Audiveris DMG"
             workingDirectory
         )
-    Provisioning.DetachAudiverisDmg workingDirectory mountRoot ->
+    Provisioning.DetachAudiverisDmg workingDirectory mountRoot -> do
+      relativeMount <- safeRelativeOperand workingDirectory mountRoot
       pure
         ( fixedProvisioningProcess
             "/usr/bin/hdiutil"
-            ["detach", mountRoot]
+            ["detach", relativeMount]
             ""
             "detach pinned Audiveris DMG"
             workingDirectory
         )
     Provisioning.SmokeInstalledRunner adapter artifactRoot ->
+      -- The installed smoke is the authority that proves the sealed generation
+      -- actually loads its own libraries, so it must run under the same fixed
+      -- runtime environment the sealed target would get -- including
+      -- `DYLD_PRINT_LIBRARIES`, without which the smoke emits no loader
+      -- provenance for `validateRetainedArtifactLoaderEvidence` to validate.
       pure
-        ( fixedProvisioningProcess
+        ( fixedProvisioningProcessWithEnvironment
             ( artifactRoot
                 </> Provisioning.installedSmokeExecutableRelativePath adapter
             )
@@ -3279,15 +3846,30 @@ renderProvisioningCommand environment command =
             ""
             ("smoke installed runner for " <> Provisioning.appleAdapterSlug adapter)
             artifactRoot
+            ( artifactSnapshotRuntimeEnvironment
+                artifactRoot
+                (Provisioning.installedSmokeExecutableRelativePath adapter)
+            )
         )
     Provisioning.SmokeLinuxNativeArtifact identity artifactRoot policy ->
+      -- The Linux counterpart of the installed smoke's `DYLD_PRINT_LIBRARIES`.
+      -- Without it the sealed run emits no loader provenance, so the recorded
+      -- ELF loader closure would remain a derivation that nothing ever
+      -- confirmed against the real loader.
+      --
+      -- The executable spelling below is still the retired `bin/*` wrapper
+      -- shape and is known not to agree with the `linux-native` catalog, which
+      -- names an absolute image target. That correction is the decided,
+      -- unimplemented work recorded under the generation-lease consumer
+      -- residual in the phase plan.
       pure
-        ( fixedProvisioningProcess
+        ( fixedProvisioningProcessWithEnvironment
             (artifactRoot </> Provisioning.linuxNativeArtifactEntrypoint identity)
             (Provisioning.linuxNativeArtifactSmokeArguments identity policy)
             ""
             "smoke Linux native artifact"
             artifactRoot
+            [("LD_DEBUG", "libs")]
         )
     Provisioning.QueryPythonVersion adapter artifactRoot ->
       pure
@@ -3318,9 +3900,44 @@ pythonVersionProbeScript adapter =
     _ ->
       "import platform,sys; v=sys.version_info[:2]; print(platform.python_version()); raise SystemExit(0 if v == (3, 12) else 1)"
 
-provisioningVenvRoot :: FilePath -> FilePath
-provisioningVenvRoot artifactRoot =
-  artifactRoot </> "venv"
+-- | The venv's own leaf, which is what the external tool receives.
+--
+-- The target enters its working directory by @fchdir@ on a retained
+-- descriptor, so an absolute operand would be re-resolved from @\/@ and defeat
+-- that anchoring entirely. Every rendered operand under a descriptor-derived
+-- working directory must therefore be relative to it.
+provisioningVenvLeaf :: FilePath
+provisioningVenvLeaf = "venv"
+
+-- | Re-express one absolute operand as a safe path relative to the command's
+-- descriptor-derived working directory.
+--
+-- The working directory is entered with @fchdir@ on a descriptor that was
+-- validated component by component, so a relative operand resolves inside the
+-- directory that was actually checked. An absolute operand resolves from the
+-- filesystem root instead, which is exactly the re-resolution the retained
+-- descriptor exists to prevent. An operand outside the working directory, or
+-- one whose relative form would ascend, is refused rather than passed through.
+-- | The rendered-operand rule, exposed so a deterministic test can prove it
+-- refuses an operand outside the command's descriptor-derived working
+-- directory rather than passing it through as an absolute path.
+safeRelativeOperandForTest :: FilePath -> FilePath -> Either String FilePath
+safeRelativeOperandForTest = safeRelativeOperand
+
+safeRelativeOperand :: FilePath -> FilePath -> Either String FilePath
+safeRelativeOperand workingDirectory operand
+  | not (isAbsolute workingDirectory) =
+      Left "provisioning working directory is not absolute"
+  | not (isAbsolute operand) =
+      Left "provisioning operand is already relative"
+  | null relative
+      || isAbsolute relative
+      || any (`elem` [".", ".."]) (splitDirectories relative) =
+      Left ("provisioning operand escapes its working directory: " <> operand)
+  | otherwise = Right relative
+  where
+    relative =
+      makeRelative (normalise workingDirectory) (normalise operand)
 
 provisioningVenvPython :: FilePath -> FilePath
 provisioningVenvPython artifactRoot =
@@ -3334,15 +3951,43 @@ fixedProvisioningProcess ::
   FilePath ->
   RenderedProcess
 fixedProvisioningProcess executable arguments input label workingDirectory =
+  fixedProvisioningProcessWithEnvironment
+    executable
+    arguments
+    input
+    label
+    workingDirectory
+    []
+
+-- | A fixed provisioning process that additionally carries the closed runtime
+-- environment its target requires. The bytecode guard is always present; the
+-- supplied entries must keep the whole environment inside one of the closed
+-- rendered shapes 'validateSupervisorTargetEnvironment' admits.
+fixedProvisioningProcessWithEnvironment ::
+  FilePath ->
+  [String] ->
+  String ->
+  String ->
+  FilePath ->
+  [(String, String)] ->
   RenderedProcess
-    { renderedExecutable = executable,
-      renderedExecutableIdentity = Nothing,
-      renderedArguments = arguments,
-      renderedInput = input,
-      renderedLabel = label,
-      renderedWorkingDirectory = Just workingDirectory,
-      renderedEnvironment = [("PYTHONDONTWRITEBYTECODE", "1")]
-    }
+fixedProvisioningProcessWithEnvironment
+  executable
+  arguments
+  input
+  label
+  workingDirectory
+  runtimeEnvironment =
+    RenderedProcess
+      { renderedExecutable = executable,
+        renderedExecutableIdentity = Nothing,
+        renderedArguments = arguments,
+        renderedInput = input,
+        renderedLabel = label,
+        renderedWorkingDirectory = Just workingDirectory,
+        renderedEnvironment =
+          ("PYTHONDONTWRITEBYTECODE", "1") : runtimeEnvironment
+      }
 
 validateTestCommand :: TestCommand -> Either String ()
 validateTestCommand testCommand =
@@ -4181,20 +4826,26 @@ runProvisioningFilesystemMutation environment commandTimeout mutation =
                     )
             Right bounded -> do
               outcome <- runBoundedCommand bounded
-              pure
-                ( case outcome of
-                    CommandSucceeded output ->
-                      decodeProvisioningMutationHelperOutcome output
-                    CommandFailedFatal failure ->
-                      ProvisioningMutationKernelFailure
-                        ( "isolated mutation target failed unexpectedly: "
-                            <> Text.pack failure
-                        )
-                    CommandFailedKernel failure ->
-                      ProvisioningMutationKernelFailure (Text.pack failure)
-                    CommandTimedOut timedOut ->
-                      ProvisioningMutationTimedOut timedOut
-                )
+              pure (classifyProvisioningMutationCommandOutcome outcome)
+
+-- | Fold the isolated mutation target's bounded-command outcome into the
+-- provisioning mutation outcome the caller observes.
+classifyProvisioningMutationCommandOutcome ::
+  CommandOutcome ->
+  ProvisioningFilesystemMutationOutcome
+classifyProvisioningMutationCommandOutcome outcome =
+  case outcome of
+    CommandSucceeded output ->
+      decodeProvisioningMutationHelperOutcome output
+    CommandFailedFatal failure ->
+      ProvisioningMutationKernelFailure
+        ( "isolated mutation target failed unexpectedly: "
+            <> Text.pack failure
+        )
+    CommandFailedKernel failure ->
+      ProvisioningMutationKernelFailure (Text.pack failure)
+    CommandTimedOut timedOut ->
+      ProvisioningMutationTimedOut timedOut
 
 decodeProvisioningMutationHelperOutcome ::
   String ->
@@ -4223,11 +4874,19 @@ maximumProvisioningMutationRequestBytes = 65536
 -- the deadline cannot interrupt process-group termination or lease retirement.
 runBoundedCommand :: BoundedCommand command -> IO CommandOutcome
 runBoundedCommand command
+  -- A provisioning command carries exact executable authority in one of two
+  -- forms. A target outside the mutation root keeps its resolved identity on
+  -- the rendered command; a target *inside* that root — such as a candidate
+  -- venv's own interpreter — has its authority moved by
+  -- 'compileProvisioningCommandWithExecutableInMutationRoot' into the retained
+  -- expectation, which the helper revalidates relative to the retained parent
+  -- descriptor. Requiring only the first form rejects every in-root target.
   | ProvisioningCommandIdentity {} <- boundedCommandIdentity command,
     isNothing
       ( renderedExecutableIdentity
           (boundedRenderedCommand command)
-      ) =
+      ),
+    isNothing (boundedRetainedExecutableExpectation command) =
       pure
         ( CommandFailedKernel
             "runBoundedCommand: provisioning command has no exact executable authority"
@@ -4302,8 +4961,7 @@ runBoundedCommandExactCapture ::
   BoundedCommand command ->
   IO NativeArtifactCommandOutcome
 runBoundedCommandExactCapture command
-  | ClosedArtifactSmokeCommandIdentity {} <-
-      boundedCommandIdentity command,
+  | Just audit <- sealedRunLoaderAuditFor (boundedCommandIdentity command),
     Just _ <- boundedArtifactGenerationLeaseExpectation command,
     Just
       ( ProvisioningMutationWorkingDirectory
@@ -4347,57 +5005,110 @@ runBoundedCommandExactCapture command
                   then pure AttemptTimedOut
                   else runSupervisedAttempt command deadline
               pure
-                ( case attempt of
-                    AttemptTimedOut ->
-                      NativeArtifactCommandTimedOut budget
-                    AttemptKernelFailure failure ->
-                      NativeArtifactCommandKernelFailure (Text.pack failure)
-                    AttemptCompleted
-                      classified
-                      terminal
-                      stdoutBytes
-                      stderrBytes ->
-                        case classified of
-                          CommandFailedKernel failure ->
-                            NativeArtifactCommandKernelFailure
-                              (Text.pack failure)
-                          CommandTimedOut timedOut ->
-                            NativeArtifactCommandTimedOut timedOut
-                          _ ->
-                            case terminal of
-                              TargetExited 0 ->
-                                case
-                                  validateRetainedArtifactLoaderEvidence
-                                    (provisioningMutationRootPath retainedRoot)
-                                    stderrBytes
-                                  of
-                                  Left failure ->
-                                    NativeArtifactCommandKernelFailure failure
-                                  Right () ->
-                                    NativeArtifactCommandExited
-                                      ExitSuccess
-                                      stdoutBytes
-                                      stderrBytes
-                              TargetExited exitCode ->
-                                NativeArtifactCommandExited
-                                  (ExitFailure exitCode)
-                                  stdoutBytes
-                                  stderrBytes
-                              TargetSignaled signal coreDumped ->
-                                NativeArtifactCommandSignaled
-                                  signal
-                                  coreDumped
-                                  stdoutBytes
-                                  stderrBytes
-                              TargetKernelFailure failure ->
-                                NativeArtifactCommandKernelFailure
-                                  (Text.pack failure)
+                ( classifyExactCaptureAttempt
+                    budget
+                    audit
+                    retainedRoot
+                    attempt
                 )
   | otherwise =
       pure
         ( NativeArtifactCommandKernelFailure
             "bounded exact-capture command lacks closed generation and relative-target authority"
         )
+
+-- | Fold one exact-capture supervised attempt into its typed native-artifact
+-- outcome. A clean target exit is admitted only once the retained generation's
+-- loader provenance validates.
+classifyExactCaptureAttempt ::
+  Timeout ->
+  SealedRunLoaderAudit ->
+  ProvisioningMutationRoot ->
+  AttemptOutcome ->
+  NativeArtifactCommandOutcome
+classifyExactCaptureAttempt budget audit retainedRoot attempt =
+  case attempt of
+    AttemptTimedOut ->
+      NativeArtifactCommandTimedOut budget
+    AttemptKernelFailure failure ->
+      NativeArtifactCommandKernelFailure (Text.pack failure)
+    AttemptCompleted classified terminal stdoutBytes stderrBytes ->
+      case classified of
+        CommandFailedKernel failure ->
+          NativeArtifactCommandKernelFailure (Text.pack failure)
+        CommandTimedOut timedOut ->
+          NativeArtifactCommandTimedOut timedOut
+        _ ->
+          classifyExactCaptureTerminal
+            audit
+            retainedRoot
+            terminal
+            stdoutBytes
+            stderrBytes
+
+-- | Which loader an exact-capture smoke's own run is audited against.
+--
+-- Selected from the command's closed provisioning operation, so a smoke cannot
+-- be compiled with the wrong audit: an Apple installed runner is audited
+-- against @dyld@ and a Linux native artifact against @ld.so@.
+data SealedRunLoaderAudit
+  = DyldSealedRunAudit
+  | ElfSealedRunAudit
+  deriving (Eq, Show)
+
+sealedRunLoaderAuditFor ::
+  CommandIdentity ->
+  Maybe SealedRunLoaderAudit
+sealedRunLoaderAuditFor identity =
+  case identity of
+    ClosedArtifactSmokeCommandIdentity
+      (Provisioning.InstalledRunnerSmokeOperation _) ->
+        Just DyldSealedRunAudit
+    ClosedArtifactSmokeCommandIdentity
+      (Provisioning.LinuxNativeArtifactSmokeOperation _) ->
+        Just ElfSealedRunAudit
+    _ -> Nothing
+
+classifyExactCaptureTerminal ::
+  SealedRunLoaderAudit ->
+  ProvisioningMutationRoot ->
+  TargetTerminal ->
+  ByteString.ByteString ->
+  ByteString.ByteString ->
+  NativeArtifactCommandOutcome
+classifyExactCaptureTerminal audit retainedRoot terminal stdoutBytes stderrBytes =
+  case terminal of
+    TargetExited 0 ->
+      case auditSealedRun
+        audit
+        (provisioningMutationRootPath retainedRoot)
+        stderrBytes of
+        Left failure ->
+          NativeArtifactCommandKernelFailure failure
+        Right applicationOutput ->
+          -- A runner that reports through stderr leaves stdout empty. The
+          -- validated output is its own diagnostics with every loader frame
+          -- removed, never the raw stderr.
+          NativeArtifactCommandExited
+            ExitSuccess
+            ( if ByteString.null (trimCapturedBytes stdoutBytes)
+                then applicationOutput
+                else stdoutBytes
+            )
+            stderrBytes
+    TargetExited exitCode ->
+      NativeArtifactCommandExited
+        (ExitFailure exitCode)
+        stdoutBytes
+        stderrBytes
+    TargetSignaled signal coreDumped ->
+      NativeArtifactCommandSignaled
+        signal
+        coreDumped
+        stdoutBytes
+        stderrBytes
+    TargetKernelFailure failure ->
+      NativeArtifactCommandKernelFailure (Text.pack failure)
 
 remainingDeadlineMicros :: Word64 -> IO Int
 remainingDeadlineMicros deadline = do
@@ -6097,7 +6808,7 @@ pollTrackedProcess tracked = do
         Nothing -> do
           maybeStatus <-
             getProcessStatus False False (trackedProcessId tracked)
-          pure (maybeStatus, (maybeStatus, not (isNothing maybeStatus)))
+          pure (maybeStatus, (maybeStatus, isJust maybeStatus))
   when newlyReaped (releaseTrackedProcessRegistration tracked)
   pure maybeStatus
 
@@ -6187,6 +6898,41 @@ internalProvisioningMutationMode =
 internalSynchronousTreeTargetMode :: String
 internalSynchronousTreeTargetMode =
   "__infernix_internal_synchronous_tree_target_v1"
+
+-- | The only argument shape a self-exec sentinel target may carry: the
+-- synchronous-tree mode selector followed by exactly the declared identity
+-- path.
+selfExecTreeTargetArguments :: Maybe FilePath -> [String] -> Bool
+selfExecTreeTargetArguments synchronousExceptionIdentityPath arguments =
+  case (synchronousExceptionIdentityPath, arguments) of
+    (Just expectedPath, [mode, identityPath]) ->
+      mode == internalSynchronousTreeTargetMode
+        && expectedPath == identityPath
+    _ -> False
+
+-- | A retained executable expectation is admissible only for a relative
+-- generation-custodied target that names the configured executable, carries no
+-- test hook, and declares valid package/runtime closure aggregates.
+validRetainedExecutableExpectation ::
+  Maybe FilePath ->
+  FilePath ->
+  Maybe ExecutableSnapshotExpectation ->
+  Bool
+validRetainedExecutableExpectation
+  relativeExecutable
+  executable
+  retainedExecutableExpectation =
+    case retainedExecutableExpectation of
+      Nothing -> True
+      Just expectation ->
+        isJust relativeExecutable
+          && normalise (snapshotConfiguredPath expectation)
+            == normalise executable
+          && isNothing (snapshotTestHook expectation)
+          && validPackageClosureSnapshotAggregate
+            (snapshotPackageClosures expectation)
+          && validRuntimeLibrarySnapshotAggregate
+            (snapshotRuntimeLibraries expectation)
 
 internalSynchronousDescendantMode :: String
 internalSynchronousDescendantMode =
@@ -6305,13 +7051,25 @@ artifactGenerationLeaseExpectation ::
   ArtifactGenerationLease ->
   ArtifactGenerationLeaseExpectation
 artifactGenerationLeaseExpectation lease =
-  case MaterializationLockInternal.artifactGenerationLeaseFields lease of
+  case artifactGenerationLeaseFields lease of
     (enginesRoot, adapterId, generationFingerprint, payloadDigest) ->
       ArtifactGenerationLeaseExpectation
         enginesRoot
         adapterId
         generationFingerprint
         payloadDigest
+
+-- | The exact root a retained provisioning mutation authority owns.
+--
+-- This is the root the command may actually execute and mutate within, which
+-- during a pre-activation smoke is the candidate sibling rather than the final
+-- install root the generation lease names.
+provisioningMutationWireRootPath ::
+  ProvisioningMutationWorkingDirectoryWire ->
+  FilePath
+provisioningMutationWireRootPath
+  (ProvisioningMutationWorkingDirectoryWire root _ _) =
+    mutationWireRootPath root
 
 artifactGenerationLeaseFromExpectation ::
   ArtifactGenerationLeaseExpectation ->
@@ -6328,7 +7086,7 @@ artifactGenerationLeaseFromExpectation
         (Left "artifact generation lease has no closed adapter identity")
         Right
         (ArtifactIdentity.parseNativeArtifactIdentity adapterId)
-    MaterializationLockInternal.artifactGenerationLease
+    artifactGenerationLease
       enginesRoot
       identity
       generationFingerprint
@@ -6928,17 +7686,14 @@ instance Aeson.FromJSON SupervisorPlan where
         fail "bounded-command executable snapshot root is not absolute"
       unless
         ( executable /= internalSelfExecutableSentinel
-            || ( case (synchronousExceptionIdentityPath, arguments) of
-                   (Just expectedPath, [mode, identityPath]) ->
-                     mode == internalSynchronousTreeTargetMode
-                       && expectedPath == identityPath
-                   _ -> False
-               )
+            || selfExecTreeTargetArguments
+              synchronousExceptionIdentityPath
+              arguments
               && isNothing executableSnapshot
-                   && isNothing retainedExecutableExpectation
-                   && isNothing provisioningMutationWorkingDirectory
-                   && isNothing artifactLeaseExpectation
-                   && isNothing artifactGenerationLeaseExpectationValue
+              && isNothing retainedExecutableExpectation
+              && isNothing provisioningMutationWorkingDirectory
+              && isNothing artifactLeaseExpectation
+              && isNothing artifactGenerationLeaseExpectationValue
         )
         (fail "bounded-command internal self-exec authority has an invalid shape")
       unless (maybe True isAbsolute terminalObservationPath) $
@@ -6970,8 +7725,8 @@ instance Aeson.FromJSON SupervisorPlan where
               >>= ( \( ProvisioningMutationWorkingDirectoryWire
                          _
                          _
-                         executable
-                       ) -> executable
+                         wireExecutable
+                       ) -> wireExecutable
                   )
           retainedExecutablePath =
             provisioningMutationWorkingDirectory
@@ -6999,9 +7754,8 @@ instance Aeson.FromJSON SupervisorPlan where
       unless
         ( isNothing relativeExecutable
             || ( isNothing executableSnapshot
-                   && ( not
-                          (isNothing artifactGenerationLeaseExpectationValue)
-                          || not (isNothing retainedExecutableExpectation)
+                   && ( isJust artifactGenerationLeaseExpectationValue
+                          || isJust retainedExecutableExpectation
                       )
                )
         )
@@ -7009,17 +7763,10 @@ instance Aeson.FromJSON SupervisorPlan where
             "bounded-command relative target lacks generation custody or attempts executable snapshotting"
         )
       unless
-        ( case retainedExecutableExpectation of
-            Nothing -> True
-            Just expectation ->
-              not (isNothing relativeExecutable)
-                && normalise (snapshotConfiguredPath expectation)
-                  == normalise executable
-                && isNothing (snapshotTestHook expectation)
-                && validPackageClosureSnapshotAggregate
-                  (snapshotPackageClosures expectation)
-                && validRuntimeLibrarySnapshotAggregate
-                  (snapshotRuntimeLibraries expectation)
+        ( validRetainedExecutableExpectation
+            relativeExecutable
+            executable
+            retainedExecutableExpectation
         )
         (fail "bounded-command retained executable expectation is invalid")
       either fail pure (validateSupervisorHelperEnvironment helperEnvironment)
@@ -7028,6 +7775,15 @@ instance Aeson.FromJSON SupervisorPlan where
         pure
         ( validateSupervisorTargetEnvironment
             executableSnapshotRoot
+            ( map
+                normalise
+                ( maybe [] (pure . artifactLeaseInstallRoot) artifactLeaseExpectation
+                    <> maybe
+                      []
+                      (pure . provisioningMutationWireRootPath)
+                      provisioningMutationWorkingDirectory
+                )
+            )
             helperEnvironment
             environment
         )
@@ -7088,13 +7844,22 @@ validateSupervisorHelperEnvironment environment = do
     (Left "bounded-command helper environment does not match the closed base environment")
   validateSupervisorBaseEnvironment environment
 
+-- | Validate the closed environment a supervised target may carry.
+--
+-- Runtime closure paths must stay inside a root this command already owns.
+-- A snapshotting command owns its executable snapshot root. A command that
+-- executes a sealed installed artifact under its generation lease owns that
+-- artifact's install root instead, and its runtime closure legitimately
+-- resolves there rather than in any snapshot.
 validateSupervisorTargetEnvironment ::
   FilePath ->
+  [FilePath] ->
   [(String, String)] ->
   [(String, String)] ->
   Either String ()
 validateSupervisorTargetEnvironment
   executableSnapshotRoot
+  artifactInstallRoots
   helperEnvironment
   targetEnvironment = do
     validateSupervisorEnvironmentSyntax "target" targetEnvironment
@@ -7157,6 +7922,12 @@ validateSupervisorTargetEnvironment
               ]
                 <> supervisorBaseEnvironmentNames
             )
+        -- A Linux native artifact's sealed run needs only the loader audit: its
+        -- runtime closure is bound by the recorded ELF loader closure, not by a
+        -- search-path variable. @LD_LIBRARY_PATH@ is deliberately absent, for
+        -- the same reason the loader-closure producer never reads it.
+        linuxSealedRunNames =
+          List.sort ("LD_DEBUG" : supervisorBaseEnvironmentNames)
         kubeconfigNames = List.sort ("KUBECONFIG" : supervisorBaseEnvironmentNames)
         kubercNames =
           List.sort ("KUBECONFIG" : "KUBERC" : supervisorBaseEnvironmentNames)
@@ -7169,6 +7940,7 @@ validateSupervisorTargetEnvironment
           || targetNames == appleNativeSnapshotNames
           || targetNames == applePythonSnapshotNames
           || targetNames == appleJvmSnapshotNames
+          || targetNames == linuxSealedRunNames
           || targetNames == kubeconfigNames
           || targetNames == kubercNames
       )
@@ -7201,6 +7973,14 @@ validateSupervisorTargetEnvironment
       Just "1" -> pure ()
       Just _ ->
         Left "bounded-command target DYLD_PRINT_LIBRARIES must be 1"
+    -- @libs@ is the exact glibc setting the ELF audit parses. A wider setting
+    -- (@all@) would bury the load records in unrelated frames; a narrower one
+    -- would emit none, and the audit would fail closed on its own evidence.
+    case lookup "LD_DEBUG" targetEnvironment of
+      Nothing -> pure ()
+      Just "libs" -> pure ()
+      Just _ ->
+        Left "bounded-command target LD_DEBUG must be libs"
     mapM_
       validateAbsoluteEnvironmentPath
       [ value
@@ -7231,14 +8011,17 @@ validateSupervisorTargetEnvironment
           (lookup name targetEnvironment == lookup name helperEnvironment)
           (Left ("bounded-command target environment changed helper-owned " <> name))
 
+      ownedClosureRoots =
+        executableSnapshotRoot : artifactInstallRoots
+
       validateAbsoluteEnvironmentPath path
         | null path =
             Left "bounded-command Python closure path must be non-empty"
         | not (isAbsolute path) =
             Left "bounded-command Python closure path must be absolute"
         | not
-            (pathWithinOwnedRoot executableSnapshotRoot path) =
-            Left "bounded-command Python closure path escaped its executable snapshot"
+            (any (`pathWithinOwnedRoot` path) ownedClosureRoots) =
+            Left "bounded-command Python closure path escaped its owned roots"
         | otherwise = Right ()
 
 validateSupervisorEnvironmentSyntax ::
@@ -7482,9 +8265,14 @@ instance Aeson.FromJSON SynchronousExceptionTreeEvidence where
       version <- value Aeson..: "version"
       unless (version == (3 :: Int)) $
         fail "unsupported bounded-command synchronous-exception evidence version"
+      -- Only the retained pin is a group leader here. The target and its
+      -- descendant are by construction non-leader members of that pin's
+      -- group -- 'validateSynchronousExceptionTree' rejects the record unless
+      -- both differ from the leader and share its process group -- so they
+      -- decode through the group-member parser.
       SynchronousExceptionTreeEvidence
-        <$> parsePrefixedIdentity value "target"
-        <*> parsePrefixedIdentity value "descendant"
+        <$> parsePrefixedMemberIdentity value "target"
+        <*> parsePrefixedMemberIdentity value "descendant"
         <*> parsePrefixedIdentity value "groupLeader"
 
 instance Aeson.ToJSON AnchorEvent where
@@ -8137,21 +8925,22 @@ requireActivityGroupAbsentAfterLeaderLookupFailure identity = do
                 "bounded-command refused a reused leader after group lookup failed"
             )
     _ -> pure ()
-  groupProbe <-
-    try @IOException
-      ( signalProcessGroup
-          nullSignal
-          (fromIntegral (activityProcessGroup identity))
-      )
-  case groupProbe of
-    Left failure
-      | isDoesNotExistError failure -> pure ()
-      | otherwise -> ioError failure
-    Right () ->
-      ioError
-        ( userError
-            "bounded-command refused to leave a live group after its leader lookup failed"
-        )
+  -- The exact leader was reaped by its designated owner between this signal's
+  -- identity check and its group lookup. That owner is still tearing the rest
+  -- of the group down, so demanding instantaneous absence would race it.
+  -- Signalling the bare process-group id is still refused, because a reaped
+  -- leader can no longer prove the group id was not reused; instead the group
+  -- must become absent within the bounded cleanup window, which is the same
+  -- evidence the caller would otherwise have obtained.
+  awaitUnregisteredProcessGroupAbsent
+    "reaped-leader activity group"
+    (fromIntegral (activityProcessGroup identity))
+    leaderlessGroupAbsenceAttempts
+
+-- | Poll budget, at the shared 10ms interval, for a group whose exact leader
+-- was reaped while its designated owner was still terminating the members.
+leaderlessGroupAbsenceAttempts :: Int
+leaderlessGroupAbsenceAttempts = 500
 
 signalActivityProcessWith ::
   Signal ->
@@ -8594,7 +9383,11 @@ runSupervisedAttempt command attemptDeadline = mask $ \restore -> do
               try @IOException
                 (restore (runSupervisorProtocol command session attemptDeadline))
             mask_ $ do
-              cleanup <- cleanupSupervisedProcesses command session
+              cleanup <-
+                cleanupSupervisedProcesses
+                  command
+                  session
+                  (anchorShutdownExpectation protocol)
               diagnostic <-
                 takeMVarBounded
                   "anchor stderr capture"
@@ -8611,7 +9404,11 @@ runSupervisedAttempt command attemptDeadline = mask $ \restore -> do
                 )
         )
         ( mask_ $ do
-            cleanup <- cleanupSupervisedProcesses command session
+            cleanup <-
+              cleanupSupervisedProcesses
+                command
+                session
+                TerminateAnchorNow
             either
               (ioError . userError)
               (const (pure ()))
@@ -9273,8 +10070,8 @@ publishCurrentHelperIdentity label = do
   identity <- registerCurrentActivityIdentity label
   writeJsonFrameHandle stdout (HelperIdentityReady identity)
 
-data ReapedChildEvidence
-  = ReapedRegisteredChild !ActivityProcessIdentity
+newtype ReapedChildEvidence
+  = ReapedRegisteredChild ActivityProcessIdentity
 
 recordCurrentOwnerReapEvidence ::
   FilePath ->
@@ -9350,13 +10147,46 @@ activityIdentityEvidence identity =
           (activityProcessBirthIdentity identity)
     ]
 
+-- | Whether the anchor is expected to retire its own executable-snapshot
+-- generation and exit on its own, or must be terminated immediately.
+--
+-- Only an attempt whose supervisor protocol reached a terminal frame leaves
+-- the anchor in a state where it is already unwinding; a protocol failure,
+-- an expired attempt deadline, or an asynchronous cancellation leaves it
+-- blocked, so those paths must not pay a shutdown grace period.
+data AnchorShutdownExpectation
+  = ExpectAnchorSelfExit
+  | TerminateAnchorNow
+  deriving (Eq, Show)
+
+anchorShutdownExpectation ::
+  Either IOException ProtocolReport ->
+  AnchorShutdownExpectation
+anchorShutdownExpectation protocol =
+  case protocol of
+    Right (ProtocolTerminal {}) -> ExpectAnchorSelfExit
+    _ -> TerminateAnchorNow
+
 cleanupSupervisedProcesses ::
   BoundedCommand command ->
   SupervisedSession ->
+  AnchorShutdownExpectation ->
   IO (Either String ExitCode)
-cleanupSupervisedProcesses command session = mask_ $ do
+cleanupSupervisedProcesses command session anchorShutdown = mask_ $ do
   let anchor = supervisedAnchor session
       anchorIdentity = trackedHelperIdentity anchor
+      tryKillAnchorGroup =
+        try @SomeException
+          ( signalOwnedUnreapedHelperGroupWith
+              sigKILL
+              anchor
+              anchorIdentity
+          )
+      tryCloseAnchorControl =
+        try @SomeException
+          ( ignoreIOException
+              (Protocol.closeAnchorControl (supervisedAnchorControl session))
+          )
   supervisorProvisionalResult <-
     try @SomeException
       (readMVar (supervisedSupervisorProvisional session))
@@ -9398,18 +10228,29 @@ cleanupSupervisedProcesses command session = mask_ $ do
                 . signalProvisionalProcessWith sigCONT
             )
       )
-  anchorKillAttempt <-
-    try @SomeException
-      ( signalOwnedUnreapedHelperGroupWith
-          sigKILL
-          anchor
-          anchorIdentity
-      )
-  anchorControlClose <-
-    try @SomeException
-      ( ignoreIOException
-          (Protocol.closeAnchorControl (supervisedAnchorControl session))
-      )
+  -- The anchor owns retirement of its own exact executable-snapshot
+  -- generation. An anchor that reached a terminal frame is already unwinding,
+  -- so closing its control channel is its shutdown signal and it is then given
+  -- the same bounded window the designated reap uses to finish and exit on its
+  -- own; force-terminating it there destroys that retirement and reports a
+  -- signalled exit that disagrees with the target's terminal evidence.
+  -- Every other path leaves the anchor blocked, so it keeps the prompt
+  -- kill-then-close teardown and pays no shutdown grace period.
+  (anchorKillAttempt, anchorControlClose, gracefulAnchorExit) <-
+    case anchorShutdown of
+      TerminateAnchorNow -> do
+        killAttempt <- tryKillAnchorGroup
+        controlClose <- tryCloseAnchorControl
+        pure (killAttempt, controlClose, Right Nothing)
+      ExpectAnchorSelfExit -> do
+        controlClose <- tryCloseAnchorControl
+        graceful <-
+          try @SomeException (waitForTrackedHelperMaybe anchor)
+        killAttempt <-
+          case graceful of
+            Right (Just _) -> pure (Right ())
+            _ -> tryKillAnchorGroup
+        pure (killAttempt, controlClose, graceful)
   anchorProtocolClose <-
     try @SomeException
       (awaitHelperProtocolClose (supervisedAnchorOutput session))
@@ -9515,7 +10356,10 @@ cleanupSupervisedProcesses command session = mask_ $ do
           _ -> anchorKillAttempt
       results =
         initialCleanupResults
-          <> [verifiedAnchorKill, anchorControlClose]
+          <> [ verifiedAnchorKill,
+               anchorControlClose,
+               voidResult gracefulAnchorExit
+             ]
           <> forcedCleanupResults
           <> [ anchorProtocolClose,
                voidResult anchorReap,
@@ -9887,18 +10731,14 @@ validateInstalledRunnerLoaderEvidence
                   [ line
                   | (line, NotDyldAuditLine) <- zip (lines err) audited
                   ]
-          unless
-            (not (null loadedPaths))
+          when
+            (null loadedPaths)
             (Left "installed runner emitted no DYLD loader provenance")
           ownedRoots <-
             mapM
               (classifyLoadedLibrary executableSnapshotRoot)
               loadedPaths
-          let artifactRoots =
-                List.nub
-                  [ root
-                  | Just root <- ownedRoots
-                  ]
+          let artifactRoots = List.nub (catMaybes ownedRoots)
           unless
             (length artifactRoots == 1)
             ( Left
@@ -9907,16 +10747,34 @@ validateInstalledRunnerLoaderEvidence
           let validatedOutput =
                 trimCapturedOutput
                   (if null (trimCapturedOutput out) then applicationError else out)
-          unless
-            (not (null validatedOutput))
+          when
+            (null validatedOutput)
             (Left "installed runner smoke returned no validated version output")
           Right validatedOutput
       _ -> Right out
 
+-- | Validate a retained generation's loader provenance and return the runner's
+-- own diagnostics — the stderr lines that are not @dyld@ frames at all.
+--
+-- A runner that writes its version banner to stderr (as @llama-cli --version@
+-- does) leaves an empty stdout, so the caller needs those lines to read the
+-- exact runtime version. Loader frames, including the delayed-initialization
+-- scheduling frames, are excluded: they are loader output, not the runner's.
+-- | Audit one sealed run against the loader that actually performed its loads.
+auditSealedRun ::
+  SealedRunLoaderAudit ->
+  FilePath ->
+  ByteString.ByteString ->
+  Either Text.Text ByteString.ByteString
+auditSealedRun audit =
+  case audit of
+    DyldSealedRunAudit -> validateRetainedArtifactLoaderEvidence
+    ElfSealedRunAudit -> validateRetainedElfArtifactLoaderEvidence
+
 validateRetainedArtifactLoaderEvidence ::
   FilePath ->
   ByteString.ByteString ->
-  Either Text.Text ()
+  Either Text.Text ByteString.ByteString
 validateRetainedArtifactLoaderEvidence artifactRoot stderrBytes = do
   stderrText <-
     either
@@ -9931,70 +10789,306 @@ validateRetainedArtifactLoaderEvidence artifactRoot stderrBytes = do
     either
       (Left . Text.pack)
       Right
-      (mapM parseDyldAuditLine (Text.lines stderrText >>= pure . Text.unpack))
-  let loadedPaths =
-        [ loadedPath
-        | DyldLoadedPath loadedPath <- audited
-        ]
-      artifactOwnedLoads =
-        [ loadedPath
-        | loadedPath <- loadedPaths,
-          pathWithinOwnedRoot artifactRoot loadedPath
-        ]
-      unsealedLoads =
-        [ loadedPath
-        | loadedPath <- loadedPaths,
-          not
-            ( systemDyldLibraryPath loadedPath
-                || pathWithinOwnedRoot artifactRoot loadedPath
-            )
-        ]
-  unless
-    (not (null loadedPaths))
-    (Left "installed runner emitted no DYLD loader provenance")
-  unless
-    (null unsealedLoads)
+      (mapM parseDyldAuditLine (Text.unpack <$> Text.lines stderrText))
+  classifySealedRunLoads
+    "DYLD"
+    systemDyldLibraryPath
+    artifactRoot
+    [loadedPath | DyldLoadedPath loadedPath <- audited]
+  pure
+    ( TextEncoding.encodeUtf8
+        ( Text.unlines
+            [ line
+            | (line, NotDyldAuditLine) <- zip (Text.lines stderrText) audited
+            ]
+        )
+    )
+
+-- | The Linux counterpart of the @dyld@ audit.
+--
+-- Without this, a resolver that disagreed with the real loader would bind the
+-- wrong object and the smoke would not notice, so the Linux loader evidence
+-- would be a faithful /derivation/ rather than an /observation/. The
+-- @ld.so@ analogue of @DYLD_PRINT_LIBRARIES@ is @LD_DEBUG=libs@, which reports
+-- the objects @dlopen@ pulls in as well as the linked ones — the same class of
+-- defect the Apple lane found in the Python home's @lib-dynload@.
+validateRetainedElfArtifactLoaderEvidence ::
+  FilePath ->
+  ByteString.ByteString ->
+  Either Text.Text ByteString.ByteString
+validateRetainedElfArtifactLoaderEvidence artifactRoot stderrBytes = do
+  stderrText <-
+    either
+      ( Left
+          . ("sealed Linux runner stderr is not valid UTF-8: " <>)
+          . Text.pack
+          . show
+      )
+      Right
+      (TextEncoding.decodeUtf8' stderrBytes)
+  audited <-
+    either
+      (Left . Text.pack)
+      Right
+      (mapM parseElfAuditLine (Text.unpack <$> Text.lines stderrText))
+  classifySealedRunLoads
+    "LD_DEBUG"
+    systemElfLibraryPath
+    artifactRoot
+    [loadedPath | ElfLoadedPath loadedPath <- audited]
+  pure
+    ( TextEncoding.encodeUtf8
+        ( Text.unlines
+            [ line
+            | (line, NotElfAuditLine) <- zip (Text.lines stderrText) audited
+            ]
+        )
+    )
+
+-- | The three aggregate checks that make a loader audit meaningful, shared by
+-- both loaders: something was loaded, at least one object came from the sealed
+-- generation, and nothing outside the generation and the operating system was
+-- loaded.
+--
+-- Per-frame strictness is not what provides the guarantee — these are. A future
+-- loader that changed its load-record format fails loudly here rather than
+-- passing silently.
+classifySealedRunLoads ::
+  Text.Text ->
+  (FilePath -> Bool) ->
+  FilePath ->
+  [FilePath] ->
+  Either Text.Text ()
+classifySealedRunLoads loaderName systemLibraryPath artifactRoot loadedPaths = do
+  when
+    (null loadedPaths)
     ( Left
-        ( "installed runner loaded an unsealed non-system library: "
-            <> Text.pack (List.intercalate ", " unsealedLoads)
+        ( "sealed runner emitted no "
+            <> loaderName
+            <> " loader provenance"
         )
     )
   unless
-    (not (null artifactOwnedLoads))
-    (Left "installed runner loaded no library from its exact artifact generation")
+    (null unsealedLoads)
+    ( Left
+        ( "sealed runner loaded an unsealed non-system library: "
+            <> Text.pack (List.intercalate ", " unsealedLoads)
+        )
+    )
+  when
+    (null artifactOwnedLoads)
+    (Left "sealed runner loaded no library from its exact artifact generation")
+  where
+    artifactOwnedLoads =
+      [ loadedPath
+      | loadedPath <- loadedPaths,
+        pathWithinOwnedRoot artifactRoot loadedPath
+      ]
+    unsealedLoads =
+      [ loadedPath
+      | loadedPath <- loadedPaths,
+        not
+          ( systemLibraryPath loadedPath
+              || pathWithinOwnedRoot artifactRoot loadedPath
+          )
+      ]
+
+data ElfAuditLine
+  = NotElfAuditLine
+  | -- | An @ld.so@ frame that carries no loaded path: a search step, a cache
+    -- probe, a candidate that was tried, or the program-entry and
+    -- control-transfer frames, whose operand is @argv[0]@ rather than a
+    -- resolved path.
+    ElfLoaderFrame
+  | ElfLoadedPath !FilePath
+  deriving (Eq, Show)
+
+-- | Only a frame that announces itself as a load record is provenance.
+--
+-- Measured against glibc 2.39 @LD_DEBUG=libs@, whose frames are all
+-- @\<pid\>:\\t\<payload\>@:
+--
+-- > find library=libc.so.6 [0]; searching
+-- >  search cache=/etc/ld.so.cache
+-- >   trying file=/lib/aarch64-linux-gnu/libc.so.6
+-- > calling init: /lib/aarch64-linux-gnu/libc.so.6
+-- > initialize program: python3
+-- > transferring control: python3
+--
+-- @calling init:@ is the only frame that names an object the loader actually
+-- mapped and initialized. @trying file=@ also names candidates that were
+-- /rejected/, so admitting it would launder paths that were never loaded, and
+-- @initialize program:@ / @transferring control:@ carry @argv[0]@ — measured as
+-- the bare @python3@, not a path — so neither can be a load record either.
+--
+-- This is the same inversion the @dyld@ parser settled on: an unrecognised
+-- frame is loader commentary carrying no path, and the guarantee comes from the
+-- aggregate checks in 'classifySealedRunLoads'.
+parseElfAuditLine :: String -> Either String ElfAuditLine
+parseElfAuditLine rawLine =
+  case elfLinePayload rawLine of
+    Nothing -> Right NotElfAuditLine
+    Just payload ->
+      case List.stripPrefix "calling init:" payload of
+        Nothing -> Right ElfLoaderFrame
+        Just loadedPath ->
+          validateElfLoadedPath (dropWhile isSpace loadedPath)
+
+-- | An @ld.so@ debug frame is @\<spaces\>\<pid\>:\<tab\>\<payload\>@. Anything
+-- else on the captured stream is the runner's own output.
+elfLinePayload :: String -> Maybe String
+elfLinePayload rawLine =
+  case break (== ':') (dropWhile isSpace rawLine) of
+    (processId, ':' : '\t' : payload)
+      | not (null processId),
+        all isDigit processId ->
+          Just (dropWhile isSpace payload)
+    _ -> Nothing
+
+-- | A loaded object must be an absolute, NUL-free path that stays absolute once
+-- its @..@ components are collapsed.
+--
+-- glibc reports the path it opened, which legitimately carries @..@ when the
+-- search entry did: a stock CPython reports
+-- @\/usr\/local\/bin\/..\/lib\/libpython3.12.so.1.0@. Banning @..@ outright
+-- would therefore reject a correct load record, which is the same mistake the
+-- delocated-wheel install-name ban made. Collapsing is also the /safe/
+-- operation for the containment test that follows: an ascending path collapses
+-- to where it actually resolves, so it is classified as unsealed rather than
+-- laundered into the artifact root.
+validateElfLoadedPath :: String -> Either String ElfAuditLine
+validateElfLoadedPath loadedPath
+  | null loadedPath || not (isAbsolute loadedPath) = malformed
+  | '\NUL' `elem` loadedPath =
+      Left "sealed Linux runner LD_DEBUG loader provenance contains NUL"
+  | otherwise =
+      case collapseElfLoadedPath loadedPath of
+        Nothing -> malformed
+        Just collapsed -> Right (ElfLoadedPath collapsed)
+  where
+    malformed =
+      Left
+        ( "sealed Linux runner emitted malformed LD_DEBUG loader provenance: "
+            <> show (take 200 loadedPath)
+        )
+
+collapseElfLoadedPath :: FilePath -> Maybe FilePath
+collapseElfLoadedPath loadedPath =
+  fmap (("/" </>) . joinPath . reverse) (foldl descend (Just []) components)
+  where
+    components =
+      filter
+        (\component -> component /= "/" && component /= ".")
+        (splitDirectories loadedPath)
+    descend accumulated component =
+      case accumulated of
+        Nothing -> Nothing
+        Just retained
+          | component /= ".." -> Just (component : retained)
+          | otherwise ->
+              case retained of
+                -- An ascent past the filesystem root is not a path any loader
+                -- could have opened.
+                [] -> Nothing
+                _ : above -> Just above
+
+-- | The prefixes the operating system owns on a Linux substrate. A sealed
+-- artifact is expected to load its own libraries and the platform C library,
+-- and nothing else.
+systemElfLibraryPath :: FilePath -> Bool
+systemElfLibraryPath path =
+  any
+    (`List.isPrefixOf` path)
+    [ "/lib/",
+      "/lib64/",
+      "/usr/lib/",
+      "/usr/lib64/"
+    ]
 
 data DyldAuditLine
   = NotDyldAuditLine
+  | -- | A @dyld@ frame that carries no loaded path. It is loader output, not
+    -- application output, so it contributes neither loader provenance nor a
+    -- line of the runner's own diagnostics.
+    DyldSchedulingFrame
   | DyldLoadedPath !FilePath
+  deriving (Eq, Show)
 
 parseDyldAuditLine :: String -> Either String DyldAuditLine
 parseDyldAuditLine rawLine =
   case dyldLinePayload (dropWhile isSpace rawLine) of
     Nothing -> Right NotDyldAuditLine
-    Just payload ->
-      case dropWhile (/= '/') payload of
-        [] -> Left "installed runner emitted malformed DYLD loader provenance"
-        loadedPath
-          | '\NUL' `elem` loadedPath ->
-              Left "installed runner DYLD loader provenance contains NUL"
-          | normalise loadedPath /= loadedPath
-              || ".." `elem` splitPathComponents loadedPath ->
-              Left "installed runner DYLD loader provenance is not canonical"
-          | otherwise -> Right (DyldLoadedPath loadedPath)
+    Just payload
+      -- Only a frame that announces itself as a load record is loader
+      -- provenance. dyld emits a great deal of other commentary under the same
+      -- prefix -- delayed-initialization transitions in both directions, and
+      -- explanations such as "<lib> has weak-def (or flat lookup) symbol used
+      -- by <lib>, so cannot be delayed". Enumerating those message shapes is
+      -- brittle: each macOS release may add more, and two separate releases of
+      -- this smoke were broken by exactly that. Such a frame carries no path
+      -- and therefore contributes none.
+      --
+      -- Nothing is laundered by this. A path is only ever extracted from the
+      -- load-record forms below, and a frame that /claims/ to be a load record
+      -- but violates the shape still fails closed. The guarantee that the smoke
+      -- actually observed its generation comes from the aggregate checks --
+      -- at least one loaded path, at least one from the sealed artifact, and no
+      -- unsealed non-system library -- so a future dyld that changed its load
+      -- record format would fail loudly there rather than pass silently.
+      | otherwise -> parseDyldLoadRecord payload
+
+-- | A load record is exactly @\<uuid\> \/absolute\/canonical\/path@, or the
+-- older @loaded: \/absolute\/canonical\/path@ spelling. Any other payload
+-- carrying a @dyld[...]@ or @dyld:@ prefix fails closed rather than being
+-- scanned for the first slash, so a frame this kernel does not understand can
+-- never be laundered into a loaded path.
+parseDyldLoadRecord :: String -> Either String DyldAuditLine
+parseDyldLoadRecord payload =
+  case payload of
+    '<' : afterOpen ->
+      case break (== '>') afterOpen of
+        (uuid, '>' : afterUuid)
+          | not (null uuid),
+            all (\character -> isHexDigit character || character == '-') uuid ->
+              validateLoadedPath (dropWhile isSpace afterUuid)
+        _ -> malformed
+    _ ->
+      case List.stripPrefix "loaded: " payload of
+        Just legacyPath -> validateLoadedPath (dropWhile isSpace legacyPath)
+        -- Loader commentary rather than a load record: carries no path.
+        Nothing -> Right DyldSchedulingFrame
+  where
+    malformed =
+      Left
+        ( "installed runner emitted malformed DYLD loader provenance: "
+            <> show (take 200 payload)
+        )
+    validateLoadedPath loadedPath
+      | not (isAbsolute loadedPath) = malformed
+      | '\NUL' `elem` loadedPath =
+          Left "installed runner DYLD loader provenance contains NUL"
+      | normalise loadedPath /= loadedPath
+          || ".." `elem` splitPathComponents loadedPath =
+          Left "installed runner DYLD loader provenance is not canonical"
+      | otherwise = Right (DyldLoadedPath loadedPath)
 
 dyldLinePayload :: String -> Maybe String
 dyldLinePayload line =
   case List.stripPrefix "dyld[" line of
-    Just rest ->
-      let (processDigits, suffix) = span isDigit rest
-       in case suffix of
-            ']' : ':' : payload
-              | not (null processDigits)
-                  && length processDigits <= 20 ->
-                  Just (dropWhile isSpace payload)
-            _ -> Nothing
+    Just rest -> bracketedDyldPayload (span isDigit rest)
     Nothing ->
       dropWhile isSpace <$> List.stripPrefix "dyld:" line
+
+-- | Accept a @dyld[<pid>]:@ frame only when the bracketed process id is a
+-- bounded, non-empty digit run.
+bracketedDyldPayload :: (String, String) -> Maybe String
+bracketedDyldPayload (processDigits, suffix) =
+  case suffix of
+    ']' : ':' : payload
+      | not (null processDigits)
+          && length processDigits <= 20 ->
+          Just (dropWhile isSpace payload)
+    _ -> Nothing
 
 classifyLoadedLibrary ::
   FilePath ->
@@ -10052,6 +11146,12 @@ trimCapturedOutput :: String -> String
 trimCapturedOutput =
   List.dropWhileEnd isSpace . dropWhile isSpace
 
+-- | The byte-level counterpart of 'trimCapturedOutput', used to decide whether
+-- a captured stream carries anything but ASCII whitespace.
+trimCapturedBytes :: ByteString.ByteString -> ByteString.ByteString
+trimCapturedBytes =
+  ByteString8.dropWhileEnd isSpace . ByteString8.dropWhile isSpace
+
 capturedCommandOutput :: String -> String -> String
 capturedCommandOutput out err =
   "\nstdout:\n"
@@ -10100,12 +11200,17 @@ runInternalSynchronousTreeTarget identityPath = mask $ \restore -> do
       sigTERM
       (CatchOnce (void (tryPutMVar termination ())))
       Nothing
+  -- This target was itself executed with the supervisor's explicit, validated
+  -- target environment, so the descendant inherits that already-closed
+  -- environment. Blanking it here would strip the HOME/TMPDIR the typed
+  -- 'SubprocessEnv' guarantees, and reconstructing it would require reading
+  -- the ambient environment, which the no-env doctrine forbids.
   (maybeInput, maybeOutput, maybeError, processHandle) <-
     createProcess
       (proc executable [internalSynchronousDescendantMode])
         { close_fds = True,
           create_group = False,
-          env = Just [],
+          env = Nothing,
           std_in = CreatePipe,
           std_out = CreatePipe,
           std_err = CreatePipe
@@ -10181,6 +11286,31 @@ publishSynchronousDescendantIdentity identityPath identity = mask $ \restore -> 
     (ignoreIOException (closeFd descriptor))
   synchroniseDirectory (takeDirectory identityPath)
 
+-- | Render a wire-decode rejection as helper-visible text. Only an explicit
+-- spec rejection carries its own message; every other outcome is an invalid
+-- wire authority.
+provisioningMutationWireRejection ::
+  ProvisioningFilesystemMutationOutcome ->
+  Text.Text
+provisioningMutationWireRejection rejection =
+  case rejection of
+    ProvisioningMutationRejectedSpec failure -> failure
+    _ -> "invalid provisioning mutation wire authority"
+
+-- | Fold the isolated helper's mutation attempt into its wire outcome.
+classifyProvisioningMutationHelperResult ::
+  Either IOException (Either Text.Text ()) ->
+  ProvisioningMutationHelperOutcome
+classifyProvisioningMutationHelperResult result =
+  case result of
+    Left failure ->
+      ProvisioningMutationHelperKernelFailure
+        (Text.pack (displayException failure))
+    Right (Left rejection) ->
+      ProvisioningMutationHelperRejected rejection
+    Right (Right ()) ->
+      ProvisioningMutationHelperSucceeded
+
 runInternalProvisioningMutation :: IO ()
 runInternalProvisioningMutation = do
   mapM_ prepareProtocolHandle [stdin, stdout, stderr]
@@ -10206,27 +11336,13 @@ runInternalProvisioningMutation = do
               Left rejection ->
                 pure
                   ( ProvisioningMutationHelperRejected
-                      ( case rejection of
-                          ProvisioningMutationRejectedSpec failure ->
-                            failure
-                          _ ->
-                            "invalid provisioning mutation wire authority"
-                      )
+                      (provisioningMutationWireRejection rejection)
                   )
               Right mutation -> do
                 result <-
                   try @IOException
                     (executeProvisioningFilesystemMutation mutation)
-                pure
-                  ( case result of
-                      Left failure ->
-                        ProvisioningMutationHelperKernelFailure
-                          (Text.pack (displayException failure))
-                      Right (Left rejection) ->
-                        ProvisioningMutationHelperRejected rejection
-                      Right (Right ()) ->
-                        ProvisioningMutationHelperSucceeded
-                  )
+                pure (classifyProvisioningMutationHelperResult result)
   ByteString.hPut
     stdout
     (LazyByteString.toStrict (Aeson.encode helperOutcome))
@@ -10274,6 +11390,20 @@ executeProvisioningFilesystemMutation mutation =
                       parentDescriptor
                       sourceLeaf
                       destinationLeaf
+                ProvisioningReplaceSiblingRegularFile
+                  _
+                  _
+                  sourceLeaf
+                  destinationLeaf ->
+                    replaceProvisioningMutationRegularFile
+                      parentDescriptor
+                      sourceLeaf
+                      destinationLeaf
+                ProvisioningCreateSymbolicLinkLeaf _ _ leaf target ->
+                  createProvisioningMutationSymbolicLink
+                    parentDescriptor
+                    leaf
+                    target
           )
     )
 
@@ -10286,6 +11416,8 @@ provisioningFilesystemMutationRoot mutation =
     ProvisioningRemoveTreeLeaf root _ _ -> root
     ProvisioningRenameSiblingDirectory root _ _ _ -> root
     ProvisioningRenameSiblingRegularFile root _ _ _ -> root
+    ProvisioningReplaceSiblingRegularFile root _ _ _ -> root
+    ProvisioningCreateSymbolicLinkLeaf root _ _ _ -> root
 
 provisioningFilesystemMutationParentComponents ::
   ProvisioningFilesystemMutation ->
@@ -10296,6 +11428,8 @@ provisioningFilesystemMutationParentComponents mutation =
     ProvisioningRemoveTreeLeaf _ components _ -> components
     ProvisioningRenameSiblingDirectory _ components _ _ -> components
     ProvisioningRenameSiblingRegularFile _ components _ _ -> components
+    ProvisioningReplaceSiblingRegularFile _ components _ _ -> components
+    ProvisioningCreateSymbolicLinkLeaf _ components _ _ -> components
 
 withProvisioningMutationRootDescriptor ::
   ProvisioningMutationRoot ->
@@ -10303,42 +11437,41 @@ withProvisioningMutationRootDescriptor ::
   IO (Either Text.Text result)
 withProvisioningMutationRootDescriptor root action = mask $ \restore -> do
   listedStatus <- getSymbolicLinkStatus rootPath
-  if
-    | not
-        ( mutationRootStatusMatches root listedStatus
-            && not (isSymbolicLink listedStatus)
-        ) ->
-        pure (Left "provisioning mutation root identity changed")
-    | otherwise -> do
-        descriptor <-
-          restore
-            ( openFd
-                rootPath
-                ReadOnly
-                defaultFileFlags
-                  { nofollow = True,
-                    directory = True,
-                    cloexec = True
-                  }
-            )
-        finallyPreservingPrimary
-          ( do
-              openedStatus <- getFdStatus descriptor
-              if not (mutationRootStatusMatches root openedStatus)
-                then pure (Left "provisioning mutation root descriptor disagreed")
-                else do
-                  result <- restore (action descriptor)
-                  finalDescriptorStatus <- getFdStatus descriptor
-                  finalPathStatus <- getSymbolicLinkStatus rootPath
-                  pure
-                    ( if mutationRootStatusMatches root finalDescriptorStatus
-                        && mutationRootStatusMatches root finalPathStatus
-                        && not (isSymbolicLink finalPathStatus)
-                        then result
-                        else Left "provisioning mutation root changed during use"
-                    )
+  if not
+    ( mutationRootStatusMatches root listedStatus
+        && not (isSymbolicLink listedStatus)
+    )
+    then pure (Left "provisioning mutation root identity changed")
+    else do
+      descriptor <-
+        restore
+          ( openFd
+              rootPath
+              ReadOnly
+              defaultFileFlags
+                { nofollow = True,
+                  directory = True,
+                  cloexec = True
+                }
           )
-          (ignoreIOException (closeFd descriptor))
+      finallyPreservingPrimary
+        ( do
+            openedStatus <- getFdStatus descriptor
+            if not (mutationRootStatusMatches root openedStatus)
+              then pure (Left "provisioning mutation root descriptor disagreed")
+              else do
+                result <- restore (action descriptor)
+                finalDescriptorStatus <- getFdStatus descriptor
+                finalPathStatus <- getSymbolicLinkStatus rootPath
+                pure
+                  ( if mutationRootStatusMatches root finalDescriptorStatus
+                      && mutationRootStatusMatches root finalPathStatus
+                      && not (isSymbolicLink finalPathStatus)
+                      then result
+                      else Left "provisioning mutation root changed during use"
+                  )
+        )
+        (ignoreIOException (closeFd descriptor))
   where
     rootPath = provisioningMutationRootPath root
 
@@ -10431,6 +11564,33 @@ createProvisioningMutationDirectory parentDescriptor leaf = do
       createdStatus <- getSymbolicLinkStatus leaf
       if not (isDirectory createdStatus && not (isSymbolicLink createdStatus))
         then pure (Left "provisioning mutation created a non-directory leaf")
+        else do
+          fileSynchronise parentDescriptor
+          pure (Right ())
+
+-- | Create one symbolic link under the retained parent directory.
+--
+-- The parent descriptor is made the working directory first, so the leaf and
+-- the created link are named relative to the exact directory object the caller
+-- retained. The created link is read back and compared against the requested
+-- target before the parent is fsynced, so a concurrent replacement between
+-- creation and confirmation is a failure rather than a silent divergence.
+createProvisioningMutationSymbolicLink ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  IO (Either Text.Text ())
+createProvisioningMutationSymbolicLink parentDescriptor leaf target = do
+  PosixDirectory.changeWorkingDirectoryFd parentDescriptor
+  alreadyExists <- mutationPathExists leaf
+  if alreadyExists
+    then pure (Left "provisioning mutation link leaf already exists")
+    else do
+      createSymbolicLink target leaf
+      createdStatus <- getSymbolicLinkStatus leaf
+      createdTarget <- readSymbolicLink leaf
+      if not (isSymbolicLink createdStatus) || createdTarget /= target
+        then pure (Left "provisioning mutation created an unexpected link")
         else do
           fileSynchronise parentDescriptor
           pure (Right ())
@@ -10554,6 +11714,84 @@ renameProvisioningMutationRegularFile
                         pure (Right ())
             )
             (ignoreIOException (closeFd sourceDescriptor))
+
+-- | Atomically replace an existing regular-file sibling.
+--
+-- The destination must already be a real regular file: this operation exists
+-- to make a durable-record replacement one step, and a caller that reached it
+-- with an absent destination is publishing rather than replacing and should
+-- have said so. The source's exact identity is retained across the rename and
+-- confirmed at the destination afterwards, so a concurrent swap of either name
+-- is a failure rather than a silently different published record.
+replaceProvisioningMutationRegularFile ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  IO (Either Text.Text ())
+replaceProvisioningMutationRegularFile
+  parentDescriptor
+  sourceLeaf
+  destinationLeaf = do
+    PosixDirectory.changeWorkingDirectoryFd parentDescriptor
+    sourceStatus <- getSymbolicLinkStatus sourceLeaf
+    destinationStatus <- try @IOException (getSymbolicLinkStatus destinationLeaf)
+    if
+      | not (isRegularFile sourceStatus && not (isSymbolicLink sourceStatus)) ->
+          pure (Left "provisioning mutation replace source is not a regular file")
+      | not (replacedRegularFileDestination destinationStatus) ->
+          pure
+            (Left "provisioning mutation replace destination is not a regular file")
+      | otherwise -> mask $ \restore -> do
+          sourceDescriptor <-
+            restore
+              ( openFdAt
+                  (Just parentDescriptor)
+                  sourceLeaf
+                  ReadOnly
+                  defaultFileFlags
+                    { nofollow = True,
+                      cloexec = True
+                    }
+              )
+          finallyPreservingPrimary
+            ( do
+                openedStatus <- getFdStatus sourceDescriptor
+                if not (exactMutationRegularFileStatus sourceStatus openedStatus)
+                  then pure (Left "provisioning mutation replace source changed")
+                  else do
+                    fileSynchronise sourceDescriptor
+                    restore (PosixFiles.rename sourceLeaf destinationLeaf)
+                    sourceStillExists <- mutationPathExists sourceLeaf
+                    publishedStatus <-
+                      getSymbolicLinkStatus destinationLeaf
+                    finalOpenedStatus <- getFdStatus sourceDescriptor
+                    if sourceStillExists
+                      || isSymbolicLink publishedStatus
+                      || not
+                        ( exactMutationRegularFileStatus
+                            openedStatus
+                            finalOpenedStatus
+                            && exactMutationRegularFileStatus
+                              finalOpenedStatus
+                              publishedStatus
+                        )
+                      then
+                        pure
+                          (Left "provisioning mutation replace identity changed")
+                      else do
+                        fileSynchronise parentDescriptor
+                        pure (Right ())
+            )
+            (ignoreIOException (closeFd sourceDescriptor))
+
+-- | Whether an observed replace destination is a real regular file.
+replacedRegularFileDestination ::
+  Either IOException FileStatus ->
+  Bool
+replacedRegularFileDestination observed =
+  case observed of
+    Left _ -> False
+    Right status -> isRegularFile status && not (isSymbolicLink status)
 
 exactMutationRegularFileStatus :: FileStatus -> FileStatus -> Bool
 exactMutationRegularFileStatus expected observed =
@@ -11071,7 +12309,7 @@ withExactExecutableSnapshot plan usePlan =
                     Nothing -> do
                       standaloneExecutable <-
                         restore
-                          ( materializeExactExecutableSnapshot
+                          ( materializeExactExecutableSnapshotUnlessPlatformBinary
                               snapshotRoot
                               expectation
                           )
@@ -11242,6 +12480,12 @@ writeExecutableSnapshotOwner snapshotRoot identity =
     setFileMode ownerPath ownerReadMode
     synchroniseDirectory snapshotRoot
 
+-- | Sweep abandoned snapshot roots whose owner is provably dead.
+--
+-- The owning helper retires its own snapshot in its own cleanup, so this sweep
+-- races that teardown by construction. An entry — or its owner record — that
+-- disappears under the sweep is being retired by its rightful owner and is not
+-- a fault: the sweep skips it and leaves the owner's own retirement to report.
 recoverDeadExecutableSnapshots :: FilePath -> IO ()
 recoverDeadExecutableSnapshots snapshotParent =
   mask $ \restore -> do
@@ -11270,7 +12514,7 @@ recoverDeadExecutableSnapshots snapshotParent =
             listDirectoryBoundedFromDescriptor
               parentDescriptor
               maximumExecutableSnapshotRecoveryGenerations
-          mapM_ (recoverEntry parentDescriptor) entries
+          mapM_ (recoverEntryIgnoringConcurrentRetirement parentDescriptor) entries
           finalParentStatus <- getFdStatus parentDescriptor
           finalParentPathStatus <- getSymbolicLinkStatus snapshotParent
           unless
@@ -11283,6 +12527,15 @@ recoverDeadExecutableSnapshots snapshotParent =
       )
       (ignoreIOException (closeFd parentDescriptor))
   where
+    recoverEntryIgnoringConcurrentRetirement parentDescriptor entry = do
+      observed <-
+        try @IOException (recoverEntry parentDescriptor entry)
+      case observed of
+        Right () -> pure ()
+        Left failure
+          | isDoesNotExistError failure -> pure ()
+          | otherwise -> ioError failure
+
     recoverEntry parentDescriptor entry =
       case parseExecutableSnapshotOwnerName entry of
         Nothing ->
@@ -11798,7 +13051,7 @@ readExecutableSnapshotOwnerAt snapshotRoot rootDescriptor = do
           unless
             ( isRegularFile status
                 && exactFileStatusMatches status pathStatus
-                && fromIntegral (PosixFiles.fileSize status) <= 4096
+                && PosixFiles.fileSize status <= 4096
             )
             (ioError (userError ("snapshot owner record is invalid: " <> ownerPath)))
           observed <- readSnapshotOwnerDescriptor descriptor 0 []
@@ -11846,7 +13099,7 @@ readSnapshotOwnerDescriptor descriptor bytesRead chunks
       ioError (userError "snapshot owner record exceeds its fixed byte bound")
   | otherwise = do
       chunk <-
-        PosixByteString.fdRead
+        readRegularFdChunk
           descriptor
           (fromIntegral (4097 - bytesRead))
       if ByteString.null chunk
@@ -11856,6 +13109,66 @@ readSnapshotOwnerDescriptor descriptor bytesRead chunks
             descriptor
             (bytesRead + ByteString.length chunk)
             (chunk : chunks)
+
+-- | Snapshot the target executable, unless it is an operating-system platform
+-- binary, which is executed in place after the same identity validation.
+--
+-- On Apple Silicon a platform binary is validated against the kernel trust
+-- cache rather than an embedded signature, so a /copy/ of one carries no usable
+-- signature and the kernel kills it at exec: a copied @\/usr\/bin\/curl@ dies
+-- with @SIGKILL@ and produces no output, while the original runs normally.
+-- Snapshotting therefore cannot be applied to @curl@, @hdiutil@, @ditto@,
+-- @top@, @footprint@, or any other configured system tool.
+--
+-- Executing such a binary in place is not a weakening. The snapshot exists to
+-- stop the executable being swapped between validation and exec, and a
+-- SIP-protected path cannot be swapped at all without disabling System
+-- Integrity Protection -- a stronger guarantee than a private copy. The exact
+-- identity checks are unchanged: the canonical path, device, inode, mode, size,
+-- and content digest are all still verified against the recorded expectation
+-- immediately before launch. Only paths the operating system itself protects
+-- qualify; @\/usr\/local@ and Homebrew prefixes are writable and continue to be
+-- snapshotted.
+materializeExactExecutableSnapshotUnlessPlatformBinary ::
+  FilePath ->
+  ExecutableSnapshotExpectation ->
+  IO FilePath
+materializeExactExecutableSnapshotUnlessPlatformBinary snapshotRoot expectation
+  | systemPlatformBinaryPath (snapshotCanonicalPath expectation) = do
+      canonicalPath <-
+        canonicalizePath (snapshotConfiguredPath expectation)
+      unless
+        (normalise canonicalPath == normalise (snapshotCanonicalPath expectation))
+        ( ioError
+            ( userError
+                "bounded-command configured executable canonical target changed before platform-binary launch"
+            )
+        )
+      observedStatus <- getSymbolicLinkStatus canonicalPath
+      unless
+        (exactExecutableStatusMatches expectation observedStatus)
+        ( ioError
+            ( userError
+                "bounded-command platform binary identity changed before launch"
+            )
+        )
+      pure canonicalPath
+  | otherwise = materializeExactExecutableSnapshot snapshotRoot expectation
+
+-- | Absolute path prefixes the operating system protects and whose executables
+-- are trust-cache platform binaries.
+systemPlatformBinaryPath :: FilePath -> Bool
+systemPlatformBinaryPath path =
+  isAbsolute path
+    && any
+      (`List.isPrefixOf` normalise path)
+      [ "/bin/",
+        "/sbin/",
+        "/usr/bin/",
+        "/usr/sbin/",
+        "/usr/libexec/",
+        "/System/"
+      ]
 
 materializeExactExecutableSnapshot ::
   FilePath ->
@@ -11880,7 +13193,22 @@ materializeExactExecutableSnapshot snapshotRoot expectation =
           { nofollow = True,
             cloexec = True
           }
-    let snapshotPath = snapshotRoot </> "target"
+    -- Keep the executable's own filename inside the snapshot rather than
+    -- renaming it to a fixed leaf. A target that records its own path durably
+    -- would otherwise persist the synthetic name: `python -m venv` writes
+    -- `executable = <snapshotRoot>/target` into the venv's `pyvenv.cfg`, which
+    -- both names an ephemeral path and leaves the artifact's own relocation
+    -- unable to recover the real interpreter leaf.
+    snapshotLeaf <-
+      case takeFileName (snapshotCanonicalPath expectation) of
+        leaf
+          | safeProvisioningMutationLeaf leaf -> pure leaf
+          | otherwise ->
+              ioError
+                ( userError
+                    "bounded-command executable snapshot source has an unsafe filename"
+                )
+    let snapshotPath = snapshotRoot </> snapshotLeaf
     finallyPreservingPrimary
       ( do
           openedStatus <- getFdStatus sourceDescriptor
@@ -12092,7 +13420,7 @@ requireArtifactDescendant label artifactRoot path = do
         && pathWithinOwnedRoot artifactRoot path
         && not (isAbsolute relativePath)
         && relativePath /= "."
-        && not (".." `elem` splitPathComponents relativePath)
+        && notElem ".." (splitPathComponents relativePath)
     )
     ( ioError
         ( userError
@@ -12799,6 +14127,20 @@ copyPackageClosureLink
   destinationPath
   relativePath
   state = do
+    unless
+      ( not (null sourceEntry)
+          && sourceEntry `notElem` [".", ".."]
+          && takeFileName sourceEntry == sourceEntry
+          && '\NUL' `notElem` sourceEntry
+          && sourcePath == sourceParent </> sourceEntry
+      )
+      ( ioError
+          ( userError
+              ( "package closure link entry is not a validated single leaf of its retained parent: "
+                  <> sourcePath
+              )
+          )
+      )
     parentStatus <- getFdStatus sourceParentDescriptor
     parentPathStatus <- getSymbolicLinkStatus sourceParent
     unless
@@ -13033,8 +14375,8 @@ hashSnapshotDescriptor ::
   Integer ->
   SHA256.Ctx ->
   IO SHA256.Ctx
-hashSnapshotDescriptor descriptor expectedBytes initialContext =
-  go 0 initialContext
+hashSnapshotDescriptor descriptor expectedBytes =
+  go 0
   where
     go observedBytes context
       | observedBytes > expectedBytes =
@@ -13043,7 +14385,7 @@ hashSnapshotDescriptor descriptor expectedBytes initialContext =
           let remaining = expectedBytes - observedBytes
               requestBytes =
                 fromIntegral (min (64 * 1024) (remaining + 1))
-          chunk <- PosixByteString.fdRead descriptor requestBytes
+          chunk <- readRegularFdChunk descriptor requestBytes
           if ByteString.null chunk
             then do
               unless
@@ -13144,29 +14486,37 @@ artifactSnapshotEnvironment artifactRoot executablePath = do
       "sealed executable"
       artifactRoot
       executablePath
-  pure
-    ( case splitPathComponents relativeExecutable of
-        ["native", "bin", executableLeaf]
-          | executableLeaf `elem` ["llama-cli", "whisper-cli"] ->
-              [ ( "DYLD_FRAMEWORK_PATH",
-                  artifactRoot </> "native" </> "frameworks"
-                ),
-                ( "DYLD_LIBRARY_PATH",
-                  List.intercalate
-                    ":"
-                    [ artifactRoot </> "native" </> "lib",
-                      artifactRoot </> "native" </> "libexec"
-                    ]
-                ),
-                ( "GGML_BACKEND_PATH",
+  pure (artifactSnapshotRuntimeEnvironment artifactRoot relativeExecutable)
+
+-- | The fixed runtime environment each sealed artifact target requires,
+-- selected by that target's exact relative position inside its generation.
+artifactSnapshotRuntimeEnvironment ::
+  FilePath ->
+  FilePath ->
+  [(String, String)]
+artifactSnapshotRuntimeEnvironment artifactRoot relativeExecutable =
+  case splitPathComponents relativeExecutable of
+    ["native", "bin", executableLeaf]
+      | executableLeaf `elem` ["llama-cli", "whisper-cli"] ->
+          [ ( "DYLD_FRAMEWORK_PATH",
+              artifactRoot </> "native" </> "frameworks"
+            ),
+            ( "DYLD_LIBRARY_PATH",
+              List.intercalate
+                ":"
+                [ artifactRoot </> "native" </> "lib",
                   artifactRoot </> "native" </> "libexec"
-                ),
-                ("DYLD_PRINT_LIBRARIES", "1")
-              ]
-        relativeExecutable
-          | relativeExecutable
-              == splitPathComponents
-                Provisioning.fixedVenvPythonRelativePath ->
+                ]
+            ),
+            ( "GGML_BACKEND_PATH",
+              artifactRoot </> "native" </> "libexec"
+            ),
+            ("DYLD_PRINT_LIBRARIES", "1")
+          ]
+    relativeComponents
+      | relativeComponents
+          == splitPathComponents
+            Provisioning.fixedVenvPythonRelativePath ->
           [ ("PYTHONHOME", artifactRoot </> "python-home"),
             ( "DYLD_FRAMEWORK_PATH",
               artifactRoot </> "python-frameworks"
@@ -13181,14 +14531,13 @@ artifactSnapshotEnvironment artifactRoot executablePath = do
             ("PYTHONNOUSERSITE", "1"),
             ("DYLD_PRINT_LIBRARIES", "1")
           ]
-        [ "Audiveris.app",
-          "Contents",
-          "MacOS",
-          "Audiveris"
-          ] ->
-            [("DYLD_PRINT_LIBRARIES", "1")]
-        _ -> []
-    )
+    [ "Audiveris.app",
+      "Contents",
+      "MacOS",
+      "Audiveris"
+      ] ->
+        [("DYLD_PRINT_LIBRARIES", "1")]
+    _ -> []
 
 validateTargetExecutableSnapshot :: SupervisorPlan -> IO ()
 validateTargetExecutableSnapshot plan =
@@ -13205,12 +14554,20 @@ validateTargetExecutableSnapshot plan =
         )
         (ioError (userError "sealed package/runtime closure aggregate is invalid"))
       canonicalPath <- canonicalizePath executablePath
+      -- An operating-system platform binary is executed in place rather than
+      -- from the anchor snapshot, because a copy of one carries no usable
+      -- signature and is killed at exec. Its exact identity is still required
+      -- to match the recorded expectation; only the snapshot-containment
+      -- requirement is lifted, and only for paths the OS itself protects.
       unless
-        ( normalise executablePath
-            == normalise (snapshotConfiguredPath expectation)
-            && normalise canonicalPath
-              == normalise (snapshotCanonicalPath expectation)
-            && pathWithinOwnedRoot snapshotRoot executablePath
+        ( normalise canonicalPath
+            == normalise (snapshotCanonicalPath expectation)
+            && ( ( normalise executablePath
+                     == normalise (snapshotConfiguredPath expectation)
+                     && pathWithinOwnedRoot snapshotRoot executablePath
+                 )
+                   || systemPlatformBinaryPath canonicalPath
+               )
         )
         (ioError (userError "sealed target executable escaped its anchor snapshot"))
       status <- getSymbolicLinkStatus canonicalPath
@@ -13703,10 +15060,8 @@ copyExecutableDescriptor ::
 copyExecutableDescriptor
   sourceDescriptor
   targetDescriptor
-  expectedBytes
-  initialCopiedBytes
-  initialDigestContext =
-    go initialCopiedBytes initialDigestContext
+  expectedBytes =
+    go
     where
       go copiedBytes digestContext
         | copiedBytes > expectedBytes =
@@ -13716,7 +15071,7 @@ copyExecutableDescriptor
                 requestBytes =
                   fromIntegral (min (64 * 1024) (remaining + 1))
             chunk <-
-              PosixByteString.fdRead
+              readRegularFdChunk
                 sourceDescriptor
                 requestBytes
             if ByteString.null chunk
@@ -14299,91 +15654,91 @@ openRetainedProvisioningRelativeExecutable
   relativePath
   configuredPath
   retainedExpectation =
-  case reverse (splitDirectories relativePath) of
-    [] ->
-      ioError (userError "provisioning relative executable is empty")
-    executableLeaf : reversedDirectoryComponents ->
-      mask $ \restore -> do
-        let directoryComponents = reverse reversedDirectoryComponents
-            closeDirectories =
-              runCleanupsPreservingFailures
-                . map (ignoreIOException . closeFd)
-                . reverse
-            openDirectories parentDescriptor opened components =
-              case components of
-                [] -> pure (parentDescriptor, opened)
-                component : rest -> do
-                  descriptor <-
-                    restore
-                      ( openFdAt
-                          (Just parentDescriptor)
-                          component
-                          ReadOnly
-                          defaultFileFlags
-                            { nofollow = True,
-                              directory = True,
-                              cloexec = True
-                            }
-                      )
-                  status <- getFdStatus descriptor
-                  unless
-                    (isDirectory status)
-                    (ioError (userError "provisioning relative executable parent is not a directory"))
-                  onExceptionPreservingPrimary
-                    (openDirectories descriptor (opened <> [descriptor]) rest)
-                    (closeDirectories (opened <> [descriptor]))
-        (parentDescriptor, directoryDescriptors) <-
-          openDirectories
-            workingDirectoryDescriptor
-            []
-            directoryComponents
-        listedConfiguredStatus <- getSymbolicLinkStatus configuredPath
-        executableDescriptor <-
+    case reverse (splitDirectories relativePath) of
+      [] ->
+        ioError (userError "provisioning relative executable is empty")
+      executableLeaf : reversedDirectoryComponents ->
+        mask $ \restore -> do
+          let directoryComponents = reverse reversedDirectoryComponents
+              closeDirectories =
+                runCleanupsPreservingFailures
+                  . map (ignoreIOException . closeFd)
+                  . reverse
+              openDirectories parentDescriptor opened components =
+                case components of
+                  [] -> pure (parentDescriptor, opened)
+                  component : rest -> do
+                    descriptor <-
+                      restore
+                        ( openFdAt
+                            (Just parentDescriptor)
+                            component
+                            ReadOnly
+                            defaultFileFlags
+                              { nofollow = True,
+                                directory = True,
+                                cloexec = True
+                              }
+                        )
+                    status <- getFdStatus descriptor
+                    unless
+                      (isDirectory status)
+                      (ioError (userError "provisioning relative executable parent is not a directory"))
+                    onExceptionPreservingPrimary
+                      (openDirectories descriptor (opened <> [descriptor]) rest)
+                      (closeDirectories (opened <> [descriptor]))
+          (parentDescriptor, directoryDescriptors) <-
+            openDirectories
+              workingDirectoryDescriptor
+              []
+              directoryComponents
+          listedConfiguredStatus <- getSymbolicLinkStatus configuredPath
+          executableDescriptor <-
+            onExceptionPreservingPrimary
+              ( restore
+                  ( openFdAt
+                      (Just parentDescriptor)
+                      executableLeaf
+                      ReadOnly
+                      defaultFileFlags
+                        { nofollow = isNothing retainedExpectation,
+                          cloexec = True
+                        }
+                  )
+              )
+              (closeDirectories directoryDescriptors)
           onExceptionPreservingPrimary
-            ( restore
-                ( openFdAt
-                    (Just parentDescriptor)
-                    executableLeaf
-                    ReadOnly
-                    defaultFileFlags
-                      { nofollow = isNothing retainedExpectation,
-                        cloexec = True
-                      }
-                )
-            )
-            (closeDirectories directoryDescriptors)
-        onExceptionPreservingPrimary
-          ( do
-              status <- getFdStatus executableDescriptor
-              finalConfiguredStatus <-
-                getSymbolicLinkStatus configuredPath
-              unless
-                ( isRegularFile status
-                    && exactFileStatusMatches
-                      listedConfiguredStatus
+            ( do
+                status <- getFdStatus executableDescriptor
+                finalConfiguredStatus <-
+                  getSymbolicLinkStatus configuredPath
+                unless
+                  ( isRegularFile status
+                      && exactFileStatusMatches
+                        listedConfiguredStatus
+                        finalConfiguredStatus
+                      && fileMode status
+                        .&. ( PosixFiles.ownerExecuteMode
+                                .|. PosixFiles.groupExecuteMode
+                                .|. PosixFiles.otherExecuteMode
+                            )
+                        /= 0
+                  )
+                  (ioError (userError "provisioning relative executable is not a real executable file"))
+                pure
+                  ( RetainedProvisioningRelativeExecutable
+                      relativePath
+                      directoryDescriptors
+                      executableDescriptor
+                      configuredPath
                       finalConfiguredStatus
-                    && fileMode status
-                      .&. ( PosixFiles.ownerExecuteMode
-                              .|. PosixFiles.groupExecuteMode
-                              .|. PosixFiles.otherExecuteMode
-                          )
-                      /= 0
-                )
-                (ioError (userError "provisioning relative executable is not a real executable file"))
-              pure
-                ( RetainedProvisioningRelativeExecutable
-                    relativePath
-                    directoryDescriptors
-                    executableDescriptor
-                    configuredPath
-                    finalConfiguredStatus
-                )
-          )
-          ( runCleanupsPreservingFailures
-              [ ignoreIOException (closeFd executableDescriptor),
-                closeDirectories directoryDescriptors
-              ]
-          )
+                  )
+            )
+            ( runCleanupsPreservingFailures
+                [ ignoreIOException (closeFd executableDescriptor),
+                  closeDirectories directoryDescriptors
+                ]
+            )
 
 validateRetainedProvisioningRelativeExecutable ::
   Fd ->
@@ -14614,8 +15969,8 @@ acquireSupervisorGenerationLease ::
 acquireSupervisorGenerationLease plan =
   case supervisorPlanArtifactGenerationLeaseExpectation plan of
     Nothing -> do
-      when
-        (not (isNothing (supervisorPlanArtifactLeaseExpectation plan)))
+      unless
+        (isNothing (supervisorPlanArtifactLeaseExpectation plan))
         ( ioError
             ( userError
                 "bounded installed artifact helper lacks an exact generation lease"
@@ -14688,8 +16043,8 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
         expectedGenerationFingerprint,
         expectedPayloadDigest
         ) =
-        MaterializationLockInternal.artifactGenerationLeaseFields
-          generationLease
+          artifactGenerationLeaseFields
+            generationLease
   identity <-
     maybe
       (ioError (userError "artifact generation lease has no closed adapter identity"))
@@ -14715,12 +16070,12 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
             )
         )
       validateCandidateArtifactTarget plan identity artifactRoot
-      ArtifactInternal.validateArtifactGenerationPayloadLease
+      Artifact.validateArtifactGenerationPayloadLease
         artifactRoot
         expectedPayloadDigest
     Just artifactExpectation -> do
-      when
-        (not (isNothing (supervisorPlanExecutableSnapshot plan)))
+      unless
+        (isNothing (supervisorPlanExecutableSnapshot plan))
         ( ioError
             ( userError
                 "bounded artifact command cannot snapshot its installed direct target"
@@ -14740,11 +16095,11 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
         case artifactLeaseSubstrate artifactExpectation of
           "apple-silicon"
             | artifactLeaseArchitecture artifactExpectation == "arm64" ->
-                pure ArtifactInternal.appleArtifactRuntimeExpectation
+                pure Artifact.appleArtifactRuntimeExpectation
           "linux-native"
             | artifactLeaseArchitecture artifactExpectation
                 `elem` ["amd64", "arm64"] ->
-                pure ArtifactInternal.linuxArtifactRuntimeExpectation
+                pure Artifact.linuxArtifactRuntimeExpectation
           _ ->
             ioError (userError "bounded artifact lease has an unsupported runtime lane")
       target <-
@@ -14765,7 +16120,7 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
                 "bounded artifact target disagrees with the closed direct-target catalog"
             )
         )
-      ArtifactInternal.validateEngineArtifactHelperLease
+      Artifact.validateEngineArtifactHelperLease
         identity
         runtimeExpectation
         artifactRoot
@@ -14775,33 +16130,31 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
 
 supervisorArtifactGenerationRoot :: SupervisorPlan -> IO FilePath
 supervisorArtifactGenerationRoot plan =
-  case
-      ( supervisorPlanArtifactLeaseExpectation plan,
-        supervisorPlanProvisioningMutationWorkingDirectory plan
+  case ( supervisorPlanArtifactLeaseExpectation plan,
+         supervisorPlanProvisioningMutationWorkingDirectory plan
+       ) of
+    (Just artifactExpectation, Nothing) ->
+      pure (artifactLeaseInstallRoot artifactExpectation)
+    ( Just artifactExpectation,
+      Just (ProvisioningMutationWorkingDirectoryWire mutationWireRoot [] _)
       )
-    of
-      (Just artifactExpectation, Nothing) ->
-        pure (artifactLeaseInstallRoot artifactExpectation)
-      ( Just artifactExpectation,
-        Just (ProvisioningMutationWorkingDirectoryWire mutationWireRoot [] _)
-        )
-          | normalise (artifactLeaseInstallRoot artifactExpectation)
-              == normalise (mutationWireRootPath mutationWireRoot) ->
-              pure (mutationWireRootPath mutationWireRoot)
-      ( Nothing,
-        Just
-          ( ProvisioningMutationWorkingDirectoryWire
-              mutationWireRoot
-              []
-              (Just _)
-            )
-        ) ->
-          pure (mutationWireRootPath mutationWireRoot)
-      _ ->
-        ioError
-          ( userError
-              "artifact generation helper lacks one exact retained artifact root"
+        | normalise (artifactLeaseInstallRoot artifactExpectation)
+            == normalise (mutationWireRootPath mutationWireRoot) ->
+            pure (mutationWireRootPath mutationWireRoot)
+    ( Nothing,
+      Just
+        ( ProvisioningMutationWorkingDirectoryWire
+            mutationWireRoot
+            []
+            (Just _)
           )
+      ) ->
+        pure (mutationWireRootPath mutationWireRoot)
+    _ ->
+      ioError
+        ( userError
+            "artifact generation helper lacks one exact retained artifact root"
+        )
 
 validateCandidateArtifactTarget ::
   SupervisorPlan ->
@@ -15506,26 +16859,26 @@ awaitSynchronousDescendantProcess identityPath pinIdentity = do
           initialStatus <- getSymbolicLinkStatus identityPath
           contents <- ByteString8.readFile identityPath
           finalStatus <- getSymbolicLinkStatus identityPath
-          if
-            not
-              ( isRegularFile initialStatus
-                  && not (isSymbolicLink initialStatus)
-                  && exactFileStatusMatches initialStatus finalStatus
-                  && ByteString.length contents
-                    <= maximumTargetSetupFrameBytes + 9
-              )
+          if not
+            ( isRegularFile initialStatus
+                && not (isSymbolicLink initialStatus)
+                && exactFileStatusMatches initialStatus finalStatus
+                && ByteString.length contents
+                  <= maximumTargetSetupFrameBytes + 9
+            )
             then pure waiting
-            else
-              case decodeTargetSetupFrameBytes contents of
-                Left _ -> pure waiting
-                Right (HelperIdentityReady identity)
-                  | activityProcessGroup identity
-                      == activityProcessGroup pinIdentity -> do
-                      validateObservedGroupMember
-                        "synchronous descendant"
-                        identity
-                      pure (Right identity)
-                  | otherwise -> pure waiting
+            else observeDecodedIdentity (decodeTargetSetupFrameBytes contents)
+    observeDecodedIdentity decoded =
+      case decoded of
+        Left _ -> pure waiting
+        Right (HelperIdentityReady identity)
+          | activityProcessGroup identity
+              == activityProcessGroup pinIdentity -> do
+              validateObservedGroupMember
+                "synchronous descendant"
+                identity
+              pure (Right identity)
+          | otherwise -> pure waiting
     waiting =
       Left
         ( Readiness.Progress
@@ -15712,12 +17065,11 @@ spawnSupervisorTarget
               (fromIntegral processId)
           modifyMVar_
             registrationState
-            ( \existing ->
-                case existing of
-                  Nothing -> pure (Just registration)
-                  Just _ ->
-                    ioError
-                      (userError "bounded-command target acquired duplicate registration")
+            ( \case
+                Nothing -> pure (Just registration)
+                Just _ ->
+                  ioError
+                    (userError "bounded-command target acquired duplicate registration")
             )
           let (registeredProcessId, registeredBirthIdentity) =
                 ProcessIdentityInternal.registeredProcessIdentity registration
@@ -15876,18 +17228,15 @@ runSupervisorTargetChild
             PosixDirectory.changeWorkingDirectoryFd
               (retainedProvisioningMutationWorkingDirectoryDescriptor retained)
         executable <-
-          case
-              mutationWorkingDirectory
-                >>= retainedProvisioningMutationRelativeExecutable
-            of
-              Just retainedExecutable -> pure retainedExecutable
-              Nothing
-                | supervisorPlanExecutable plan
-                    == internalSelfExecutableSentinel,
-                  not
-                    (isNothing (supervisorPlanSynchronousExceptionIdentityPath plan)) ->
-                    getExecutablePath
-                | otherwise -> pure (supervisorPlanExecutable plan)
+          case mutationWorkingDirectory
+            >>= retainedProvisioningMutationRelativeExecutable of
+            Just retainedExecutable -> pure retainedExecutable
+            Nothing
+              | supervisorPlanExecutable plan
+                  == internalSelfExecutableSentinel,
+                isJust (supervisorPlanSynchronousExceptionIdentityPath plan) ->
+                  getExecutablePath
+              | otherwise -> pure (supervisorPlanExecutable plan)
         executeFile
           executable
           False

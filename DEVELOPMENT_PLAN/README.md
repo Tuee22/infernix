@@ -82,11 +82,18 @@ rather than exact executable/interpreter/script/runtime-closure observations. Wr
 has landed in the worktree, but the next audit found that the first Linux image-target record
 covered only selected `/opt` roots and therefore did not bind the system loader, resolution
 metadata, or recursively loaded system libraries used by ELF, Python, and JVM targets. That is a
-High-severity incomplete-closure defect, not executable provenance. Exact descriptor-derived
-loader/interpreter/library/script closure evidence plus helper-side revalidation remains an open
-blocker. The Linux lease identity also currently derives from only the metadata-root payload digest,
-which excludes the image-owned evidence; the corrected generation fingerprint must bind both before
-it can authorize shared execution.
+High-severity incomplete-closure defect, not executable provenance. **That blocker is now closed**
+(2026-07-29): `Infernix.Engines.Artifact.Loader` produces descriptor-derived ELF loader-closure
+evidence — `PT_INTERP`, the recursive `DT_NEEDED` chain, and `/etc/ld.so.cache` — and
+`runClosedLinuxNativeArtifactSmoke` revalidates the complete recorded closure before launch and
+fails closed on a manifest carrying none. `LD_LIBRARY_PATH` is deliberately never consulted, since
+reading it would violate the no-env doctrine and make the generation irreproducible.
+The related claim that the Linux lease identity "derives from only the metadata-root payload digest"
+was **stale**: `engineArtifactGenerationFingerprint` already binds payload digest, recipe, target
+contract, and evidence fingerprint together on `linux-native`. The real residual is one level down —
+every production generation-leased helper takes the Apple-shaped candidate branch, so
+`validateEngineArtifactHelperLease` is unreachable in production, and runtime launch consumes no
+generation lease at all, so generation identity does not yet authorize shared execution anywhere.
 The root-bound provisioning writer draft also remains rejected: it revalidated an authorized root
 around pathname effects, but direct writes/create/rename/retirement and external venv, package,
 download, mount, and copy tools could still be redirected by swapping an intermediate parent at the
@@ -119,10 +126,126 @@ The focused subprocess-test audit also found PID-only target disappearance and s
 assertions. They are not lifecycle evidence: each owned target fixture must publish the target birth
 identity and use exact-identity absence plus designated-owner reap evidence rather than numeric PID
 reuse assumptions.
-Sprint 1.20 remains Active while the remaining findings and this live audit blocker are corrected,
-followed by another fresh review, exact-source Stage 1, Apple rematerialization/runtime smokes, the
-Apple cohort, and its paired `linux-cpu` cohort. The old fixed-bridge/Clang topology has no accepted
-correction evidence.
+The **complete machine-independent gate set is now GREEN** on one identified Sprint 1.20 worktree,
+`sha256:9f75c2deaa3086f7aa018e5c5fdf421c8e059b83223cf106f81045e3f326a132`, with installed Apple
+binary `sha256:2a1e8262bbdbb840fc303e142e2c60baa8fcfadbd512f81744a8d8377bb49f6e`: the production and
+integration build, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail` (6 positive,
+78 negative), `infernix-artifact-transaction` (44 cases), `infernix-apple-materializer`,
+`infernix-capped-engine-observer`, `infernix-execution-plan-internal`, Python `check-code`, web unit
+83/83, `infernix lint files/docs/proto/chart`, `infernix docs check`, and `git diff --check`. The
+previously red `infernix-unit` and `infernix-haskell-style` suites are green for the first time on
+this correction. Reaching them exposed and closed the anchor/group-owner lifecycle defect this
+section records, the leaderless-group signal race, a synchronous-exception record that decoded
+non-leader group members as leaders, and — behind the `hlint` stage that had always failed first —
+thirty repo-owned readability and governed-boundary violations no recorded gate result had ever
+covered, including two forbidden `.Internal` writer-authority imports in the bounded-command kernel
+and an empty subprocess environment. The subprocess-test audit item above is closed for the anchor,
+supervisor, pin, and target-group fixtures, which now execute against exact birth identities.
+The first Apple cohort attempt then ran against that green tree and **rejected it**, which is
+precisely what a cohort gate is for. Ten further defects, none reachable by any machine-independent
+gate, were found and corrected: a Mach-O identity comparison that could never hold for a
+symlinked tool (so no Homebrew-Python materialization was reachable), unconditional candidate-venv
+relocation (so no native-binary or JVM artifact could activate), an installed smoke that never set
+`DYLD_PRINT_LIBRARIES` yet required the resulting provenance, two environment validators that
+rejected the sealed-artifact runtime environment, an owned-root derivation that named the final
+install root while the smoke runs pre-activation on the candidate sibling, two macOS 26 dyld frame
+families the audit parser mis-handled, a two-valued audit classification that made loader
+bookkeeping look like application output, an executable-authority guard that recognised only one of
+the kernel's two authority forms, and a closure walk that required weak and lazy dylib references to
+resolve. **Six of the seven Apple artifacts now materialize, smoke, and activate end to end** —
+`llama-cpp-cli`, `whisper-cpp-cli`, `coreml-native`, `ctranslate2-native`, `mlx-native`, and
+`onnx-runtime-native` — the first Apple artifact activations of this correction, and the first
+Python-backed sealed generations proven to load only from themselves. The most consequential finding
+came last: the Python home was never scanned for its own runtime closure, so `lib-dynload` extension
+modules (`_lzma`, `_ssl`, `_decimal`) are `dlopen`ed rather than linked and no dependency edge
+reached them, leaving the artifact silently dependent on host Homebrew formulae while every
+machine-independent gate stayed green.
+
+Two further kernel-level findings came from the Audiveris artifact. First, **the executable snapshot
+cannot be applied to an operating-system platform binary**: on Apple Silicon such a binary is
+validated against the kernel trust cache rather than an embedded signature, so a copy is killed at
+exec — measured directly, `/usr/bin/curl` exits 0 while a byte-identical copy exits 137. That
+affects every configured system tool, including the `/usr/bin/top` and `/usr/bin/footprint` observer
+Phase 4 Sprint 4.32 specifies. Platform binaries are now executed in place, which is stronger than a
+private copy since a SIP-protected path cannot be swapped at all. Second, **the Mach-O universal
+magic `0xCAFEBABE` is byte-identical to the Java class file magic**, so the closure scan admitted
+Audiveris's `.class` files as Mach-O images; candidacy now requires a structurally credible fat
+header.
+
+That attempt is still **not closure evidence**: the Audiveris artifact now reaches its installed
+smoke and correctly reports that JavaCPP extracts Leptonica and Tesseract into the operator's
+`~/.javacpp/cache` at run time and loads them from outside the sealed generation — a real violation
+needing an explicit design decision, not a bound to raise. The closure bounds also remain provisional
+pending final measurement, several corrections still have no machine-independent regression coverage,
+and no integration, routed, or `linux-cpu` lane has started.
+
+A further finding is that `infernix-unit` is **load-sensitive**. On a host carrying sustained
+background CPU load it failed repeatedly with several different deadline symptoms on unchanged
+source, then passed. Every symptom was a missed deadline rather than a wrong result, and the pattern
+is consistent: the assertions that fail are the ones whose command completes a full target lifecycle,
+while the short-circuiting cases in the same assertion pass. One symptom deserves independent
+follow-up regardless — an `EPERM` from `signalProcessGroup` during forced cleanup is the same Darwin
+zombie-group behaviour already corrected on the test side, and whether every production cleanup path
+discharges it is unproven. The suite is green on the current tree, but it should not be treated as a
+reliable gate on a loaded host.
+
+Sprint 1.20 therefore remains Active. The Linux ELF/loader closure producer and its helper-side
+revalidation landed on 2026-07-29 with machine-independent fixture coverage. The writer-effect
+residual was larger than "roughly fifteen": a full audit found 21 pathname-resolving writer functions
+across 34 effect sites in `Engines/Provisioning.hs`, 4 absolute external-tool operands in
+`Cluster/Subprocess.hs`, a missing kernel symlink primitive, and a still-pathname-resolving
+activation transaction.
+
+**Enumerated writer items 1-10 are now closed** (2026-07-29), and a repeat audit finds no remaining
+pathname-resolving write effect on any production path in either `Engines/Provisioning.hs` or
+`Engines/Artifact/Internal.hs`. Every surviving raw `openFd` in the provisioning module is
+`ReadOnly`, and the `Directory` create/remove/rename/permissions writers, `writeFile`, and
+`Posix.createSymbolicLink` no longer appear in it. The pathname
+`synchroniseProvisioningDirectory` is deleted in favour of a descriptor-taking form, which forced
+each of its thirteen callers to hold the parent it had mutated through; the mutation kernel gained a
+symbolic-link constructor with the same containment rule the package-closure walk applies, plus an
+atomic regular-file replace so a durable-record replacement stays one step.
+
+**Item 10, the activation transaction, is closed via a closed first-order root-mutation language.**
+The kernel lives in `Cluster.Subprocess`, which already imports the public `Engines.Artifact` and
+`Engines.MaterializationLock` facades, so `Artifact/Internal.hs` cannot import it without closing a
+cycle. The transaction therefore requests two named effects — `RenameArtifactRootSibling` and
+`RemoveArtifactRootSibling` — and the provisioning facade, the only holder of both the writer root
+and the kernel, interprets them; the interpreter type is never re-exported by the public facade, and
+it is retained on the activation token so a rollback cannot be handed a different interpreter than
+the forward transaction used. The conversion also removed a pathname write *above* the authority root
+(`createDirectoryIfMissing`, now an exact-identity check against the authority's recorded engines
+root), every pathname directory fsync, and — a defect the enumeration had not identified — a
+per-entry pathname `removeDirectory` inside the recursive retirement walk, which is now one bounded
+descriptor-anchored kernel call rather than one subprocess per directory entry.
+
+The complete machine-independent gate set is GREEN on worktree
+`sha256:b23b282ce15b1741130cef08f15ac69745512c290633878c521704772010acd0` with installed binary
+`sha256:823675470cfaae700bca4fcd32e3e0ae01034828a9f80bc870af2552c017a7e3`.
+
+**Item 11, the closure-bound reachability obligation, and the Linux sealed-run loader observation
+closed on 2026-07-30**, with the complete machine-independent gate set green, run serially, against
+worktree `sha256:570ed8fabb8d356acffc32966f76a64ce76b97985c87afeecea04c4992a7d79d` and installed
+binary `sha256:5ca4cb99251f84b623ca4a4bb6b9c0b7c747444309fa4ba48d37423c44b46b49`. Item 11 gives the
+production root-mutation interpreter its first coverage, and its direct-boundary fixture carries a
+pathname control so the descriptor assertion cannot pass vacuously. The four closure bounds are now
+reachable through exported accessors and pure folds that production itself runs.
+
+The loader-observation work exposed a High-severity defect no machine-independent gate could reach:
+the exact-capture classifier applied the `dyld` audit to **every** smoke, so the Linux native
+artifact smoke could not pass on any input. The audit is now selected from the command's closed
+provisioning operation, and the ELF frame grammar was measured from a native `linux/arm64` container
+rather than assumed. Correcting it surfaced a **design contradiction in the Linux lane** — the smoke
+is built on the Apple installed-artifact shape while the `linux-native` catalog names absolute image
+targets — which is now decided in favour of binding the smoke to the image target, with the
+implementation enumerated but deliberately not landed.
+
+Still required: the Linux image-target binding, the JavaCPP pre-extraction chosen for Audiveris,
+final closure *values* (blocked on the `jvm-native` measurement), the generation-lease consumer
+residual (blocked on the image-target binding), the remaining impure-surface regression coverage, a
+fresh final review, exact-source Stage 1 on a genuinely quiet host, the completed Apple cohort, and
+its paired `linux-cpu` cohort. Machine-independent green is the gate to begin Phase 2 implementation,
+not Phase 1 closure. The old fixed-bridge/Clang topology has no accepted correction evidence.
 
 The same source review rejected the remaining direct `proc_pid_rusage` FFI exemption. The source
 now implements Phase 4 Sprint 4.32's fixed-command, total-deadline public `/usr/bin/top` plus
@@ -1227,12 +1350,12 @@ recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 | Phase | Current status | Reopened work |
 |-------|----------------|---------------|
 | 0 | Done | Sprint 0.18 no-repo-owned-native-source doctrine, governed mirror, focused adversarial proof, final review, and source-matched correction Stage 1 closed 2026-07-27 |
-| 1 | Active | Sprint 1.20 native-source removal and bounded provisioning are implemented, but five adversarial reviews have rejected successive drafts. Review #5 found that writer authority could escape the exclusive lock inside an `IO` closure, post-activation validation still accepted arbitrary `IO`, closure identity/scan paths remained pathname-recursive, and snapshot/package discovery plus nested native-runner capture were not completely bounded. The live correction audit additionally found a PID/PGID-reuse window because capped-engine cleanup reaped the group leader before numeric group cleanup, an unsound linear-callback shape over ordinary `IO`, and path-text-only direct-target fingerprints; wrapper deletion has landed, but the first Linux target evidence still omitted the system loader and recursive library closure. The root-bound writer draft also converts retained authority back to pathname effects, leaving an intermediate-parent swap window, and Apple Python `pyvenv.cfg` still names the source Homebrew runtime. Runner-owned indexed sequencing, descriptor-retained single-leaf writer effects, self-contained installed targets, closed direct invocation, descriptor-relative bounded traversal, exact executable/interpreter/script/closure records, a live helper-owned engine group through cleanup/reap, full-materializer cleanup proof, fresh review/Stage 1, and Apple plus paired `linux-cpu` cohorts remain |
+| 1 | Active | On 2026-07-30 the writer-effect audit's item 11, the closure-bound reachability obligation, and the Linux sealed-run loader observation closed with the complete machine-independent gate set green on one frozen identity. That work exposed a High-severity defect (the exact-capture classifier audited every smoke against `dyld`, so the Linux native smoke could not pass on any input) and a Linux-lane design contradiction now decided in favour of image-target binding. Remaining: the image-target binding, JavaCPP pre-extraction, final closure values, the generation-lease consumers, impure-surface coverage, a fresh review, Stage 1 on a quiet host, and both cohorts. Prior context — Sprint 1.20 native-source removal and bounded provisioning are implemented, but five adversarial reviews have rejected successive drafts. Review #5 found that writer authority could escape the exclusive lock inside an `IO` closure, post-activation validation still accepted arbitrary `IO`, closure identity/scan paths remained pathname-recursive, and snapshot/package discovery plus nested native-runner capture were not completely bounded. The live correction audit additionally found a PID/PGID-reuse window because capped-engine cleanup reaped the group leader before numeric group cleanup, an unsound linear-callback shape over ordinary `IO`, and path-text-only direct-target fingerprints; wrapper deletion has landed, but the first Linux target evidence still omitted the system loader and recursive library closure. The root-bound writer draft also converts retained authority back to pathname effects, leaving an intermediate-parent swap window, and Apple Python `pyvenv.cfg` still names the source Homebrew runtime. Runner-owned indexed sequencing, descriptor-retained single-leaf writer effects, self-contained installed targets, closed direct invocation, descriptor-relative bounded traversal, exact executable/interpreter/script/closure records, a live helper-owned engine group through cleanup/reap, full-materializer cleanup proof, fresh review/Stage 1, and Apple plus paired `linux-cpu` cohorts remain |
 | 2 | Blocked by Phase 1 | Governed all-Haskell correction: the `filelock` boundary and self-exec anchor/supervisor/pin implementation are present, and the obsolete subprocess C/Cabal boundary is removed; Phase 2's ordered review/validation and then Apple and `linux-cpu` remain |
 | 3 | Done | No work in this reopen |
 | 4 | Blocked by Phases 1-2 | Sprint 4.32 bounded public-tool Apple footprint observer and correction-focused proof are present; verified Apple/Linux CPU enforcers, opaque single-flight authority, and fresh behavioral evidence remain |
 | 5 | Done | No work in this reopen |
-| 6 | Blocked by Phases 2 and 4 | Sprint 6.43 owner-atomic harness correction + Sprint 6.44 verified NVIDIA enforcement and lint closure |
+| 6 | Blocked by Phases 2 and 4 | Sprint 6.43 owner-atomic harness correction + Sprint 6.44 verified NVIDIA enforcement and lint closure. Sprint 6.44's selected `linux-gpu` cohort gate is additionally **hardware-blocked**: the operator host is Apple Silicon with no CUDA device. Per the 2026-07-30 operator decision, Sprint 6.44 lands its enforcement and lint-closure code and validates machine-independent plus `linux-cpu`, and the `linux-gpu` cohort is recorded as an explicit outstanding obligation rather than claimed |
 | 7 | Done | No work in this reopen |
 | 8 | Blocked by Phase 6 Sprint 6.44 | Sprint 8.9 generated proper-union schema migration |
 | 9 | Done | No work in this reopen |
