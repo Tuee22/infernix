@@ -769,6 +769,8 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
             "onnx-runtime-native",
             "--engine-name",
             "contract-engine",
+            "--expected-python-prefix",
+            str(Path(sys.prefix)),
             "--smoke",
         ]
         smoke_args = runner._parse_args()
@@ -782,6 +784,8 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
             "onnx-runtime-native",
             "--engine-name",
             "contract-engine",
+            "--expected-python-prefix",
+            str(Path(sys.prefix)),
             "--help",
         ]
         with contextlib.redirect_stderr(io.StringIO()):
@@ -816,6 +820,7 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
                 input_file="",
                 model_cache_root=None,
                 output_dir=None,
+                expected_python_prefix=Path(sys.prefix),
                 smoke_only=False,
             )
             for operation_name, operation in (

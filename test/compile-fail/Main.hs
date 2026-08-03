@@ -269,7 +269,11 @@ failingFixtures =
       "fail-cannot-import-cluster-subprocess-activity"
       "CannotImportClusterSubprocessActivity.hs"
       "Infernix.Cluster.Subprocess.Activity",
-    hiddenModuleFixture "fail-raw-capped-launch" "RawCappedLaunch.hs" "Infernix.Runtime.CappedEngine"
+    hiddenModuleFixture "fail-raw-capped-launch" "RawCappedLaunch.hs" "Infernix.Runtime.CappedEngine",
+    removedExportFixture
+      "fail-cannot-construct-engine-topic-capability"
+      "CannotConstructEngineTopicCapability.hs"
+      "EngineTopicCapability"
   ]
 
 constructorFixture :: String -> FilePath -> String -> FailingFixture

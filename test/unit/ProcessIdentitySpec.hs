@@ -4,6 +4,7 @@
 module ProcessIdentitySpec (runProcessIdentityTests) where
 
 import Control.Monad (unless)
+import Data.Maybe (isNothing)
 import Data.Word (Word64)
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
@@ -19,7 +20,7 @@ import Control.Monad (forM_, replicateM)
 import Data.Bits ((.|.))
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.List (isInfixOf, isPrefixOf)
-import Data.Maybe (isJust, isNothing)
+import Data.Maybe (isJust)
 import Infernix.ProcessIdentity
   ( dropInheritedProcessIdentity,
     readProcessBirthIdentity,

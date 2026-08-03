@@ -620,3 +620,8 @@ executable fail-raw-capped-launch
     import: fixture
     main-is: RawCappedLaunch.hs
     hs-source-dirs: fail
+
+executable fail-cannot-construct-engine-topic-capability
+    import: fixture
+    main-is: CannotConstructEngineTopicCapability.hs
+    hs-source-dirs: fail

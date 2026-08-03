@@ -30,6 +30,7 @@ module Infernix.Runtime.Pulsar
     streamDemoContextConversation,
     streamDemoUserMetadata,
     prepareModelBootstrapRequest,
+    modelBootstrapRequestAttemptKey,
     publishModelBootstrapRequest,
     validateModelBootstrapRequest,
     validateDemoClientMessageCatalog,
@@ -183,6 +184,10 @@ import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as Presigned
 import Infernix.Python (ensurePoetryExecutable)
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
+import Infernix.Runtime.CappedEngine
+  ( EngineExecutionAuthority,
+    withSerializedEngineExecution,
+  )
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.SecretsConfig qualified as Secrets
@@ -1093,6 +1098,13 @@ prepareModelBootstrapRequest compiledPlan modelIdValue =
             <$> authorizeModelBootstrapRequest compiledPlan request
         )
 
+-- | Inspect only the causal identity of an authorized bootstrap capability.
+-- The request and constructors remain hidden, so callers can correlate durable
+-- evidence without gaining authority to alter or synthesize a request.
+modelBootstrapRequestAttemptKey :: ModelBootstrapRequestCapability -> Text.Text
+modelBootstrapRequestAttemptKey (ModelBootstrapRequestCapability _ (AuthorizedBootstrapRequest request)) =
+  BootstrapModels.bootstrapRequestDedupKey request
+
 publishModelBootstrapRequest ::
   Paths ->
   ModelBootstrapRequestCapability ->
@@ -1374,8 +1386,15 @@ data DaemonTopicCapability
       CompiledDaemon
       Text.Text
       ConsumerSubscriptionType
-  | EngineTopicCapability
+  | -- | The engine capability carries the single-flight authority alongside the
+    -- refined plan it authorizes. Encapsulating it here rather than threading a
+    -- bare token through public signatures is what closes Sprint 4.32's
+    -- deliverable: the constructor is private, so a caller cannot pair this plan
+    -- with a different token, and no execution path can reach
+    -- 'publishedResultFromRequest' without one.
+    EngineTopicCapability
       RuntimePlan
+      EngineExecutionAuthority
       CompiledDaemon
       Text.Text
       ConsumerSubscriptionType
@@ -1403,8 +1422,9 @@ mkCoordinatorTopicCapability compiledPlan compiledDaemon requestTopicValue =
 engineTopicCapabilities ::
   Text.Text ->
   RuntimePlan ->
+  EngineExecutionAuthority ->
   Either String [DaemonTopicCapability]
-engineTopicCapabilities memberIdValue runtimePlan =
+engineTopicCapabilities memberIdValue runtimePlan authority =
   case lookupCompiledEngineDaemon memberIdValue compiledPlan of
     Nothing ->
       Left
@@ -1414,7 +1434,7 @@ engineTopicCapabilities memberIdValue runtimePlan =
     Just compiledDaemon ->
       Right
         ( map
-            (mkEngineTopicCapability runtimePlan compiledDaemon)
+            (mkEngineTopicCapability runtimePlan authority compiledDaemon)
             (compiledDaemonRequestTopics compiledDaemon)
         )
   where
@@ -1422,12 +1442,14 @@ engineTopicCapabilities memberIdValue runtimePlan =
 
 mkEngineTopicCapability ::
   RuntimePlan ->
+  EngineExecutionAuthority ->
   CompiledDaemon ->
   Text.Text ->
   DaemonTopicCapability
-mkEngineTopicCapability runtimePlan compiledDaemon requestTopicValue =
+mkEngineTopicCapability runtimePlan authority compiledDaemon requestTopicValue =
   EngineTopicCapability
     runtimePlan
+    authority
     compiledDaemon
     requestTopicValue
     (authorizedSubscriptionType runtimeMode compiledDaemon requestTopicValue)
@@ -1439,7 +1461,7 @@ daemonTopicCapabilityTopic :: DaemonTopicCapability -> Text.Text
 daemonTopicCapabilityTopic capability =
   case capability of
     CoordinatorTopicCapability _ _ requestTopicValue _ -> requestTopicValue
-    EngineTopicCapability _ _ requestTopicValue _ -> requestTopicValue
+    EngineTopicCapability _ _ _ requestTopicValue _ -> requestTopicValue
 
 daemonTopicCapabilityRuntimeMode :: DaemonTopicCapability -> RuntimeMode
 daemonTopicCapabilityRuntimeMode capability =
@@ -1449,7 +1471,7 @@ daemonTopicCapabilityCompiledPlan :: DaemonTopicCapability -> CompiledRuntimePla
 daemonTopicCapabilityCompiledPlan capability =
   case capability of
     CoordinatorTopicCapability compiledPlan _ _ _ -> compiledPlan
-    EngineTopicCapability runtimePlan _ _ _ ->
+    EngineTopicCapability runtimePlan _ _ _ _ ->
       runtimePlanCompiledPlan runtimePlan
 
 drainTopic :: Paths -> DaemonTopicCapability -> IO ()
@@ -1527,7 +1549,7 @@ drainInferenceTopic paths capability maybeEngineKVCache =
     CoordinatorTopicCapability {} ->
       ioError
         (userError "coordinator topic capability cannot execute inference")
-    EngineTopicCapability runtimePlan compiledDaemon requestTopicValue _ -> do
+    EngineTopicCapability runtimePlan authority compiledDaemon requestTopicValue _ -> do
       let runtimeMode = daemonTopicCapabilityRuntimeMode capability
           compiledPlan = runtimePlanCompiledPlan runtimePlan
           resultTopicValue = compiledDaemonResultTopic compiledDaemon
@@ -1566,7 +1588,7 @@ drainInferenceTopic paths capability maybeEngineKVCache =
                             protoRequest
                         )
                     Right () ->
-                      publishedResultFromRequest Nothing paths runtimeMode runtimePlan maybeEngineKVCache protoRequest
+                      publishedResultFromRequest Nothing paths runtimeMode runtimePlan authority maybeEngineKVCache protoRequest
             createDirectoryIfMissing True (topicDirectoryPath paths resultTopicValue)
             writeInferenceResultFile
               (topicDirectoryPath paths resultTopicValue </> Text.unpack (requestId publishedResult) <.> "pb")
@@ -2404,9 +2426,8 @@ consumeTopicForever ::
   Paths ->
   DaemonTopicCapability ->
   Maybe KVCache.EngineKVCache ->
-  MVar () ->
   IO ()
-consumeTopicForever transport paths capability maybeEngineKVCache engineExecutionLock =
+consumeTopicForever transport paths capability maybeEngineKVCache =
   forever $ do
     sessionResult <-
       try @SomeException
@@ -2415,7 +2436,6 @@ consumeTopicForever transport paths capability maybeEngineKVCache engineExecutio
             paths
             capability
             maybeEngineKVCache
-            engineExecutionLock
         )
     case sessionResult of
       Right _ -> threadDelay 1000000
@@ -2455,7 +2475,7 @@ serviceConsumerSubscriptionType :: DaemonTopicCapability -> ConsumerSubscription
 serviceConsumerSubscriptionType capability =
   case capability of
     CoordinatorTopicCapability _ _ _ subscriptionType -> subscriptionType
-    EngineTopicCapability _ _ _ subscriptionType -> subscriptionType
+    EngineTopicCapability _ _ _ _ subscriptionType -> subscriptionType
 
 authorizedSubscriptionType ::
   RuntimeMode ->
@@ -2485,9 +2505,8 @@ consumeTopicSession ::
   Paths ->
   DaemonTopicCapability ->
   Maybe KVCache.EngineKVCache ->
-  MVar () ->
   IO ()
-consumeTopicSession transport paths capability maybeEngineKVCache engineExecutionLock = do
+consumeTopicSession transport paths capability maybeEngineKVCache = do
   processLabel <- currentProcessLabel
   topicRef <- requireTopicRef requestTopicValue
   let subscriptionName = "infernix-service-" <> sanitizeTopic requestTopicValue
@@ -2569,8 +2588,11 @@ consumeTopicSession transport paths capability maybeEngineKVCache engineExecutio
                 batchOptions
                 (view ProtoInferenceFields.requestId decodedRequest)
                 (encodeMessage decodedRequest)
-        EngineTopicCapability runtimePlan compiledDaemon _ _ ->
-          modifyMVar_ engineExecutionLock $ \() -> do
+        EngineTopicCapability runtimePlan authority compiledDaemon _ _ -> do
+          -- The serialization that used to live here is now inside
+          -- 'publishedResultFromRequest', so the spool path cannot reach engine
+          -- execution unguarded.
+          do
             let modelIdValue = view ProtoInferenceFields.requestModelId decodedRequest
                 requestIdValue = view ProtoInferenceFields.requestId decodedRequest
             let maybeRejection =
@@ -2590,7 +2612,7 @@ consumeTopicSession transport paths capability maybeEngineKVCache engineExecutio
                             decodedRequest
                         )
                     Right () ->
-                      publishedResultFromRequest (Just transport) paths runtimeMode runtimePlan maybeEngineKVCache decodedRequest
+                      publishedResultFromRequest (Just transport) paths runtimeMode runtimePlan authority maybeEngineKVCache decodedRequest
             -- Phase 7 Sprint 7.14 follow-on (2026-05-30): one-line trace per
             -- engine-side inference so the host daemon log surfaces the
             -- request id, resolved model id, and final status. Diagnoses
@@ -2678,7 +2700,7 @@ daemonTopicCapabilityResultTopic capability =
   case capability of
     CoordinatorTopicCapability compiledPlan _ _ _ ->
       compiledPlanResultTopic compiledPlan
-    EngineTopicCapability _ compiledDaemon _ _ ->
+    EngineTopicCapability _ _ compiledDaemon _ _ ->
       compiledDaemonResultTopic compiledDaemon
 
 daemonTopicCapabilityAuthorizesModel ::
@@ -2698,7 +2720,7 @@ executableRequestRouteAuthorization capability modelIdValue =
   case capability of
     CoordinatorTopicCapability {} ->
       Left "coordinator topic capability cannot authorize engine execution"
-    EngineTopicCapability runtimePlan compiledDaemon requestTopicValue _ ->
+    EngineTopicCapability runtimePlan _ compiledDaemon requestTopicValue _ ->
       case compiledDaemonMemberId compiledDaemon of
         Nothing ->
           Left "engine topic capability has no compiled daemon member"
@@ -4339,7 +4361,8 @@ publishBootstrapReadyEvent transport systemNamespace request = do
         BootstrapModels.ModelBootstrapReadyEvent
           { BootstrapModels.readyEventModelId = modelId,
             BootstrapModels.readyEventReadyAtIso8601 =
-              Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now)
+              Text.pack (formatTime defaultTimeLocale "%Y-%m-%dT%H:%M:%SZ" now),
+            BootstrapModels.readyEventRequestAttemptKey = Just dedupKey
           }
       dedupKey = BootstrapModels.readyEventDedupKeyForRequest request
       options =
@@ -4921,60 +4944,68 @@ memoryAdmissionRejectionResult runtimeMode model errorValue protoRequest =
           resultCausalRef = envelopeCausalRef
         }
 
+-- | The single choke point every engine execution passes through, on both the
+-- websocket and the filesystem-spool path. Taking the authority here is what
+-- makes serialization a property of the boundary rather than of one branch of
+-- one caller: the spool path previously reached this function with no lock in
+-- scope at all while the websocket path held one, and that asymmetry was
+-- invisible from either call site.
 publishedResultFromRequest ::
   Maybe PulsarTransport ->
   Paths ->
   RuntimeMode ->
   RuntimePlan ->
+  EngineExecutionAuthority ->
   Maybe KVCache.EngineKVCache ->
   ProtoInference.InferenceRequest ->
   IO InferenceResult
-publishedResultFromRequest maybeTransport paths runtimeMode runtimePlan maybeEngineKVCache protoRequest = do
-  domainResult <-
-    executeInferenceWithModelBootstrapRetry
-      maybeTransport
-      paths
-      runtimePlan
-      maybeEngineKVCache
-      (kvCacheRequestFromProto protoRequest)
-      (protoRequestToDomain protoRequest)
-  now <- getCurrentTime
-  let envelopeUserId = view ProtoInferenceFields.userId protoRequest
-      envelopeContextId = view ProtoInferenceFields.contextId protoRequest
-      envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
-  case domainResult of
-    Right resultValue ->
-      pure
-        resultValue
-          { requestId = view ProtoInferenceFields.requestId protoRequest,
-            -- Phase 7 Sprint 7.8: forward the durable-context routing
-            -- fields from the request envelope into the result so the
-            -- coordinator's result-bridge can compute the destination
-            -- conversation topic without consulting a separate cache.
-            resultUserId = envelopeUserId,
-            resultContextId = envelopeContextId,
-            resultCausalRef = envelopeCausalRef
-          }
-    Left errorValue ->
-      pure
-        InferenceResult
-          { requestId = view ProtoInferenceFields.requestId protoRequest,
-            resultModelId = view ProtoInferenceFields.requestModelId protoRequest,
-            resultMatrixRowId = "",
-            resultRuntimeMode = runtimeMode,
-            resultSelectedEngine = "",
-            status = "failed",
-            payload =
-              ResultPayload
-                { inlineOutput = Just (message errorValue),
-                  objectRef = Nothing,
-                  inferenceError = Nothing
-                },
-            createdAt = now,
-            resultUserId = envelopeUserId,
-            resultContextId = envelopeContextId,
-            resultCausalRef = envelopeCausalRef
-          }
+publishedResultFromRequest maybeTransport paths runtimeMode runtimePlan authority maybeEngineKVCache protoRequest =
+  withSerializedEngineExecution authority $ do
+    domainResult <-
+      executeInferenceWithModelBootstrapRetry
+        maybeTransport
+        paths
+        runtimePlan
+        maybeEngineKVCache
+        (kvCacheRequestFromProto protoRequest)
+        (protoRequestToDomain protoRequest)
+    now <- getCurrentTime
+    let envelopeUserId = view ProtoInferenceFields.userId protoRequest
+        envelopeContextId = view ProtoInferenceFields.contextId protoRequest
+        envelopeCausalRef = view ProtoInferenceFields.userPromptMessageId protoRequest
+    case domainResult of
+      Right resultValue ->
+        pure
+          resultValue
+            { requestId = view ProtoInferenceFields.requestId protoRequest,
+              -- Phase 7 Sprint 7.8: forward the durable-context routing
+              -- fields from the request envelope into the result so the
+              -- coordinator's result-bridge can compute the destination
+              -- conversation topic without consulting a separate cache.
+              resultUserId = envelopeUserId,
+              resultContextId = envelopeContextId,
+              resultCausalRef = envelopeCausalRef
+            }
+      Left errorValue ->
+        pure
+          InferenceResult
+            { requestId = view ProtoInferenceFields.requestId protoRequest,
+              resultModelId = view ProtoInferenceFields.requestModelId protoRequest,
+              resultMatrixRowId = "",
+              resultRuntimeMode = runtimeMode,
+              resultSelectedEngine = "",
+              status = "failed",
+              payload =
+                ResultPayload
+                  { inlineOutput = Just (message errorValue),
+                    objectRef = Nothing,
+                    inferenceError = Nothing
+                  },
+              createdAt = now,
+              resultUserId = envelopeUserId,
+              resultContextId = envelopeContextId,
+              resultCausalRef = envelopeCausalRef
+            }
 
 executeInferenceWithModelBootstrapRetry ::
   Maybe PulsarTransport ->

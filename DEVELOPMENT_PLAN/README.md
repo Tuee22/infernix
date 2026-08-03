@@ -11,6 +11,350 @@
 See [development_plan_standards.md](development_plan_standards.md) for the maintenance rules that
 govern this plan.
 
+## Active Phase 1 validation update (2026-08-02)
+
+Sprint 1.20 is code-side closed, and its exact-source `linux-cpu` full-suite cohort is GREEN on
+`sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`.
+Phase 1 remains Active only for validation-only Wave Y Apple accelerator evidence. Under the
+development-plan standards' two-axis rule, Phase 2 code-side closure may now proceed in numerical
+order while that hardware queue item remains open. The supported
+`linux-cpu` launcher image has now built successfully through all five native artifact
+materializations. The run corrected static-executable audit recognition, absolute interpreter
+links in the image-owned Python venv, dependency ordering and already-loaded `DT_SONAME` reuse in
+the ELF closure observer, and the cross-substrate sealed Python-prefix smoke contract. Linux
+Audiveris now pre-extracts JavaCPP natives into a fixed image-owned cache and includes that cache in
+its sealed closure. The Apple code path now performs the same operation through the closed
+provisioning language before hashing the candidate and launches through the bundle's fixed JVM
+with a candidate-local cache. The machine-independent build, artifact transaction, Apple
+materializer, style, and unit gates are GREEN for that follow-on correction. The exact current-tree
+`linux-cpu` image also rebuilt GREEN as
+`sha256:33a0086e51e8bda30dca94c3502320e53ca3ab9c788be469709bdc88fdfbd55c`, including all five native
+materializations; its file, documentation, Proto, chart, and documentation-render gates are GREEN.
+Phase 1 remains Active pending corrected-root Apple rematerialization, production cancellation and
+installed-runtime smokes, and the Apple full-suite cohort; the paired `linux-cpu` cohort is closed.
+
+Successive canonical `./bootstrap/linux-cpu.sh test` attempts have remained fail-closed before
+cluster mutation while exposing three provisioning defects. The Docker Poetry venv now uses
+`--copies`, preventing its interpreter from widening the measured closure to `/usr`. The shared
+runtime resolver now selects the bounded Darwin Mach-O or Linux descriptor-derived ELF closure by
+compiled host platform instead of applying Mach-O inspection on Linux. The resulting image rebuilt
+GREEN as `sha256:6a8c107a0d7dd8e33cd1d3b4b7d5ffe55d8d8d6baa04311e17518d3ee09b2fdd`; its cohort passed the clean
+build and style gate, then found that the anchor copied host-bound Python-home shebang launchers
+which the provisioning digest intentionally excludes. The anchor snapshot now applies the same
+content-based exclusion. The next image reached supervisor validation and proved that the closed
+environment still modeled only the Darwin snapshot. Linux now retains and revalidates exact ELF
+runtime identities without DYLD variables, while Darwin retains its copied DYLD closure. Subsequent
+target starts exposed non-self-contained Poetry and project venvs, an over-broad shebang exclusion,
+and rejection of valid zero-program-header relocatable ELF objects. The Linux image now constructs
+both venvs with copied interpreters and dereferenced standard-library payloads; host-bound launcher
+exclusion is confined to `bin/`; and the ELF parser accepts a zero entry size only when the program
+header count is zero. An image-native focused rerun passes provisioning and the complete unit
+cohort, including the Sprint 1.20 regressions and 83/83 web tests. The focused style and
+`cabal build all --enable-tests` gates subsequently passed, and the exact-source image rebuilt
+through all five native materializations, framework installs, web build, and Python checks as
+`sha256:6adb3c02bad77f710ed45208f3be7253a596b4680c7aece7bcdd912d327e8a38`; only the complete
+canonical cohort remains pending at this boundary.
+That image's canonical cohort completed its clean test build, then failed the style gate before
+cluster mutation on two Ormolu guard-layout differences introduced after the earlier focused run.
+The layouts are corrected. The replacement exact-source image rebuilt GREEN as
+`sha256:13e83e3e5c337f3c76f22250dc1ee5c430ab0b9a79146799f778702b637aaa2d`; its canonical cohort rerun
+passed clean style, Python checks, unit, 83/83 web tests, cluster creation, Harbor publication,
+final rollout, routed publication, and eager staging of all 12 models. Per-model inference then
+failed closed because the worker required an Apple setup manifest in each Linux engine pod's
+private data `emptyDir`. Linux now proves setup through its immutable image framework marker while
+Apple retains the published bootstrap-manifest requirement. Focused build, unit, and style gates
+are GREEN. The exact-source replacement subsequently rebuilt GREEN as
+`sha256:d52820cc81eb90f38e3036c1fcb7ef5af24cda82e1458239745f81993f83e6a9`. Its canonical cohort
+passed clean style, Python checks, unit, 83/83 web tests, cluster creation, Harbor publication,
+final rollout, routed publication, and eager staging of all 12 models. Both engine replicas then
+failed closed at per-model inference because the baked Linux framework markers omitted the
+`projectDigest` required by runtime revalidation. The Docker producer now records the same exact
+SHA-256 construction consumed by Haskell for both framework environments. The replacement rebuilt
+GREEN through all five native materializations, framework installs, web build, and Python checks as
+`sha256:6b93f886c299585a973221095c273f8664daf7e0dd35d97cda836b99f7f1ec1f`; an image-native probe
+independently recomputed both project digests and matched their recorded marker values. Only its
+complete canonical cohort remained pending at that boundary. That cohort passed every pre-cluster
+gate, cluster creation/publication/rollout, eager staging, and the Python-backed inference boundary,
+then failed closed on `llm-tinyllama-gguf`: OCI unpack had assigned fresh inode numbers, so runtime
+comparison rejected otherwise exact persisted Linux target evidence. Descriptor-stable observation
+continues to bind device/inode identity while reading; persisted image evidence now compares the
+portable closed paths, types, modes, sizes, digests, ELF metadata, and loader edges. Focused
+regression evidence and a replacement cohort remain pending; Phase 1 remains Active.
+The exact-source focused unit and style gates are GREEN, including the OCI identity-normalization
+regression. The replacement image and canonical cohort remain pending.
+The replacement image subsequently rebuilt GREEN through all materialization and image checks as
+`sha256:51dc9484c4327725b9b18e284afe761d37e75ec20e2909c39f02cd82c4b32e90`; its canonical cohort is
+pending. That cohort passed every pre-cluster gate, cluster publication/rollout, and eager staging,
+and crossed the prior Linux inode-revalidation failure, but the first
+`llm-smollm2-safetensors` request produced no result within the 4,200-second deadline while both
+replicas repeatedly launched CPU-bound bounded children for the unacked request. The
+diagnostic rerun reproduced the request and captured `engineProcessed ... status=completed` from
+both replicas, followed by Pulsar consumer `Broken pipe` failures and the proxy's explicit
+`Idle timeout expired: 30000/30000 ms`. The model and capped runner therefore completed; the
+consumer session was severed while real inference held its delivery. An initial correction set
+`webSocketSessionIdleTimeoutMillis`, and its focused `infernix-unit` plus `lint chart` gates were
+GREEN. The replacement image subsequently rebuilt GREEN through all five native
+materializations, framework installs, web build, Python checks, and browser provisioning as
+`sha256:75e40a2e57537834efcfbd6b89082e786bef6d019ce3ec2cdb1951ce33614bf9`
+(20,125,136,372 bytes). Its canonical cohort passed all pre-cluster gates and reached per-model
+inference, but live proxy inspection proved that Pulsar 4.0.9 does not project that key into
+`proxy.conf`; the effective closing setting remained `httpServerIdleTimeout=30000`. The cohort was
+stopped through managed teardown before the known timeout. The chart default and binary-owned
+local-topology override now set the effective `httpServerIdleTimeout` to a bounded 7,200,000 ms,
+above the 4,200-second result deadline, with lint and rendered-values guards. Focused validation
+is GREEN (`infernix-unit`, including the rendered-value assertion, and `lint chart`). Another
+replacement image/cohort remains pending; Phase 1 remains Active.
+The corrected replacement then rebuilt GREEN through the complete image gate as
+`sha256:7129edb66e79ece15fa73f82fa458da373abf6d45ba82752dbfc243c374b9a17`
+(20,125,117,304 bytes). Its canonical cohort is pending.
+The canonical cohort has passed the clean pre-cluster gates and live cluster inspection confirms
+the running Pulsar 4.0.9 proxy contains `httpServerIdleTimeout=7200000` in
+`/pulsar/conf/proxy.conf`. It then crossed the former missing-result boundary: retained and current
+SmolLM2 requests completed and published without an idle timeout or broken pipe. The cohort next
+failed cleanly on `llm-tinyllama-gguf` because Linux target revalidation still bound
+`/etc/ld.so.cache`; a later Playwright dependency-install layer legitimately regenerated that
+cache. A direct image-native expected/observed diff proved that some system-library edges genuinely
+used the cache: resolved paths and object digests were unchanged, but the cache digest, size, and
+entry indices changed. Cache identity therefore must remain bound. The loader observer now omits
+cache evidence only when no edge used it (focused unit/style GREEN), while the Dockerfile installs
+all Playwright system packages before native artifact materialization so cache-backed evidence is
+measured from the final immutable filesystem. A new image/cohort remain pending; Phase 1 remains
+Active.
+The replacement image rebuilt GREEN through the complete image gate as
+`sha256:5a353aa4c59ef46d3b4cef5097225bd4f55d61513db1f1cfd41914f566ab832b`
+(20,125,140,109 bytes). Its canonical cohort is pending.
+After moving browser/system dependency installation ahead of native materialization, the final
+replacement image rebuilt GREEN as
+`sha256:7211b0fe8b55d4d28b35fcf4fcfc4edf04050a6292e94d7b86bffe2d57d354df`
+(20,125,135,753 bytes). A fresh image-native observation of `llama-cpp-cli` now equals its embedded
+artifact manifest exactly, including the genuinely used loader-cache evidence. The replacement
+canonical cohort is the next gate; Phase 1 remains Active.
+That canonical cohort passed every pre-cluster gate, published the exact image to Harbor, brought
+the platform up, staged all 12 models, and confirmed the live proxy setting. It nevertheless failed
+cleanly at `llm-tinyllama-gguf` with `native engine artifact validation failed for llama-cpp-cli`.
+Because the same final image validates under Docker but not after Kubernetes/containerd deployment,
+the remaining mismatch is runtime-specific artifact observation; managed teardown completed and
+Phase 1 remains Active.
+An in-place diagnostic bring-up then disproved that preliminary runtime-specific hypothesis. Inside
+the live engine pod, llama target evidence and the complete `/opt` manifest both validated. The
+actual mint failure was the generation-lease sidecar: multi-artifact reconciliation globally
+retired every preceding adapter's sidecar, leaving only the last (`jvm-native`) launchable. The
+reconciliation now retains a bounded, identity-checked census of installed sibling generations.
+The same live census also showed ONNX Runtime and CTranslate2 evidence had been observed before
+framework Poetry installs in the same final Docker `RUN`; those installs changed their system
+loader closure. Native materialization is now the last mutating command after framework installs,
+web build, and Python checks. Focused compilation is GREEN; a replacement image/cohort remain
+pending and Phase 1 remains Active. The combined `infernix-haskell-style`/realness and
+`infernix-unit` focused gates are also GREEN for the correction.
+The reordered replacement image then rebuilt GREEN as
+`sha256:5898e219674bf08ab94a15701bf0f21b61e9f34b11fda9fc96b96ed2fa6cc0c1`
+(20,125,337,251 bytes), and direct final-image validation passed for all five native manifests.
+Its sidecar census still contained only `jvm-native`: retained missing paths were reserved from
+retirement but not recreated. Reconciliation now reacquires each validated sibling generation
+under exclusive materialization authority, which mints any missing real lock leaf before obsolete
+retirement; a focused in-container probe recreated all five exact sidecars. One final replacement
+image/cohort remain pending and Phase 1 remains Active.
+The next clean image rebuilt GREEN as
+`sha256:ab74cc45bb978dd96a6c5f55cf0f6562d165999bb752b10a10457dadcb2fc263`
+(20,125,326,588 bytes), again with five valid manifests but only the final sidecar. The remaining
+retirement site was post-publication activation: after explicitly retiring the replaced adapter's
+prior generation it redundantly ran a global `[currentLease]` reconciliation, deleting every
+sibling. That global sweep is removed; preparation already performs bounded all-sibling
+reconciliation and commit retains the adapter-local retirement. Focused style/realness and unit
+gates are GREEN; a final replacement image/cohort remain pending and Phase 1 remains Active.
+The final replacement image rebuilt GREEN as
+`sha256:e4e042c10c9fe7aa32c3d2eb49ecc4df392061b7095712d7dded01001cb4af0e`
+(20,125,330,441 bytes). Direct validation from an untouched container proves all five native
+manifests valid and all five exact generation-lease sidecars present. The canonical Linux cohort is
+the next gate; Phase 1 remains Active.
+The canonical cohort passed every pre-cluster gate, published the exact image, deployed all five
+lease leaves into the live engine pod, staged all 12 models, and completed real SmolLM2 inference.
+TinyLlama crossed the former artifact-validation boundary and launched the real native executable,
+then failed cleanly because `llama-cpp-cli` rejected the closed wrapper argument `--engine`.
+Managed teardown completed. The remaining defect is now the native invocation grammar rather than
+artifact identity or custody; Phase 1 remains Active.
+The raw-target dispatch now renders the verified real CLI grammar for llama.cpp, whisper.cpp, and
+Audiveris, retains the wrapper protocol only for Python-backed native adapters, and rejects missing
+operands or unregistered adapters before process creation. Focused unit coverage pins the exact
+bounded argv shapes and the focused Haskell unit gate is GREEN; the style gate first rejected a
+hanging-case layout, which is corrected and awaiting its rerun. No replacement image or canonical
+cohort has yet validated this correction, so Phase 1 remains Active.
+Audiveris success handling now performs a deterministic, depth-8/4,096-entry output-tree census,
+rejects symlinks and ambiguous or absent MusicXML outputs, and emits an upload marker only for the
+single real output file. This adjacent fail-closed correction compiles and the focused unit gate is
+GREEN; the style gate reported one mechanical HLint suggestion, now corrected, and awaits rerun.
+The corrected focused Haskell style/realness gate is GREEN. A clean replacement image and canonical
+cohort are now the next evidence gates; Phase 1 remains Active.
+The clean replacement image rebuilt GREEN as
+`sha256:6415a72573baa4920a2197e6c8a61f65040d654be91c89d73849bf4a4ce0dcdd`
+(20,125,326,520 bytes). An untouched-container census proves all five exact generation-lease
+sidecars, and package-internal root revalidation proves all five native manifests valid. The
+canonical Linux cohort against this exact image is the next gate; Phase 1 remains Active.
+That canonical cohort passed the static/unit/web gates, published and deployed the exact image,
+staged all 12 models, and completed real SmolLM2 inference. TinyLlama accepted the corrected real
+CLI grammar and began native execution, then exceeded the capped standard-output capture limit;
+the process group was terminated and managed teardown completed. The remaining Linux defect is now
+bounded llama.cpp output, not invocation parsing, artifact identity, or custody. Phase 1 remains
+Active.
+The llama.cpp grammar now also selects its supported non-conversation single-turn/simple-I/O mode
+and disables native diagnostic logging while retaining the 32-token, 512-context, one-thread,
+zero-GPU-layer bounds. Exact argv regression coverage, focused style/realness, and focused unit
+gates are GREEN. A replacement image/cohort remain pending; Phase 1 remains Active.
+The replacement image rebuilt GREEN as
+`sha256:3f6b8b7e45429c9b8be80bd39d6285fb6563849984fbbbb8cae045b2c18c85d9`
+(20,125,341,777 bytes). An untouched-container census proves five exact generation leases and all
+five package-internal manifest revalidations pass. Its canonical cohort is pending; Phase 1 remains
+Active.
+The canonical cohort again passed every pre-cluster gate, published the exact image, staged all 12
+models, completed real SmolLM2, and advanced beyond TinyLlama to `speech-whisper-small`, proving the
+bounded llama.cpp output correction behaviorally. It then failed before whisper execution because
+MinIO returned HTTP 507 while uploading the integration WAV; managed teardown completed. Storage
+capacity/reconciliation is now the active Linux boundary. Phase 1 remains Active.
+The HTTP 507 was host-capacity pressure rather than an inference regression: ten disposable
+Phase 1 diagnostic containers retained superseded image generations while the backing filesystem
+was 90% full. Removing only those explicitly named task containers recovered 119 GiB and moved the
+filesystem to 81% used (263 GiB available); operator state and retained cluster data were untouched.
+The unchanged `3f6b8...` image is ready for the canonical cohort retry. Phase 1 remains Active.
+That retry passed every machine-independent gate, published the exact image, reached typed cluster
+readiness, staged all 12 models, and crossed the former MinIO and Whisper boundaries. It then failed
+at `speech-faster-whisper-ct2`: the Linux RSS observer sampled a live `/proc/<pid>/stat`, raced the
+process into terminal state, and treated the resulting terminal `status` file without `VmRSS` as
+enforcer loss. Managed teardown completed. The observer-race correction and regression are the
+active Phase 1 boundary.
+The Linux observer correction now accepts missing `VmRSS` only when the same status payload
+explicitly reports terminal `Z` or `X`, and continues to reject live or malformed payloads. Its
+positive and fail-closed regressions compiled and ran in the focused unit command. That command did
+not close the full unit gate: a later, unrelated bounded-command recovery assertion found its exact
+test owner PID still live. Retained test-activity reconciliation is the next focused check; no image
+has been rebuilt from this correction yet.
+The supported `infernix test unit` Linux-container gate is GREEN, including the RSS terminal-state
+regressions, the complete Haskell unit suite, and PureScript 83/83. The earlier exact-owner failure
+was reproduced only by bypassing the harness with direct Cabal, which omits the test surface's
+lifecycle preparation; it is not accepted as phase evidence and did not justify weakening custody.
+The corrected image built GREEN as
+`sha256:5bef020973a155137c696272231510e7f95f5ef28dfe01175d44ed5b74f68684`
+(20,125,349,791 bytes), including all native-artifact checks and the image-local compile, bundle,
+type, formatting, and static checks. The canonical Linux CPU cohort against this exact image is now
+the active gate; Phase 1 remains Active.
+That exact-image cohort passed the complete style/realness, Python, Haskell unit, and PureScript
+83/83 gates; registry-only verification; typed cluster readiness; routed publication; and staging
+of all 12 models. Six over-budget rows returned their expected typed admission failures. The first
+remaining real artifact row, `tool-audiveris`, then returned an artifact whose type failed the
+optical-music-recognition contract. Managed teardown completed. Audiveris output-type discovery is
+now the active Linux boundary; Phase 1 remains Active.
+The failure was a validator defect, not fabricated or malformed engine output: the runtime's closed
+Audiveris collector accepts the three real MusicXML forms `.mxl`, `.musicxml`, and `.xml`, while the
+integration family contract omitted compressed MusicXML (`.mxl`). The contract now recognizes the
+same three forms. Focused validation and a replacement image/cohort remain pending.
+The source-matched replacement image built GREEN as
+`sha256:0b7a2ce5bf381f8436c32526ac8aa27a010d6cc4e40184060889b05a6b0be2ff`
+(20,125,353,937 bytes), including all five native-artifact checks and the image-local compile,
+bundle, type, formatting, and static checks. Its canonical Linux CPU cohort is now the active gate.
+That cohort passed all machine-independent gates, exact-image registry verification, typed cluster
+readiness, staging of all 12 models, the complete per-model matrix (including the corrected real
+Audiveris `.mxl` artifact), cache lifecycle, service runtime loop, durable topic families, engine
+pool placement/backpressure, frontend and coordinator failover, engine-pod replacement, and engine
+node drain. It then failed model-bootstrap deduplication because one authorized request attempt
+produced two new ready events instead of exactly one. Managed teardown completed. Bootstrap
+ready-event deduplication/accounting is now the active Linux boundary; Phase 1 remains Active.
+The failure exposed ambiguous validation accounting: ready events identified only the model, so the
+test attributed every concurrent eager/recovery ready event for that model to the one replayed
+request. The typed event now carries its causal request-attempt key (with backward-compatible decode
+for retained older events), and the adversarial check still counts raw Pulsar message IDs but only
+for that exact authorized attempt. Focused validation and a replacement exact-source image remain
+pending.
+The supported Linux-container `infernix test unit` gate is GREEN after that correction: all Haskell
+unit/property coverage passed, the changed integration target compiled under `-Wall -Werror`, and
+PureScript passed 83/83. The replacement exact-source image then built GREEN as
+`sha256:79e746d37fdd6a8415964c9350af6346f00f1244460890cea61ffdb81648cde1`
+(20,125,554,166 bytes), including all five native materializations, framework environments,
+image-local Haskell and web builds, Python checks, browser provisioning, and the CLI-help smoke.
+Its canonical Linux CPU cohort passed every machine-independent gate, exact-image Harbor
+publication, the complete real per-model matrix, all six typed memory-admission rows, cache and
+service-runtime validation, durable Pulsar families, placement/backpressure, frontend/coordinator/
+engine replacement and node-drain recovery, the corrected exact-attempt model-bootstrap
+deduplication gate, 12-prompt throughput (`p95Seconds = 1639.8977992534637`), Harbor/MinIO/routed
+Pulsar/PostgreSQL recovery, PostgreSQL lifecycle rebinding, anti-affinity, and the
+`demo_ui = false` lifecycle. Routed Playwright then passed 14/16 and failed both inference-bearing
+tests before submission because their helper invoked operator-facing `infernix kubectl scale`
+while the harness-owned cluster slot was reserved. Managed teardown completed. Replacing the
+Playwright helper's arbitrary operator-kubectl dependency with a closed, harness-authorized
+package command vocabulary is now the active Phase 1 boundary; Phase 1 remains Active.
+That code-side correction is now implemented: Playwright can request only two package-owned
+actions, model-specific engine preparation and fixed demo-pod replacement. Both execute inside a
+harness-owned cluster region; deployment names and replica counts are derived from the generated
+catalog, and the closed cluster command language owns the exact scale/list/delete/wait vocabulary.
+The operator diagnostic wrapper is no longer used for these mutations. The supported Linux
+container unit gate is GREEN (Haskell unit/property plus PureScript 83/83), the focused command
+registry/argv/rejection regressions pass, repository lint is GREEN, `infernix lint docs` is GREEN,
+and `git diff --check` is GREEN. A replacement exact-source image and its canonical Linux CPU
+cohort remain the active Phase 1 gate.
+The replacement image has now built GREEN as
+`sha256:0415213b271d730eb8099f8414ec4d49aabc0e141c1024e247db3e55389b80c2`
+(20,125,667,641 bytes), including all five native artifacts, framework environments,
+image-local Haskell/PureScript/Python checks, browser provisioning, and the CLI-help smoke. Its
+canonical Linux CPU cohort is now the active Phase 1 gate.
+That cohort passed the Haskell style/realness gate but stopped in machine-independent preflight
+because the image-baked `documents/reference/cli_reference.md` generated section omitted the two
+new registry commands. The host reference is now byte-aligned with the authoritative renderer.
+Because Linux validation consumes the baked source snapshot, a second replacement image is
+required; the prior digest is retained only as failed evidence and Phase 1 remains Active.
+The corrected source-matched image is now GREEN as
+`sha256:e5ef7da5641972f7935386b1e95919f476fe861f93adc3984f364b75c767f7d3`
+(20,125,654,078 bytes). Its image-local checks and an image-backed `infernix lint docs` pass. This
+digest's canonical Linux CPU cohort is now the active Phase 1 gate.
+That cohort passed the repaired generated-documentation gate and repository style/realness, then
+stopped in `infernix-unit` because the newly added scale-renderer assertion omitted the renderer's
+mandatory `--kuberc=/dev/null` argument. Production behavior was not implicated. The assertion now
+pins the complete closed argv, including ambient-kuberc suppression. The replacement exact-source
+image is GREEN as `sha256:6b9e7f5aada9f51e0befe7cd583ad08384ca63419f2088f074bbec048fd881aa`
+(20,125,645,456 bytes). Its image-backed unit cohort is GREEN (Haskell unit/property and
+PureScript 83/83), and its image-backed documentation lint is GREEN. The canonical Linux CPU
+cohort on this immutable digest passed all machine-independent gates, exact registry publication
+and verification, typed cluster readiness, routed publication, and staging of all 12 configured
+models. It then failed during real `llm-tinyllama-gguf` inference because the Linux RSS observer
+sampled a live `stat` record while the process was exiting and the following `status` record lacked
+`VmRSS`; managed teardown completed. The earlier terminal-status correction was too narrow because
+procfs can discard the memory map before publishing a terminal state. The observer now performs a
+fixed three-retry `stat`/`status` recheck, accepts zero only after disappearance or explicit
+terminal-state evidence, and still fails closed for a stable live or malformed record. Focused
+regressions cover vanished, terminal, live, and malformed recheck evidence. A new exact-source
+image built GREEN as
+`sha256:77b89e61bf6e96bb40978a73b018ecd6c480bf83dfea1b6aaba8b8c04f2236df`
+(20,125,740,478 bytes), including strict Haskell compilation, browser provisioning, web and Python
+checks, and all five native-artifact validations. Its image-backed unit cohort is GREEN (Haskell
+unit/property plus PureScript 83/83). The canonical Linux CPU cohort on this immutable digest is
+now the active gate; Phase 1 remains Active. Its first attempt stopped before cluster mutation at
+the style/realness gate: HLint required eta-reducing the new `readResidentBytes` definition. The
+mechanical correction is applied; because it changes source identity, a fresh exact-source image
+and complete canonical cohort are required rather than reusing this digest. The replacement image
+built GREEN as
+`sha256:d9cb08af957937ef5658c4b8f4b24cc97497032d5cf21958b82bd9fda6066a3f`
+(20,125,766,951 bytes), including strict compilation, browser provisioning, web and Python checks,
+and native substrate materialization. Its complete canonical Linux CPU cohort is now the active
+gate. That cohort passed every machine-independent gate, exact Harbor publication and registry-only
+verification, typed cluster readiness, routed publication, and eager staging of all 12 models, but
+real `speech-faster-whisper-ct2` inference reproduced the missing-`VmRSS` exit race. The three 1 ms
+rechecks were too short under the loaded cohort; managed teardown completed. The same fail-closed
+terminal-evidence loop now permits four full 50 ms watchdog intervals before rejecting a stable
+live task. The replacement exact-source image built GREEN as
+`sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`
+(20,125,729,597 bytes), including strict compilation, browser provisioning, web and Python checks,
+and all five native-artifact validations. Its complete canonical `./bootstrap/linux-cpu.sh test`
+cohort is GREEN with exit status 0. The source-matched run passed the combined Haskell
+style/realness gate, Python checks, Haskell unit/property suites, PureScript 83/83, exact-image
+Harbor publication and registry-only verification, typed cluster readiness, routed publication,
+eager staging of all 12 configured models, real per-model inference or the exact typed 4 GiB pod
+capacity rejection, cache and service-loop checks, durable Pulsar topic families, placement and
+backpressure, frontend/coordinator/engine/node failure recovery, bootstrap deduplication, the
+12-prompt multi-user throughput gate, Harbor/MinIO/Pulsar/PostgreSQL recovery, lifecycle rebinding,
+and Linux engine anti-affinity. The integration suite passed and completed managed teardown; the
+outer harness then restored the operator configuration and all 12 model-cache entries. All 16
+Playwright tests passed, including the full catalog per-model browser matrix (42.5 minutes), and
+the final managed teardown completed before the command returned 0. This closes the current
+Linux CPU frozen-identity gate; Phase 1 remains Active only for its separately governed remaining
+Apple closure and hardware evidence.
+
 ## No-Repo-Owned Native Source Correction (2026-07-26)
 
 The governed architecture now forbids repository-owned native implementation source, including C,
@@ -24,7 +368,7 @@ adversarial validation, final review with no High or Medium findings, and the co
 machine-independent correction Stage 1 passed on 2026-07-27. The rejected forked target-group
 candidate has been replaced by the all-Haskell
 self-exec anchor/supervisor/pin topology. The production modules compile and the ordered
-compile gate passed with the current inventory of 5 positive and 50 negative fixtures. The prewrite activity-residue window,
+compile gate passed; the inventory recorded there has since grown and is currently 6 positive and 79 negative fixtures. The prewrite activity-residue window,
 unbounded recovery-record reads, and missing capture/terminal semantic bounds found by review are
 corrected. The
 replacement uses nested exact-identity custody
@@ -179,6 +523,19 @@ needing an explicit design decision, not a bound to raise. The closure bounds al
 pending final measurement, several corrections still have no machine-independent regression coverage,
 and no integration, routed, or `linux-cpu` lane has started.
 
+**Part of that load-sensitivity was a real defect, and it is now corrected** (2026-07-30). A frozen
+gate run failed with `the cancelled protocol-isolation command published an invalid descendant pid`,
+and elimination is exact: the "never published" branch did not fire, so the file existed, and the
+only writer for it emits a valid integer. Every fixture publishes with `printf ... > "$path"`, whose
+redirection creates and truncates the file *before* `printf` runs, so a zero-length window is
+guaranteed by the shell's evaluation order rather than produced by scheduling. `waitForFileContents`
+returned the first read after `doesFileExist` and so could return an empty record. It now treats an
+empty file as not-yet-published, which makes the deadline the only way a publication wait can fail
+and removes that whole class from the load-sensitivity bucket — across roughly thirty call sites,
+several of which already asserted `published empty evidence` immediately afterwards, i.e. caught this
+race and reported it as a failure. The bucket is not retired: the deadline-shaped symptoms below are
+a separate question and repeated green runs on a genuinely quiet host are still owed.
+
 A further finding is that `infernix-unit` is **load-sensitive**. On a host carrying sustained
 background CPU load it failed repeatedly with several different deadline symptoms on unchanged
 source, then passed. Every symptom was a missed deadline rather than a wrong result, and the pattern
@@ -240,12 +597,27 @@ is built on the Apple installed-artifact shape while the `linux-native` catalog 
 targets — which is now decided in favour of binding the smoke to the image target, with the
 implementation enumerated but deliberately not landed.
 
-Still required: the Linux image-target binding, the JavaCPP pre-extraction chosen for Audiveris,
-final closure *values* (blocked on the `jvm-native` measurement), the generation-lease consumer
-residual (blocked on the image-target binding), the remaining impure-surface regression coverage, a
-fresh final review, exact-source Stage 1 on a genuinely quiet host, the completed Apple cohort, and
-its paired `linux-cpu` cohort. Machine-independent green is the gate to begin Phase 2 implementation,
-not Phase 1 closure. The old fixed-bridge/Clang topology has no accepted correction evidence.
+**The Linux image-target binding and the generation-lease consumer residual closed on 2026-07-30**,
+and closing the latter exposed two further High-severity defects that no machine-independent gate
+could reach. First, both closed Linux sealed-run environment contracts named `LD_DEBUG` alone while
+every rendered command also carries the renderer's fixed bytecode guard, so the Linux native artifact
+smoke was refused as an unsupported command environment on every input — a second layer behind the
+wrong-audit defect recorded above. Second, and larger, **the runtime inference launch never rendered
+the closed catalog's leading arguments**: wrapper retirement rebuilt argument rendering only on the
+smoke path, so all four installed Python-runner artifacts reached `apple_native_runner.py` without
+the `--adapter-id`/`--engine-name` pair it requires, and the Linux JVM target reached `java` without
+its classpath. Both are corrected, and every new assertion was measured against the pre-correction
+source rather than argued. Runtime launch now also holds the exact generation's shared read lease
+through reap and refuses a generation no writer minted.
+
+Still required: the raw-CLI runtime argument translation the leading-argument correction exposed
+(`llama-cpp-cli` and `whisper-cpp-cli` carry no argument prefix, so the direct binaries are still
+handed a protocol they do not parse — a design decision of the same kind as the JavaCPP question),
+the JavaCPP pre-extraction chosen for Audiveris, final closure *values* (blocked on the `jvm-native`
+measurement), the remaining impure-surface regression coverage, a fresh final review, exact-source
+Stage 1 on a genuinely quiet host, the completed Apple cohort, and its paired `linux-cpu` cohort.
+Machine-independent green is the gate to begin Phase 2 implementation, not Phase 1 closure. The old
+fixed-bridge/Clang topology has no accepted correction evidence.
 
 The same source review rejected the remaining direct `proc_pid_rusage` FFI exemption. The source
 now implements Phase 4 Sprint 4.32's fixed-command, total-deadline public `/usr/bin/top` plus
@@ -275,6 +647,35 @@ interjection invalidated its freeze. Cancellation preserved the primary `user in
 exposed same-process lifecycle-lock cleanup contention (`errno 35`). Supported recovery staged all
 retained claims, observed Kind absent, retired the harness reservation, and restored the operator
 config. Those partial observations do not close Phase 2 or Wave Y.
+
+## Accelerator Availability Inverted On The Current Host (2026-07-30)
+
+Work moved to the CUDA Linux development host — native Ubuntu amd64, 32 cores, 124 GiB RAM, one
+RTX 5090 (driver 570.211.01, CUDA 12.8), GHC 9.12.4, cabal 3.14.2.0. This inverts the hardware
+assumptions every open phase was written against, in both directions:
+
+- **`apple-silicon` is now the unavailable accelerator.** Sprint 1.20's Apple materializer,
+  cohort, and `jvm-native` measurement obligations, and the Apple halves of the Phase 2 and Phase 4
+  cohort gates, cannot be run here at all. Per the operator decision below they are recorded as
+  explicit outstanding obligations rather than claimed, which is exactly the treatment this plan
+  already applies to Sprint 6.44's `linux-gpu` gate.
+- **`linux-gpu` is now available.** Sprint 6.44's selected `linux-gpu` cohort gate was recorded as
+  hardware-blocked because "the operator host is Apple Silicon with no CUDA device". That blocker no
+  longer holds. `nvidia-ctk` and the `nvidia` Docker runtime are installed and registered; `nvkind`
+  is not yet on `PATH` and its bootstrap installs it.
+- **`linux-cpu` remains available** and `./bootstrap/linux-cpu.sh doctor` passes here with no
+  package installation triggered.
+
+Section Q's single-accelerator rule is unchanged by this: a phase still selects exactly one of
+`{apple-silicon, linux-gpu}` plus `linux-cpu`. What changed is which one a phase can actually
+select on the machine in front of it. A deliverable that is intrinsically Apple-bound — the Apple
+materializer, Core ML, the Audiveris DMG — keeps `apple-silicon` and waits for that hardware; the
+rest may select `linux-gpu`.
+
+The host is not idle: the `jitml` sister project runs here concurrently, including a four-node Kind
+cluster. Sustained load averages of 25-35 were observed throughout this session's gate runs. That is
+the same condition this plan already records as making `infernix-unit` load-sensitive, and it means
+no run recorded from this session is a Stage 1 result.
 
 ## Typed Execution Plan Doctrine Reopen (2026-07-25)
 
@@ -1329,14 +1730,15 @@ reopened for that owner-atomic correction.
   mirror, the `documentation_standards.md` cluster-lifecycle Update Rule, and the operator / test-harness
   / persistence doc reconciliation. Doc-only, **`Done`** (2026-07-23, `infernix lint docs` + `docs check`
   + `cabal build all`).
-- **Phase 2 Sprint 2.15** (`Blocked by Phase 1`) — the model half preserves the `ClusterOwner` field and
+- **Phase 2 Sprint 2.15** (`Active`) — the model half preserves the `ClusterOwner` field and
   `ClusterMutating` lifecycle position while making operator/harness teardown authorization and the
   destructive transition one cross-process locked operation. Its implementation remains landed,
   and the Bark plus registry-only Harbor verification corrections are implemented. The
   `d578…` / `a0d1…` and `eae424…` / `a0d1…` review and Stage 1 results are historical
   GREEN-as-run evidence only and are superseded by the no-native-source correction. Phase 0's
-  current correction review and Stage 1 are green; Phase 2 remains blocked by Phase 1 and no Wave Y
-  behavioral evidence exists.
+  current correction review and Stage 1 are green. Phase 1 is code-side closed, so Phase 2's own
+  ordered settled-source review and validation are now active; no Phase 2 Wave Y behavioral
+  evidence exists.
 - **Phase 6 Sprint 6.43** (`Blocked by Phase 2 and Phase 4`) — Phase 6's own ordered closure remains
   after its predecessors.
 
@@ -1350,12 +1752,12 @@ recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 | Phase | Current status | Reopened work |
 |-------|----------------|---------------|
 | 0 | Done | Sprint 0.18 no-repo-owned-native-source doctrine, governed mirror, focused adversarial proof, final review, and source-matched correction Stage 1 closed 2026-07-27 |
-| 1 | Active | On 2026-07-30 the writer-effect audit's item 11, the closure-bound reachability obligation, and the Linux sealed-run loader observation closed with the complete machine-independent gate set green on one frozen identity. That work exposed a High-severity defect (the exact-capture classifier audited every smoke against `dyld`, so the Linux native smoke could not pass on any input) and a Linux-lane design contradiction now decided in favour of image-target binding. Remaining: the image-target binding, JavaCPP pre-extraction, final closure values, the generation-lease consumers, impure-surface coverage, a fresh review, Stage 1 on a quiet host, and both cohorts. Prior context — Sprint 1.20 native-source removal and bounded provisioning are implemented, but five adversarial reviews have rejected successive drafts. Review #5 found that writer authority could escape the exclusive lock inside an `IO` closure, post-activation validation still accepted arbitrary `IO`, closure identity/scan paths remained pathname-recursive, and snapshot/package discovery plus nested native-runner capture were not completely bounded. The live correction audit additionally found a PID/PGID-reuse window because capped-engine cleanup reaped the group leader before numeric group cleanup, an unsound linear-callback shape over ordinary `IO`, and path-text-only direct-target fingerprints; wrapper deletion has landed, but the first Linux target evidence still omitted the system loader and recursive library closure. The root-bound writer draft also converts retained authority back to pathname effects, leaving an intermediate-parent swap window, and Apple Python `pyvenv.cfg` still names the source Homebrew runtime. Runner-owned indexed sequencing, descriptor-retained single-leaf writer effects, self-contained installed targets, closed direct invocation, descriptor-relative bounded traversal, exact executable/interpreter/script/closure records, a live helper-owned engine group through cleanup/reap, full-materializer cleanup proof, fresh review/Stage 1, and Apple plus paired `linux-cpu` cohorts remain |
-| 2 | Blocked by Phase 1 | Governed all-Haskell correction: the `filelock` boundary and self-exec anchor/supervisor/pin implementation are present, and the obsolete subprocess C/Cabal boundary is removed; Phase 2's ordered review/validation and then Apple and `linux-cpu` remain |
+| 1 | Active | On 2026-07-30 the generation-lease residual was closed, and closing it found that the Linux native artifact smoke **still could not pass on any input** — the wrong-audit correction recorded above was necessary but not sufficient. Two further independent High-severity blockers sat behind it, neither reachable by any machine-independent gate: the pre-manifest candidate branch asserted `generationFingerprint == payloadDigest`, which is the `apple-silicon` branch of `engineArtifactGenerationFingerprint` and which no `linux-native` generation can satisfy by construction; and `supervisorArtifactGenerationRoot` required a `Just` retained relative executable, refusing every image candidate before its root was resolved. Both are corrected: the candidate identity is now re-derived helper-side through `rederiveArtifactGenerationFingerprint` from the lane, the closed catalog, and re-observed descriptor-derived image evidence — which is the real close of generation-lease sub-item 3 rather than its Apple-only half — and the root resolver admits either shape while `validateRetainedArtifactTarget` enforces agreement with the catalog. Step 6 itself landed with them, and exposed that the installed branch skipped the retained-target shape check entirely, so an activated generation was held to a weaker rule than a candidate. The style-gate operator-config defect is also closed with a self-describing diagnostic plus a declared prerequisite in `local_dev.md`. The complete machine-independent gate set is GREEN over frozen identity `sha256:7077ab25…` / binary `sha256:0c3f9d27…`, but under load 28-33, so it is not a Stage 1 result. Remaining: generation-lease sub-item 2 (runtime launch reaches the capped-engine spawn, not the bounded-command kernel, so no lease authorizes shared execution anywhere), a discriminating helper-side regression for the candidate re-derivation, JavaCPP pre-extraction, final closure values (blocked on the Apple-only `jvm-native` measurement), a fresh final review, Stage 1 on a quiet host, and both cohorts — the Apple half of which cannot run on the current CUDA Linux host at all |
+| 2 | Active — Validation Only | The ordered machine-independent review is closed with no High/Medium code-side residual. The all-Haskell `filelock` and bounded self-exec kernel are implemented, and the exact Linux cohort exercised their lifecycle paths. Selected Apple Wave Y validation remains. |
 | 3 | Done | No work in this reopen |
-| 4 | Blocked by Phases 1-2 | Sprint 4.32 bounded public-tool Apple footprint observer and correction-focused proof are present; verified Apple/Linux CPU enforcers, opaque single-flight authority, and fresh behavioral evidence remain |
+| 4 | Active — Validation Only | Sprint 4.32 code-side closure and the Linux behavioral half are GREEN. The opaque single-flight authority and fail-closed sampler-loss path are implemented; the live 64 MiB/16 MiB watchdog breach returns typed `EngineExceededCeiling`, reaps non-successfully, and a subsequent child succeeds. Exact image `sha256:dfc0e2b6251e2d7ed74712253e06d2f9fbc60b649ac162b44dac030aca43a979` (20,125,723,532 bytes) passed uninterrupted `./bootstrap/linux-cpu.sh test`: style/realness, Python, Haskell unit, web `83/83`, full integration/HA/lifecycle, and routed Playwright `16/16` (44.6 m; catalog matrix 42.9 m), with clean teardown. Apple breach/observer hardware evidence is the only remaining Phase 4 gate. |
 | 5 | Done | No work in this reopen |
-| 6 | Blocked by Phases 2 and 4 | Sprint 6.43 owner-atomic harness correction + Sprint 6.44 verified NVIDIA enforcement and lint closure. Sprint 6.44's selected `linux-gpu` cohort gate is additionally **hardware-blocked**: the operator host is Apple Silicon with no CUDA device. Per the 2026-07-30 operator decision, Sprint 6.44 lands its enforcement and lint-closure code and validates machine-independent plus `linux-cpu`, and the `linux-gpu` cohort is recorded as an explicit outstanding obligation rather than claimed |
+| 6 | Blocked by Phases 2 and 4 | Sprint 6.43 owner-atomic harness correction + Sprint 6.44 verified NVIDIA enforcement and lint closure. Sprint 6.44's selected `linux-gpu` cohort gate is **no longer hardware-blocked**: work moved to a CUDA Linux host with an RTX 5090, so that gate is runnable for the first time (see the accelerator-availability section above). Sprint 6.44's code-side closure is still `Not started` — `watchdogForGrant` returns a hard `Left "NVIDIA per-process VRAM enforcement is unavailable"` for `NvidiaVramAccountingEnforcer`, so the work is a third `WatchdogSpec` constructor plus a bounded fixed-command observer over `nvidia-smi --query-compute-apps=pid,used_gpu_memory`, mirroring the Darwin `/usr/bin/top` plus `/usr/bin/footprint` one. The plan/refinement plumbing it consumes (`NvidiaVram`, `GpuPlacementObservation`, `NvidiaSamplerUnavailable`, `NvidiaEnvelopeTooSmall`) already exists |
 | 7 | Done | No work in this reopen |
 | 8 | Blocked by Phase 6 Sprint 6.44 | Sprint 8.9 generated proper-union schema migration |
 | 9 | Done | No work in this reopen |

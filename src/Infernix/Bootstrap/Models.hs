@@ -21,6 +21,7 @@ import Data.Aeson
     object,
     withObject,
     (.:),
+    (.:?),
     (.=),
   )
 import Data.Text (Text)
@@ -45,7 +46,8 @@ instance ToJSON ModelBootstrapReadyEvent where
   toJSON event =
     object
       [ "modelId" .= readyEventModelId event,
-        "readyAt" .= readyEventReadyAtIso8601 event
+        "readyAt" .= readyEventReadyAtIso8601 event,
+        "requestAttemptKey" .= readyEventRequestAttemptKey event
       ]
 
 instance FromJSON ModelBootstrapReadyEvent where
@@ -53,6 +55,7 @@ instance FromJSON ModelBootstrapReadyEvent where
     ModelBootstrapReadyEvent
       <$> value .: "modelId"
       <*> value .: "readyAt"
+      <*> value .:? "requestAttemptKey"
 
 -- | A request the engine pod publishes when its adapter sees an uncached
 -- model. The supported topic is @infernix/system/model.bootstrap.request@.
@@ -68,10 +71,15 @@ data ModelBootstrapRequest = ModelBootstrapRequest
   deriving (Eq, Show)
 
 -- | The completion event published once every file is uploaded to MinIO
--- and the @.ready@ sentinel has been written.
+-- and the @.ready@ sentinel has been written. New publishers carry the
+-- request-attempt key so consumers and adversarial validation can distinguish
+-- an exact replay from independent eager/recovery attempts for the same model.
+-- The field remains optional on decode for retained events written before the
+-- causal key was added.
 data ModelBootstrapReadyEvent = ModelBootstrapReadyEvent
   { readyEventModelId :: Text,
-    readyEventReadyAtIso8601 :: Text
+    readyEventReadyAtIso8601 :: Text,
+    readyEventRequestAttemptKey :: Maybe Text
   }
   deriving (Eq, Show)
 

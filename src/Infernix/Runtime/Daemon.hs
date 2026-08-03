@@ -6,7 +6,6 @@ module Infernix.Runtime.Daemon
 where
 
 import Control.Concurrent (forkIO, threadDelay)
-import Control.Concurrent.MVar (newMVar)
 import Control.Monad (forM_, forever, when)
 import Data.List (intercalate)
 import Data.Maybe (fromMaybe, listToMaybe)
@@ -44,6 +43,7 @@ import Infernix.ExecutionPlan
     runtimePlanCompiledPlan,
     runtimePlanModels,
   )
+import Infernix.Runtime.CappedEngine (EngineExecutionAuthority)
 import Infernix.Runtime.Enforcer (refineCompiledRuntimePlan)
 import Infernix.Runtime.KVCache qualified as KVCache
 import Infernix.Runtime.Pulsar
@@ -76,7 +76,7 @@ import Infernix.Types hiding (generatedDemoConfigPath)
 -- process-local engine KV cache is threaded into request handling.
 data DaemonExecutionPlan
   = RoutingDaemonPlan CompiledRuntimePlan
-  | ExecutingDaemonPlan Text.Text RuntimePlan
+  | ExecutingDaemonPlan Text.Text RuntimePlan EngineExecutionAuthority
 
 runProductionDaemon :: Paths -> RuntimeMode -> Maybe ClusterConfig -> Maybe FilePath -> DaemonRole -> Maybe Text.Text -> IO ()
 runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath daemonRole maybeEngineName = do
@@ -121,14 +121,14 @@ runProductionDaemon paths runtimeMode maybeClusterConfig maybeDemoConfigPath dae
           Left errors ->
             ioError
               (userError ("generated substrate runtime plan could not be refined against live enforcement: " <> show errors))
-          Right runtimePlan -> do
+          Right (runtimePlan, executionAuthority) -> do
             memberIdValue <-
               case compiledDaemonMemberId compiledDaemon of
                 Nothing ->
                   ioError
                     (userError "compiled engine daemon has no member identity")
                 Just memberId -> pure memberId
-            pure (ExecutingDaemonPlan memberIdValue runtimePlan)
+            pure (ExecutingDaemonPlan memberIdValue runtimePlan executionAuthority)
       Coordinator -> pure (RoutingDaemonPlan compiledPlan)
       Webapp ->
         ioError
@@ -172,14 +172,14 @@ daemonExecutableModelCount daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan ->
       length (compiledPlanAvailableModels compiledPlan)
-    ExecutingDaemonPlan _ runtimePlan ->
+    ExecutingDaemonPlan _ runtimePlan _ ->
       length (runtimePlanModels runtimePlan)
 
 daemonCompiledPlan :: DaemonExecutionPlan -> CompiledRuntimePlan
 daemonCompiledPlan daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan -> compiledPlan
-    ExecutingDaemonPlan _ runtimePlan -> runtimePlanCompiledPlan runtimePlan
+    ExecutingDaemonPlan _ runtimePlan _ -> runtimePlanCompiledPlan runtimePlan
 
 daemonTopicCapabilities ::
   DaemonExecutionPlan ->
@@ -188,8 +188,8 @@ daemonTopicCapabilities daemonPlan =
   case daemonPlan of
     RoutingDaemonPlan compiledPlan ->
       Right (coordinatorTopicCapabilities compiledPlan)
-    ExecutingDaemonPlan memberIdValue runtimePlan ->
-      engineTopicCapabilities memberIdValue runtimePlan
+    ExecutingDaemonPlan memberIdValue runtimePlan executionAuthority ->
+      engineTopicCapabilities memberIdValue runtimePlan executionAuthority
 
 runFilesystemTopicSpool ::
   Paths ->
@@ -224,9 +224,8 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
   writeServiceReadinessMarker paths
   putStrLn "serviceSubscriptionMode: websocket-pulsar"
   putStrLn ("servicePulsarWsBaseUrl: " <> renderPulsarWebSocketBase (pulsarWebSocketBase transport))
-  engineExecutionLock <- newMVar ()
   case (daemonPlan, compiledPlanRuntimeMode compiledPlan, topicCapabilities) of
-    (ExecutingDaemonPlan _ _, AppleSilicon, primaryCapability : extraCapabilities) -> do
+    (ExecutingDaemonPlan {}, AppleSilicon, primaryCapability : extraCapabilities) -> do
       forM_
         extraCapabilities
         ( \capability ->
@@ -236,11 +235,10 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
                   paths
                   capability
                   (Just engineKVCache)
-                  engineExecutionLock
               )
         )
-      consumeTopicForever transport paths primaryCapability (Just engineKVCache) engineExecutionLock
-    (ExecutingDaemonPlan _ _, _, capabilities) -> do
+      consumeTopicForever transport paths primaryCapability (Just engineKVCache)
+    (ExecutingDaemonPlan {}, _, capabilities) -> do
       forM_
         capabilities
         ( \capability ->
@@ -250,7 +248,6 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
                   paths
                   capability
                   (Just engineKVCache)
-                  engineExecutionLock
               )
         )
       forever (threadDelay 60000000)
@@ -264,7 +261,6 @@ runWebSocketPulsarDaemon paths daemonPlan topicCapabilities engineKVCache transp
                   paths
                   capability
                   (Just engineKVCache)
-                  engineExecutionLock
               )
         )
       startCoordinatorLoops transport routingPlan

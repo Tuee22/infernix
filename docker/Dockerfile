@@ -85,7 +85,8 @@ RUN apt-get update \
     && ln -sf /usr/bin/python3 /usr/local/bin/python \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m venv ${POETRY_HOME} \
+RUN python3 -m venv --copies ${POETRY_HOME} \
+    && cp -aL /usr/lib/python3.12/. ${POETRY_HOME}/lib/python3.12/ \
     && ${POETRY_HOME}/bin/python -m pip install --upgrade pip \
     && ${POETRY_HOME}/bin/pip install poetry \
     && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry \
@@ -141,6 +142,8 @@ RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
     && cabal update \
     && cabal build all --only-dependencies \
     && npm --prefix web install --no-audit --no-fund \
+    && python3 -m venv --copies /workspace/python/.venv \
+    && cp -aL /usr/lib/python3.12/. /workspace/python/.venv/lib/python3.12/ \
     && poetry install --directory python --no-root
 
 COPY . /workspace
@@ -182,7 +185,11 @@ RUN set -eu; \
       libxtst6; \
     dpkg-deb -x "${native_tmp}/audiveris.deb" /; \
     rm -rf /opt/audiveris/lib/runtime; \
-    python3 -m venv /opt/infernix/native-python; \
+    mkdir -p /opt/infernix/audiveris-javacpp-cache; \
+    /opt/infernix/audiveris-jre/bin/java \
+      -Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache \
+      -cp '/opt/audiveris/lib/app/*' Audiveris -version; \
+    python3 -m venv --copies /opt/infernix/native-python; \
     /opt/infernix/native-python/bin/python -m pip install --upgrade pip; \
     /opt/infernix/native-python/bin/pip install --no-cache-dir -r /workspace/python/native-runners/requirements-linux.txt; \
     /opt/infernix/native-python/bin/pip uninstall -y hf_xet || true; \
@@ -328,6 +335,7 @@ RUN printf '%s\n' \
 # is a dependency-level removal, not an env var, per the configuration doctrine.
 RUN mkdir -p /workspace/tools/generated_proto \
     && poetry install --directory python \
+    && cp -aL /usr/lib/python3.12/. /workspace/python/.venv/lib/python3.12/ \
     && poetry --directory python run pip uninstall -y hf_xet \
     && poetry --directory python run python -m grpc_tools.protoc \
          -I /workspace/proto \
@@ -339,26 +347,43 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --installdir=/usr/local/bin \
          --install-method=copy \
          --overwrite-policy=always \
-         exe:infernix \
-    && infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
+         exe:infernix
+
+# Phase 3 Sprint 3.10 — install Playwright's system dependencies before native
+# artifact observation. The installer legitimately regenerates
+# /etc/ld.so.cache; materializing afterward ensures cache-backed loader edges
+# bind the final immutable image bytes rather than an intermediate layer.
+RUN apt-get update \
+    && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep artifact materialization in its own final filesystem-mutating layer: its
+# fail-closed loader and provenance checks are intentionally stricter than
+# compilation, and a failed observation must be diagnosable and retryable
+# without rebuilding the binary.
+RUN infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
     && infernix test init --runtime-mode ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
-    && infernix internal materialize-linux-native-engines \
     && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
          poetry install --directory python/engines/transformers --with linux-cpu --no-interaction \
+         && transformers_project_digest="$( { cat python/engines/transformers/pyproject.toml; printf '\n'; cat python/engines/transformers/poetry.lock; } | sha256sum | cut -d ' ' -f 1 )" \
          && printf '%s\n' \
            'runtimeMode=linux-cpu' \
            'adapterId=transformers-python' \
            'groups=linux-cpu' \
+           "projectDigest=${transformers_project_digest}" \
            > python/engines/transformers/.venv/.infernix-framework-groups-linux-cpu-linux-cpu \
          && poetry install --directory python/engines/pytorch --with linux-cpu --no-interaction \
+         && pytorch_project_digest="$( { cat python/engines/pytorch/pyproject.toml; printf '\n'; cat python/engines/pytorch/poetry.lock; } | sha256sum | cut -d ' ' -f 1 )" \
          && printf '%s\n' \
            'runtimeMode=linux-cpu' \
            'adapterId=pytorch-python' \
            'groups=linux-cpu' \
+           "projectDigest=${pytorch_project_digest}" \
            > python/engines/pytorch/.venv/.infernix-framework-groups-linux-cpu-linux-cpu; \
        fi \
     && npm --prefix web run build \
-    && poetry --directory python run check-code
+    && poetry --directory python run check-code \
+    && infernix internal materialize-linux-native-engines
 
 # Phase 4 Sprint 4.17 — this is the slim control-plane / coordinator image: it
 # carries the `infernix` binaries, the framework-free shared `python/` project
@@ -368,16 +393,6 @@ RUN mkdir -p /workspace/tools/generated_proto \
 # still live only in per-engine images built from `docker/engine.Dockerfile`
 # (CUDA-runtime base + this image's binary/python + one engine's `--with cuda`
 # venv), so the GPU lane avoids the retired ~121 GB monolith.
-
-# Phase 3 Sprint 3.10 — Playwright system dependencies + browser
-# install live in the launcher image. The previous dedicated
-# @infernix-playwright:local@ container is retired; @infernix test e2e@
-# now invokes @npm --prefix web exec -- playwright test ...@ inside
-# this launcher container, on the same private Docker @kind@ network as
-# the running cluster.
-RUN apt-get update \
-    && npm --prefix web exec -- playwright install --with-deps chromium firefox webkit \
-    && rm -rf /var/lib/apt/lists/*
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["infernix", "--help"]

@@ -87,6 +87,7 @@ module Infernix.Cluster.Subprocess
     sealedRunLoaderAuditForTest,
     sealedArtifactRuntimeEnvironmentForTest,
     renderedEnvironmentContractForTest,
+    linuxSealedRunRenderedEnvironmentForTest,
     supervisorTargetEnvironmentContractForTest,
     runBoundedCommand,
     dispatchInternalSubprocessMode,
@@ -95,6 +96,13 @@ module Infernix.Cluster.Subprocess
     proveBoundedCommandActivitiesQuiescent,
     AbandonedActivitiesRecovered,
     recoverAbandonedBoundedCommandActivities,
+    -- Sprint 1.20 process-group lifecycle regression surfaces. An exact leader
+    -- that is absent over a live group is the ordinary reap race, not a pid
+    -- reuse, and both classifications used to conflate the two. These drive the
+    -- corrected paths against a real group without handing the caller a
+    -- constructor for 'ActivityProcessIdentity'.
+    signalActivityProcessGroupForTest,
+    observeRecoverableProcessGroupActiveForTest,
   )
 where
 
@@ -214,7 +222,8 @@ import System.Directory
 import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (..))
 import System.FilePath
-  ( isAbsolute,
+  ( dropTrailingPathSeparator,
+    isAbsolute,
     joinPath,
     makeRelative,
     normalise,
@@ -237,6 +246,7 @@ import System.IO
     stdout,
   )
 import System.IO.Error (ioeGetErrorType, isAlreadyExistsError, isDoesNotExistError, isPermissionError)
+import System.Info qualified as SystemInfo
 import System.Posix.Directory
   ( closeDirStream,
     readDirStream,
@@ -2752,7 +2762,7 @@ runClosedInstalledRunnerSmoke
                   bounded
                     { boundedArtifactGenerationLeaseExpectation =
                         Just
-                          (artifactGenerationLeaseExpectation generationLease),
+                          (artifactGenerationLeaseExpectation "apple-silicon" "arm64" generationLease),
                       boundedProvisioningMutationWorkingDirectory =
                         Just
                           ( ProvisioningMutationWorkingDirectory
@@ -2762,9 +2772,20 @@ runClosedInstalledRunnerSmoke
                           )
                     }
 
+-- | The Linux image-target smoke.
+--
+-- @maybeManifestFingerprint@ selects which helper-side validation the retained
+-- generation gets. 'Nothing' is a pre-manifest candidate, whose identity the
+-- helper rebuilds from its lane, recipe, target contract, and re-observed image
+-- evidence. 'Just' is an activated generation whose manifest is already on the
+-- final path, so the helper additionally revalidates the whole manifest through
+-- 'Artifact.validateEngineArtifactHelperLease' — the production consumer that
+-- lease validation previously had none of on this lane.
 runClosedLinuxNativeArtifactSmoke ::
   ArtifactIdentity.NativeArtifactIdentity ->
+  Text.Text ->
   ArtifactGenerationLease ->
+  Maybe Text.Text ->
   ProvisioningMutationRoot ->
   ArtifactTarget.NativeArtifactTargetEvidence ->
   Provisioning.LinuxNativeSmokePolicy ->
@@ -2773,7 +2794,9 @@ runClosedLinuxNativeArtifactSmoke ::
   IO (Either String NativeArtifactCommandOutcome)
 runClosedLinuxNativeArtifactSmoke
   identity
+  architecture
   generationLease
+  maybeManifestFingerprint
   artifactRootAuthority
   expectedTargetEvidence
   policy
@@ -2791,9 +2814,11 @@ runClosedLinuxNativeArtifactSmoke
     where
       artifactRoot = provisioningMutationRootPath artifactRootAuthority
       command =
-        Provisioning.SmokeLinuxNativeArtifact identity artifactRoot policy
-      targetRelativePath =
-        Provisioning.linuxNativeArtifactEntrypoint identity
+        Provisioning.SmokeLinuxNativeArtifact
+          identity
+          architecture
+          artifactRoot
+          policy
       compileClosedLinuxNativeArtifactSmoke = do
         let (enginesRoot, leaseAdapterId, _generationFingerprint, _payloadDigest) =
               artifactGenerationLeaseFields
@@ -2807,11 +2832,14 @@ runClosedLinuxNativeArtifactSmoke
           ( Left
               "Linux native artifact generation lease does not match its exact artifact root and adapter"
           )
-        unless
-          (safeProvisioningMutationRelativeExecutable targetRelativePath)
-          ( Left
-              "Linux native artifact target is not one closed relative executable"
-          )
+        -- A `linux-native` target is an absolute image path, so there is no
+        -- artifact-root-relative executable to constrain. The retained root
+        -- stays the working directory because it is the generation whose
+        -- manifest and recorded loader closure authorize this run; the payload
+        -- itself lives in the immutable image, which is a stronger guarantee
+        -- than a private copy because it cannot be swapped at all.
+        target <-
+          ArtifactTarget.nativeArtifactTarget identity "linux-native" architecture
         case commandTimeout of
           Timeout micros
             | micros <= 0 ->
@@ -2820,13 +2848,16 @@ runClosedLinuxNativeArtifactSmoke
             | otherwise -> do
                 validateProvisioningCommand command
                 rendered <- renderProvisioningCommand environment command
-                let expectedExecutable = artifactRoot </> targetRelativePath
+                let expectedExecutable =
+                      ArtifactTarget.nativeArtifactTargetExecutable
+                        artifactRoot
+                        target
                 unless
                   ( renderedExecutable rendered == expectedExecutable
                       && renderedWorkingDirectory rendered == Just artifactRoot
                   )
                   ( Left
-                      "Linux native artifact rendering disagrees with its retained root authority"
+                      "Linux native artifact rendering disagrees with its closed image target"
                   )
                 bounded <-
                   compileRenderedCommand
@@ -2842,15 +2873,22 @@ runClosedLinuxNativeArtifactSmoke
                       }
                 pure
                   bounded
-                    { boundedArtifactGenerationLeaseExpectation =
+                    { boundedArtifactLeaseExpectation =
+                        ArtifactLeaseExpectation
+                          expectedAdapterId
+                          "linux-native"
+                          architecture
+                          artifactRoot
+                          <$> maybeManifestFingerprint,
+                      boundedArtifactGenerationLeaseExpectation =
                         Just
-                          (artifactGenerationLeaseExpectation generationLease),
+                          (artifactGenerationLeaseExpectation "linux-native" architecture generationLease),
                       boundedProvisioningMutationWorkingDirectory =
                         Just
                           ( ProvisioningMutationWorkingDirectory
                               artifactRootAuthority
                               []
-                              (Just targetRelativePath)
+                              Nothing
                           )
                     }
 
@@ -3208,7 +3246,7 @@ parseElfAuditLineForTest = parseElfAuditLine
 -- | Validate a sealed Linux generation's @LD_DEBUG=libs@ provenance and return
 -- the runner's own diagnostics, exactly as the Linux native smoke does.
 sealedLinuxRunnerApplicationOutputForTest ::
-  FilePath ->
+  [FilePath] ->
   ByteString.ByteString ->
   Either Text.Text ByteString.ByteString
 sealedLinuxRunnerApplicationOutputForTest =
@@ -3226,7 +3264,7 @@ sealedRunLoaderAuditForTest =
 -- | Validate a sealed generation's loader provenance and return the runner's
 -- own diagnostics, exactly as the installed smoke does.
 installedRunnerApplicationOutputForTest ::
-  FilePath ->
+  [FilePath] ->
   ByteString.ByteString ->
   Either Text.Text ByteString.ByteString
 installedRunnerApplicationOutputForTest =
@@ -3246,6 +3284,13 @@ renderedEnvironmentContractForTest ::
   [(String, String)] ->
   Either String ()
 renderedEnvironmentContractForTest = validateRenderedEnvironment
+
+-- | The exact extra environment the production renderer emits for a
+-- @linux-native@ artifact smoke, including the fixed guard the rendering
+-- wrapper prepends. Exported so the closed contracts are exercised against the
+-- shape the renderer produces rather than against a restatement of it.
+linuxSealedRunRenderedEnvironmentForTest :: [(String, String)]
+linuxSealedRunRenderedEnvironmentForTest = linuxSealedRunRenderedEnvironment
 
 -- | The closed contract a supervised target's environment must satisfy, given
 -- the executable snapshot root and any install roots the command's own lease
@@ -3480,8 +3525,7 @@ sealedArtifactRuntimeNameSets =
       [ "DYLD_PRINT_LIBRARIES",
         "PYTHONDONTWRITEBYTECODE"
       ],
-      -- The Linux sealed run: only the loader audit.
-      ["LD_DEBUG"]
+      linuxSealedRunRenderedNames
     ]
 
 validateKubeconfigPath :: FilePath -> Either String ()
@@ -3623,10 +3667,17 @@ validateProvisioningCommand command =
         [ ("Audiveris detach working directory", workingDirectory),
           ("Audiveris mount root", mountRoot)
         ]
+    Provisioning.ExtractAudiverisJavaCppNatives artifactRoot ->
+      validateProvisioningPath "Audiveris JavaCPP artifact root" artifactRoot
     Provisioning.SmokeInstalledRunner _ artifactRoot ->
       validateProvisioningPath "installed runner artifact root" artifactRoot
-    Provisioning.SmokeLinuxNativeArtifact _ artifactRoot _ ->
+    Provisioning.SmokeLinuxNativeArtifact identity architecture artifactRoot _ -> do
       validateProvisioningPath "Linux native artifact root" artifactRoot
+      -- Reject an architecture the closed catalog has no entry for here, so a
+      -- command that could not render is refused at validation rather than
+      -- failing later inside the renderer.
+      void
+        (ArtifactTarget.nativeArtifactTarget identity "linux-native" architecture)
     Provisioning.QueryPythonVersion _ artifactRoot ->
       validateProvisioningPath "Python version artifact root" artifactRoot
     Provisioning.QueryPythonProvenance _ artifactRoot ->
@@ -3831,6 +3882,28 @@ renderProvisioningCommand environment command =
             "detach pinned Audiveris DMG"
             workingDirectory
         )
+    Provisioning.ExtractAudiverisJavaCppNatives artifactRoot ->
+      pure
+        ( fixedProvisioningProcess
+            ( artifactRoot
+                </> "Audiveris.app"
+                </> "Contents"
+                </> "runtime"
+                </> "Contents"
+                </> "Home"
+                </> "bin"
+                </> "java"
+            )
+            [ "-Dorg.bytedeco.javacpp.cachedir=" <> (artifactRoot </> "javacpp-cache"),
+              "-cp",
+              artifactRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
+              "Audiveris",
+              "-version"
+            ]
+            ""
+            "extract Audiveris JavaCPP natives"
+            artifactRoot
+        )
     Provisioning.SmokeInstalledRunner adapter artifactRoot ->
       -- The installed smoke is the authority that proves the sealed generation
       -- actually loads its own libraries, so it must run under the same fixed
@@ -3851,25 +3924,32 @@ renderProvisioningCommand environment command =
                 (Provisioning.installedSmokeExecutableRelativePath adapter)
             )
         )
-    Provisioning.SmokeLinuxNativeArtifact identity artifactRoot policy ->
+    Provisioning.SmokeLinuxNativeArtifact identity architecture artifactRoot policy -> do
       -- The Linux counterpart of the installed smoke's `DYLD_PRINT_LIBRARIES`.
       -- Without it the sealed run emits no loader provenance, so the recorded
       -- ELF loader closure would remain a derivation that nothing ever
       -- confirmed against the real loader.
       --
-      -- The executable spelling below is still the retired `bin/*` wrapper
-      -- shape and is known not to agree with the `linux-native` catalog, which
-      -- names an absolute image target. That correction is the decided,
-      -- unimplemented work recorded under the generation-lease consumer
-      -- residual in the phase plan.
+      -- The executable is the closed catalog's own image target, resolved from
+      -- the same `(identity, architecture)` the helper revalidates against, so
+      -- the two cannot drift. The artifact root stays the working directory —
+      -- it is the generation whose manifest and recorded loader closure
+      -- authorize this run — but it is no longer where the executable lives.
+      target <-
+        ArtifactTarget.nativeArtifactTarget identity "linux-native" architecture
       pure
         ( fixedProvisioningProcessWithEnvironment
-            (artifactRoot </> Provisioning.linuxNativeArtifactEntrypoint identity)
-            (Provisioning.linuxNativeArtifactSmokeArguments identity policy)
+            (ArtifactTarget.nativeArtifactTargetExecutable artifactRoot target)
+            ( ArtifactTarget.nativeArtifactTargetLeadingArguments
+                artifactRoot
+                (ArtifactIdentity.nativeArtifactAdapterId identity)
+                target
+                <> Provisioning.linuxNativeArtifactSmokeArguments identity policy
+            )
             ""
             "smoke Linux native artifact"
             artifactRoot
-            [("LD_DEBUG", "libs")]
+            linuxSealedRunAuditEnvironment
         )
     Provisioning.QueryPythonVersion adapter artifactRoot ->
       pure
@@ -3986,8 +4066,36 @@ fixedProvisioningProcessWithEnvironment
         renderedLabel = label,
         renderedWorkingDirectory = Just workingDirectory,
         renderedEnvironment =
-          ("PYTHONDONTWRITEBYTECODE", "1") : runtimeEnvironment
+          provisioningFixedEnvironmentGuard : runtimeEnvironment
       }
+
+-- | The guard every fixed provisioning process carries. Named because the
+-- closed environment contracts must be written against the same value the
+-- renderer prepends: a contract that omits it describes a shape no rendered
+-- command can have.
+provisioningFixedEnvironmentGuard :: (String, String)
+provisioningFixedEnvironmentGuard = ("PYTHONDONTWRITEBYTECODE", "1")
+
+-- | The loader audit a sealed @linux-native@ run carries, and the complete
+-- extra environment the renderer therefore produces for it.
+--
+-- Both closed contracts below derive their Linux name set from
+-- 'linuxSealedRunRenderedEnvironment', and the renderer passes
+-- 'linuxSealedRunAuditEnvironment' to the wrapper that prepends the same guard,
+-- so the shape the renderer emits and the shapes the validators admit cannot
+-- drift apart. They previously did: the contracts named @LD_DEBUG@ alone while
+-- every rendered command also carries the guard, so the Linux native artifact
+-- smoke was refused as an unsupported command environment on every input.
+linuxSealedRunAuditEnvironment :: [(String, String)]
+linuxSealedRunAuditEnvironment = [("LD_DEBUG", "libs")]
+
+linuxSealedRunRenderedEnvironment :: [(String, String)]
+linuxSealedRunRenderedEnvironment =
+  provisioningFixedEnvironmentGuard : linuxSealedRunAuditEnvironment
+
+linuxSealedRunRenderedNames :: [String]
+linuxSealedRunRenderedNames =
+  List.sort (map fst linuxSealedRunRenderedEnvironment)
 
 validateTestCommand :: TestCommand -> Either String ()
 validateTestCommand testCommand =
@@ -4962,12 +5070,16 @@ runBoundedCommandExactCapture ::
   IO NativeArtifactCommandOutcome
 runBoundedCommandExactCapture command
   | Just audit <- sealedRunLoaderAuditFor (boundedCommandIdentity command),
-    Just _ <- boundedArtifactGenerationLeaseExpectation command,
+    Just leaseExpectation <- boundedArtifactGenerationLeaseExpectation command,
+    -- The relative executable is present for an installed artifact and absent
+    -- for an image target, which executes an absolute path the immutable image
+    -- owns. Both are closed target shapes; what authorizes the run is the
+    -- retained generation root, which is required either way.
     Just
       ( ProvisioningMutationWorkingDirectory
           retainedRoot
           _
-          (Just _relativeExecutable)
+          _
         ) <-
       boundedProvisioningMutationWorkingDirectory command,
     NeverRetry <-
@@ -5004,13 +5116,17 @@ runBoundedCommandExactCapture command
                 if remainingMicros <= 0
                   then pure AttemptTimedOut
                   else runSupervisedAttempt command deadline
-              pure
-                ( classifyExactCaptureAttempt
-                    budget
-                    audit
-                    retainedRoot
-                    attempt
-                )
+              case sealedRunOwnedRoots leaseExpectation retainedRoot of
+                Left failure ->
+                  pure (NativeArtifactCommandKernelFailure (Text.pack failure))
+                Right ownedRoots ->
+                  pure
+                    ( classifyExactCaptureAttempt
+                        budget
+                        audit
+                        ownedRoots
+                        attempt
+                    )
   | otherwise =
       pure
         ( NativeArtifactCommandKernelFailure
@@ -5023,10 +5139,10 @@ runBoundedCommandExactCapture command
 classifyExactCaptureAttempt ::
   Timeout ->
   SealedRunLoaderAudit ->
-  ProvisioningMutationRoot ->
+  [FilePath] ->
   AttemptOutcome ->
   NativeArtifactCommandOutcome
-classifyExactCaptureAttempt budget audit retainedRoot attempt =
+classifyExactCaptureAttempt budget audit ownedRoots attempt =
   case attempt of
     AttemptTimedOut ->
       NativeArtifactCommandTimedOut budget
@@ -5041,7 +5157,7 @@ classifyExactCaptureAttempt budget audit retainedRoot attempt =
         _ ->
           classifyExactCaptureTerminal
             audit
-            retainedRoot
+            ownedRoots
             terminal
             stdoutBytes
             stderrBytes
@@ -5065,23 +5181,23 @@ sealedRunLoaderAuditFor identity =
       (Provisioning.InstalledRunnerSmokeOperation _) ->
         Just DyldSealedRunAudit
     ClosedArtifactSmokeCommandIdentity
-      (Provisioning.LinuxNativeArtifactSmokeOperation _) ->
+      (Provisioning.LinuxNativeArtifactSmokeOperation _ _) ->
         Just ElfSealedRunAudit
     _ -> Nothing
 
 classifyExactCaptureTerminal ::
   SealedRunLoaderAudit ->
-  ProvisioningMutationRoot ->
+  [FilePath] ->
   TargetTerminal ->
   ByteString.ByteString ->
   ByteString.ByteString ->
   NativeArtifactCommandOutcome
-classifyExactCaptureTerminal audit retainedRoot terminal stdoutBytes stderrBytes =
+classifyExactCaptureTerminal audit ownedRoots terminal stdoutBytes stderrBytes =
   case terminal of
     TargetExited 0 ->
       case auditSealedRun
         audit
-        (provisioningMutationRootPath retainedRoot)
+        ownedRoots
         stderrBytes of
         Left failure ->
           NativeArtifactCommandKernelFailure failure
@@ -6577,10 +6693,17 @@ observeRecoverableProcessGroup (label, identity) = do
                 Right observedProcessGroup -> do
                   observedBirthIdentityAfter <-
                     readProcessBirthIdentity (activityProcessId identity)
-                  if observedBirthIdentityAfter
-                    /= Just (activityProcessBirthIdentity identity)
-                    then refuse "leader identity changed during observation"
-                    else
+                  case observedBirthIdentityAfter of
+                    -- A leader that is simply gone is the sibling branch's
+                    -- ordinary case, and the group reading above was taken
+                    -- while the pre-read still proved the exact leader, so it
+                    -- stays attributable evidence. Only a leader observed as a
+                    -- different process is reuse.
+                    Just laterIdentity
+                      | laterIdentity
+                          /= activityProcessBirthIdentity identity ->
+                          refuse "leader identity changed during observation"
+                    _ ->
                       if fromIntegral observedProcessGroup
                         /= activityProcessGroup identity
                         then refuse "leader moved outside its recorded group"
@@ -6596,8 +6719,15 @@ observeRecoverableProcessGroup (label, identity) = do
                                 )
         Just _ ->
           refuse "leader birth identity does not match"
+        -- The direct process can exit while descendants still retain its
+        -- original process group, and a live PGID cannot be reused until that
+        -- group disappears. An absent leader over a live group is therefore
+        -- the ordinary abandoned-activity shape, not a reuse. 'Active' is also
+        -- the conservative verdict here: it is the one that makes the caller
+        -- run the full owner-death check, signal sweep, and bounded
+        -- group-absence proof rather than retiring the lease.
         Nothing ->
-          refuse "live group has no exact recorded leader"
+          pure (label, identity, RecoverableProcessGroupActive)
   where
     refuse reason =
       ioError
@@ -6641,8 +6771,17 @@ requireActivityOwnerDead activity =
           case ownerProbe of
             Left failure
               | isDoesNotExistError failure -> pure ()
+              -- EPERM is liveness, not absence: the pid is allocated to a
+              -- process this uid may not signal. It must classify as the
+              -- unverifiable-owner refusal rather than escape as a bare errno,
+              -- and it must never be read as owner death — on Darwin the birth
+              -- identity is registry-backed, so an unregistered live process
+              -- reads as 'Nothing' here and only this probe distinguishes it.
+              | isPermissionError failure -> refuseUnverifiableOwner
               | otherwise -> ioError failure
-            Right () ->
+            Right () -> refuseUnverifiableOwner
+          where
+            refuseUnverifiableOwner =
               ioError
                 ( userError
                     ( "refusing bounded-command activity recovery because the live owner birth identity is unverifiable: "
@@ -6676,8 +6815,14 @@ activityExactOwnerIsLive activity =
           case ownerProbe of
             Left failure
               | isDoesNotExistError failure -> pure False
+              -- EPERM is liveness, not absence. Returning 'False' here would
+              -- declare a live-but-unsignalable owner dead and let an
+              -- abandoned-activity sweep reclaim its lease, so it refuses.
+              | isPermissionError failure -> refuseUnverifiableOwner
               | otherwise -> ioError failure
-            Right () ->
+            Right () -> refuseUnverifiableOwner
+          where
+            refuseUnverifiableOwner =
               ioError
                 ( userError
                     ( "refusing bounded-command abandoned-activity recovery because the live owner birth identity is unverifiable: "
@@ -7039,18 +7184,29 @@ data ArtifactLeaseExpectation = ArtifactLeaseExpectation
   }
   deriving (Eq, Show)
 
+-- | The engines root, adapter, generation fingerprint, and payload digest a
+-- helper is handed, plus the lane the parent resolved the target from.
+--
+-- The lane is carried because without it a helper structurally cannot re-derive
+-- the closed catalog entry it is being asked to validate, and would have to
+-- assume one. Assuming @apple-silicon@ is precisely what made the
+-- @linux-native@ smoke unable to pass on any input.
 data ArtifactGenerationLeaseExpectation
   = ArtifactGenerationLeaseExpectation
       !FilePath
       !Text.Text
       !Text.Text
       !Text.Text
+      !Text.Text
+      !Text.Text
   deriving (Eq, Show)
 
 artifactGenerationLeaseExpectation ::
+  Text.Text ->
+  Text.Text ->
   ArtifactGenerationLease ->
   ArtifactGenerationLeaseExpectation
-artifactGenerationLeaseExpectation lease =
+artifactGenerationLeaseExpectation substrate architecture lease =
   case artifactGenerationLeaseFields lease of
     (enginesRoot, adapterId, generationFingerprint, payloadDigest) ->
       ArtifactGenerationLeaseExpectation
@@ -7058,6 +7214,54 @@ artifactGenerationLeaseExpectation lease =
         adapterId
         generationFingerprint
         payloadDigest
+        substrate
+        architecture
+
+artifactGenerationLeaseExpectationLane ::
+  ArtifactGenerationLeaseExpectation ->
+  (Text.Text, Text.Text)
+artifactGenerationLeaseExpectationLane
+  ( ArtifactGenerationLeaseExpectation
+      _
+      _
+      _
+      _
+      substrate
+      architecture
+    ) = (substrate, architecture)
+
+-- | The roots a sealed run may legitimately load from.
+--
+-- An installed artifact owns its generation root; an image target owns the
+-- closure roots its catalog entry declares, because the payload it execs lives
+-- in the immutable image rather than in the generation. Both come from the same
+-- closed catalog entry, resolved from the lane the expectation names, so the
+-- audit cannot admit a root the target contract never declared.
+sealedRunOwnedRoots ::
+  ArtifactGenerationLeaseExpectation ->
+  ProvisioningMutationRoot ->
+  Either String [FilePath]
+sealedRunOwnedRoots expectation retainedRoot =
+  case expectation of
+    ArtifactGenerationLeaseExpectation
+      _
+      adapterId
+      _
+      _
+      substrate
+      architecture -> do
+        identity <-
+          maybe
+            (Left "sealed run expectation has no closed adapter identity")
+            Right
+            (ArtifactIdentity.parseNativeArtifactIdentity adapterId)
+        target <-
+          ArtifactTarget.nativeArtifactTarget identity substrate architecture
+        pure
+          ( ArtifactTarget.nativeArtifactTargetImmutableClosureRoots
+              (provisioningMutationRootPath retainedRoot)
+              target
+          )
 
 -- | The exact root a retained provisioning mutation authority owns.
 --
@@ -7080,6 +7284,8 @@ artifactGenerationLeaseFromExpectation
       adapterId
       generationFingerprint
       payloadDigest
+      _substrate
+      _architecture
     ) = do
     identity <-
       maybe
@@ -7560,12 +7766,16 @@ instance Aeson.ToJSON ArtifactGenerationLeaseExpectation where
         adapterId
         generationFingerprint
         payloadDigest
+        substrate
+        architecture
       ) =
       Aeson.object
         [ "enginesRoot" Aeson..= enginesRoot,
           "adapterId" Aeson..= adapterId,
           "generationFingerprint" Aeson..= generationFingerprint,
-          "payloadDigest" Aeson..= payloadDigest
+          "payloadDigest" Aeson..= payloadDigest,
+          "substrate" Aeson..= substrate,
+          "architecture" Aeson..= architecture
         ]
 
 instance Aeson.FromJSON ArtifactGenerationLeaseExpectation where
@@ -7577,6 +7787,8 @@ instance Aeson.FromJSON ArtifactGenerationLeaseExpectation where
           <*> value Aeson..: "adapterId"
           <*> value Aeson..: "generationFingerprint"
           <*> value Aeson..: "payloadDigest"
+          <*> value Aeson..: "substrate"
+          <*> value Aeson..: "architecture"
       either
         fail
         (const (pure expectation))
@@ -7873,6 +8085,14 @@ validateSupervisorTargetEnvironment
                 : "PYTHONDONTWRITEBYTECODE"
                 : supervisorBaseEnvironmentNames
             )
+        pythonLinuxSnapshotNames =
+          List.sort
+            ( [ "PYTHONHOME",
+                "PYTHONPATH",
+                "PYTHONDONTWRITEBYTECODE"
+              ]
+                <> supervisorBaseEnvironmentNames
+            )
         poetrySnapshotNames =
           List.sort
             ( [ "PYTHONHOME",
@@ -7922,12 +8142,13 @@ validateSupervisorTargetEnvironment
               ]
                 <> supervisorBaseEnvironmentNames
             )
-        -- A Linux native artifact's sealed run needs only the loader audit: its
-        -- runtime closure is bound by the recorded ELF loader closure, not by a
-        -- search-path variable. @LD_LIBRARY_PATH@ is deliberately absent, for
-        -- the same reason the loader-closure producer never reads it.
+        -- A Linux native artifact's sealed run needs only the loader audit and
+        -- the renderer's fixed guard: its runtime closure is bound by the
+        -- recorded ELF loader closure, not by a search-path variable.
+        -- @LD_LIBRARY_PATH@ is deliberately absent, for the same reason the
+        -- loader-closure producer never reads it.
         linuxSealedRunNames =
-          List.sort ("LD_DEBUG" : supervisorBaseEnvironmentNames)
+          List.sort (linuxSealedRunRenderedNames <> supervisorBaseEnvironmentNames)
         kubeconfigNames = List.sort ("KUBECONFIG" : supervisorBaseEnvironmentNames)
         kubercNames =
           List.sort ("KUBECONFIG" : "KUBERC" : supervisorBaseEnvironmentNames)
@@ -7935,6 +8156,7 @@ validateSupervisorTargetEnvironment
       ( targetNames == baseNames
           || targetNames == pythonNoBytecodeNames
           || targetNames == poetryModuleNames
+          || targetNames == pythonLinuxSnapshotNames
           || targetNames == poetrySnapshotNames
           || targetNames == poetrySnapshotDyldNames
           || targetNames == appleNativeSnapshotNames
@@ -7944,7 +8166,11 @@ validateSupervisorTargetEnvironment
           || targetNames == kubeconfigNames
           || targetNames == kubercNames
       )
-      (Left "bounded-command target environment does not match a closed rendered environment")
+      ( Left
+          ( "bounded-command target environment does not match a closed rendered environment; names="
+              <> show targetNames
+          )
+      )
     mapM_ requireMatchingBaseValue supervisorBaseEnvironmentNames
     case lookup "KUBECONFIG" targetEnvironment of
       Nothing -> pure ()
@@ -8816,17 +9042,24 @@ awaitUnregisteredKernelIdentityAbsent label probeAction attemptsRemaining = do
       case result of
         Left failure
           | isDoesNotExistError failure -> pure (Right ())
+          -- EPERM is not absence, and it is not a reason to abandon the proof
+          -- either. Darwin reports it while a just-exited group still holds
+          -- unreaped kernel state, and Linux reports it while one surviving
+          -- member belongs to a uid we may not signal. Both resolve to ESRCH
+          -- once the group is really gone, so keep polling until it does or
+          -- until the bounded budget runs out. Only ESRCH ever discharges the
+          -- obligation; a persistent EPERM still fails closed below.
+          | isPermissionError failure -> pure stillPresent
           | otherwise -> ioError failure
-        Right () ->
-          pure
-            ( Left
-                Readiness.Progress
-                  { Readiness.progressObserved = 0,
-                    Readiness.progressExpected = 1,
-                    Readiness.progressDetail =
-                      Text.pack ("still live: " <> label)
-                  }
-            )
+        Right () -> pure stillPresent
+    stillPresent =
+      Left
+        Readiness.Progress
+          { Readiness.progressObserved = 0,
+            Readiness.progressExpected = 1,
+            Readiness.progressDetail =
+              Text.pack ("still live: " <> label)
+          }
     timeoutFailure =
       userError
         ("bounded-command cleanup could not prove absent: " <> label)
@@ -8838,6 +9071,45 @@ closeSpawnedHelperHandles helper =
       ignoreIOException (hClose (spawnedHelperOutput helper)),
       ignoreIOException (hClose (spawnedHelperError helper))
     ]
+
+-- | Drive 'signalActivityProcessGroupWith' against a recorded identity built
+-- from raw kernel observations.
+--
+-- The identity is assembled here rather than by the caller so the regression
+-- suite gains no constructor for 'ActivityProcessIdentity'.
+signalActivityProcessGroupForTest ::
+  Integer ->
+  Integer ->
+  ProcessBirthIdentity ->
+  IO ()
+signalActivityProcessGroupForTest processId processGroup birthIdentity =
+  signalActivityProcessGroupWith
+    sigKILL
+    (ActivityProcessIdentity processId processGroup birthIdentity)
+
+-- | Observe one recorded group the way abandoned-activity recovery does, and
+-- report whether it classified as active. A refusal still throws.
+observeRecoverableProcessGroupActiveForTest ::
+  Integer ->
+  Integer ->
+  ProcessBirthIdentity ->
+  IO Bool
+observeRecoverableProcessGroupActiveForTest
+  processId
+  processGroup
+  birthIdentity = do
+    (_, _, status) <-
+      observeRecoverableProcessGroup
+        ( "regression",
+          ActivityProcessIdentity processId processGroup birthIdentity
+        )
+    pure (recoverableProcessGroupIsActive status)
+
+recoverableProcessGroupIsActive :: RecoverableProcessGroupStatus -> Bool
+recoverableProcessGroupIsActive status =
+  case status of
+    RecoverableProcessGroupActive -> True
+    RecoverableProcessGroupAbsent -> False
 
 signalActivityProcessGroupWith ::
   Signal ->
@@ -8854,22 +9126,14 @@ signalActivityProcessGroupWith signal identity = do
   observedBirthIdentity <-
     readProcessBirthIdentity (activityProcessId identity)
   case observedBirthIdentity of
-    Nothing -> do
-      groupProbe <-
-        try @IOException
-          ( signalProcessGroup
-              nullSignal
-              (fromIntegral (activityProcessGroup identity))
-          )
-      case groupProbe of
-        Left failure
-          | isDoesNotExistError failure -> pure ()
-          | otherwise -> ioError failure
-        Right () ->
-          ioError
-            ( userError
-                "bounded-command refused to signal a live group whose exact leader is absent"
-            )
+    -- The exact leader was already gone when this signal was requested. That
+    -- is the ordinary shape while a designated owner reaps the leader and the
+    -- rest of the group is still exiting, not evidence of reuse: a live group
+    -- whose leader PID is unallocated cannot have been re-created under that
+    -- id. Its group id can no longer be vouched for, so nothing is signalled;
+    -- the group must instead become absent within the bounded window, which is
+    -- the same evidence the successful-signal path would have had to obtain.
+    Nothing -> requireActivityGroupAbsentAfterLeaderLookupFailure identity
     Just observedIdentity
       | observedIdentity /= activityProcessBirthIdentity identity ->
           ioError
@@ -8888,28 +9152,37 @@ signalActivityProcessGroupWith signal identity = do
             Right observedProcessGroup -> do
               observedBirthIdentityAfter <-
                 readProcessBirthIdentity (activityProcessId identity)
-              unless
-                ( observedBirthIdentityAfter
-                    == Just (activityProcessBirthIdentity identity)
-                    && fromIntegral observedProcessGroup
-                      == activityProcessGroup identity
-                )
-                ( ioError
-                    ( userError
-                        "bounded-command refused to signal an unstable process-group identity"
-                    )
-                )
-              result <-
-                try @IOException
-                  ( signalProcessGroup
-                      signal
-                      (fromIntegral (activityProcessGroup identity))
-                  )
-              case result of
-                Right () -> pure ()
-                Left failure
-                  | isDoesNotExistError failure -> pure ()
-                  | otherwise -> ioError failure
+              case observedBirthIdentityAfter of
+                -- The designated owner reaped the exact leader between this
+                -- signal's identity check and its group lookup. An absent
+                -- leader is not a mismatched leader, and only the second is
+                -- the reuse this refusal exists for.
+                Nothing ->
+                  requireActivityGroupAbsentAfterLeaderLookupFailure identity
+                Just laterIdentity
+                  | laterIdentity /= activityProcessBirthIdentity identity ->
+                      ioError
+                        ( userError
+                            "bounded-command refused to signal a process group with a mismatched leader birth identity"
+                        )
+                  | fromIntegral observedProcessGroup
+                      /= activityProcessGroup identity ->
+                      ioError
+                        ( userError
+                            "bounded-command refused to signal an unstable process-group identity"
+                        )
+                  | otherwise -> do
+                      result <-
+                        try @IOException
+                          ( signalProcessGroup
+                              signal
+                              (fromIntegral (activityProcessGroup identity))
+                          )
+                      case result of
+                        Right () -> pure ()
+                        Left failure
+                          | isDoesNotExistError failure -> pure ()
+                          | otherwise -> ioError failure
 
 requireActivityGroupAbsentAfterLeaderLookupFailure ::
   ActivityProcessIdentity ->
@@ -8989,32 +9262,41 @@ signalProvisionalProcessWith signal identity = do
           ioError
             (userError "bounded-command refused to signal a reused provisional pid")
       | otherwise -> do
-          observedGroup <-
-            fromIntegral
-              <$> getProcessGroupIDOf (fromIntegral processId)
-          observedBirthIdentityAfter <-
-            readProcessBirthIdentity processId
-          unless
-            ( observedBirthIdentityAfter
-                == Just (provisionalBirthIdentity identity)
-            )
-            ( ioError
-                ( userError
-                    "bounded-command refused to signal an unstable provisional process identity"
-                )
-            )
-          if observedGroup == processId
-            then signalKnownGroup processId
-            else
-              if observedGroup == initialGroup
-                then signalKnownProcess processId
-                else
-                  ioError
-                    ( userError
-                        "bounded-command provisional process made an unauthorized group transition"
-                    )
+          observedGroupResult <-
+            try @IOException (getProcessGroupIDOf (fromIntegral processId))
+          case observedGroupResult of
+            Left failure
+              -- The exact process was reaped between the identity check and
+              -- its group lookup. That is the same ordinary shape the activity
+              -- signaller handles, not an unattributed kernel error.
+              | isDoesNotExistError failure ->
+                  requireProvisionalAbsent identity
+              | otherwise -> ioError failure
+            Right rawGroup -> do
+              let observedGroup = fromIntegral rawGroup
+              observedBirthIdentityAfter <-
+                readProcessBirthIdentity processId
+              case observedBirthIdentityAfter of
+                -- Gone is not reused. Only a *different* birth identity is
+                -- the recycled pid this refusal exists for.
+                Nothing -> requireProvisionalAbsent identity
+                Just laterIdentity
+                  | laterIdentity /= provisionalBirthIdentity identity ->
+                      ioError
+                        ( userError
+                            "bounded-command refused to signal an unstable provisional process identity"
+                        )
+                  | observedGroup == processId ->
+                      signalKnownGroup processId
+                  | observedGroup == initialGroup ->
+                      signalKnownProcess processId
+                  | otherwise ->
+                      ioError
+                        ( userError
+                            "bounded-command provisional process made an unauthorized group transition"
+                        )
     Nothing ->
-      requireDetachedGroupAbsent processId
+      requireProvisionalAbsent identity
   where
     signalKnownGroup processGroup =
       ignoreMissing
@@ -9022,19 +9304,6 @@ signalProvisionalProcessWith signal identity = do
     signalKnownProcess processId =
       ignoreMissing
         (signalProcess signal (fromIntegral processId))
-    requireDetachedGroupAbsent processGroup = do
-      probe <-
-        try @IOException
-          (signalProcessGroup nullSignal (fromIntegral processGroup))
-      case probe of
-        Left failure
-          | isDoesNotExistError failure -> pure ()
-          | otherwise -> ioError failure
-        Right () ->
-          ioError
-            ( userError
-                "bounded-command refused to signal a live provisional group after its exact leader disappeared"
-            )
     ignoreMissing action = do
       outcome <- try @IOException action
       case outcome of
@@ -9042,6 +9311,41 @@ signalProvisionalProcessWith signal identity = do
         Left failure
           | isDoesNotExistError failure -> pure ()
           | otherwise -> ioError failure
+
+-- | The provisional counterpart of
+-- 'requireActivityGroupAbsentAfterLeaderLookupFailure'.
+--
+-- Nothing is signalled once the exact provisional process is gone: its pid can
+-- no longer vouch for the group id, so the obligation is discharged by proving
+-- absence within the bounded window instead. A reused pid is still refused,
+-- and the group half runs only when the recorded identity was its own group
+-- leader — probing a non-leader pid as a process-group id would be exactly the
+-- bare-PGID assumption this kernel forbids.
+requireProvisionalAbsent ::
+  ProvisionalProcessIdentity ->
+  IO ()
+requireProvisionalAbsent identity = do
+  observedBirthIdentityAfter <-
+    readProcessBirthIdentity (provisionalProcessId identity)
+  case observedBirthIdentityAfter of
+    Just observedIdentity
+      | observedIdentity /= provisionalBirthIdentity identity ->
+          ioError
+            ( userError
+                "bounded-command refused a reused provisional pid after its exact process disappeared"
+            )
+    _ -> pure ()
+  awaitUnregisteredProcessAbsent
+    "reaped provisional"
+    (fromIntegral (provisionalProcessId identity))
+    leaderlessGroupAbsenceAttempts
+  when
+    (provisionalProcessGroup identity == provisionalProcessId identity)
+    ( awaitUnregisteredProcessGroupAbsent
+        "reaped provisional group"
+        (fromIntegral (provisionalProcessGroup identity))
+        leaderlessGroupAbsenceAttempts
+    )
 
 signalActivityProcessGroup ::
   ActivityProcessIdentity ->
@@ -9128,7 +9432,32 @@ writeJsonFrameFd ::
   Fd ->
   value ->
   IO ()
-writeJsonFrameFd descriptor value = do
+writeJsonFrameFd descriptor value =
+  encodeJsonFrame value >>= writeFdFully descriptor
+
+-- | The regular-file counterpart of 'writeJsonFrameFd'.
+--
+-- The write side needs the same split the read side already draws between
+-- 'readRegularFdChunk' and 'readFdChunk'. 'writeFdFully' waits on the IO
+-- manager first, and a regular file cannot be registered with it: @epoll_ctl@
+-- answers @EPERM@ for one, so the wait fails before any byte is written.
+-- Darwin's kqueue accepts a regular-file registration, which is why a
+-- descriptor published this way worked there and could not work on Linux. A
+-- regular-file write never reports @EAGAIN@, so there is nothing for the wait
+-- to do in either case.
+writeRegularJsonFrameFd ::
+  (Aeson.ToJSON value) =>
+  Fd ->
+  value ->
+  IO ()
+writeRegularJsonFrameFd descriptor value =
+  encodeJsonFrame value >>= writeFdFullyBlocking descriptor
+
+encodeJsonFrame ::
+  (Aeson.ToJSON value) =>
+  value ->
+  IO ByteString.ByteString
+encodeJsonFrame value = do
   let payload = LazyByteString.toStrict (Aeson.encode value)
   when
     (ByteString.length payload > maximumTargetSetupFrameBytes)
@@ -9137,7 +9466,7 @@ writeJsonFrameFd descriptor value = do
       header =
         ByteString8.pack
           (replicate (8 - length rawLength) '0' <> rawLength <> "\n")
-  writeFdFully descriptor (header <> payload)
+  pure (header <> payload)
 
 readJsonFrameFd ::
   (Aeson.FromJSON value) =>
@@ -10763,7 +11092,7 @@ validateInstalledRunnerLoaderEvidence
 -- | Audit one sealed run against the loader that actually performed its loads.
 auditSealedRun ::
   SealedRunLoaderAudit ->
-  FilePath ->
+  [FilePath] ->
   ByteString.ByteString ->
   Either Text.Text ByteString.ByteString
 auditSealedRun audit =
@@ -10772,10 +11101,10 @@ auditSealedRun audit =
     ElfSealedRunAudit -> validateRetainedElfArtifactLoaderEvidence
 
 validateRetainedArtifactLoaderEvidence ::
-  FilePath ->
+  [FilePath] ->
   ByteString.ByteString ->
   Either Text.Text ByteString.ByteString
-validateRetainedArtifactLoaderEvidence artifactRoot stderrBytes = do
+validateRetainedArtifactLoaderEvidence ownedRoots stderrBytes = do
   stderrText <-
     either
       ( Left
@@ -10793,7 +11122,7 @@ validateRetainedArtifactLoaderEvidence artifactRoot stderrBytes = do
   classifySealedRunLoads
     "DYLD"
     systemDyldLibraryPath
-    artifactRoot
+    ownedRoots
     [loadedPath | DyldLoadedPath loadedPath <- audited]
   pure
     ( TextEncoding.encodeUtf8
@@ -10813,10 +11142,10 @@ validateRetainedArtifactLoaderEvidence artifactRoot stderrBytes = do
 -- the objects @dlopen@ pulls in as well as the linked ones — the same class of
 -- defect the Apple lane found in the Python home's @lib-dynload@.
 validateRetainedElfArtifactLoaderEvidence ::
-  FilePath ->
+  [FilePath] ->
   ByteString.ByteString ->
   Either Text.Text ByteString.ByteString
-validateRetainedElfArtifactLoaderEvidence artifactRoot stderrBytes = do
+validateRetainedElfArtifactLoaderEvidence ownedRoots stderrBytes = do
   stderrText <-
     either
       ( Left
@@ -10834,7 +11163,7 @@ validateRetainedElfArtifactLoaderEvidence artifactRoot stderrBytes = do
   classifySealedRunLoads
     "LD_DEBUG"
     systemElfLibraryPath
-    artifactRoot
+    ownedRoots
     [loadedPath | ElfLoadedPath loadedPath <- audited]
   pure
     ( TextEncoding.encodeUtf8
@@ -10856,10 +11185,10 @@ validateRetainedElfArtifactLoaderEvidence artifactRoot stderrBytes = do
 classifySealedRunLoads ::
   Text.Text ->
   (FilePath -> Bool) ->
-  FilePath ->
+  [FilePath] ->
   [FilePath] ->
   Either Text.Text ()
-classifySealedRunLoads loaderName systemLibraryPath artifactRoot loadedPaths = do
+classifySealedRunLoads loaderName systemLibraryPath ownedRoots loadedPaths = do
   when
     (null loadedPaths)
     ( Left
@@ -10879,18 +11208,20 @@ classifySealedRunLoads loaderName systemLibraryPath artifactRoot loadedPaths = d
     (null artifactOwnedLoads)
     (Left "sealed runner loaded no library from its exact artifact generation")
   where
+    -- An installed artifact owns exactly one root. An image target owns the
+    -- closure roots its catalog entry declares, because the payload it execs
+    -- lives in the immutable image rather than in the generation.
+    ownedLoad loadedPath =
+      any (`pathWithinOwnedRoot` loadedPath) ownedRoots
     artifactOwnedLoads =
       [ loadedPath
       | loadedPath <- loadedPaths,
-        pathWithinOwnedRoot artifactRoot loadedPath
+        ownedLoad loadedPath
       ]
     unsealedLoads =
       [ loadedPath
       | loadedPath <- loadedPaths,
-        not
-          ( systemLibraryPath loadedPath
-              || pathWithinOwnedRoot artifactRoot loadedPath
-          )
+        not (systemLibraryPath loadedPath || ownedLoad loadedPath)
       ]
 
 data ElfAuditLine
@@ -10915,11 +11246,13 @@ data ElfAuditLine
 -- > initialize program: python3
 -- > transferring control: python3
 --
--- @calling init:@ is the only frame that names an object the loader actually
--- mapped and initialized. @trying file=@ also names candidates that were
--- /rejected/, so admitting it would launder paths that were never loaded, and
--- @initialize program:@ / @transferring control:@ carry @argv[0]@ — measured as
--- the bare @python3@, not a path — so neither can be a load record either.
+-- @calling init:@ names a shared object the loader actually mapped and
+-- initialized. @initialize program:@ also names a mapped object when its
+-- operand is absolute; glibc preserves the absolute @argv[0]@ used by the
+-- closed image-target smoke, and that observation is required for a valid
+-- fully static target that loads no artifact-owned shared object. A bare
+-- @python3@ remains commentary. @trying file=@ names candidates the loader may
+-- reject, so admitting it would launder paths that were never loaded.
 --
 -- This is the same inversion the @dyld@ parser settled on: an unrecognised
 -- frame is loader commentary carrying no path, and the guarantee comes from the
@@ -10930,7 +11263,13 @@ parseElfAuditLine rawLine =
     Nothing -> Right NotElfAuditLine
     Just payload ->
       case List.stripPrefix "calling init:" payload of
-        Nothing -> Right ElfLoaderFrame
+        Nothing ->
+          case List.stripPrefix "initialize program:" payload of
+            Nothing -> Right ElfLoaderFrame
+            Just loadedPath
+              | isAbsolute (dropWhile isSpace loadedPath) ->
+                  validateElfLoadedPath (dropWhile isSpace loadedPath)
+              | otherwise -> Right ElfLoaderFrame
         Just loadedPath ->
           validateElfLoadedPath (dropWhile isSpace loadedPath)
 
@@ -11280,7 +11619,7 @@ publishSynchronousDescendantIdentity identityPath identity = mask $ \restore -> 
       )
   finallyPreservingPrimary
     ( restore $ do
-        writeJsonFrameFd descriptor (HelperIdentityReady identity)
+        writeRegularJsonFrameFd descriptor (HelperIdentityReady identity)
         fileSynchronise descriptor
     )
     (ignoreIOException (closeFd descriptor))
@@ -12112,9 +12451,13 @@ supervisePreparedFromAnchor plan = mask $ \restore -> do
               void cleanupSupervisor
               exitImmediately ExitSuccess
             Just (SupervisorPinBorn identity) -> pure identity
-            Just _ ->
+            Just unexpected ->
               ioError
-                (userError "bounded-command supervisor skipped provisional pin custody")
+                ( userError
+                    ( "bounded-command supervisor skipped provisional pin custody: "
+                        <> show unexpected
+                    )
+                )
         unless
           ( provisionalProcessGroup provisionalPin == anchorGroup
               && provisionalProcessId provisionalPin /= anchorGroup
@@ -12143,9 +12486,13 @@ supervisePreparedFromAnchor plan = mask $ \restore -> do
               void cleanupSupervisor
               exitImmediately ExitSuccess
             Just (SupervisorDetached identity) -> pure identity
-            Just _ ->
+            Just unexpected ->
               ioError
-                (userError "bounded-command supervisor skipped its custody transition")
+                ( userError
+                    ( "bounded-command supervisor skipped its custody transition: "
+                        <> show unexpected
+                    )
+                )
         validateCustodyTransition
           "supervisor"
           provisionalSupervisor
@@ -12162,9 +12509,13 @@ supervisePreparedFromAnchor plan = mask $ \restore -> do
               exitImmediately ExitSuccess
             Just (SupervisorPrepared groupLeader) ->
               pure groupLeader
-            Just _ ->
+            Just unexpected ->
               ioError
-                (userError "bounded-command supervisor sent terminal before prepared")
+                ( userError
+                    ( "bounded-command supervisor sent an unexpected pre-prepare event: "
+                        <> show unexpected
+                    )
+                )
         validateCustodyTransition
           "target-group pin"
           provisionalPin
@@ -12326,9 +12677,18 @@ withExactExecutableSnapshot plan usePlan =
                         (supervisorPlanArguments plan)
                         (supervisorPlanWorkingDirectory plan)
                 runtimeLibraries <-
-                  mapM
-                    (materializeRuntimeLibrarySnapshot snapshotRoot)
-                    (snapshotRuntimeLibraries expectation)
+                  if SystemInfo.os == "linux"
+                    then
+                      mapM
+                        ( \runtimeLibrary -> do
+                            verifyRetainedRuntimeLibrary runtimeLibrary
+                            pure runtimeLibrary
+                        )
+                        (snapshotRuntimeLibraries expectation)
+                    else
+                      mapM
+                        (materializeRuntimeLibrarySnapshot snapshotRoot)
+                        (snapshotRuntimeLibraries expectation)
                 sealed <-
                   sealedExecutableSnapshotExpectation
                     executable
@@ -13933,16 +14293,24 @@ copyPackageClosureEntry
               ( do
                   status <- getFdStatus sourceDescriptor
                   if isRegularFile status
-                    then
-                      copyPackageClosureFile
-                        sourceParentDescriptor
-                        entry
-                        sourcePath
-                        sourceDescriptor
-                        destinationPath
-                        relativePath
-                        status
-                        state
+                    then do
+                      excluded <-
+                        excludedPythonHomeShebangSnapshotFile
+                          excludeBaseSitePackages
+                          relativePath
+                          sourceDescriptor
+                      if excluded
+                        then pure state
+                        else
+                          copyPackageClosureFile
+                            sourceParentDescriptor
+                            entry
+                            sourcePath
+                            sourceDescriptor
+                            destinationPath
+                            relativePath
+                            status
+                            state
                     else
                       ioError
                         (userError ("package closure contains an unsupported opened entry: " <> sourcePath))
@@ -14256,6 +14624,29 @@ excludedPythonBaseSitePackagesSnapshotLink relativePath =
       "python" `List.isPrefixOf` pythonDirectory
     _ -> False
 
+excludedPythonHomeShebangSnapshotFile :: Bool -> FilePath -> Fd -> IO Bool
+excludedPythonHomeShebangSnapshotFile excludeBaseSitePackages relativePath descriptor
+  | not excludeBaseSitePackages
+      || take 1 (splitPathComponents (normalise relativePath)) /= ["bin"] =
+      pure False
+  | otherwise = do
+      _ <- fdSeek descriptor AbsoluteSeek 0
+      leading <- readRegularFdPrefix 512 descriptor
+      _ <- fdSeek descriptor AbsoluteSeek 0
+      pure (snapshotShebangBindsHostInstallation leading)
+
+snapshotShebangBindsHostInstallation :: ByteString.ByteString -> Bool
+snapshotShebangBindsHostInstallation leading =
+  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+    Nothing -> False
+    Just afterMarker ->
+      case ByteString8.words (ByteString8.takeWhile (/= '\n') afterMarker) of
+        interpreter : _ ->
+          let interpreterPath = ByteString8.unpack interpreter
+           in isAbsolute interpreterPath
+                && normalise interpreterPath /= "/usr/bin/env"
+        [] -> False
+
 splitPathComponents :: FilePath -> [FilePath]
 splitPathComponents path =
   filter
@@ -14456,16 +14847,17 @@ packageClosureSnapshotEnvironment
           ( [ ("PYTHONHOME", pythonHome),
               ( "PYTHONPATH",
                 List.intercalate ":" (pythonPaths <> projectSources)
-              ),
-              ( "DYLD_FRAMEWORK_PATH",
-                snapshotRoot </> "python-framework"
               )
             ]
-              <> [ ( "DYLD_LIBRARY_PATH",
-                     snapshotRoot </> "dyld-libraries"
-                   )
-                 | not (null runtimeLibraries)
-                 ]
+              <> if SystemInfo.os == "linux"
+                then []
+                else
+                  ("DYLD_FRAMEWORK_PATH", snapshotRoot </> "python-framework")
+                    : [ ( "DYLD_LIBRARY_PATH",
+                          snapshotRoot </> "dyld-libraries"
+                        )
+                      | not (null runtimeLibraries)
+                      ]
           )
       ([], [], [], [artifactRoot])
         | null runtimeLibraries ->
@@ -14581,7 +14973,10 @@ validateTargetExecutableSnapshot plan =
         (verifySealedPackageClosure snapshotRoot)
         (snapshotPackageClosures expectation)
       mapM_
-        (verifySealedRuntimeLibrary snapshotRoot)
+        ( if SystemInfo.os == "linux"
+            then verifyRetainedRuntimeLibrary
+            else verifySealedRuntimeLibrary snapshotRoot
+        )
         (snapshotRuntimeLibraries expectation)
       validateSealedArtifactOperands plan expectation
       expectedEnvironment <-
@@ -15043,10 +15438,17 @@ digestSealedPackageClosureLink
               )
         }
 
+-- | Whether a loaded path lies inside an owned root.
+--
+-- The trailing separator has to be dropped, not merely normalised. An installed
+-- target's closure root is the relative @.@, and @normalise@ turns
+-- @\/generation\/.@ into @\/generation\/@ rather than @\/generation@ — which
+-- then fails the prefix test for every path underneath it, silently reporting
+-- that a sealed run loaded nothing from its own generation.
 pathWithinOwnedRoot :: FilePath -> FilePath -> Bool
 pathWithinOwnedRoot ownedRoot path =
-  let normalRoot = normalise ownedRoot
-      normalPath = normalise path
+  let normalRoot = dropTrailingPathSeparator (normalise ownedRoot)
+      normalPath = dropTrailingPathSeparator (normalise path)
    in normalPath == normalRoot
         || (normalRoot <> "/") `List.isPrefixOf` (normalPath <> "/")
 
@@ -16062,17 +16464,52 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
     )
   case supervisorPlanArtifactLeaseExpectation plan of
     Nothing -> do
-      unless
-        (expectedGenerationFingerprint == expectedPayloadDigest)
-        ( ioError
-            ( userError
-                "candidate artifact generation fingerprint is not its complete installed payload digest"
-            )
-        )
-      validateCandidateArtifactTarget plan identity artifactRoot
+      lane@(candidateSubstrate, candidateArchitecture) <-
+        maybe
+          ( ioError
+              ( userError
+                  "artifact generation lease expectation names no closed target lane"
+              )
+          )
+          (pure . artifactGenerationLeaseExpectationLane)
+          (supervisorPlanArtifactGenerationLeaseExpectation plan)
+      candidateRuntimeExpectation <-
+        artifactRuntimeExpectationForLane candidateSubstrate candidateArchitecture
+      validateRetainedArtifactTarget plan identity lane artifactRoot
+      -- Re-digest the retained payload from bytes before it is used as an input
+      -- to the generation identity below, so the identity is rebuilt on observed
+      -- bytes rather than on the digest the parent asserted.
       Artifact.validateArtifactGenerationPayloadLease
         artifactRoot
         expectedPayloadDigest
+      -- A pre-manifest candidate has no manifest to validate against, so its
+      -- generation identity is rebuilt from the closed catalog and re-observed
+      -- target evidence instead. The superseded assertion here was
+      -- @generationFingerprint == payloadDigest@, which is only the
+      -- @apple-silicon@ construction: a @linux-native@ generation binds the
+      -- recipe, target contract, and image evidence too, so it is never its own
+      -- payload digest and no Linux candidate smoke could pass on any input.
+      rederived <-
+        Artifact.rederiveArtifactGenerationFingerprint
+          identity
+          candidateRuntimeExpectation
+          artifactRoot
+          expectedPayloadDigest
+      candidateGenerationFingerprint <-
+        either
+          ( ioError
+              . userError
+              . ("re-derive candidate artifact generation identity: " <>)
+          )
+          pure
+          rederived
+      unless
+        (candidateGenerationFingerprint == expectedGenerationFingerprint)
+        ( ioError
+            ( userError
+                "candidate artifact generation fingerprint is not the identity its own lane, recipe, target contract, and observed evidence produce"
+            )
+        )
     Just artifactExpectation -> do
       unless
         (isNothing (supervisorPlanExecutableSnapshot plan))
@@ -16092,16 +16529,21 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
             )
         )
       runtimeExpectation <-
-        case artifactLeaseSubstrate artifactExpectation of
-          "apple-silicon"
-            | artifactLeaseArchitecture artifactExpectation == "arm64" ->
-                pure Artifact.appleArtifactRuntimeExpectation
-          "linux-native"
-            | artifactLeaseArchitecture artifactExpectation
-                `elem` ["amd64", "arm64"] ->
-                pure Artifact.linuxArtifactRuntimeExpectation
-          _ ->
-            ioError (userError "bounded artifact lease has an unsupported runtime lane")
+        artifactRuntimeExpectationForLane
+          (artifactLeaseSubstrate artifactExpectation)
+          (artifactLeaseArchitecture artifactExpectation)
+      -- The retained-shape rule is not weaker for an activated generation than
+      -- for a candidate: an installed target must retain exactly one safe
+      -- relative executable and an image target must retain none, so neither
+      -- shape can pass as the other. This branch previously skipped that check
+      -- entirely, which only went unnoticed because nothing reached it.
+      validateRetainedArtifactTarget
+        plan
+        identity
+        ( artifactLeaseSubstrate artifactExpectation,
+          artifactLeaseArchitecture artifactExpectation
+        )
+        artifactRoot
       target <-
         either
           (ioError . userError)
@@ -16128,6 +16570,27 @@ validateSupervisorArtifactGenerationLease plan generationLease = do
         expectedGenerationFingerprint
         expectedPayloadDigest
 
+-- | The one place a named lane becomes a runtime expectation. Both the
+-- candidate and the installed branch resolve through it, so neither can admit a
+-- lane the other refuses. The Linux expectation names the running host's
+-- architecture, so a lease naming a different one fails closed downstream rather
+-- than being silently reinterpreted.
+artifactRuntimeExpectationForLane ::
+  Text.Text ->
+  Text.Text ->
+  IO Artifact.ArtifactRuntimeExpectation
+artifactRuntimeExpectationForLane substrate architecture =
+  case substrate of
+    "apple-silicon"
+      | architecture == "arm64" ->
+          pure Artifact.appleArtifactRuntimeExpectation
+    "linux-native"
+      | architecture `elem` ["amd64", "arm64"] ->
+          pure Artifact.linuxArtifactRuntimeExpectation
+    _ ->
+      ioError
+        (userError "bounded artifact lease has an unsupported runtime lane")
+
 supervisorArtifactGenerationRoot :: SupervisorPlan -> IO FilePath
 supervisorArtifactGenerationRoot plan =
   case ( supervisorPlanArtifactLeaseExpectation plan,
@@ -16146,7 +16609,16 @@ supervisorArtifactGenerationRoot plan =
         ( ProvisioningMutationWorkingDirectoryWire
             mutationWireRoot
             []
-            (Just _)
+            -- Deliberately either shape. An installed candidate retains one
+            -- safe relative executable and an image candidate retains none,
+            -- because it execs an absolute path the immutable image owns. This
+            -- position previously demanded @Just _@, which refused every image
+            -- candidate before its root was even resolved. The shape is not
+            -- unchecked as a result: 'validateRetainedArtifactTarget' requires
+            -- it to agree with 'nativeArtifactTargetIsInstalled' for the closed
+            -- catalog entry, which is a stronger rule than either constructor
+            -- alone.
+            _
           )
       ) ->
         pure (mutationWireRootPath mutationWireRoot)
@@ -16156,32 +16628,42 @@ supervisorArtifactGenerationRoot plan =
             "artifact generation helper lacks one exact retained artifact root"
         )
 
-validateCandidateArtifactTarget ::
+validateRetainedArtifactTarget ::
   SupervisorPlan ->
   ArtifactIdentity.NativeArtifactIdentity ->
+  (Text.Text, Text.Text) ->
   FilePath ->
   IO ()
-validateCandidateArtifactTarget plan identity artifactRoot = do
+validateRetainedArtifactTarget plan identity (substrate, architecture) artifactRoot = do
   target <-
     either
       (ioError . userError)
       pure
-      (ArtifactTarget.nativeArtifactTarget identity "apple-silicon" "arm64")
+      (ArtifactTarget.nativeArtifactTarget identity substrate architecture)
   let expectedExecutable =
         ArtifactTarget.nativeArtifactTargetExecutable artifactRoot target
       expectedRelativeExecutable =
         makeRelative artifactRoot expectedExecutable
+      -- An installed target is retained as one safe relative executable under
+      -- the generation root. An image target has none: it execs an absolute
+      -- path the immutable image owns, and the retained root is present only
+      -- because it is the generation whose manifest and loader closure
+      -- authorize the run. Both shapes still require the exact retained root.
       exactRetainedTarget =
         case supervisorPlanProvisioningMutationWorkingDirectory plan of
           Just
             ( ProvisioningMutationWorkingDirectoryWire
                 mutationWireRoot
                 []
-                (Just relativeExecutable)
+                retainedRelativeExecutable
               ) ->
               normalise (mutationWireRootPath mutationWireRoot)
                 == normalise artifactRoot
-                && relativeExecutable == expectedRelativeExecutable
+                && retainedRelativeExecutable
+                  == ( if ArtifactTarget.nativeArtifactTargetIsInstalled target
+                         then Just expectedRelativeExecutable
+                         else Nothing
+                     )
           _ -> False
   unless
     ( normalise (supervisorPlanExecutable plan)
@@ -17511,10 +17993,16 @@ cleanupSupervisorTargetResult
         Left _ ->
           try @SomeException
             ( runCleanupsPreservingFailures
-                [ signalOwnedUnreapedProcessWith
-                    sigKILL
-                    target,
-                  signalActivityProcessWith sigKILL pinIdentity
+                -- The fallback runs precisely because the group signal already
+                -- failed, so an ESRCH or EPERM here is the expected shape and
+                -- must not abort the teardown before its absence proof runs.
+                -- The deferral discharges only those two errnos; every
+                -- identity refusal these primitives raise is a 'userError' and
+                -- still propagates.
+                [ deferSignalFailureUntilAbsence
+                    (signalOwnedUnreapedProcessWith sigKILL target),
+                  deferSignalFailureUntilAbsence
+                    (signalActivityProcessWith sigKILL pinIdentity)
                 ]
             )
         Right () -> pure (Right ())
@@ -17544,9 +18032,24 @@ cleanupSupervisorTargetResult
     pinDiagnosticResult <-
       try @SomeException
         (takeMVarBounded "pin stderr capture" pinErrorResult)
-    let cleanupFailures =
+    -- EPERM from the group kill is not absence evidence on its own, so it is
+    -- discharged only once two independent exact-identity facts hold: the
+    -- designated reap of the pin completed, and the recorded group was proven
+    -- absent. 'awaitRecordedProcessGroupAbsent' still refuses a leader PID
+    -- reused across that observation, so nothing about reuse detection is
+    -- relaxed; if either fact is missing the EPERM is reported unchanged.
+    let verifiedGroupKill =
+          case (groupKillAttempt, pinStatusResult, terminationProof) of
+            (Left failure, Right _, Right ())
+              | maybe
+                  False
+                  isPermissionError
+                  (fromException failure :: Maybe IOException) ->
+                  Right ()
+            _ -> groupKillAttempt
+        cleanupFailures =
           exceptionFailures gracefulAttempt
-            <> exceptionFailures groupKillAttempt
+            <> exceptionFailures verifiedGroupKill
             <> exceptionFailures fallbackResult
             <> exceptionFailures targetStatusResult
             <> exceptionFailures pinStatusResult

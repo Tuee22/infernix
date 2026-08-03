@@ -317,7 +317,9 @@ readElfProgramHeaders reader contents = do
     (entryCount <= maximumElfProgramHeaders)
     "ELF program header table exceeds its fixed bound"
   unlessEither
-    (entrySize >= (if is64 then 56 else 32))
+    ( entryCount == 0
+        || entrySize >= (if is64 then 56 else 32)
+    )
     "ELF program header entry size is invalid"
   let tableStart = fromIntegral tableOffset :: Integer
       tableBytes = fromIntegral entrySize * fromIntegral entryCount :: Integer
@@ -829,19 +831,36 @@ observeNativeArtifactLoaderEvidence entryObject closureRoots = do
   cacheEvidence <- observeLdSoCacheEvidence
   cacheEntries <- loadLdSoCacheEntries
   scanned <- concat <$> mapM scanClosureRootForElfObjects closureRoots
+  let (wheelEntrypoints, wheelPrivateLibraries) =
+        List.partition (not . isWheelPrivateLibraryPath) scanned
   let seeds =
         LoaderQueueEntry canonicalEntry [] 0
-          : [LoaderQueueEntry path [] 0 | path <- scanned, path /= canonicalEntry]
+          : [ LoaderQueueEntry path [] 0
+            | path <- reverse wheelEntrypoints <> reverse wheelPrivateLibraries,
+              path /= canonicalEntry
+            ]
   finalState <-
     walkLoaderClosure cacheEntries emptyWalkState seeds
   pure
     NativeArtifactLoaderEvidence
       { loaderEvidenceEntryObject = canonicalEntry,
-        loaderEvidenceCache = cacheEvidence,
+        loaderEvidenceCache =
+          if any loaderResolutionUsedCache (walkResolutions finalState)
+            then cacheEvidence
+            else Nothing,
         loaderEvidenceObjects = walkObservedObjectEvidence finalState,
         loaderEvidenceResolutions = walkResolutions finalState,
         loaderEvidenceMaximumDepth = walkMaximumDepth finalState
       }
+
+-- | Linux wheels repaired by auditwheel conventionally place renamed private
+-- libraries below a sibling @*.libs@ directory. The importing extension owns
+-- the inherited @DT_RPATH@ which makes those libraries resolvable, so it must
+-- establish that context before a complete-root scan considers the private
+-- objects as otherwise-unreachable seeds.
+isWheelPrivateLibraryPath :: FilePath -> Bool
+isWheelPrivateLibraryPath =
+  any (".libs" `List.isSuffixOf`) . splitDirectories
 
 -- | The observed objects in first-observation order. The fingerprint sorts
 -- them independently, so this order is a diagnostic convenience rather than
@@ -916,7 +935,11 @@ walkLoaderClosure cacheEntries state (entry : pending) = do
         (ioError (userError "ELF loader closure exceeds its fixed object bound"))
       (resolvedState, queued) <-
         resolveLoaderDependencies cacheEntries widened entry observed
-      walkLoaderClosure cacheEntries resolvedState (pending <> queued)
+      -- Follow dependencies before returning to otherwise-unreachable scan
+      -- seeds. In particular, an extension's inherited DT_RPATH must reach its
+      -- auditwheel private objects before those same objects are considered as
+      -- context-free roots of the completeness scan.
+      walkLoaderClosure cacheEntries resolvedState (queued <> pending)
 
 resolveLoaderDependencies ::
   [LdSoCacheEntry] ->
@@ -995,7 +1018,13 @@ resolveOneDependency
   (state, queued)
   needed = do
     resolution <-
-      resolveLoaderNeeded cacheEntries searchOrder needed
+      case resolveAlreadyObservedNeeded state needed of
+        Left failure -> ioError (userError failure)
+        Right (Just observedPath) ->
+          pure (ResolvedNeeded observedPath False Nothing)
+        Right Nothing ->
+          resolveLoaderNeeded cacheEntries searchOrder needed
+            `catchLoaderResolutionFailure` objectPath
     canonical <- canonicalizePath (resolvedNeededPath resolution)
     let record =
           NativeArtifactLoaderResolutionEvidence
@@ -1032,6 +1061,45 @@ data ResolvedNeeded = ResolvedNeeded
     resolvedNeededUsedCache :: !Bool,
     resolvedNeededCacheIndex :: !(Maybe Int)
   }
+
+-- | The ELF loader reuses an object already present in the namespace when its
+-- SONAME satisfies a later DT_NEEDED edge. This matters for runtimes such as
+-- the JRE, which load libjvm by exact path before optional libraries (for
+-- example libawt) name it. Multiple observed objects claiming the same SONAME
+-- are not interchangeable evidence, so ambiguity fails closed.
+resolveAlreadyObservedNeeded ::
+  LoaderWalkState ->
+  FilePath ->
+  Either String (Maybe FilePath)
+resolveAlreadyObservedNeeded state needed =
+  case [ path
+       | (path, observed) <- Map.toList (walkObjects state),
+         elfInspectionSoname (observedObjectInspection observed) == Just needed
+       ] of
+    [] -> Right Nothing
+    [path] -> Right (Just path)
+    paths ->
+      Left
+        ( "ELF DT_NEEDED matches multiple already-observed SONAME objects: "
+            <> needed
+            <> " -> "
+            <> show paths
+        )
+
+catchLoaderResolutionFailure :: IO a -> FilePath -> IO a
+catchLoaderResolutionFailure action requester = do
+  outcome <- try @IOException action
+  case outcome of
+    Right value -> pure value
+    Left failure ->
+      ioError
+        ( userError
+            ( show failure
+                <> " (requested by "
+                <> requester
+                <> ")"
+            )
+        )
 
 -- | Resolve one @DT_NEEDED@ name in the loader's own order. A name carrying a
 -- slash is a path and bypasses the search entirely, exactly as the loader

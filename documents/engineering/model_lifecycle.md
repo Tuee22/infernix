@@ -141,9 +141,11 @@ written to `infernix-demo-objects` with a typed `ObjectRef` for the artifact fam
   integrity witness — `PayloadVerified` is minted only when the uploaded object's Content-Length
   matches the downloaded byte count — so a truncated upload cannot mark a model ready. Canonical
   doctrine: [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
-- per-adapter bootstrap state lives under `./.data/engines/<adapter-id>/bootstrap.json`; the
-  Apple host path and the cluster or worker path both treat that bootstrap manifest as the
-  idempotent setup-ready marker
+- Apple per-adapter bootstrap state lives under
+  `./.data/engines/<adapter-id>/bootstrap.json` and is the host materializer's idempotent
+  setup-ready marker. Linux cluster engines instead consume the immutable framework venv and its
+  baked per-engine marker from the exact image; `/workspace/.data` is a pod-private `emptyDir`, so
+  it is runtime scratch rather than a transport for image setup evidence
 - per-engine software manifests record adapter id, engine name, substrate, architecture,
   artifact kind, source reference, runtime versions, digest, optional MinIO object key,
   recipe fingerprint, direct-target contract fingerprint, exact resolved provenance, and optional

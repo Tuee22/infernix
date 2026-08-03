@@ -17,6 +17,7 @@ module Infernix.Engines.Artifact.Target
     nativeArtifactTargetLeadingArguments,
     nativeArtifactTargetImmutableClosureRoots,
     nativeArtifactTargetIsInstalled,
+    nativeArtifactTargetArchitecture,
     nativeArtifactTargetFingerprint,
     nativeArtifactTargetEvidenceFingerprint,
   )
@@ -40,7 +41,7 @@ import Infernix.Engines.Artifact.Identity
   ( NativeArtifactIdentity,
     nativeArtifactAdapterId,
   )
-import System.FilePath ((</>))
+import System.FilePath (takeDirectory, (</>))
 
 data TargetPath
   = InstalledTarget !FilePath
@@ -394,7 +395,7 @@ nativeArtifactTarget identity substrate architecture =
     ("apple-silicon", "arm64", "jvm-native") ->
       appleTarget
         identity
-        (InstalledTarget "Audiveris.app/Contents/MacOS/Audiveris")
+        (InstalledTarget "Audiveris.app/Contents/runtime/Contents/Home/bin/java")
         NoTargetArgumentPrefix
     ("linux-native", laneArchitecture, "llama-cpp-cli")
       | supportedLinuxArchitecture laneArchitecture ->
@@ -436,7 +437,8 @@ nativeArtifactTarget identity substrate architecture =
             (ImageTarget "/opt/infernix/audiveris-jre/bin/java")
             NoTargetArgumentPrefix
             [ ImageClosureRoot "/opt/infernix/audiveris-jre",
-              ImageClosureRoot "/opt/audiveris/lib/app"
+              ImageClosureRoot "/opt/audiveris/lib/app",
+              ImageClosureRoot "/opt/infernix/audiveris-javacpp-cache"
             ]
     _ ->
       Left
@@ -482,6 +484,14 @@ nativeArtifactTargetExecutable installRoot target =
     InstalledTarget relativePath -> installRoot </> relativePath
     ImageTarget absolutePath -> absolutePath
 
+-- | The lane architecture this target was resolved for.
+--
+-- A @linux-native@ image path depends on it, so a caller that already holds a
+-- resolved target can re-derive the identical catalog entry from the target
+-- itself rather than threading a second architecture value that could disagree.
+nativeArtifactTargetArchitecture :: NativeArtifactTarget -> Text
+nativeArtifactTargetArchitecture = targetArchitecture
+
 nativeArtifactTargetIsInstalled :: NativeArtifactTarget -> Bool
 nativeArtifactTargetIsInstalled target =
   case targetPath target of
@@ -497,8 +507,18 @@ nativeArtifactTargetLeadingArguments installRoot engineName target =
   case targetArgumentPrefix target of
     NoTargetArgumentPrefix ->
       case (targetSubstrate target, targetAdapterId target) of
+        ("apple-silicon", "jvm-native") ->
+          [ "-Dorg.bytedeco.javacpp.cachedir=" <> (installRoot </> "javacpp-cache"),
+            "-cp",
+            installRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
+            "Audiveris"
+          ]
         ("linux-native", "jvm-native") ->
-          ["-cp", "/opt/audiveris/lib/app/*", "Audiveris"]
+          [ "-Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache",
+            "-cp",
+            "/opt/audiveris/lib/app/*",
+            "Audiveris"
+          ]
         _ -> []
     InstalledPythonRunnerPrefix ->
       pythonRunnerArguments
@@ -512,8 +532,14 @@ nativeArtifactTargetLeadingArguments installRoot engineName target =
         "--adapter-id",
         Text.unpack (targetAdapterId target),
         "--engine-name",
-        Text.unpack engineName
+        Text.unpack engineName,
+        "--expected-python-prefix",
+        expectedPythonPrefix
       ]
+    expectedPythonPrefix =
+      case targetPath target of
+        InstalledTarget _ -> installRoot </> "venv"
+        ImageTarget executable -> takeDirectory (takeDirectory executable)
 
 nativeArtifactTargetImmutableClosureRoots ::
   FilePath ->

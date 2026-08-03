@@ -10,12 +10,19 @@
 module Infernix.Runtime.CappedEngine.Internal
   ( EngineOutputStream (..),
     EngineOutcome (..),
+    EngineExecutionAuthority,
+    newEngineExecutionAuthority,
+    withSerializedEngineExecution,
     NativeArtifactCache,
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
     PythonWorkerLaunchOutcome (..),
     nativeArtifactCache,
     nativeArtifactInvocation,
+    missingResidentRecheckForTest,
+    linuxWatchdogOutcomeForTest,
+    parseResidentBytesForTest,
+    renderNativeArtifactArgumentsForTest,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
     verifyPhysicalFootprintSampler,
@@ -24,7 +31,7 @@ module Infernix.Runtime.CappedEngine.Internal
 where
 
 import Control.Concurrent (ThreadId, forkFinally, forkIO, killThread, threadDelay)
-import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, newMVar, putMVar, readMVar, withMVar)
 import Control.Exception
   ( IOException,
     SomeAsyncException,
@@ -36,11 +43,12 @@ import Control.Exception
     throwIO,
     try,
   )
-import Control.Monad (unless, void, when)
+import Control.Monad (foldM, unless, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
@@ -67,7 +75,6 @@ import Infernix.ExecutionPlan.Internal
       ),
   )
 import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
-import Infernix.Runtime.CappedEngine.DarwinObserver qualified as DarwinObserver
 import Infernix.Runtime.CappedEngine.OutputCapture qualified as OutputCapture
 import Infernix.Types
   ( EngineBinding
@@ -80,7 +87,7 @@ import Infernix.Types
   )
 import System.Directory qualified as Directory
 import System.Exit (ExitCode (..))
-import System.FilePath (isAbsolute, (</>))
+import System.FilePath (isAbsolute, takeExtension, (</>))
 import System.IO (Handle, hClose, hPutStr)
 import System.Posix.Signals (sigKILL, signalProcessGroup)
 import System.Posix.Types (CPid)
@@ -95,7 +102,13 @@ import System.Process
     terminateProcess,
     waitForProcess,
   )
-#if !defined(darwin_HOST_OS)
+
+-- The Apple footprint observer is reachable only from the Apple watchdog and
+-- its startup probe, and the @\/proc@ resident-set reader only from the Linux
+-- pair, so each import belongs to the branch that uses it.
+#if defined(darwin_HOST_OS)
+import Infernix.Runtime.CappedEngine.DarwinObserver qualified as DarwinObserver
+#else
 import Data.Char (isDigit)
 import Data.List (elemIndices)
 import System.IO.Error (isDoesNotExistError)
@@ -275,6 +288,32 @@ data EnforcementTermination
   | EnforcementUnavailable Text
   | OutputLimitExceeded EngineOutputStream
   | OutputCaptureFailed EngineOutputStream Text
+
+-- | The single-flight authority for engine execution.
+--
+-- The constructor is hidden and the value is minted once, by
+-- 'Infernix.Runtime.Enforcer.refineCompiledRuntimePlan', alongside the
+-- 'RuntimePlan' it serializes. A caller therefore cannot mint a second token and
+-- obtain concurrent execution of the same refined plan under independent locks,
+-- which a bare @MVar ()@ threaded through a public signature could not prevent.
+--
+-- It is deliberately one authority for the whole plan rather than one per
+-- executable. Serialization here is what bounds *total* resident memory to a
+-- single admitted grant at a time; per-executable tokens would let two admitted
+-- models run concurrently and exceed the host or pod budget the admission
+-- decision was made against.
+newtype EngineExecutionAuthority = EngineExecutionAuthority (MVar ())
+
+-- | Mint the one authority for one refined plan. Exposed only so the refinement
+-- boundary can pair it with the 'RuntimePlan'; every other module receives it.
+newEngineExecutionAuthority :: IO EngineExecutionAuthority
+newEngineExecutionAuthority = EngineExecutionAuthority <$> newMVar ()
+
+-- | Run one engine execution under the authority. Exceptions propagate with the
+-- token released, so a failed execution cannot wedge the daemon.
+withSerializedEngineExecution :: EngineExecutionAuthority -> IO a -> IO a
+withSerializedEngineExecution (EngineExecutionAuthority token) action =
+  withMVar token (const action)
 
 data WatchdogSpec
   = AppleFootprintWatchdog Int
@@ -489,31 +528,108 @@ runArtifactLaunchRequest
   executableModel
   launchRequest
   invocation
-  processEnvironment = do
-    let installRoot = Artifact.artifactLaunchInstallRoot launchRequest
-        entrypoint = Artifact.artifactLaunchEntrypoint launchRequest
-    artifactEnvironment <-
-      closedNativeArtifactEnvironment
-        installRoot
-        invocation
-        processEnvironment
-    (outcome, exitCode, stdoutOutput, stderrOutput) <-
-      runExecutableProcess
-        executableModel
-        ( DirectEngineCommand
-            entrypoint
-            (renderNativeArtifactArguments installRoot invocation)
+  processEnvironment =
+    case renderNativeArtifactArguments installRoot invocation of
+      Left _ -> pure Artifact.ArtifactTerminalRejected
+      Right invocationArguments -> do
+        artifactEnvironment <-
+          closedNativeArtifactEnvironment
             installRoot
-            artifactEnvironment
-        )
-        ""
-    pure
-      ( Artifact.ArtifactTerminalProcess
-          (artifactProcessOutcome outcome)
-          exitCode
-          (ByteString8.pack stdoutOutput)
-          (ByteString8.pack stderrOutput)
-      )
+            invocation
+            processEnvironment
+        (outcome, exitCode, stdoutOutput, stderrOutput) <-
+          runExecutableProcess
+            executableModel
+            ( DirectEngineCommand
+                entrypoint
+                (leadingArguments <> invocationArguments)
+                installRoot
+                artifactEnvironment
+            )
+            ""
+        finalizedOutput <-
+          finalizeNativeArtifactOutput invocation exitCode stdoutOutput
+        pure $
+          case finalizedOutput of
+            Left _ -> Artifact.ArtifactTerminalRejected
+            Right finalStdout ->
+              Artifact.ArtifactTerminalProcess
+                (artifactProcessOutcome outcome)
+                exitCode
+                (ByteString8.pack finalStdout)
+                (ByteString8.pack stderrOutput)
+    where
+      -- The closed catalog's leading arguments come first. They are what makes a
+      -- target complete: Python runners receive their script and fixed protocol
+      -- prefix, while the JVM receives its classpath and main class. The sealed
+      -- adapter dispatch then appends that target's actual invocation grammar.
+      installRoot = Artifact.artifactLaunchInstallRoot launchRequest
+      entrypoint = Artifact.artifactLaunchEntrypoint launchRequest
+      leadingArguments =
+        Artifact.artifactLaunchLeadingArguments launchRequest
+
+finalizeNativeArtifactOutput ::
+  NativeArtifactInvocation ->
+  ExitCode ->
+  String ->
+  IO (Either String String)
+finalizeNativeArtifactOutput invocation exitCode stdoutOutput =
+  case (nativeInvocationAdapterId invocation, exitCode) of
+    ("jvm-native", ExitSuccess) ->
+      case requireNativeInvocationPath
+        "jvm-native output directory"
+        (nativeInvocationOutputDirectory invocation) of
+        Left failure -> pure (Left failure)
+        Right directory -> do
+          outputFiles <- collectBoundedArtifactOutputFiles directory
+          pure $
+            case outputFiles of
+              Right [artifactPath] ->
+                Right ("infernix-native-artifact-file:" <> artifactPath)
+              Right [] ->
+                Left "Audiveris completed without a MusicXML output artifact"
+              Right _ ->
+                Left "Audiveris completed with multiple MusicXML output artifacts"
+              Left failure -> Left failure
+    _ -> pure (Right stdoutOutput)
+
+collectBoundedArtifactOutputFiles :: FilePath -> IO (Either String [FilePath])
+collectBoundedArtifactOutputFiles root = fmap (fmap snd) (walk 0 0 root)
+  where
+    maximumDepth = 8 :: Int
+    maximumEntries = 4096 :: Int
+    walk depth observed directory
+      | depth > maximumDepth =
+          pure (Left "native artifact output exceeded the directory-depth bound")
+      | otherwise = do
+          entries <- List.sort <$> Directory.listDirectory directory
+          if observed + length entries > maximumEntries
+            then pure (Left "native artifact output exceeded the entry-count bound")
+            else
+              foldM
+                (visit depth directory)
+                (Right (observed + length entries, []))
+                entries
+    visit _ _ (Left failure) _ = pure (Left failure)
+    visit depth directory (Right (observed, files)) entry = do
+      let path = directory </> entry
+      symbolicLink <- Directory.pathIsSymbolicLink path
+      if symbolicLink
+        then pure (Left "native artifact output contains a symbolic link")
+        else do
+          isDirectory <- Directory.doesDirectoryExist path
+          if isDirectory
+            then do
+              descendants <- walk (depth + 1) observed path
+              pure (fmap (appendCollectedFiles files) descendants)
+            else do
+              regularFile <- Directory.doesFileExist path
+              let accepted =
+                    regularFile
+                      && takeExtension path `elem` [".mxl", ".musicxml", ".xml"]
+              pure (Right (observed, files <> [path | accepted]))
+    appendCollectedFiles existingFiles (count, descendantFiles) =
+      (count, existingFiles <> descendantFiles)
 
 closedNativeArtifactEnvironment ::
   FilePath ->
@@ -679,8 +795,144 @@ validateInvocationBinding
 renderNativeArtifactArguments ::
   FilePath ->
   NativeArtifactInvocation ->
-  [String]
+  Either String [String]
 renderNativeArtifactArguments installRoot invocation =
+  case nativeInvocationAdapterId invocation of
+    "llama-cpp-cli" -> do
+      cache <- requireNativeArtifactCache invocation
+      prompt <-
+        case nativeInvocationInput invocation of
+          NativeArtifactText value -> Right value
+          NativeArtifactObjectRef _ ->
+            Left "llama-cpp-cli requires inline text input"
+      pure
+        [ "--model",
+          nativeModelPayloadPath cache invocation,
+          "--prompt",
+          Text.unpack prompt,
+          "--n-predict",
+          "32",
+          "--ctx-size",
+          "512",
+          "--threads",
+          "1",
+          "--gpu-layers",
+          "0",
+          "--no-display-prompt",
+          "--no-conversation",
+          "--single-turn",
+          "--simple-io",
+          "--log-disable"
+        ]
+    "whisper-cpp-cli" -> do
+      cache <- requireNativeArtifactCache invocation
+      inputFile <-
+        requireNativeInvocationPath
+          "whisper-cpp-cli input file"
+          (nativeInvocationInputFile invocation)
+      pure
+        [ "--model",
+          nativeModelPayloadPath cache invocation,
+          "--file",
+          inputFile,
+          "--threads",
+          "1",
+          "--no-timestamps",
+          "--language",
+          "en",
+          "--no-gpu"
+        ]
+    "jvm-native" -> do
+      inputFile <-
+        requireNativeInvocationPath
+          "jvm-native input file"
+          (nativeInvocationInputFile invocation)
+      outputDirectory <-
+        requireNativeInvocationPath
+          "jvm-native output directory"
+          (nativeInvocationOutputDirectory invocation)
+      pure
+        [ "-batch",
+          "-export",
+          "-output",
+          outputDirectory,
+          inputFile
+        ]
+    adapterId
+      | adapterId
+          `elem` [ "ctranslate2-native",
+                   "onnx-runtime-native",
+                   "mlx-native",
+                   "coreml-native"
+                 ] ->
+          Right (renderPythonNativeArtifactArguments installRoot invocation)
+    adapterId ->
+      Left
+        ( "closed native invocation grammar has no entry for adapter "
+            <> Text.unpack adapterId
+        )
+
+-- | Unit-test view of the closed adapter dispatch. Production callers cannot
+-- supply these operands; they receive the opaque invocation minted above.
+renderNativeArtifactArgumentsForTest ::
+  Text ->
+  Maybe FilePath ->
+  Maybe FilePath ->
+  Either String [String]
+renderNativeArtifactArgumentsForTest adapterId maybeOutputDirectory maybeInputFile =
+  renderNativeArtifactArguments
+    "/opt/infernix/engines/test-adapter"
+    NativeArtifactInvocation
+      { nativeInvocationModelId = "test-model",
+        nativeInvocationSelectedEngine = "test-engine",
+        nativeInvocationFamily = "test-family",
+        nativeInvocationAdapterId = adapterId,
+        nativeInvocationRuntimeMode = LinuxCpu,
+        nativeInvocationInput = NativeArtifactText "test prompt",
+        nativeInvocationCache =
+          Just
+            NativeArtifactCache
+              { nativeCacheRoot = "/var/lib/infernix/models",
+                nativeCacheQuotaBytes = 1,
+                nativeCacheMinioEndpoint = "minio",
+                nativeCacheModelsBucket = "models",
+                nativeCacheDemoArtifactsBucket = "artifacts",
+                nativeCacheRegion = "local"
+              },
+        nativeInvocationOutputDirectory = maybeOutputDirectory,
+        nativeInvocationInputFile = maybeInputFile
+      }
+
+requireNativeArtifactCache ::
+  NativeArtifactInvocation ->
+  Either String NativeArtifactCache
+requireNativeArtifactCache invocation =
+  maybe
+    (Left "native invocation requires a populated model cache")
+    Right
+    (nativeInvocationCache invocation)
+
+requireNativeInvocationPath ::
+  String ->
+  Maybe FilePath ->
+  Either String FilePath
+requireNativeInvocationPath label =
+  maybe (Left (label <> " is unavailable")) Right
+
+nativeModelPayloadPath ::
+  NativeArtifactCache ->
+  NativeArtifactInvocation ->
+  FilePath
+nativeModelPayloadPath cache invocation =
+  nativeCacheRoot cache
+    </> Text.unpack (nativeInvocationModelId invocation)
+    </> "payload"
+
+renderPythonNativeArtifactArguments ::
+  FilePath ->
+  NativeArtifactInvocation ->
+  [String]
+renderPythonNativeArtifactArguments installRoot invocation =
   [ "--model",
     Text.unpack (nativeInvocationModelId invocation),
     "--engine",
@@ -1080,7 +1332,19 @@ runLinuxWatchdog ceilingMib processHandle processGroup terminationRef = loop
         Left reason ->
           failSamplerIfRunning processHandle processGroup terminationRef reason
         Right Nothing ->
-          pure ()
+          -- No live group member was observed. If the engine has actually
+          -- exited this is the ordinary end of enforcement and
+          -- 'failSamplerIfRunning' returns quietly. If it has *not* exited, the
+          -- sampler cannot account for a process that is still running, which is
+          -- the same class of loss as a `Left` and must fail closed. Returning
+          -- unconditionally here — as this did — silently disabled enforcement
+          -- for the rest of an execution that was still going, and the startup
+          -- probe already treats the same observation as a failure.
+          failSamplerIfRunning
+            processHandle
+            processGroup
+            terminationRef
+            "Linux /proc process-group RSS sampler observed no live group member for a running engine"
         Right (Just footprint)
           | footprint > ceilingBytes ->
               terminateForWatchdog
@@ -1092,6 +1356,30 @@ runLinuxWatchdog ceilingMib processHandle processGroup terminationRef = loop
               threadDelay watchdogIntervalMicros
               loop
 #endif
+
+-- | Package-test seam for the real Linux watchdog. The seam accepts an
+-- already-created grouped child, mints no execution authority, and exposes
+-- only the typed terminal classification after the production loop returns.
+linuxWatchdogOutcomeForTest ::
+  Int ->
+  ProcessHandle ->
+  CPid ->
+  IO (Maybe EngineOutcome)
+linuxWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
+  terminationRef <- newIORef Nothing
+  runLinuxWatchdog ceilingMib processHandle processGroup terminationRef
+  termination <- readIORef terminationRef
+  pure $
+    case termination of
+      Just (CeilingBreached observedCeilingMib) ->
+        Just (EngineExceededCeiling observedCeilingMib)
+      Just (EnforcementUnavailable reason) ->
+        Just (EngineEnforcementUnavailable reason)
+      Just (OutputLimitExceeded outputStream) ->
+        Just (EngineOutputLimitExceeded outputStream)
+      Just (OutputCaptureFailed outputStream reason) ->
+        Just (EngineOutputCaptureFailed outputStream reason)
+      Nothing -> Nothing
 
 #if defined(darwin_HOST_OS)
 continueIfRunning :: ProcessHandle -> IO () -> IO ()
@@ -1223,21 +1511,57 @@ processGroupRssBytes processGroup = do
             Right (processState, processGroupValue)
               | processGroupValue /= targetGroup ->
                   foldProcessEntries remaining foundMember totalBytes
-              | processState == 'Z' ->
+              | processStateIsTerminal processState ->
                   foldProcessEntries remaining True totalBytes
               | otherwise -> do
                   statusResult <- readProcFile ("/proc/" <> pidText <> "/status")
                   case statusResult of
                     Left reason -> pure (Left reason)
                     Right Nothing -> foldProcessEntries remaining foundMember totalBytes
-                    Right (Just statusContents) ->
-                      case parseResidentBytes statusContents of
-                        Left reason -> pure (Left (procParseError pidText "status" reason))
+                    Right (Just statusContents) -> do
+                      residentResult <- readResidentBytes pidText statusContents
+                      case residentResult of
+                        Left reason -> pure (Left reason)
                         Right residentBytes ->
                           case checkedAdd totalBytes residentBytes of
                             Nothing -> pure (Left "process-group RSS total overflowed Word64")
                             Just nextTotal ->
                               foldProcessEntries remaining True nextTotal
+
+    -- A task can discard its memory map before procfs publishes its terminal
+    -- state. In that exit window @status@ legitimately has no @VmRSS@ even
+    -- though the earlier @stat@ sample still said live. Re-read both files a
+    -- bounded interval and accept zero only after disappearance or explicit
+    -- terminal-state evidence. The interval matches the watchdog cadence so a
+    -- scheduler-delayed exit gets several ordinary observation opportunities;
+    -- a stable live or malformed task still fails closed after 200 ms.
+    readResidentBytes pidText = retry 4
+      where
+        retry :: Int -> ByteString -> IO (Either Text Word64)
+        retry retriesRemaining statusContents =
+          case parseResidentSample statusContents of
+            Left reason -> pure (Left (procParseError pidText "status" reason))
+            Right (ResidentBytes residentBytes) -> pure (Right residentBytes)
+            Right ResidentTerminal -> pure (Right 0)
+            Right ResidentMissing -> do
+              statResult <- readProcFile ("/proc/" <> pidText <> "/stat")
+              case statResult of
+                Left reason -> pure (Left reason)
+                Right statContents ->
+                  case missingResidentRecheckForTest statContents of
+                    Left reason -> pure (Left (procParseError pidText "stat" reason))
+                    Right True -> pure (Right 0)
+                    Right False
+                      | retriesRemaining <= 0 ->
+                          pure (Left (procParseError pidText "status" "missing VmRSS"))
+                      | otherwise -> do
+                          threadDelay watchdogIntervalMicros
+                          nextStatusResult <- readProcFile ("/proc/" <> pidText <> "/status")
+                          case nextStatusResult of
+                            Left reason -> pure (Left reason)
+                            Right Nothing -> pure (Right 0)
+                            Right (Just nextStatusContents) ->
+                              retry (retriesRemaining - 1) nextStatusContents
 
 readProcFile :: FilePath -> IO (Either Text (Maybe ByteString))
 readProcFile path = do
@@ -1268,8 +1592,13 @@ parseProcessStateAndGroup contents =
                 Nothing -> Left "invalid process-group id"
         _ -> Left "missing process state or process-group id"
 
-parseResidentBytes :: ByteString -> Either Text Word64
-parseResidentBytes contents =
+data ResidentSample
+  = ResidentBytes Word64
+  | ResidentTerminal
+  | ResidentMissing
+
+parseResidentSample :: ByteString -> Either Text ResidentSample
+parseResidentSample contents =
   case
       [ kibibytes
       | line <- ByteString8.lines contents,
@@ -1279,11 +1608,51 @@ parseResidentBytes contents =
       case readWord64 kibibytesText of
         Just kibibytes
           | kibibytes <= maxBound `div` bytesPerKib ->
-              Right (kibibytes * bytesPerKib)
+              Right (ResidentBytes (kibibytes * bytesPerKib))
           | otherwise -> Left "VmRSS byte conversion overflow"
         Nothing -> Left "invalid VmRSS quantity"
-    [] -> Left "missing VmRSS"
+    []
+      | processHasTerminalStatus contents -> Right ResidentTerminal
+      | otherwise -> Right ResidentMissing
     _ -> Left "duplicate VmRSS"
+
+parseResidentBytes :: ByteString -> Either Text Word64
+parseResidentBytes contents =
+  case parseResidentSample contents of
+    Left reason -> Left reason
+    Right (ResidentBytes residentBytes) -> Right residentBytes
+    Right ResidentTerminal -> Right 0
+    Right ResidentMissing -> Left "missing VmRSS"
+
+-- A process may cross from the live state observed in @stat@ to a zombie or
+-- dead state before its @status@ file is read. Linux then legitimately omits
+-- @VmRSS@. That terminal transition contributes zero resident bytes; a live
+-- or malformed status without @VmRSS@ remains an enforcement failure.
+processHasTerminalStatus :: ByteString -> Bool
+processHasTerminalStatus contents =
+  case
+      [ processState
+      | line <- ByteString8.lines contents,
+        "State:" : [processState] : _ <- [words (ByteString8.unpack line)]
+      ] of
+    [processState] -> processState == 'Z' || processState == 'X'
+    _ -> False
+
+processStateIsTerminal :: Char -> Bool
+processStateIsTerminal processState =
+  processState == 'Z' || processState == 'X' || processState == 'x'
+
+-- | Pure seam for the bounded exit-race recheck. A vanished task or an
+-- explicitly terminal second @stat@ sample permits zero RSS; a still-live
+-- task must be sampled again and eventually fails closed if @VmRSS@ remains
+-- absent.
+missingResidentRecheckForTest :: Maybe ByteString -> Either Text Bool
+missingResidentRecheckForTest Nothing = Right True
+missingResidentRecheckForTest (Just statContents) =
+  processStateIsTerminal . fst <$> parseProcessStateAndGroup statContents
+
+parseResidentBytesForTest :: ByteString -> Either Text Word64
+parseResidentBytesForTest = parseResidentBytes
 
 readInteger :: String -> Maybe Integer
 readInteger value =

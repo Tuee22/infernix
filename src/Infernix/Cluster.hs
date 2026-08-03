@@ -49,6 +49,8 @@ module Infernix.Cluster
     loadClusterState,
     pulsarBootstrapLogIndicatesDirtyState,
     renderHelmValues,
+    runPlaywrightPrepareEngine,
+    runPlaywrightReplaceDemoPods,
     runKubectlCompat,
     writeGeneratedKindConfig,
   )
@@ -2568,6 +2570,123 @@ normalizeClusterStatePaths paths state =
   state
     { kubeconfigPath = Config.generatedKubeconfigPath paths
     }
+
+-- | Closed test-harness mutation used by routed Playwright coverage. The model
+-- id is resolved through the generated catalog before any deployment name is
+-- constructed; callers cannot supply a Kubernetes resource or replica count.
+runPlaywrightPrepareEngine :: Text.Text -> IO ()
+runPlaywrightPrepareEngine requestedModelId =
+  withHarnessPlaywrightCluster $ \paths state -> do
+    let scale workload replicas =
+          runClusterCommand
+            paths
+            ( Command.kubectlScaleDeployment
+                (clusterKubeTarget state)
+                (Command.Namespace "platform")
+                (Command.WorkloadRef workload)
+                replicas
+            )
+    demoConfig <- decodeDemoConfigFile (generatedDemoConfigPath state)
+    case configRuntimeMode demoConfig of
+      AppleSilicon -> pure ()
+      LinuxCpu -> scale "deployment/infernix-engine" 1
+      LinuxGpu -> do
+        model <-
+          maybe
+            (ioError . userError $ "Playwright model is absent from the generated catalog: " <> Text.unpack requestedModelId)
+            pure
+            (List.find ((== requestedModelId) . modelId) (models demoConfig))
+        binding <-
+          maybe
+            (ioError . userError $ "Playwright model has no selected engine binding: " <> Text.unpack requestedModelId)
+            pure
+            (engineBindingForSelectedEngine LinuxGpu (selectedEngine model))
+        let maybeActiveEngine =
+              if engineBindingPythonNative binding
+                then engineNameForSelectedEngine LinuxGpu (selectedEngine model)
+                else Nothing
+        scale "deployment/infernix-engine" (maybe 1 (const 0) maybeActiveEngine)
+        forM_ (perEngineDeploymentNames LinuxGpu) $ \engineName ->
+          scale
+            ("deployment/infernix-engine-" <> Text.unpack engineName)
+            (if Just engineName == maybeActiveEngine then 1 else 0)
+
+-- | Replace the fixed demo workload and wait for a distinct ready pod set. The
+-- closed command owns the label, namespace, delete flags, and readiness budget.
+runPlaywrightReplaceDemoPods :: IO ()
+runPlaywrightReplaceDemoPods =
+  withHarnessPlaywrightCluster $ \paths state -> do
+    originalPods <- playwrightDemoPods paths state
+    case NonEmpty.nonEmpty originalPods of
+      Nothing -> ioError (userError "Playwright demo replacement found no existing demo pods")
+      Just pods ->
+        runClusterCommand
+          paths
+          ( Command.kubectlDeletePods
+              (clusterKubeTarget state)
+              (Command.Namespace "platform")
+              pods
+          )
+    outcome <-
+      Readiness.awaitReadiness (Readiness.budgetDeadline 180 1000000) $ do
+        currentPods <- playwrightDemoPods paths state
+        let replacements = filter (`notElem` originalPods) currentPods
+            originalsGone = all (`notElem` currentPods) originalPods
+        pure $
+          if originalsGone && length replacements >= length originalPods
+            then Right (take (length originalPods) replacements)
+            else Left (Readiness.Progress (length replacements) (length originalPods) "replacement demo pods")
+    replacementPods <-
+      Readiness.foldReadiness
+        pure
+        (\_ -> ioError (userError "Timed out waiting for replacement demo pods"))
+        (\_ -> ioError (userError "Timed out waiting for replacement demo pods"))
+        outcome
+    forM_ replacementPods $ \podName ->
+      runClusterCommand
+        paths
+        ( Command.kubectlWaitPodReady
+            (clusterKubeTarget state)
+            (Command.Namespace "platform")
+            podName
+            180
+        )
+
+playwrightDemoPods :: Paths -> ClusterState -> IO [Command.PodName]
+playwrightDemoPods paths state =
+  map Command.PodName
+    . filter (not . null)
+    . lines
+    <$> captureClusterCommand
+      paths
+      (Command.kubectlListPods (clusterKubeTarget state) Command.PlaywrightDemoPods)
+
+withHarnessPlaywrightCluster :: (Paths -> ClusterState -> IO a) -> IO a
+withHarnessPlaywrightCluster action = do
+  paths <- discoverClusterCommandPaths
+  withClusterLifecycleLock paths $ \lifecycleLock -> do
+    reservationAccess <- requireReservationAccess paths HarnessOwned
+    recordedState <- loadClusterState paths
+    runtimeMode <- resolveCommandRuntimeMode paths Nothing recordedState
+    presentRuntimeModes <- presentClusterRuntimeModes paths
+    _ <-
+      requireClusterOwnership
+        lifecycleLock
+        paths
+        runtimeMode
+        "run closed Playwright harness mutation"
+        HarnessOwned
+        reservationAccess
+        presentRuntimeModes
+        recordedState
+    state <-
+      maybe
+        (ioError (userError "Playwright harness mutation requires matching persisted cluster state"))
+        pure
+        (matchingClusterState runtimeMode recordedState)
+    ensureOuterContainerKindNetworkAccess paths runtimeMode
+    ensureClusterKubeconfigPresent paths state
+    action paths state
 
 ensureClusterKubeconfigPresent :: Paths -> ClusterState -> IO ()
 ensureClusterKubeconfigPresent paths state = do
@@ -7299,6 +7418,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      PULSAR_MEM: \"-Xms64m -Xmx128m -XX:MaxDirectMemorySize=64m\"",
             "      PULSAR_GC: " <> show localPulsarJvmGc,
             "      httpNumThreads: \"8\"",
+            "      httpServerIdleTimeout: \"7200000\"",
             "      webSocketServiceEnabled: \"true\"",
             "    resources:",
             "      requests:",

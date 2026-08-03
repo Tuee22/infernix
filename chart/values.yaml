@@ -793,6 +793,11 @@ pulsar:
     replicaCount: 3
     configData:
       webSocketServiceEnabled: "true"
+      # Engine consumers retain their delivery until real inference and result
+      # publication complete. Pulsar 4.0.9's proxy WebSocket servlet is bounded
+      # by the proxy HTTP-server idle timeout, so keep that connection alive
+      # beyond the integration/runtime inference ceiling.
+      httpServerIdleTimeout: "7200000"
     podMonitor:
       enabled: false
     affinity:

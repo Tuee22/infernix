@@ -32,7 +32,9 @@ import Infernix.ExecutionPlan.Internal
     RuntimeObservation (RuntimeObservation),
   )
 import Infernix.Runtime.CappedEngine
-  ( verifyPhysicalFootprintSampler,
+  ( EngineExecutionAuthority,
+    newEngineExecutionAuthority,
+    verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
   )
 import Infernix.Runtime.Enforcer.Internal (parseFiniteMib)
@@ -43,10 +45,13 @@ import System.FilePath ((</>))
 -- into the only value accepted by the engine launch boundary. Probe results
 -- are observations, not permanent assumptions: each watchdog still fails
 -- closed if its sampler disappears during an execution.
+-- | The authority is minted here, with the plan it serializes, and nowhere
+-- else. Returning the pair is what makes concurrent reuse of one refined plan
+-- unrepresentable: a caller has no way to obtain a second token.
 refineCompiledRuntimePlan ::
   Paths ->
   CompiledRuntimePlan ->
-  IO (Either RefinementErrors RuntimePlan)
+  IO (Either RefinementErrors (RuntimePlan, EngineExecutionAuthority))
 refineCompiledRuntimePlan paths compiledPlan = do
   let placements = Map.elems (compiledPlacements compiledPlan)
       needsHostSampler = any isHostPlacement placements
@@ -71,7 +76,11 @@ refineCompiledRuntimePlan paths compiledPlan = do
         map
           (placementObservation observedHostPartition hostSamplerAvailable podSamplerAvailable outerLimitMib)
           placements
-  pure (refineRuntimePlan (RuntimeObservation observations) compiledPlan)
+  case refineRuntimePlan (RuntimeObservation observations) compiledPlan of
+    Left errors -> pure (Left errors)
+    Right runtimePlan -> do
+      authority <- newEngineExecutionAuthority
+      pure (Right (runtimePlan, authority))
 
 isHostPlacement :: CompiledPlacement -> Bool
 isHostPlacement placement =

@@ -25,6 +25,7 @@ class RunnerArgs:
     input_file: str
     model_cache_root: pathlib.Path | None
     output_dir: pathlib.Path | None
+    expected_python_prefix: pathlib.Path
     smoke_only: bool
 
 
@@ -68,6 +69,7 @@ def _parse_args() -> RunnerArgs:
     )
     parser.add_argument("--minio-region", default="")
     parser.add_argument("--output-dir", default="")
+    parser.add_argument("--expected-python-prefix", required=True)
     parser.add_argument("--smoke", action="store_true", dest="smoke_only")
     parser.add_argument("--require-native-payload", action="store_true")
     parser.add_argument("--allow-missing-native-payload", action="store_true")
@@ -90,6 +92,7 @@ def _parse_args() -> RunnerArgs:
             pathlib.Path(parsed.model_cache_root) if parsed.model_cache_root else None
         ),
         output_dir=pathlib.Path(parsed.output_dir) if parsed.output_dir else None,
+        expected_python_prefix=pathlib.Path(parsed.expected_python_prefix),
         smoke_only=bool(parsed.smoke_only),
     )
 
@@ -134,7 +137,7 @@ def _smoke_python_runtime(args: RunnerArgs) -> dict[str, str]:
     # missing or broken venv. Require the venv interpreter, then import the
     # real engine runtime and surface any ImportError as a non-zero failure
     # rather than a silent pass.
-    venv_root = (args.install_root / "venv").resolve()
+    venv_root = args.expected_python_prefix.resolve()
     # Detect venv membership via sys.prefix (the venv root), not
     # pathlib(sys.executable).resolve(): the interpreter path is not the venv
     # identity, and upstream packages may still contain contained links even
@@ -143,7 +146,7 @@ def _smoke_python_runtime(args: RunnerArgs) -> dict[str, str]:
     prefix = pathlib.Path(sys.prefix).resolve()
     if not _path_is_under(prefix, venv_root):
         raise RunnerFailure(
-            f"apple native smoke for {args.adapter_id} must run under the engine venv "
+            f"native smoke for {args.adapter_id} must run under its sealed Python prefix "
             f"({venv_root}); the engine runtime cannot be validated from {sys.executable} "
             f"(interpreter prefix {prefix})",
             70,

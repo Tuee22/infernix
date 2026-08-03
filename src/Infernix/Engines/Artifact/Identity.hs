@@ -5,9 +5,6 @@ module Infernix.Engines.Artifact.Identity
   ( NativeArtifactIdentity,
     parseNativeArtifactIdentity,
     nativeArtifactAdapterId,
-    nativeArtifactEntrypoint,
-    nativeArtifactSmokeArguments,
-    nativeArtifactSmokeCommand,
   )
 where
 
@@ -46,23 +43,9 @@ nativeArtifactAdapterId identity =
     CoreMlArtifact -> "coreml-native"
     JvmArtifact -> "jvm-native"
 
-nativeArtifactEntrypoint :: NativeArtifactIdentity -> FilePath
-nativeArtifactEntrypoint identity =
-  case identity of
-    LlamaCppArtifact -> "bin/llama-cli"
-    WhisperCppArtifact -> "bin/whisper-cli"
-    CTranslate2Artifact -> "bin/ct2-runner"
-    OnnxRuntimeArtifact -> "bin/onnx-runner"
-    MlxArtifact -> "bin/mlx-runner"
-    CoreMlArtifact -> "bin/coreml-runner"
-    JvmArtifact -> "bin/audiveris"
-
-nativeArtifactSmokeArguments :: NativeArtifactIdentity -> [String]
-nativeArtifactSmokeArguments _identity = ["--smoke"]
-
-nativeArtifactSmokeCommand :: NativeArtifactIdentity -> String
-nativeArtifactSmokeCommand identity =
-  unwords
-    ( nativeArtifactEntrypoint identity
-        : nativeArtifactSmokeArguments identity
-    )
+-- The @bin\/*@ wrapper entrypoint and its uniform @--smoke@ command are
+-- deliberately absent. Generated shell wrappers were retired on the Apple side
+-- and the Linux lane was the last consumer of the wrapper-shaped contract; the
+-- supported spelling of a runner is now the closed direct-target catalog in
+-- "Infernix.Engines.Artifact.Target", which names an installed relative path or
+-- an absolute image path together with the leading arguments that target needs.

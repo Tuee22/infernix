@@ -1,7 +1,8 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Blocked — Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing)
-is blocked while active Phase 1 and then Phase 2 close in numerical order. Phase 2's
+**Status**: Active — Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing)
+is in its exact-source Linux validation gate after the ordered Phase 1 and Phase 2
+machine-independent work closed. Selected Apple hardware validation remains open. Phase 2's
 `d578…` / `a0d1…` final review and source-matched Stage 1 are historical GREEN evidence from a
 freeze rejected by Apple attempt 4. Its follow-on fp16 Bark correction is implemented with focused
 Python/Haskell unit checks GREEN and passed renewed final review plus complete Stage 1 against
@@ -10,8 +11,9 @@ correction supersedes every pre-correction Phase 2 digest, review, Stage 1, and 
 Phase 0's current correction review and complete Stage 1 are green, while Apple and `linux-cpu`
 evidence remain open.
 The lifecycle and bounded-subprocess replacements are present, and the obsolete C/Cabal boundary is
-removed. Their correction-focused proof is green, but Phase 4's own enforcer, single-flight, and
-behavioral gates remain; Phase 4 stays blocked.
+removed. Their correction-focused proof is green; Phase 4's enforcer and single-flight
+implementation is present, while its exact-source full-suite and selected Apple behavioral gates
+remain.
 Phase 1 Sprint 1.19 passed its
 complete source-matched gate on 2026-07-25;
 the earlier memory-safety reopen was closed under
@@ -2366,11 +2368,12 @@ audit opened Sprint 4.32 below.
 
 ---
 
-## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Blocked]
+## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Active]
 
-**Status**: Blocked
-**Blocked by**: Phases 1-2 in numerical order
-**Code-side closure**: Blocked on the ordered predecessor gates. The no-repo-owned-native-source audit
+**Status**: Active
+**Blocked by**: None for machine-independent implementation; Apple hardware validation remains gated
+on an available selected Apple host
+**Code-side closure**: Complete on 2026-08-02 after the ordered Phase 1-2 machine-independent gates. The no-repo-owned-native-source audit
 rejected the direct `proc_pid_rusage` FFI exemption. The source now replaces it with a
 package-internal bounded public-API observer over fixed `/usr/bin/top` and
 `/usr/bin/footprint` commands; its focused adversarial suite and the aggregate correction gate are
@@ -2379,11 +2382,11 @@ resource-indexed compiler and live-enforcer refinement boundary: coordinators pr
 placements and daemon capabilities, while engine subscription and launch receive
 `RuntimePlan` / `ExecutableModel`; raw presentation decoders, routing constructors, and process
 commands are hidden. Phase 1 validation, including normal-path typed rejection for an
-`UnavailableModel`, passed its complete source-matched gate on 2026-07-25. Phase 4 still owns
-Apple/Linux CPU adversarial enforcement proof and moving caller-owned serialization inside one
-opaque execution authority. The rebuilt
-`linux-cpu` launcher `sha256:0f6e256dc97e7940c0386790b97d68780c611d2de579b079096ce6f2c0cd6ed9`
-and its Haskell/PureScript unit gate (`83/83` web tests) are pre-audit evidence only
+`UnavailableModel`, passed its complete source-matched gate on 2026-07-25. Phase 4's opaque
+single-flight authority, Linux sampler-loss fail-closed path, and live adversarial Linux breach
+regression are implemented and source-matched. Exact image
+`sha256:dfc0e2b6251e2d7ed74712253e06d2f9fbc60b649ac162b44dac030aca43a979`
+passed the complete `linux-cpu` cohort. Only the selected Apple hardware proof remains
 **Cohort gate**: selected `apple-silicon` plus `linux-cpu`, new typed-execution-plan wave
 **Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
@@ -2420,6 +2423,75 @@ unavailable compiled placements.
 
 ### Remaining Work
 
+**D6, the encapsulated single-flight authority, landed on 2026-07-30, and closing it found the
+serialization was not merely un-encapsulated but genuinely absent on one live production path.**
+
+The mechanism was a bare `MVar ()` created in `Runtime/Daemon.hs`, passed through the *public*
+signature of `consumeTopicForever`, and taken in exactly one place — the `EngineTopicCapability`
+branch of the websocket consumer. Two consequences followed, both confirmed against source:
+
+- Any caller could pass a fresh `newMVar ()` per capability or per thread and obtain fully
+  concurrent execution of the same `RuntimePlan`, because the token was an ordinary argument.
+- `drainTopic` / `drainTopicWithKVCache` reach the *same* `publishedResultFromRequest` call with no
+  lock in scope at all. That is not a dormant path: `runFilesystemTopicSpool` is selected whenever
+  no Pulsar transport is discovered (`Daemon.hs:166`). It happens to drain sequentially in one
+  thread today, so the defect was masked by an unrelated implementation detail rather than by any
+  guarantee.
+
+Because serialization is what bounds *total* resident memory to one admitted grant at a time, a
+second token does not merely reduce throughput fairness — it lets two admitted models run
+concurrently and exceed the budget their admission decision was made against.
+
+The correction puts the authority where the deliverable says it belongs: inside the capability that
+authorizes execution. `EngineExecutionAuthority` is an opaque newtype in the capped-engine kernel,
+minted only by `refineCompiledRuntimePlan`, which now returns it paired with the `RuntimePlan` it
+serializes — so there is no second mint site to reach. `EngineTopicCapability` carries it alongside
+the refined plan, and its constructor is private, so a caller cannot re-pair that plan with a
+different token. `publishedResultFromRequest` — the single choke point both the websocket and
+filesystem-spool paths pass through — now requires it and wraps execution in
+`withSerializedEngineExecution`, which closes the unguarded path by construction rather than by
+convention. It stays one authority per plan rather than one per executable, deliberately: per-model
+tokens would reintroduce exactly the total-memory overrun described above.
+`fail-cannot-construct-engine-topic-capability` pins the private constructor.
+
+**A second, independent enforcement gap closed with it.** `runLinuxWatchdog`'s
+`Right Nothing` arm — no live process-group member observed — simply returned, silently ending
+enforcement for the remainder of that execution. It now discharges through `failSamplerIfRunning`,
+which returns quietly if the engine really has exited and fails closed with typed
+`EnforcementUnavailable` if it has not. That also removes an asymmetry: the startup probe already
+treated the same observation as a failure.
+
+The adversarial Linux CPU ceiling-breach survival regression landed on 2026-08-02. The unit binary
+self-execs a grouped child that allocates and touches 64 MiB, applies the production `/proc`
+process-group watchdog under a 16 MiB ceiling, and proves the typed
+`EngineExceededCeiling 16` result plus non-successful child reap. It then runs a smaller child under
+a 512 MiB ceiling and proves normal success, establishing daemon/test-process survival after the
+breach. The focused `infernix-unit` gate is GREEN in the supported `linux-cpu` image when the image's
+required `/usr/bin/tini` entrypoint is preserved. A diagnostic launcher that replaced the entrypoint
+with `/bin/bash` was correctly rejected by the managed-subprocess tests because its PID 1 did not
+reap orphan descendants; that invalid topology is not closure evidence.
+
+Still open for this sprint: the adversarial Apple ceiling-breach survival test, Apple-hardware
+observer validation, and the Apple half of the selected `apple-silicon` plus `linux-cpu` cohort.
+The exact-source Linux half is complete and must not be rerun merely to compensate for absent Apple
+hardware.
+
+The exact-current-source `linux-cpu` launcher build completed GREEN on 2026-08-02 as image
+`sha256:dfc0e2b6251e2d7ed74712253e06d2f9fbc60b649ac162b44dac030aca43a979`
+(20,125,723,532 bytes). The launcher post-build `infernix --help` smoke passed. The canonical
+uninterrupted `./bootstrap/linux-cpu.sh test` against that immutable image then exited zero.
+Haskell style/realness, Python checks, Haskell unit (including the live 64 MiB/16 MiB watchdog
+breach and post-breach smaller-child survival), and PureScript `83/83` passed. Integration passed
+all six real-output rows and six typed `ModelMemoryLimitExceeded` admission rows;
+cache/service/durable topics; engine placement and backpressure; frontend, coordinator,
+engine-pod, and engine-node failover; bootstrap deduplication; 12-prompt multi-user throughput
+(`p95Seconds = 1658.6823971271515` under the new single-flight authority); Harbor, MinIO, Pulsar,
+and PostgreSQL recovery; lifecycle rebinding; anti-affinity; and demo-disabled routing. Routed
+Playwright passed `16/16` in 44.6 minutes, including the complete catalog browser matrix in 42.9
+minutes, auth/RBAC, SSO account switching, isolation, and artifact coverage. All test-owned
+clusters were deleted and the harness configuration was restored. This closes the Linux
+behavioral gate without claiming the Apple observer or breach proof.
+
 Phase 1 has implemented and validated the Haskell execution-plan compiler/refiner and capability
 boundaries. Its 2026-07-25 source-matched gate proved exhaustive placement accounting and that a
 request for an `UnavailableModel` reaches a normal coordinator `status=failed`
@@ -2440,7 +2512,7 @@ daemon inside the same OOM-kill domain. The selected construction instead keeps 
 fresh child group, sums every `/proc` group member conservatively, kills only that group on a grant
 breach, fails closed on sampler loss, and verifies live `memory.max` as a larger outer envelope with
 daemon and polling headroom. Encapsulate the single-flight authority so independent caller locks
-cannot run the same executable concurrently. Add the adversarial Apple/Linux CPU survival tests,
+cannot run the same executable concurrently. Add the adversarial Apple survival test,
 run the complete machine-independent gate set, and run the selected apple-silicon plus `linux-cpu`
 Wave Y cohort gate. The earlier clean `linux-cpu` launcher rebuild and unit evidence remain
 pre-audit evidence, not closure evidence for this sprint. Every Apple footprint/watchdog result

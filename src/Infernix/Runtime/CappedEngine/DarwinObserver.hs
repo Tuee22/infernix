@@ -83,8 +83,7 @@ import System.IO
   )
 import System.IO.Error (isDoesNotExistError, isPermissionError)
 import System.Posix.Process
-  ( getProcessGroupID,
-    getProcessGroupIDOf,
+  ( getProcessGroupIDOf,
     getProcessID,
   )
 import System.Posix.Signals
@@ -116,6 +115,10 @@ import System.Process
   )
 import System.Timeout (timeout)
 
+#if defined(darwin_HOST_OS)
+import System.Posix.Process (getProcessGroupID)
+#endif
+
 data DarwinObserverKernelTest
   = ObserverNormalCompletion
   | ObserverNonzeroCompletion
@@ -127,9 +130,15 @@ data DarwinObserverKernelTest
   | ObserverOutputBoundsCleanup
   deriving (Bounded, Enum, Eq, Show)
 
+-- The two fixed observation requests exist only where their public tools do.
+-- On any other platform the three public entry points below answer
+-- unavailable, so this request vocabulary and the helper chain it drives are
+-- unreachable and would fail @-Wunused-top-binds@ under @-Werror@.
+#if defined(darwin_HOST_OS)
 data FixedObserverRequest
   = DiscoverProcessGroup CPid
   | MeasureProcessFootprint CPid
+#endif
 
 data FixedObserverSpec = FixedObserverSpec
   { observerExecutable :: FilePath,
@@ -243,6 +252,8 @@ probePhysicalFootprintObserver =
 probePhysicalFootprintObserver =
   pure (Left "Apple physical-footprint observation is unavailable on this platform")
 #endif
+
+#if defined(darwin_HOST_OS)
 
 discoverProcessGroupMembers ::
   ObserverDeadline ->
@@ -358,6 +369,8 @@ successfulObserverOutput spec observerRun =
                 <> renderCapturedDiagnostic captured
             )
 
+#endif
+
 requireDrainCapture ::
   Text ->
   Either SomeException DrainCapture ->
@@ -372,6 +385,8 @@ requireDrainCapture streamName result =
             <> " drain failed: "
             <> Text.pack (displayException failure)
         )
+
+#if defined(darwin_HOST_OS)
 
 renderCapturedDiagnostic :: CapturedStreams -> Text
 renderCapturedDiagnostic captured =
@@ -407,6 +422,8 @@ captureSynchronousFailure label action = do
                     <> Text.pack (displayException failure)
                 )
             )
+
+#endif
 
 runFixedObserver ::
   ObserverDeadline ->
@@ -1002,6 +1019,8 @@ validProcessId processId =
   let value = fromIntegral processId :: Integer
    in value > 0 && value <= toInteger maximumPosixProcessId
 
+#if defined(darwin_HOST_OS)
+
 checkedAddWord64 :: Word64 -> Word64 -> Maybe Word64
 checkedAddWord64 left right
   | maxBound - left < right = Nothing
@@ -1010,6 +1029,8 @@ checkedAddWord64 left right
 isObserverWhitespace :: Char -> Bool
 isObserverWhitespace character =
   character `elem` (" \t\r\n" :: String)
+
+#endif
 
 runDarwinObserverKernelTest ::
   DarwinObserverKernelTest ->
@@ -1410,8 +1431,24 @@ runDescendantOwner = do
       void (waitForProcessWithinCleanupDeadline processHandle)
       kernelTestFailure "closed descendant fixture omitted its input gate"
 
+-- | Block until the observer's cleanup terminates this fixture.
+--
+-- The obvious spelling, @newEmptyMVar >>= takeMVar@, is not a hang. Nothing
+-- else can ever reference that 'MVar', so the RTS deadlock detector delivers
+-- @BlockedIndefinitelyOnMVar@ at the first idle GC and the fixture exits 1
+-- long before its observer's deadline — which reads as a completed run rather
+-- than the timeout the fixture exists to produce.
+--
+-- Wrapping the same wait in 'timeout' removes that: the pending timer is
+-- another way for the thread to become runnable, so the wait is not indefinite
+-- and the detector does not fire. The interval is re-armed rather than made
+-- unbounded, which is also what keeps this a bounded wait rather than the raw
+-- indefinite sleep the readiness kernel exists to forbid.
 blockForever :: IO value
-blockForever = newEmptyMVar >>= takeMVar
+blockForever = do
+  blocker <- newEmptyMVar
+  void (timeout fixtureBlockingIntervalMicros (takeMVar blocker))
+  blockForever
 
 observerEnvironment :: [(String, String)]
 observerEnvironment =
@@ -1442,8 +1479,17 @@ synchronousFixtureFailureMarker =
 fixtureNonzeroExitCode :: Int
 fixtureNonzeroExitCode = 23
 
+-- | One re-armed blocking interval for a fixture that must outlive its
+-- observer's deadline. Any bound far above every fixture deadline below works.
+fixtureBlockingIntervalMicros :: Int
+fixtureBlockingIntervalMicros = 60000000
+
+#if defined(darwin_HOST_OS)
+
 observerSampleTimeoutMicros :: Int
 observerSampleTimeoutMicros = 5000000
+
+#endif
 
 observerCleanupTimeoutMicros :: Int
 observerCleanupTimeoutMicros = 2000000

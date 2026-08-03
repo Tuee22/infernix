@@ -7,6 +7,7 @@ module Infernix.Runtime.Worker
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
     nativeModelCacheObjectKeys,
+    pythonEngineBootstrapManifestRequiredForTest,
     runExecutableInferenceWorker,
     workerRequestModelCacheConfig,
   )
@@ -252,19 +253,32 @@ decodedWorkerOutput encodedResponse =
 
 ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
 ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
-  let installRoot = engineInstallRootPath paths engineBinding
-      bootstrapManifest = installRoot </> "bootstrap.json"
-  bootstrapReady <- doesFileExist bootstrapManifest
-  unless bootstrapReady $
-    ioError
-      ( userError
-          ( "prepared Python engine bootstrap manifest is missing for "
-              <> Text.unpack (engineBindingAdapterId engineBinding)
-              <> ": "
-              <> bootstrapManifest
-          )
-      )
+  when (pythonEngineBootstrapManifestRequired runtimeMode) $ do
+    let installRoot = engineInstallRootPath paths engineBinding
+        bootstrapManifest = installRoot </> "bootstrap.json"
+    bootstrapReady <- doesFileExist bootstrapManifest
+    unless bootstrapReady $
+      ioError
+        ( userError
+            ( "prepared Python engine bootstrap manifest is missing for "
+                <> Text.unpack (engineBindingAdapterId engineBinding)
+                <> ": "
+                <> bootstrapManifest
+            )
+        )
   ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding
+
+-- | Linux framework environments are immutable image payloads proven by their
+-- fixed per-engine marker. Only the Apple host materializer publishes the
+-- adapter bootstrap manifest into its retained engine root.
+pythonEngineBootstrapManifestRequired :: RuntimeMode -> Bool
+pythonEngineBootstrapManifestRequired AppleSilicon = True
+pythonEngineBootstrapManifestRequired LinuxCpu = False
+pythonEngineBootstrapManifestRequired LinuxGpu = False
+
+pythonEngineBootstrapManifestRequiredForTest :: RuntimeMode -> Bool
+pythonEngineBootstrapManifestRequiredForTest =
+  pythonEngineBootstrapManifestRequired
 
 ensurePerEngineFrameworkVenvReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
 ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding = do

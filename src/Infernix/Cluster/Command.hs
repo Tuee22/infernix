@@ -86,6 +86,7 @@ module Infernix.Cluster.Command
     kubectlApplyInfernixStorageClass,
     kubectlDeleteHarborMigrationJob,
     kubectlListPods,
+    kubectlScaleDeployment,
     kubectlWaitPodReady,
     kubectlDeletePods,
     kubectlReinitPostgresReplicas,
@@ -309,6 +310,7 @@ data PodQuery
   = AllPodsNoHeaders
   | HarborPostgresStartupPods
   | HarborPostgresPrimary
+  | PlaywrightDemoPods
   deriving (Eq, Show)
 
 data SecretField
@@ -424,6 +426,7 @@ data ClusterCommand
   | KubectlApplyInfernixStorageClass !KubeTarget
   | KubectlDeleteHarborMigrationJob !KubeTarget
   | KubectlListPods !KubeTarget !PodQuery
+  | KubectlScaleDeployment !KubeTarget !Namespace !WorkloadRef !Int
   | KubectlWaitPodReady !KubeTarget !Namespace !PodName !Int
   | KubectlDeletePods !KubeTarget !Namespace !(NonEmpty PodName)
   | KubectlReinitPostgresReplicas !KubeTarget !PodName !(NonEmpty PodName)
@@ -551,6 +554,9 @@ kubectlDeleteHarborMigrationJob = KubectlDeleteHarborMigrationJob
 
 kubectlListPods :: KubeTarget -> PodQuery -> ClusterCommand
 kubectlListPods = KubectlListPods
+
+kubectlScaleDeployment :: KubeTarget -> Namespace -> WorkloadRef -> Int -> ClusterCommand
+kubectlScaleDeployment = KubectlScaleDeployment
 
 kubectlWaitPodReady :: KubeTarget -> Namespace -> PodName -> Int -> ClusterCommand
 kubectlWaitPodReady = KubectlWaitPodReady
@@ -975,6 +981,7 @@ clusterCommandOperation = \case
   KubectlApplyInfernixStorageClass {} -> KubectlApplyOperation
   KubectlDeleteHarborMigrationJob {} -> KubectlDeleteOperation
   KubectlListPods {} -> KubectlReadOperation
+  KubectlScaleDeployment {} -> KubectlApplyOperation
   KubectlWaitPodReady {} -> KubectlWaitOperation
   KubectlDeletePods {} -> KubectlDeleteOperation
   KubectlReinitPostgresReplicas {} -> KubectlExecOperation
@@ -1086,6 +1093,11 @@ validateClusterCommand = \case
     validateKubeTarget target
   KubectlListPods target _podQuery ->
     validateKubeTarget target
+  KubectlScaleDeployment target namespaceName workload replicas -> do
+    validateKubeTarget target
+    validateNamespace namespaceName
+    validateWorkloadRef workload
+    require "kubectl deployment replicas must be non-negative" (replicas >= 0)
   KubectlWaitPodReady target namespaceName podName timeoutSeconds -> do
     validateKubeTarget target
     validateNamespace namespaceName
@@ -1576,6 +1588,16 @@ renderClusterCommand resolveTool = \case
       ""
   KubectlListPods target podQuery ->
     kubectlSpec target (podQueryArguments podQuery) ""
+  KubectlScaleDeployment target namespaceName workload replicas ->
+    kubectlSpec
+      target
+      [ "-n",
+        unNamespace namespaceName,
+        "scale",
+        unWorkloadRef workload,
+        "--replicas=" <> show replicas
+      ]
+      ""
   KubectlWaitPodReady target namespaceName podName timeoutSeconds ->
     kubectlSpec
       target
@@ -2086,6 +2108,17 @@ podQueryArguments podQuery =
         "--no-headers",
         "-o",
         "custom-columns=:metadata.name"
+      ]
+    PlaywrightDemoPods ->
+      [ "-n",
+        "platform",
+        "get",
+        "pods",
+        "-l",
+        "app.kubernetes.io/name=infernix-demo",
+        "-o",
+        "custom-columns=:metadata.name",
+        "--no-headers"
       ]
 
 renderSecretField :: SecretField -> String

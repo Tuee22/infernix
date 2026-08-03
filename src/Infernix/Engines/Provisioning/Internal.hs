@@ -27,7 +27,6 @@ module Infernix.Engines.Provisioning.Internal
     installedSmokeExecutableRelativePath,
     installedSmokeArguments,
     nativeArtifactIdentity,
-    linuxNativeArtifactEntrypoint,
     linuxNativeArtifactSmokeArguments,
     audiverisVersion,
     audiverisDmgFileName,
@@ -281,7 +280,7 @@ installedSmokeExecutableRelativePath adapter =
     MlxAdapter -> fixedVenvPythonRelativePath
     CoreMlAdapter -> fixedVenvPythonRelativePath
     JvmAdapter ->
-      "Audiveris.app/Contents/MacOS/Audiveris"
+      "Audiveris.app/Contents/runtime/Contents/Home/bin/java"
 
 installedSmokeArguments ::
   AppleAdapterId ->
@@ -366,11 +365,19 @@ data ProvisioningCommand
   | DetachAudiverisDmg
       !FilePath
       !FilePath
+  | ExtractAudiverisJavaCppNatives
+      !FilePath
   | SmokeInstalledRunner
       !AppleAdapterId
       !FilePath
-  | SmokeLinuxNativeArtifact
+  | -- | The architecture is part of the command because a @linux-native@
+    -- target is an absolute image path that depends on it
+    -- (@whisper-bin-ubuntu-x64@ versus @-arm64@). Carrying it here is what lets
+    -- the renderer and the helper-side revalidation resolve the same closed
+    -- catalog entry instead of agreeing by construction.
+    SmokeLinuxNativeArtifact
       !Identity.NativeArtifactIdentity
+      !Text.Text
       !FilePath
       !LinuxNativeSmokePolicy
   | QueryPythonVersion
@@ -394,8 +401,9 @@ data ProvisioningOperation
   | AudiverisDownloadOperation
   | AudiverisMountOperation
   | AudiverisDetachOperation
+  | AudiverisJavaCppExtractionOperation
   | InstalledRunnerSmokeOperation !AppleAdapterId
-  | LinuxNativeArtifactSmokeOperation !Identity.NativeArtifactIdentity
+  | LinuxNativeArtifactSmokeOperation !Identity.NativeArtifactIdentity !Text.Text
   | PythonVersionQueryOperation !ApplePythonAdapterId
   | PythonProvenanceQueryOperation !ApplePythonAdapterId
   deriving (Eq, Show)
@@ -423,28 +431,37 @@ provisioningCommandOperation command =
       AudiverisMountOperation
     DetachAudiverisDmg {} ->
       AudiverisDetachOperation
+    ExtractAudiverisJavaCppNatives {} ->
+      AudiverisJavaCppExtractionOperation
     SmokeInstalledRunner adapter _ ->
       InstalledRunnerSmokeOperation adapter
-    SmokeLinuxNativeArtifact identity _ _ ->
-      LinuxNativeArtifactSmokeOperation identity
+    SmokeLinuxNativeArtifact identity architecture _ _ ->
+      LinuxNativeArtifactSmokeOperation identity architecture
     QueryPythonVersion adapter _ ->
       PythonVersionQueryOperation adapter
     QueryPythonProvenance adapter _ ->
       PythonProvenanceQueryOperation adapter
 
-linuxNativeArtifactEntrypoint ::
-  Identity.NativeArtifactIdentity ->
-  FilePath
-linuxNativeArtifactEntrypoint =
-  Identity.nativeArtifactEntrypoint
-
+-- | The arguments that follow a @linux-native@ target's own leading arguments.
+--
+-- These have to be real arguments of the image payload. The retired @bin\/*@
+-- wrappers accepted a uniform @--smoke@ plus a payload-policy flag; the direct
+-- targets do not, so each one gets the argument its own runner actually
+-- understands, exactly as the Apple installed smoke already does. Only the
+-- Python-runner targets reach @apple_native_runner.py@, so only they carry the
+-- smoke and payload-policy flags.
 linuxNativeArtifactSmokeArguments ::
   Identity.NativeArtifactIdentity ->
   LinuxNativeSmokePolicy ->
   [String]
 linuxNativeArtifactSmokeArguments identity policy =
-  Identity.nativeArtifactSmokeArguments identity
-    <> [ case policy of
-           RequireImagePayload -> "--require-native-payload"
-           AllowFixturePayloadAbsence -> "--allow-missing-native-payload"
-       ]
+  case Text.unpack (Identity.nativeArtifactAdapterId identity) of
+    "llama-cpp-cli" -> ["--version"]
+    "whisper-cpp-cli" -> ["--version"]
+    "jvm-native" -> ["-version"]
+    _ ->
+      [ "--smoke",
+        case policy of
+          RequireImagePayload -> "--require-native-payload"
+          AllowFixturePayloadAbsence -> "--allow-missing-native-payload"
+      ]

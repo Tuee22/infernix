@@ -21,6 +21,11 @@ module Infernix.Engines.MaterializationLock.Internal
     withTryEngineArtifactReadLock,
     artifactGenerationLease,
     artifactGenerationLeaseFields,
+    -- The derived sidecar path. Exported so the artifact validator can prove,
+    -- while it still holds the engines-root shared lock, that the generation it
+    -- is about to execute has a real lease sidecar. The constructor stays
+    -- unexported, so the path still cannot be forged.
+    artifactGenerationLeasePath,
     withTryArtifactGenerationMutationLock,
     withTryArtifactGenerationReadLock,
     retireArtifactGenerationLease,

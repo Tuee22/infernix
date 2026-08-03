@@ -1184,6 +1184,17 @@ hydrateAudiverisJvmTool cacheWriter writer hook grant deadlines tempRoot = do
     hook
   bundledJavaVersion <-
     Provisioning.provisioningReadAudiverisBundledJavaVersion writer tempRoot
+  Provisioning.provisioningCreateDirectory writer (tempRoot </> "javacpp-cache")
+  extractionOutcome <-
+    Provisioning.extractAudiverisJavaCppNatives
+      writer
+      grant
+      (deadlineArtifactSmoke deadlines)
+      tempRoot
+  _ <-
+    requireProvisioningSuccess
+      "extract Audiveris JavaCPP natives into the sealed candidate"
+      extractionOutcome
   pure (Recipe.audiverisDmgDigest, bundledJavaVersion)
 
 data AudiverisMountPhase

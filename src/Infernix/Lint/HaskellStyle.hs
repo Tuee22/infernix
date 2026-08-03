@@ -1771,6 +1771,14 @@ runCommand workingDirectory command args = do
     ExitSuccess -> pure ()
     _ -> ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput))
 
+-- | The fixed fallback candidates are container layouts. A host whose
+-- toolchain lives under a non-root home (an ordinary ghcup install) has no
+-- candidate at all and depends entirely on the generated host manifest, so the
+-- diagnostic names that prerequisite instead of reporting an unexplained
+-- absence. Widening the candidate list is not an option: enumerating an
+-- operator's home directory would mean reading the ambient environment, which
+-- @documents/development/no_env_vars.md@ forbids. The manifest is exactly where
+-- host-specific absolute paths belong, and @infernix init@ is what writes it.
 requireStyleCabal :: Paths -> IO FilePath
 requireStyleCabal paths =
   case configuredCabalPath paths of
@@ -1782,7 +1790,14 @@ requireStyleCabal paths =
         Nothing ->
           ioError
             ( userError
-                "haskell-style-check: cabal is unavailable through HostConfig.toolPaths.cabal and fixed fallback candidates"
+                ( "haskell-style-check: cabal is unavailable through HostConfig.toolPaths.cabal"
+                    <> " and the fixed container-layout fallback candidates ("
+                    <> intercalate
+                      ", "
+                      (HostTools.hostToolFallbackCandidates HostTools.HostCabal)
+                    <> "). This gate reads the generated host manifest; run"
+                    <> " `infernix init` to create ./infernix-host.dhall before running it."
+                )
             )
 
 configuredCabalPath :: Paths -> Maybe FilePath

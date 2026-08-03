@@ -178,8 +178,10 @@ Current state:
   `ClusterConfig` plus secret-file-backed `SecretsConfig` values
 - the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
-- each `setup-*` entrypoint writes an idempotent repo-local bootstrap manifest at
-  `./.data/engines/<adapter-id>/bootstrap.json`
+- each Apple `setup-*` materialization writes an idempotent repo-local bootstrap manifest at
+  `./.data/engines/<adapter-id>/bootstrap.json`; Linux framework environments are immutable image
+  payloads and use their baked per-engine framework marker instead of trying to publish retained
+  setup state into each pod's private `emptyDir`
 - adapter modules load durable runtime context from the protobuf request, configure
   `adapters.model_cache` from that same request before calling `get_model_path`, load model weights,
   and perform real inference over a prebuilt host wheel. The runtime worker invokes the real engine

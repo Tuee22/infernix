@@ -2186,58 +2186,7 @@ async function waitForFrameAfter(frames, startIndex, predicate, direction, timeo
 }
 
 async function replaceDemoPods(fixture) {
-  const originalPods = demoPodNames(fixture);
-  expect(originalPods.length).toBeGreaterThan(0);
-  runInfernixKubectl(fixture, [
-    "-n",
-    "platform",
-    "delete",
-    "pod",
-    "-l",
-    "app.kubernetes.io/name=infernix-demo",
-    "--grace-period=0",
-    "--force",
-    "--wait=false",
-  ]);
-  const replacementPods = await waitForReplacementDemoPods(fixture, originalPods);
-  for (const podName of replacementPods) {
-    runInfernixKubectl(
-      fixture,
-      ["-n", "platform", "wait", "--for=condition=Ready", `pod/${podName}`, "--timeout=180s"],
-      200000,
-    );
-  }
-}
-
-async function waitForReplacementDemoPods(fixture, originalPods) {
-  const deadline = Date.now() + 180000;
-  while (Date.now() < deadline) {
-    const pods = demoPodNames(fixture);
-    const originalsGone = originalPods.every((podName) => !pods.includes(podName));
-    const replacements = pods.filter((podName) => !originalPods.includes(podName));
-    if (originalsGone && replacements.length >= originalPods.length) {
-      return replacements.slice(0, originalPods.length);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-  }
-  throw new Error(`Timed out waiting for replacement infernix-demo pods after deleting ${originalPods.join(", ")}`);
-}
-
-function demoPodNames(fixture) {
-  return runInfernixKubectl(fixture, [
-    "-n",
-    "platform",
-    "get",
-    "pods",
-    "-l",
-    "app.kubernetes.io/name=infernix-demo",
-    "-o",
-    "jsonpath={.items[*].metadata.name}",
-  ])
-    .trim()
-    .split(/\s+/)
-    .filter((token) => /^infernix-demo-[a-z0-9-]+$/.test(token))
-    .filter(Boolean);
+  runInfernixInternal(fixture, ["playwright", "replace-demo-pods"], 240000);
 }
 
 async function fetchDemoConfig(request, baseUrl) {
@@ -2247,49 +2196,8 @@ async function fetchDemoConfig(request, baseUrl) {
 }
 
 function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
-  if (demoConfig?.runtimeMode === "linux-cpu") {
-    scaleGenericEngineDeployment(fixture, 1);
-    return;
-  }
-  if (demoConfig?.runtimeMode !== "linux-gpu") {
-    return;
-  }
-  const models = Array.isArray(demoConfig.models) ? demoConfig.models : [];
-  const engineBindings = Array.isArray(demoConfig.engines) ? demoConfig.engines : [];
-  const model = models.find((entry) => entry.modelId === modelId);
-  if (!model) {
-    throw new Error(`linux-gpu model ${modelId} is absent from the routed demo config`);
-  }
-  const binding = engineBindings.find((entry) => entry.engine === model.selectedEngine);
-  if (!binding) {
-    throw new Error(`linux-gpu model ${modelId} has no engine binding for ${model.selectedEngine}`);
-  }
-  const perEngineNames = Array.from(
-    new Set(
-      engineBindings
-        .filter((entry) => entry.pythonNative)
-        .map((entry) => perEngineNameFromAdapterId(entry.adapterId))
-        .filter(Boolean),
-    ),
-  ).sort();
-  const activeEngineName = binding.pythonNative ? perEngineNameFromAdapterId(binding.adapterId) : null;
-
-  if (activeEngineName) {
-    runInfernixKubectl(fixture, ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=0"]);
-  }
-  for (const engineName of perEngineNames) {
-    const replicas = engineName === activeEngineName ? "1" : "0";
-    runInfernixKubectl(fixture, [
-      "-n",
-      "platform",
-      "scale",
-      `deployment/infernix-engine-${engineName}`,
-      `--replicas=${replicas}`,
-    ]);
-  }
-  if (!activeEngineName) {
-    scaleGenericEngineDeployment(fixture, 1);
-  }
+  expect(demoConfig?.models?.some((entry) => entry.modelId === modelId)).toBeTruthy();
+  runInfernixInternal(fixture, ["playwright", "prepare-engine", modelId]);
   // Sprint 5.12 (managed-state-transition doctrine): the kubectl rollout-status
   // proxy for readiness is removed. The engine deployment is scaled up above, but
   // readiness is now proven by the real model-bootstrap flow — the per-model
@@ -2299,30 +2207,10 @@ function prepareEngineDeploymentForModelId(fixture, demoConfig, modelId) {
   // so the test waits on real readiness evidence rather than a pod-rollout proxy.
 }
 
-function scaleGenericEngineDeployment(fixture, replicas) {
-  runInfernixKubectl(fixture, [
-    "-n",
-    "platform",
-    "scale",
-    "deployment/infernix-engine",
-    `--replicas=${replicas}`,
-  ]);
-  // Sprint 5.12: no kubectl rollout-status readiness proxy — readiness is proven
-  // by the real inference result awaited by the matrix result wait. See
-  // scaleActiveEngineForBinding for the full rationale.
-}
-
-function perEngineNameFromAdapterId(adapterId) {
-  if (typeof adapterId === "string" && adapterId.endsWith("-python")) {
-    return adapterId.slice(0, -"-python".length);
-  }
-  return adapterId;
-}
-
-function runInfernixKubectl(fixture, args, timeoutMs = 120000) {
+function runInfernixInternal(fixture, args, timeoutMs = 120000) {
   expect(fixture?.infernixCommand).toBeTruthy();
   try {
-    return execFileSync(fixture.infernixCommand, ["kubectl", ...args], {
+    return execFileSync(fixture.infernixCommand, ["internal", ...args], {
       cwd: fixture.repoRoot || process.cwd(),
       encoding: "utf8",
       maxBuffer: 10 * 1024 * 1024,
@@ -2331,7 +2219,7 @@ function runInfernixKubectl(fixture, args, timeoutMs = 120000) {
   } catch (error) {
     const stdout = error.stdout ? String(error.stdout) : "";
     const stderr = error.stderr ? String(error.stderr) : "";
-    throw new Error(`infernix kubectl ${args.join(" ")} failed\n${stdout}${stderr}`);
+    throw new Error(`infernix internal ${args.join(" ")} failed\n${stdout}${stderr}`);
   }
 }
 

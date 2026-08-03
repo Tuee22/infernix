@@ -53,6 +53,8 @@ data Command
   | InternalDhallSchemaCommand DhallSchema
   | InternalGeneratePursContractsCommand FilePath
   | InternalPulsarRoundTripCommand FilePath String String
+  | InternalPlaywrightPrepareEngineCommand String
+  | InternalPlaywrightReplaceDemoPodsCommand
   deriving (Eq, Show)
 
 data CommandFamily = CommandFamily
@@ -383,7 +385,19 @@ internalCommandFamily =
             InternalDemoConfigValidateCommand
             ["internal", "demo-config", "validate"],
           dhallSchemaCommand,
-          pulsarRoundTripCommand
+          pulsarRoundTripCommand,
+          CommandSpec
+            { commandUsageSuffix = "internal playwright prepare-engine MODEL_ID",
+              commandDescription = "selects the generated model's closed engine deployment under harness ownership",
+              commandParse = \case
+                ["internal", "playwright", "prepare-engine", modelIdValue] ->
+                  Just (InternalPlaywrightPrepareEngineCommand modelIdValue)
+                _ -> Nothing
+            },
+          simpleCommand
+            "internal playwright replace-demo-pods"
+            "replaces the fixed demo workload and waits for distinct ready pods under harness ownership"
+            InternalPlaywrightReplaceDemoPodsCommand
         ]
     }
 

@@ -56,6 +56,7 @@ import Infernix.Runtime.Pulsar
     RawTopicMessage (..),
     compactTopicAndWait,
     discoverPulsarTransport,
+    modelBootstrapRequestAttemptKey,
     prepareModelBootstrapRequest,
     publishDemoClientMessage,
     publishInferenceRequest,
@@ -1064,7 +1065,7 @@ expectedArtifactSuffixes resultFamily =
     ImageGeneration -> [".png"]
     VideoGeneration -> [".mp4"]
     AudioGeneration -> [".wav"]
-    OpticalMusicRecognition -> [".musicxml", ".xml"]
+    OpticalMusicRecognition -> [".mxl", ".musicxml", ".xml"]
     LlmText -> []
     SpeechTranscription -> []
 
@@ -1696,13 +1697,14 @@ validateModelBootstrapDeduplication paths state runtimeMode compiledPlan represe
   let modelIdText = Text.pack representativeModelId
       readyTopic =
         ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace modelIdText
-  baselineReadyMessageIds <-
-    bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
   bootstrapCapability <-
     prepareModelBootstrapRequest compiledPlan modelIdText
       >>= either
         (fail . ("could not prepare the compiled model-bootstrap request: " <>))
         pure
+  let requestAttemptKey = modelBootstrapRequestAttemptKey bootstrapCapability
+  baselineReadyMessageIds <-
+    bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
   publishModelBootstrapRequest paths bootstrapCapability
   oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
   runKubectl state ["-n", "platform", "delete", "pod", oldPod]
@@ -1716,6 +1718,7 @@ validateModelBootstrapDeduplication paths state runtimeMode compiledPlan represe
       runtimeMode
       readyTopic
       modelIdText
+      requestAttemptKey
       baselineReadyMessageIds
   assert
     (Set.size newReadyMessageIds == 1)
@@ -1728,16 +1731,17 @@ waitForNewBootstrapReadyMessageIds ::
   RuntimeMode ->
   Text.Text ->
   Text.Text ->
+  Text.Text ->
   Set.Set Text.Text ->
   IO (Set.Set Text.Text)
-waitForNewBootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText baselineMessageIds = go (120 :: Int)
+waitForNewBootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey baselineMessageIds = go (120 :: Int)
   where
     go remainingAttempts
       | remainingAttempts <= 0 =
           fail ("timed out waiting for model-bootstrap ready event on " <> Text.unpack readyTopic)
       | otherwise = do
           observedMessageIds <-
-            bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
+            bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
           let newMessageIds =
                 observedMessageIds `Set.difference` baselineMessageIds
           if Set.null newMessageIds
@@ -1747,7 +1751,7 @@ waitForNewBootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText base
             else do
               threadDelay 2000000
               settledMessageIds <-
-                bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText
+                bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
               pure (settledMessageIds `Set.difference` baselineMessageIds)
 
 bootstrapReadyMessageIds ::
@@ -1755,15 +1759,17 @@ bootstrapReadyMessageIds ::
   RuntimeMode ->
   Text.Text ->
   Text.Text ->
+  Text.Text ->
   IO (Set.Set Text.Text)
-bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText = do
+bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey = do
   messages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 64
   pure
     ( Set.fromList
         [ rawTopicMessageId rawMessage
         | rawMessage <- messages,
           Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
-          BootstrapModels.readyEventModelId readyEvent == modelIdText
+          BootstrapModels.readyEventModelId readyEvent == modelIdText,
+          BootstrapModels.readyEventRequestAttemptKey readyEvent == Just requestAttemptKey
         ]
     )
 

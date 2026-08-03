@@ -1,6 +1,7 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Blocked by active Phase 1 in numerical order. The governed
+**Status**: Active — Phase 1 code-side closure passed on 2026-08-02, so the standards' Axis 1 gate
+permits Phase 2's own ordered code-side closure while Phase 1 waits on validation-only Apple Wave Y evidence. The governed
 no-repo-owned-native-source correction supersedes every pre-correction review, Stage 1, and
 behavioral source identity. Phase 0's current correction review and complete Stage 1 passed on
 2026-07-27. The lifecycle C shim, its FFI declaration, and its Cabal entry are removed code-side in
@@ -13,12 +14,17 @@ parent-acknowledged exact-identity custody. The hidden rank-2 linear
 `AnchorReady -> SupervisorReady -> LeaseDurable -> TargetRunning` session makes durable activity
 publication precede target fork/start. The recoverable exact-identity prewrite intent, bounded
 activity-record reads, and strict capture/terminal semantic bounds are implemented. The current
-compile inventory of 5 positive and 50 negative fixtures passed against the Phase 0 closure
+compile inventory passed against the Phase 0 closure (that inventory was 5 positive and 50 negative when recorded; the tree now carries 6 positive and 79 negative)
 identity. The obsolete
 `cbits/infernix_subprocess.c` file and Cabal `c-sources:` declaration are removed. The repository
-lint implementation and focused adversarial lock/subprocess tests passed. Phase 2 remains blocked
-until Phase 1 closes, then requires its own ordered phase closure before any Apple or `linux-cpu`
-cohort run.
+lint implementation and focused adversarial lock/subprocess tests passed. The ordered settled-source
+review completed on 2026-08-02 with no High or Medium residual. The exact-source machine-independent
+gates and paired `./bootstrap/linux-cpu.sh test` full suite passed on image
+`sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`, including
+ownership/reservation races, bounded-command cleanup, lifecycle rebinding, node drain,
+Harbor/MinIO/Pulsar/PostgreSQL recovery, anti-affinity, browser 16/16, restoration, and managed
+teardown. Phase 2 is code-side closed and remains Active only for validation-only Apple Wave Y
+sign-off.
 
 The now-superseded Apple attempt 5 passed style, Python, Haskell unit, and web 83/83; replayed
 retained state; built workload tag `sha256-12e0ab1c…cc1e`; registry-only verified that image; and
@@ -1012,9 +1018,10 @@ ownership. Phase 6 Sprint 6.43 is the harness half. The superseded ownerless
 
 ---
 
-## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Blocked]
+## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Active — Validation Only]
 
-**Status**: Blocked by Phase 1 — the Apple Silicon behavioral lane surfaced a retained PVC with no live pod
+**Status**: Active — code-side closed on 2026-08-02; Apple accelerator sign-off remains a
+validation-only blocker under Wave Y. The earlier Apple Silicon behavioral lane surfaced a retained PVC with no live pod
 during cleanup, invalidating the prior code-side freeze. The sole-paused-worker inference
 correction and exhaustive preserving cleanup are implemented. The Bark 8192 MiB footprint and
 strict catalog-matrix validation correction is also implemented. The later registry-only Harbor
@@ -1097,6 +1104,10 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Remaining Work
 
+Authoritative current remainder (2026-08-02): validation-only Apple Wave Y evidence. The settled
+source review and exact-source machine-independent gate are GREEN, and the paired exact-image
+`linux-cpu` full suite passed. The historical chronology below is superseded as a current work list.
+
 - the previously closed 2026-07-16 scope remains landed:
   - the typed `ClusterLifecycle` closed sum in `src/Infernix/Types.hs`
     (`ClusterAbsent` / `ClusterProvisioning` / `ClusterActivating` / `ClusterReady` /
@@ -1168,9 +1179,10 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ---
 
-## Sprint 2.15: Cluster Ownership and Mutation-Position [Blocked]
+## Sprint 2.15: Cluster Ownership and Mutation-Position [Active — Validation Only]
 
-**Status**: Blocked by Phase 1 — the owner/effect-adjacent correction, stale-state mutation-helper fix,
+**Status**: Active — code-side closed on 2026-08-02; Apple accelerator sign-off remains a
+validation-only blocker under Wave Y. The owner/effect-adjacent correction, stale-state mutation-helper fix,
 independent region fixtures, and preserving/exhaustive synchronous and asynchronous cleanup are
 implemented. The Bark 8192 MiB footprint and strict catalog-matrix validation correction is also
 implemented. The registry-only Harbor verification correction is also implemented after the final
@@ -1334,15 +1346,16 @@ operator or harness cannot invalidate the proof between check and use. See the d
 
 ### Remaining Work
 
-After Phase 1 closes, pass Phase 2's own ordered closure; then run Apple Silicon and `linux-cpu`
-behavioral validation against the new frozen identity before restoring `Done`. Phase 0's focused
-nested-custody subprocess proof and correction Stage 1 are already green.
+Run Apple Silicon behavioral validation against the settled identity and record Wave Y before
+restoring `Done`. Phase 2's settled-source review, exact-source machine-independent closure, focused
+nested-custody proof, and paired `linux-cpu` full suite are GREEN.
 
 ---
 
-## Sprint 2.16: Bounded Semantic Command Plan [Blocked]
+## Sprint 2.16: Bounded Semantic Command Plan [Active — Validation Only]
 
-**Status**: Blocked by Phase 1 — command-kernel exec provenance, supervision, forced cleanup, real readiness
+**Status**: Active — code-side closed on 2026-08-02; Apple accelerator sign-off remains a
+validation-only blocker under Wave Y. Command-kernel exec provenance, supervision, forced cleanup, real readiness
 deadlines, and the claim-permission postcondition are implemented. The Bark 8192 MiB footprint and
 strict catalog-matrix validation correction is also implemented. The final publication audit's
 registry-only `BlobServable` correction is implemented with focused unit coverage. Final review and
@@ -1373,7 +1386,7 @@ the destructive builders, compiler, and runner around the lifecycle evidence bou
 suite compiles those source modules directly as home modules to retain kernel coverage, while the
 integration suite receives only a non-destructive quiescence check through exposed
 `Infernix.Cluster`. Negative fixtures prove that external imports of either internal module fail;
-the focused compile-time fixture set now contains 5 positive and 50 negative fixtures. The production
+the focused compile-time fixture set contained 5 positive and 50 negative fixtures when this was recorded; the tree now carries 6 positive and 79 negative. The production
 compiler accepts only the closed `ClusterCommand` vocabulary, validates every caller operand before
 rendering, selects the generated policy exhaustively, and runs one total deadline across
 acquisition, attempts, and backoff. The pre-correction kernel implemented
@@ -1509,9 +1522,9 @@ so no cluster lifecycle path can invoke a raw or unbounded process.
 
 ### Remaining Work
 
-Phase 0's focused adversarial and compile-fail suites, final review, and complete correction Stage 1
-are green. After Phase 1 closes, pass Phase 2's own ordered closure. Only then freeze a new identity
-for Apple Silicon followed by `linux-cpu` before restoring `Done`.
+Run the Apple Silicon full-suite gate and record Wave Y before restoring `Done`. The focused
+adversarial and compile-fail suites, settled-source review, exact-source machine-independent gate,
+and paired exact-image `linux-cpu` full suite are GREEN.
 
 ---
 

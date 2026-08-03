@@ -186,6 +186,7 @@ module Infernix.Engines.Provisioning
     downloadAudiverisDmg,
     mountAudiverisDmg,
     detachAudiverisDmg,
+    extractAudiverisJavaCppNatives,
     queryPythonVersion,
     queryPythonProvenance,
     pinnedPipRequirementSpec,
@@ -223,11 +224,15 @@ import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.Engines.Artifact.Activation qualified as ArtifactActivation
 import Infernix.Engines.Artifact.Identity qualified as ArtifactIdentity
 import Infernix.Engines.Artifact.Internal qualified as ArtifactInternal
+import Infernix.Engines.Artifact.Loader qualified as ArtifactLoader
 import Infernix.Engines.Artifact.Recipe qualified as Recipe
 import Infernix.Engines.Artifact.Target
-  ( NativeArtifactTarget,
+  ( NativeArtifactLoaderEvidence (..),
+    NativeArtifactLoaderObjectEvidence (..),
+    NativeArtifactTarget,
     NativeArtifactTargetEvidence,
     nativeArtifactTarget,
+    nativeArtifactTargetArchitecture,
     nativeArtifactTargetFingerprint,
   )
 import Infernix.Engines.DownloadCacheLock.Internal
@@ -1305,6 +1310,7 @@ materializeAudiverisRuntimeClosure writer candidateRoot = do
       writer
       candidateRoot
   let appRoot = ownedCandidate </> "Audiveris.app"
+      javaCppCacheRoot = ownedCandidate </> "javacpp-cache"
       launcher =
         appRoot
           </> "Contents"
@@ -1312,6 +1318,8 @@ materializeAudiverisRuntimeClosure writer candidateRoot = do
           </> "Audiveris"
   authorizedApp <-
     authorizeEnginePath "Audiveris fixed application root" writer appRoot
+  authorizedJavaCppCache <-
+    authorizeEnginePath "Audiveris fixed JavaCPP cache root" writer javaCppCacheRoot
   authorizedLauncher <-
     authorizeEnginePath "Audiveris fixed launcher" writer launcher
   launcherIdentity <-
@@ -1327,6 +1335,17 @@ materializeAudiverisRuntimeClosure writer candidateRoot = do
           Internal.ProvisioningArtifactRootClosure
           authorizedApp
       )
+  javaCppCacheIdentity <-
+    ProvisioningSession
+      ( resolvePackageClosureIdentity
+          Internal.ProvisioningArtifactRootClosure
+          authorizedJavaCppCache
+      )
+  javaCppCacheImages <-
+    ProvisioningSession (scanPackageClosureMachOFiles javaCppCacheIdentity)
+  when
+    (null javaCppCacheImages)
+    (failProvisioningSession "Audiveris JavaCPP cache contains no Mach-O runtime image")
   appImages <-
     ProvisioningSession (scanPackageClosureMachOFiles appIdentity)
   seedImage <-
@@ -1366,6 +1385,16 @@ materializeAudiverisRuntimeClosure writer candidateRoot = do
             Internal.provisioningPackageClosureFiles appIdentity,
           installedRuntimeSourceBytes =
             Internal.provisioningPackageClosureBytes appIdentity
+        },
+      InstalledRuntimeSource
+        { installedRuntimeSourcePath = authorizedJavaCppCache,
+          installedRuntimeOwnedPath = authorizedJavaCppCache,
+          installedRuntimeSourceDigest =
+            Internal.provisioningPackageClosureDigest javaCppCacheIdentity,
+          installedRuntimeSourceFiles =
+            Internal.provisioningPackageClosureFiles javaCppCacheIdentity,
+          installedRuntimeSourceBytes =
+            Internal.provisioningPackageClosureBytes javaCppCacheIdentity
         }
     ]
 
@@ -1710,7 +1739,56 @@ resolvePoetryRuntimeLibraries ::
   ResolvedExecutableIdentity ->
   [Internal.ProvisioningPackageClosureIdentity] ->
   IO (Either String [Internal.ProvisioningRuntimeLibraryIdentity])
-resolvePoetryRuntimeLibraries interpreterIdentity packageClosures = do
+resolvePoetryRuntimeLibraries interpreterIdentity packageClosures =
+  case SystemInfo.os of
+    "darwin" ->
+      resolvePoetryMachORuntimeLibraries interpreterIdentity packageClosures
+    "linux" ->
+      resolvePoetryElfRuntimeLibraries interpreterIdentity packageClosures
+    unsupported ->
+      pure (Left ("unsupported Poetry runtime platform: " <> unsupported))
+
+resolvePoetryElfRuntimeLibraries ::
+  ResolvedExecutableIdentity ->
+  [Internal.ProvisioningPackageClosureIdentity] ->
+  IO (Either String [Internal.ProvisioningRuntimeLibraryIdentity])
+resolvePoetryElfRuntimeLibraries interpreterIdentity packageClosures = do
+  result <-
+    try @IOException $ do
+      evidence <-
+        ArtifactLoader.observeNativeArtifactLoaderEvidence
+          (resolvedExecutableCanonicalPath interpreterIdentity)
+          (map Internal.provisioningPackageClosureRoot packageClosures)
+      pure
+        [ Internal.ProvisioningRuntimeLibraryIdentity
+            { Internal.provisioningRuntimeLibraryLeafName =
+                takeFileName (loaderObjectConfiguredPath object),
+              Internal.provisioningRuntimeLibraryConfiguredPath =
+                loaderObjectConfiguredPath object,
+              Internal.provisioningRuntimeLibraryCanonicalPath =
+                loaderObjectCanonicalPath object,
+              Internal.provisioningRuntimeLibraryDeviceId =
+                loaderObjectCanonicalDeviceId object,
+              Internal.provisioningRuntimeLibraryFileId =
+                loaderObjectCanonicalFileId object,
+              Internal.provisioningRuntimeLibraryMode =
+                loaderObjectCanonicalMode object,
+              Internal.provisioningRuntimeLibrarySize =
+                loaderObjectCanonicalSize object,
+              Internal.provisioningRuntimeLibraryDigest =
+                loaderObjectDigest object
+            }
+        | object <- loaderEvidenceObjects evidence,
+          loaderObjectCanonicalPath object
+            /= resolvedExecutableCanonicalPath interpreterIdentity
+        ]
+  pure (either (Left . displayException) Right result)
+
+resolvePoetryMachORuntimeLibraries ::
+  ResolvedExecutableIdentity ->
+  [Internal.ProvisioningPackageClosureIdentity] ->
+  IO (Either String [Internal.ProvisioningRuntimeLibraryIdentity])
+resolvePoetryMachORuntimeLibraries interpreterIdentity packageClosures = do
   result <-
     try @IOException $ do
       closureMachOIdentities <-
@@ -4054,6 +4132,7 @@ digestPackageClosureEntry
                   excluded <-
                     excludedPythonHomeShebangFile
                       excludeBaseSitePackages
+                      relativePath
                       descriptor
                   if excluded
                     then pure state
@@ -4253,9 +4332,11 @@ excludedPythonBaseSitePackagesLink relativePath =
 --
 -- The digest walk and the copy walk share this predicate, so the source and
 -- destination closure identities continue to describe the same payload.
-excludedPythonHomeShebangFile :: Bool -> Fd -> IO Bool
-excludedPythonHomeShebangFile excludeBaseSitePackages descriptor
-  | not excludeBaseSitePackages = pure False
+excludedPythonHomeShebangFile :: Bool -> FilePath -> Fd -> IO Bool
+excludedPythonHomeShebangFile excludeBaseSitePackages relativePath descriptor
+  | not excludeBaseSitePackages
+      || take 1 (splitDirectories (normalise relativePath)) /= ["bin"] =
+      pure False
   | otherwise = do
       _ <- fdSeek descriptor AbsoluteSeek 0
       leading <-
@@ -4696,6 +4777,7 @@ copyPackageClosureEntry
                   excluded <-
                     excludedPythonHomeShebangFile
                       excludeBaseSitePackages
+                      relativePath
                       sourceFileDescriptor
                   unless excluded $ do
                     _ <-
@@ -6179,6 +6261,23 @@ reconcileRetainedArtifactGenerationLeases
   installRoot
   proposedLease = do
     recovered `seq` pure ()
+    let (enginesRoot, _, _, _) =
+          artifactGenerationLeaseFields proposedLease
+    siblingLeases <-
+      retainedSiblingArtifactGenerationLeases
+        enginesRoot
+        installRoot
+    mapM_
+      ( \siblingLease -> do
+          minted <-
+            withTryArtifactGenerationMutationLock
+              authority
+              siblingLease
+              (const (pure ()))
+          unless (isJust minted) $
+            ioError (userError "installed sibling generation lease is contended")
+      )
+      siblingLeases
     currentManifestExists <-
       Directory.doesFileExist
         (Artifact.engineArtifactManifestPath installRoot)
@@ -6186,7 +6285,7 @@ reconcileRetainedArtifactGenerationLeases
       then
         reconcileObsoleteArtifactGenerationLeases
           authority
-          [proposedLease]
+          (proposedLease : siblingLeases)
       else do
         currentManifestResult <-
           try @IOException
@@ -6202,8 +6301,6 @@ reconcileRetainedArtifactGenerationLeases
                   == ArtifactIdentity.nativeArtifactAdapterId identity
               )
               (ioError (userError "current artifact adapter changed before sidecar reconciliation"))
-            let (enginesRoot, _, _, _) =
-                  artifactGenerationLeaseFields proposedLease
             currentLease <-
               either
                 ( ioError
@@ -6219,10 +6316,60 @@ reconcileRetainedArtifactGenerationLeases
                 )
             reconcileObsoleteArtifactGenerationLeases
               authority
-              ( if currentLease == proposedLease
-                  then [proposedLease]
-                  else [proposedLease, currentLease]
+              ( siblingLeases
+                  <> ( if currentLease == proposedLease
+                         then [proposedLease]
+                         else [proposedLease, currentLease]
+                     )
               )
+
+-- Reconciliation is scoped to the shared engines root, so every installed
+-- sibling generation must be retained while one adapter is replaced. Omitting
+-- these leases makes each materialization retire the preceding adapters'
+-- sidecars and leaves only the last artifact launchable.
+retainedSiblingArtifactGenerationLeases ::
+  FilePath ->
+  FilePath ->
+  IO [ArtifactGenerationLease]
+retainedSiblingArtifactGenerationLeases enginesRoot installRoot = do
+  entries <- List.sort <$> Directory.listDirectory enginesRoot
+  unless (length entries <= 64) $
+    ioError (userError "engine root exceeds the bounded sibling-artifact census")
+  catMaybes
+    <$> mapM
+      ( \entry -> do
+          let siblingRoot = enginesRoot </> entry
+          isSiblingDirectory <- Directory.doesDirectoryExist siblingRoot
+          manifestExists <-
+            Directory.doesFileExist
+              (Artifact.engineArtifactManifestPath siblingRoot)
+          if siblingRoot == installRoot || not isSiblingDirectory || not manifestExists
+            then pure Nothing
+            else do
+              manifest <-
+                Artifact.validateEngineArtifactRootAt siblingRoot siblingRoot
+              siblingIdentity <-
+                maybe
+                  ( ioError
+                      (userError "installed sibling artifact has an unknown adapter identity")
+                  )
+                  pure
+                  (ArtifactIdentity.parseNativeArtifactIdentity (Artifact.manifestAdapterId manifest))
+              unless
+                (entry == Text.unpack (Artifact.manifestAdapterId manifest))
+                (ioError (userError "installed sibling artifact directory changed identity"))
+              Just
+                <$> either
+                  (ioError . userError . ("derive sibling artifact generation lease: " <>))
+                  pure
+                  ( artifactGenerationLease
+                      enginesRoot
+                      siblingIdentity
+                      (Artifact.manifestGenerationFingerprint manifest)
+                      (Artifact.manifestDigest manifest)
+                  )
+      )
+      entries
 
 hashLinuxCompletionState ::
   AuthorizedWriterRoot ->
@@ -6378,7 +6525,11 @@ smokeLinuxCompletionState
     commandOutcome <-
       Subprocess.runClosedLinuxNativeArtifactSmoke
         identity
+        (nativeArtifactTargetArchitecture target)
         lease
+        -- Pre-publication: the candidate carries no manifest yet, so the helper
+        -- gets the candidate validation shape rather than the installed one.
+        Nothing
         mutationRoot
         expectedTargetEvidence
         (internalLinuxNativeSmokePolicy smokePolicy)
@@ -6545,6 +6696,11 @@ activateLinuxCompletionState
         environment
         timeout
         identity
+        -- The published manifest is the authority for the activated
+        -- generation's architecture, so the post-activation smoke resolves the
+        -- same catalog entry the manifest's own target contract was minted
+        -- from.
+        (Artifact.manifestArchitecture manifest)
         (internalLinuxNativeSmokePolicy smokePolicy)
         expectedTargetEvidence
         installRoot
@@ -7295,14 +7451,17 @@ validateHydratedCandidate adapter installRoot candidateRoot
           Internal.OnnxRuntimeAdapter -> pythonPayloadOkay
           Internal.MlxAdapter -> pythonPayloadOkay
           Internal.CoreMlAdapter -> pythonPayloadOkay
-          Internal.JvmAdapter ->
-            regularExecutable
-              ( candidateRoot
-                  </> "Audiveris.app"
-                  </> "Contents"
-                  </> "MacOS"
-                  </> "Audiveris"
-              )
+          Internal.JvmAdapter -> do
+            appLauncherOkay <-
+              regularExecutable
+                ( candidateRoot
+                    </> "Audiveris.app"
+                    </> "Contents"
+                    </> "MacOS"
+                    </> "Audiveris"
+                )
+            javaCppCacheOkay <- regularDirectory (candidateRoot </> "javacpp-cache")
+            pure (appLauncherOkay && javaCppCacheOkay)
       pure
         ( if candidateOkay && targetOkay && payloadOkay
             then Right ()
@@ -12064,6 +12223,54 @@ detachAudiverisDmg
       grant
       deadline
       (Internal.DetachAudiverisDmg authorizedWorkingDirectory authorizedMountRoot)
+
+extractAudiverisJavaCppNatives ::
+  EngineWriter w s q ->
+  ProvisioningGrant s ->
+  ProvisioningDeadline ->
+  FilePath ->
+  ProvisioningSession s ProvisioningOutcome
+extractAudiverisJavaCppNatives
+  (EngineWriter _ _ engineRoot)
+  grant
+  deadline
+  candidateRoot = do
+    authorizedCandidate <-
+      ProvisioningSession
+        (authorizedWriterPath "Audiveris JavaCPP candidate" engineRoot candidateRoot)
+    let appRoot = authorizedCandidate </> "Audiveris.app"
+        javaExecutable =
+          appRoot
+            </> "Contents"
+            </> "runtime"
+            </> "Contents"
+            </> "Home"
+            </> "bin"
+            </> "java"
+    javaIdentity <-
+      ProvisioningSession (resolveExactExecutableIdentity javaExecutable)
+    appIdentity <-
+      ProvisioningSession
+        ( resolvePackageClosureIdentity
+            Internal.ProvisioningArtifactRootClosure
+            appRoot
+        )
+    components <-
+      ProvisioningSession
+        ( authorizedWriterRelativeComponents
+            "Audiveris JavaCPP extraction working directory"
+            engineRoot
+            authorizedCandidate
+        )
+    runProvisioningCommandWithExecutableInWriter
+      engineRoot
+      components
+      grant
+      deadline
+      javaIdentity
+      [appIdentity]
+      []
+      (Internal.ExtractAudiverisJavaCppNatives authorizedCandidate)
 
 queryPythonVersion ::
   EngineWriter w s q ->

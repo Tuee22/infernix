@@ -49,6 +49,7 @@ import Infernix.Models
     engineBindingForSelectedEngine,
   )
 import Infernix.Runtime (executeExecutableInferenceWithKVCache)
+import Infernix.Runtime.CappedEngine qualified as CappedEngine
 import Infernix.Runtime.Pulsar qualified as Pulsar
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
@@ -161,16 +162,17 @@ runExecutionPlanRefinementProperties = do
 assertDaemonTopicCapabilityProperties :: IO ()
 assertDaemonTopicCapabilityProperties = do
   runtimePlan <- requireCapabilityRuntimePlan
+  capabilityAuthority <- CappedEngine.newEngineExecutionAuthority
   firstCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan)
+      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan capabilityAuthority)
   secondCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities secondMemberId runtimePlan)
+      (Pulsar.engineTopicCapabilities secondMemberId runtimePlan capabilityAuthority)
   firstCapability <-
     requireCapability sampleTopic firstCapabilities
   secondCapability <-
@@ -187,7 +189,7 @@ assertDaemonTopicCapabilityProperties = do
   assert
     (not (Pulsar.daemonTopicCapabilityAuthorizesModel secondCapability sampleModelId))
     "the second engine topic capability rejects the first member/topic route"
-  case Pulsar.engineTopicCapabilities "unauthorized-member" runtimePlan of
+  case Pulsar.engineTopicCapabilities "unauthorized-member" runtimePlan capabilityAuthority of
     Left _ -> pure ()
     Right _ ->
       fail "an engine topic capability was minted for an unknown daemon member"
@@ -285,11 +287,12 @@ runExecutableLaunchBoundaryProperties paths = do
     (not artifactsPresent)
     "request-model mismatch guards run before cache, setup, result, or process artifacts are created"
   runtimePlan <- requireCapabilityRuntimePlan
+  capabilityAuthority <- CappedEngine.newEngineExecutionAuthority
   engineCapabilities <-
     either
       fail
       pure
-      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan)
+      (Pulsar.engineTopicCapabilities sampleMemberId runtimePlan capabilityAuthority)
   engineCapability <-
     requireCapability sampleTopic engineCapabilities
   let poisonRoot = buildRoot paths </> "engine-poison-message-properties"

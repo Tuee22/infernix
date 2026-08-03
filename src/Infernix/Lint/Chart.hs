@@ -66,6 +66,7 @@ requiredPhrases =
         "30011",
         "30650",
         "webSocketServiceEnabled: \"true\"",
+        "httpServerIdleTimeout: \"7200000\"",
         "storageClass: infernix-manual",
         "storageClassName: infernix-manual"
       ]

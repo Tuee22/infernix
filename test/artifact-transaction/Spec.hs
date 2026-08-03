@@ -26,7 +26,7 @@ import Control.Exception
     fromException,
     try,
   )
-import Control.Monad (forM, unless, when)
+import Control.Monad (forM, unless, void, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
@@ -49,6 +49,7 @@ import Infernix.Engines.Artifact
     NativeArtifactIdentity,
     ResolvedArtifactProvenance (..),
     appleArtifactRuntimeExpectation,
+    artifactLaunchLeadingArguments,
     artifactLauncher,
     currentArtifactRecipeFingerprint,
     decodeEngineArtifactManifest,
@@ -74,6 +75,7 @@ import Infernix.Engines.Artifact.Internal
   ( ArtifactActivationBoundary (..),
     ArtifactCleanupBoundary (..),
     artifactRootMutatorForTest,
+    digestEngineArtifactImageClosureForTest,
     installEngineArtifactRoot,
     installEngineArtifactRootWithCleanupObserverForTest,
     installEngineArtifactRootWithExpectedDigest,
@@ -107,6 +109,7 @@ import System.Directory
     doesPathExist,
     getPermissions,
     getTemporaryDirectory,
+    makeAbsolute,
     removeFile,
     removePathForcibly,
     renameDirectory,
@@ -115,6 +118,7 @@ import System.Directory
     setPermissions,
   )
 import System.Exit (ExitCode (ExitSuccess), exitFailure)
+import System.FileLock qualified as FileLock
 import System.FilePath (takeDirectory, (</>))
 import System.IO (hClose, openTempFile)
 import System.IO.Unsafe (unsafeInterleaveIO)
@@ -157,6 +161,7 @@ testCases =
     ("descriptor snapshot rejects sparse declared-size overflow before hashing", sparseDeclaredSizeOverflowTest),
     ("manifest symlinks and special payload files are rejected", manifestAndSpecialFileRejectionTest),
     ("absolute and nested escaping symlinks are rejected", escapingSymlinkRejectionTest),
+    ("image closures admit only absolute symlinks contained by the exact root", imageClosureSymlinkPolicyTest),
     ("root, digest, and direct-target manifest mismatches are rejected", manifestMismatchTest),
     ("exact manifests bind canonical digest, key, mode, and Apple provenance", exactManifestContractTest),
     ("current closed recipe invalidates a prior artifact recipe", recipeFingerprintInvalidationTest),
@@ -171,6 +176,9 @@ testCases =
     ("full use-boundary validation detects nested payload tampering", nestedPayloadUseBoundaryTest),
     ("validated runtime callback excludes cooperative materialization", runtimeReadLockTest),
     ("runtime program holds and releases its read lock through reap and cancellation", runtimeProgramLockLifetimeTest),
+    ("runtime launch holds the exact generation lease through reap", runtimeGenerationLeaseHeldTest),
+    ("runtime launch refuses a generation no writer minted", runtimeUnmintedGenerationTest),
+    ("runtime launch carries the closed catalog's leading arguments", runtimeLeadingArgumentsTest),
     ("fresh activation installs one exact root", freshActivationTest),
     ("smoke-bound activation rejects a valid candidate mutated after smoke", smokeBoundDigestTamperTest),
     ("replacement activation retires the previous exact root", replacementActivationTest),
@@ -519,6 +527,28 @@ escapingSymlinkRejectionTest =
     assertIOException
       "a second parent traversal from a nested link escapes the root"
       (digestEngineArtifactPayload nestedRoot)
+
+imageClosureSymlinkPolicyTest :: IO ()
+imageClosureSymlinkPolicyTest =
+  withTestDirectory $ \workspace -> do
+    let imageRoot = workspace </> "image-closure"
+        outsideRoot = workspace </> "outside-closure"
+    createDirectory imageRoot
+    createDirectory outsideRoot
+    writeFile (imageRoot </> "native-library") "inside"
+    writeFile (outsideRoot </> "native-library") "outside"
+    absoluteInside <- makeAbsolute (imageRoot </> "native-library")
+    absoluteOutside <- makeAbsolute (outsideRoot </> "native-library")
+    createFileLink absoluteInside (imageRoot </> "inside-link")
+    assertIOException
+      "an installed artifact rejects an absolute symlink even when it is self-contained"
+      (digestEngineArtifactPayload imageRoot)
+    void (digestEngineArtifactImageClosureForTest imageRoot)
+    removeFile (imageRoot </> "inside-link")
+    createFileLink absoluteOutside (imageRoot </> "outside-link")
+    assertIOException
+      "an image closure rejects an absolute symlink outside its exact root"
+      (digestEngineArtifactImageClosureForTest imageRoot)
 
 manifestMismatchTest :: IO ()
 manifestMismatchTest =
@@ -1032,6 +1062,201 @@ nestedPayloadUseBoundaryTest =
       _ ->
         failTest
           "runner-owned use-boundary revalidation accepted nested payload tampering"
+
+-- | The generation lease is what makes generation identity authorize shared
+-- execution. These two cases pin the halves of that separately, and both
+-- discriminate against the pre-correction source, which stored the lease on the
+-- validated capability and never consumed it: an exclusive lock on the sidecar
+-- was freely available while an artifact ran, and a root whose generation no
+-- writer had ever minted launched normally.
+runtimeGenerationLeaseHeldTest :: IO ()
+runtimeGenerationLeaseHeldTest =
+  withTestDirectory $ \workspace -> do
+    identity <- testArtifactIdentity
+    let installRoot = workspace </> "artifact"
+    manifest <- writeExactArtifactRoot installRoot installRoot "generation-leased"
+    let sidecarPath = exactGenerationSidecarPath installRoot manifest
+
+    launcherEntered <- newEmptyMVar
+    launcherResume <- newEmptyMVar
+    runResult <- newEmptyMVar
+    _ <-
+      forkFinally
+        ( withFirstValidatedEngineArtifact
+            identity
+            testRuntimeExpectation
+            [installRoot]
+            ( artifactLauncher
+                ( \_launchRequest -> do
+                    putMVar launcherEntered ()
+                    takeMVar launcherResume
+                    pure ArtifactTerminalCompleted
+                )
+            )
+        )
+        (putMVar runResult)
+    takeMVar launcherEntered
+    heldDuringRun <- tryExclusiveGenerationSidecar sidecarPath
+    when heldDuringRun $
+      failTest
+        "the exact generation lease was available exclusively while its artifact was running"
+    putMVar launcherResume ()
+    -- The bound is generous because this suite shares the host with the other
+    -- lifecycle-driving suites; the assertion is about the lease, not latency.
+    maybeCompleted <- timeout 20000000 (takeMVar runResult)
+    completed <-
+      maybe
+        (failTest "leased artifact program did not finish")
+        pure
+        maybeCompleted
+    case completed of
+      Right (ArtifactResolved ArtifactTerminalCompleted) -> pure ()
+      Right _ -> failTest "leased artifact program returned an unexpected result"
+      Left failure ->
+        failTest
+          ( "leased artifact program failed unexpectedly: "
+              <> displayException failure
+          )
+    releasedAfterRun <- tryExclusiveGenerationSidecar sidecarPath
+    unless releasedAfterRun $
+      failTest
+        "the exact generation lease was not released after the artifact was reaped"
+
+runtimeUnmintedGenerationTest :: IO ()
+runtimeUnmintedGenerationTest =
+  withTestDirectory $ \workspace -> do
+    identity <- testArtifactIdentity
+    let installRoot = workspace </> "artifact"
+    manifest <- writeExactArtifactRoot installRoot installRoot "unminted"
+    removeFile (exactGenerationSidecarPath installRoot manifest)
+    launched <- newIORef False
+    resolution <-
+      withFirstValidatedEngineArtifact
+        identity
+        testRuntimeExpectation
+        [installRoot]
+        ( artifactLauncher
+            ( const
+                ( do
+                    atomicModifyIORef' launched (const (True, ()))
+                    pure ArtifactTerminalCompleted
+                )
+            )
+        )
+    case resolution of
+      ArtifactRejected rejectedRoot _
+        | rejectedRoot == installRoot -> pure ()
+      _ ->
+        failTest
+          "runtime resolution admitted a generation whose lease sidecar no writer minted"
+    reachedLauncher <- readIORef launched
+    when reachedLauncher $
+      failTest "an unminted generation reached the artifact launcher"
+
+-- | Wrapper retirement removed the generated per-engine shell shim that
+-- translated the native-runner protocol into each payload's real argument
+-- vector, and rebuilt only the smoke's argument rendering. The runtime launch
+-- must therefore carry the closed catalog's leading arguments itself — for an
+-- installed Python-runner target, the runner script plus the runner's own
+-- required @--adapter-id@/@--engine-name@ pair. Pre-correction the launch
+-- request had no such field, so every Python-runner artifact was handed
+-- protocol flags its runner cannot parse.
+runtimeLeadingArgumentsTest :: IO ()
+runtimeLeadingArgumentsTest =
+  withTestDirectory $ \workspace -> do
+    runnerIdentity <-
+      maybe
+        (failTest "closed native artifact catalog omitted onnx-runtime-native")
+        pure
+        (parseNativeArtifactIdentity "onnx-runtime-native")
+    let installRoot = workspace </> "artifact"
+    baseManifest <-
+      writeExactArtifactRoot installRoot installRoot "leading-arguments"
+    let runnerManifest =
+          baseManifest
+            { manifestAdapterId = "onnx-runtime-native",
+              manifestRecipeFingerprint =
+                testRecipeFingerprintFor
+                  runnerIdentity
+                  appleArtifactRuntimeExpectation,
+              manifestTargetContractFingerprint =
+                testTargetFingerprintFor
+                  runnerIdentity
+                  "apple-silicon"
+                  "arm64",
+              manifestMinioObjectKey =
+                exactObjectKey
+                  "apple-silicon"
+                  "arm64"
+                  "onnx-runtime-native"
+                  (manifestDigest baseManifest)
+            }
+    writeManifest installRoot runnerManifest
+    _ <- validateEngineArtifactRootAt installRoot installRoot
+    mintExactGenerationSidecar runnerIdentity installRoot runnerManifest
+    observedArguments <- newIORef []
+    resolution <-
+      withFirstValidatedEngineArtifact
+        runnerIdentity
+        testRuntimeExpectation
+        [installRoot]
+        ( artifactLauncher
+            ( \launchRequest -> do
+                atomicModifyIORef'
+                  observedArguments
+                  ( const
+                      ( artifactLaunchLeadingArguments launchRequest,
+                        ()
+                      )
+                  )
+                pure ArtifactTerminalCompleted
+            )
+        )
+    case resolution of
+      ArtifactResolved ArtifactTerminalCompleted -> pure ()
+      _ ->
+        failTest
+          "a Python-runner artifact did not resolve through the runtime launch"
+    leadingArguments <- readIORef observedArguments
+    unless
+      ( leadingArguments
+          == [ installRoot </> "lib" </> "apple_native_runner.py",
+               "--adapter-id",
+               "onnx-runtime-native",
+               "--engine-name",
+               "onnx-runtime-native",
+               "--expected-python-prefix",
+               installRoot </> "venv"
+             ]
+      )
+      ( failTest
+          ( "the launch request did not carry the closed catalog's leading arguments: "
+              <> show leadingArguments
+          )
+      )
+
+-- | The sidecar 'artifactGenerationLease' derives for an exact manifest. The
+-- test computes it from the manifest rather than reading it back, so a change
+-- to the naming scheme is a visible edit here.
+exactGenerationSidecarPath :: FilePath -> EngineArtifactManifest -> FilePath
+exactGenerationSidecarPath installRoot manifest =
+  takeDirectory installRoot
+    </> ( ".generation-lease-"
+            <> Text.unpack (manifestAdapterId manifest)
+            <> "-"
+            <> Text.unpack
+              (Text.drop 7 (manifestGenerationFingerprint manifest))
+            <> ".lock"
+        )
+
+tryExclusiveGenerationSidecar :: FilePath -> IO Bool
+tryExclusiveGenerationSidecar sidecarPath = do
+  maybeLock <- FileLock.tryLockFile sidecarPath FileLock.Exclusive
+  case maybeLock of
+    Nothing -> pure False
+    Just token -> do
+      FileLock.unlockFile token
+      pure True
 
 runtimeReadLockTest :: IO ()
 runtimeReadLockTest =
@@ -1945,7 +2170,36 @@ writeExactArtifactRoot expectedInstallRoot actualRoot payload = do
   let manifest = testManifest expectedInstallRoot digest
   writeManifest actualRoot manifest
   _ <- validateEngineArtifactRootAt expectedInstallRoot actualRoot
+  identity <- testArtifactIdentity
+  mintExactGenerationSidecar identity expectedInstallRoot manifest
   pure manifest
+
+-- | Every exact artifact root production creates has its generation lease
+-- sidecar minted by the activation transaction, and runtime resolution now
+-- requires that sidecar before it will execute the generation. A fixture root
+-- must therefore mint it the same way, or it models a generation no writer ever
+-- produced.
+mintExactGenerationSidecar ::
+  NativeArtifactIdentity ->
+  FilePath ->
+  EngineArtifactManifest ->
+  IO ()
+mintExactGenerationSidecar identity expectedInstallRoot manifest = do
+  lease <-
+    either
+      (failTest . ("test generation lease: " <>))
+      pure
+      ( artifactGenerationLease
+          enginesRoot
+          identity
+          (manifestGenerationFingerprint manifest)
+          (manifestDigest manifest)
+      )
+  withEngineMaterializationLock
+    enginesRoot
+    (`createGenerationSidecar` lease)
+  where
+    enginesRoot = takeDirectory expectedInstallRoot
 
 writeLegacyArtifactRoot ::
   FilePath ->
@@ -2096,6 +2350,10 @@ refreshExactManifest root manifest = do
           }
   writeManifest root refreshedManifest
   _ <- validateEngineArtifactRootAt root root
+  -- A refreshed payload is a different generation, so it needs its own sidecar
+  -- exactly as the first one did.
+  identity <- testArtifactIdentity
+  mintExactGenerationSidecar identity root refreshedManifest
   pure refreshedManifest
 
 testArtifactIdentity :: IO NativeArtifactIdentity

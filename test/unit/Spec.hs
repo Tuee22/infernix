@@ -175,6 +175,7 @@ import Infernix.Routes
     renderReadmeRouteSummarySection,
   )
 import Infernix.Runtime
+import Infernix.Runtime.CappedEngine.Internal qualified as CappedEngineInternal
 import Infernix.Runtime.Daemon
   ( runProductionDaemon,
   )
@@ -223,6 +224,7 @@ import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     loadWorkerModelCacheConfig,
     nativeModelCacheObjectKeys,
+    pythonEngineBootstrapManifestRequiredForTest,
   )
 import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
@@ -236,7 +238,8 @@ import Network.WebSockets qualified as WebSockets
 import Numeric (showHex)
 import ProcessIdentitySpec qualified
 import System.Directory
-import System.Exit (ExitCode (..))
+import System.Environment (getArgs, getExecutablePath)
+import System.Exit (ExitCode (..), exitSuccess)
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError, isPermissionError)
@@ -244,9 +247,16 @@ import System.Info qualified
 import System.Posix.Files (createNamedPipe, createSymbolicLink, fileMode, getFileStatus, removeLink, setFileMode)
 import System.Posix.IO qualified as PosixIO
 import System.Posix.IO.ByteString qualified as PosixByteString
-import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus)
+import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
 import System.Posix.Signals (nullSignal, sigKILL, sigSTOP, signalProcess, signalProcessGroup)
-import System.Process (proc, readCreateProcessWithExitCode)
+import System.Process
+  ( CreateProcess (create_group),
+    createProcess,
+    getPid,
+    proc,
+    readCreateProcessWithExitCode,
+    waitForProcess,
+  )
 import System.Timeout (timeout)
 import Test.QuickCheck
   ( Args (..),
@@ -390,12 +400,71 @@ expectedClusterOperationPolicy operation =
     policyTuple timeoutMicros retryPolicy failureClass =
       (timeoutMicros, retryPolicy, failureClass)
 
+dispatchCappedEngineMemoryFixture :: IO ()
+dispatchCappedEngineMemoryFixture = do
+  arguments <- getArgs
+  case arguments of
+    ["__infernix_unit_linux_memory_breach_fixture"] -> do
+      let payload = BS.replicate (64 * 1024 * 1024) 65
+      BS.length payload `seq` threadDelay (60 * 1000000)
+      BS.length payload `seq` exitSuccess
+    ["__infernix_unit_linux_memory_small_fixture"] -> do
+      threadDelay 250000
+      exitSuccess
+    _ -> pure ()
+
+runLinuxWatchdogBreachAssertions :: IO ()
+runLinuxWatchdogBreachAssertions =
+  unless (System.Info.os == "darwin") $ do
+    executable <- getExecutablePath
+    (_, _, _, breachHandle) <-
+      createProcess
+        (proc executable ["__infernix_unit_linux_memory_breach_fixture"])
+          { create_group = True
+          }
+    breachPid <-
+      getPid breachHandle >>= maybe (fail "memory-breach fixture exposed no pid") pure
+    breachReaped <- MVar.newEmptyMVar
+    _ <- forkIO (waitForProcess breachHandle >>= MVar.putMVar breachReaped)
+    breachOutcome <-
+      CappedEngineInternal.linuxWatchdogOutcomeForTest
+        16
+        breachHandle
+        breachPid
+    breachExit <- MVar.takeMVar breachReaped
+    assert
+      ( breachOutcome == Just (CappedEngineInternal.EngineExceededCeiling 16)
+          && breachExit /= ExitSuccess
+      )
+      "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome and reaps the grouped engine"
+
+    (_, _, _, smallHandle) <-
+      createProcess
+        (proc executable ["__infernix_unit_linux_memory_small_fixture"])
+          { create_group = True
+          }
+    smallPid <-
+      getPid smallHandle >>= maybe (fail "small-memory fixture exposed no pid") pure
+    smallReaped <- MVar.newEmptyMVar
+    _ <- forkIO (waitForProcess smallHandle >>= MVar.putMVar smallReaped)
+    smallOutcome <-
+      CappedEngineInternal.linuxWatchdogOutcomeForTest
+        512
+        smallHandle
+        smallPid
+    smallExit <- MVar.takeMVar smallReaped
+    assert
+      (isNothing smallOutcome && smallExit == ExitSuccess)
+      "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
+
 main :: IO ()
 main = do
+  dispatchCappedEngineMemoryFixture
   Subprocess.dispatchInternalSubprocessMode
   unitTestRoot <- testRootPath "unit"
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
+  runLinuxWatchdogBreachAssertions
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
@@ -492,6 +561,13 @@ main = do
   assert
     (parseCommand ["internal", "materialize-linux-native-engines"] == Right InternalMaterializeLinuxNativeEnginesCommand)
     "the structured command registry parses Linux native engine materialization"
+  assert
+    ( parseCommand ["internal", "playwright", "prepare-engine", "llm-qwen25"]
+        == Right (InternalPlaywrightPrepareEngineCommand "llm-qwen25")
+        && parseCommand ["internal", "playwright", "replace-demo-pods"]
+          == Right InternalPlaywrightReplaceDemoPodsCommand
+    )
+    "the structured command registry parses only the closed Playwright harness actions"
   mapM_
     ( \schema ->
         assert
@@ -1925,6 +2001,8 @@ main = do
       runAppleCohortRegressionAssertions
       runElfLoaderClosureAssertions
       runElfSealedRunAuditAssertions
+      runArtifactGenerationIdentityAssertions
+      runNativeArtifactArgumentAssertions
       runClosureBoundAssertions
       runWriterEffectParentSwapAssertions
         (unitTestRoot </> "writer-effect-parent-swap")
@@ -1985,6 +2063,12 @@ main = do
       assert
         (null (nativeModelCacheObjectKeys audiverisModel))
         "worker hydration treats package-backed Audiveris as installed state, not a payload download"
+      assert
+        ( pythonEngineBootstrapManifestRequiredForTest AppleSilicon
+            && not (pythonEngineBootstrapManifestRequiredForTest LinuxCpu)
+            && not (pythonEngineBootstrapManifestRequiredForTest LinuxGpu)
+        )
+        "only Apple Python engines require the retained setup manifest; Linux uses the immutable framework marker"
       let hostWorkerState =
             ClusterState
               ClusterReady
@@ -2103,6 +2187,9 @@ main = do
     assert
       ("      httpNumThreads: \"8\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values keep enough local Pulsar proxy HTTP threads for Jetty startup"
+    assert
+      ("      httpServerIdleTimeout: \"7200000\"" `isInfixOf` linuxCpuFinalValues)
+      "linux-cpu final Helm values keep a Pulsar WebSocket consumer alive through bounded real inference"
     -- Phase 8 Sprint 8.4: the binary renders the cluster-config ConfigMap
     -- body and the cluster-secrets manifest as strings; the Helm values
     -- carry them under `clusterConfig.body` / `clusterSecrets.manifest`, and
@@ -2621,6 +2708,14 @@ main = do
   subprocessRoot <- testRootPath "mst-subprocess"
   removeTestPathIfPresent subprocessRoot
   createDirectoryIfMissing True subprocessRoot
+  let subprocessHostDefaults =
+        HostConfig.defaultAppleHostNativeHostConfig
+          (Text.pack subprocessRoot)
+          (Text.pack subprocessRoot)
+  subprocessHostToolPaths <-
+    hermeticHostToolPaths
+      (subprocessRoot </> "host-tools")
+      (HostConfig.hostToolPaths subprocessHostDefaults)
   let subprocessPaths =
         pathsWithoutManifest
           { dataRoot = subprocessRoot,
@@ -2633,10 +2728,9 @@ main = do
             modelCacheRoot = subprocessRoot </> "model-cache",
             pathsHostConfig =
               Just
-                ( HostConfig.defaultAppleHostNativeHostConfig
-                    (Text.pack subprocessRoot)
-                    (Text.pack subprocessRoot)
-                )
+                subprocessHostDefaults
+                  { HostConfig.hostToolPaths = subprocessHostToolPaths
+                  }
           }
   subprocessEnv <- Subprocess.clusterSubprocessEnv subprocessPaths
   assert
@@ -2894,6 +2988,12 @@ main = do
             }
       invalidKubectlDurationCommand =
         ClusterCommand.kubectlWaitAllNodesReady operatorTarget (-1)
+      invalidDeploymentReplicaCommand =
+        ClusterCommand.kubectlScaleDeployment
+          operatorTarget
+          validNamespace
+          (ClusterCommand.WorkloadRef "deployment/infernix-engine")
+          (-1)
       leadingOptionPathCommand =
         ClusterCommand.kindCreate
           (ClusterCommand.ClusterName "unit-cluster")
@@ -2934,6 +3034,7 @@ main = do
           unsafePersistentVolumeCommand,
           invalidHelmDurationCommand,
           invalidKubectlDurationCommand,
+          invalidDeploymentReplicaCommand,
           leadingOptionPathCommand,
           emptyPathCommand,
           controlPathCommand,
@@ -2944,6 +3045,28 @@ main = do
   assert
     (all (isLeft . ClusterCommand.validateClusterCommand) adversarialClusterCommands)
     "closed cluster commands reject option-shaped names, manifest injection, non-positive durations, invalid paths, and Docker composite separators"
+  let scaleDeploymentSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.kubectlScaleDeployment
+              operatorTarget
+              validNamespace
+              (ClusterCommand.WorkloadRef "deployment/infernix-engine")
+              1
+          )
+  assert
+    ( ClusterCommand.renderedCommandArgv scaleDeploymentSpec
+        == [ "--kubeconfig",
+             ClusterCommand.kubeconfigPath operatorTarget,
+             "--kuberc=/dev/null",
+             "-n",
+             "platform",
+             "scale",
+             "deployment/infernix-engine",
+             "--replicas=1"
+           ]
+    )
+    "the closed deployment-scale renderer owns the exact kubectl argv"
   assert
     ( either
         (not . (credentialText `isInfixOf`))
@@ -5793,6 +5916,7 @@ main = do
   assert
     (deadOwnerReady == "ready" && deadOwnerStatus == Just (Exited ExitSuccess))
     "the forged-identity recovery fixture starts from a proven-dead owner group"
+  runLeaderlessProcessGroupAssertions
   (unrelatedReadyReader, unrelatedReadyWriter) <- PosixIO.createPipe
   (unrelatedBlockReader, unrelatedBlockWriter) <- PosixIO.createPipe
   unrelatedProcessId <-
@@ -9076,6 +9200,117 @@ testRootPath suiteName = do
   paths <- discoverPaths
   pure (repoRoot paths </> ".build" </> ("test-" <> suiteName))
 
+-- | Redirect every configured host tool onto a stub this suite creates.
+--
+-- The manifest defaults name Homebrew and macOS system paths, and command
+-- compilation refuses a configured tool that is not an executable file. A
+-- fixture that keeps those defaults is therefore asserting about whatever the
+-- host happens to have installed: the same case compiles on a Homebrew host
+-- and fails everywhere else for a reason that has nothing to do with what it
+-- tests. This suite is in the machine-independent gate set, so its tool
+-- availability has to come from the fixture rather than from the machine.
+--
+-- A tool the defaults leave empty stays empty. "Configured but unavailable" is
+-- a distinct state several assertions depend on, and a stub would erase it.
+hermeticHostToolPaths ::
+  FilePath ->
+  HostConfig.HostToolPaths ->
+  IO HostConfig.HostToolPaths
+hermeticHostToolPaths stubRoot configured = do
+  createDirectoryIfMissing True stubRoot
+  docker <- stub "docker" HostConfig.hostDocker
+  kubectl <- stub "kubectl" HostConfig.hostKubectl
+  helm <- stub "helm" HostConfig.hostHelm
+  kind <- stub "kind" HostConfig.hostKind
+  cabalTool <- stub "cabal" HostConfig.hostCabal
+  ghc <- stub "ghc" HostConfig.hostGhc
+  ghcup <- stub "ghcup" HostConfig.hostGhcup
+  ormolu <- stub "ormolu" HostConfig.hostOrmolu
+  hlint <- stub "hlint" HostConfig.hostHlint
+  npm <- stub "npm" HostConfig.hostNpm
+  node <- stub "node" HostConfig.hostNode
+  python3 <- stub "python3.12" HostConfig.hostPython3
+  python311 <- stub "python3.11" HostConfig.hostPython311
+  llamaCli <- stub "llama-cli" HostConfig.hostLlamaCli
+  whisperCli <- stub "whisper-cli" HostConfig.hostWhisperCli
+  poetry <- stub "poetry" HostConfig.hostPoetry
+  protoc <- stub "protoc" HostConfig.hostProtoc
+  git <- stub "git" HostConfig.hostGit
+  tar <- stub "tar" HostConfig.hostTar
+  curl <- stub "curl" HostConfig.hostCurl
+  aptGet <- stub "apt-get" HostConfig.hostAptGet
+  brew <- stub "brew" HostConfig.hostBrew
+  sudo <- stub "sudo" HostConfig.hostSudo
+  systemctl <- stub "systemctl" HostConfig.hostSystemctl
+  mkdirTool <- stub "mkdir" HostConfig.hostMkdir
+  chmodTool <- stub "chmod" HostConfig.hostChmod
+  lnTool <- stub "ln" HostConfig.hostLn
+  installTool <- stub "install" HostConfig.hostInstall
+  idTool <- stub "id" HostConfig.hostId
+  getent <- stub "getent" HostConfig.hostGetent
+  cutTool <- stub "cut" HostConfig.hostCut
+  dirnameTool <- stub "dirname" HostConfig.hostDirname
+  bash <- stub "bash" HostConfig.hostBash
+  crictl <- stub "crictl" HostConfig.hostCrictl
+  chownTool <- stub "chown" HostConfig.hostChown
+  nvidiaSmi <- stub "nvidia-smi" HostConfig.hostNvidiaSmi
+  nvkind <- stub "nvkind" HostConfig.hostNvkind
+  skopeo <- stub "skopeo" HostConfig.hostSkopeo
+  hostnameTool <- stub "hostname" HostConfig.hostHostname
+  sysctl <- stub "sysctl" HostConfig.hostSysctl
+  pure
+    configured
+      { HostConfig.hostDocker = docker,
+        HostConfig.hostKubectl = kubectl,
+        HostConfig.hostHelm = helm,
+        HostConfig.hostKind = kind,
+        HostConfig.hostCabal = cabalTool,
+        HostConfig.hostGhc = ghc,
+        HostConfig.hostGhcup = ghcup,
+        HostConfig.hostOrmolu = ormolu,
+        HostConfig.hostHlint = hlint,
+        HostConfig.hostNpm = npm,
+        HostConfig.hostNode = node,
+        HostConfig.hostPython3 = python3,
+        HostConfig.hostPython311 = python311,
+        HostConfig.hostLlamaCli = llamaCli,
+        HostConfig.hostWhisperCli = whisperCli,
+        HostConfig.hostPoetry = poetry,
+        HostConfig.hostProtoc = protoc,
+        HostConfig.hostGit = git,
+        HostConfig.hostTar = tar,
+        HostConfig.hostCurl = curl,
+        HostConfig.hostAptGet = aptGet,
+        HostConfig.hostBrew = brew,
+        HostConfig.hostSudo = sudo,
+        HostConfig.hostSystemctl = systemctl,
+        HostConfig.hostMkdir = mkdirTool,
+        HostConfig.hostChmod = chmodTool,
+        HostConfig.hostLn = lnTool,
+        HostConfig.hostInstall = installTool,
+        HostConfig.hostId = idTool,
+        HostConfig.hostGetent = getent,
+        HostConfig.hostCut = cutTool,
+        HostConfig.hostDirname = dirnameTool,
+        HostConfig.hostBash = bash,
+        HostConfig.hostCrictl = crictl,
+        HostConfig.hostChown = chownTool,
+        HostConfig.hostNvidiaSmi = nvidiaSmi,
+        HostConfig.hostNvkind = nvkind,
+        HostConfig.hostSkopeo = skopeo,
+        HostConfig.hostHostname = hostnameTool,
+        HostConfig.hostSysctl = sysctl
+      }
+  where
+    stub leafName readConfigured
+      | Text.null (readConfigured configured) = pure ""
+      | otherwise = do
+          let stubPath = stubRoot </> leafName
+          writeFile stubPath "#!/bin/sh\nexit 0\n"
+          stubPermissions <- getPermissions stubPath
+          setPermissions stubPath stubPermissions {executable = True}
+          pure (Text.pack stubPath)
+
 extractDockerfileHostManifest :: String -> Either String String
 extractDockerfileHostManifest dockerfileContents =
   case dropWhile (/= hostManifestPrintfStart) (lines dockerfileContents) of
@@ -9788,14 +10023,35 @@ waitForBoundedCommandActivitiesQuiescent attemptsRemaining paths ownerProcessGro
             paths
             ownerProcessGroup
 
+-- | Wait for a fixture to publish a record, and treat an empty file as
+-- not-yet-published rather than as the record.
+--
+-- Every publisher in the closed test-command language writes with
+-- @printf ... > "$path"@, and the redirection creates and truncates the file
+-- /before/ @printf@ runs. Observing the file between those two steps is
+-- therefore a guaranteed window, not a scheduling artefact: the observer sees a
+-- zero-length file and the caller's parse of it fails. That is the whole
+-- mechanism behind the failure recorded as
+-- @the cancelled protocol-isolation command published an invalid descendant pid@
+-- — the "never published" branch did not fire, so the file existed, and the
+-- only writer for it emits a valid integer.
+--
+-- Several call sites already assert @not (null contents)@ immediately after
+-- this returns, which is this same race being reported as a failure instead of
+-- being waited through. Waiting for a non-empty record makes the deadline the
+-- only way to fail, which is what a fixture-publication wait should mean.
 waitForFileContents :: Int -> FilePath -> IO (Maybe String)
 waitForFileContents attemptsRemaining filePath = do
   fileExists <- doesFileExist filePath
-  if fileExists
-    then Just <$> System.IO.readFile' filePath
+  publishedContents <-
+    if fileExists
+      then System.IO.readFile' filePath
+      else pure ""
+  if not (null publishedContents)
+    then pure (Just publishedContents)
     else
       if attemptsRemaining <= 0
-        then pure Nothing
+        then pure (if fileExists then Just publishedContents else Nothing)
         else do
           threadDelay 50000
           waitForFileContents (attemptsRemaining - 1) filePath
@@ -9909,6 +10165,19 @@ runSealedArtifactEnvironmentRegressionAssertions = do
         )
     )
     "the rendered-environment contract still rejects an unknown name set"
+  -- The Linux sealed run is the case the Apple-shaped assertions above never
+  -- reached. Its contracts named LD_DEBUG alone while every rendered command
+  -- also carries the renderer's fixed guard, so the Linux native artifact
+  -- smoke was refused as an unsupported command environment on every input.
+  -- Both assertions therefore drive the shape the renderer produces, not a
+  -- restatement of it, and both fail against the pre-correction source.
+  let linuxSealedRunEnvironment =
+        Subprocess.linuxSealedRunRenderedEnvironmentForTest
+  assert
+    ( isRight
+        (Subprocess.renderedEnvironmentContractForTest linuxSealedRunEnvironment)
+    )
+    "the rendered-environment contract admits the Linux sealed-run environment"
   let baseEnvironment =
         [ ("PATH", "/usr/bin"),
           ("HOME", "/tmp/home"),
@@ -9944,6 +10213,16 @@ runSealedArtifactEnvironmentRegressionAssertions = do
         )
     )
     "a supervised target with no owned artifact root is still confined to its snapshot"
+  assert
+    ( isRight
+        ( Subprocess.supervisorTargetEnvironmentContractForTest
+            "/data/runtime/command-executable-snapshots"
+            [artifactRoot]
+            baseEnvironment
+            (baseEnvironment <> linuxSealedRunEnvironment)
+        )
+    )
+    "a supervised Linux sealed run matches a closed rendered environment"
   -- A runner that reports through stderr leaves stdout empty; loader frames of
   -- either kind must be excluded from the diagnostics used as its output.
   let loaderStderr =
@@ -9958,7 +10237,7 @@ runSealedArtifactEnvironmentRegressionAssertions = do
               ]
           )
   assert
-    ( Subprocess.installedRunnerApplicationOutputForTest artifactRoot loaderStderr
+    ( Subprocess.installedRunnerApplicationOutputForTest [artifactRoot] loaderStderr
         == Right
           ( ByteString8.pack
               ( unlines
@@ -9972,7 +10251,7 @@ runSealedArtifactEnvironmentRegressionAssertions = do
   assert
     ( isLeft
         ( Subprocess.installedRunnerApplicationOutputForTest
-            artifactRoot
+            [artifactRoot]
             ( ByteString8.pack
                 "dyld[4321]: <E730B179-D826-315A-A49B-FAF364854DB7> /opt/elsewhere/lib/libz.dylib\n"
             )
@@ -12698,7 +12977,8 @@ assertBootstrapModels = do
       ev =
         BootstrapModels.ModelBootstrapReadyEvent
           { BootstrapModels.readyEventModelId = "qwen2.5-7b",
-            BootstrapModels.readyEventReadyAtIso8601 = "2026-05-21T00:01:00Z"
+            BootstrapModels.readyEventReadyAtIso8601 = "2026-05-21T00:01:00Z",
+            BootstrapModels.readyEventRequestAttemptKey = Just "qwen2.5-7b@2026-05-21T00:00:00Z"
           }
   assert
     (BootstrapModels.bootstrapSubscriptionName == "bootstrap-models")
@@ -12712,6 +12992,9 @@ assertBootstrapModels = do
   assert
     (BootstrapModels.readyEventDedupKeyForRequest req == "qwen2.5-7b@2026-05-21T00:00:00Z")
     "request-scoped ready event dedup collapses exact bootstrap request replays"
+  assert
+    (BootstrapModels.readyEventRequestAttemptKey ev == Just (BootstrapModels.bootstrapRequestDedupKey req))
+    "ready events retain the causal bootstrap request-attempt key"
   assert
     (BootstrapModels.bootstrapReadyTopicFor "persistent://infernix/system" "qwen2.5-7b" == "persistent://infernix/system/model.bootstrap.ready.qwen2.5-7b")
     "ready topic name follows the supported infernix/system namespace pattern"
@@ -14174,6 +14457,15 @@ assertHostConfig testRoot = do
   whisperTarget <- catalogTarget "whisper-cpp-cli"
   onnxTarget <- catalogTarget "onnx-runtime-native"
   jvmTarget <- catalogTarget "jvm-native"
+  appleJvmIdentity <-
+    maybe
+      (fail "closed native identity omitted jvm-native")
+      pure
+      (EngineArtifact.parseNativeArtifactIdentity "jvm-native")
+  appleJvmTarget <-
+    expectRight
+      "resolve Apple Audiveris direct target"
+      (ArtifactTarget.nativeArtifactTarget appleJvmIdentity "apple-silicon" "arm64")
   let llamaExecutable =
         ArtifactTarget.nativeArtifactTargetExecutable
           (catalogInstallRoot "llama-cpp-cli")
@@ -14200,6 +14492,14 @@ assertHostConfig testRoot = do
           (catalogInstallRoot "jvm-native")
           "Audiveris JVM Linux runner"
           jvmTarget
+      appleJvmRoot = testRoot </> "apple-engines" </> "jvm-native"
+      appleJvmExecutable =
+        ArtifactTarget.nativeArtifactTargetExecutable appleJvmRoot appleJvmTarget
+      appleJvmPrefix =
+        ArtifactTarget.nativeArtifactTargetLeadingArguments
+          appleJvmRoot
+          "Audiveris JVM Apple runner"
+          appleJvmTarget
   assert
     ( llamaExecutable
         == "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-cli"
@@ -14234,9 +14534,31 @@ assertHostConfig testRoot = do
   assert
     ( jvmExecutable == "/opt/infernix/audiveris-jre/bin/java"
         && jvmPrefix
-          == ["-cp", "/opt/audiveris/lib/app/*", "Audiveris"]
+          == [ "-Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache",
+               "-cp",
+               "/opt/audiveris/lib/app/*",
+               "Audiveris"
+             ]
     )
     "architectural correction: Audiveris uses the fixed image JRE and classpath"
+  assert
+    ( appleJvmExecutable
+        == appleJvmRoot
+          </> "Audiveris.app"
+          </> "Contents"
+          </> "runtime"
+          </> "Contents"
+          </> "Home"
+          </> "bin"
+          </> "java"
+        && appleJvmPrefix
+          == [ "-Dorg.bytedeco.javacpp.cachedir=" <> (appleJvmRoot </> "javacpp-cache"),
+               "-cp",
+               appleJvmRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
+               "Audiveris"
+             ]
+    )
+    "Sprint 1.20: Apple Audiveris uses its bundled JVM and candidate-local JavaCPP cache"
   assert
     ( all
         (Text.isPrefixOf "sha256:" . ArtifactTarget.nativeArtifactTargetFingerprint)
@@ -14684,6 +15006,123 @@ assertClusterConfig testRoot demoConfigPathValue = do
 
 -- | Sprint 1.20 Linux ELF/loader closure evidence.
 --
+-- | Sprint 1.20 regression: a live process group whose exact recorded leader
+-- has already been reaped.
+--
+-- This is the shape both corrected classifications used to reject outright, and
+-- nothing in the gate set reached it before — grepping @test/@ for any of the
+-- refusal strings these paths emit returned nothing. It is built
+-- deterministically: every step synchronises on a pipe or on a blocking reap, so
+-- there is no sleep and no dependence on host load, which is what made the
+-- original failures look like flakes.
+--
+-- The fixture asserts its own two preconditions rather than assuming them. The
+-- absence semantics of 'readProcessBirthIdentity' differ by platform — procfs
+-- allocation on Linux, registry membership on Darwin — and if either stopped
+-- holding, the interesting assertions below would still pass while testing
+-- nothing.
+runLeaderlessProcessGroupAssertions :: IO ()
+runLeaderlessProcessGroupAssertions = do
+  (readyReader, readyWriter) <- PosixIO.createPipe
+  (leaderReleaseReader, leaderReleaseWriter) <- PosixIO.createPipe
+  (memberReadyReader, memberReadyWriter) <- PosixIO.createPipe
+  (memberReleaseReader, memberReleaseWriter) <- PosixIO.createPipe
+  leaderProcessId <-
+    forkProcess $ do
+      PosixIO.closeFd readyReader
+      PosixIO.closeFd leaderReleaseWriter
+      dropInheritedProcessIdentity
+      processId <- getProcessID
+      _ <- createProcessGroupFor processId
+      _ <- registerCurrentProcessIdentity
+      _ <- PosixByteString.fdWrite readyWriter "ready"
+      PosixIO.closeFd readyWriter
+      _ <- PosixByteString.fdRead leaderReleaseReader 1
+      exitImmediately ExitSuccess
+  PosixIO.closeFd readyWriter
+  PosixIO.closeFd leaderReleaseReader
+  leaderReady <- PosixByteString.fdRead readyReader 5
+  PosixIO.closeFd readyReader
+  -- The surviving member is forked by this process and joins the leader's
+  -- group, rather than being forked by the leader. A grandchild would orphan
+  -- when the leader is reaped, and the fixture would then depend on the init
+  -- system reaping it — which is not something the container lanes can be
+  -- assumed to do, and an unreaped zombie still answers 'kill(2)' as a live
+  -- group member. Owning the member here keeps every transition a blocking
+  -- reap this process performs itself.
+  memberProcessId <-
+    forkProcess $ do
+      PosixIO.closeFd memberReadyReader
+      PosixIO.closeFd memberReleaseWriter
+      dropInheritedProcessIdentity
+      joinProcessGroup (fromIntegral leaderProcessId)
+      _ <- PosixByteString.fdWrite memberReadyWriter "ready"
+      PosixIO.closeFd memberReadyWriter
+      _ <- PosixByteString.fdRead memberReleaseReader 1
+      exitImmediately ExitSuccess
+  PosixIO.closeFd memberReadyWriter
+  PosixIO.closeFd memberReleaseReader
+  memberReady <- PosixByteString.fdRead memberReadyReader 5
+  PosixIO.closeFd memberReadyReader
+  leaderBirthIdentity <-
+    maybe
+      (fail "the leaderless-group fixture leader had no observable birth identity")
+      pure
+      =<< readProcessBirthIdentity (fromIntegral leaderProcessId)
+  _ <- PosixByteString.fdWrite leaderReleaseWriter "x"
+  PosixIO.closeFd leaderReleaseWriter
+  leaderStatus <- getProcessStatus True False leaderProcessId
+  reapedLeaderIdentity <-
+    readProcessBirthIdentity (fromIntegral leaderProcessId)
+  liveGroupProbe <-
+    try @IOException
+      (signalProcessGroup nullSignal leaderProcessId)
+  assert
+    ( leaderReady == "ready"
+        && memberReady == "ready"
+        && leaderStatus == Just (Exited ExitSuccess)
+        && isNothing reapedLeaderIdentity
+        && liveGroupProbe == Right ()
+    )
+    "the leaderless-group fixture reaches a live process group whose exact recorded leader is absent"
+  recoverableStatus <-
+    Subprocess.observeRecoverableProcessGroupActiveForTest
+      (fromIntegral leaderProcessId)
+      (fromIntegral leaderProcessId)
+      leaderBirthIdentity
+  assert
+    recoverableStatus
+    "abandoned-activity recovery classifies a reaped leader over a live group as active instead of refusing it"
+  refusedWhileMemberLives <-
+    try @IOException
+      ( Subprocess.signalActivityProcessGroupForTest
+          (fromIntegral leaderProcessId)
+          (fromIntegral leaderProcessId)
+          leaderBirthIdentity
+      )
+  -- The conservative discipline is the only acceptable outcome here. A reaped
+  -- leader can no longer vouch for its group id, so the group must never be
+  -- signalled by that bare number; the obligation is discharged by proving
+  -- absence, and while the member is alive that proof must fail closed.
+  let refusedForUnprovableAbsence =
+        case refusedWhileMemberLives of
+          Left failure ->
+            "could not prove absent" `isInfixOf` displayException failure
+          Right () -> False
+  assert
+    refusedForUnprovableAbsence
+    "a reaped leader's group is never signalled by its bare process-group id, and an unprovable absence fails closed"
+  _ <- PosixByteString.fdWrite memberReleaseWriter "x"
+  PosixIO.closeFd memberReleaseWriter
+  memberStatus <- getProcessStatus True False memberProcessId
+  assert
+    (memberStatus == Just (Exited ExitSuccess))
+    "the leaderless-group fixture reaps its surviving member itself rather than relying on the init system"
+  Subprocess.signalActivityProcessGroupForTest
+    (fromIntegral leaderProcessId)
+    (fromIntegral leaderProcessId)
+    leaderBirthIdentity
+
 -- The loader closure producer runs only on Linux, but every part of it that
 -- decides what the evidence says is pure: the ELF parse, the dynamic-token
 -- expansion, and the @ld.so.cache@ parse. Those are pinned here against
@@ -14777,6 +15216,18 @@ runElfImageParseAssertions = do
   assert
     (isLeftResult (ArtifactLoader.parseElfImageInspection (BS.take 400 syntheticElf64Image)))
     "ELF parse rejects an image whose dynamic string table is truncated"
+  let relocatableElf =
+        foldr
+          (uncurry replaceByteAt)
+          syntheticElf64Image
+          [(54, 0), (55, 0), (56, 0), (57, 0)]
+  assert
+    ( either
+        (const False)
+        (const True)
+        (ArtifactLoader.parseElfImageInspection relocatableElf)
+    )
+    "ELF parse admits a relocatable object with no program-header table"
 
 -- | The machine byte is only consulted during expansion, so an unsupported
 -- machine is allowed to parse and must fail at the platform token instead.
@@ -15027,9 +15478,9 @@ runElfSealedRunAuditAssertions = do
     )
     "Sprint 1.20: a load record carrying .. is collapsed rather than refused, because glibc reports the path it opened"
   -- `trying file=` also names candidates the loader rejected, so admitting it
-  -- would launder a path that was never loaded. `initialize program:` and
-  -- `transferring control:` carry argv[0] -- measured as the bare `python3` --
-  -- so neither can be a load record either.
+  -- would launder a path that was never loaded. A bare `initialize program:`
+  -- operand and `transferring control:` carry no resolved path and remain
+  -- commentary.
   assert
     ( all
         ( \frame ->
@@ -15045,6 +15496,13 @@ runElfSealedRunAuditAssertions = do
         ]
     )
     "Sprint 1.20: every non-load ld.so frame is loader commentary carrying no path"
+  assert
+    ( Subprocess.parseElfAuditLineForTest
+        "         7:\tinitialize program: /opt/infernix/native/llama-cli"
+        == Right
+          (Subprocess.ElfLoadedPath "/opt/infernix/native/llama-cli")
+    )
+    "Sprint 1.20: an absolute initialized program is mapped-object evidence for a static sealed target"
   assert
     ( Subprocess.parseElfAuditLineForTest "version: 9870 (2d973636e)"
         == Right Subprocess.NotElfAuditLine
@@ -15065,7 +15523,11 @@ runElfSealedRunAuditAssertions = do
           )
     )
     "Sprint 1.20: a frame that claims to be a load record but is relative, empty, or ascends past the root fails closed"
-  let artifactRoot = "/data/engines/llama-cpp-cli"
+  let artifactRoot = "/data/engines/llama-cpp-cli" :: FilePath
+      -- The Linux lane's owned roots are the target's declared image closure
+      -- roots, not the artifact root; the fixture keeps using one root so the
+      -- frame grammar stays the subject of these cases.
+      ownedRoots = [artifactRoot]
       sealedFrames =
         [ "         7:\tfind library=libllama.so [0]; searching",
           "         7:\t  trying file=" <> artifactRoot <> "/lib/libllama.so",
@@ -15077,7 +15539,7 @@ runElfSealedRunAuditAssertions = do
         ]
   assert
     ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
-        artifactRoot
+        ownedRoots
         (ByteString8.pack (unlines sealedFrames))
         == Right (ByteString8.pack "version: 9870 (2d973636e)\n")
     )
@@ -15085,7 +15547,7 @@ runElfSealedRunAuditAssertions = do
   assert
     ( isLeftResult
         ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
-            artifactRoot
+            ownedRoots
             (ByteString8.pack "version: 9870 (2d973636e)\n")
         )
     )
@@ -15093,7 +15555,7 @@ runElfSealedRunAuditAssertions = do
   assert
     ( isLeftResult
         ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
-            artifactRoot
+            ownedRoots
             ( ByteString8.pack
                 ( unlines
                     [ "         7:\tcalling init: /lib/aarch64-linux-gnu/libc.so.6"
@@ -15108,7 +15570,7 @@ runElfSealedRunAuditAssertions = do
   assert
     ( isLeftResult
         ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
-            artifactRoot
+            ownedRoots
             ( ByteString8.pack
                 ( unlines
                     ( sealedFrames
@@ -15120,6 +15582,18 @@ runElfSealedRunAuditAssertions = do
         )
     )
     "Sprint 1.20: a sealed Linux run loading an unsealed non-system library fails closed"
+  -- An installed target's closure root is the relative `.`, which resolves to
+  -- `<generation>/.`. That is the shape the Apple lane actually passes, and it
+  -- only works if the containment check drops the trailing separator: without
+  -- that, every path under the generation reads as unsealed and the audit
+  -- reports that the run loaded nothing from its own generation.
+  assert
+    ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
+        [artifactRoot <> "/."]
+        (ByteString8.pack (unlines sealedFrames))
+        == Right (ByteString8.pack "version: 9870 (2d973636e)\n")
+    )
+    "Sprint 1.20: an owned root spelled as the generation's own relative directory still contains its payload"
   llamaIdentity <-
     maybe
       (fail "closed native identity omitted llama-cpp-cli")
@@ -15129,6 +15603,7 @@ runElfSealedRunAuditAssertions = do
     ( Subprocess.sealedRunLoaderAuditForTest
         ( ProvisioningInternal.LinuxNativeArtifactSmokeOperation
             llamaIdentity
+            "amd64"
         )
         == Just Subprocess.ElfSealedRunAudit
         && Subprocess.sealedRunLoaderAuditForTest
@@ -15149,6 +15624,143 @@ runElfSealedRunAuditAssertions = do
 -- Before this, none of the four bounds was exported or had a pure validator, so
 -- none was reachable from any gate — a bound that no test can reach is a bound
 -- that can silently drift back to "raised to unblock a measurement".
+runNativeArtifactArgumentAssertions :: IO ()
+runNativeArtifactArgumentAssertions = do
+  let llamaArguments =
+        CappedEngineInternal.renderNativeArtifactArgumentsForTest
+          "llama-cpp-cli"
+          Nothing
+          Nothing
+      whisperArguments =
+        CappedEngineInternal.renderNativeArtifactArgumentsForTest
+          "whisper-cpp-cli"
+          Nothing
+          (Just "/tmp/input.wav")
+      jvmArguments =
+        CappedEngineInternal.renderNativeArtifactArgumentsForTest
+          "jvm-native"
+          (Just "/tmp/output")
+          (Just "/tmp/input.png")
+      pythonArguments =
+        CappedEngineInternal.renderNativeArtifactArgumentsForTest
+          "onnx-runtime-native"
+          (Just "/tmp/output")
+          (Just "/tmp/input.wav")
+  assert
+    ( llamaArguments
+        == Right
+          [ "--model",
+            "/var/lib/infernix/models/test-model/payload",
+            "--prompt",
+            "test prompt",
+            "--n-predict",
+            "32",
+            "--ctx-size",
+            "512",
+            "--threads",
+            "1",
+            "--gpu-layers",
+            "0",
+            "--no-display-prompt",
+            "--no-conversation",
+            "--single-turn",
+            "--simple-io",
+            "--log-disable"
+          ]
+    )
+    "Sprint 1.20: llama.cpp receives its real bounded CLI grammar and cached payload path"
+  assert
+    ( whisperArguments
+        == Right
+          [ "--model",
+            "/var/lib/infernix/models/test-model/payload",
+            "--file",
+            "/tmp/input.wav",
+            "--threads",
+            "1",
+            "--no-timestamps",
+            "--language",
+            "en",
+            "--no-gpu"
+          ]
+    )
+    "Sprint 1.20: whisper.cpp receives its real bounded CLI grammar"
+  assert
+    ( jvmArguments
+        == Right
+          [ "-batch",
+            "-export",
+            "-output",
+            "/tmp/output",
+            "/tmp/input.png"
+          ]
+    )
+    "Sprint 1.20: Audiveris receives its real headless export CLI grammar"
+  assert
+    (either (const False) (elem "--engine") pythonArguments)
+    "Sprint 1.20: Python-backed native adapters retain the package-owned runner protocol"
+  assert
+    ( isLeftResult
+        ( CappedEngineInternal.renderNativeArtifactArgumentsForTest
+            "whisper-cpp-cli"
+            Nothing
+            Nothing
+        )
+        && isLeftResult
+          ( CappedEngineInternal.renderNativeArtifactArgumentsForTest
+              "jvm-native"
+              Nothing
+              (Just "/tmp/input.png")
+          )
+        && isLeftResult
+          ( CappedEngineInternal.renderNativeArtifactArgumentsForTest
+              "unregistered-native-adapter"
+              Nothing
+              Nothing
+          )
+    )
+    "Sprint 1.20: missing raw-target operands and unknown adapters fail before process creation"
+  assert
+    ( CappedEngineInternal.parseResidentBytesForTest
+        "Name:\ttarget\nState:\tZ (zombie)\n"
+        == Right 0
+        && CappedEngineInternal.parseResidentBytesForTest
+          "Name:\ttarget\nState:\tX (dead)\n"
+          == Right 0
+    )
+    "Sprint 1.20: a terminal /proc status that races the prior live stat sample contributes zero RSS"
+  assert
+    ( isLeftResult
+        ( CappedEngineInternal.parseResidentBytesForTest
+            "Name:\ttarget\nState:\tS (sleeping)\n"
+        )
+        && isLeftResult
+          ( CappedEngineInternal.parseResidentBytesForTest
+              "Name:\ttarget\n"
+          )
+    )
+    "Sprint 1.20: a live or malformed /proc status without VmRSS still fails closed"
+  assert
+    ( CappedEngineInternal.missingResidentRecheckForTest Nothing == Right True
+        && CappedEngineInternal.missingResidentRecheckForTest
+          (Just "885 (target) Z 1 885\n")
+          == Right True
+        && CappedEngineInternal.missingResidentRecheckForTest
+          (Just "885 (target) X 1 885\n")
+          == Right True
+    )
+    "Sprint 1.20: the missing-VmRSS recheck accepts only vanished or terminal tasks"
+  assert
+    ( CappedEngineInternal.missingResidentRecheckForTest
+        (Just "885 (target) R 1 885\n")
+        == Right False
+        && isLeftResult
+          ( CappedEngineInternal.missingResidentRecheckForTest
+              (Just "malformed stat\n")
+          )
+    )
+    "Sprint 1.20: the missing-VmRSS recheck retries live tasks and rejects malformed stat evidence"
+
 runClosureBoundAssertions :: IO ()
 runClosureBoundAssertions = do
   let poetryClosureBytes =
@@ -15696,3 +16308,165 @@ embeddedNewFormatLdSoCache =
       BS.replicate 4 0, -- pad 28 -> 32
       newFormatLdSoCache
     ]
+
+-- | Sprint 1.20: the generation identity a helper re-derives is lane-specific.
+--
+-- The superseded supervisor check asserted
+-- @generationFingerprint == payloadDigest@ for every pre-manifest candidate.
+-- That is only the @apple-silicon@ branch of
+-- 'ArtifactInternal.engineArtifactGenerationFingerprint'. A @linux-native@
+-- generation additionally binds the recipe, the closed target contract, and the
+-- descriptor-derived image evidence, because a Linux metadata root deliberately
+-- does not contain the image-owned payload it executes. Its identity is
+-- therefore never its own payload digest, so the superseded assertion refused
+-- every Linux generation that could ever exist and the Linux native smoke could
+-- not pass on any input.
+--
+-- These assertions discriminate against that source: the first pins the Apple
+-- construction the old check encoded, and the second pins that the same check
+-- is unsatisfiable on the Linux lane. The remaining two pin that the two inputs
+-- the payload digest does not cover are genuinely bound.
+runArtifactGenerationIdentityAssertions :: IO ()
+runArtifactGenerationIdentityAssertions = do
+  let payloadDigest = canonicalTestDigest 'a'
+      recipeFingerprint = canonicalTestDigest 'b'
+      targetContractFingerprint = canonicalTestDigest 'c'
+      evidence contract executableDigest =
+        ArtifactTarget.NativeArtifactTargetEvidence
+          { ArtifactTarget.targetEvidenceContractFingerprint = contract,
+            ArtifactTarget.targetEvidenceExecutable =
+              ArtifactTarget.NativeArtifactTargetExecutableEvidence
+                { ArtifactTarget.targetExecutableConfiguredPath =
+                    "/opt/infernix/native-payloads/llama.cpp/llama-cli",
+                  ArtifactTarget.targetExecutableConfiguredDeviceId = 64,
+                  ArtifactTarget.targetExecutableConfiguredFileId = 1234,
+                  ArtifactTarget.targetExecutableConfiguredMode = 0o100755,
+                  ArtifactTarget.targetExecutableConfiguredSize = 4096,
+                  ArtifactTarget.targetExecutableCanonicalPath =
+                    "/opt/infernix/native-payloads/llama.cpp/llama-cli",
+                  ArtifactTarget.targetExecutableCanonicalDeviceId = 64,
+                  ArtifactTarget.targetExecutableCanonicalFileId = 1234,
+                  ArtifactTarget.targetExecutableCanonicalMode = 0o100755,
+                  ArtifactTarget.targetExecutableCanonicalSize = 4096,
+                  ArtifactTarget.targetExecutableDigest = executableDigest
+                },
+            ArtifactTarget.targetEvidenceClosures = [],
+            ArtifactTarget.targetEvidenceLoader = Nothing
+          }
+      appleIdentity =
+        ArtifactInternal.engineArtifactGenerationFingerprint
+          "apple-silicon"
+          payloadDigest
+          recipeFingerprint
+          targetContractFingerprint
+          Nothing
+      linuxIdentityWith recipe executableDigest =
+        ArtifactInternal.engineArtifactGenerationFingerprint
+          "linux-native"
+          payloadDigest
+          recipe
+          targetContractFingerprint
+          (Just (evidence targetContractFingerprint executableDigest))
+      linuxIdentity =
+        linuxIdentityWith recipeFingerprint (canonicalTestDigest 'd')
+      originalEvidence = evidence targetContractFingerprint (canonicalTestDigest 'd')
+      unusedCache digest =
+        ArtifactTarget.NativeArtifactLoaderEvidence
+          { ArtifactTarget.loaderEvidenceEntryObject =
+              "/opt/infernix/native-payloads/llama.cpp/llama-cli",
+            ArtifactTarget.loaderEvidenceCache =
+              Just
+                ArtifactTarget.NativeArtifactLoaderFileEvidence
+                  { ArtifactTarget.loaderFileConfiguredPath = "/etc/ld.so.cache",
+                    ArtifactTarget.loaderFileConfiguredDeviceId = 64,
+                    ArtifactTarget.loaderFileConfiguredFileId = 2222,
+                    ArtifactTarget.loaderFileConfiguredMode = 0o100644,
+                    ArtifactTarget.loaderFileConfiguredSize = 4096,
+                    ArtifactTarget.loaderFileCanonicalPath = "/etc/ld.so.cache",
+                    ArtifactTarget.loaderFileCanonicalDeviceId = 64,
+                    ArtifactTarget.loaderFileCanonicalFileId = 2222,
+                    ArtifactTarget.loaderFileCanonicalMode = 0o100644,
+                    ArtifactTarget.loaderFileCanonicalSize = 4096,
+                    ArtifactTarget.loaderFileDigest = digest
+                  },
+            ArtifactTarget.loaderEvidenceObjects = [],
+            ArtifactTarget.loaderEvidenceResolutions = [],
+            ArtifactTarget.loaderEvidenceMaximumDepth = 0
+          }
+      originalEvidenceWithUnusedCache =
+        originalEvidence
+          { ArtifactTarget.targetEvidenceLoader =
+              Just (unusedCache (canonicalTestDigest '1'))
+          }
+      unpackedEvidence =
+        originalEvidenceWithUnusedCache
+          { ArtifactTarget.targetEvidenceExecutable =
+              (ArtifactTarget.targetEvidenceExecutable originalEvidence)
+                { ArtifactTarget.targetExecutableConfiguredDeviceId = 91,
+                  ArtifactTarget.targetExecutableConfiguredFileId = 5678,
+                  ArtifactTarget.targetExecutableCanonicalDeviceId = 91,
+                  ArtifactTarget.targetExecutableCanonicalFileId = 5678
+                },
+            ArtifactTarget.targetEvidenceLoader =
+              Just (unusedCache (canonicalTestDigest '2'))
+          }
+  assert
+    (appleIdentity == Right payloadDigest)
+    "Sprint 1.20: an apple-silicon generation identity is exactly its payload digest"
+  assert
+    ( ArtifactInternal.portableImageTargetEvidenceForTest originalEvidenceWithUnusedCache
+        == ArtifactInternal.portableImageTargetEvidenceForTest unpackedEvidence
+    )
+    "Sprint 1.20: OCI-assigned device/inode and unused loader-cache changes do not invalidate portable image evidence"
+  assert
+    (linuxIdentity /= Right payloadDigest)
+    "Sprint 1.20: a linux-native generation identity is never its payload digest, so the superseded candidate equality refused every Linux generation"
+  assert
+    (either (const False) isCanonicalSha256Text linuxIdentity)
+    "Sprint 1.20: a linux-native generation identity is a canonical sha256"
+  assert
+    (linuxIdentityWith (canonicalTestDigest 'e') (canonicalTestDigest 'd') /= linuxIdentity)
+    "Sprint 1.20: the linux-native generation identity binds the recipe fingerprint the payload digest cannot cover"
+  assert
+    (linuxIdentityWith recipeFingerprint (canonicalTestDigest 'f') /= linuxIdentity)
+    "Sprint 1.20: the linux-native generation identity binds the observed image-target evidence"
+  assert
+    ( isLeft
+        ( ArtifactInternal.engineArtifactGenerationFingerprint
+            "linux-native"
+            payloadDigest
+            recipeFingerprint
+            targetContractFingerprint
+            Nothing
+        )
+    )
+    "Sprint 1.20: a linux-native generation without image-target evidence fails closed"
+  assert
+    ( isLeft
+        ( ArtifactInternal.engineArtifactGenerationFingerprint
+            "apple-silicon"
+            payloadDigest
+            recipeFingerprint
+            targetContractFingerprint
+            (Just (evidence targetContractFingerprint (canonicalTestDigest 'd')))
+        )
+    )
+    "Sprint 1.20: an apple-silicon generation carrying image-target evidence fails closed"
+  assert
+    ( isLeft
+        ( ArtifactInternal.engineArtifactGenerationFingerprint
+            "linux-native"
+            payloadDigest
+            recipeFingerprint
+            targetContractFingerprint
+            (Just (evidence (canonicalTestDigest 'e') (canonicalTestDigest 'd')))
+        )
+    )
+    "Sprint 1.20: evidence disagreeing with its closed target contract fails closed"
+
+canonicalTestDigest :: Char -> Text.Text
+canonicalTestDigest filler = "sha256:" <> Text.replicate 64 (Text.singleton filler)
+
+isCanonicalSha256Text :: Text.Text -> Bool
+isCanonicalSha256Text value =
+  Text.isPrefixOf "sha256:" value && Text.length value == 71

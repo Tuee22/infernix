@@ -34,7 +34,6 @@ import Infernix.Runtime.CappedEngine.DarwinObserver
   ( DarwinObserverKernelTest,
     parseFootprintPhysicalBytes,
     parseTopProcessGroupMembers,
-    probePhysicalFootprintObserver,
     runDarwinObserverFixtureModeIfRequested,
     runDarwinObserverKernelTest,
   )
@@ -46,6 +45,14 @@ import System.Exit (ExitCode (ExitSuccess), exitFailure)
 import System.IO (hClose)
 import System.Posix.IO (createPipe, fdToHandle)
 import System.Posix.Types (CPid)
+
+-- The startup probe runs the public Apple tools, so only the Apple branch of
+-- 'observerProbeTest' below can call it.
+#if defined(darwin_HOST_OS)
+import Infernix.Runtime.CappedEngine.DarwinObserver
+  ( probePhysicalFootprintObserver,
+  )
+#endif
 
 main :: IO ()
 main = do

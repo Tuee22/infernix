@@ -122,7 +122,15 @@ The supported workflow keeps day-to-day phase work local to one hardware cohort 
 > plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
 > `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
 > check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
+> machine, it is the gate to begin the *next* phase's implementation. **That set has one declared
+> prerequisite: `infernix init` must have written the repo-root `./infernix-host.dhall` host
+> manifest.** `cabal test infernix-haskell-style` resolves `cabal` through
+> `HostConfig.toolPaths.cabal`, and its only non-manifest fallbacks are the fixed container-layout
+> paths in `Infernix.HostTools`; a host whose toolchain lives under an ordinary user home has no
+> fallback and the gate cannot run. Widening those candidates is not available, because deriving a
+> home-relative path at command time would be the ambient environment read
+> [no_env_vars.md](no_env_vars.md) forbids — the manifest is exactly where host-specific absolute
+> paths belong. *Cohort sign-off* (Axis 2) is
 > the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
 > and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
 > `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The

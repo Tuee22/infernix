@@ -29,9 +29,12 @@ module Infernix.Engines.Artifact.Internal
     renderArtifactSnapshotRecord,
     digestEngineArtifactPayload,
     digestEngineArtifactPayloadWithObserver,
+    digestEngineArtifactImageClosureForTest,
     observeNativeArtifactTargetEvidence,
     validateNativeArtifactTargetEvidence,
+    portableImageTargetEvidenceForTest,
     validateEngineArtifactRootAt,
+    manifestFingerprint,
     ArtifactResolution (..),
     NativeArtifactIdentity,
     parseNativeArtifactIdentity,
@@ -40,6 +43,7 @@ module Infernix.Engines.Artifact.Internal
     linuxArtifactRuntimeExpectation,
     currentArtifactRecipeFingerprint,
     engineArtifactGenerationFingerprint,
+    rederiveArtifactGenerationFingerprint,
     ArtifactPhase (..),
     ArtifactOutputStream (..),
     ArtifactProcessOutcome (..),
@@ -47,6 +51,7 @@ module Infernix.Engines.Artifact.Internal
     ArtifactLaunchRequest,
     artifactLaunchInstallRoot,
     artifactLaunchEntrypoint,
+    artifactLaunchLeadingArguments,
     ArtifactLauncher,
     artifactLauncher,
     ArtifactPreLaunchFixture,
@@ -127,6 +132,7 @@ import Infernix.Engines.Artifact.Capability
     ValidatedEngineArtifact (..),
     artifactLaunchEntrypoint,
     artifactLaunchInstallRoot,
+    artifactLaunchLeadingArguments,
     artifactLauncher,
     noArtifactPreLaunchFixture,
     overwriteFileBeforeLaunch,
@@ -143,7 +149,10 @@ import Infernix.Engines.Artifact.Recipe
   )
 import Infernix.Engines.Artifact.Snapshot qualified as Snapshot
 import Infernix.Engines.Artifact.Target
-  ( NativeArtifactLoaderEvidence,
+  ( NativeArtifactLoaderEvidence (..),
+    NativeArtifactLoaderFileEvidence (..),
+    NativeArtifactLoaderObjectEvidence (..),
+    NativeArtifactLoaderResolutionEvidence (..),
     NativeArtifactTarget,
     NativeArtifactTargetClosureEvidence (..),
     NativeArtifactTargetEvidence (..),
@@ -154,6 +163,7 @@ import Infernix.Engines.Artifact.Target
     nativeArtifactTargetFingerprint,
     nativeArtifactTargetImmutableClosureRoots,
     nativeArtifactTargetIsInstalled,
+    nativeArtifactTargetLeadingArguments,
   )
 import Infernix.Engines.MaterializationLock
   ( withTryEngineArtifactReadLock,
@@ -162,6 +172,7 @@ import Infernix.Engines.MaterializationLock.Internal
   ( ArtifactGenerationMutationAuthority,
     MaterializationAuthority,
     artifactGenerationLease,
+    artifactGenerationLeasePath,
     materializationAuthorityDeviceId,
     materializationAuthorityFileId,
     materializationAuthorityMode,
@@ -458,9 +469,59 @@ validateNativeArtifactTargetEvidence ::
   IO ()
 validateNativeArtifactTargetEvidence installRoot target expected = do
   observed <- observeNativeArtifactTargetEvidence installRoot target
-  unless (observed == expected) $
-    ioError
+  unless
+    ( portableImageTargetEvidenceForTest observed
+        == portableImageTargetEvidenceForTest expected
+    )
+    $ ioError
       (userError "native artifact direct target or runtime closure identity changed")
+
+-- OCI unpack assigns fresh device/inode identities on each container rootfs.
+-- Observation still uses those identities to prove every descriptor-stable
+-- read, but persisted image evidence must compare the portable identity:
+-- closed path, type/mode/size, digest, ELF metadata, and loader edges.
+portableImageTargetEvidenceForTest :: NativeArtifactTargetEvidence -> NativeArtifactTargetEvidence
+portableImageTargetEvidenceForTest evidence =
+  evidence
+    { targetEvidenceExecutable = portableExecutable (targetEvidenceExecutable evidence),
+      targetEvidenceClosures = map portableClosure (targetEvidenceClosures evidence),
+      targetEvidenceLoader = portableLoader <$> targetEvidenceLoader evidence
+    }
+  where
+    portableExecutable executable =
+      executable
+        { targetExecutableConfiguredDeviceId = 0,
+          targetExecutableConfiguredFileId = 0,
+          targetExecutableCanonicalDeviceId = 0,
+          targetExecutableCanonicalFileId = 0
+        }
+    portableClosure closure =
+      closure
+        { targetClosureDeviceId = 0,
+          targetClosureFileId = 0
+        }
+    portableLoader loader =
+      loader
+        { loaderEvidenceCache =
+            if any loaderResolutionUsedCache (loaderEvidenceResolutions loader)
+              then portableLoaderFile <$> loaderEvidenceCache loader
+              else Nothing,
+          loaderEvidenceObjects = map portableLoaderObject (loaderEvidenceObjects loader)
+        }
+    portableLoaderFile loaderFile =
+      loaderFile
+        { loaderFileConfiguredDeviceId = 0,
+          loaderFileConfiguredFileId = 0,
+          loaderFileCanonicalDeviceId = 0,
+          loaderFileCanonicalFileId = 0
+        }
+    portableLoaderObject loaderObject =
+      loaderObject
+        { loaderObjectConfiguredDeviceId = 0,
+          loaderObjectConfiguredFileId = 0,
+          loaderObjectCanonicalDeviceId = 0,
+          loaderObjectCanonicalFileId = 0
+        }
 
 maximumNativeTargetClosureRoots :: Int
 maximumNativeTargetClosureRoots = 8
@@ -588,7 +649,7 @@ observeNativeArtifactTargetClosure closureRoot = do
   initialStatus <- requireOwnedDirectory "native artifact target closure" closureRoot
   unless (isDirectory initialStatus) $
     ioError (userError "native artifact target closure is not a directory")
-  digest <- digestEngineArtifactPayload closureRoot
+  digest <- digestEngineArtifactImageClosure closureRoot
   finalStatus <- getSymbolicLinkStatus closureRoot
   unless
     ( stableFileStatusMatches initialStatus finalStatus
@@ -616,19 +677,42 @@ digestEngineArtifactPayloadWithObserver observeBoundary root = do
     ( \rootDescriptor _rootStatus ->
         digestEngineArtifactPayloadDescriptor
           observeBoundary
+          Nothing
           absoluteRoot
           rootDescriptor
     )
 
+digestEngineArtifactImageClosure :: FilePath -> IO Text
+digestEngineArtifactImageClosure root = do
+  absoluteRoot <- makeAbsolute root
+  withStableDirectoryDescriptor
+    "native artifact target closure"
+    absoluteRoot
+    ( \rootDescriptor _rootStatus ->
+        digestEngineArtifactPayloadDescriptor
+          (const (pure ()))
+          (Just absoluteRoot)
+          absoluteRoot
+          rootDescriptor
+    )
+
+-- | Exercise the image-only closure policy without widening the public
+-- artifact API. Image closures may contain absolute links only when their
+-- targets remain inside the exact observed closure root.
+digestEngineArtifactImageClosureForTest :: FilePath -> IO Text
+digestEngineArtifactImageClosureForTest = digestEngineArtifactImageClosure
+
 digestEngineArtifactPayloadDescriptor ::
   (ArtifactSnapshotBoundary -> IO ()) ->
+  Maybe FilePath ->
   FilePath ->
   Fd ->
   IO Text
-digestEngineArtifactPayloadDescriptor observeBoundary rootPath rootDescriptor = do
+digestEngineArtifactPayloadDescriptor observeBoundary imageClosureRoot rootPath rootDescriptor = do
   finalState <-
     payloadDirectoryContext
       observeBoundary
+      imageClosureRoot
       rootDescriptor
       rootPath
       ""
@@ -647,6 +731,7 @@ digestEngineArtifactPayloadDescriptor observeBoundary rootPath rootDescriptor = 
 
 payloadDirectoryContext ::
   (ArtifactSnapshotBoundary -> IO ()) ->
+  Maybe FilePath ->
   Fd ->
   FilePath ->
   FilePath ->
@@ -655,6 +740,7 @@ payloadDirectoryContext ::
   IO ArtifactSnapshotState
 payloadDirectoryContext
   observeBoundary
+  imageClosureRoot
   directoryDescriptor
   directoryPath
   relativeDirectory
@@ -686,6 +772,7 @@ payloadDirectoryContext
       foldM
         ( payloadEntryContext
             observeBoundary
+            imageClosureRoot
             directoryDescriptor
             directoryPath
             relativeDirectory
@@ -705,6 +792,7 @@ payloadDirectoryContext
 
 payloadEntryContext ::
   (ArtifactSnapshotBoundary -> IO ()) ->
+  Maybe FilePath ->
   Fd ->
   FilePath ->
   FilePath ->
@@ -714,6 +802,7 @@ payloadEntryContext ::
   IO ArtifactSnapshotState
 payloadEntryContext
   observeBoundary
+  imageClosureRoot
   parentDescriptor
   parentPath
   relativeDirectory
@@ -786,6 +875,7 @@ payloadEntryContext
                         observeBoundary (ArtifactSnapshotEntryOpened relativePath)
                         payloadDirectoryContext
                           observeBoundary
+                          imageClosureRoot
                           childDescriptor
                           (parentPath </> entryName)
                           relativePath
@@ -815,6 +905,7 @@ payloadEntryContext
           | otherwise ->
               digestStableSymlink
                 observeBoundary
+                imageClosureRoot
                 parentDescriptor
                 parentPath
                 relativePath
@@ -833,6 +924,7 @@ payloadEntryContext
 
 digestStableSymlink ::
   (ArtifactSnapshotBoundary -> IO ()) ->
+  Maybe FilePath ->
   Fd ->
   FilePath ->
   FilePath ->
@@ -842,6 +934,7 @@ digestStableSymlink ::
   IO ArtifactSnapshotState
 digestStableSymlink
   observeBoundary
+  imageClosureRoot
   parentDescriptor
   parentPath
   relativePath
@@ -854,7 +947,7 @@ digestStableSymlink
         parentPath
         relativePath
         entryName
-    validateSymlinkTarget relativePath target
+    validateSnapshotSymlinkTarget imageClosureRoot relativePath target
     let targetBytes =
           toInteger
             (ByteString.length (TextEncoding.encodeUtf8 (Text.pack target)))
@@ -1365,6 +1458,28 @@ validateSymlinkTarget relativePath target = do
           )
       )
 
+validateSnapshotSymlinkTarget ::
+  Maybe FilePath ->
+  FilePath ->
+  FilePath ->
+  IO ()
+validateSnapshotSymlinkTarget imageClosureRoot relativePath target
+  | isAbsolute target =
+      unless
+        ( '\0' `notElem` target
+            && maybe False (`pathIsWithin` target) imageClosureRoot
+        )
+        ( ioError
+            ( userError
+                ( "engine artifact payload symlink escapes its root: "
+                    <> relativePath
+                    <> " -> "
+                    <> target
+                )
+            )
+        )
+  | otherwise = validateSymlinkTarget relativePath target
+
 pathEscapesAtDepth :: Int -> [FilePath] -> Bool
 pathEscapesAtDepth _ [] = False
 pathEscapesAtDepth depth (component : remaining)
@@ -1415,6 +1530,7 @@ validateEngineArtifactRootAt expectedInstallRoot actualRoot = do
         observedDigest <-
           digestEngineArtifactPayloadDescriptor
             (const (pure ()))
+            Nothing
             absoluteActualRoot
             rootDescriptor
         unless (manifestDigest manifest == observedDigest) $
@@ -1743,6 +1859,58 @@ currentArtifactRecipeFingerprint
   (ArtifactRuntimeExpectation substrate architecture) =
     nativeArtifactRecipeFingerprint identity substrate architecture
 
+-- | Re-derive, helper-side, the generation identity a parent handed down,
+-- taking nothing from the parent but the lane and the payload digest the caller
+-- has just re-computed from bytes.
+--
+-- This exists because asserting @generationFingerprint == payloadDigest@ is not
+-- a general property of a generation identity: it is the @apple-silicon@ branch
+-- of 'engineArtifactGenerationFingerprint'. A @linux-native@ generation
+-- additionally binds the current recipe, the closed target contract, and the
+-- descriptor-derived image-target evidence, precisely because a Linux metadata
+-- root does not contain the image-owned payload it will execute. Its identity is
+-- therefore never its own payload digest, and a helper applying the Apple
+-- assertion to it can never admit any Linux generation at all.
+--
+-- Everything the equation needs is independently derivable here, so nothing is
+-- taken on trust: the recipe fingerprint and the target contract come from the
+-- closed catalog entry for the named lane, and the image-target evidence is
+-- re-observed through descriptors against the immutable image. A swapped
+-- generation, a drifted recipe, or a changed image therefore fails to reproduce
+-- the fingerprint.
+rederiveArtifactGenerationFingerprint ::
+  NativeArtifactIdentity ->
+  ArtifactRuntimeExpectation ->
+  FilePath ->
+  Text ->
+  IO (Either String Text)
+rederiveArtifactGenerationFingerprint
+  identity
+  runtimeExpectation@(ArtifactRuntimeExpectation substrate architecture)
+  artifactRoot
+  payloadDigest =
+    case ( nativeArtifactTarget identity substrate architecture,
+           currentArtifactRecipeFingerprint identity runtimeExpectation
+         ) of
+      (Left failure, _) -> pure (Left failure)
+      (_, Left failure) -> pure (Left failure)
+      (Right target, Right recipeFingerprint) -> do
+        -- An Apple installed generation carries no image-target evidence by
+        -- construction, and 'engineArtifactGenerationFingerprint' rejects one
+        -- that does. Its runtime closure is inside the payload digest already.
+        maybeEvidence <-
+          if substrate == "linux-native"
+            then Just <$> observeNativeArtifactTargetEvidence artifactRoot target
+            else pure Nothing
+        pure
+          ( engineArtifactGenerationFingerprint
+              substrate
+              payloadDigest
+              recipeFingerprint
+              (nativeArtifactTargetFingerprint target)
+              maybeEvidence
+          )
+
 -- | Stable generation identity used by the kernel-managed generation lease.
 -- Apple targets and their runtime closure are entirely inside the payload
 -- digest. Linux metadata roots deliberately do not copy image-owned native
@@ -1882,15 +2050,22 @@ withFirstValidatedEngineArtifactUnderPreLaunchFixture
                                   (show failure)
                               )
                           )
-                      Right validatedArtifact ->
-                        CandidateCompleted . ArtifactResolved
-                          <$> runArtifactRun
+                      Right validatedArtifact -> do
+                        maybeTerminalOutcome <-
+                          runArtifactRun
                             ( Capability.reapArtifactRun
                                 revalidatedArtifactIsExact
                                 preLaunchFixture
                                 launcher
                                 (Capability.readyArtifactRun validatedArtifact)
                             )
+                        pure
+                          ( CandidateCompleted
+                              ( leasedCandidateResolution
+                                  installRoot
+                                  maybeTerminalOutcome
+                              )
+                          )
             case maybeCandidateResolution of
               Nothing -> pure (ArtifactBusy installRoot)
               Just candidateResolution ->
@@ -1901,17 +2076,37 @@ withFirstValidatedEngineArtifactUnderPreLaunchFixture
                       remainingRoots
                   CandidateCompleted resolution -> pure resolution
 
+-- | A refused generation read lease means a writer holds the generation, which
+-- is the same answer as a contended engines root: busy, not rejected.
+leasedCandidateResolution ::
+  FilePath ->
+  Maybe ArtifactTerminalOutcome ->
+  ArtifactResolution ArtifactTerminalOutcome
+leasedCandidateResolution installRoot maybeTerminalOutcome =
+  case maybeTerminalOutcome of
+    Nothing -> ArtifactBusy installRoot
+    Just terminalOutcome -> ArtifactResolved terminalOutcome
+
 data CandidateResolution a
   = CandidateDisappeared
   | CandidateCompleted !(ArtifactResolution a)
 
+-- | 'Nothing' means the exact generation's shared read lease was refused, so
+-- the reap transition never reached a launch. The terminal outcome is still
+-- forced while the engines-root shared lock is held, which is the lock that
+-- keeps the artifact root stable; the generation lease nested inside it is
+-- finer-grained and does not change that guarantee.
 runArtifactRun ::
-  IO (ArtifactRun s 'ArtifactReaped) ->
-  IO ArtifactTerminalOutcome
+  IO (Maybe (ArtifactRun s 'ArtifactReaped)) ->
+  IO (Maybe ArtifactTerminalOutcome)
 runArtifactRun reapedAction = do
-  reaped <- reapedAction
-  evaluate
-    (forceArtifactTerminalOutcome (Capability.artifactRunOutcome reaped))
+  maybeReaped <- reapedAction
+  case maybeReaped of
+    Nothing -> pure Nothing
+    Just reaped ->
+      Just
+        <$> evaluate
+          (forceArtifactTerminalOutcome (Capability.artifactRunOutcome reaped))
 
 -- | The runner-owned revalidation spent by 'Capability.reapArtifactRun'
 -- immediately before the launch request is derived. A caller cannot skip it
@@ -2015,10 +2210,25 @@ mintValidatedEngineArtifact
             (manifestGenerationFingerprint manifest)
             (manifestDigest manifest)
         )
+    -- Requiring the sidecar here, rather than only at acquisition, keeps the
+    -- classification of a generation that no writer ever minted the same as
+    -- every other validation failure: the caller's 'try' turns it into a
+    -- rejection naming this root. It is sound at this point because the
+    -- engines-root shared lock is held, and lease retirement runs only under
+    -- that root's exclusive writer authority.
+    _ <-
+      requireOwnedRegularFileStatus
+        "engine artifact generation lease sidecar"
+        (artifactGenerationLeasePath generationLease)
     pure
       ValidatedEngineArtifact
         { validatedArtifactInstallRoot = installRoot,
           validatedArtifactEntrypoint = entrypointPath,
+          validatedArtifactLeadingArguments =
+            nativeArtifactTargetLeadingArguments
+              installRoot
+              expectedAdapterId
+              target,
           validatedArtifactManifestFingerprint =
             manifestFingerprint manifest,
           validatedArtifactGenerationLease = generationLease,
@@ -2044,6 +2254,7 @@ revalidateValidatedEngineArtifact
   ( ValidatedEngineArtifact
       installRoot
       entrypoint
+      _leadingArguments
       manifestFingerprintValue
       _generationLease
       rootStatus
@@ -3608,6 +3819,7 @@ validateLegacyArtifactRootAt expectedInstallRoot actualRoot = do
         _ <-
           digestEngineArtifactPayloadDescriptor
             (const (pure ()))
+            Nothing
             absoluteActualRoot
             rootDescriptor
         unless

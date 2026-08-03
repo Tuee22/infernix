@@ -212,6 +212,10 @@ dispatch command =
       writeGeneratedPursContracts runtimeMode outputDir
     InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue ->
       runInternalPulsarRoundTrip demoConfigPath modelIdValue inputTextValue
+    InternalPlaywrightPrepareEngineCommand modelIdValue ->
+      runPlaywrightPrepareEngine (Text.pack modelIdValue)
+    InternalPlaywrightReplaceDemoPodsCommand ->
+      runPlaywrightReplaceDemoPods
 
 validateCommandExecutionContext :: Command -> IO (Maybe RuntimeMode)
 validateCommandExecutionContext command = do

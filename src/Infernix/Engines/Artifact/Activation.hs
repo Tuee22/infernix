@@ -30,7 +30,6 @@ import Infernix.Engines.MaterializationLock.Internal
     MaterializationAuthority,
     artifactGenerationLease,
     artifactGenerationLeaseFields,
-    reconcileObsoleteArtifactGenerationLeases,
     retireArtifactGenerationLease,
     withTryArtifactGenerationMutationLock,
   )
@@ -76,9 +75,18 @@ activateAppleEngineArtifactWithInstalledSmoke
       installRoot
       tempRoot
       expectedDigest
-      ( Subprocess.runClosedInstalledRunnerSmoke
-          adapter
-          generationLease
+      -- The Apple lane deliberately stays on the pre-manifest candidate
+      -- validation shape. Its generation identity IS its complete payload
+      -- digest, so the helper re-derives it exactly from bytes it re-digests,
+      -- and moving it onto the installed-lease branch would change a path this
+      -- host cannot exercise for no additional guarantee.
+      ( \retainedRoot _manifestFingerprint activeEnvironment timeout ->
+          Subprocess.runClosedInstalledRunnerSmoke
+            adapter
+            generationLease
+            retainedRoot
+            activeEnvironment
+            timeout
       )
       environment
       smokeTimeout
@@ -91,6 +99,7 @@ activateLinuxEngineArtifactWithInstalledSmoke ::
   Subprocess.SubprocessEnv ->
   Provisioning.PositiveProvisioningTimeout ->
   NativeArtifactIdentity ->
+  Text ->
   Provisioning.LinuxNativeSmokePolicy ->
   NativeArtifactTargetEvidence ->
   FilePath ->
@@ -105,6 +114,7 @@ activateLinuxEngineArtifactWithInstalledSmoke
   environment
   smokeTimeout
   identity
+  architecture
   smokePolicy
   expectedTargetEvidence
   installRoot
@@ -119,10 +129,17 @@ activateLinuxEngineArtifactWithInstalledSmoke
       installRoot
       tempRoot
       expectedDigest
-      ( \retainedRoot activeEnvironment timeout ->
+      ( \retainedRoot manifestFingerprintValue activeEnvironment timeout ->
           Subprocess.runClosedLinuxNativeArtifactSmoke
             identity
+            architecture
             generationLease
+            -- The activated generation's manifest is already on the final path
+            -- when this runs, so the helper is given the full installed-artifact
+            -- lease rather than the pre-manifest candidate one. That is what
+            -- makes `validateEngineArtifactHelperLease` reachable on the Linux
+            -- lane, which it previously never was.
+            (Just manifestFingerprintValue)
             retainedRoot
             expectedTargetEvidence
             smokePolicy
@@ -142,6 +159,7 @@ activateEngineArtifactWithInstalledSmoke ::
   FilePath ->
   Text ->
   ( Subprocess.ProvisioningMutationRoot ->
+    Text ->
     Subprocess.SubprocessEnv ->
     Subprocess.Timeout ->
     IO (Either String Subprocess.NativeArtifactCommandOutcome)
@@ -201,8 +219,14 @@ activateEngineArtifactWithInstalledSmoke
               ( restore $ do
                   retainedRoot <-
                     observeFinalArtifactRoot installRoot
+                  -- The candidate has already been renamed onto the final path
+                  -- by the pending activation, so this manifest is the one the
+                  -- smoke's helper will find there.
                   runSmoke
                     retainedRoot
+                    ( Artifact.manifestFingerprint
+                        (Artifact.pendingArtifactActivationManifest pending)
+                    )
                     environment
                     (provisioningSubprocessTimeout smokeTimeout)
               )
@@ -253,9 +277,6 @@ activateEngineArtifactWithInstalledSmoke
                           identity
                           installRoot
                           committed
-                      reconcileObsoleteArtifactGenerationLeases
-                        authority
-                        [generationLease]
                       pure (retired >> outcome)
               | otherwise -> do
                   rollbackResult <-

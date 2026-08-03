@@ -23,6 +23,7 @@ module Infernix.Engines.Artifact.Capability
     ArtifactLaunchRequest,
     artifactLaunchInstallRoot,
     artifactLaunchEntrypoint,
+    artifactLaunchLeadingArguments,
     ArtifactLauncher,
     artifactLauncher,
     ArtifactRun,
@@ -40,6 +41,7 @@ import Data.ByteString qualified as ByteString
 import Data.Text (Text)
 import Infernix.Engines.MaterializationLock
   ( ArtifactGenerationLease,
+    withTryArtifactGenerationReadLock,
   )
 import System.Exit (ExitCode)
 import System.Posix.Files (FileStatus)
@@ -47,6 +49,13 @@ import System.Posix.Files (FileStatus)
 data ValidatedEngineArtifact s = ValidatedEngineArtifact
   { validatedArtifactInstallRoot :: !FilePath,
     validatedArtifactEntrypoint :: !FilePath,
+    -- | The closed catalog's leading argument vector for this exact target,
+    -- resolved by the validator from the same catalog entry it validated the
+    -- entrypoint against. It is what makes the target speak the native-runner
+    -- protocol at all — for an installed Python-runner target it is the runner
+    -- script plus its required @--adapter-id@/@--engine-name@ pair, and for the
+    -- Linux JVM target it is @-cp \/opt\/audiveris\/lib\/app\/* Audiveris@.
+    validatedArtifactLeadingArguments :: ![String],
     validatedArtifactManifestFingerprint :: !Text,
     validatedArtifactGenerationLease :: !ArtifactGenerationLease,
     validatedArtifactRootStatus :: !FileStatus,
@@ -96,7 +105,11 @@ data ArtifactTerminalOutcome
 -- already revalidated by the runner under the shared lock.
 data ArtifactLaunchRequest = ArtifactLaunchRequest
   { artifactLaunchInstallRoot :: !FilePath,
-    artifactLaunchEntrypoint :: !FilePath
+    artifactLaunchEntrypoint :: !FilePath,
+    -- | The closed catalog's leading arguments for this target. A launcher must
+    -- render them before its own invocation arguments; without them the direct
+    -- target does not speak the native-runner protocol the invocation uses.
+    artifactLaunchLeadingArguments :: ![String]
   }
   deriving (Eq, Show)
 
@@ -157,36 +170,52 @@ runArtifactPreLaunchFixture fixture =
     OverwriteFileBeforeLaunch path contents ->
       ByteString.writeFile path contents
 
--- | The single transition out of the ready phase. The runner revalidates the
--- artifact through its own package-owned check, derives the closed launch
--- request itself, and only then calls the unprivileged launcher. The launcher
--- cannot reach the ready run, cannot repeat the transition, and cannot skip the
--- revalidation.
+-- | The single transition out of the ready phase, and the only place a launch
+-- request is derived.
+--
+-- The transition takes the exact generation's shared read lease itself, from
+-- the lease the validator derived from that generation's own manifest, and
+-- holds it across the launcher's whole execution. Generation identity therefore
+-- authorizes shared execution by construction: there is no mint site for the
+-- lease-held evidence and no path from a ready run to a launch request that
+-- does not go through this acquisition. A 'Nothing' result means the generation
+-- is being mutated by a writer and no launch was attempted; the read lease is
+-- refused rather than waited on, so a stopped materializer cannot turn request
+-- resolution into an unbounded wait.
+--
+-- The launcher still cannot reach the ready run, repeat the transition, or skip
+-- the revalidation.
 reapArtifactRun ::
   (ValidatedEngineArtifact s -> IO Bool) ->
   ArtifactPreLaunchFixture ->
   ArtifactLauncher ->
   ArtifactRun s 'ArtifactReady ->
-  IO (ArtifactRun s 'ArtifactReaped)
+  IO (Maybe (ArtifactRun s 'ArtifactReaped))
 reapArtifactRun
   revalidate
   preLaunchFixture
   (ArtifactLauncher launch)
-  (ArtifactReadyRun validatedArtifact) = do
-    runArtifactPreLaunchFixture preLaunchFixture
-    stillExact <- revalidate validatedArtifact
-    if not stillExact
-      then pure (ArtifactReapedRun ArtifactTerminalRejected)
-      else
-        ArtifactReapedRun
-          <$> launch
-            ( ArtifactLaunchRequest
-                { artifactLaunchInstallRoot =
-                    validatedArtifactInstallRoot validatedArtifact,
-                  artifactLaunchEntrypoint =
-                    validatedArtifactEntrypoint validatedArtifact
-                }
-            )
+  (ArtifactReadyRun validatedArtifact) =
+    withTryArtifactGenerationReadLock
+      (validatedArtifactGenerationLease validatedArtifact)
+      ( do
+          runArtifactPreLaunchFixture preLaunchFixture
+          stillExact <- revalidate validatedArtifact
+          if not stillExact
+            then pure (ArtifactReapedRun ArtifactTerminalRejected)
+            else
+              ArtifactReapedRun
+                <$> launch
+                  ( ArtifactLaunchRequest
+                      { artifactLaunchInstallRoot =
+                          validatedArtifactInstallRoot validatedArtifact,
+                        artifactLaunchEntrypoint =
+                          validatedArtifactEntrypoint validatedArtifact,
+                        artifactLaunchLeadingArguments =
+                          validatedArtifactLeadingArguments validatedArtifact
+                      }
+                  )
+      )
 
 -- | Read the closed terminal result of a reaped run.
 artifactRunOutcome ::

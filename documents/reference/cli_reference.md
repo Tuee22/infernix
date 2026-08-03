@@ -66,6 +66,8 @@
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
 - `infernix internal dhall-schema host|cluster|secrets|substrate` - prints the Dhall type expression reflected from the binary's decoder for one packaged schema
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
+- `infernix internal playwright prepare-engine MODEL_ID` - selects the generated model's closed engine deployment under harness ownership
+- `infernix internal playwright replace-demo-pods` - replaces the fixed demo workload and waits for distinct ready pods under harness ownership
 <!-- infernix:command-registry:end -->
 
 ## Rules

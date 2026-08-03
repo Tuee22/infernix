@@ -6,21 +6,25 @@
 module Infernix.Runtime.CappedEngine
   ( EngineOutputStream (..),
     EngineOutcome (..),
+    EngineExecutionAuthority,
     NativeArtifactCache,
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
     PythonWorkerLaunchOutcome (..),
     nativeArtifactCache,
     nativeArtifactInvocation,
+    newEngineExecutionAuthority,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
+    withSerializedEngineExecution,
   )
 where
 
 import Infernix.Runtime.CappedEngine.Internal
-  ( EngineOutcome (..),
+  ( EngineExecutionAuthority,
+    EngineOutcome (..),
     EngineOutputStream (..),
     NativeArtifactCache,
     NativeArtifactInvocation,
@@ -28,8 +32,10 @@ import Infernix.Runtime.CappedEngine.Internal
     PythonWorkerLaunchOutcome (..),
     nativeArtifactCache,
     nativeArtifactInvocation,
+    newEngineExecutionAuthority,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
+    withSerializedEngineExecution,
   )
