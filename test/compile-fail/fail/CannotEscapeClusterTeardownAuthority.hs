@@ -12,8 +12,8 @@ import Infernix.Evidence.Lease (Lease)
 
 escapeAuthority ::
   Paths ->
-  (forall s. Lease s ClusterMutationLocked -> IO (ClusterTeardownAuthority s)) ->
-  IO (ClusterTeardownAuthority ())
+  (forall s. Lease s ClusterMutationLocked -> IO (ClusterTeardownAuthority owner s)) ->
+  IO (ClusterTeardownAuthority owner ())
 escapeAuthority =
   withClusterLifecycleLock
 

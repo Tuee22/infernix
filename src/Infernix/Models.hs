@@ -25,6 +25,9 @@ module Infernix.Models
     conservativeRamFootprintMibForRow,
     defaultInferenceRamBudgetMib,
     linuxEngineInferenceRamBudgetMib,
+    linuxEngineInferenceVramBudgetMib,
+    linuxGpuEngineInferenceRamBudgetMib,
+    linuxGpuEnginePodMemoryLimitMib,
     appleFallbackInferenceRamBudgetMib,
     engineMembersForMode,
     enginePoolsForMode,
@@ -56,6 +59,7 @@ import Infernix.EngineBindings
   ( canonicalEngineBindingForSelectedEngine,
     canonicalEngineBindingsForMode,
   )
+import Infernix.ExecutionPlan (linuxOuterEnvelopeHeadroomMib)
 import Infernix.Routes qualified as Routes
 import Infernix.Substrate (encodeSubstrateConfig)
 import Infernix.Types
@@ -613,6 +617,33 @@ conservativeRamFootprintMibForRow row binding =
 -- watchdog remain outside the 4 GiB child grant.
 linuxEngineInferenceRamBudgetMib :: Int
 linuxEngineInferenceRamBudgetMib = 4096
+
+-- | Phase 6 Sprint 6.44 — the @linux-gpu@ per-execution __resident-set__ budget
+-- (MiB). It is deliberately *not* 'linuxEngineInferenceRamBudgetMib': the GPU
+-- engine pod is provisioned with a 16 GiB limit (framework host RAM for CUDA
+-- contexts and model loading) where the CPU engine pod gets 5 GiB, and runtime
+-- refinement requires the observed outer envelope to equal the child budget plus
+-- 'linuxOuterEnvelopeHeadroomMib' __exactly__. Reusing the 4 GiB CPU budget here
+-- produced @OuterEnvelopeTooLarge 5120 16384@ on every GPU placement, so no
+-- engine ever became ready. That defect was invisible to every
+-- machine-independent gate because @linux-gpu@ compiled no plan at all before
+-- this sprint; it is now pinned by a chart-value assertion in the unit suite.
+linuxGpuEngineInferenceRamBudgetMib :: Int
+linuxGpuEngineInferenceRamBudgetMib =
+  linuxGpuEnginePodMemoryLimitMib - linuxOuterEnvelopeHeadroomMib
+
+-- | The @linux-gpu@ engine pod memory limit (MiB) the cluster lifecycle emits
+-- into its generated Helm values. The budget above is derived from it rather
+-- than written down twice, so the two cannot drift apart silently.
+linuxGpuEnginePodMemoryLimitMib :: Int
+linuxGpuEnginePodMemoryLimitMib = 16384
+
+-- | Phase 6 Sprint 6.44 — the @linux-gpu@ per-execution device-memory budget
+-- (MiB). Unlike the resident-set half this is a device quantity, and the
+-- supported single-GPU lane holds the whole device; the value is a conservative
+-- admission ceiling, not a measurement, and the cohort is what calibrates it.
+linuxEngineInferenceVramBudgetMib :: Int
+linuxEngineInferenceVramBudgetMib = 4096
 
 -- | Phase 4 Sprint 4.26 — the assumed @apple-silicon@ inference-RAM
 -- budget (MiB) used only when the host-native resolver cannot read host

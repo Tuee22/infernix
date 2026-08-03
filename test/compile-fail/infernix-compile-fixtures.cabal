@@ -383,6 +383,22 @@ executable fail-vram-enforcer-host-grant
         support
     other-modules: DesiredApi
 
+executable fail-vram-enforcer-pod-grant
+    import: fixture
+    main-is: VramEnforcerPodGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-pod-enforcer-vram-grant
+    import: fixture
+    main-is: PodEnforcerVramGrant.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
 executable fail-compiled-plan-is-not-runtime-plan
     import: fixture
     main-is: CompiledPlanIsNotRuntimePlan.hs
@@ -422,6 +438,11 @@ executable fail-cannot-escape-cluster-teardown-authority
 executable fail-cannot-reuse-cluster-teardown-authority
     import: fixture
     main-is: CannotReuseClusterTeardownAuthority.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-substitute-cluster-teardown-owner
+    import: fixture
+    main-is: CannotSubstituteClusterTeardownOwner.hs
     hs-source-dirs: fail
 
 executable fail-skip-subprocess-lease-phase

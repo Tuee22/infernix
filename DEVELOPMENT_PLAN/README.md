@@ -11,6 +11,157 @@
 See [development_plan_standards.md](development_plan_standards.md) for the maintenance rules that
 govern this plan.
 
+## Sprint 6.44 residual closure: bounded descriptor space and the CUDA breach fixture (2026-08-03)
+
+Execution resumed in numerical order. Phases 1, 2, and 4 are each `Active — Validation Only` with an
+**Apple-hardware** residual and the active development host is a CUDA Linux box (RTX 5090), so none of
+the three had an item that could be worked here; their rows say so rather than implying progress.
+Phase 6 was the actionable one.
+
+**The `close_fds` finding is resolved, and it was platform-wide rather than Sprint 6.44's alone.**
+The prior session root-caused the second cohort failure to the pre-`exec` descriptor walk that
+`close_fds = True` performs, left it explicitly unfixed as a doctrine decision, and named the open
+question: whether the capped-engine and bounded-command kernels pay the same cost. They do. The
+question was settled by measurement, not inference — a spawn through the same public
+`System.Process` API inside a container started with a pod's own `--ulimit nofile=1073741816` takes
+**313 s**, where the previous figure was a 4.5-minute extrapolation from 524288. The same spawn with
+`close_fds = False` is 0.8 ms at every limit, so the entire cost is the walk.
+
+Reading the `process-1.6.26.1` source settled the mechanism and the remedy together: `close_fds` is a
+configuration `posix_spawn` cannot express, so the spawn always falls back to fork/exec and the child
+runs `for (i = 3; i < sysconf(_SC_OPEN_MAX); i++) close(i)` — linear in a soft `RLIMIT_NOFILE` the
+process *inherits* rather than chooses. So the correction bounds the resource instead of weakening
+the isolation, which is what the prior session correctly declined to do. `Infernix.DescriptorSpace`
+lowers the soft limit to a 16384 ceiling as the first action of every process image, before the
+internal self-exec dispatch and before any descriptor is opened; because a process cannot open a
+descriptor at or above its own soft limit, the child's walk still closes the **entire** descriptor
+space and `close_fds` keeps its exact meaning. The ceiling was chosen from the measured table, not
+picked: 16384 costs 4.9 ms, which the observer's 50 ms cadence absorbs alongside a ~27 ms
+`nvidia-smi` query, while 65536 costs 17.5 ms and does not. Three guards keep it: a fail-closed
+observation in each of the three kernels that turns an unbounded image into a **named refusal**
+instead of a stall, a new `unboundedDescriptorSpawnViolations` lint rule, and unit assertions
+covering the bound, the refusal, re-establishment, and the never-widen property.
+
+The end-to-end evidence is the eight self-exec observer kernel tests completing in **3.7 s inside a
+container at the pod's real 1073741816 limit**, against 3.2 s on the host — the same limit at which
+one spawn previously cost 313 s.
+
+**Sprint 6.44's CUDA ceiling-breach deliverable is closed.** It was the item the prior session
+recorded as covered by no suite and un-closable by the cohort. `runNvidiaVramBreachAssertions` now
+holds a real device allocation through `libcuda.so.1` driver-API calls under `ctypes` — no compiler,
+no repo-owned native source — and drives the existing `nvidiaWatchdogOutcomeForTest` seam exactly as
+Phase 4 Sprint 4.32 drives its Linux CPU counterpart. Its ceilings come from measurement: a CUDA
+context is itself a 496 MiB device allocation before any `cuMemAlloc`, so ceilings were placed clear
+of that floor in both directions, and the assertion was negative-tested to prove it is live rather
+than vacuous.
+
+**The raw-spawn exemption decision is made rather than deferred to a successor sprint, and the
+exemption set is down from nine rows to seven.** The decision is that the bounded-command kernel's
+closed operand catalog applies wherever the operand vocabulary *is* closed, and that exactly two
+situations fall outside it: an operator's own passthrough invocation, and a spawn that must run
+before the host manifest exists. Neither is a licence to be unbounded, so every retained non-daemon
+surface gained a required deadline. Two of the sprint's premises turned out to be wrong on
+inspection: `HostTools.hs` was not a generic runner — three of its five raw spawns had **no callers
+at all** and are deleted, leaving two fixed-argv pre-manifest probes — and `Workflow.hs`'s generic
+command runner was generic only on paper, since its sole caller passed a renderer-owned literal.
+`Lint/Files.hs` and `Workflow.hs` are fully migrated to closed bounded commands that reuse existing
+policy-plan fields, so no operator's generated host manifest is invalidated.
+
+Item 4 (narrowing the engine-spawn gate) is resolved honestly as **not narrowable by a smaller
+list**: both rules match the same tokens on the same lines, so separating them needs a stronger
+detector rather than a shorter exemption list. No narrowing is claimed.
+
+All three corrections are source changes, so Sprint 6.44's cohort needs an exact-source image rebuild
+before it counts; the cohort is now the sprint's only remaining item. The complete machine-independent
+gate set is GREEN on this source: `cabal build all --enable-tests` under `-Wall -Werror`,
+`infernix-haskell-style` (`haskell-style-check: ok`), and `infernix-unit`.
+
+## Phases 6 and 8 code-side closure (2026-08-02)
+
+Execution resumed in numerical order over the open phases. Phases 1, 2, and 4 are each
+`Active — Validation Only` with an **Apple-hardware** residual, and the active development host is a
+CUDA Linux box (RTX 5090); none of those three has a code-side item left, so no work was possible on
+them here and their status rows say so rather than implying progress. Phases 6 and 8 were the
+actionable ones.
+
+**Phase 6 Sprint 6.44 is code-side closed.** The starting condition was more serious than the sprint
+text implied: `linux-gpu` could not compile an execution plan *at all*. `runtimeBudgetErrors`
+returned `GpuDualResourceBudgetRequired` for every `LinuxGpu` config regardless of its budget,
+`compileResources` had no `LinuxGpu` arm, `CompiledGpuResources` was constructed only in a test
+fixture, `Infernix.Runtime.Enforcer` hardcoded NVIDIA availability to `False`, and
+`watchdogForGrant` returned a hard `Left`. The lane was fail-closed end to end. It now compiles: a
+device-using model carries a pod-RAM and an NVIDIA-VRAM grant admitted independently from a
+`DualEnforcedBudget`, and runs under one watchdog per grant. A `linux-gpu` model that does *not* use
+the device stays on the resident-set lane alone.
+
+Two design decisions were made from measurement rather than assumption. First, whether per-process
+VRAM attribution is even sound inside a pod: a CUDA process holding 1008 MiB on the host was
+**invisible** to `nvidia-smi --query-compute-apps` from inside a container, while the same allocation
+made *inside* a container was reported with the container-local pid. NVML resolves compute contexts
+in the reading process's PID namespace and omits what it cannot resolve, so an engine pod observes
+exactly its own namespace — which is the correct attribution, and the opposite of what a naive
+host-pid design would have produced. Second, the observer needs no process discovery of its own,
+because group membership is already available subprocess-free from `/proc/<pid>/stat`; the NVIDIA
+lane therefore spawns one fixed command per sample instead of the Darwin lane's per-member pair.
+
+`DarwinObserver` is generalized to `FixedObserver`. Duplicating a second bounded observer kernel was
+rejected — this repository's review history is largely one-pattern-N-sites defects — and the
+spawn/drain/deadline/cleanup kernel plus its eight self-exec kernel tests were already
+platform-neutral and already running on Linux. The module now owns both closed catalogs behind an
+unexported spec. `nvidia-smi` is pinned as a literal absolute path rather than resolved from the
+host-tools manifest: an enforcement observer that follows a configurable path is redirectable.
+
+The same sprint shrank the raw-spawn exemption set from twelve rows to nine. Both raw spawns in
+`Runtime/Pulsar.hs` became closed bounded commands — including a Poetry-driven upstream model
+download that had **no deadline at all** on the coordinator's startup path, the sharpest remaining
+instance of the hang class the bounded-command doctrine exists to prevent — and a real gate hole was
+closed: whole-token matching meant `withCreateProcess` never matched `createProcess`, so a
+non-exempt module could bracket an unbounded spawn in plain sight. Five exemptions remain and are
+named individually with the design decision each needs, rather than carried as an unqualified
+residual.
+
+**Phase 8 Sprint 8.9 is code-side closed, and its premise is corrected.** The sprint was written
+against a flat text-tagged budget that no longer existed — the union and its per-arm payload records
+had already landed. Rather than claim retired work, the plan records what was actually left: the
+third `DualEnforced` arm Sprint 6.44 needed, one shared rendered union type replacing a literal
+duplicated per arm, an assertion that pins the rendered payload against the alternatives the
+reflected decoder expects (renderer/decoder drift was previously undetectable by anything), a
+targeted migration diagnostic that names a retired payload's shape and the regenerating command
+instead of surfacing a bare Dhall type error, and removal of the dead `legacyDhall` decoder branch.
+The rest of the generated wire — text enums, `Integer`-vs-`Natural`, the zero-filled `edgePort`, and
+the still-flat Aeson `kind` encoding the web UI reads — is now named explicitly as follow-on work.
+
+**Sprint 6.43's final cross-phase review reopened scope rather than closing it.** Four independent
+adversarial lenses raised seven findings; each was attacked from two further angles. Three were
+refuted, four confirmed. One was fixed here: the `linux-gpu` engine-Deployment rotation ran outside
+`withPersistedClusterMutation`, so a kill mid-rotation left the persisted state reading
+`ClusterReady` while engine Deployments sat scaled to zero. Three opened **Sprint 6.45**, including a
+High cross-checkout defect — the Kind cluster name is machine-global while the lifecycle lock,
+reservation, and persisted state are repo-local, so a second checkout can authorize teardown against
+the operator's live inventory using its own leftover state and delete the operator's cluster. The
+review also disproved a documented by-construction claim: `ClusterTeardownAuthority` type-indexes the
+lock region but not the owner, so "tearing down an `OperatorOwned` cluster does not typecheck" was an
+over-claim; the refusal is a value comparison under the held lease. `CLAUDE.md`, `AGENTS.md`, and
+`managed_state_transitions.md` now say what the code does, with the type-level work scheduled.
+
+The complete machine-independent gate set is GREEN on this source: `cabal build all --enable-tests`
+under `-Wall -Werror`, `infernix-unit`, `infernix-execution-plan-internal`,
+`infernix-capped-engine-observer`, `infernix-compile-fail` (6 positive / 81 negative),
+`infernix-haskell-style` including the realness rules, and `lint files|chart|proto|docs` plus
+`docs check`. The live NVIDIA assertions ran against the real device on this host.
+
+One further check changed a conclusion rather than confirming it, and is recorded here because it
+would otherwise have become a false closure. Sprint 6.44's headline validation item — the adversarial
+CUDA ceiling breach — was initially written as "owned by the `linux-gpu` cohort". It is not, and the
+cohort cannot own it as things stand: `test/integration/Spec.hs` has no runtime ceiling-breach case
+at all (every row is classified as compiler-unavailable or completed, and a breach of an *admitted*
+ceiling is neither), and the unit suite's live NVIDIA assertions run in the outer launcher container,
+which `compose.yaml` reserves no GPU for — consistent with the standing rule that the outer
+control-plane container does not require the NVIDIA runtime. Inside the cohort those assertions skip
+loudly. So a green `./bootstrap/linux-gpu.sh test` would **not** prove that deliverable. Sprint 6.44
+and Wave Z both now say so, and Sprint 6.44's remaining work names the shape that would close it: an
+integration case running inside the engine pod, where the device is.
+
 ## Active Phase 1 validation update (2026-08-02)
 
 Sprint 1.20 is code-side closed, and its exact-source `linux-cpu` full-suite cohort is GREEN on
@@ -1752,14 +1903,14 @@ recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 | Phase | Current status | Reopened work |
 |-------|----------------|---------------|
 | 0 | Done | Sprint 0.18 no-repo-owned-native-source doctrine, governed mirror, focused adversarial proof, final review, and source-matched correction Stage 1 closed 2026-07-27 |
-| 1 | Active | On 2026-07-30 the generation-lease residual was closed, and closing it found that the Linux native artifact smoke **still could not pass on any input** — the wrong-audit correction recorded above was necessary but not sufficient. Two further independent High-severity blockers sat behind it, neither reachable by any machine-independent gate: the pre-manifest candidate branch asserted `generationFingerprint == payloadDigest`, which is the `apple-silicon` branch of `engineArtifactGenerationFingerprint` and which no `linux-native` generation can satisfy by construction; and `supervisorArtifactGenerationRoot` required a `Just` retained relative executable, refusing every image candidate before its root was resolved. Both are corrected: the candidate identity is now re-derived helper-side through `rederiveArtifactGenerationFingerprint` from the lane, the closed catalog, and re-observed descriptor-derived image evidence — which is the real close of generation-lease sub-item 3 rather than its Apple-only half — and the root resolver admits either shape while `validateRetainedArtifactTarget` enforces agreement with the catalog. Step 6 itself landed with them, and exposed that the installed branch skipped the retained-target shape check entirely, so an activated generation was held to a weaker rule than a candidate. The style-gate operator-config defect is also closed with a self-describing diagnostic plus a declared prerequisite in `local_dev.md`. The complete machine-independent gate set is GREEN over frozen identity `sha256:7077ab25…` / binary `sha256:0c3f9d27…`, but under load 28-33, so it is not a Stage 1 result. Remaining: generation-lease sub-item 2 (runtime launch reaches the capped-engine spawn, not the bounded-command kernel, so no lease authorizes shared execution anywhere), a discriminating helper-side regression for the candidate re-derivation, JavaCPP pre-extraction, final closure values (blocked on the Apple-only `jvm-native` measurement), a fresh final review, Stage 1 on a quiet host, and both cohorts — the Apple half of which cannot run on the current CUDA Linux host at all |
+| 1 | Active — Validation Only | Superseded by the phase document's authoritative 2026-08-02 remainder: Sprint 1.20 is **code-side closed**, the complete machine-independent gate set is GREEN, and the paired source-matched `linux-cpu` full-suite cohort passed on exact image `sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`. The final settled-source adversarial review found no High or Medium residual. The prior contents of this row enumerated a work list that the phase document explicitly retired as rejected-identity audit chronology; keeping it here contradicted the authoritative section and is corrected. Remaining: **validation only** — on an Apple Silicon host, rematerialize the corrected MLX/Core ML/native-runner roots, run the opt-in production Audiveris cancellation case and the installed upstream authoritative smokes, then complete the Apple catalog's `test integration` / `test e2e` / `test all` and record the Wave Y attestation. That half cannot run on the current CUDA Linux host at all |
 | 2 | Active — Validation Only | The ordered machine-independent review is closed with no High/Medium code-side residual. The all-Haskell `filelock` and bounded self-exec kernel are implemented, and the exact Linux cohort exercised their lifecycle paths. Selected Apple Wave Y validation remains. |
 | 3 | Done | No work in this reopen |
 | 4 | Active — Validation Only | Sprint 4.32 code-side closure and the Linux behavioral half are GREEN. The opaque single-flight authority and fail-closed sampler-loss path are implemented; the live 64 MiB/16 MiB watchdog breach returns typed `EngineExceededCeiling`, reaps non-successfully, and a subsequent child succeeds. Exact image `sha256:dfc0e2b6251e2d7ed74712253e06d2f9fbc60b649ac162b44dac030aca43a979` (20,125,723,532 bytes) passed uninterrupted `./bootstrap/linux-cpu.sh test`: style/realness, Python, Haskell unit, web `83/83`, full integration/HA/lifecycle, and routed Playwright `16/16` (44.6 m; catalog matrix 42.9 m), with clean teardown. Apple breach/observer hardware evidence is the only remaining Phase 4 gate. |
 | 5 | Done | No work in this reopen |
-| 6 | Blocked by Phases 2 and 4 | Sprint 6.43 owner-atomic harness correction + Sprint 6.44 verified NVIDIA enforcement and lint closure. Sprint 6.44's selected `linux-gpu` cohort gate is **no longer hardware-blocked**: work moved to a CUDA Linux host with an RTX 5090, so that gate is runnable for the first time (see the accelerator-availability section above). Sprint 6.44's code-side closure is still `Not started` — `watchdogForGrant` returns a hard `Left "NVIDIA per-process VRAM enforcement is unavailable"` for `NvidiaVramAccountingEnforcer`, so the work is a third `WatchdogSpec` constructor plus a bounded fixed-command observer over `nvidia-smi --query-compute-apps=pid,used_gpu_memory`, mirroring the Darwin `/usr/bin/top` plus `/usr/bin/footprint` one. The plan/refinement plumbing it consumes (`NvidiaVram`, `GpuPlacementObservation`, `NvidiaSamplerUnavailable`, `NvidiaEnvelopeTooSmall`) already exists |
+| 6 | Active — Validation Only | Sprint 6.44 is **code-side closed on 2026-08-02** and no longer blocked. `linux-gpu` compiled no execution plan at all before this sprint: every `LinuxGpu` config failed with `GpuDualResourceBudgetRequired`, `compileResources` had no `LinuxGpu` arm, and `watchdogForGrant` returned a hard `Left "NVIDIA per-process VRAM enforcement is unavailable"`. Now a device-using model compiles two independently indexed grants from a `DualEnforcedBudget` and runs under two live watchdogs; `DarwinObserver` is generalized to `FixedObserver`, a fixed bounded public-tool kernel owning both the Apple `/usr/bin/top` + `/usr/bin/footprint` pair and the NVIDIA `/usr/bin/nvidia-smi` pair behind an unexported spec; and per-process-group attribution was **measured, not assumed** — NVML resolves compute contexts in the reading process's PID namespace, so an engine pod sees its own namespace's pids and never another container's. Sprint 6.44 also migrated both `Runtime/Pulsar.hs` raw spawns onto bounded closed commands (including an unbounded Poetry-driven model download), deleted three raw-spawn exemption rows, and closed a real whole-token gap that had let `withCreateProcess` through. Remaining: the selected `linux-gpu` plus `linux-cpu` cohort with its adversarial CUDA breach case, and five named raw-spawn exemptions whose migration needs a doctrine decision (CLI passthrough, host tools, Apple prereqs, workflow tooling, files lint). Sprint 6.43's owner-atomic implementation is landed; its final cross-phase review is recorded in the phase document | Sprint 6.43's final cross-phase review ran on 2026-08-02 over four independent adversarial lenses with two-angle refutation: seven findings raised, three refuted, **four confirmed**. One was fixed with the review (the `linux-gpu` engine-Deployment rotation ran outside `withPersistedClusterMutation`, so a kill left a false steady-state). Three opened **Sprint 6.45**: a High cross-checkout defect — the Kind cluster name is machine-global while the lifecycle lock, reservation, and persisted state are repo-local, so a second checkout can authorize against the operator's inventory using its own leftover state and delete the operator's cluster — its reverse-direction twin, and the disproof of the documented "tearing down an `OperatorOwned` cluster does not typecheck" claim (the region is type-indexed; the owner is an ordinary field, so the refusal is a runtime check under the held lease). The doctrine wording in `CLAUDE.md`, `AGENTS.md`, and `managed_state_transitions.md` is corrected to what the code does | **Sprint 6.44's adversarial CUDA breach deliverable is not covered by any suite and the cohort cannot cover it** — the integration suite has no runtime ceiling-breach case, and the unit suite's live NVIDIA assertions skip inside the cohort because the outer launcher container has no GPU by design; closing it needs an in-engine-pod case | **Cohort attempt 1 (2026-08-03) failed and found a real Sprint 6.44 defect**: the GPU engine pod's 16 GiB cgroup limit against a reused 4 GiB `linux-cpu` child budget produced `OuterEnvelopeTooLarge 5120 16384` on every GPU placement, so no engine became ready. Invisible to every machine-independent gate because `linux-gpu` compiled no plan at all before the sprint. Fixed by deriving the GPU budget from the pod limit and guarded by a new both-lane unit assertion that was negative-tested against the original value | A second cohort defect is now root-caused by measurement: the fixed `nvidia-smi` observer stalls before `exec` because `close_fds = True` walks the containerd pod's `RLIMIT_NOFILE` of 1073741816 (~4.5 min/spawn extrapolated from 133 ms at 524288), versus 1024 in the launcher container — which is why every machine-independent gate passes. **No fix applied**: the same flag is set in the capped-engine and bounded-command kernels, so the remedy is a doctrine decision needing its own validation, and whether those kernels pay the same cost is explicitly unverified |
 | 7 | Done | No work in this reopen |
-| 8 | Blocked by Phase 6 Sprint 6.44 | Sprint 8.9 generated proper-union schema migration |
+| 8 | Active — Validation Only | Sprint 8.9 is **code-side closed on 2026-08-02**. Its premise was partly out of date on arrival — the budget was already a proper two-arm union — so the plan is corrected rather than left claiming retired work. Landed: the third `DualEnforced` arm Sprint 6.44's dual capability needed, one shared rendered union type replacing a literal duplicated per arm, a schema-reflection assertion that pins the rendered payload against the alternatives the decoder expects (renderer/decoder drift was previously undetectable), a targeted migration diagnostic that names a retired flat payload's shape and the regenerating command instead of surfacing a bare Dhall type error, and removal of the dead `legacyDhall` decoder branch. Remaining and now named explicitly: the generated wire's text enums, `Integer`-vs-`Natural` quantities, the zero-filled `edgePort`, the still-flat Aeson `kind` encoding the web UI reads, and the coordinator/webapp readiness-refinement question. Behavioral evidence is consumed from the Sprint 6.44 wave, per this sprint's own no-dual-accelerator-gate rule |
 | 9 | Done | No work in this reopen |
 
 ## Prior Closure Evidence By Phase
@@ -1776,7 +1927,7 @@ table above is authoritative.
 | 3 | HA Platform Services and Edge Routing | Done — Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15 code-side closed 2026-07-19: bounded Harbor publish exec through `runBoundedCommand` + opaque `BlobServable` witness + `harborTagMetadataPresent`/`registryApiReachable` demotion; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); Managed-State-Transition Doctrine reopen (Sprint 3.14 code-side closed 2026-07-16: Harbor wait on the Readiness kernel + typed SubprocessEnv seam; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); prior Done — reopened and re-closed (Sprints 3.1-3.12 remain closed — Sprint 3.12 native `linux-cpu` architecture selector and native arm64 publication path closed in Wave F, Sprints 3.10-3.11 validated by Apple Wave A/A.2 and CUDA Linux Wave C; Sprint 3.13 de-exposes the `/minio/s3` external gateway route + `infernix-minio-s3` SecurityPolicy + `presignPublicEndpoint` so the webapp object-proxy is the sole external file-storage service. Sprint 3.13 is code-side closed and validated machine-independent on 2026-06-24, then cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with `linux-cpu` plus the selected `linux-gpu` full-suite gates.) | [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md) |
 | 4 | Inference Service and Durable Runtime | Prior closure only — Sprints 4.22–4.31 retain their recorded Wave P/R/S/T/V/W evidence, including the narrower Sprint 4.30/4.31 memory-safety scope closed by Wave W. Current Sprint 4.32 is blocked by Phase 2 and must behaviorally prove the landed Apple/Linux CPU enforcers, encapsulate serialized execution inside the capability boundary, and preserve the split where coordinators route through compiled placement/daemon capabilities while engine subscription and launch use refined runtime/executable capabilities before Phase 4 is current-scope `Done`. | [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md) |
 | 5 | Web UI and Shared Types | Done — Managed-State-Transition Doctrine reopen (Sprint 5.12 code-side closed 2026-07-16: single-sourced model-bootstrap deadline + Playwright awaits real readiness; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); prior Done — Sprint 5.11 is closed for typed `InferenceError` browser contracts and demo-app rendering of `ModelMemoryLimitExceeded` from explicit MiB fields, not parsed inline text. Wave T closed on 2026-07-12 with `linux-cpu` plus selected `linux-gpu` routed full-suite evidence. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and no-env scopes. | [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md) |
-| 6 | Validation, E2E, and HA Hardening | Prior closure only — Sprints 6.35–6.42 retain their recorded Wave P/R/S/T/V/W evidence, and Wave X remains evidence for the earlier typed owner/mutation/config scope. Reopened Sprint 6.43 still requires the ordered owner-atomic cohort after Phases 2/4; Sprint 6.44 then owns verified NVIDIA enforcement, adversarial CUDA/CPU evidence, and raw-spawn exemption closure. | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
+| 6 | Validation, E2E, and HA Hardening | Prior closure only — Sprints 6.35–6.42 retain their recorded Wave P/R/S/T/V/W evidence, and Wave X remains evidence for the earlier typed owner/mutation/config scope. Sprint 6.44 is code-side closed (2026-08-02) and owns only its `linux-gpu` plus `linux-cpu` cohort with the adversarial CUDA breach case. Reopened Sprint 6.43 still requires the ordered owner-atomic cohort after Phases 2/4, and is now additionally blocked by the newly opened Sprint 6.45, which its own final review created. | [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md) |
 | 7 | Demo App Multi-User Durable Context | Done — Managed-State-Transition Doctrine reopen (Sprint 7.29 code-side closed 2026-07-16: LifecycleProgress field retirement + DemoBucketsProvisioned object-proxy gate + proven `.ready` sentinel; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); prior Done — Sprint 7.28 closed generated artifact object ownership and result-bridge authorization on 2026-06-30 with full selected `linux-gpu` plus `linux-cpu` cohort validation. Prior durable-context, engine-pool, object-proxy, Files view, in-browser rendering, and Wave M closure evidence remains recorded for Sprints 7.1-7.27. Desired-state hot reload remains future work. | [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md) |
 | 8 | Zero-Tracked-Dhall Config and Eager Model Cache | Done — Observable-Readiness reopen (Sprint 8.8 — the fault-vs-absence fix in the warm-model-cache barrier: tri-state `SentinelObservation` probe + `classifyHeadOutcome` + `SentinelCensus` + Python `CacheValidity`, which supersedes the documented non-blocking MinIO-poll-observability residual by diagnosing it as the "11/16" stall root cause and fixing it by construction) closed under [Wave W](cohort-validation-waves.md) on 2026-07-24 with apple-silicon plus linux-cpu full-suite GREEN; prior Done — Managed-State-Transition Doctrine reopen (Sprint 8.7 code-side closed 2026-07-16: typed WarmModelCacheOutcome evidence + fail-closed config-side port reads; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); prior Done — all sprints (8.1-8.6) closed. Zero-tracked `.dhall`; `infernix init` / `test init` explicit creation with shared defaults; fail-fast no-auto-generate backstops; binary-generated ConfigMap/Secret bodies with the chart as string embedder; coordinator eager model-cache staging (+ `--empty-models` image bake); test-harness config lifecycle. Cohort gate closed 2026-07-04 (Wave P): `linux-gpu` + `linux-cpu` full-suite `infernix test all` both GREEN, routed Playwright **9/9**. One documented non-blocking residual: the `warm-model-cache` barrier's host-side MinIO poll observability. | [phase-8-zero-tracked-dhall-config-and-eager-model-cache.md](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md) |
 | 9 | Access Control and Monitoring | Done — Managed-State-Transition Doctrine reopen (Sprint 9.10 code-side closed 2026-07-16: withValidAdminToken region lease + typed StsSession leased value; cohort gate closed by [Wave V](cohort-validation-waves.md) (2026-07-20)); prior Done — the original 8 RBAC/STS/dashboard sprints are code-side closed and Wave Q validated on both `apple-silicon` and `linux-cpu` (2026-07-07). Sprint 9.9 closes the UAT auth residual from `notes.txt`: Sign out previously cleared only local SPA tokens and left the Keycloak SSO browser session alive, so switching from a self-registered user to the separate hardcoded admin login could silently reuse the non-admin session. The SPA now performs Keycloak OIDC logout with `id_token_hint`, `client_id`, and `post_logout_redirect_uri`, and the routed Playwright spec has a user-to-admin switching regression. Wave U closed on 2026-07-12 with `linux-cpu` plus selected `linux-gpu` routed evidence. The implemented surface includes admin/user RBAC (Keycloak `infernix-admin` realm role + JWT `realm_access.roles` claim + hardcoded demo admin), edge admin `SecurityPolicy` over all four operator routes + ungated-route closure, backend admin gate on `GET /api/cache` + `/api/cache/{evict,rebuild}` + `GET /api/admin/overview`, admin cluster-wide monitoring panel + per-user personal dashboard, the Kind data-plane + edge loopback invariant, per-user MinIO STS defense-in-depth, and real Keycloak logout for account switching. | [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md) |

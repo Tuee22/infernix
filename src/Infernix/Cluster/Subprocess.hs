@@ -174,6 +174,7 @@ import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Subprocess.Activity qualified as Activity
 import Infernix.Cluster.Subprocess.Protocol qualified as Protocol
 import Infernix.Config (Paths (..))
+import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
 import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.Engines.Artifact.Identity qualified as ArtifactIdentity
 import Infernix.Engines.Artifact.Target qualified as ArtifactTarget
@@ -2123,6 +2124,27 @@ commandPolicyFor plan operation =
     ImagePublicationPushOperation -> planImagePublicationPush plan
     ImagePublicationRemoveOperation -> planImagePublicationRemove plan
     ImagePublicationCopyOperation -> planImagePublicationCopy plan
+    -- Sprint 6.44: the model-weight snapshot bootstrap is an upstream fetch
+    -- followed by an object-store copy, so it reuses the image-publication copy
+    -- policy rather than adding a configurable field: the same long deadline,
+    -- bounded retry, and transient-then-fatal classification already describe
+    -- that shape, and reusing it keeps the generated host-manifest schema
+    -- unchanged for operators who already ran `infernix init`.
+    ModelSnapshotBootstrapOperation -> planImagePublicationCopy plan
+    -- Sprint 6.44 follow-on: `git ls-files -z` is a fixed local read of the
+    -- work tree's index and `node --version` is a fixed local version print.
+    -- Both are exactly the host-probe shape the plan already describes — a
+    -- short deadline, no retry, fatal on failure — so they reuse it rather
+    -- than adding fields that would invalidate every already-generated
+    -- `./infernix-host.dhall`.
+    SourceInventoryOperation -> planHostProbe plan
+    WebToolchainProbeOperation -> planHostProbe plan
+    -- The web dependency install downloads and links an entire npm workspace
+    -- (PureScript, esbuild, Playwright browsers), so it needs the longest
+    -- deadline in the plan. `dockerBuild` already describes that shape — a
+    -- 45-minute network-bound build that must not be blindly retried and is
+    -- fatal on failure — so it is reused for the same schema-stability reason.
+    WebDependencyInstallOperation -> planDockerBuild plan
 
 data PackageClosureSnapshotRole
   = SnapshotPythonHome
@@ -8814,6 +8836,11 @@ spawnSelfExecHelperMasked ::
 spawnSelfExecHelperMasked helperGroup explicitEnvironment mode = do
   unless (validExplicitEnvironment explicitEnvironment) $
     ioError (userError "bounded-command helper environment is invalid")
+  -- A bounded command performs three self-exec spawns (anchor, supervisor,
+  -- target), each of which closes every descriptor up to the soft
+  -- RLIMIT_NOFILE before 'exec'. Unbounded, that is a quarter-hour per command
+  -- inside a containerd pod. See "Infernix.DescriptorSpace".
+  _ <- requireBoundedDescriptorSpace "bounded-command self-exec helper"
   executable <- getExecutablePath
   created <-
     createProcess

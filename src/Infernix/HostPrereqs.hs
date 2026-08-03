@@ -23,6 +23,7 @@ import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.Info (os)
 import System.Process (proc, readCreateProcessWithExitCode)
+import System.Timeout (timeout)
 
 data AppleHostRequirement
   = AppleDockerCli
@@ -158,6 +159,56 @@ requireBrewExecutable brewExecutable = do
           )
       )
 
+-- | The required deadline for the two Apple Docker prerequisite probes.
+--
+-- @docker context show@ reads a local config file and @docker info@ round-trips
+-- one request to an already-running daemon socket; both answer in
+-- milliseconds. The bound exists for the failure mode instead: a Colima VM that
+-- is up but wedged accepts the socket connection and never replies, which
+-- previously hung @bootstrap/apple-silicon.sh@ with no diagnostic. 120 s is the
+-- same figure the generated host manifest gives every closed
+-- 'Infernix.Cluster.Command.HostProbeOperation', so the pre-manifest and
+-- post-manifest host-probe surfaces agree on one number.
+hostProbeDeadlineMicros :: Int
+hostProbeDeadlineMicros = 120 * 1000 * 1000
+
+-- | The required deadline for a Homebrew formula install.
+--
+-- Unlike the probes, this is a genuine long-running reconciliation: Homebrew
+-- may download a large bottle or, when no bottle matches the host, build the
+-- formula from source. 45 minutes is the same figure the generated host
+-- manifest gives the longest closed operation
+-- ('Infernix.Cluster.Command.DockerBuildOperation'), which is the closest
+-- shape in the catalog — a network-bound build that must not be blindly
+-- retried. It is far above any observed install and still bounds a Homebrew
+-- run that has stalled on an unreachable mirror.
+homebrewInstallDeadlineMicros :: Int
+homebrewInstallDeadlineMicros = 45 * 60 * 1000 * 1000
+
+-- | Impose a required total deadline on a pre-manifest prerequisite command.
+-- The capture primitive terminates its child when the deadline exception
+-- unwinds it, so an expired command leaves no orphan and surfaces as an
+-- @IOError@ naming both the command and the bound.
+withPrerequisiteDeadline :: Int -> String -> IO a -> IO a
+withPrerequisiteDeadline deadlineMicros label action = do
+  outcome <- timeout deadlineMicros action
+  requirePrerequisiteOutcome deadlineMicros label outcome
+
+requirePrerequisiteOutcome :: Int -> String -> Maybe a -> IO a
+requirePrerequisiteOutcome deadlineMicros label outcome =
+  case outcome of
+    Just value -> pure value
+    Nothing ->
+      ioError
+        ( userError
+            ( "Apple host prerequisite command `"
+                <> label
+                <> "` exceeded its required "
+                <> show (deadlineMicros `div` 1000000)
+                <> "s deadline"
+            )
+        )
+
 ensureHomebrewManagedTool :: FilePath -> AppleHostRequirement -> IO ()
 ensureHomebrewManagedTool brewExecutable requirement = do
   let commandName = providedCommand requirement
@@ -167,7 +218,10 @@ ensureHomebrewManagedTool brewExecutable requirement = do
     let formulaName = homebrewFormula requirement
     putStrLn ("reconciling Apple host prerequisite via Homebrew: " <> formulaName)
     (exitCode, _, stderrOutput) <-
-      readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) ""
+      withPrerequisiteDeadline
+        homebrewInstallDeadlineMicros
+        ("brew install " <> formulaName)
+        (readCreateProcessWithExitCode (proc brewExecutable ["install", formulaName]) "")
     case exitCode of
       ExitSuccess -> do
         installed <- doesFileExist commandPath
@@ -209,7 +263,10 @@ ensureSelectedDockerDaemonReady = do
 readDockerContext :: FilePath -> IO String
 readDockerContext dockerExecutable = do
   (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode (proc dockerExecutable ["context", "show"]) ""
+    withPrerequisiteDeadline
+      hostProbeDeadlineMicros
+      "docker context show"
+      (readCreateProcessWithExitCode (proc dockerExecutable ["context", "show"]) "")
   case exitCode of
     ExitSuccess -> pure (trimWhitespace stdoutOutput)
     _ ->
@@ -225,9 +282,13 @@ readDockerContext dockerExecutable = do
 readDockerDaemonArchitecture :: FilePath -> String -> IO String
 readDockerDaemonArchitecture dockerExecutable contextName = do
   (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc dockerExecutable ["info", "--format", "{{json .}}"])
-      ""
+    withPrerequisiteDeadline
+      hostProbeDeadlineMicros
+      "docker info"
+      ( readCreateProcessWithExitCode
+          (proc dockerExecutable ["info", "--format", "{{json .}}"])
+          ""
+      )
   case exitCode of
     ExitSuccess ->
       case decodeDockerInfoArchitecture stdoutOutput of

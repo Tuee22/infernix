@@ -1,6 +1,15 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Blocked — Sprint 8.9 (proper-union generated execution-plan schema migration) is blocked by Phase 6 Sprint 6.44; Sprints 8.1–8.8 retain their recorded closure
+**Status**: Active — Validation Only. Sprint 8.9 (proper-union generated execution-plan schema
+migration) is code-side closed on 2026-08-02: the budget wire carries the third `DualEnforced` union
+arm Phase 6 Sprint 6.44's dual RAM/VRAM capability needed, the renderer emits one shared union type
+whose agreement with the reflected decoder is now asserted, a retired flat payload fails with a
+targeted migration diagnostic naming the regenerating command, and the dead `legacyDhall` decoder
+residue is removed. Its behavioral evidence is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus
+`linux-cpu` wave rather than a wave of its own, per its own validation rule. The remaining
+generated-wire text enums, `Integer`-vs-`Natural` quantities, the zero-filled `edgePort`, the
+still-flat Aeson encoding, and the coordinator/webapp readiness-refinement question are named
+explicitly as follow-on work in the sprint section. Sprints 8.1–8.8 retain their recorded closure
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -409,12 +418,24 @@ superseded `IO Bool` sentinel probe, the `sentinelReady` error-to-`False` coerci
 fail-open delete are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
-## Sprint 8.9: Generated Proper-Union Execution Plan [Blocked]
+## Sprint 8.9: Generated Proper-Union Execution Plan [Active — Validation Only]
 
-**Status**: Blocked
-**Blocked by**: Phase 6 Sprint 6.44
-**Implementation**: `src/Infernix/Substrate.hs`, `src/Infernix/ProjectInit.hs`, `src/Infernix/DhallSchema.hs`, chart payload generation
-**Docs to update**: `documents/architecture/configuration_doctrine.md`, `documents/architecture/typed_execution_plan.md`, `documents/engineering/cluster_config_manifest.md`
+**Status**: Active — code-side closed on 2026-08-02 for the execution-plan budget language; the
+remaining generated-wire text enums are named as explicit follow-on work below rather than left
+implied. Behavioral evidence is consumed from the Phase 6 Sprint 6.44 cohort, per this sprint's own
+validation rule that it must not create a dual-accelerator gate of its own.
+**Code-side closure**: Complete for the budget union. The machine-independent gate set is GREEN
+(`cabal build all --enable-tests`, `infernix-unit`, `infernix-execution-plan-internal`,
+`infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style`, and
+`lint files|chart|proto|docs` plus `docs check`).
+**Blocked by**: nothing. Phase 6 Sprint 6.44's dual RAM/VRAM capability surface landed the third
+union arm this sprint's language needed.
+**Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
+`src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/DhallSchema.hs` (reflection, unchanged),
+`test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/configuration_doctrine.md` (updated),
+`documents/architecture/typed_execution_plan.md` (updated),
+`documents/engineering/cluster_config_manifest.md`
 
 ### Objective
 
@@ -429,17 +450,78 @@ proper execution-plan unions and by deleting the flat tagged compatibility repre
 - old flat `DhallInferenceMemoryBudget` decoding and zeroed fields are removed
 - startup compiles and refines the generated plan before publishing readiness
 
+### Landed Implementation
+
+The sprint's premise was partly out of date when it was reached, and the plan is corrected here
+rather than left claiming work that no longer existed. The budget was **already** a proper two-arm
+union with per-arm payload records — the text discriminator and zero-filled fields were removed
+earlier — so this sprint's real remaining scope was the third arm, the drift surface, the migration
+diagnostic, and the dead residue.
+
+1. **Third union arm.** `DhallInferenceMemoryBudget` gains `DualEnforced DhallDualMemoryBudget`,
+   whose two halves reuse the substrate limit record so they are structurally identical and the arm
+   names which is which instead of encoding it in a discriminator field. The decoder path is now one
+   shared `podMemoryLimitFromDhall` used by both the single and dual arms, so the positivity and
+   enum checks cannot drift between them, and each diagnostic names its own field path
+   (`inferenceMemoryBudget.vramLimit.limitMib`, not a generic message).
+2. **One rendered union type.** The union's type annotation was a string literal duplicated once per
+   arm. It is now a single `inferenceMemoryBudgetUnionType` that every arm selects from, with the
+   arm payload record type factored out alongside it, so a new arm cannot be added to the ADT and the
+   decoder while some renderer keeps emitting a stale union type.
+3. **Drift is now asserted, not assumed.** Nothing in the type system ties the hand-written renderer
+   annotation to the reflected decoder type. The schema-reflection test now renders a real generated
+   payload for each of the three budget shapes through the production
+   `renderGeneratedDemoConfigPayload` — the same function all four generators funnel through — and
+   asserts every alternative the reflected decoder expects appears in it, in both directions.
+4. **Targeted migration diagnostic.** A payload written by a pre-union generator used to surface a
+   bare structural Dhall type error that said nothing about what to do. `decodeRawRuntimeConfigFile`
+   now classifies the retired shapes (`inferenceRamBudgetMib`, a `kind =` discriminator, a flat
+   `podLimitMib`) and prefixes the failure with the retired shape's name and the command that
+   regenerates it — which is always the right fix, because no `.dhall` is version-controlled. The
+   unit suite asserts the diagnostic names both the shape and `infernix init`.
+5. **Dead residue removed.** The `legacyDhall` prefix branch in the field-name modifier served the
+   pre-union decoder and no field carried that prefix any more.
+
+Deliverable 1 was verified rather than re-implemented: every payload — `infernix init`, the test
+harness, the image-baked config, and the cluster ConfigMap body — already funnels through
+`renderGeneratedDemoConfigPayloadWithModels` → `Models.encodeDemoConfig` →
+`Substrate.encodeSubstrateConfig` → `renderSubstrateConfig`, so there is one renderer and one decode
+entry point for the whole generated substrate language.
+
 ### Validation
 
-- zero tracked `.dhall` remains true
-- generated host, test, baked-image, and mounted-cluster payloads round-trip every applicable union
-- legacy flat payloads fail with a targeted migration diagnostic
-- machine-independent gates pass; behavioral evidence is consumed from the Phase 4 and Phase 6
-  single-accelerator attestations without creating a dual-accelerator gate
+- zero tracked `.dhall` remains true — **GREEN** (`lint files` passes; the generated
+  `./infernix.dhall`, `./infernix-host.dhall`, and secrets manifest used for the style gate were
+  removed after the run)
+- generated host, test, baked-image, and mounted-cluster payloads round-trip every applicable
+  union — **GREEN**: the unit suite round-trips the host-enforced and substrate-enforced arms through
+  the real decode boundary and compiles a full `linux-gpu` catalog under the dual arm
+- legacy flat payloads fail with a targeted migration diagnostic — **GREEN**
+- machine-independent gates pass — **GREEN**
 
 ### Remaining Work
 
-Blocked until the enforcing CPU/Apple and GPU capability surfaces are complete.
+1. **The rest of the generated wire is still text-tagged**, and this is now stated explicitly rather
+   than implied by "the final schema must not encode alternatives as text tags". Every top-level
+   enum-like choice — `runtimeMode`, `daemonRole`, `adapterType`, `fieldType`, `subscription`,
+   `pulsarConnectionMode`, `runtimeLane` — plus the two `Text` fields *inside* the substrate limit
+   record (`resource`, `source`) remain `Text` refined by post-decode smart constructors. The host
+   manifest already generates both an enum-only union and a payload-carrying union, so it is the
+   working template.
+2. **Quantities are `Integer`, not `Natural`.** Negative and zero values are representable in the
+   wire language and rejected only after decode.
+3. **`configEdgePort` is generated as a literal `0`** and accepted by the compiler — the last
+   zero-filled placeholder in the generated language. It needs a decision: refine it, or move it out
+   of the generated language as a runtime-supplied value.
+4. **The Aeson side still carries a `"kind"` discriminator** plus an `inferenceRamBudgetMib` legacy
+   scalar fallback, and the web UI reads that JSON shape. The Dhall migration therefore did not
+   remove the flat encoding system-wide; retiring it is a coordinated Haskell-plus-PureScript change.
+5. **Readiness refinement is engine-only.** The coordinator publishes readiness on a compiled but
+   unrefined plan, and the webapp role never builds a compiled plan at all. Whether deliverable 4
+   ("startup compiles and refines the generated plan before publishing readiness") is meant to cover
+   all three roles, or whether engine-only refinement is the intended end state, is an open doctrine
+   question — the coordinator does not launch engines, so it has no enforcer to refine against.
+6. **Cohort evidence** is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave.
 
 ---
 

@@ -1,3 +1,17 @@
+-- | Developer workflow tooling.
+--
+-- Phase 6 Sprint 6.44 follow-on removed this module's two raw spawns. The
+-- @node --version@ probe was already fixed in substance and is now the closed
+-- 'Command.nodeVersionProbe'. The workspace dependency install went through a
+-- generic @runWorkflowCommand@ that took a caller-supplied executable and
+-- argv, but its only caller passed one fixed argument vector selected between
+-- two fixed shapes by that same node-version observation; the genericity was
+-- an artifact, not a requirement, so it is now the closed
+-- 'Command.npmInstallWebDependencies' indexed by
+-- 'Command.WebDependencyToolchain'. Both are reached from
+-- @infernix test unit@ / @infernix test all@, which run after configuration
+-- exists, so the bounded-command environment's required host manifest is
+-- available.
 module Infernix.Workflow
   ( demoConfigGeneratedBanner,
     demoConfigGeneratedBannerLine,
@@ -8,18 +22,16 @@ module Infernix.Workflow
 where
 
 import Data.Char (isDigit)
-import Data.List qualified as List
 import Data.Maybe (isJust)
 import Data.Text qualified as Text
+import Infernix.Cluster.Command qualified as Command
+import Infernix.Cluster.Invoke qualified as Invoke
 import Infernix.Config (Paths (pathsHostConfig, repoRoot), discoverPaths)
-import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
 import Infernix.Substrate (demoConfigGeneratedBanner, demoConfigGeneratedBannerLine)
 import System.Directory (doesDirectoryExist, doesFileExist)
-import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, (</>))
-import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
+import System.FilePath ((</>))
 
 ensureWebDependencies :: IO ()
 ensureWebDependencies = do
@@ -30,10 +42,30 @@ ensureWebDependencies = do
   hostNodeReady <- hostNodeSupportsWebToolchain paths
   if depsDirectoryPresent && toolchainPresent && hostNodeReady
     then pure ()
-    else do
-      (command, args) <-
-        resolveWebNpmInvocationWithPaths paths ["--prefix", "web", "install", "--no-audit", "--no-fund"]
-      runWorkflowCommand paths (repoRoot paths) command args
+    else installWebDependencies paths (webDependencyToolchainFor hostNodeReady)
+
+-- | The closed toolchain index is exactly the host-node observation: a host
+-- whose @node@ satisfies the web toolchain minimum installs directly, and one
+-- that does not has npm provision a pinned pair for the install.
+webDependencyToolchainFor :: Bool -> Command.WebDependencyToolchain
+webDependencyToolchainFor hostNodeReady =
+  if hostNodeReady
+    then Command.HostNodeToolchain
+    else Command.PinnedNodeToolchain
+
+installWebDependencies :: Paths -> Command.WebDependencyToolchain -> IO ()
+installWebDependencies paths toolchain = do
+  outcome <-
+    Invoke.tryClusterCommand
+      paths
+      (Command.npmInstallWebDependencies toolchain)
+  case outcome of
+    Right _ -> pure ()
+    Left failure ->
+      ioError
+        ( userError
+            ("web dependency install failed:\n" <> failure)
+        )
 
 platformCommandsAvailable :: IO Bool
 platformCommandsAvailable = do
@@ -77,23 +109,25 @@ resolveWebNpmInvocationWithPaths paths npmArgs = do
           ]
         )
 
+-- | Observe whether the host's own @node@ satisfies the web toolchain
+-- minimum. Both executables must be present before the probe runs, so an
+-- absent toolchain is reported as unsupported rather than as a command
+-- failure; a probe that fails or times out is also unsupported, which is the
+-- fail-closed direction (it selects the pinned toolchain).
 hostNodeSupportsWebToolchain :: Paths -> IO Bool
 hostNodeSupportsWebToolchain paths = do
   maybeNode <- hostToolExecutablePath paths HostNode
   maybeNpm <- hostToolExecutablePath paths HostNpm
   case (maybeNode, maybeNpm) of
-    (Just nodeCommand, Just _) -> do
-      (exitCode, stdoutOutput, _) <-
-        readCreateProcessWithExitCode
-          (proc nodeCommand ["--version"])
-            { env = Just (workflowSubprocessBaseEnvFor paths)
-            }
-          ""
-      pure $
-        case exitCode of
-          ExitSuccess -> nodeVersionSatisfiesMinimum stdoutOutput
-          _ -> False
+    (Just _, Just _) -> probeHostNodeVersion paths
     _ -> pure False
+
+probeHostNodeVersion :: Paths -> IO Bool
+probeHostNodeVersion paths = do
+  outcome <- Invoke.tryClusterCommand paths Command.nodeVersionProbe
+  case outcome of
+    Right stdoutOutput -> pure (nodeVersionSatisfiesMinimum stdoutOutput)
+    Left _ -> pure False
 
 nodeVersionSatisfiesMinimum :: String -> Bool
 nodeVersionSatisfiesMinimum stdoutOutput =
@@ -129,19 +163,6 @@ shellQuote rawValue =
   where
     escapeCharacter '\'' = "'\\''"
     escapeCharacter character = [character]
-
-runWorkflowCommand :: Paths -> FilePath -> FilePath -> [String] -> IO ()
-runWorkflowCommand paths workingDirectory command args = do
-  (exitCode, _, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc command args)
-        { cwd = Just workingDirectory,
-          env = Just (workflowSubprocessBaseEnvFor paths)
-        }
-      ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ -> ioError (userError ("workflow command failed: " <> command <> " " <> unwords args <> "\n" <> stderrOutput))
 
 hostToolExecutablePresent :: Paths -> HostTool -> IO Bool
 hostToolExecutablePresent paths tool = do
@@ -180,40 +201,6 @@ firstExistingPath (candidate : rest) = do
   if present
     then pure (Just candidate)
     else firstExistingPath rest
-
-workflowSubprocessBaseEnvFor :: Paths -> [(String, String)]
-workflowSubprocessBaseEnvFor paths =
-  maybe [] hostHomeEnv (pathsHostConfig paths)
-    <> [ ("PATH", workflowSearchPath paths),
-         ("LANG", "C.UTF-8"),
-         ("LC_ALL", "C.UTF-8")
-       ]
-
-hostHomeEnv :: HostConfig.HostConfig -> [(String, String)]
-hostHomeEnv hostConfig =
-  let home = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
-   in [("HOME", home) | not (null home)]
-
-workflowSearchPath :: Paths -> String
-workflowSearchPath paths =
-  let fallback =
-        [ "/opt/homebrew/bin",
-          "/usr/local/bin",
-          "/usr/bin",
-          "/bin"
-        ]
-      manifestDirs =
-        maybe [] hostToolParentDirs (pathsHostConfig paths)
-   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
-
-hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
-hostToolParentDirs hostConfig =
-  List.nub
-    [ takeDirectory path
-    | tool <- [HostNpm, HostNode],
-      let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
-      not (null path)
-    ]
 
 allM :: (a -> IO Bool) -> [a] -> IO Bool
 allM predicate values = and <$> mapM predicate values

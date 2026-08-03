@@ -13,7 +13,7 @@ import Infernix.Evidence.Lease (Lease)
 
 reuseAuthority ::
   Paths ->
-  ClusterTeardownAuthority outerRegion ->
+  ClusterTeardownAuthority owner outerRegion ->
   IO ()
 reuseAuthority paths authority =
   withClusterLifecycleLock paths $ \currentLock ->

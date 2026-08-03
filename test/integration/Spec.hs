@@ -32,6 +32,7 @@ import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
 import Infernix.Config qualified as Config
 import Infernix.Conversation.Topic qualified as ConversationTopic
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Error
   ( bracketPreservingPrimary,
     finallyPreservingPrimary,
@@ -131,6 +132,10 @@ instance Aeson.FromJSON IntegrationPulsarEnvelope where
 
 main :: IO ()
 main = do
+  -- Test images spawn self-exec children through the same close_fds
+  -- kernels the production binary uses, so they bound their descriptor
+  -- space first. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
   Subprocess.dispatchInternalSubprocessMode
   integrationTestRoot <- testRootPath "integration"
   withTestRoot integrationTestRoot $ do
@@ -251,11 +256,11 @@ exerciseRuntimeMode paths runtimeMode = do
         "Phase 9 Sprint 9.3: GET /api/cache is admin-gated and rejects an unauthenticated read with 401"
 
       reportStep ("service runtime loop: " <> showRuntimeMode runtimeMode)
-      ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
+      ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId
       validateServiceRuntimeLoop paths state runtimeMode compiledPlan representativeModelId
 
       reportStep ("durable Pulsar topic families: " <> showRuntimeMode runtimeMode)
-      ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId
+      ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
       when (requiresHostServiceHarness paths runtimeMode) $ do
@@ -560,21 +565,21 @@ validateLinuxGpuCatalogModelInferenceSerially paths state compiledPlan activeMod
         sort
           . nub
           $ map snd pythonNativeDeployments
-  prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+  prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
   forM_ (map (Text.unpack . modelId) nativeModels) (validateCatalogModelInference paths state LinuxGpu compiledPlan)
   forM_ perEngineNames $ \engineName -> do
     reportStep ("linux-gpu per-engine deployment: " <> Text.unpack engineName)
-    prepareLinuxGpuEngineDeployment state perEngineNames (Just engineName)
+    prepareLinuxGpuEngineDeployment paths perEngineNames (Just engineName)
     forM_
       [ Text.unpack (modelId model)
       | (model, deploymentName) <- pythonNativeDeployments,
         deploymentName == engineName
       ]
       (validateCatalogModelInference paths state LinuxGpu compiledPlan)
-  prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+  prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
 
-ensureLinuxGpuRepresentativeEngineDeployment :: ClusterState -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
-ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels representativeModelId =
+ensureLinuxGpuRepresentativeEngineDeployment :: Paths -> RuntimeMode -> [ModelDescriptor] -> String -> IO ()
+ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId =
   when (runtimeMode == LinuxGpu) $ do
     let pythonNativeModels = filter linuxGpuModelUsesPythonNativeEngine activeModels
     pythonNativeDeployments <-
@@ -589,9 +594,9 @@ ensureLinuxGpuRepresentativeEngineDeployment state runtimeMode activeModels repr
       ((== Text.pack representativeModelId) . modelId . fst)
       pythonNativeDeployments of
       Just (_, deploymentName) ->
-        prepareLinuxGpuEngineDeployment state perEngineNames (Just deploymentName)
+        prepareLinuxGpuEngineDeployment paths perEngineNames (Just deploymentName)
       Nothing ->
-        prepareLinuxGpuEngineDeployment state perEngineNames Nothing
+        prepareLinuxGpuEngineDeployment paths perEngineNames Nothing
 
 ensureCatalogInputObject :: Paths -> ClusterState -> RuntimeMode -> ModelDescriptor -> IO (Maybe Text.Text)
 ensureCatalogInputObject paths state runtimeMode model =
@@ -988,8 +993,34 @@ requireLinuxGpuPerEngineDeploymentName model =
     pure
     (engineNameForSelectedEngine LinuxGpu (selectedEngine model))
 
-prepareLinuxGpuEngineDeployment :: ClusterState -> [Text.Text] -> Maybe Text.Text -> IO ()
-prepareLinuxGpuEngineDeployment state perEngineNames maybeEngineName = do
+-- Sprint 6.43 (corrected 2026-08-02 by the final cross-phase review): this
+-- rotates the shared engine Deployment and every per-engine Deployment between
+-- replica counts, which is exactly the class of cluster mutation the
+-- `ClusterMutating` position exists for. It previously ran outside
+-- `withPersistedClusterMutation`, unlike its two sibling chaos sites, so a
+-- SIGKILL anywhere in the rotation left the persisted state reading
+-- `ClusterReady` while the live cluster had engine Deployments scaled to zero —
+-- the exact false steady-state the doctrine forbids. The marker now brackets the
+-- whole rotation so a killed run leaves a detectable dirty cluster the next
+-- `cluster up` reconciles by scaling the deployments back to their chart counts.
+prepareLinuxGpuEngineDeployment :: Paths -> [Text.Text] -> Maybe Text.Text -> IO ()
+prepareLinuxGpuEngineDeployment paths perEngineNames maybeEngineName = do
+  mutationState <-
+    maybe
+      (fail "linux-gpu engine deployment rotation requires a freshly persisted cluster state")
+      pure
+      =<< loadClusterState paths
+  withPersistedClusterMutation
+    paths
+    mutationState
+    "linux-gpu-engine-deployment-rotation"
+    ( "rotating the shared and per-engine linux-gpu engine Deployments to "
+        <> maybe "the shared deployment" Text.unpack maybeEngineName
+    )
+    (\freshState -> rotateLinuxGpuEngineDeployments freshState perEngineNames maybeEngineName)
+
+rotateLinuxGpuEngineDeployments :: ClusterState -> [Text.Text] -> Maybe Text.Text -> IO ()
+rotateLinuxGpuEngineDeployments state perEngineNames maybeEngineName = do
   case maybeEngineName of
     Just _ ->
       runKubectl state ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=0"]

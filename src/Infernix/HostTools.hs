@@ -5,9 +5,23 @@
 -- @dhall/InfernixHost.dhall@. The supported invariant
 -- (`documents/architecture/configuration_doctrine.md` Section T) is
 -- that no module ever calls @proc "<bare-name>"@ or relies on @\$PATH@
--- for resolution; every external invocation goes through 'runHostTool'
--- (or the lower-level 'hostToolPath' lookup) so the linter introduced
--- in Phase 6 Sprint 6.28 can mechanically reject regressions.
+-- for resolution; every external invocation resolves through
+-- 'hostToolPath' (or the fixed 'hostToolFallbackCandidates' list) so the
+-- linter introduced in Phase 6 Sprint 6.28 can mechanically reject
+-- regressions.
+--
+-- Phase 6 Sprint 6.44 follow-on narrowed this module to the two
+-- /pre-manifest/ host probes it still owns. The generic runners
+-- (@runHostTool@, @runHostToolWithCwd@, @readHostToolWithExitCode@) had
+-- no callers left anywhere in the repository and were deleted rather
+-- than carried: a caller-supplied executable plus caller-supplied argv is
+-- exactly the shape the closed 'Infernix.Cluster.Command.ClusterCommand'
+-- catalog exists to make unrepresentable. What remains — 'readHostTool'
+-- and 'readHostToolFallback' — runs during @infernix init@, /before/ the
+-- generated host manifest exists, so 'Infernix.Cluster.Subprocess.clusterSubprocessEnv'
+-- (which fails closed without a manifest) cannot compile a closed command
+-- there. Both therefore carry a required total deadline instead; see
+-- 'hostProbeDeadlineMicros'.
 module Infernix.HostTools
   ( HostTool (..),
     hostToolName,
@@ -16,10 +30,7 @@ module Infernix.HostTools
     hostToolFallbackCandidates,
     hostToolFallbackPath,
     readHostToolFallback,
-    runHostTool,
-    runHostToolWithCwd,
     readHostTool,
-    readHostToolWithExitCode,
     hostToolProcess,
   )
 where
@@ -31,15 +42,12 @@ import Infernix.HostConfig
     HostToolPaths (..),
   )
 import System.Directory (doesFileExist)
-import System.Exit (ExitCode)
 import System.Process
-  ( CreateProcess (cwd),
+  ( CreateProcess,
     proc,
-    readCreateProcessWithExitCode,
     readProcess,
-    waitForProcess,
-    withCreateProcess,
   )
+import System.Timeout (timeout)
 
 -- | Closed enumeration of every external command the project ever
 -- invokes. Adding a new constructor here is the supported way to
@@ -221,12 +229,61 @@ readHostToolFallback tool args input = do
   maybePath <- firstExistingCandidate (hostToolFallbackCandidates tool)
   case maybePath of
     Nothing -> pure Nothing
-    Just path -> Just <$> readProcess path args input
+    Just path ->
+      Just
+        <$> withHostProbeDeadline
+          (Text.unpack (hostToolName tool))
+          (readProcess path args input)
   where
     firstExistingCandidate [] = pure Nothing
     firstExistingCandidate (candidate : rest) = do
       present <- doesFileExist candidate
       if present then pure (Just candidate) else firstExistingCandidate rest
+
+-- | The required total deadline shared by the two pre-manifest host
+-- probes.
+--
+-- Both probes are strictly local reads — @sysctl -n hw.memsize@ reads a
+-- kernel scalar and @colima list --json@ reads on-disk profile state —
+-- and both complete in milliseconds on a healthy host. The number is
+-- therefore not a performance budget; it is the bound that turns a
+-- wedged probe (an unresponsive @colima@ daemon socket, a stuck
+-- filesystem under the profile directory) into a named failure instead
+-- of a hang that stalls @infernix init@ forever.
+--
+-- 120 s is chosen deliberately rather than invented: it is exactly the
+-- @hostProbe@ deadline the generated host manifest gives every closed
+-- 'Infernix.Cluster.Command.HostProbeOperation'. Keeping the
+-- pre-manifest and post-manifest host-probe surfaces on the same bound
+-- means an operator reading either one sees a single host-probe
+-- deadline, and it leaves roughly four orders of magnitude of headroom
+-- over the observed cost.
+hostProbeDeadlineMicros :: Int
+hostProbeDeadlineMicros = 120 * 1000 * 1000
+
+-- | Impose 'hostProbeDeadlineMicros' on a pre-manifest host probe. The
+-- capture primitive terminates its child when the deadline exception
+-- unwinds it, so an expired probe leaves no orphan behind and surfaces
+-- as an ordinary @IOError@ naming both the tool and the bound.
+withHostProbeDeadline :: String -> IO a -> IO a
+withHostProbeDeadline toolLabel action = do
+  outcome <- timeout hostProbeDeadlineMicros action
+  requireHostProbeOutcome toolLabel outcome
+
+requireHostProbeOutcome :: String -> Maybe a -> IO a
+requireHostProbeOutcome toolLabel outcome =
+  case outcome of
+    Just value -> pure value
+    Nothing ->
+      ioError
+        ( userError
+            ( "host probe `"
+                <> toolLabel
+                <> "` exceeded its required "
+                <> show (hostProbeDeadlineMicros `div` 1000000)
+                <> "s deadline"
+            )
+        )
 
 pickToolPath :: HostTool -> HostToolPaths -> Text
 pickToolPath tool paths = case tool of
@@ -298,33 +355,12 @@ resolveOrFail config tool =
             )
         else Text.unpack path
 
--- | Run a tool with the supplied args, inheriting the parent's
--- handles. Returns when the process exits.
-runHostTool :: HostConfig -> HostTool -> [String] -> IO ExitCode
-runHostTool config tool args =
-  withCreateProcess (hostToolProcess config tool args) $ \_ _ _ processHandle ->
-    waitForProcess processHandle
-
--- | Run a tool with an explicit working directory.
-runHostToolWithCwd :: HostConfig -> HostTool -> [String] -> FilePath -> IO ExitCode
-runHostToolWithCwd config tool args workingDirectory =
-  let cp = (hostToolProcess config tool args) {cwd = Just workingDirectory}
-   in withCreateProcess cp $ \_ _ _ processHandle -> waitForProcess processHandle
-
--- | Run a tool and capture its stdout. Equivalent to the legacy
--- @readProcess "<bare-name>"@ pattern, with command resolution
--- routed through 'HostConfig'.
+-- | Run a manifest-resolved pre-manifest host probe and capture its
+-- stdout under the required 'hostProbeDeadlineMicros' bound. The sole
+-- caller is the Apple physical-RAM probe (@sysctl -n hw.memsize@), whose
+-- argument vector is a fixed literal.
 readHostTool :: HostConfig -> HostTool -> [String] -> String -> IO String
-readHostTool config tool =
-  readProcess (resolveOrFail config tool)
-
--- | Run a tool, capture its stdout, and return the exit code + stderr
--- alongside. Equivalent to @readProcessWithExitCode "<bare-name>"@.
-readHostToolWithExitCode ::
-  HostConfig ->
-  HostTool ->
-  [String] ->
-  String ->
-  IO (ExitCode, String, String)
-readHostToolWithExitCode config tool args =
-  readCreateProcessWithExitCode (hostToolProcess config tool args)
+readHostTool config tool args input =
+  withHostProbeDeadline
+    (Text.unpack (hostToolName tool))
+    (readProcess (resolveOrFail config tool) args input)

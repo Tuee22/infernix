@@ -33,6 +33,7 @@ import Infernix.DemoConfig
     renderModelListing,
   )
 import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.DhallSchema (renderDhallSchema)
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
@@ -99,9 +100,14 @@ import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeDirectory, takeFileName, (</>))
 import System.Process (CreateProcess (cwd, env), createProcess, proc, readCreateProcessWithExitCode, terminateProcess, waitForProcess)
+import System.Timeout (timeout)
 
 main :: IO ()
 main = do
+  -- Before the internal self-exec dispatch, because those images spawn too,
+  -- and before anything opens a descriptor, which is what makes the bound
+  -- sound rather than merely cheap. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
   dispatchInternalSubprocessMode
   setLocaleEncoding utf8
   syncBuildRootExecutable
@@ -819,18 +825,49 @@ resolveCliHostTool paths tool =
                 )
             )
 
+-- | Capture a closed host tool's stdout under a required total deadline.
+--
+-- The sole caller is 'loadTextUrl', which fetches a demo-UI page with @curl@.
+-- @curl@ against an unreachable-but-accepting endpoint can block indefinitely,
+-- so the capture carries the same 120 s bound the generated host manifest
+-- gives every closed 'Infernix.Cluster.Command.CurlProbeOperation'. The caller
+-- already classifies an @IOError@ as "page unavailable", so an expired fetch
+-- is a named observation rather than a hang.
 captureCliHostTool :: Paths -> HostTool -> [String] -> IO String
 captureCliHostTool paths tool args = do
   command <- resolveCliHostTool paths tool
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc command args)
-        { env = Just (cliSubprocessBaseEnvFor paths)
-        }
-      ""
-  case exitCode of
-    ExitSuccess -> pure stdoutOutput
-    _ -> ioError (userError stderrOutput)
+  captureOutcome <-
+    timeout
+      cliHostToolCaptureDeadlineMicros
+      ( readCreateProcessWithExitCode
+          (proc command args)
+            { env = Just (cliSubprocessBaseEnvFor paths)
+            }
+          ""
+      )
+  classifyCliHostToolCapture tool captureOutcome
+
+cliHostToolCaptureDeadlineMicros :: Int
+cliHostToolCaptureDeadlineMicros = 120 * 1000 * 1000
+
+classifyCliHostToolCapture ::
+  HostTool ->
+  Maybe (ExitCode, String, String) ->
+  IO String
+classifyCliHostToolCapture tool captureOutcome =
+  case captureOutcome of
+    Just (ExitSuccess, stdoutOutput, _) -> pure stdoutOutput
+    Just (_, _, stderrOutput) -> ioError (userError stderrOutput)
+    Nothing ->
+      ioError
+        ( userError
+            ( "host tool `"
+                <> Text.unpack (HostTools.hostToolName tool)
+                <> "` capture exceeded its required "
+                <> show (cliHostToolCaptureDeadlineMicros `div` 1000000)
+                <> "s deadline"
+            )
+        )
 
 cliSubprocessBaseEnvFor :: Paths -> [(String, String)]
 cliSubprocessBaseEnvFor paths =

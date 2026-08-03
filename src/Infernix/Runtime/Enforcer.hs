@@ -8,6 +8,7 @@ where
 import Control.Exception (IOException, try)
 import Data.List (find)
 import Data.Map.Strict qualified as Map
+import Data.Text qualified as Text
 import Infernix.Config (Paths)
 import Infernix.DemoConfig (observeAppleHostMemoryPartition)
 import Infernix.ExecutionPlan
@@ -34,12 +35,15 @@ import Infernix.ExecutionPlan.Internal
 import Infernix.Runtime.CappedEngine
   ( EngineExecutionAuthority,
     newEngineExecutionAuthority,
+    observeNvidiaDeviceVramMib,
+    probeNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
   )
 import Infernix.Runtime.Enforcer.Internal (parseFiniteMib)
 import Infernix.Types (HostMemoryPartition, ModelDescriptor (modelId))
 import System.FilePath ((</>))
+import System.IO (hPutStrLn, stderr)
 
 -- | Probe the enforcement mechanisms named by a compiled plan and refine it
 -- into the only value accepted by the engine launch boundary. Probe results
@@ -56,6 +60,7 @@ refineCompiledRuntimePlan paths compiledPlan = do
   let placements = Map.elems (compiledPlacements compiledPlan)
       needsHostSampler = any isHostPlacement placements
       needsPodSampler = any isPodPlacement placements
+      needsNvidiaSampler = any isGpuPlacement placements
   hostSamplerAvailable <-
     if needsHostSampler
       then verifyPhysicalFootprintSampler
@@ -72,9 +77,38 @@ refineCompiledRuntimePlan paths compiledPlan = do
     if needsPodSampler
       then readCgroupMemoryLimitMib
       else pure Nothing
+  -- Sprint 6.44: the probe's reason is logged here rather than discarded.
+  -- `NvidiaSamplerUnavailable` names the placement but carries no diagnosis, so
+  -- a `linux-gpu` engine that cannot enforce VRAM used to crash-loop with an
+  -- error that said nothing about which precondition failed.
+  nvidiaSamplerAvailable <-
+    if needsNvidiaSampler
+      then do
+        probed <- probeNvidiaVramSampler
+        case probed of
+          Right _ -> pure True
+          Left reason -> do
+            hPutStrLn
+              stderr
+              ( "engine refinement: NVIDIA VRAM sampler unavailable: "
+                  <> Text.unpack reason
+              )
+            pure False
+      else pure False
+  observedVramMib <-
+    if needsNvidiaSampler
+      then observeNvidiaDeviceVramMib
+      else pure Nothing
   let observations =
         map
-          (placementObservation observedHostPartition hostSamplerAvailable podSamplerAvailable outerLimitMib)
+          ( placementObservation
+              observedHostPartition
+              hostSamplerAvailable
+              podSamplerAvailable
+              outerLimitMib
+              nvidiaSamplerAvailable
+              observedVramMib
+          )
           placements
   case refineRuntimePlan (RuntimeObservation observations) compiledPlan of
     Left errors -> pure (Left errors)
@@ -96,28 +130,44 @@ isPodPlacement placement =
     CompiledPodResources {} -> True
     CompiledGpuResources {} -> True
 
+isGpuPlacement :: CompiledPlacement -> Bool
+isGpuPlacement placement =
+  case placementResources placement of
+    CompiledHostResources {} -> False
+    CompiledPodResources {} -> False
+    CompiledGpuResources {} -> True
+
 placementObservation ::
   Maybe HostMemoryPartition ->
   Bool ->
   Bool ->
   Maybe Int ->
+  Bool ->
+  Maybe Int ->
   CompiledPlacement ->
   PlacementObservation
-placementObservation observedHostPartition hostSamplerAvailable podSamplerAvailable outerLimitMib placement =
-  case placementResources placement of
-    CompiledHostResources {} ->
-      HostPlacementObservation placementId hostSamplerAvailable observedHostPartition
-    CompiledPodResources {} ->
-      PodPlacementObservation placementId podSamplerAvailable outerLimitMib
-    CompiledGpuResources {} ->
-      GpuPlacementObservation
-        placementId
-        podSamplerAvailable
-        outerLimitMib
-        False
-        Nothing
-  where
-    placementId = modelId (placementDescriptor placement)
+placementObservation
+  observedHostPartition
+  hostSamplerAvailable
+  podSamplerAvailable
+  outerLimitMib
+  nvidiaSamplerAvailable
+  observedVramMib
+  placement =
+    case placementResources placement of
+      CompiledHostResources {} ->
+        HostPlacementObservation placementId hostSamplerAvailable observedHostPartition
+      CompiledPodResources {} ->
+        PodPlacementObservation placementId podSamplerAvailable outerLimitMib
+      CompiledGpuResources {} ->
+        GpuPlacementObservation
+          placementId
+          podSamplerAvailable
+          outerLimitMib
+          nvidiaSamplerAvailable
+          observedVramMib
+    where
+      placementId = modelId (placementDescriptor placement)
 
 readCgroupMemoryLimitMib :: IO (Maybe Int)
 readCgroupMemoryLimitMib = do

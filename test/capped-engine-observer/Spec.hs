@@ -26,16 +26,21 @@ import Data.IORef (atomicModifyIORef', newIORef, readIORef)
 import Data.List (isInfixOf)
 import Data.Text (Text)
 import Data.Text qualified as Text
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Runtime.CappedEngine.Cleanup
   ( runCappedEngineCleanup,
     withCappedEngineCleanupBoundary,
   )
-import Infernix.Runtime.CappedEngine.DarwinObserver
-  ( DarwinObserverKernelTest,
+import Infernix.Runtime.CappedEngine.FixedObserver
+  ( FixedObserverKernelTest,
+    NvidiaComputeApp (..),
+    nvidiaComputeAppGroupBytes,
     parseFootprintPhysicalBytes,
+    parseNvidiaComputeApps,
+    parseNvidiaDeviceTotalMib,
     parseTopProcessGroupMembers,
-    runDarwinObserverFixtureModeIfRequested,
-    runDarwinObserverKernelTest,
+    runFixedObserverFixtureModeIfRequested,
+    runFixedObserverKernelTest,
   )
 import Infernix.Runtime.CappedEngine.OutputCapture
   ( BoundedCapture (..),
@@ -49,20 +54,25 @@ import System.Posix.Types (CPid)
 -- The startup probe runs the public Apple tools, so only the Apple branch of
 -- 'observerProbeTest' below can call it.
 #if defined(darwin_HOST_OS)
-import Infernix.Runtime.CappedEngine.DarwinObserver
+import Infernix.Runtime.CappedEngine.FixedObserver
   ( probePhysicalFootprintObserver,
   )
 #endif
 
 main :: IO ()
 main = do
-  handledFixture <- runDarwinObserverFixtureModeIfRequested
+  -- Test images spawn self-exec children through the same close_fds
+  -- kernels the production binary uses, so they bound their descriptor
+  -- space first. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
+  handledFixture <- runFixedObserverFixtureModeIfRequested
   unless handledFixture $ do
     parserTests
+    nvidiaParserTests
     boundedCaptureTests
     cleanupBoundaryTests
     forM_ allKernelTests $ \testCase -> do
-      result <- runDarwinObserverKernelTest testCase
+      result <- runFixedObserverKernelTest testCase
       case result of
         Right () -> pure ()
         Left reason ->
@@ -72,7 +82,7 @@ main = do
                 <> Text.unpack reason
             )
     observerProbeTest
-    putStrLn "capped-engine Darwin observer tests passed"
+    putStrLn "capped-engine fixed public-tool observer tests passed"
 
 cleanupBoundaryTests :: IO ()
 cleanupBoundaryTests = do
@@ -250,7 +260,7 @@ observerProbeTest = do
 observerProbeTest = pure ()
 #endif
 
-allKernelTests :: [DarwinObserverKernelTest]
+allKernelTests :: [FixedObserverKernelTest]
 allKernelTests = [minBound .. maxBound]
 
 parserTests :: IO ()
@@ -315,6 +325,74 @@ parserTests = do
   assertLeft
     "footprint parser rejects non-byte units"
     (parseFootprintPhysicalBytes "phys_footprint: 10 K\n")
+
+-- | Phase 6 Sprint 6.44 — the fixed NVIDIA observer's parsers. The valid
+-- payloads are the exact shapes @nvidia-smi ... --format=csv,noheader,nounits@
+-- produced on the supported CUDA host, including the space after each comma.
+nvidiaParserTests :: IO ()
+nvidiaParserTests = do
+  assertEqual
+    "compute-app parser returns every pid and its MiB"
+    (Right [NvidiaComputeApp (pid 473) 1008, NvidiaComputeApp (pid 512) 64])
+    (parseNvidiaComputeApps "473, 1008\n512, 64\n")
+  assertEqual
+    "compute-app parser treats an empty payload as no compute application"
+    (Right [])
+    (parseNvidiaComputeApps "")
+  assertEqual
+    "compute-app parser ignores trailing blank lines"
+    (Right [NvidiaComputeApp (pid 473) 1008])
+    (parseNvidiaComputeApps "473, 1008\n\n")
+  assertLeft
+    "compute-app parser rejects a row that is not a pid,mib pair"
+    (parseNvidiaComputeApps "473\n")
+  assertLeft
+    "compute-app parser rejects a non-decimal memory quantity"
+    (parseNvidiaComputeApps "473, [N/A]\n")
+  assertLeft
+    "compute-app parser rejects a non-decimal pid"
+    (parseNvidiaComputeApps "not-a-pid, 1008\n")
+  assertLeft
+    "compute-app parser rejects pid zero"
+    (parseNvidiaComputeApps "0, 1008\n")
+  assertLeft
+    "compute-app parser rejects a repeated pid"
+    (parseNvidiaComputeApps "473, 1008\n473, 64\n")
+
+  assertEqual
+    "device-memory parser returns the exact total MiB"
+    (Right 32607)
+    (parseNvidiaDeviceTotalMib "32607\n")
+  assertLeft
+    "device-memory parser rejects an absent device"
+    (parseNvidiaDeviceTotalMib "")
+  assertLeft
+    "device-memory parser rejects a zero total"
+    (parseNvidiaDeviceTotalMib "0\n")
+  assertLeft
+    "device-memory parser rejects a multi-device host"
+    (parseNvidiaDeviceTotalMib "32607\n32607\n")
+  assertLeft
+    "device-memory parser rejects a non-decimal total"
+    (parseNvidiaDeviceTotalMib "[N/A]\n")
+
+  assertEqual
+    "group attribution sums only the members' device memory"
+    (Right (1008 * 1024 * 1024))
+    ( nvidiaComputeAppGroupBytes
+        [pid 473]
+        [NvidiaComputeApp (pid 473) 1008, NvidiaComputeApp (pid 900) 4096]
+    )
+  assertEqual
+    "group attribution of a member with no compute context is zero, not a loss"
+    (Right 0)
+    (nvidiaComputeAppGroupBytes [pid 473] [])
+  assertLeft
+    "group attribution rejects a MiB quantity that overflows its byte conversion"
+    ( nvidiaComputeAppGroupBytes
+        [pid 473]
+        [NvidiaComputeApp (pid 473) maxBound]
+    )
 
 validTopOutput :: ByteString
 validTopOutput =

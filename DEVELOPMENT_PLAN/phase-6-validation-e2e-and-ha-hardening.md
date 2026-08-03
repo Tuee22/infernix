@@ -1,8 +1,14 @@
 # Phase 6: Validation, E2E, and HA Hardening
 
-**Status**: Blocked — Sprint 6.43 is reopened for the owner-atomic harness teardown correction found
-while executing Phase 2 in numerical order, and Sprint 6.44 (verified NVIDIA enforcement and zero
-raw-spawn exemptions) is blocked by Phase 4 Sprint 4.32. Wave X remains valid for the narrower
+**Status**: Active — Validation Only. Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
+exemption reduction) is **code-side closed on 2026-08-02** and is no longer blocked: Phase 4 Sprint
+4.32's code-side closure landed the shared resource-indexed execution boundary it consumes. The
+`linux-gpu` lane compiles an execution plan for the first time — a device-using model now carries two
+independently indexed grants and two live watchdogs — and the NVIDIA per-process-group VRAM observer
+is a fixed bounded public-tool kernel whose namespace-local attribution was measured on real hardware
+rather than assumed. Sprint 6.43 remains reopened for the owner-atomic harness teardown correction
+found while executing Phase 2 in numerical order; its implementation is landed and its final
+cross-phase review is recorded below. Wave X remains valid for the narrower
 ownership/state representation it exercised, but it did not prove that the ownership decision and
 destructive teardown share one lifecycle lease. The owner-atomic implementation is landed with
 Phase 2 Sprint 2.15. Phase 2's fp16 Bark correction is also implemented with focused checks GREEN,
@@ -2715,10 +2721,48 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   the 2026-07-23 behavioral contract; after Phases 2 and 4 close, rerun `infernix test all` on
   apple-silicon plus linux-cpu for the 2026-07-25 owner-atomic correction
 
+### Final cross-phase review (2026-08-02)
+
+The review ran four independent adversarial lenses — cross-process lock atomicity, crash/kill safety,
+type-level ownership evidence, and harness-seizure fail-closed behaviour — over `Cluster.hs`,
+`CLI.hs`, `LifecycleLock.hs`, `MutationRecovery.hs`, the integration chaos sites, and the four
+teardown compile-fail fixtures. Seven findings were raised; each was then attacked from two
+independent angles (is the interleaving reachable in the real source, and would existing coverage
+catch it). **Three were refuted and four survived.** The review is therefore *not* an acceptance:
+it reopened the sprint's scope.
+
+**Refuted** (recorded so they are not re-raised): the teardown authority is reusable across regions
+(the compile-fail fixtures do pin region reuse); `authorizeClusterOwnership` ignores the recorded
+owner on an empty inventory (a pristine checkout falls to the refusal arm); the kill-9 reservation
+path aborts every subsequent command without reconciling.
+
+**Confirmed and fixed with this sprint:**
+
+- *(Medium)* `prepareLinuxGpuEngineDeployment` in `test/integration/Spec.hs` rotated the shared and
+  per-engine `linux-gpu` engine Deployments between replica counts **outside**
+  `withPersistedClusterMutation`, unlike its two sibling chaos sites whose own comments state the
+  marker exists precisely so a SIGKILL mid-mutation leaves a detectable dirty cluster. A kill anywhere
+  in that rotation left the persisted state reading `ClusterReady` while engine Deployments sat scaled
+  to zero — the exact false steady-state the doctrine forbids. The rotation is now bracketed, loading
+  a fresh state and running under the `linux-gpu-engine-deployment-rotation` marker.
+
+**Confirmed and carried into a new sprint** (see [Sprint 6.45](#sprint-645-machine-scoped-cluster-slot-ownership-and-type-indexed-teardown-owner-planned)):
+
+- *(High)* the Kind cluster name is machine-global while the lifecycle lock, reservation, and
+  persisted state are repo-local;
+- *(Medium)* the harness reservation is likewise repo-local, so the fence that should hold for the
+  whole test body is invisible to a process rooted at a different checkout;
+- *(Medium)* `ClusterTeardownAuthority` type-indexes only the lock region, not the owner, so the
+  documented "tearing down an `OperatorOwned` cluster does not typecheck" was an over-claim. The
+  refusal is a value comparison producing an `ioError` under the held lease. The doctrine wording in
+  `CLAUDE.md`, `AGENTS.md`, and
+  [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
+  is corrected to say what the code actually does, with the type-level work scheduled.
+
 ### Remaining Work
 
-- complete final cross-phase review for the landed 2026-07-25 owner-atomic
-  reservation/teardown correction
+- Sprint 6.45 owns the three carried findings. Sprint 6.43 cannot reach `Done` before it, because two
+  of them contradict this sprint's own stated deliverable.
 - after Phase 2 closes under Wave Y and Phase 4 closes, rerun the machine-independent gates and the
   Phase 6 apple-silicon plus linux-cpu behavioral cohort; record the new evidence without rewriting
   Wave X's narrower historical claim
@@ -2757,14 +2801,34 @@ correction review and Stage 1 are green; Phase 6's own final review and
 machine-independent/behavioral gates remain, ordered after Phase 2 closes under Wave Y and Phase 4
 closes.
 
-## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Blocked]
+## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active — Validation Only]
 
-**Status**: Blocked
-**Code-side closure**: Not started
-**Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave
-**Blocked by**: Phase 4 Sprint 4.32
-**Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Lint/HaskellStyle.hs`, validation suites
-**Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/development/testing_strategy.md`
+**Status**: Active — code-side closed on 2026-08-02. The `linux-gpu` behavioral cohort is the only
+remaining gate, and it is runnable on the current host for the first time (CUDA Linux, RTX 5090).
+**Code-side closure**: Complete. The complete machine-independent gate set is GREEN:
+`cabal build all --enable-tests` (`-Wall -Werror`), `infernix-unit`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
+(6 positive / 81 negative), `infernix-haskell-style` (`haskell-style-check: ok`, including the
+realness rules), and `lint files|chart|proto|docs` plus `docs check`.
+**Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave — pending, and
+now the sprint's **only** remaining item. Its three prior code-side residuals — the adversarial CUDA
+breach fixture, the `close_fds` descriptor stall, and the raw-spawn exemption decision — are all
+closed on 2026-08-03 and are recorded in their own sections below.
+**Blocked by**: nothing. Phase 4 Sprint 4.32's code-side closure landed the shared resource-indexed
+execution boundary this sprint consumes.
+**Implementation**: `src/Infernix/DescriptorSpace.hs` (new — the bounded descriptor space the
+`close_fds` correction rests on), `src/Infernix/Runtime/CappedEngine/FixedObserver.hs` (renamed from
+`DarwinObserver.hs`), `src/Infernix/Runtime/CappedEngine/Internal.hs`,
+`src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Runtime/Enforcer.hs`,
+`src/Infernix/ExecutionPlan.hs`, `src/Infernix/Types.hs`, `src/Infernix/Models.hs`,
+`src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/Substrate/Internal.hs`,
+`src/Infernix/Cluster/Invoke.hs` (new), `src/Infernix/Cluster/Command.hs`,
+`src/Infernix/Cluster/Subprocess.hs`, `src/Infernix/Runtime/Pulsar.hs`,
+`src/Infernix/Lint/HaskellStyle.hs`, `test/unit/Spec.hs`,
+`test/capped-engine-observer/Spec.hs`, `test/compile-fail/`
+**Docs to update**: `documents/architecture/typed_execution_plan.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/development/testing_strategy.md` — all three updated with this sprint.
 
 ### Objective
 
@@ -2778,19 +2842,535 @@ and reduce raw-spawn enforcement to explicit kernel import boundaries with no br
 - provisioning/smoke processes use a bounded `ProvisioningGrant`
 - raw-spawn lint exemptions are removed outside command, engine, and provisioning kernels
 
+### Landed Implementation
+
+The starting state was that **no `linux-gpu` execution plan could compile at all**:
+`runtimeBudgetErrors` returned `GpuDualResourceBudgetRequired` for every `LinuxGpu` config,
+`compileResources` had no `LinuxGpu` arm, `CompiledGpuResources` was constructed only in a test
+fixture, `Infernix.Runtime.Enforcer` hardcoded NVIDIA availability to `False`, and
+`watchdogForGrant` returned a hard `Left "NVIDIA per-process VRAM enforcement is unavailable"`.
+
+1. **Dual budget.** `InferenceMemoryBudget` gains `DualEnforcedBudget PodMemoryLimit PodMemoryLimit`
+   (pod RAM first, NVIDIA VRAM second). `resolveInferenceMemoryBudget LinuxGpu` emits it, the
+   generated Dhall carries a third union arm (`DualEnforced`), and `memoryEnforcerErrors` walks every
+   named limit plus pins which physical resource each half of the dual arm names — two RAM limits or
+   two VRAM limits presented as dual enforcement is an `InvalidMemoryEnforcer` config error.
+2. **Dual grants.** `ResourceWitness` gains `NvidiaVramWitness`, and `compileResources` gains
+   `LinuxGpu` arms: a `requiresGpu` model compiles `CompiledGpuResources` with one grant admitted
+   against each limit, while a shared-lane model stays on `CompiledPodResources` alone — a VRAM grant
+   a model would never consume is not evidence of anything. `admitGrant` now takes the rejecting
+   limit's own source, so a dual-resource rejection names *which* limit was exceeded.
+3. **Fixed public-tool NVIDIA observer.** `DarwinObserver.hs` is renamed
+   `FixedObserver.hs`: the spawn/drain/deadline/cleanup kernel and its eight self-exec kernel tests
+   were already platform-neutral, so the module now owns both platforms' closed request vocabularies
+   — the Apple `/usr/bin/top` + `/usr/bin/footprint` pair on Darwin and the NVIDIA
+   `/usr/bin/nvidia-smi` pair elsewhere — with `FixedObserverSpec` still unexported. `nvidia-smi` is
+   pinned as a literal absolute path rather than resolved from the host-tools manifest, because an
+   enforcement observer that follows a configurable path is redirectable.
+4. **Per-process-group attribution.** Two properties were **measured, not assumed**, before the
+   design was fixed: NVML resolves each compute context against the reading process's PID namespace
+   and omits contexts it cannot resolve (a host process holding 1008 MiB was invisible from inside a
+   container, while the same allocation made *inside* the container was reported with the
+   container-local pid), and group membership is already available subprocess-free from
+   `/proc/<pid>/stat`. The NVIDIA lane therefore spawns exactly one fixed command per sample and
+   reuses the resident-set lane's `/proc` walk for membership.
+5. **Third watchdog.** `WatchdogSpec` gains `NvidiaVramWatchdog`, `watchdogForGrant` mints it, and
+   `runNvidiaWatchdog` mirrors the Linux RSS loop's fail-closed discipline: a sampler error, a
+   `/proc` enumeration failure, an overflow, or *no live group member for a still-running engine* is
+   `EngineEnforcementUnavailable`; a live member holding no CUDA context is `Just 0`, an ordinary
+   early-execution observation rather than a loss; a measured breach is `EngineExceededCeiling`.
+6. **Refinement.** `Infernix.Runtime.Enforcer` probes the sampler and the device envelope when a GPU
+   placement exists and wires both into `GpuPlacementObservation`, so `NvidiaSamplerUnavailable`,
+   `NvidiaEnvelopeUnavailable`, and `NvidiaEnvelopeTooSmall` are now reachable from production
+   observations rather than only from test fixtures.
+7. **Bounded-command migration.** `Infernix.Cluster.Invoke` hoists the setup/compile/kernel
+   invocation shape out of `Infernix.Cluster`, and both of `Runtime/Pulsar.hs`'s raw spawns became
+   closed bounded commands: the control-plane address probe reuses the existing
+   `DockerInspectContainerField … KindNetworkIpv4`, and the model-weight snapshot bootstrap — an
+   unbounded `readProcessWithExitCode` over a Poetry-driven upstream download, the sharpest remaining
+   instance of the hang class the doctrine exists to prevent — became
+   `PoetryModelSnapshotBootstrap`, rendered with `commandSpecRedacted` so MinIO credentials are not
+   written to the command label. It reuses the image-publication copy policy (40 minutes, bounded
+   retry, transient-then-fatal) rather than adding a configurable field, so operators' existing
+   generated host manifests keep decoding.
+8. **Lint tightening.** `unboundedExecExemptedFiles` drops `Runtime/Pulsar.hs` (now clean),
+   `Engines/LinuxNative.hs`, and `Python.hs` (the latter two had contained no raw spawn at all), and
+   `threadDelayExemptedFiles` drops `Python.hs`. A real hole is closed: whole-token matching meant
+   `withCreateProcess` never matched `createProcess`, so a non-exempt module could bracket an
+   unbounded spawn in plain sight — `withCreateProcess`, `runInteractiveProcess`, `runProcess`, and
+   `cleanupProcess` are now forbidden tokens, and `withCreateProcess` is forbidden by the engine-spawn
+   rule too.
+
+Deliverable 3 was already satisfied before this sprint and was re-verified rather than re-implemented:
+the provisioning facade's fifteen named steps funnel through three private dispatchers that all end at
+`runBoundedCommand`, and both smoke helpers go through the closed
+`runClosedInstalledRunnerSmoke` / `runClosedLinuxNativeArtifactSmoke` kernels. There is no raw spawn
+anywhere in the provisioning path.
+
+### First cohort attempt found a real defect in this sprint (2026-08-03)
+
+The first `./bootstrap/linux-gpu.sh test` run failed, and the failure was **caused by this sprint**,
+not by the environment. It is recorded in full because it is the single most valuable thing the
+cohort produced and because three plausible explanations were wrong before the right one was found by
+measurement.
+
+The run cleared every gate — clean in-image build, `haskell-style-check: ok`, `infernix-unit` PASS,
+Kind cluster, Harbor publication of all images including the three GPU engine images, preload,
+Keycloak/PostgreSQL — then `infernix-engine` timed out at `0 of 1 updated replicas are available` and
+the harness tore the cluster down cleanly.
+
+Three hypotheses were checked and refuted before the cause was found:
+
+1. *The GPU is not schedulable* — refuted. The log shows `nvkind hit its known configmap persistence
+   bug (exit 255)` with a fallback to repo-owned node setup, which looked like the culprit, and a
+   first check found no `nvidia.com/gpu` capacity. That check was taken **one second** after the
+   device-plugin daemonset was created and was simply premature: the plugin comes up and the worker
+   advertises `nvidia.com/gpu=1`.
+2. *The node label is missing* — refuted. The worker carries `infernix.runtime/gpu=true`.
+3. *Four engine Deployments contend for one GPU* — refuted. The generated lifecycle values already
+   set `infernix-engine` to 1 replica and every per-engine deployment to 0 at final phase precisely
+   so the single device is not oversubscribed.
+
+The actual cause was arithmetic, and was confirmed by reading the live pod rather than by inference:
+the engine pod's cgroup `memory.max` is `17179869184` bytes = **16384 MiB**, while
+`podRefinementErrors` requires the observed outer envelope to equal
+`childBudget + linuxOuterEnvelopeHeadroomMib` **exactly**. This sprint reused the `linux-cpu` child
+budget of 4096 MiB, so every GPU placement produced `OuterEnvelopeTooLarge 5120 16384`, refinement
+failed, no `ExecutableModel` was ever minted, the engine never wrote its subscription-ready sentinel,
+and the readiness probe never passed. The pod was `Running`, `ready=false`, `restarts=0`, with **no
+log output at all** — a shape that looks nothing like a crash and is easy to misread as an
+infrastructure problem.
+
+This defect was invisible to every machine-independent gate for a structural reason worth stating:
+before this sprint `linux-gpu` compiled no execution plan at all, so the pod-RAM envelope equality
+had never once executed on that lane. The GPU engine pod is deliberately provisioned at 16 GiB
+(framework host RAM for CUDA contexts and model loading) where the CPU engine pod gets 5 GiB.
+
+**The fix, and the more important fix.** `linuxGpuEngineInferenceRamBudgetMib` is now *derived* as
+`linuxGpuEnginePodMemoryLimitMib - linuxOuterEnvelopeHeadroomMib`, so the budget and the pod limit
+cannot be written down independently. The durable correction is the guard that was missing: the unit
+suite asserted the `linux-cpu` envelope relationship but had no `linux-gpu` counterpart. It now
+asserts, for **both** lanes, that the child budget plus the headroom equals the engine pod memory
+limit exactly, and ties the pod-limit constant to the literal the generated Helm values emit. The
+guard was negative-tested by restoring the 4096 MiB budget: the unit suite fails with
+`linux-gpu child-execution budget plus the daemon/watchdog headroom equals the engine pod memory
+limit exactly, as runtime refinement requires`. A multi-hour cohort is no longer required to catch
+this class of drift.
+
+Consequence for evidence: the failed run also proved that the cohort consumes the **baked image
+source**, because `compose.yaml` bind-mounts only `./.data` while `/workspace` is image content. Any
+source change — including this fix — requires an exact-source image rebuild before its cohort counts.
+
+### Root cause of the second cohort failure: `close_fds` against the containerd fd limit (2026-08-03)
+
+Cohort attempts 4 and 5 failed with `infernix-engine` crash-looping on
+`NvidiaSamplerUnavailable` for all five admitted GPU placements. The instrumentation added above
+(`probeNvidiaVramSampler` carrying its reason) turned a multi-hour hypothesis cycle into a single
+run, and the reason was:
+
+> NVIDIA device observation failed: fixed /usr/bin/nvidia-smi device-memory observer exceeded its
+> total monotonic deadline — stdout: (empty) stderr: (empty)
+
+Empty captured streams mean the child produced nothing at all in 5 seconds, while the same command
+run by hand in the same pod returns `32607` in 26-28 ms at a host load of 3.66. The child was
+therefore stalling **before `exec`**, not running slowly.
+
+The measured environmental difference is the fd limit:
+
+| Context | `RLIMIT_NOFILE` |
+|---|---|
+| engine pod (containerd) | 1073741816 |
+| launcher container (docker) | 1024 |
+
+`System.Process` with `close_fds = True` closes every descriptor from 3 up to that limit before
+`exec`. A direct measurement with the same library on this host gives 0 ms at rlimit 1024 and
+**133 ms at rlimit 524288** — about 0.25 µs per descriptor. Extrapolated to the pod's 1,073,741,816
+descriptors that is roughly **4.5 minutes per spawn**, against a 5-second observer deadline. Every
+observation stalls, refinement fails, the engine never becomes ready.
+
+This also explains why no earlier gate caught it. The unit suite's live NVIDIA assertions pass in the
+launcher container, whose limit is 1024, and pass on the development host directly; only a
+containerd pod carries the billion-descriptor limit.
+
+**The finding is not confined to this sprint.** `close_fds = True` is set in three kernels:
+`FixedObserver.hs` (the observer spawn), `Runtime/CappedEngine/Internal.hs` (the capped-engine
+engine launch), and `Cluster/Subprocess.hs` (the bounded-command self-exec anchor). If the
+measurement generalizes, every subprocess those kernels start inside a containerd pod pays the same
+pre-`exec` cost. That has **not** been verified: `linux-cpu` cohorts do pass with real per-model
+inference, so either they pay this cost and are simply slow, or something differs between those call
+sites that has not been identified. Establishing which is the first task of the follow-on, because
+the answer determines whether this is a Sprint 6.44 bug or a platform-wide one.
+
+### The descriptor-space correction (2026-08-03)
+
+The open question above is now **answered by measurement rather than inference, and the answer is
+that the defect is platform-wide, not confined to this sprint.**
+
+Three measurements were taken with the same public `System.Process` API and the same flags the
+kernels use. The first two replace the previous extrapolation:
+
+| soft `RLIMIT_NOFILE` | `close_fds = True` | `close_fds = False` |
+|---|---|---|
+| 1024 | 0.9 ms | 0.9 ms |
+| 4096 | 1.8 ms | 0.6 ms |
+| 16384 | 4.9 ms | 0.6 ms |
+| 65536 | 17.5 ms | 0.6 ms |
+| 524288 | 130 ms | 0.5 ms |
+| **1073741816 (a pod's limit)** | **313 s** | **0.8 ms** |
+
+The last row was taken inside a container started with the pod's own
+`--ulimit nofile=1073741816`, so it is a measurement of the real limit rather than a linear
+extrapolation from 524288 (the extrapolation predicted ~4.5 min; the measured figure is 5 min 13 s).
+The entire cost is the pre-`exec` descriptor walk: at every limit, the same spawn with
+`close_fds = False` is under a millisecond.
+
+Reading the `process-1.6.26.1` source settles the mechanism and the remedy together. `close_fds` is
+one of the configurations `posix_spawn` cannot express (`do_spawn_posix` returns `-2` for it), so the
+spawn always falls back to fork/exec, and in the forked child `do_spawn_fork` runs
+`for (int i = 3; i < get_max_fd(); i++) close(i);` where `get_max_fd()` is `sysconf(_SC_OPEN_MAX)` —
+the soft `RLIMIT_NOFILE`. The loop is linear in a limit the process **inherits** rather than chooses.
+
+**So the fix is to bound the resource, not to weaken the isolation.** The previously-obvious change —
+dropping `close_fds` — was correctly rejected. `Infernix.DescriptorSpace` (new) lowers the soft limit
+to a 16384 ceiling as the first action of a process image, before the internal self-exec dispatch and
+before anything opens a descriptor. Because a process cannot open a descriptor numbered at or above
+its own soft limit, no descriptor above the bound can ever exist afterwards, so the child's walk over
+`3 .. bound` still closes the **entire** descriptor space: `close_fds` keeps its exact meaning and
+only its cost becomes bounded. The bound is inherited across `fork` and `exec`, so the anchor,
+supervisor, pin, target, and engine children are bounded by their parent without doing anything
+themselves. The limit is only ever lowered, so a host that already imposes a tighter one keeps it,
+and the hard limit is written back unchanged, so establishing the bound needs no privilege.
+
+16384 was chosen from the table: it costs 4.9 ms, which the observer's 50 ms sampling cadence absorbs
+alongside a ~27 ms `nvidia-smi` query, while the next round value up (65536, 17.5 ms) does not leave
+that cadence enough room. Nothing this platform runs comes within two orders of magnitude of 16384
+open descriptors.
+
+Three guards, because a startup call that a later change silently drops would reintroduce a
+five-minute stall that reads as a hang:
+
+1. `requireBoundedDescriptorSpace` is called by all three kernels immediately before `createProcess`.
+   An unbounded process image is now a **named refusal** identifying the spawning kernel, not a
+   timeout with two empty captured streams.
+2. A new `unboundedDescriptorSpawnViolations` lint rule makes a `close_fds` spawn surface that never
+   observes the bound a build error. It is file-scoped like its sibling rules, so it does not catch a
+   second unguarded spawn added to a file that already observes the bound; that limitation is stated
+   rather than papered over.
+3. Unit assertions pin that the bound holds in the test image, that an unbounded space is refused by
+   name, that re-establishing lowers to the ceiling, and that a tighter host-imposed limit is
+   preserved rather than widened.
+
+**Evidence.** `cabal build all --enable-tests` under `-Wall -Werror`, `infernix-haskell-style`
+(`haskell-style-check: ok`, including the new rule over the whole tree), and `infernix-unit` are
+GREEN. End to end: the `infernix-capped-engine-observer` suite — eight self-exec kernel tests that
+each spawn through `close_fds = True` — completes in **3.7 s inside a container at the pod's real
+`RLIMIT_NOFILE` of 1073741816**, against 3.2 s on the host. That is the same limit at which a single
+spawn previously cost 313 s.
+
+One caveat on that container run, recorded so it is not rediscovered: the suite must not be started
+as PID 1. A container init has different signal and reaping semantics, and the observer's
+group-termination fixtures depend on ordinary signal defaults, so the suite hangs as PID 1 at *any*
+fd limit and in any image. `docker run --init` is what makes the measurement above meaningful; the
+cohort is unaffected because it enters through the launcher entrypoint.
+
 ### Validation
 
-- negative tests reject RAM/VRAM enforcer substitution and unenforced GPU placements
+- negative tests reject RAM/VRAM enforcer substitution and unenforced GPU placements — **GREEN**:
+  two new compile-fail fixtures (`fail-vram-enforcer-pod-grant`, `fail-pod-enforcer-vram-grant`) join
+  the existing `fail-vram-enforcer-host-grant` and `fail-host-enforcer-pod-grant`, so every
+  cross-resource substitution among the three indices is a type error; the unit suite rejects a
+  single-resource `linux-gpu` budget, a dual budget with swapped resources on each half, and asserts
+  that a placement's enforced resource set is `[PodRam, GpuVram]` exactly when the model uses the
+  device
 - adversarial CUDA allocation breaches the declared ceiling, yields typed terminal failure, and
-  leaves the GPU worker and subsequent smaller inference healthy
-- import-boundary and lint scans report zero non-kernel raw process access
-- selected `linux-gpu` plus `linux-cpu` full-suite gate passes against one frozen state
+  leaves the GPU worker and subsequent smaller inference healthy — **NOW COVERED (2026-08-03) and
+  GREEN against the real RTX 5090.** `runNvidiaVramBreachAssertions` in `test/unit/Spec.hs` launches a
+  process-group-leading child that holds a real device allocation made through `libcuda.so.1`
+  driver-API calls under `ctypes` — no compiler, no repo-owned native source — and drives the
+  existing `nvidiaWatchdogOutcomeForTest` seam exactly as Phase 4 Sprint 4.32's
+  `runLinuxWatchdogBreachAssertions` drives its Linux CPU counterpart. A breach returns typed
+  `EngineExceededCeiling`, the group is reaped non-successfully, and a subsequent smaller allocation
+  completes cleanly under the same enforcer.
+
+  The ceilings were chosen from measurement, not assumption: a CUDA context is itself a real device
+  allocation of **496 MiB** on this host before any `cuMemAlloc`, so a naive small ceiling would have
+  been breached by context overhead alone and would have proved nothing about the allocation. The
+  breach case allocates 3072 MiB against a 1024 MiB ceiling (observed 3568 MiB attributed to the
+  pid), and the clean case allocates 64 MiB against a 3072 MiB ceiling (~560 MiB). Both outcomes are
+  clear of the context floor in both directions.
+
+  The assertion was **negative-tested**, as the envelope guard above was: reducing the breach
+  allocation to 64 MiB makes the suite fail with
+  `a live CUDA allocation past the declared ceiling returns the typed ceiling outcome and reaps the
+  grouped engine non-successfully; observed Nothing and ExitSuccess`. It is therefore live rather
+  than vacuous. It skips loudly and by name when `/usr/bin/nvidia-smi` or the pinned interpreter is
+  absent, or when the fixture cannot reach its allocation gate — never silently.
+
+  The pre-existing analysis of why nothing covered this is retained below, because it is what
+  identified the seam that closed it:
+  - `test/integration/Spec.hs` has **no runtime ceiling-breach case at all**.
+    `validateCatalogModelInference` classifies every row into exactly two outcomes — a model the
+    compiler marked unavailable publishes a typed `ModelMemoryLimitExceeded`, and every other model
+    must publish `completed`. A *runtime* breach of an admitted ceiling is neither, so nothing in the
+    suite would observe one.
+  - The unit suite **can** reach the device inside the cohort, contrary to an earlier reading of this
+    sprint. `/usr/bin/nvidia-smi` and `libcuda.so.1` are both present in the launcher image, and the
+    Sprint 6.44 live NVIDIA assertions **ran and passed** inside the `linux-gpu` cohort — the
+    `skipping the live NVIDIA VRAM watchdog assertions` line does not appear in its log. That is a
+    property of the **host Docker daemon**, not of `compose.yaml`: this development host sets
+    `"default-runtime": "nvidia"` in `/etc/docker/daemon.json`, so every container gets the driver
+    injected without a `--gpus` flag or a compose device reservation. On a host whose default runtime
+    is `runc`, the outer container would have no device and those assertions would skip loudly
+    instead. The suite is honest either way, but its coverage is host-configuration-dependent and
+    must not be recorded as unconditional.
+  - So the gap is not "the cohort cannot reach a GPU"; it is that **no fixture allocates device
+    memory past a ceiling**. The Phase 4 Sprint 4.32 precedent for the Linux CPU breach —
+    `runLinuxWatchdogBreachAssertions` driving `linuxWatchdogOutcomeForTest` against a live self-exec
+    child — transfers directly: `nvidiaWatchdogOutcomeForTest` already exists and takes the same
+    shape. What is missing is a child that makes a real CUDA allocation, which needs no compiler and
+    no repo-owned native source: `libcuda.so.1` driver-API calls through `ctypes` from the image's
+    Python are sufficient (`cuInit`, `cuDeviceGet`, `cuCtxCreate_v2`, `cuMemAlloc_v2`), and were
+    verified to produce a device allocation that `nvidia-smi --query-compute-apps` attributes to the
+    allocating pid.
+
+  What *is* GREEN, and ran against the real RTX 5090 both on the development host and inside the
+  `linux-gpu` cohort: the fixed observer's parsers and every rejection they encode, the
+  group-attribution arithmetic and its overflow rejections, a live no-CUDA-context sample that
+  completes without a fabricated breach or an enforcement failure, a positive device envelope, and an
+  available startup probe.
+
+  Note when reading cohort output: 13 of the 16 `linux-gpu` catalog rows are device-using and 3 are
+  shared-lane, so both new compile arms are exercised. After the envelope correction the two limits
+  are no longer equal — pod RAM is 15360 MiB and VRAM is 4096 MiB — which makes the typed rejections
+  more informative than they would have been: a device-using row between those two figures (the
+  6 GiB music/MLX rows, the 8 GiB Bark and Demucs rows, the 12 GiB image rows) is rejected against
+  `gpu-vram`, naming the resource an operator would actually have to enlarge. Only the 28 GiB video
+  row exceeds the RAM limit as well, and because the pod grant is admitted first it reports
+  `pod-ram`; that is a real limit genuinely exceeded, not a sign that VRAM admission is unwired.
+  Ordering the dual admission VRAM-first for `requiresGpu` models would make even that row name the
+  device, and remains a small follow-on.
+
+- import-boundary and lint scans report zero non-kernel raw process access — **GREEN, and the
+  residual is now a settled scope decision rather than a backlog.** `infernix-haskell-style` passes
+  with the tightened token set, and the exemption set is down from twelve rows to **seven**: four
+  kernels plus three surfaces whose exemption is a recorded decision. See the exemption resolution
+  below.
+- selected `linux-gpu` plus `linux-cpu` full-suite gate passes against one frozen state — **pending**
 
 ### Remaining Work
 
-Blocked until Sprint 4.32 closes the shared resource-indexed execution boundary.
+1. **The `linux-gpu` behavioral cohort** (`./bootstrap/linux-gpu.sh test`) plus the paired
+   `linux-cpu` cohort against one frozen state. This is the sprint's only blocking residual and is
+   runnable on the current CUDA host. It has not been attempted since the descriptor-space
+   correction; because the cohort consumes the **baked image source**, it needs an exact-source image
+   rebuild first. The two prior blockers it failed on are now closed by construction and guarded —
+   the GPU envelope arithmetic by a both-lane unit assertion, and the `close_fds` descriptor walk by
+   the bound, the three kernel observations, and the new lint rule.
+2. ~~**A fixture that allocates device memory past a ceiling.**~~ **CLOSED (2026-08-03)** — see the
+   Validation section above. `runNvidiaVramBreachAssertions` drives a real `libcuda.so.1` allocation
+   through `nvidiaWatchdogOutcomeForTest`, is GREEN against the RTX 5090, and was negative-tested. It
+   is a source change, so it needs its own frozen state and is part of the item-1 rebuild.
+   The original analysis is retained for the record:
+   (`runLinuxWatchdogBreachAssertions`) both already exist; what is missing is a child that holds a
+   real CUDA allocation. Driver-API calls through `ctypes` on `libcuda.so.1` from the image's Python
+   need no compiler and add no repo-owned native source, and were verified to produce an allocation
+   that `nvidia-smi --query-compute-apps` attributes to the allocating pid in the same PID namespace.
+   The assertion must mirror the Linux CPU case: a breach returns typed `EngineExceededCeiling`, the
+   group is reaped non-successfully, and a subsequent smaller allocation completes cleanly. It must
+   skip loudly — never vacuously — when the device is absent, because outer-container GPU access
+   depends on the host daemon's default runtime rather than on `compose.yaml`. **Until this exists,
+   Sprint 6.44 cannot reach `Done` on any cohort result**, and because it is a source change it needs
+   its own frozen state and a follow-up cohort.
+3. ~~**Five raw-spawn exemptions remain**~~ **CLOSED (2026-08-03): nine rows → seven, and the
+   doctrine decision is made rather than deferred.** Two rows were deleted by migration and three are
+   now recorded decisions. The decision is that the bounded-command kernel's closed operand catalog
+   is the right tool wherever the operand vocabulary *is* closed, and that two situations genuinely
+   fall outside it — an operator's own passthrough invocation, and a spawn that must run *before* the
+   host manifest exists. Neither is a licence to be unbounded, so every retained non-daemon surface
+   gained a required deadline.
+
+   Two findings changed the shape of this work relative to the sprint's description:
+
+   - **`HostTools.hs` was not "the generic host-tool runner" — three of its five raw spawns were
+     dead.** `runHostTool`, `runHostToolWithCwd`, and `readHostToolWithExitCode` had zero callers
+     anywhere in the repo and are deleted. Its two live invocations, `sysctl -n hw.memsize` and
+     `colima list --json`, both carry *fixed* argv. So the module is not a generic passthrough at
+     all; it is the pre-manifest fixed host probe surface, and its exemption is now recorded as such.
+   - **`Workflow.hs`'s `runWorkflowCommand` was generic only on paper.** Its sole caller passed a
+     renderer-owned literal argv, so the genericity was an artifact rather than a requirement and was
+     removed with the migration rather than preserved.
+
+   Migrated to closed bounded commands (exemption rows deleted): `Lint/Files.hs`
+   (`git -c safe.directory=… ls-files -z`, `SourceInventoryOperation`), and `Workflow.hs` (both
+   `node --version` as `WebToolchainProbeOperation` and the npm install as
+   `WebDependencyInstallOperation`, the latter indexed by a closed two-constructor toolchain over the
+   only two argv shapes the old runner ever received). All three reuse an existing policy-plan field
+   rather than adding one, so the generated host-manifest schema is unchanged and an operator's
+   already-generated `./infernix-host.dhall` keeps decoding — the same constraint Sprint 6.44's
+   `PoetryModelSnapshotBootstrap` respected.
+
+   Retained as scope decisions, each with a required deadline where a deadline is the right shape:
+   - `src/Infernix/CLI.hs` — two surfaces named individually. `withRuntimeServiceDaemon` starts a
+     deliberately long-lived host daemon, for which a *total* deadline is the wrong shape; it is
+     bounded structurally by its terminate-and-wait bracket instead.
+     `runCommandWithCwdAndEnvRemovingWithPaths` is an operator passthrough that must stream to the
+     operator's terminal and exit with the child's code — bounding an operator's own `cabal test`
+     invocation would be wrong. The one CLI capture that is *not* a passthrough
+     (`captureCliHostTool`, the demo-UI `curl`) gained a 120 s deadline.
+   - `src/Infernix/HostPrereqs.hs` — the objection here is **ordering, not operands**: all three
+     spawns already have fixed executables and fixed argv, but they run before any host manifest or
+     Docker context exists, because reconciling those is precisely their job, and
+     `clusterSubprocessEnv` fails closed without a manifest. Deadlines added (120 s for the two
+     Docker probes, 45 min for `brew install`, which is a genuine long reconciliation).
+   - `src/Infernix/HostTools.hs` — the pre-manifest fixed host probes, 120 s each, matching the
+     `hostProbe` deadline the generated manifest gives every closed `HostProbeOperation` so the
+     pre-manifest and post-manifest probes agree on one number.
+
+   Two consequences are recorded rather than left to be discovered. `infernix lint files` now
+   requires the host manifest and fails closed naming the setup failure instead of falling back to
+   ambient `$PATH`; that is the intended doctrine direction but it is a real behaviour change for a
+   pre-config invocation (the `.git`-absent snapshot-manifest path used in container images is
+   untouched). And migrating `Lint/Files.hs` was verified end to end rather than only by gate: in a
+   scratch repository, staging a `.c` file and deleting it from the working tree still produced the
+   forbidden-native-source violation, which can only come from `git ls-files -z` output flowing
+   through the bounded command, because the working-tree walk cannot see a deleted file.
+
+4. **`unboundedEngineSpawnExemptedFiles` — resolved as "cannot be narrowed by a smaller list", not
+   narrowed.** The redundant `cappedEngineKernelFile :` cons is removed (that file was already a
+   member, so it produced a duplicate rather than a wider set), and the two sets now coincide *by
+   construction*. The reason is stated plainly in the Haddock instead of being carried as a backlog
+   item: both rules match the same `System.Process` tokens on the same lines, so for any file
+   legitimately retaining a non-engine raw spawn, removing it from the engine set would fire the
+   engine rule on a line that is not an engine spawn. Separating the two gates needs a **stronger
+   detector, not a smaller list** — either a per-site intent annotation or an AST pass that resolves
+   what each spawn actually executes, for which the `check-code` realness pass is the precedent. No
+   narrowing is claimed, because none happened.
 
 ---
+
+## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Planned]
+
+**Status**: Planned — opened 2026-08-02 by Sprint 6.43's final cross-phase review, which confirmed
+three findings the sprint's own deliverables claim are already closed.
+**Code-side closure**: Not started
+**Cohort gate**: selected accelerator plus `linux-cpu`
+**Blocked by**: nothing — dependencies are satisfied; this is ordered after Sprint 6.43's landed
+implementation and before Sprint 6.43 can reach `Done`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/LifecycleLock.hs`,
+`src/Infernix/CLI.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`,
+`documents/operations/cluster_bootstrap_runbook.md`, `CLAUDE.md`, `AGENTS.md`
+
+### Objective
+
+Make the cluster-slot guard cover the resource it actually protects, and make the owner
+discrimination the type-level property the doctrine claims it is.
+
+### The defect
+
+`kindClusterName` drops its `dataRoot` discriminator whenever `dataRoot == repoRoot </> ".data"`,
+which is what both shipped default host manifests generate — i.e. every ordinary checkout. The
+protected resource, `infernix-<runtime>` on the shared Docker daemon, is therefore **machine-global**,
+while `clusterLifecycleLockPath`, `harnessReservationPath`, and `clusterStatePath` are all derived
+from the per-checkout `runtimeRoot`. Two checkouts on one host lock different inodes while contending
+for one cluster, and each authorizes ownership against the *other's* live Kind inventory using its
+*own* state file.
+
+The destructive path is reachable through ordinary use, not a contrived one: a killed harness run
+leaves a `HarnessOwned` state file behind (teardown persists `ClusterAbsent` but retains the owner
+field, and the interrupted-state reconcile only touches the reservation). A second checkout starting
+`infernix test all` with that leftover state observes the operator's live cluster in the shared
+inventory, matches it against its own recorded `HarnessOwned` owner, publishes its reservation, and
+deletes the operator's cluster — while the operator's process holds its own lifecycle lock and its
+own persisted state still reads `OperatorOwned` / `ClusterReady`. A *pristine* second checkout fails
+closed, which is why this was not caught earlier.
+
+The reverse direction is the same scope mismatch: because the reservation is repo-local, the fence
+that should hold for the entire span between `seizeHarnessClusterSlot` and
+`releaseHarnessClusterSlot` — deliberately wider than the lock — is invisible to an `infernix`
+process rooted elsewhere, so an operator can seize the slot *during* the harness's test body.
+
+Separately, `ClusterTeardownAuthority s` indexes only the lifecycle-lock region. The owner is an
+ordinary `teardownAuthorityOwner :: ClusterOwner` field and `ClusterOwner` is never promoted, so an
+authority minted for `HarnessOwned` and one minted for `OperatorOwned` are the same type and every
+consumer accepts either. The refusal is an `ioError` reached from a value comparison. The three
+teardown compile-fail fixtures exercise only the region parameter, so the compile-fail suite cannot
+detect regression of the property it is cited for.
+
+### Design analysis (2026-08-03) — the two named options are both unsound as written
+
+Before implementing, both options this sprint offered were checked against the two execution
+contexts the platform actually supports. **Neither works on its own**, and the reason is worth
+recording because it changes the deliverable.
+
+*Option (b), always discriminate the cluster name by the checkout*, has a blast radius wider than the
+sprint text suggests. `kindControlPlaneNodeName` is `kindClusterName <> "-control-plane"` and is
+consumed at seven sites — the `linux-gpu` worker filter, the in-cluster registry-hosts target
+`<name>-control-plane:30002`, retained-state node priming, the `docker port` container lookup, the
+outer-container Harbor address, `clusterEdgeHost`, and the Playwright host in `CLI.hs`. Renaming also
+orphans every existing operator cluster and every kubeconfig context. That is a migration, not a fix.
+
+*Option (a), move the lock and reservation to a machine-scoped location*, fails on the Linux lane for
+a reason the sprint did not consider. Two `linux-cpu`/`linux-gpu` checkouts run as two launcher
+**containers** that share the host Docker daemon — `compose.yaml` mounts `/var/run/docker.sock` — and
+therefore share the Kind inventory, but they do **not** share a filesystem. Worse, the baked host
+manifest gives every launcher container `hostRepoRoot = /workspace` and
+`hostDataRoot = /workspace/.data`, so any identity derived from an in-container path is *identical*
+across checkouts. A "machine-scoped" lock path is unreachable from inside the container, and a
+path-derived checkout identity actively collides. Note this also means `clusterNameHash (dataRoot)`
+— the discriminator option (b) would rely on — is constant across Linux checkouts, so option (b)
+does not even discriminate on the lane where the contention is most likely.
+
+What the two contexts genuinely share is the **Docker daemon**, which is exactly what deliverable 2
+already proposes: put the identity on the protected resource. That makes deliverable 2 the primary
+mechanism rather than a complement to deliverable 1, and it needs an identity that is per-checkout
+and machine-unique in *both* contexts. The host-side kind root is the candidate: the code already
+resolves it (`resolveHostKindRoot`, `kindUsesHostBindMounts`) precisely because the container needs
+to name host paths for bind mounts, so it is available in-container and differs per checkout there.
+`Command.ContainerInspectField` already carries a `MountSourceAt` field, so reading a bind-mount
+source back from a live container is an existing capability rather than a new one.
+
+The migration consequence is then confined to clusters created before the identity existed: they
+carry no label, and teardown must decide between refusing them (safe, but strands an operator's
+running cluster until an explicit reconcile) and grandfathering them (compatible, but leaves the
+defect open for exactly those clusters). That decision, and the label round-trip, are the remaining
+work.
+
+One further correction to the sprint's premise: `authorizeClusterOwnership` does **not** consult
+`clusterLifecycle` at all — it checks only the present runtime and the recorded owner. So the
+leftover-state exploit does not depend on the lifecycle field being `ClusterAbsent`, and a narrow
+"stale state cannot authorize a present cluster" check would close the specific path the sprint
+describes but not the SIGKILL-mid-run variant where the leftover state reads `ClusterReady`. It is
+recorded here as insufficient rather than implemented as a partial fix.
+
+### Deliverables
+
+- the guard is scoped to the resource: per the analysis above, **deliverable 2 is the mechanism** and
+  the choice between relocating the lock and renaming the cluster is recorded as rejected — the lock
+  cannot be machine-scoped from inside a launcher container, and the cluster-name discriminator does
+  not discriminate there either. The migration consequence for existing clusters, node names
+  (`infernix-<runtime>-control-plane`, which the Pulsar transport probe resolves), kubeconfig
+  contexts, and the chart is therefore avoided rather than paid
+- ownership evidence travels **with the protected resource** rather than only in a local state file:
+  the creating checkout's identity is recorded on the Kind cluster itself (a node label or container
+  label) and teardown reads it back and requires agreement, so a foreign checkout cannot authorize
+  against an inventory entry it did not create
+- `ClusterOwner` is promoted and `ClusterTeardownAuthority` is indexed by it, so a teardown of an
+  `OperatorOwned` cluster from a harness-minted authority is a type error
+- a compile-fail fixture pins the owner index, alongside the existing three region fixtures
+
+### Validation
+
+- a unit fixture with two distinct `dataRoot`s proves a second checkout cannot authorize teardown of
+  a cluster it did not create, with and without a leftover `HarnessOwned` state file
+- a compile-fail fixture proves an owner-mismatched teardown does not compile
+- `infernix test all` still fails closed loud on an operator's running cluster, and the harness still
+  tears down only its own
+- machine-independent gates plus the selected accelerator and `linux-cpu` cohorts
+
+### Remaining Work
+
+All of it; this sprint is newly opened.
 
 ## Documentation Requirements
 

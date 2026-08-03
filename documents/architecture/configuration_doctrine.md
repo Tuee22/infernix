@@ -145,10 +145,18 @@ model set) is volume-mounted **over** the baked file; only the deployed coordina
 ### Execution plans are closed and refined
 
 The runtime and host configs feed the closed execution language defined by
-[Typed Execution Plan](typed_execution_plan.md). The current Haskell core uses indexed ADTs for
-resource/enforcer alternatives, while Phase 8 Sprint 8.9 owns the remaining generated-wire migration
-to proper Dhall unions and `Natural` quantities. The final schema must not encode alternatives as text
-tags with unused fields zeroed.
+[Typed Execution Plan](typed_execution_plan.md). The Haskell core uses indexed ADTs for
+resource/enforcer alternatives, and the generated wire carries the memory budget as a proper Dhall
+union — `< HostEnforced | SubstrateEnforced | DualEnforced >`, each arm carrying only its own payload
+record — so the retired text discriminator plus zero-filled unused fields is not a representable
+shape. Sprint 8.9 additionally makes drift detectable rather than latent: the union's rendered type
+annotation is written once and selected by every arm, a unit assertion pins the rendered payload
+against the alternatives the reflected decoder expects, and a payload written by a pre-union
+generator now fails with a diagnostic that names the retired shape and tells the operator to
+regenerate it with `infernix init` (or `infernix test init`) instead of surfacing a bare structural
+Dhall type error. The remaining generated-wire migration is the enum-like text fields
+(`runtimeMode`, `daemonRole`, `adapterType`, and the rest) and `Integer`-to-`Natural` quantities;
+those are still refined by post-decode smart constructors rather than by the wire type.
 
 The new execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
 validates model placements, routes, engine bindings, daemon wiring, and admission accounting into

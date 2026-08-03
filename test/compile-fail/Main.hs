@@ -148,6 +148,8 @@ failingFixtures =
     typeMismatchFixture "fail-raw-model-bootstrap-publish" "RawModelBootstrapPublish.hs" "publishModelBootstrapRequest",
     typeMismatchFixture "fail-host-enforcer-pod-grant" "HostEnforcerPodGrant.hs" "PodRam",
     typeMismatchFixture "fail-vram-enforcer-host-grant" "VramEnforcerHostGrant.hs" "NvidiaVram",
+    typeMismatchFixture "fail-vram-enforcer-pod-grant" "VramEnforcerPodGrant.hs" "NvidiaVram",
+    typeMismatchFixture "fail-pod-enforcer-vram-grant" "PodEnforcerVramGrant.hs" "PodRam",
     typeMismatchFixture "fail-compiled-plan-is-not-runtime-plan" "CompiledPlanIsNotRuntimePlan.hs" "CompiledRuntimePlan",
     typeMismatchFixture "fail-planned-enforcer-is-not-live" "PlannedEnforcerIsNotLive.hs" "EnforcerPlan",
     typeMismatchFixture "fail-raw-worker-route" "RawWorkerRoute.hs" "ModelDescriptor",
@@ -155,6 +157,10 @@ failingFixtures =
     typeMismatchFixture "fail-cannot-coerce-cluster-lifecycle-lease" "CannotCoerceClusterLifecycleLease.hs" "Lease",
     typeMismatchFixture "fail-cannot-escape-cluster-teardown-authority" "CannotEscapeClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture "fail-cannot-reuse-cluster-teardown-authority" "CannotReuseClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
+    typeMismatchFixture
+      "fail-cannot-substitute-cluster-teardown-owner"
+      "CannotSubstituteClusterTeardownOwner.hs"
+      "ClusterTeardownAuthority",
     typeMismatchFixture "fail-skip-subprocess-lease-phase" "SkipSubprocessLeasePhase.hs" "LeaseDurable",
     typeMismatchFixture
       "fail-skip-subprocess-supervisor-observation"

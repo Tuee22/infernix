@@ -38,6 +38,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Engines.Artifact
   ( ArtifactLauncher,
     ArtifactProcessOutcome (..),
@@ -127,6 +128,10 @@ import System.Timeout (timeout)
 
 main :: IO ()
 main = do
+  -- Test images spawn self-exec children through the same close_fds
+  -- kernels the production binary uses, so they bound their descriptor
+  -- space first. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
   results <-
     forM testCases $ \(label, testCase) -> do
       result <- try @SomeException testCase

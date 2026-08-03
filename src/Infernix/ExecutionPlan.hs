@@ -31,6 +31,7 @@ module Infernix.ExecutionPlan
     compiledDaemonResultTopic,
     compiledDaemonRole,
     compiledPlacementDescriptor,
+    compiledPlacementEnforcedResources,
     compiledPlacementEngine,
     compiledPlacementId,
     compiledPlacementRoutes,
@@ -126,6 +127,7 @@ import Infernix.Types
     defaultModelBootstrapTopic,
     defaultModelsBucket,
     hostPartitionInferenceCapacityMib,
+    inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
     inferenceMemoryBudgetSource,
     modelMemoryFootprintMib,
@@ -235,6 +237,7 @@ type RefinementErrors = NonEmpty RefinementError
 data ResourceWitness resource where
   HostRamWitness :: ResourceWitness 'HostRam
   PodRamWitness :: ResourceWitness 'PodRam
+  NvidiaVramWitness :: ResourceWitness 'NvidiaVram
 
 -- | Memory retained outside a Linux child execution grant for the Haskell
 -- daemon and worst-case sampler overshoot.
@@ -372,12 +375,51 @@ compileResources runtimeModeValue budget model =
     (AppleSilicon, HostEnforcedBudget partition) ->
       CompiledHostResources
         (HostFootprintWatchdogPlan partition)
-        <$> admitGrant HostRamWitness budget model (hostPartitionInferenceCapacityMib partition)
+        <$> admitGrant
+          HostRamWitness
+          (inferenceMemoryBudgetSource budget)
+          model
+          (hostPartitionInferenceCapacityMib partition)
     (LinuxCpu, SubstrateEnforcedBudget podLimit)
       | podMemoryLimitResource podLimit == Types.PodRam ->
           CompiledPodResources
             (LinuxProcessGroupRssWatchdogPlan podLimit)
-            <$> admitGrant PodRamWitness budget model (podMemoryLimitMib podLimit)
+            <$> admitGrant
+              PodRamWitness
+              (podMemoryLimitSource podLimit)
+              model
+              (podMemoryLimitMib podLimit)
+    -- Phase 6 Sprint 6.44 — a @linux-gpu@ model that actually uses the device
+    -- must clear both limits, and each admitted quantity becomes its own
+    -- resource-indexed grant with its own live watchdog. A @linux-gpu@ model
+    -- that does not require the device stays on the resident-set lane alone: a
+    -- VRAM grant it would never consume is not evidence of anything.
+    (LinuxGpu, DualEnforcedBudget podLimit vramLimit)
+      | podMemoryLimitResource podLimit == Types.PodRam,
+        podMemoryLimitResource vramLimit == Types.GpuVram ->
+          if requiresGpu model
+            then
+              CompiledGpuResources
+                (LinuxProcessGroupRssWatchdogPlan podLimit)
+                <$> admitGrant
+                  PodRamWitness
+                  (podMemoryLimitSource podLimit)
+                  model
+                  (podMemoryLimitMib podLimit)
+                <*> pure (NvidiaVramAccountingPlan vramLimit)
+                <*> admitGrant
+                  NvidiaVramWitness
+                  (podMemoryLimitSource vramLimit)
+                  model
+                  (podMemoryLimitMib vramLimit)
+            else
+              CompiledPodResources
+                (LinuxProcessGroupRssWatchdogPlan podLimit)
+                <$> admitGrant
+                  PodRamWitness
+                  (podMemoryLimitSource podLimit)
+                  model
+                  (podMemoryLimitMib podLimit)
     _ ->
       Left
         ModelMemoryLimitExceeded
@@ -388,13 +430,17 @@ compileResources runtimeModeValue budget model =
             inferenceErrorSource = "runtime-memory-enforcer-mismatch"
           }
 
+-- | Admit one resource. The rejection payload names the resource the witness
+-- indexes and the source of the limit that rejected it, so a dual-resource
+-- placement reports which of its two independent limits was exceeded instead of
+-- collapsing both onto one budget-wide source string.
 admitGrant ::
   ResourceWitness resource ->
-  InferenceMemoryBudget ->
+  Text ->
   ModelDescriptor ->
   Int ->
   Either InferenceError (MemoryGrant resource)
-admitGrant witness budget model availableMib
+admitGrant witness limitSource model availableMib
   | requiredMib > availableMib =
       Left
         ModelMemoryLimitExceeded
@@ -402,7 +448,7 @@ admitGrant witness budget model availableMib
             inferenceErrorRequiredMib = requiredMib,
             inferenceErrorAvailableMib = availableMib,
             inferenceErrorResource = witnessInferenceResource witness,
-            inferenceErrorSource = inferenceMemoryBudgetSource budget
+            inferenceErrorSource = limitSource
           }
   | otherwise = Right (MemoryGrant (MemoryCeiling requiredMib))
   where
@@ -413,6 +459,7 @@ witnessInferenceResource witness =
   case witness of
     HostRamWitness -> Types.UnifiedHostRam
     PodRamWitness -> Types.PodRam
+    NvidiaVramWitness -> Types.GpuVram
 
 compilerErrors :: DemoConfig -> [ConfigError]
 compilerErrors config =
@@ -771,7 +818,10 @@ compilerErrors config =
            | configRuntimeMode config == LinuxGpu,
              model <- models config,
              requiresGpu model,
-             inferenceMemoryBudgetResource (inferenceMemoryBudget config) /= Types.GpuVram
+             Types.GpuVram
+               `notElem` map
+                 podMemoryLimitResource
+                 (inferenceMemoryBudgetPodLimits (inferenceMemoryBudget config))
            ]
     expectedRuntimeLane runtimeModeValue gpuRequired =
       case runtimeModeValue of
@@ -786,13 +836,30 @@ compilerErrors config =
         LinuxCpu -> "cluster-pod"
         LinuxGpu -> "cluster-pod"
 
+-- | Every named limit in a budget must be positive, carry a source, and not
+-- claim the unified host RAM that only the Apple partition arm enforces. The
+-- dual arm additionally pins which physical resource each half names, so a
+-- config cannot present two RAM limits — or two VRAM limits — as dual
+-- enforcement.
 memoryEnforcerErrors :: InferenceMemoryBudget -> [ConfigError]
-memoryEnforcerErrors = \case
-  HostEnforcedBudget _ -> []
-  SubstrateEnforcedBudget podLimit ->
-    [InvalidMemoryEnforcer "substrate memory limit must be positive" | podMemoryLimitMib podLimit <= 0]
-      <> [InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty" | Text.null (Text.strip (podMemoryLimitSource podLimit))]
-      <> [InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM" | podMemoryLimitResource podLimit == Types.UnifiedHostRam]
+memoryEnforcerErrors budget =
+  concatMap podLimitErrors (inferenceMemoryBudgetPodLimits budget)
+    <> dualArmErrors
+  where
+    podLimitErrors podLimit =
+      [InvalidMemoryEnforcer "substrate memory limit must be positive" | podMemoryLimitMib podLimit <= 0]
+        <> [InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty" | Text.null (Text.strip (podMemoryLimitSource podLimit))]
+        <> [InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM" | podMemoryLimitResource podLimit == Types.UnifiedHostRam]
+    dualArmErrors =
+      case budget of
+        DualEnforcedBudget podLimit vramLimit ->
+          [ InvalidMemoryEnforcer "dual memory enforcer must name a pod RAM limit first"
+          | podMemoryLimitResource podLimit /= Types.PodRam
+          ]
+            <> [ InvalidMemoryEnforcer "dual memory enforcer must name a GPU VRAM limit second"
+               | podMemoryLimitResource vramLimit /= Types.GpuVram
+               ]
+        _ -> []
 
 runtimeBudgetErrors :: RuntimeMode -> InferenceMemoryBudget -> [ConfigError]
 runtimeBudgetErrors runtimeModeValue budget =
@@ -800,6 +867,13 @@ runtimeBudgetErrors runtimeModeValue budget =
     (AppleSilicon, HostEnforcedBudget _) -> []
     (LinuxCpu, SubstrateEnforcedBudget podLimit)
       | podMemoryLimitResource podLimit == Types.PodRam -> []
+    (LinuxGpu, DualEnforcedBudget podLimit vramLimit)
+      | podMemoryLimitResource podLimit == Types.PodRam,
+        podMemoryLimitResource vramLimit == Types.GpuVram ->
+          []
+    -- A @linux-gpu@ budget that names only one resource cannot enforce the
+    -- other, so it is rejected as a config error rather than silently admitting
+    -- device work against a host-RAM limit.
     (LinuxGpu, _) -> [GpuDualResourceBudgetRequired]
     _ -> [RuntimeBudgetMismatch runtimeModeValue (inferenceMemoryBudgetResource budget)]
 
@@ -1080,6 +1154,20 @@ executableModelResidentCeilingMib executable =
     RuntimeHostResources grant -> enforcedGrantCeilingMib grant
     RuntimePodResources grant -> enforcedGrantCeilingMib grant
     RuntimeGpuResources grant _ -> enforcedGrantCeilingMib grant
+
+-- | The physical resources a compiled placement will have enforced, in
+-- enforcement order. A GPU placement names both its pod RAM and its NVIDIA
+-- VRAM resource; every other placement names exactly one. This is the
+-- compile-time counterpart of 'executableModelResidentResource' plus
+-- 'executableModelGpuVramCeilingMib', and it exists so callers can observe
+-- which resources a placement is bound to without reaching the grants
+-- themselves.
+compiledPlacementEnforcedResources :: CompiledPlacement -> [InferenceMemoryResource]
+compiledPlacementEnforcedResources placement =
+  case placementResources placement of
+    CompiledHostResources {} -> [Types.UnifiedHostRam]
+    CompiledPodResources {} -> [Types.PodRam]
+    CompiledGpuResources {} -> [Types.PodRam, Types.GpuVram]
 
 executableModelResidentResource :: ExecutableModel -> InferenceMemoryResource
 executableModelResidentResource executable =

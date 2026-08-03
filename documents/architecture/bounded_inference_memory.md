@@ -9,11 +9,14 @@
 > and a host out-of-memory kill is structurally unrepresentable.
 
 > **Reopened target contract.** The invariant below is the required end state. The current worktree
-> has resource-indexed compilation/refinement plus Apple and Linux CPU watchdog implementations, but
-> their adversarial proof and an encapsulated serialized-execution authority remain Phase 4 work.
-> GPU VRAM lacks a verified per-process enforcer, and engine-adjacent modules retain raw-spawn lint
-> exemptions for Phase 6. The ordered correction is governed by
-> [Typed Execution Plan](typed_execution_plan.md).
+> has resource-indexed compilation/refinement plus Apple, Linux CPU, **and NVIDIA VRAM** watchdog
+> implementations. Phase 6 Sprint 6.44 closed the GPU half: a `linux-gpu` model that uses the device
+> now compiles two independently indexed grants, and the NVIDIA per-process-group VRAM watchdog runs
+> against its own admitted ceiling through the fixed public-tool observer kernel. The Apple
+> adversarial breach proof remains Phase 4 hardware work, and the CLI-passthrough plus host-tool
+> modules retain raw-spawn lint exemptions (each needs a design decision rather than a mechanical
+> migration; see the exemption comment in `Infernix.Lint.HaskellStyle`). The ordered correction is
+> governed by [Typed Execution Plan](typed_execution_plan.md).
 
 ## TL;DR
 
@@ -80,11 +83,15 @@ The budget these grants draw from is itself a checked partition, and the model's
 so the related unmanaged states are also unbuildable:
 
 - **The budget names its enforcer.** `InferenceMemoryBudget` is `HostEnforcedBudget HostMemoryPartition
-  | SubstrateEnforcedBudget PodMemoryLimit` during the current wire migration — there is no
-  "enforced by nobody" arm. `apple-silicon` is host-enforced by the grant plus the watchdog;
-  `linux-cpu` is enforced by its process-group RSS watchdog under a verified outer pod envelope;
-  `linux-gpu` additionally requires independent VRAM evidence. Phase 8 replaces the transitional
-  substrate record with the final proper enforcer union.
+  | SubstrateEnforcedBudget PodMemoryLimit | DualEnforcedBudget PodMemoryLimit PodMemoryLimit` —
+  there is no "enforced by nobody" arm. `apple-silicon` is host-enforced by the grant plus the
+  watchdog; `linux-cpu` is enforced by its process-group RSS watchdog under a verified outer pod
+  envelope; `linux-gpu` carries the dual arm, whose pod RAM limit comes first and whose NVIDIA VRAM
+  limit comes second. Both halves of a dual budget are required and independently enforced: the
+  compiler mints one resource-indexed grant per limit and the capped-engine kernel runs one watchdog
+  per grant, so a GPU model can never be admitted against RAM alone or VRAM alone. A `linux-gpu`
+  budget that names only one resource is a hard config error (`GpuDualResourceBudgetRequired`), and a
+  dual budget whose halves name the wrong resources is rejected by `InvalidMemoryEnforcer`.
 - **Physical RAM is a checked partition.** `HostMemoryPartition` is minted by a smart constructor that
   splits physical RAM into `vmReserve + hostHeadroom + inferenceCapacity`, **rejects oversubscription**,
   and forces `hostHeadroom` to be large enough to cover the OS, the control-plane binary, the routed
@@ -107,9 +114,9 @@ type makes the capacity tradeoff explicit (running an oversized model requires e
 | Types | GHC module export lists (opaque `CompiledRuntimePlan`, `RuntimePlan`, `ExecutableModel`, and resource-indexed grant/enforcer types) under `-Wall -Werror` | constructing or relabeling a grant; refining from caller-fabricated observations; launching from a raw model/config record; a bare-`Int`/absent-zero footprint; a budget with no named enforcer |
 | Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
 | Serialization (Phase 4 target) | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
-| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group accounting (`linux-gpu`, Phase 6 target) | actual resident memory exceeding the admitted ceiling without a clean, typed, terminal per-request failure — i.e. a host OOM |
+| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group VRAM accounting (`linux-gpu`) | actual resident memory exceeding the admitted ceiling without a clean, typed, terminal per-request failure — i.e. a host OOM |
 | Partition | `HostMemoryPartition` smart constructor | `vmReserve + hostHeadroom + inferenceCapacity` oversubscribing physical RAM; a headroom too small to cover the OS and the routed end-to-end browser |
-| Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitive that has no type-level chokepoint |
+| Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `withCreateProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitives that have no type-level chokepoint. Sprint 6.44 added `withCreateProcess` after finding that whole-token matching had let a bracketed unbounded spawn through |
 
 The residual review obligations are deliberately explicit: **compiler honesty**
 (`compileRuntimePlan` is the only grant mint and compares the required footprint with the declared
@@ -138,9 +145,40 @@ whole remains Active for Sprint 1.20's bounded artifact provisioning/runtime cor
 later source and evidence do not reuse Sprint 1.19's gate. Phase 4 owns the Apple/Linux CPU
 adversarial breach-and-survival proof,
 verification of the outer pod envelope under live workloads, and moving the process-local
-serialization authority inside the opaque execution API. Phase 6 owns NVIDIA per-process VRAM
-enforcement and removal of broad raw-spawn exemptions. Phase 8 owns the
-final proper-union generated-Dhall wire.
+serialization authority inside the opaque execution API. Phase 6 Sprint 6.44 landed NVIDIA
+per-process-group VRAM enforcement and shrank the raw-spawn exemption set; the remaining exempt
+modules are the CLI passthrough and the host-tool surfaces, which need a design decision rather than
+a mechanical migration. Phase 8 owns the final proper-union generated-Dhall wire.
+
+### The NVIDIA VRAM observer (Phase 6 Sprint 6.44)
+
+The device sampler is the same shape as the Apple footprint observer: a fixed, bounded public-tool
+kernel in `Infernix.Runtime.CappedEngine.FixedObserver` whose request vocabulary is a closed enum and
+whose `FixedObserverSpec` is unexported, so no caller can supply an executable, argument vector,
+environment, or working directory. Enforcement pins `/usr/bin/nvidia-smi` as a literal absolute path
+rather than resolving it from the host-tools manifest: an enforcement observer that follows a
+configurable path is redirectable, which is exactly what the closed catalog exists to prevent.
+
+Two properties make per-process attribution sound inside an engine pod, and both were measured
+rather than assumed:
+
+- NVML resolves each compute context against the **reading process's** PID namespace and omits the
+  contexts it cannot resolve. A pod therefore observes its own namespace's compute applications with
+  namespace-local process ids, and never another container's. A CUDA process running outside the
+  namespace is invisible to the query — correctly, because it is not ours.
+- Membership comes from the same `/proc` walk the resident-set lane already uses, so the NVIDIA lane
+  spawns exactly one fixed command per sample and performs no process discovery of its own. Compute
+  applications outside the engine's process group are deliberately not attributed to it.
+
+Every failure is fail-closed and typed: a spawn, deadline, parse, overflow, or `/proc` enumeration
+failure becomes `EngineEnforcementUnavailable`, which kills the group and exits `70`. A live group
+member holding no CUDA context attributes zero bytes — an ordinary early-execution observation, not a
+loss — while *no* live group member observed for a still-running engine is the same loss class as a
+sampler error and also fails closed. A measured breach is `EngineExceededCeiling`, reported as the
+typed `ModelMemoryLimitExceeded` per-request failure. The device's total VRAM is the outer envelope a
+grant must fit inside, the GPU analogue of the cgroup memory limit read for the resident-set lane;
+an absent or non-positive envelope is a refinement rejection (`NvidiaEnvelopeUnavailable` /
+`NvidiaEnvelopeTooSmall`), never an assumed value.
 Until the later behavioral/enforcement work passes, a host OOM remains representable despite the
 landed resource/enforcer type coherence.
 

@@ -1,3 +1,5 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE RoleAnnotations #-}
@@ -80,6 +82,12 @@ import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Discover
 import Infernix.Cluster.ImageFingerprint
+import Infernix.Cluster.Invoke
+  ( commandOutcomeToEither,
+    invokeClusterCommand,
+    renderBoundedCommandOutcome,
+    tryClusterCommand,
+  )
 import Infernix.Cluster.LifecycleLock (withLifecycleFileLock)
 import Infernix.Cluster.MutationRecovery
   ( InterruptedMutationRecoveryEffects (..),
@@ -575,16 +583,18 @@ withPersistedClusterMutation paths expectedState phaseName detail body =
             <> ", but contains "
             <> show (map runtimeModeId presentRuntimeModes)
         )
-    _ <-
-      requireClusterOwnership
-        lifecycleLock
-        paths
-        runtimeMode
-        "begin a persisted cluster mutation"
-        owner
-        reservationAccess
-        presentRuntimeModes
-        recordedState
+    withClusterOwnerSingleton owner $ \ownerSingleton ->
+      void
+        ( requireClusterOwnership
+            lifecycleLock
+            paths
+            runtimeMode
+            "begin a persisted cluster mutation"
+            ownerSingleton
+            reservationAccess
+            presentRuntimeModes
+            recordedState
+        )
     now <- getCurrentTime
     let phaseValue =
           LifecyclePhase
@@ -616,16 +626,18 @@ withPersistedClusterMutation paths expectedState phaseName detail body =
     unless (stateAfterBody == Just mutatingState) $
       refuseMutation
         "the persisted mutation marker changed while the mutation body ran"
-    _ <-
-      requireClusterOwnership
-        lifecycleLock
-        paths
-        runtimeMode
-        "complete a persisted cluster mutation"
-        owner
-        currentReservationAccess
-        currentRuntimeModes
-        stateAfterBody
+    withClusterOwnerSingleton owner $ \ownerSingleton ->
+      void
+        ( requireClusterOwnership
+            lifecycleLock
+            paths
+            runtimeMode
+            "complete a persisted cluster mutation"
+            ownerSingleton
+            currentReservationAccess
+            currentRuntimeModes
+            stateAfterBody
+        )
     restoreTime <- getCurrentTime
     persistClusterState
       paths
@@ -636,6 +648,10 @@ withPersistedClusterMutation paths expectedState phaseName detail body =
       )
     pure result
   where
+    -- Explicitly generalized: @GADTs@ (needed for the owner singleton) turns on
+    -- @MonoLocalBinds@, which would otherwise pin this refusal to one result
+    -- type.
+    refuseMutation :: String -> IO refusalResult
     refuseMutation reason =
       ioError
         ( userError
@@ -649,17 +665,18 @@ withPersistedClusterMutation paths expectedState phaseName detail body =
 -- | Bring up the operator-owned cluster. The owner choice is not caller
 -- constructible; harness bring-up has a separate reservation-gated entry.
 clusterUp :: Maybe RuntimeMode -> IO ()
-clusterUp = clusterUpForOwner OperatorOwned
+clusterUp = clusterUpForOwner SOperatorOwned
 
 clusterUpHarness :: Maybe RuntimeMode -> IO ()
-clusterUpHarness = clusterUpForOwner HarnessOwned
+clusterUpHarness = clusterUpForOwner SHarnessOwned
 
-clusterUpForOwner :: ClusterOwner -> Maybe RuntimeMode -> IO ()
-clusterUpForOwner owner maybeRuntimeMode = do
+clusterUpForOwner :: SClusterOwner owner -> Maybe RuntimeMode -> IO ()
+clusterUpForOwner ownerSingleton maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
   Config.ensureRepoLayout paths
   withClusterLifecycleLock paths $ \lifecycleLock -> do
     runtimeMode <- resolveClusterRuntimeMode paths maybeRuntimeMode
+    let owner = clusterOwnerValue ownerSingleton
     reservationAccess <- requireReservationAccess paths owner
     Config.ensureSupportedRuntimeModeForExecutionContext paths runtimeMode
     when (runtimeMode == AppleSilicon) (ensureAppleSiliconRuntimeReady paths)
@@ -677,20 +694,20 @@ clusterUpForOwner owner maybeRuntimeMode = do
         paths
         runtimeMode
         ("bring up a " <> clusterOwnerLabel owner <> "-owned cluster")
-        owner
+        ownerSingleton
         reservationAccess
         presentRuntimeModes
         recordedState
-    clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority owner paths runtimeMode
+    clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority ownerSingleton paths runtimeMode
 
 clusterUpWithPulsarBootstrapRepair ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
-  ClusterOwner ->
+  ClusterTeardownAuthority owner s ->
+  SClusterOwner owner ->
   Paths ->
   RuntimeMode ->
   IO ()
-clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority owner paths runtimeMode = go 0
+clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority ownerSingleton paths runtimeMode = go 0
   where
     maxRepairAttempts = 3 :: Int
     go repairAttempts = do
@@ -706,7 +723,7 @@ clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority owner paths r
             else do
               repaired <- repairInterruptedDirtyPulsarBootstrapState
               pure (if repaired then repairAttempts + 1 else repairAttempts)
-        result <- try (clusterUpWithPlatform lifecycleLock teardownAuthority owner paths runtimeMode)
+        result <- try (clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runtimeMode)
         case result of
           Right _ -> pure ()
           Left err -> do
@@ -975,16 +992,17 @@ nodeNamesFromOutput output =
 
 clusterUpWithPlatform ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
-  ClusterOwner ->
+  ClusterTeardownAuthority owner s ->
+  SClusterOwner owner ->
   Paths ->
   RuntimeMode ->
   IO ()
-clusterUpWithPlatform lifecycleLock teardownAuthority owner paths runtimeMode = do
+clusterUpWithPlatform lifecycleLock teardownAuthority ownerSingleton paths runtimeMode = do
   recordedStateBeforeBringUp <- loadClusterState paths
   clusterAlreadyPresent <- kindClusterExists paths runtimeMode
   usesHostBindMounts <- kindUsesHostBindMounts paths runtimeMode
-  let replayPlan =
+  let owner = clusterOwnerValue ownerSingleton
+      replayPlan =
         retainedReplayPlan
           usesHostBindMounts
           clusterAlreadyPresent
@@ -1448,31 +1466,76 @@ clusterOwnerLabel :: ClusterOwner -> String
 clusterOwnerLabel OperatorOwned = "operator"
 clusterOwnerLabel HarnessOwned = "harness"
 
+-- | Sprint 6.45 — the runtime witness that selects a 'ClusterOwner' type index.
+-- 'ClusterOwner' is an ordinary value type promoted with @DataKinds@; this
+-- singleton is the only bridge between the promoted index and the owner value
+-- the runtime checks still compare.
+data SClusterOwner (owner :: ClusterOwner) where
+  SOperatorOwned :: SClusterOwner 'OperatorOwned
+  SHarnessOwned :: SClusterOwner 'HarnessOwned
+
+-- | Project the ordinary owner value out of its singleton, so every existing
+-- value-level comparison keeps operating on the same data it always did.
+clusterOwnerValue :: SClusterOwner owner -> ClusterOwner
+clusterOwnerValue ownerSingleton =
+  case ownerSingleton of
+    SOperatorOwned -> OperatorOwned
+    SHarnessOwned -> HarnessOwned
+
+-- | Recover a type-level owner index from an owner value that was read at
+-- runtime (a persisted state document, say). The index is therefore always
+-- derived from the bytes actually read; nothing here decides who owns a live
+-- cluster.
+withClusterOwnerSingleton ::
+  ClusterOwner ->
+  (forall owner. SClusterOwner owner -> IO a) ->
+  IO a
+withClusterOwnerSingleton owner use =
+  case owner of
+    OperatorOwned -> use SOperatorOwned
+    HarnessOwned -> use SHarnessOwned
+
 -- | The authority required by the raw teardown. Its constructor is private and
 -- the value records both the checked owner and runtime. The only mint is
 -- 'requireClusterOwnership', which evaluates the global inventory under the
 -- lifecycle lock.
-data ClusterTeardownAuthority s = ClusterTeardownAuthority
-  { teardownAuthorityOwner :: ClusterOwner,
+--
+-- Sprint 6.45 — the @owner@ parameter is the promoted 'ClusterOwner' the
+-- authority was minted for, and the @s@ parameter is the lifecycle-lock region.
+-- Both roles are nominal, so an authority minted for one owner cannot be
+-- /substituted/ where the other owner is required: the harness's teardown call
+-- graph cannot be handed an operator authority, and vice versa. That is the
+-- whole of what the index buys. It decides nothing about the live cluster —
+-- which owner a present cluster actually has is discovered at runtime by
+-- 'authorizeClusterOwnership', under the held lease, by rereading the persisted
+-- record and the Kind inventory. A teardown of a genuinely 'OperatorOwned'
+-- cluster is refused there, by a checked 'ioError', not by the typechecker.
+data ClusterTeardownAuthority (owner :: ClusterOwner) s = ClusterTeardownAuthority
+  { teardownAuthorityOwner :: SClusterOwner owner,
     teardownAuthorityRuntimeMode :: RuntimeMode,
     teardownAuthorityReservationAccess :: ClusterReservationAccess
   }
 
-type role ClusterTeardownAuthority nominal
+type role ClusterTeardownAuthority nominal nominal
 
-data PreWorkloadKindRecovery s
+data PreWorkloadKindRecovery (owner :: ClusterOwner) s
   = PreWorkloadKindRecovery
-      (ClusterTeardownAuthority s)
+      (ClusterTeardownAuthority owner s)
       RuntimeMode
       ClusterLifecycle
 
-type role PreWorkloadKindRecovery nominal
+type role PreWorkloadKindRecovery nominal nominal
 
-data KindDeleteAuthorization s
-  = AuthorizedClusterTeardown (ClusterTeardownAuthority s)
-  | AuthorizedPreWorkloadRecovery (PreWorkloadKindRecovery s)
+data KindDeleteAuthorization (owner :: ClusterOwner) s
+  = AuthorizedClusterTeardown (ClusterTeardownAuthority owner s)
+  | AuthorizedPreWorkloadRecovery (PreWorkloadKindRecovery owner s)
 
-type role KindDeleteAuthorization nominal
+type role KindDeleteAuthorization nominal nominal
+
+-- | The owner value carried by an authority. Every runtime comparison uses
+-- this projection, so promoting the index changed no check.
+teardownAuthorityOwnerValue :: ClusterTeardownAuthority owner s -> ClusterOwner
+teardownAuthorityOwnerValue = clusterOwnerValue . teardownAuthorityOwner
 
 -- | Compile-time witness used by the capability fixtures. It mints no
 -- authority and performs no transition; its only purpose is to make the
@@ -1480,7 +1543,7 @@ type role KindDeleteAuthorization nominal
 -- to an external typecheck.
 clusterTeardownAuthorityRegionWitness ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
+  ClusterTeardownAuthority owner s ->
   ()
 clusterTeardownAuthorityRegionWitness lifecycleLock authority =
   case leasePayload lifecycleLock of
@@ -1493,16 +1556,16 @@ requireClusterOwnership ::
   Paths ->
   RuntimeMode ->
   String ->
-  ClusterOwner ->
+  SClusterOwner owner ->
   ClusterReservationAccess ->
   [RuntimeMode] ->
   Maybe ClusterState ->
-  IO (ClusterTeardownAuthority s)
-requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwner reservationAccess presentRuntimeModes maybeState = do
+  IO (ClusterTeardownAuthority owner s)
+requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwnerSingleton reservationAccess presentRuntimeModes maybeState = do
   case leasePayload lifecycleLock of
     ClusterMutationLocked -> pure ()
   case (reservationAccessOwner reservationAccess == requestedOwner, authorizeClusterOwnership requestedOwner runtimeMode presentRuntimeModes maybeState) of
-    (True, Right ()) -> pure (ClusterTeardownAuthority requestedOwner runtimeMode reservationAccess)
+    (True, Right ()) -> pure (ClusterTeardownAuthority requestedOwnerSingleton runtimeMode reservationAccess)
     (False, _) ->
       ioError
         ( userError
@@ -1526,6 +1589,7 @@ requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwner re
             )
         )
   where
+    requestedOwner = clusterOwnerValue requestedOwnerSingleton
     renderRuntimeModes runtimeModes =
       case runtimeModes of
         [] -> "none"
@@ -1540,7 +1604,7 @@ reservationAccessOwner reservationAccess =
 revalidateClusterTeardownAuthority ::
   Lease s ClusterMutationLocked ->
   String ->
-  ClusterTeardownAuthority s ->
+  ClusterTeardownAuthority owner s ->
   Paths ->
   RuntimeMode ->
   IO (Maybe ClusterState, [RuntimeMode])
@@ -1555,7 +1619,7 @@ revalidateClusterTeardownAuthority lifecycleLock action authority paths runtimeM
   recordedState <- loadClusterState paths
   presentRuntimeModes <- presentClusterRuntimeModes paths
   currentReservationAccess <-
-    requireReservationAccess paths (teardownAuthorityOwner authority)
+    requireReservationAccess paths (teardownAuthorityOwnerValue authority)
   unless
     (currentReservationAccess == teardownAuthorityReservationAccess authority)
     ( ioError
@@ -2153,13 +2217,13 @@ createHarnessReservation paths = do
 -- | The operator's @infernix cluster down@ command. It refuses a live
 -- 'HarnessOwned' cluster (and a live cluster with unknown ownership).
 clusterDown :: Maybe RuntimeMode -> IO ()
-clusterDown = clusterDownForOwner "tear down the operator cluster" OperatorOwned
+clusterDown = clusterDownForOwner "tear down the operator cluster" SOperatorOwned
 
 -- | Harness-only teardown. It refuses a live 'OperatorOwned' cluster, including
 -- when an operator wins the slot between harness seizure and a cleanup
 -- @finally@.
 clusterDownHarness :: Maybe RuntimeMode -> IO ()
-clusterDownHarness = clusterDownForOwner "tear down the harness cluster" HarnessOwned
+clusterDownHarness = clusterDownForOwner "tear down the harness cluster" SHarnessOwned
 
 -- | Sprint 6.43 — the test harness's evidence-gated seizure of the single
 -- cluster slot. The presence and owner observations, authorization, and
@@ -2181,7 +2245,7 @@ seizeHarnessClusterSlotAt paths maybeRuntimeMode = do
       lifecycleLock
       paths
       "seize the cluster slot for the harness"
-      HarnessOwned
+      SHarnessOwned
       reservationAccess
       maybeRuntimeMode
 
@@ -2244,7 +2308,7 @@ releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
       lifecycleLock
       paths
       "release the cluster slot held by the harness"
-      HarnessOwned
+      SHarnessOwned
       reservationAccess
       maybeRuntimeMode
     activitiesQuiescent <-
@@ -2260,17 +2324,18 @@ releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
 -- data-constructor match is strict to WHNF), so an @undefined@-forged authority
 -- is a loud crash rather than a silent unmanaged teardown. The authority is
 -- minted only after the same locked presence/owner check.
-clusterDownForOwner :: String -> ClusterOwner -> Maybe RuntimeMode -> IO ()
-clusterDownForOwner action requestedOwner maybeRuntimeMode = do
+clusterDownForOwner :: String -> SClusterOwner owner -> Maybe RuntimeMode -> IO ()
+clusterDownForOwner action requestedOwnerSingleton maybeRuntimeMode = do
   paths <- discoverClusterCommandPaths
   Config.ensureRepoLayout paths
   withClusterLifecycleLock paths $ \lifecycleLock -> do
-    reservationAccess <- requireReservationAccess paths requestedOwner
+    reservationAccess <-
+      requireReservationAccess paths (clusterOwnerValue requestedOwnerSingleton)
     clusterDownForOwnerUnderLock
       lifecycleLock
       paths
       action
-      requestedOwner
+      requestedOwnerSingleton
       reservationAccess
       maybeRuntimeMode
 
@@ -2278,17 +2343,18 @@ clusterDownForOwnerUnderLock ::
   Lease lock ClusterMutationLocked ->
   Paths ->
   String ->
-  ClusterOwner ->
+  SClusterOwner owner ->
   ClusterReservationAccess ->
   Maybe RuntimeMode ->
   IO ()
-clusterDownForOwnerUnderLock lifecycleLock paths action requestedOwner reservationAccess maybeRuntimeMode = do
+clusterDownForOwnerUnderLock lifecycleLock paths action requestedOwnerSingleton reservationAccess maybeRuntimeMode = do
   case leasePayload lifecycleLock of
     ClusterMutationLocked -> pure ()
   recordedState <- loadClusterState paths
   requestedRuntimeMode <- resolveCommandRuntimeMode paths maybeRuntimeMode recordedState
   presentRuntimeModes <- presentClusterRuntimeModes paths
-  let runtimeMode =
+  let requestedOwner = clusterOwnerValue requestedOwnerSingleton
+      runtimeMode =
         teardownRuntimeMode
           requestedOwner
           requestedRuntimeMode
@@ -2300,7 +2366,7 @@ clusterDownForOwnerUnderLock lifecycleLock paths action requestedOwner reservati
       paths
       runtimeMode
       action
-      requestedOwner
+      requestedOwnerSingleton
       reservationAccess
       presentRuntimeModes
       recordedState
@@ -2333,7 +2399,7 @@ teardownRuntimeMode requestedOwner requestedRuntimeMode presentRuntimeModes mayb
 -- the same 'WriterQuiesced' region used by the standard rebuildable scrub.
 clusterDownResolved ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
+  ClusterTeardownAuthority owner s ->
   Paths ->
   RuntimeMode ->
   (forall writerRegion. Lease writerRegion WriterQuiesced -> IO ()) ->
@@ -2538,7 +2604,7 @@ runKubectlCompat args = do
         paths
         runtimeMode
         "run operator kubectl read-only diagnostics"
-        OperatorOwned
+        SOperatorOwned
         reservationAccess
         presentRuntimeModes
         recordedState
@@ -2675,7 +2741,7 @@ withHarnessPlaywrightCluster action = do
         paths
         runtimeMode
         "run closed Playwright harness mutation"
-        HarnessOwned
+        SHarnessOwned
         reservationAccess
         presentRuntimeModes
         recordedState
@@ -2928,7 +2994,7 @@ claimOwner claimSpec
 
 ensureKindCluster ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
+  ClusterTeardownAuthority owner s ->
   Paths ->
   RuntimeMode ->
   Bool ->
@@ -3019,11 +3085,11 @@ ensureKindCluster lifecycleLock teardownAuthority paths runtimeMode expectedClus
 
 requirePreWorkloadKindRecovery ::
   Lease s ClusterMutationLocked ->
-  ClusterTeardownAuthority s ->
+  ClusterTeardownAuthority owner s ->
   Paths ->
   RuntimeMode ->
   RetainedReplayPlan ->
-  IO (PreWorkloadKindRecovery s)
+  IO (PreWorkloadKindRecovery owner s)
 requirePreWorkloadKindRecovery lifecycleLock teardownAuthority paths runtimeMode replayPlan = do
   case leasePayload lifecycleLock of
     ClusterMutationLocked -> pure ()
@@ -3056,7 +3122,7 @@ requirePreWorkloadKindRecovery lifecycleLock teardownAuthority paths runtimeMode
 
 recreatePreWorkloadKindCluster ::
   Lease s ClusterMutationLocked ->
-  PreWorkloadKindRecovery s ->
+  PreWorkloadKindRecovery owner s ->
   Paths ->
   Int ->
   Int ->
@@ -7605,7 +7671,7 @@ hostArchitectureForPaths paths =
 
 deleteKindCluster ::
   Lease s ClusterMutationLocked ->
-  KindDeleteAuthorization s ->
+  KindDeleteAuthorization owner s ->
   Paths ->
   RuntimeMode ->
   IO ()
@@ -7642,7 +7708,7 @@ deleteKindCluster lifecycleLock authorization paths runtimeMode = do
 
 revalidateKindDeleteAuthorization ::
   Lease s ClusterMutationLocked ->
-  KindDeleteAuthorization s ->
+  KindDeleteAuthorization owner s ->
   Paths ->
   RuntimeMode ->
   IO ()
@@ -7715,37 +7781,6 @@ runClusterCommand paths command = do
             )
         )
 
-tryClusterCommand ::
-  Paths ->
-  Command.ClusterCommand ->
-  IO (Either String String)
-tryClusterCommand paths command =
-  commandOutcomeToEither <$> invokeClusterCommand paths command
-
--- Keep setup, compilation, kernel, terminal-command, and timeout provenance
--- intact until a caller explicitly chooses how each state may transition.
-invokeClusterCommand ::
-  Paths ->
-  Command.ClusterCommand ->
-  IO Subprocess.CommandOutcome
-invokeClusterCommand paths command = do
-  environmentResult <-
-    try (Subprocess.clusterSubprocessEnv paths) :: IO (Either IOException Subprocess.SubprocessEnv)
-  case environmentResult of
-    Left err ->
-      pure
-        ( Subprocess.CommandFailedKernel
-            ("command environment setup failed: " <> displayException err)
-        )
-    Right environment ->
-      case Subprocess.compileBoundedCommand command environment of
-        Left err ->
-          pure
-            ( Subprocess.CommandFailedKernel
-                ("command compilation failed: " <> err)
-            )
-        Right boundedCommand -> Subprocess.runBoundedCommand boundedCommand
-
 captureOperatorKubectlCommand ::
   Paths ->
   Command.OperatorKubectlCommand ->
@@ -7804,24 +7839,6 @@ captureDiscoveredClusterCommand buildCommand = do
 renderClusterCommand :: Command.ClusterCommand -> String
 renderClusterCommand =
   show . Command.clusterCommandOperation
-
-commandOutcomeToEither :: Subprocess.CommandOutcome -> Either String String
-commandOutcomeToEither outcome =
-  case outcome of
-    Subprocess.CommandSucceeded stdoutOutput -> Right stdoutOutput
-    Subprocess.CommandFailedFatal message -> Left message
-    Subprocess.CommandFailedKernel message -> Left message
-    Subprocess.CommandTimedOut timeoutValue ->
-      Left (renderBoundedCommandOutcome (Subprocess.CommandTimedOut timeoutValue))
-
-renderBoundedCommandOutcome :: Subprocess.CommandOutcome -> String
-renderBoundedCommandOutcome outcome =
-  case outcome of
-    Subprocess.CommandSucceeded stdoutOutput -> stdoutOutput
-    Subprocess.CommandFailedFatal message -> message
-    Subprocess.CommandFailedKernel message -> message
-    Subprocess.CommandTimedOut (Subprocess.Timeout micros) ->
-      "command timed out after " <> show (micros `div` 1000000) <> "s"
 
 normalizeKubeconfigServer :: ControlPlaneContext -> String -> String
 normalizeKubeconfigServer _controlPlane kubeconfigContents = kubeconfigContents

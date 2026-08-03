@@ -67,7 +67,14 @@ Read first:
   `close_fds = True`, `create_group = True`, an explicit environment, and ordinary standard-stream
   pipes; the anchor starts and reaps the supervisor, and a total length-bounded typed framed
   protocol plus hidden constructors, a rank-2 session region, and linear phase transitions prevent
-  target start before durable activity evidence or reuse and escape of start authority. Canonical:
+  target start before durable activity evidence or reuse and escape of start authority. `close_fds`
+  is only bounded because the descriptor space is: `Infernix.DescriptorSpace` lowers the soft
+  `RLIMIT_NOFILE` to a 16384 ceiling as the first action of every process image, before the internal
+  self-exec dispatch and before any descriptor is opened, because the forked child closes every
+  descriptor up to that limit before `exec` — 313 s per spawn at a containerd pod's 1073741816,
+  measured. Every spawn kernel observes the bound immediately before `createProcess`, and the
+  `unboundedDescriptorSpawnViolations` lint keeps a new `close_fds` surface from skipping it.
+  Canonical:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - Apple engine materialization is not a process-spawn exemption: every Poetry, Python/venv,
   exact-package, Audiveris image, installed-smoke, and provenance operation must use the closed
@@ -85,8 +92,12 @@ Read first:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - cluster ownership and mutation-position by construction: the persisted cluster state names its owner
   (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
-  ownership evidence, so tearing down an `OperatorOwned` cluster does not typecheck — `infernix test all`
-  fails closed on an operator's running cluster instead of destroying it. The `ClusterLifecycle` machine
+  ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
+  teardown authority can neither escape its region nor be reused. The *owner* discrimination itself is
+  a fail-closed evidence check performed under that same held lease — the persisted owner and the live
+  Kind inventory are reread and compared inside the lock, not encoded in the authority's type — so
+  `infernix test all` fails closed on an operator's running cluster instead of destroying it. Making
+  the owner a type index is open follow-on work (Phase 6 Sprint 6.45). The `ClusterLifecycle` machine
   carries a first-class `ClusterMutating` position, so a killed `infernix test all` leaves a persisted,
   detectable, reconcilable dirty cluster (`cluster status` reports the mutation-incomplete phase and the
   next `cluster up` uncordons drained nodes and scales deployments back) rather than a false

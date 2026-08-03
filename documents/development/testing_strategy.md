@@ -53,8 +53,10 @@ in progress.
   engine launch can receive an `ExecutableModel`. Validation must prove that a request for an
   unavailable row returns typed
   `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` without
-  blocking smaller placements. Linux GPU currently fails plan compilation closed with
-  `GpuDualResourceBudgetRequired`; Phase 6 owns the dual RAM/VRAM path. Phase 1 owns compiler
+  blocking smaller placements. Linux GPU compiles a dual RAM/VRAM budget (Phase 6 Sprint 6.44): a
+  device-using row carries two independently indexed grants and two live watchdogs, and a
+  `linux-gpu` budget naming only one resource still fails plan compilation closed with
+  `GpuDualResourceBudgetRequired`. Phase 1 owns compiler
   accounting and coordinator rejection delivery, while Phase 4 owns Apple/Linux CPU adversarial
   survival and encapsulated serialization. Canonical home:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
@@ -369,8 +371,11 @@ the normal coordinator path now rejects only the unavailable request without eng
 unknown, wrong-route, and malformed coordinator/engine inputs also have terminal failed-result
 paths before source removal/acknowledgement. The current daemon supplies caller-owned
 serialization; Phase 4 must encapsulate it and prove the Apple/Linux CPU enforcement behavior.
-Linux GPU intentionally fails plan compilation closed with
-`GpuDualResourceBudgetRequired` until Phase 6 provides independent RAM and VRAM enforcement.
+Linux GPU now compiles: Phase 6 Sprint 6.44 provides independent RAM and VRAM enforcement, so a
+device-using row is admitted against both limits and watched by both enforcers. A `linux-gpu` budget
+that names only one resource still fails plan compilation closed with
+`GpuDualResourceBudgetRequired`, and a dual budget whose halves name the wrong physical resources is
+rejected by `InvalidMemoryEnforcer`.
 
 The 2026-07-25 Phase 1 gate historically proved an Apple/Linux CPU per-model run has exactly two
 per-row outcomes and no third. It predates the all-Haskell lifecycle/subprocess correction and must
@@ -386,8 +391,32 @@ model/URL/timestamp drift fails before side effects, the raw publisher is absent
 substrate metadata round-trips through explicit UTF-8 Dhall emission. The validation classifier
 must distinguish a typed memory-capacity failure from the two disallowed
 outcomes: a **stall** (a genuinely missing result, including the historical OS-OOM-kill symptom) and
-a **fabricated pass**. Phase 4 owns Apple/Linux CPU adversarial proof, Phase 6 owns GPU enforcement,
-and Phase 8 owns the final wire migration. Canonical doctrine:
+a **fabricated pass**. Phase 4 owns Apple/Linux CPU adversarial proof; Phase 6 Sprint 6.44 landed GPU
+enforcement, whose machine-independent half (the fixed `nvidia-smi` observer's parsers, the group
+attribution arithmetic and its overflow rejections, and a live no-CUDA-context sample that must
+complete without a fabricated breach or an enforcement failure) runs in `infernix-unit` and
+`infernix-capped-engine-observer`. Those live assertions require the device: they are real evidence
+only where one is reachable, and **skip loudly** otherwise. Whether the outer launcher container can
+reach the device is a property of the host Docker daemon's default runtime, not of `compose.yaml`, so
+that coverage is host-configuration-dependent and is never recorded as unconditional. The adversarial
+CUDA breach **is** now covered, in `infernix-unit`: `runNvidiaVramBreachAssertions` holds a real
+device allocation made through `libcuda.so.1` driver-API calls under `ctypes` — needing no compiler
+and adding no repo-owned native source — and drives the same `nvidiaWatchdogOutcomeForTest` seam that
+Phase 4 Sprint 4.32 uses for the Linux CPU case, asserting a typed `EngineExceededCeiling`, a
+non-successful group reap, and a subsequent smaller allocation completing cleanly. Its ceilings are
+set from measurement rather than assumption, because a CUDA context is itself a ~500 MiB device
+allocation before any `cuMemAlloc`, so a naive ceiling would be breached by context overhead and
+would prove nothing about the allocation. It skips loudly and by name when the device, the pinned
+interpreter, or the allocation gate is unavailable. The integration suite still has no runtime
+ceiling-breach case — `validateCatalogModelInference` classifies every catalog row as either
+compiler-unavailable or completed, and a runtime breach of an *admitted* ceiling is neither — so the
+unit suite is the sole owner of this proof.
+
+Every suite whose image spawns a subprocess bounds its descriptor space first
+(`Infernix.DescriptorSpace`). This is not a performance nicety: `close_fds = True` makes the forked
+child close every descriptor up to the soft `RLIMIT_NOFILE` before `exec`, which is 313 s per spawn
+at a containerd pod's 1073741816, so an unbounded suite image reads as a hang rather than as a
+resource bound. Phase 8 owns the final wire migration. Canonical doctrine:
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 ## Durable-Context Demo Validation

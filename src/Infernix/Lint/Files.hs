@@ -11,15 +11,11 @@ import Control.Monad (forM, unless)
 import Data.Char (isAlphaNum, isSpace, toLower)
 import Data.List (isInfixOf, isPrefixOf, isSuffixOf)
 import Data.List qualified as List
-import Data.Text qualified as Text
+import Infernix.Cluster.Command qualified as Command
+import Infernix.Cluster.Invoke qualified as Invoke
 import Infernix.Config (Paths (..), discoverPaths)
-import Infernix.HostConfig qualified as HostConfig
-import Infernix.HostTools (HostTool (..))
-import Infernix.HostTools qualified as HostTools
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
-import System.Exit (ExitCode (ExitSuccess))
-import System.FilePath (takeDirectory, takeExtension, (</>))
-import System.Process (CreateProcess (cwd, env), proc, readCreateProcessWithExitCode)
+import System.FilePath (takeExtension, (</>))
 
 checkSuffixes :: [String]
 checkSuffixes = [".cabal", ".hs", ".js", ".json", ".md", ".mjs", ".proto", ".purs", ".py", ".sh", ".toml", ".yaml", ".yml"]
@@ -378,25 +374,31 @@ listTrackedFileFailures paths = do
     then listTrackedFileFailuresFromGit root
     else listTrackedFileFailuresFromSnapshotManifest root
 
+-- | Enumerate the tracked inventory through the closed bounded-command
+-- catalog.
+--
+-- Phase 6 Sprint 6.44 follow-on removed this module's last raw spawn. The
+-- invocation was already fully closed in substance — a registered 'HostGit'
+-- tool, a fixed argv, an explicit environment — but it carried no deadline, so
+-- a git process wedged on a stuck filesystem or a hung credential helper hung
+-- @infernix lint files@ forever. 'Command.gitListTrackedFiles' puts it under
+-- the same required timeout and total 'Subprocess.CommandOutcome' as every
+-- other external command. @infernix lint files@ runs after configuration
+-- exists, so the generated host manifest the bounded-command environment
+-- requires is available; when it is not, the outcome is a named fail-closed
+-- diagnostic rather than an ambient @\$PATH@ fallback.
 listTrackedFileFailuresFromGit :: FilePath -> IO [String]
 listTrackedFileFailuresFromGit root = do
   paths <- discoverPaths
-  gitCommand <- requireFilesLintHostTool paths HostGit
-  (exitCode, stdoutOutput, stderrOutput) <-
-    readCreateProcessWithExitCode
-      (proc gitCommand ["-c", "safe.directory=" <> root, "ls-files", "-z"])
-        { cwd = Just root,
-          env = Just (filesLintSubprocessBaseEnvFor paths)
-        }
-      ""
-  case exitCode of
-    ExitSuccess ->
+  outcome <- Invoke.tryClusterCommand paths (Command.gitListTrackedFiles root)
+  case outcome of
+    Right stdoutOutput ->
       concat <$> mapM (trackedFilePolicyFailures root) (splitNul stdoutOutput)
-    _ ->
+    Left failure ->
       ioError
         ( userError
             ( "git ls-files failed during file lint:\n"
-                <> stderrOutput
+                <> failure
             )
         )
 
@@ -475,69 +477,4 @@ isTrackedGeneratedPath relativePath =
       "/.mypy_cache" `isSuffixOf` relativePath,
       "/.ruff_cache/" `isInfixOf` relativePath,
       "/.ruff_cache" `isSuffixOf` relativePath
-    ]
-
-requireFilesLintHostTool :: Paths -> HostTool -> IO FilePath
-requireFilesLintHostTool paths tool = do
-  maybePath <- filesLintHostToolPath paths tool
-  case maybePath of
-    Just path -> pure path
-    Nothing ->
-      ioError
-        ( userError
-            ( "required host tool is unavailable during file lint: "
-                <> Text.unpack (HostTools.hostToolName tool)
-            )
-        )
-
-filesLintHostToolPath :: Paths -> HostTool -> IO (Maybe FilePath)
-filesLintHostToolPath paths tool =
-  case pathsHostConfig paths of
-    Just hostConfig ->
-      let configured = HostTools.hostToolPath hostConfig tool
-       in pure $
-            if Text.null configured
-              then Nothing
-              else Just (Text.unpack configured)
-    Nothing -> firstExistingPath (HostTools.hostToolFallbackCandidates tool)
-
-firstExistingPath :: [FilePath] -> IO (Maybe FilePath)
-firstExistingPath [] = pure Nothing
-firstExistingPath (candidate : rest) = do
-  present <- doesFileExist candidate
-  if present
-    then pure (Just candidate)
-    else firstExistingPath rest
-
-filesLintSubprocessBaseEnvFor :: Paths -> [(String, String)]
-filesLintSubprocessBaseEnvFor paths =
-  maybe [] hostHomeEnv (pathsHostConfig paths)
-    <> [ ("PATH", filesLintSearchPath paths),
-         ("LANG", "C.UTF-8"),
-         ("LC_ALL", "C.UTF-8")
-       ]
-
-hostHomeEnv :: HostConfig.HostConfig -> [(String, String)]
-hostHomeEnv hostConfig =
-  let home = Text.unpack (HostConfig.hostHomeDirectory (HostConfig.hostFilesystem hostConfig))
-   in [("HOME", home) | not (null home)]
-
-filesLintSearchPath :: Paths -> String
-filesLintSearchPath paths =
-  let fallback =
-        [ "/opt/homebrew/bin",
-          "/usr/bin",
-          "/bin"
-        ]
-      manifestDirs =
-        maybe [] hostToolParentDirs (pathsHostConfig paths)
-   in List.intercalate ":" (List.nub (manifestDirs <> fallback))
-
-hostToolParentDirs :: HostConfig.HostConfig -> [FilePath]
-hostToolParentDirs hostConfig =
-  List.nub
-    [ takeDirectory path
-    | tool <- [HostGit],
-      let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
-      not (null path)
     ]

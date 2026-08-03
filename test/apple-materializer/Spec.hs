@@ -33,6 +33,7 @@ import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Engines.AppleSilicon.Internal qualified as AppleInternal
 import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.HostConfig qualified as HostConfig
@@ -54,6 +55,10 @@ import System.Timeout qualified as Timeout
 
 main :: IO ()
 main = do
+  -- Test images spawn self-exec children through the same close_fds
+  -- kernels the production binary uses, so they bound their descriptor
+  -- space first. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
   Subprocess.dispatchInternalSubprocessMode
   arguments <- getArgs
   case arguments of

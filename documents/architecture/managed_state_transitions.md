@@ -79,7 +79,13 @@ evidence:
   acquisition; nominal roles on the lease and authorization types prevent `Data.Coerce` from
   erasing the region. The effect-adjacent check rereads reservation access and requires the exact
   captured record, including owner PID, process group, and birth identity, before revalidating
-  owner/runtime; tearing down an `OperatorOwned` cluster from the harness does not typecheck;
+  owner/runtime. The 2026-08-02 final cross-phase review corrected an over-claim here: the region is
+  type-indexed, but the *owner* is an ordinary field of `ClusterTeardownAuthority`, so an authority
+  minted for `HarnessOwned` and one minted for `OperatorOwned` have the same type. Tearing down an
+  `OperatorOwned` cluster from the harness is refused by an evidence check under the held lease, not
+  by the type checker, and none of the three teardown compile-fail fixtures asserts otherwise —
+  they exercise only the region parameter. Promoting `ClusterOwner` so the discrimination is a type
+  error is Phase 6 Sprint 6.45 work;
 - the readiness-sentinel commit takes a `PayloadVerified`, so a sentinel written without proof does not
   typecheck;
 - the lifecycle lock is acquired only through the library-internal
@@ -293,7 +299,34 @@ retained cache.
 | Region | rank-2 `forall s.` lease scope, plus surgical `LinearTypes` (`%1 ->`) for spend-once capabilities | using revocable evidence outside the scope that holds the condition; reusing a spent capability |
 | Haskell | `Infernix.Lint.HaskellStyle` escape-token check | `unsafeCoerce` / `unsafePerformIO` in the evidence modules (the two escapes types cannot close) |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` capability-gating rules `unboundedExecViolations` / `unboundedHttpViolations` / `appleArtifactProvisioningViolations` | raw unbounded process spawn (`readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` / …) outside `Infernix.Cluster.Subprocess.runBoundedCommand`, raw Apple artifact process access or delegation to the legacy unbounded Poetry helpers outside the opaque provisioning facade, and raw `withResponse` for the upstream model download outside the bounded-HTTP wrapper — the raw primitives that have no type-level chokepoint |
+| Haskell (lint) | `Infernix.Lint.HaskellStyle` rule `unboundedDescriptorSpawnViolations` | a `close_fds` spawn surface that never observes `Infernix.DescriptorSpace.requireBoundedDescriptorSpace` — see [Bounded descriptor space](#bounded-descriptor-space) |
 | Files (lint) | `infernix lint files` native-source, Cabal, and embedded-source scan | repository-owned C/C++/Objective-C/CUDA/assembly/Metal/Swift/C2HS/HSC/C-- source or headers; Cabal native-source fields or native-token CPP definitions; embedded native source/writers/compiler invocations in another implementation language |
+
+### Bounded descriptor space
+
+A bounded command is not bounded if its own spawn is unbounded, and until Phase 6 Sprint 6.44's
+follow-on it was not. Every spawn kernel here sets `close_fds = True` so a child inherits nothing but
+the standard streams it is handed. `close_fds` is a configuration `posix_spawn` cannot express, so
+`process` falls back to fork/exec and, in the forked child, closes every descriptor from 3 up to
+`sysconf(_SC_OPEN_MAX)` — the soft `RLIMIT_NOFILE` — before `exec`. The walk is linear in a limit the
+process *inherits* rather than chooses, and containerd hands a pod `1073741816`. Measured at that
+exact limit: **313 s per spawn**, against a 5 s observer deadline and a 50 ms sampling cadence. The
+same spawn with `close_fds = False` is 0.8 ms at every limit.
+
+The doctrine answer is to bound the resource, not to weaken the isolation.
+`Infernix.DescriptorSpace.establishBoundedDescriptorSpace` lowers the soft limit to a 16384 ceiling as
+the first action of a process image, before the internal self-exec dispatch and before anything opens
+a descriptor. A process cannot open a descriptor numbered at or above its own soft limit, so no
+descriptor above the bound can ever exist and the child's walk over `3 .. bound` still closes the
+entire descriptor space: `close_fds` keeps its exact meaning, and only its cost becomes bounded. The
+bound is inherited across `fork` and `exec`, so anchor, supervisor, pin, target, and engine children
+are bounded by their parent. The limit is only ever lowered, so a tighter host-imposed limit is
+preserved, and the hard limit is written back unchanged, so no privilege is required.
+
+`requireBoundedDescriptorSpace` is the fail-closed half, called by each kernel immediately before
+`createProcess`: an unbounded process image is a named refusal identifying the spawning kernel rather
+than a stall that reads as a hang. Because it is an observation at the point of use, it holds even if
+a future process image forgets to establish the bound.
 
 Two residual review-obligations remain and are minimized to a small audit surface: **probe honesty**
 (each evidence type has exactly one mint, co-located with its hidden constructor, that must consume a

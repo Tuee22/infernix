@@ -130,6 +130,8 @@ import Data.Time (UTCTime, defaultTimeLocale, formatTime, getCurrentTime, parseT
 import Data.Word (Word8)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
+import Infernix.Cluster.Command qualified as ClusterCommand
+import Infernix.Cluster.Invoke qualified as ClusterInvoke
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
     DemoBackendWiring (..),
@@ -229,11 +231,9 @@ import System.Directory
     listDirectory,
     removeFile,
   )
-import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath (dropExtension, takeDirectory, (<.>), (</>))
 import System.IO (Handle, IOMode (ReadMode), hClose, hFileSize, hPutStrLn, openBinaryTempFile, stderr, withBinaryFile)
 import System.Posix.Process (getProcessID)
-import System.Process (readProcessWithExitCode)
 import System.Timeout (timeout)
 import Text.Read (readMaybe)
 
@@ -1688,29 +1688,33 @@ discoverPulsarTransport paths runtimeMode maybeClusterConfig =
 -- happened to work. Reaching the proxy NodePort directly keeps both
 -- halves un-gated and consistent with the Apple lane.
 discoverOuterContainerPulsarTransport :: HostConfig.HostConfig -> RuntimeMode -> IO (Maybe PulsarTransport)
-discoverOuterContainerPulsarTransport hostConfig runtimeMode = do
+discoverOuterContainerPulsarTransport _hostConfig runtimeMode = do
+  paths <- discoverPaths
   let containerName =
         "infernix-" <> Text.unpack (runtimeModeId runtimeMode) <> "-control-plane"
-      dockerPath = Text.unpack (HostConfig.hostDocker (HostConfig.hostToolPaths hostConfig))
-      dockerArgs =
-        [ "inspect",
-          containerName,
-          "--format",
-          "{{.NetworkSettings.Networks.kind.IPAddress}}"
-        ]
-  ipResult <- try (readProcessWithExitCode dockerPath dockerArgs "") :: IO (Either SomeException (ExitCode, String, String))
+  -- Sprint 6.44: the control-plane address probe is a bounded closed cluster
+  -- command. The former raw `docker inspect` had no deadline, so a wedged
+  -- Docker daemon stalled transport discovery indefinitely instead of failing
+  -- over to the next candidate.
+  ipResult <-
+    ClusterInvoke.tryClusterCommand
+      paths
+      ( ClusterCommand.dockerInspectContainerField
+          (ClusterCommand.ContainerName containerName)
+          ClusterCommand.KindNetworkIpv4
+      )
   pure (buildOuterContainerTransport ipResult)
 
 buildOuterContainerTransport ::
-  Either SomeException (ExitCode, String, String) -> Maybe PulsarTransport
+  Either String String -> Maybe PulsarTransport
 buildOuterContainerTransport ipResult =
   case ipResult of
-    Right (ExitSuccess, rawOutput, _) ->
+    Right rawOutput ->
       let ipv4 = filter (/= '\n') (trimWhitespacePulsar rawOutput)
        in if null ipv4
             then Nothing
             else buildOuterContainerTransportFromIpv4 ipv4
-    _ -> Nothing
+    Left _ -> Nothing
 
 buildOuterContainerTransportFromIpv4 :: String -> Maybe PulsarTransport
 buildOuterContainerTransportFromIpv4 ipv4 =
@@ -4309,42 +4313,44 @@ runModelBootstrapSnapshotHelper ::
   IO ()
 runModelBootstrapSnapshotHelper presigned request = do
   paths <- discoverPaths
-  poetryExecutable <- ensurePoetryExecutable paths
+  -- Poetry must still be installed before the closed command names it, but the
+  -- launch itself is now bounded: Sprint 6.44 replaced a raw unbounded
+  -- `readProcessWithExitCode` — which let a stalled upstream origin hang the
+  -- coordinator's bootstrap loop with no deadline — with the same required
+  -- timeout and total `CommandOutcome` every other external command carries.
+  _ <- ensurePoetryExecutable paths
   let minioEndpoint =
         Presigned.presignedScheme presigned
           <> "://"
           <> Presigned.presignedEndpoint presigned
-      args =
-        [ "--directory",
-          "python",
-          "run",
-          "bootstrap-model-snapshot",
-          "--model-id",
-          Text.unpack (BootstrapModels.bootstrapRequestModelId request),
-          "--download-url",
-          Text.unpack (BootstrapModels.bootstrapRequestDownloadUrl request),
-          "--minio-endpoint",
-          Text.unpack minioEndpoint,
-          "--minio-access-key",
-          Text.unpack (Presigned.presignedAccessKeyId presigned),
-          "--minio-secret-key",
-          Text.unpack (Presigned.presignedSecretAccessKey presigned),
-          "--minio-region",
-          Text.unpack (Presigned.presignedRegion presigned),
-          "--models-bucket",
-          "infernix-models"
-        ]
-  (exitCode, stdoutOutput, stderrOutput) <- readProcessWithExitCode poetryExecutable args ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ ->
+      snapshotSpec =
+        ClusterCommand.ModelSnapshotBootstrapSpec
+          { ClusterCommand.modelSnapshotModelId =
+              Text.unpack (BootstrapModels.bootstrapRequestModelId request),
+            ClusterCommand.modelSnapshotDownloadUrl =
+              Text.unpack (BootstrapModels.bootstrapRequestDownloadUrl request),
+            ClusterCommand.modelSnapshotMinioEndpoint = Text.unpack minioEndpoint,
+            ClusterCommand.modelSnapshotAccessKeyId =
+              Text.unpack (Presigned.presignedAccessKeyId presigned),
+            ClusterCommand.modelSnapshotSecretAccessKey =
+              Text.unpack (Presigned.presignedSecretAccessKey presigned),
+            ClusterCommand.modelSnapshotRegion =
+              Text.unpack (Presigned.presignedRegion presigned),
+            ClusterCommand.modelSnapshotBucket = "infernix-models"
+          }
+  outcome <-
+    ClusterInvoke.tryClusterCommand
+      paths
+      (ClusterCommand.poetryModelSnapshotBootstrap snapshotSpec)
+  case outcome of
+    Right _ -> pure ()
+    Left failure ->
       ioError
         ( userError
             ( "model-bootstrap snapshot helper failed for "
                 <> Text.unpack (BootstrapModels.bootstrapRequestModelId request)
                 <> ":\n"
-                <> stdoutOutput
-                <> stderrOutput
+                <> failure
             )
         )
 

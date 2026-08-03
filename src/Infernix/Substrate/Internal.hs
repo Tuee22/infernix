@@ -1,5 +1,6 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Substrate.Internal
@@ -22,6 +23,7 @@ import Data.List (intercalate)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
+import Data.Text.IO qualified as TextIO
 import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
@@ -55,13 +57,58 @@ decodeRawRuntimeConfigFile :: FilePath -> IO RawRuntimeConfig
 decodeRawRuntimeConfigFile filePath = do
   decodedValue <- try (Dhall.inputFile Dhall.auto filePath :: IO DhallDemoConfig)
   case decodedValue of
-    Left err ->
+    Left err -> do
+      -- Phase 8 Sprint 8.9: a payload written by a pre-union generator fails
+      -- the schema with a raw structural Dhall type error that says nothing
+      -- about what to do. Name the retired shape and the command that replaces
+      -- it before falling back to the generic diagnostic.
+      legacyShape <- classifyRetiredSubstrateShape filePath
       ioError
-        (userError ("invalid generated substrate Dhall: " <> displayException (err :: SomeException)))
+        ( userError
+            ( "invalid generated substrate Dhall: "
+                <> maybe "" (<> "\n") legacyShape
+                <> displayException (err :: SomeException)
+            )
+        )
     Right rawConfig ->
       case demoConfigFromDhall rawConfig of
         Left message -> ioError (userError ("invalid generated substrate Dhall: " <> message))
         Right demoConfig -> pure (RawRuntimeConfig demoConfig)
+
+-- | Phase 8 Sprint 8.9 — recognise the retired flat, text-discriminated
+-- execution-plan payloads and name them. Every generated @.dhall@ is produced
+-- by this binary and is never version-controlled, so a payload carrying one of
+-- these retired shapes is always a stale file left by an older binary, and the
+-- fix is always to regenerate it. The check reads the file as text and looks
+-- only for retired *field* spellings, so it cannot misfire on a current
+-- payload: the union arms carry no @kind@ discriminator and no flat
+-- @podLimitMib@ / @inferenceRamBudgetMib@ scalar.
+classifyRetiredSubstrateShape :: FilePath -> IO (Maybe String)
+classifyRetiredSubstrateShape filePath = do
+  contents <- try (TextIO.readFile filePath)
+  pure $
+    case contents of
+      Left (_ :: SomeException) -> Nothing
+      Right payload ->
+        case [description | (marker, description) <- retiredSubstrateMarkers, marker `Text.isInfixOf` payload] of
+          [] -> Nothing
+          description : _ ->
+            Just
+              ( "this file carries the retired "
+                  <> description
+                  <> ". The generated execution-plan language now uses proper unions"
+                  <> " (`< HostEnforced | SubstrateEnforced | DualEnforced >`), and no"
+                  <> " `.dhall` is version-controlled: delete it and re-run"
+                  <> " `infernix init` (or `infernix test init` for the harness input)"
+                  <> " to regenerate it with the current binary."
+              )
+
+retiredSubstrateMarkers :: [(Text, String)]
+retiredSubstrateMarkers =
+  [ ("inferenceRamBudgetMib", "flat `inferenceRamBudgetMib` scalar budget"),
+    ("kind =", "text-discriminated `kind =` inference-memory-budget record"),
+    ("podLimitMib", "flat `podLimitMib` inference-memory-budget field")
+  ]
 
 decodeCompiledRuntimePlanFile :: FilePath -> IO (Either ConfigErrors CompiledRuntimePlan)
 decodeCompiledRuntimePlanFile filePath =
@@ -181,6 +228,7 @@ instance Dhall.FromDhall DhallModelDescriptor where
 data DhallInferenceMemoryBudget
   = HostEnforced DhallHostMemoryBudget
   | SubstrateEnforced DhallSubstrateMemoryBudget
+  | DualEnforced DhallDualMemoryBudget
   deriving (Generic)
 
 instance Dhall.FromDhall DhallInferenceMemoryBudget
@@ -205,6 +253,18 @@ data DhallSubstrateMemoryBudget = DhallSubstrateMemoryBudget
 instance Dhall.FromDhall DhallSubstrateMemoryBudget where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
+-- | Phase 6 Sprint 6.44 — the @linux-gpu@ arm. It reuses the substrate limit
+-- record for both halves, so the two limits are structurally identical and the
+-- arm names which is which rather than encoding it in a discriminator field.
+data DhallDualMemoryBudget = DhallDualMemoryBudget
+  { dhallBudgetPodLimit :: DhallSubstrateMemoryBudget,
+    dhallBudgetVramLimit :: DhallSubstrateMemoryBudget
+  }
+  deriving (Generic)
+
+instance Dhall.FromDhall DhallDualMemoryBudget where
+  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
+
 data DhallRequestField = DhallRequestField
   { dhallName :: Text,
     dhallLabel :: Text,
@@ -220,14 +280,11 @@ dhallInterpretOptions =
   Dhall.defaultInterpretOptions {Dhall.fieldModifier = dhallFieldName}
 
 dhallFieldName :: Text -> Text
+-- Phase 8 Sprint 8.9 removed the @legacyDhall@ prefix branch: the pre-union
+-- decoder it served is gone and no field carried that prefix any more, so the
+-- branch was dead compatibility residue rather than a supported spelling.
 dhallFieldName rawFieldName =
-  case Text.stripPrefix "dhall" rawFieldName of
-    Just suffix -> dhallFieldSuffixName suffix
-    Nothing ->
-      maybe
-        rawFieldName
-        dhallFieldSuffixName
-        (Text.stripPrefix "legacyDhall" rawFieldName)
+  maybe rawFieldName dhallFieldSuffixName (Text.stripPrefix "dhall" rawFieldName)
 
 dhallFieldSuffixName :: Text -> Text
 dhallFieldSuffixName suffix =
@@ -251,6 +308,8 @@ dhallFieldSuffixName suffix =
     "BudgetVmReserveMib" -> "vmReserveMib"
     "BudgetHeadroomMib" -> "headroomMib"
     "BudgetLimitMib" -> "limitMib"
+    "BudgetPodLimit" -> "podLimit"
+    "BudgetVramLimit" -> "vramLimit"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
@@ -318,19 +377,32 @@ inferenceMemoryBudgetFromDhall rawBudget =
           (dhallBudgetPhysicalMib hostBudget)
           (dhallBudgetVmReserveMib hostBudget)
           (dhallBudgetHeadroomMib hostBudget)
-    SubstrateEnforced substrateBudget -> do
-      resource <- parseEnum "inferenceMemoryBudget.resource" parseInferenceMemoryResource (dhallBudgetResource substrateBudget)
-      if dhallBudgetLimitMib substrateBudget <= 0
-        then Left "inferenceMemoryBudget.limitMib must be positive"
-        else
-          pure
-            ( SubstrateEnforcedBudget
-                PodMemoryLimit
-                  { podMemoryLimitResource = resource,
-                    podMemoryLimitSource = dhallBudgetSource substrateBudget,
-                    podMemoryLimitMib = dhallBudgetLimitMib substrateBudget
-                  }
-            )
+    SubstrateEnforced substrateBudget ->
+      SubstrateEnforcedBudget <$> podMemoryLimitFromDhall "inferenceMemoryBudget" substrateBudget
+    DualEnforced dualBudget ->
+      DualEnforcedBudget
+        <$> podMemoryLimitFromDhall "inferenceMemoryBudget.podLimit" (dhallBudgetPodLimit dualBudget)
+        <*> podMemoryLimitFromDhall "inferenceMemoryBudget.vramLimit" (dhallBudgetVramLimit dualBudget)
+
+podMemoryLimitFromDhall ::
+  String ->
+  DhallSubstrateMemoryBudget ->
+  Either String PodMemoryLimit
+podMemoryLimitFromDhall fieldPath substrateBudget = do
+  resource <-
+    parseEnum
+      (fieldPath <> ".resource")
+      parseInferenceMemoryResource
+      (dhallBudgetResource substrateBudget)
+  if dhallBudgetLimitMib substrateBudget <= 0
+    then Left (fieldPath <> ".limitMib must be positive")
+    else
+      pure
+        PodMemoryLimit
+          { podMemoryLimitResource = resource,
+            podMemoryLimitSource = dhallBudgetSource substrateBudget,
+            podMemoryLimitMib = dhallBudgetLimitMib substrateBudget
+          }
 
 deriveEngineDaemonConfigs :: RuntimeMode -> [EnginePool] -> [EngineMember] -> Text -> [DaemonConfig]
 deriveEngineDaemonConfigs runtimeMode pools members resultTopicValue =
@@ -515,12 +587,30 @@ renderSubstrateConfig demoConfig =
       "}"
     ]
 
+-- | The single rendered spelling of the generated budget union. Every renderer
+-- arm selects from this one value, so a new arm cannot be added to the Haskell
+-- ADT and its decoder while some renderer keeps emitting a stale union type.
+inferenceMemoryBudgetUnionType :: String
+inferenceMemoryBudgetUnionType =
+  "< HostEnforced : { physicalMib : Integer, vmReserveMib : Integer, headroomMib : Integer }"
+    <> " | SubstrateEnforced : "
+    <> substrateMemoryBudgetRecordType
+    <> " | DualEnforced : { podLimit : "
+    <> substrateMemoryBudgetRecordType
+    <> ", vramLimit : "
+    <> substrateMemoryBudgetRecordType
+    <> " } >"
+
+substrateMemoryBudgetRecordType :: String
+substrateMemoryBudgetRecordType =
+  "{ resource : Text, source : Text, limitMib : Integer }"
+
 renderInferenceMemoryBudget :: InferenceMemoryBudget -> String
 renderInferenceMemoryBudget budget =
   case budget of
     HostEnforcedBudget partition ->
-      "< HostEnforced : { physicalMib : Integer, vmReserveMib : Integer, headroomMib : Integer }"
-        <> " | SubstrateEnforced : { resource : Text, source : Text, limitMib : Integer } >.HostEnforced "
+      inferenceMemoryBudgetUnionType
+        <> ".HostEnforced "
         <> "{ physicalMib = "
         <> dhallInteger (hostPartitionPhysicalMib partition)
         <> ", vmReserveMib = "
@@ -529,15 +619,27 @@ renderInferenceMemoryBudget budget =
         <> dhallInteger (hostPartitionHeadroomMib partition)
         <> " }"
     SubstrateEnforcedBudget podLimit ->
-      "< HostEnforced : { physicalMib : Integer, vmReserveMib : Integer, headroomMib : Integer }"
-        <> " | SubstrateEnforced : { resource : Text, source : Text, limitMib : Integer } >.SubstrateEnforced "
-        <> "{ resource = "
-        <> dhallText (inferenceMemoryBudgetResourceText (podMemoryLimitResource podLimit))
-        <> ", source = "
-        <> dhallText (podMemoryLimitSource podLimit)
-        <> ", limitMib = "
-        <> dhallInteger (podMemoryLimitMib podLimit)
+      inferenceMemoryBudgetUnionType
+        <> ".SubstrateEnforced "
+        <> renderPodMemoryLimit podLimit
+    DualEnforcedBudget podLimit vramLimit ->
+      inferenceMemoryBudgetUnionType
+        <> ".DualEnforced "
+        <> "{ podLimit = "
+        <> renderPodMemoryLimit podLimit
+        <> ", vramLimit = "
+        <> renderPodMemoryLimit vramLimit
         <> " }"
+
+renderPodMemoryLimit :: PodMemoryLimit -> String
+renderPodMemoryLimit podLimit =
+  "{ resource = "
+    <> dhallText (inferenceMemoryBudgetResourceText (podMemoryLimitResource podLimit))
+    <> ", source = "
+    <> dhallText (podMemoryLimitSource podLimit)
+    <> ", limitMib = "
+    <> dhallInteger (podMemoryLimitMib podLimit)
+    <> " }"
 
 renderDaemonConfig :: DaemonConfig -> String
 renderDaemonConfig daemonConfig =

@@ -7,8 +7,8 @@ module Main (main) where
 
 import Control.Concurrent (forkIO, killThread, threadDelay, yield)
 import Control.Concurrent.MVar qualified as MVar
-import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
-import Control.Monad (unless, when)
+import Control.Exception (AsyncException (ThreadKilled), IOException, SomeAsyncException, SomeException, displayException, finally, fromException, throwIO, throwTo, toException, try, uninterruptibleMask_)
+import Control.Monad (unless, void, when)
 import Crypto.Hash.Algorithms qualified
 import Crypto.Hash.SHA256 qualified as SHA256
 import Crypto.PubKey.RSA qualified
@@ -26,7 +26,7 @@ import Data.ByteString.Lazy qualified as Lazy
 import Data.Char (isHexDigit, isUpper)
 import Data.Either (isLeft, isRight)
 import Data.IORef qualified as IORef
-import Data.List (find, isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
+import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
@@ -102,6 +102,12 @@ import Infernix.DemoConfig
     validateDemoConfigFile,
   )
 import Infernix.DemoConfig.Properties qualified as DemoConfigProperties
+import Infernix.DescriptorSpace
+  ( descriptorSpaceBoundLimit,
+    establishBoundedDescriptorSpace,
+    requireBoundedDescriptorSpace,
+    spawnDescriptorLimitCeiling,
+  )
 import Infernix.DhallSchema
   ( DhallSchema (..),
     allDhallSchemas,
@@ -153,7 +159,7 @@ import Infernix.Lint.Files
     embeddedNativeSourceViolations,
     nativeSourcePathViolations,
   )
-import Infernix.Lint.HaskellStyle (unboundedEngineSpawnViolations, unsafeNativeBoundaryViolations)
+import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unsafeNativeBoundaryViolations)
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
@@ -248,9 +254,19 @@ import System.Posix.Files (createNamedPipe, createSymbolicLink, fileMode, getFil
 import System.Posix.IO qualified as PosixIO
 import System.Posix.IO.ByteString qualified as PosixByteString
 import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
+import System.Posix.Resource
+  ( Resource (ResourceOpenFiles),
+    ResourceLimit (ResourceLimit),
+    ResourceLimits (softLimit),
+    getResourceLimit,
+    setResourceLimit,
+  )
 import System.Posix.Signals (nullSignal, sigKILL, sigSTOP, signalProcess, signalProcessGroup)
+import System.Posix.Types (CPid)
 import System.Process
-  ( CreateProcess (create_group),
+  ( CreateProcess (create_group, std_out),
+    ProcessHandle,
+    StdStream (CreatePipe),
     createProcess,
     getPid,
     proc,
@@ -334,7 +350,11 @@ allClusterOperations =
     ClusterCommand.ImagePublicationTagOperation,
     ClusterCommand.ImagePublicationPushOperation,
     ClusterCommand.ImagePublicationRemoveOperation,
-    ClusterCommand.ImagePublicationCopyOperation
+    ClusterCommand.ImagePublicationCopyOperation,
+    ClusterCommand.ModelSnapshotBootstrapOperation,
+    ClusterCommand.SourceInventoryOperation,
+    ClusterCommand.WebToolchainProbeOperation,
+    ClusterCommand.WebDependencyInstallOperation
   ]
 
 expectedClusterOperationPolicy ::
@@ -395,6 +415,22 @@ expectedClusterOperationPolicy operation =
         40
         (Subprocess.BoundedRetry 30 50000000)
         Subprocess.TransientThenFatal
+    -- Sprint 6.44: the model-weight snapshot bootstrap reuses the
+    -- image-publication copy policy, so its expected tuple is identical.
+    ClusterCommand.ModelSnapshotBootstrapOperation ->
+      minutes
+        40
+        (Subprocess.BoundedRetry 30 50000000)
+        Subprocess.TransientThenFatal
+    -- Sprint 6.44 follow-on: the tracked-source inventory (`git ls-files -z`)
+    -- and the host node version probe reuse the host-probe policy; the web
+    -- dependency install reuses the Docker build policy's long deadline.
+    ClusterCommand.SourceInventoryOperation ->
+      minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.WebToolchainProbeOperation ->
+      minutes 2 Subprocess.NeverRetry Subprocess.FatalFailure
+    ClusterCommand.WebDependencyInstallOperation ->
+      minutes 45 Subprocess.NeverRetry Subprocess.FatalFailure
   where
     minutes count = policyTuple (count * 60 * 1000000)
     policyTuple timeoutMicros retryPolicy failureClass =
@@ -411,7 +447,72 @@ dispatchCappedEngineMemoryFixture = do
     ["__infernix_unit_linux_memory_small_fixture"] -> do
       threadDelay 250000
       exitSuccess
+    ["__infernix_unit_nvidia_no_context_fixture"] -> do
+      threadDelay 250000
+      exitSuccess
     _ -> pure ()
+
+-- | Phase 6 Sprint 6.44 follow-on — the bounded descriptor space.
+--
+-- The behavioural half of the correction for the pre-@exec@ descriptor walk
+-- that @close_fds = True@ performs. A containerd pod's soft @RLIMIT_NOFILE@ is
+-- @1073741816@, and a spawn at that limit was measured at 313 s inside a
+-- container started with exactly that @--ulimit@, against a 5 s observer
+-- deadline. These assertions pin the three properties the correction rests on:
+-- the bound holds in this process image, a spawn kernel refuses to spawn
+-- without it, and establishing it never /raises/ a limit a host already set
+-- tighter.
+--
+-- Every case that mutates the limit restores it, because leaving it raised
+-- would make every later spawn in this suite fail closed.
+-- | The refusal has to name the spawning kernel, so an unbounded process image
+-- is attributable from one line of output rather than from a stalled deadline.
+descriptorRefusalNamesKernel :: Either IOException value -> Bool
+descriptorRefusalNamesKernel outcome =
+  case outcome of
+    Left failure ->
+      "unit descriptor-space negative case" `isInfixOf` displayException failure
+    Right _ -> False
+
+runDescriptorSpaceAssertions :: IO ()
+runDescriptorSpaceAssertions = do
+  established <- requireBoundedDescriptorSpace "unit descriptor-space assertion"
+  assert
+    (descriptorSpaceBoundLimit established <= spawnDescriptorLimitCeiling)
+    "the unit process image runs inside the established descriptor bound"
+
+  original <- getResourceLimit ResourceOpenFiles
+  let restore = setResourceLimit ResourceOpenFiles original
+  flip finally restore $ do
+    -- An unbounded descriptor space is a named refusal, not a stall. The raised
+    -- value stays modest: if this assertion ever leaks it, later spawns fail
+    -- closed rather than taking five minutes each.
+    setResourceLimit
+      ResourceOpenFiles
+      original {softLimit = ResourceLimit (spawnDescriptorLimitCeiling * 2)}
+    refused <-
+      try @IOException
+        (requireBoundedDescriptorSpace "unit descriptor-space negative case")
+    assert
+      (descriptorRefusalNamesKernel refused)
+      "requireBoundedDescriptorSpace refuses an unbounded descriptor space and names the spawning kernel"
+
+    -- Re-establishing from an unbounded space brings it back under the ceiling.
+    reestablished <- establishBoundedDescriptorSpace
+    assert
+      (descriptorSpaceBoundLimit reestablished == spawnDescriptorLimitCeiling)
+      "establishBoundedDescriptorSpace lowers an unbounded soft limit to the ceiling"
+
+    -- A host that already imposes a tighter limit keeps it: the bound is only
+    -- ever lowered, so establishing it cannot widen a descriptor space.
+    let tighter = 512
+    setResourceLimit
+      ResourceOpenFiles
+      original {softLimit = ResourceLimit tighter}
+    preserved <- establishBoundedDescriptorSpace
+    assert
+      (descriptorSpaceBoundLimit preserved == tighter)
+      "establishBoundedDescriptorSpace preserves a tighter host-imposed soft limit"
 
 runLinuxWatchdogBreachAssertions :: IO ()
 runLinuxWatchdogBreachAssertions =
@@ -457,14 +558,281 @@ runLinuxWatchdogBreachAssertions =
       (isNothing smallOutcome && smallExit == ExitSuccess)
       "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
 
+-- | Phase 6 Sprint 6.44 — the NVIDIA VRAM watchdog against a real device. A
+-- grouped child that holds no CUDA context must sample cleanly to zero
+-- attributed bytes and complete without a fabricated breach and without an
+-- enforcement-unavailable failure: that exercises the fixed @nvidia-smi@ spawn,
+-- the @\/proc@ group enumeration, the attribution join, and the loop's exit
+-- path end to end on real hardware.
+--
+-- The adversarial breach — a real CUDA allocation past a declared ceiling —
+-- needs a device-allocating child and is therefore owned by the @linux-gpu@
+-- behavioral cohort, not by this machine-independent suite. On a host without
+-- the fixed tool the assertion is skipped loudly rather than passing vacuously.
+runNvidiaWatchdogAssertions :: IO ()
+runNvidiaWatchdogAssertions =
+  unless (System.Info.os == "darwin") $ do
+    nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
+    if not nvidiaSmiPresent
+      then
+        putStrLn
+          "skipping the live NVIDIA VRAM watchdog assertions: /usr/bin/nvidia-smi is absent on this host"
+      else do
+        executable <- getExecutablePath
+        (_, _, _, handle) <-
+          createProcess
+            (proc executable ["__infernix_unit_nvidia_no_context_fixture"])
+              { create_group = True
+              }
+        childPid <-
+          getPid handle >>= maybe (fail "NVIDIA fixture exposed no pid") pure
+        reaped <- MVar.newEmptyMVar
+        _ <- forkIO (waitForProcess handle >>= MVar.putMVar reaped)
+        outcome <-
+          CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+            512
+            handle
+            childPid
+        childExit <- MVar.takeMVar reaped
+        assert
+          (isNothing outcome && childExit == ExitSuccess)
+          ( "Sprint 6.44: a live NVIDIA VRAM sample of a group holding no CUDA context "
+              <> "completes without a breach or an enforcement failure; observed "
+              <> show outcome
+          )
+        deviceVram <- CappedEngineInternal.observeNvidiaDeviceVramMib
+        assert
+          (maybe False (> 0) deviceVram)
+          ( "Sprint 6.44: the fixed NVIDIA device-memory observer reports a positive envelope; observed "
+              <> show deviceVram
+          )
+        samplerAvailable <- CappedEngineInternal.verifyNvidiaVramSampler
+        assert
+          samplerAvailable
+          "Sprint 6.44: the NVIDIA VRAM startup probe reports the sampler available on a CUDA host"
+
+-- | The interpreter that holds the device allocation.
+--
+-- Pinned as a literal absolute path for the same reason @\/usr\/bin\/nvidia-smi@
+-- is: an enforcement fixture that follows a configurable path proves whatever
+-- that path points at. The launcher image installs @python3@ unconditionally
+-- for every runtime mode, so this is the interpreter the cohort actually has.
+cudaFixtureInterpreter :: FilePath
+cudaFixtureInterpreter = "/usr/bin/python3"
+
+-- | A real CUDA device allocation, held open for the watchdog to observe.
+--
+-- Sprint 6.44's remaining work called for a fixture that allocates device
+-- memory past a declared ceiling. Driver-API calls through @ctypes@ need no
+-- compiler and add no repo-owned native source, which is what makes this
+-- expressible at all under the no-repo-owned-native-source doctrine.
+--
+-- The first stdout line is the gate. @allocated@ means the device memory is
+-- held and attributable; @unavailable \<reason\>@ means this host cannot make
+-- the observation, and the caller skips loudly rather than vacuously passing.
+-- Every driver call is checked, so a partial failure cannot masquerade as a
+-- held allocation.
+cudaAllocationFixtureProgram :: String
+cudaAllocationFixtureProgram =
+  intercalate
+    "\n"
+    [ "import ctypes, sys, time",
+      "requested = int(sys.argv[1])",
+      "hold = float(sys.argv[2])",
+      "def unavailable(reason):",
+      "    sys.stdout.write('unavailable ' + reason + '\\n')",
+      "    sys.stdout.flush()",
+      "    raise SystemExit(0)",
+      "try:",
+      "    driver = ctypes.CDLL('libcuda.so.1')",
+      "except OSError as failure:",
+      "    unavailable('libcuda.so.1 ' + str(failure))",
+      "if driver.cuInit(0) != 0:",
+      "    unavailable('cuInit')",
+      "device = ctypes.c_int(0)",
+      "if driver.cuDeviceGet(ctypes.byref(device), 0) != 0:",
+      "    unavailable('cuDeviceGet')",
+      "context = ctypes.c_void_p()",
+      "if driver.cuCtxCreate_v2(ctypes.byref(context), 0, device) != 0:",
+      "    unavailable('cuCtxCreate_v2')",
+      "pointer = ctypes.c_void_p()",
+      "size = ctypes.c_size_t(requested * 1024 * 1024)",
+      "if driver.cuMemAlloc_v2(ctypes.byref(pointer), size) != 0:",
+      "    unavailable('cuMemAlloc_v2 ' + str(requested))",
+      "sys.stdout.write('allocated\\n')",
+      "sys.stdout.flush()",
+      "time.sleep(hold)"
+    ]
+
+-- | Launch a device-allocating child and wait for its gate line.
+--
+-- Returns the process handle, its process-group pid, and the gate line. The
+-- caller decides whether the gate permits an assertion or a loud skip.
+startCudaAllocationFixture :: Int -> Double -> IO (Maybe (ProcessHandle, CPid, String))
+startCudaAllocationFixture requestedMib holdSeconds = do
+  (_, maybeOut, _, handle) <-
+    createProcess
+      ( proc
+          cudaFixtureInterpreter
+          [ "-c",
+            cudaAllocationFixtureProgram,
+            show requestedMib,
+            show holdSeconds
+          ]
+      )
+        { create_group = True,
+          std_out = CreatePipe
+        }
+  outHandle <-
+    maybe (fail "CUDA allocation fixture exposed no stdout pipe") pure maybeOut
+  childPid <-
+    getPid handle >>= maybe (fail "CUDA allocation fixture exposed no pid") pure
+  -- The gate is bounded: a driver that never returns must not hang the suite.
+  gate <- timeout cudaFixtureGateTimeoutMicros (System.IO.hGetLine outHandle)
+  pure ((,,) handle childPid <$> gate)
+
+-- | Driver initialisation plus a multi-gibibyte allocation measured at under a
+-- second on the development host; a minute is loose enough for a loaded cohort
+-- and still bounded.
+cudaFixtureGateTimeoutMicros :: Int
+cudaFixtureGateTimeoutMicros = 60 * 1000000
+
+-- | Phase 6 Sprint 6.44 — the adversarial CUDA ceiling breach.
+--
+-- The deliverable Sprint 6.44 could not close: no suite allocated device memory
+-- past a ceiling, so nothing observed a /runtime/ breach of an /admitted/ GPU
+-- grant. The integration suite cannot cover it — 'validateCatalogModelInference'
+-- classifies every catalogue row as either a pre-admission typed rejection or a
+-- completion, and a runtime breach is neither.
+--
+-- Mirrors 'runLinuxWatchdogBreachAssertions' exactly: a breach returns the typed
+-- 'EngineExceededCeiling', the group is reaped non-successfully, and a
+-- subsequent smaller allocation completes cleanly under the same enforcer.
+--
+-- The ceilings sit clear of the CUDA context floor, which is a real allocation
+-- the driver makes before any @cuMemAlloc@: 496 MiB measured on this host. The
+-- breach case allocates 3072 MiB against a 1024 MiB ceiling (observed 3568 MiB),
+-- and the clean case allocates 64 MiB against a 3072 MiB ceiling (observed
+-- ~560 MiB), so neither outcome can be produced by context overhead alone.
+--
+-- Skips loudly and never vacuously: outer-container device access depends on the
+-- host daemon's default runtime rather than on @compose.yaml@, so a skip must
+-- say which precondition was missing.
+runNvidiaVramBreachAssertions :: IO ()
+runNvidiaVramBreachAssertions =
+  unless (System.Info.os == "darwin") $ do
+    nvidiaSmiPresent <- doesFileExist "/usr/bin/nvidia-smi"
+    interpreterPresent <- doesFileExist cudaFixtureInterpreter
+    if not nvidiaSmiPresent
+      then
+        putStrLn
+          "skipping the live CUDA ceiling-breach assertions: /usr/bin/nvidia-smi is absent on this host"
+      else
+        if not interpreterPresent
+          then
+            putStrLn
+              ( "skipping the live CUDA ceiling-breach assertions: "
+                  <> cudaFixtureInterpreter
+                  <> " is absent on this host"
+              )
+          else runLiveNvidiaVramBreachAssertions
+
+runLiveNvidiaVramBreachAssertions :: IO ()
+runLiveNvidiaVramBreachAssertions = do
+  started <- startCudaAllocationFixture cudaBreachAllocationMib 120
+  case started of
+    Nothing ->
+      putStrLn
+        ( "skipping the live CUDA ceiling-breach assertions: the device "
+            <> "allocation fixture produced no gate line within its bound"
+        )
+    Just (breachHandle, breachPid, "allocated") -> do
+      breachReaped <- MVar.newEmptyMVar
+      _ <- forkIO (waitForProcess breachHandle >>= MVar.putMVar breachReaped)
+      breachOutcome <-
+        CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+          cudaBreachCeilingMib
+          breachHandle
+          breachPid
+      breachExit <- MVar.takeMVar breachReaped
+      assert
+        ( breachOutcome
+            == Just (CappedEngineInternal.EngineExceededCeiling cudaBreachCeilingMib)
+            && breachExit /= ExitSuccess
+        )
+        ( "Sprint 6.44: a live CUDA allocation past the declared ceiling returns the "
+            <> "typed ceiling outcome and reaps the grouped engine non-successfully; observed "
+            <> show breachOutcome
+            <> " and "
+            <> show breachExit
+        )
+      runNvidiaVramCleanAllocationAssertion
+    Just (breachHandle, _, gate) -> do
+      _ <- forkIO (void (waitForProcess breachHandle))
+      putStrLn
+        ( "skipping the live CUDA ceiling-breach assertions: the device "
+            <> "allocation fixture reported "
+            <> gate
+        )
+
+-- | The GPU worker stays healthy after a breach: a smaller allocation under the
+-- same enforcer completes without a breach and exits successfully.
+runNvidiaVramCleanAllocationAssertion :: IO ()
+runNvidiaVramCleanAllocationAssertion = do
+  started <- startCudaAllocationFixture cudaCleanAllocationMib 1
+  case started of
+    Just (cleanHandle, cleanPid, "allocated") -> do
+      cleanReaped <- MVar.newEmptyMVar
+      _ <- forkIO (waitForProcess cleanHandle >>= MVar.putMVar cleanReaped)
+      cleanOutcome <-
+        CappedEngineInternal.nvidiaWatchdogOutcomeForTest
+          cudaCleanCeilingMib
+          cleanHandle
+          cleanPid
+      cleanExit <- MVar.takeMVar cleanReaped
+      assert
+        (isNothing cleanOutcome && cleanExit == ExitSuccess)
+        ( "Sprint 6.44: a smaller live CUDA allocation after a breach completes under the "
+            <> "same enforcer without a breach or an enforcement failure; observed "
+            <> show cleanOutcome
+            <> " and "
+            <> show cleanExit
+        )
+    _ ->
+      fail
+        ( "Sprint 6.44: the post-breach CUDA allocation fixture did not reach its "
+            <> "gate, so the GPU worker was not proven healthy after the breach"
+        )
+
+-- | 3072 MiB over a 1024 MiB ceiling, against a 496 MiB context floor.
+cudaBreachAllocationMib :: Int
+cudaBreachAllocationMib = 3072
+
+cudaBreachCeilingMib :: Int
+cudaBreachCeilingMib = 1024
+
+-- | 64 MiB under a 3072 MiB ceiling, again clear of the context floor.
+cudaCleanAllocationMib :: Int
+cudaCleanAllocationMib = 64
+
+cudaCleanCeilingMib :: Int
+cudaCleanCeilingMib = 3072
+
 main :: IO ()
 main = do
+  -- Test images spawn self-exec children through the same close_fds
+  -- kernels the production binary uses, so they bound their descriptor
+  -- space first. See "Infernix.DescriptorSpace".
+  _ <- establishBoundedDescriptorSpace
   dispatchCappedEngineMemoryFixture
   Subprocess.dispatchInternalSubprocessMode
   unitTestRoot <- testRootPath "unit"
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
+  runDescriptorSpaceAssertions
   runLinuxWatchdogBreachAssertions
+  runNvidiaWatchdogAssertions
+  runNvidiaVramBreachAssertions
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxCpu) == 12) "linux-cpu runnable catalog count matches the revised matrix"
   assert (length (catalogForMode LinuxGpu) == 16) "linux-gpu runnable catalog count matches the revised matrix"
@@ -1227,8 +1595,8 @@ main = do
         (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/Internal.hs" [(1, "  (_, _, _, ph) <- createProcess spec")]))
         "unboundedEngineSpawnViolations exempts the capped-engine kernel module"
       assert
-        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs" [(1, "  created <- createProcess fixedObserverSpec")]))
-        "unboundedEngineSpawnViolations narrowly exempts the fixed Darwin observer kernel"
+        (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/CappedEngine/FixedObserver.hs" [(1, "  created <- createProcess fixedObserverSpec")]))
+        "unboundedEngineSpawnViolations narrowly exempts the fixed public-tool observer kernel"
       assert
         ( not
             ( any
@@ -1246,6 +1614,48 @@ main = do
       assert
         (null (unboundedEngineSpawnViolations "src/Infernix/Runtime/Daemon.hs" [(1, "  result <- awaitEngineOutcome handle")]))
         "unboundedEngineSpawnViolations passes a line without a raw engine spawn"
+      -- Phase 6 Sprint 6.44 follow-on — the descriptor-bound gate fires on a
+      -- `close_fds` spawn surface that never observes the bound, and clears the
+      -- same file once the observation is present. This is the structural half
+      -- of the correction for the 313 s pre-exec descriptor walk a containerd
+      -- pod's soft RLIMIT_NOFILE of 1073741816 produces.
+      assert
+        ( not
+            ( null
+                ( unboundedDescriptorSpawnViolations
+                    "src/Infernix/Runtime/Daemon.hs"
+                    [ (1, "  created <- createProcess spec {close_fds = True}")
+                    ]
+                )
+            )
+        )
+        "unboundedDescriptorSpawnViolations fires on a close_fds spawn that never observes the descriptor bound"
+      assert
+        ( null
+            ( unboundedDescriptorSpawnViolations
+                "src/Infernix/Runtime/Daemon.hs"
+                [ (1, "  _ <- requireBoundedDescriptorSpace \"daemon spawn\""),
+                  (2, "  created <- createProcess spec {close_fds = True}")
+                ]
+            )
+        )
+        "unboundedDescriptorSpawnViolations clears a close_fds spawn that observes the descriptor bound"
+      assert
+        ( null
+            ( unboundedDescriptorSpawnViolations
+                "src/Infernix/Runtime/Daemon.hs"
+                [(1, "  -- close_fds = True is discussed in this comment only")]
+            )
+        )
+        "unboundedDescriptorSpawnViolations ignores close_fds inside a comment"
+      assert
+        ( null
+            ( unboundedDescriptorSpawnViolations
+                "src/Infernix/DescriptorSpace.hs"
+                [(1, "  spawnDescriptorLimitCeiling = 16384 -- close_fds")]
+            )
+        )
+        "unboundedDescriptorSpawnViolations exempts the module that owns the bound"
       assert
         ( not
             ( null
@@ -1419,7 +1829,7 @@ main = do
                     "src/Infernix/Runtime/CappedEngine/Internal.hs"
                     [(1, "foreign import ccall unsafe \"proc_pid_rusage\" c_proc_pid_rusage :: CInt -> CInt -> Ptr () -> IO CInt")],
                   unsafeNativeBoundaryViolations
-                    "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs"
+                    "src/Infernix/Runtime/CappedEngine/FixedObserver.hs"
                     [(1, "foreign import ccall unsafe \"sysctlbyname\" c_sysctlbyname :: CString -> IO CInt")],
                   unsafeNativeBoundaryViolations
                     "app/Main.hs"
@@ -2178,6 +2588,25 @@ main = do
     assert
       ("      memory: 5120Mi" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values keep a 1 GiB daemon/watchdog envelope above the 4 GiB child-execution budget"
+    -- Phase 6 Sprint 6.44 regression guard. Runtime refinement compares the
+    -- observed pod cgroup limit with `childBudget + linuxOuterEnvelopeHeadroomMib`
+    -- for **exact** equality, so the generated engine memory limit and the
+    -- generated child budget are two halves of one contract. The `linux-cpu`
+    -- half was asserted above; the `linux-gpu` half was not, and reusing the CPU
+    -- lane's 4 GiB budget against the GPU lane's 16 GiB engine pod produced
+    -- `OuterEnvelopeTooLarge 5120 16384` on every GPU placement — no engine ever
+    -- became ready, and no machine-independent gate could see it because
+    -- `linux-gpu` compiled no plan at all before this sprint. Pin both halves.
+    assert
+      ( linuxGpuEngineInferenceRamBudgetMib + ExecutionPlan.linuxOuterEnvelopeHeadroomMib
+          == linuxGpuEnginePodMemoryLimitMib
+      )
+      "linux-gpu child-execution budget plus the daemon/watchdog headroom equals the engine pod memory limit exactly, as runtime refinement requires"
+    assert
+      ( linuxEngineInferenceRamBudgetMib + ExecutionPlan.linuxOuterEnvelopeHeadroomMib
+          == 5120
+      )
+      "linux-cpu child-execution budget plus the daemon/watchdog headroom equals its 5 GiB engine pod memory limit exactly"
     assert
       ("      PULSAR_GC: \"-XX:+UseSerialGC -XX:+ExitOnOutOfMemoryError -XX:+DisableExplicitGC -XX:+PerfDisableSharedMem\"" `isInfixOf` linuxCpuFinalValues)
       "linux-cpu final Helm values override local Pulsar JVM GC away from the default pre-touch profile"
@@ -2260,7 +2689,7 @@ main = do
               "      memory: 4Gi",
               "    limits:",
               "      cpu: \"2\"",
-              "      memory: 16Gi",
+              "      memory: " <> show (linuxGpuEnginePodMemoryLimitMib `div` 1024) <> "Gi",
               "  perEngine:"
             ]
     assert
@@ -2829,6 +3258,90 @@ main = do
           `notElem` ClusterCommand.renderedCommandArgv snapshotCopySpec
     )
     "retained snapshot copy-back uses one unconditional Docker cp that preserves empty directories without a paused-container exec preflight"
+  -- Sprint 6.44 follow-on: the three commands that retired the 'Lint/Files.hs'
+  -- and 'Workflow.hs' raw-spawn exemptions.
+  let trackedInventoryCommand =
+        ClusterCommand.gitListTrackedFiles subprocessRoot
+      trackedInventorySpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          trackedInventoryCommand
+      nodeVersionSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ClusterCommand.nodeVersionProbe
+      hostToolchainInstallSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.npmInstallWebDependencies
+              ClusterCommand.HostNodeToolchain
+          )
+      pinnedToolchainInstallSpec =
+        ClusterCommand.renderClusterCommand
+          (const "/unused")
+          ( ClusterCommand.npmInstallWebDependencies
+              ClusterCommand.PinnedNodeToolchain
+          )
+  assert
+    ( ClusterCommand.validateClusterCommand trackedInventoryCommand == Right ()
+        && isLeft
+          ( ClusterCommand.validateClusterCommand
+              (ClusterCommand.gitListTrackedFiles "relative/repo/root")
+          )
+        && isLeft
+          ( ClusterCommand.validateClusterCommand
+              (ClusterCommand.gitListTrackedFiles (subprocessRoot </> "." </> "nested"))
+          )
+        && ClusterCommand.clusterCommandOperation trackedInventoryCommand
+          == ClusterCommand.SourceInventoryOperation
+        && ClusterCommand.renderedCommandTool trackedInventorySpec
+          == HostTools.HostGit
+        && ClusterCommand.renderedCommandArgv trackedInventorySpec
+          == [ "-c",
+               "safe.directory=" <> subprocessRoot,
+               "ls-files",
+               "-z"
+             ]
+        && ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+          trackedInventorySpec
+    )
+    "the file lint enumerates its tracked inventory through a closed git command that rejects a non-absolute or unnormalized repository root"
+  assert
+    ( ClusterCommand.validateClusterCommand ClusterCommand.nodeVersionProbe
+        == Right ()
+        && ClusterCommand.clusterCommandOperation ClusterCommand.nodeVersionProbe
+          == ClusterCommand.WebToolchainProbeOperation
+        && ClusterCommand.renderedCommandTool nodeVersionSpec
+          == HostTools.HostNode
+        && ClusterCommand.renderedCommandArgv nodeVersionSpec == ["--version"]
+    )
+    "the web toolchain probe is a closed fixed-argv node version command"
+  assert
+    ( ClusterCommand.validateClusterCommand
+        (ClusterCommand.npmInstallWebDependencies ClusterCommand.HostNodeToolchain)
+        == Right ()
+        && ClusterCommand.clusterCommandOperation
+          (ClusterCommand.npmInstallWebDependencies ClusterCommand.PinnedNodeToolchain)
+          == ClusterCommand.WebDependencyInstallOperation
+        && ClusterCommand.renderedCommandTool hostToolchainInstallSpec
+          == HostTools.HostNpm
+        && ClusterCommand.renderedCommandArgv hostToolchainInstallSpec
+          == ["--prefix", "web", "install", "--no-audit", "--no-fund"]
+        && ClusterCommand.renderedCommandArgv pinnedToolchainInstallSpec
+          == [ "exec",
+               "--package=node@22",
+               "--package=npm@10",
+               "--",
+               "sh",
+               "-lc",
+               "npm --prefix web install --no-audit --no-fund"
+             ]
+        && ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+          hostToolchainInstallSpec
+        && ClusterCommand.renderedCommandUsesRepositoryWorkingDirectory
+          pinnedToolchainInstallSpec
+    )
+    "the web dependency install is a closed command whose two toolchain shapes carry renderer-owned argv with no caller-supplied token"
   assert
     ( classifyWorkerPauseObservation (Right "true\n")
         == Right WorkerAlreadyPaused
@@ -3586,7 +4099,7 @@ main = do
     )
     "test-only acquisition and terminal-observation hooks reject relative synchronization paths"
   assert
-    ( length allClusterOperations == 37
+    ( length allClusterOperations == 41
         && length (nub allClusterOperations) == length allClusterOperations
         && map actualPolicy allClusterOperations
           == map expectedClusterOperationPolicy allClusterOperations
@@ -10323,6 +10836,9 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
   assertCompiledRuntimePlanDecodeFails
     legacyBudgetPath
     "execution-plan decoder rejects the retired flat/tagged memory-budget shape"
+  assertRetiredSubstrateShapeDiagnostic
+    legacyBudgetPath
+    "text-discriminated `kind =` inference-memory-budget record"
   assertCompiledRuntimePlanDecodeFailsForConfig
     root
     "zero-substrate-budget"
@@ -10408,14 +10924,38 @@ assertCompiledRuntimePlanDecodeFailsForConfig root label demoConfig = do
 
 assertCompiledRuntimePlanDecodeFails :: FilePath -> String -> IO ()
 assertCompiledRuntimePlanDecodeFails configPath message = do
-  decoded <-
-    try (decodeCompiledRuntimePlanFile configPath) ::
-      IO
-        ( Either
-            IOError
-            (Either ExecutionPlan.ConfigErrors ExecutionPlan.CompiledRuntimePlan)
-        )
+  decoded <- tryDecodeCompiledRuntimePlanFile configPath
   assert (isLeft decoded) message
+
+-- | Phase 8 Sprint 8.9 — a retired flat payload must fail with a diagnostic
+-- that names the retired shape and the command that regenerates it, not with a
+-- bare structural Dhall type error.
+assertRetiredSubstrateShapeDiagnostic :: FilePath -> String -> IO ()
+assertRetiredSubstrateShapeDiagnostic configPath retiredShapeFragment = do
+  decoded <- tryDecodeCompiledRuntimePlanFile configPath
+  case decoded of
+    Right _ ->
+      fail "retired flat/tagged execution-plan payload unexpectedly decoded"
+    Left failure -> do
+      let rendered = show failure
+      assert
+        (retiredShapeFragment `isInfixOf` rendered)
+        ( "retired execution-plan payload diagnostic does not name the retired shape ("
+            <> retiredShapeFragment
+            <> "): "
+            <> rendered
+        )
+      assert
+        ("infernix init" `isInfixOf` rendered)
+        ( "retired execution-plan payload diagnostic does not name the regenerating command: "
+            <> rendered
+        )
+
+tryDecodeCompiledRuntimePlanFile ::
+  FilePath ->
+  IO (Either IOError (Either ExecutionPlan.ConfigErrors ExecutionPlan.CompiledRuntimePlan))
+tryDecodeCompiledRuntimePlanFile configPath =
+  try (decodeCompiledRuntimePlanFile configPath)
 
 assertExecutionPlanCompilerCoverage :: Paths -> FilePath -> DemoConfig -> DemoConfig -> IO ()
 assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
@@ -10583,14 +11123,18 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           { enginePools = [pool, secondPool],
             engineMembers = [member, secondMember]
           }
+      podLimitFor resource source limitMib =
+        PodMemoryLimit
+          { podMemoryLimitResource = resource,
+            podMemoryLimitSource = source,
+            podMemoryLimitMib = limitMib
+          }
       podBudget resource source limitMib =
-        SubstrateEnforcedBudget
-          ( PodMemoryLimit
-              { podMemoryLimitResource = resource,
-                podMemoryLimitSource = source,
-                podMemoryLimitMib = limitMib
-              }
-          )
+        SubstrateEnforcedBudget (podLimitFor resource source limitMib)
+      dualBudget podResource vramResource =
+        DualEnforcedBudget
+          (podLimitFor podResource "linux-process-group-rss-watchdog" 65536)
+          (podLimitFor vramResource "nvidia-vram-accounting" 65536)
       linuxCpuConfig =
         executionPlanConfigForRuntime
           LinuxCpu
@@ -10622,6 +11166,11 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         executionPlanConfigForRuntime
           LinuxGpu
           (podBudget GpuVram "nvidia-vram-accounting" 65536)
+          (singleAppleConfig {models = [linuxGpuModel]})
+      linuxGpuWithSwappedDualBudget =
+        executionPlanConfigForRuntime
+          LinuxGpu
+          (dualBudget GpuVram PodRam)
           (singleAppleConfig {models = [linuxGpuModel]})
       invalidIdentifiers =
         [ ("path", "path/segment"),
@@ -11139,6 +11688,16 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     linuxGpuWithPodBudget
   assertExecutionPlanError
     root
+    "gpu-dual-budget-with-swapped-resources"
+    (ExecutionPlan.InvalidMemoryEnforcer "dual memory enforcer must name a pod RAM limit first")
+    linuxGpuWithSwappedDualBudget
+  assertExecutionPlanError
+    root
+    "gpu-dual-budget-with-swapped-resources-vram-half"
+    (ExecutionPlan.InvalidMemoryEnforcer "dual memory enforcer must name a GPU VRAM limit second")
+    linuxGpuWithSwappedDualBudget
+  assertExecutionPlanError
+    root
     "blank-memory-enforcer-source"
     (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty")
     (linuxCpuConfig {inferenceMemoryBudget = podBudget PodRam " " 65536})
@@ -11208,23 +11767,89 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           }
     )
     "Linux CPU rejects Bark before execution with the exact 8 GiB required and 4 GiB available budget"
-  let linuxGpuConfigPath = root </> "execution-plan-linux-gpu-catalog.dhall"
-      linuxGpuBudget = podBudget GpuVram "nvidia-vram-accounting" 65536
+  -- A single-resource `linux-gpu` budget still cannot enforce both axes, so it
+  -- remains a hard config error rather than silently admitting device work
+  -- against one limit.
+  let linuxGpuSingleResourcePath = root </> "execution-plan-linux-gpu-single-resource.dhall"
+      linuxGpuSingleResourceBudget = podBudget GpuVram "nvidia-vram-accounting" 65536
   BS.writeFile
-    linuxGpuConfigPath
-    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuBudget)
-  linuxGpuResult <- decodeCompiledRuntimePlanFile linuxGpuConfigPath
-  case linuxGpuResult of
+    linuxGpuSingleResourcePath
+    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuSingleResourceBudget)
+  linuxGpuSingleResourceResult <- decodeCompiledRuntimePlanFile linuxGpuSingleResourcePath
+  case linuxGpuSingleResourceResult of
     Right _ ->
-      fail "Linux GPU catalog unexpectedly compiled before dual-resource budget support landed"
+      fail "Linux GPU catalog compiled against a single-resource budget"
     Left errors -> do
       let errorList = NonEmpty.toList errors
       assert
         (ExecutionPlan.GpuDualResourceBudgetRequired `elem` errorList)
-        "Linux GPU catalog reaches the explicit dual-resource budget blocker"
+        "single-resource Linux GPU budget reaches the explicit dual-resource budget blocker"
       assert
         (not (any engineBindingSelectionError errorList))
         "every Linux GPU catalog engine resolves canonically before the dual-resource budget blocker"
+
+  -- Phase 6 Sprint 6.44 — the production dual budget compiles the whole
+  -- `linux-gpu` catalog, and every device-using model that fits is placed with
+  -- both an independently admitted pod-RAM and NVIDIA VRAM grant.
+  let linuxGpuConfigPath = root </> "execution-plan-linux-gpu-catalog.dhall"
+      linuxGpuDualCatalogBudget =
+        DualEnforcedBudget
+          (podLimitFor PodRam "cluster-engine-pod-memory-limit" 4096)
+          (podLimitFor GpuVram "linux-gpu-vram-budget" 4096)
+  BS.writeFile
+    linuxGpuConfigPath
+    (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuDualCatalogBudget)
+  linuxGpuPlan <-
+    either
+      (\errors -> fail ("Linux GPU catalog failed to compile under the dual budget: " <> show (NonEmpty.toList errors)))
+      pure
+      =<< decodeCompiledRuntimePlanFile linuxGpuConfigPath
+  assert
+    ( sort (map modelId (ExecutionPlan.compiledPlanConfiguredModels linuxGpuPlan))
+        == sort (map modelId (catalogForMode LinuxGpu))
+    )
+    "Linux GPU compiled plan accounts for every generated catalog model"
+  assert
+    (not (null (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)))
+    "Linux GPU catalog places at least one model under the dual budget"
+  -- The device-using models that exceed the VRAM half are rejected against the
+  -- VRAM limit by name, not against the pod RAM limit that also applies.
+  mapM_
+    ( \unavailableEntry ->
+        let reason = ExecutionPlan.unavailableModelReason unavailableEntry
+            descriptor = ExecutionPlan.unavailableModelDescriptor unavailableEntry
+         in assert
+              ( not (requiresGpu descriptor)
+                  || inferenceErrorResource reason == GpuVram
+                  || inferenceErrorResource reason == PodRam
+              )
+              "Linux GPU capacity rejection names one of the two enforced resources"
+    )
+    (ExecutionPlan.compiledRuntimePlanUnavailableModels linuxGpuPlan)
+
+  -- A `linux-gpu` model that requires the device is bound to BOTH resources; a
+  -- model on the shared lane stays on the resident-set lane alone, because a
+  -- VRAM grant it would never consume is not evidence of anything.
+  mapM_
+    ( \placement ->
+        let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
+            expectedResources =
+              if requiresGpu descriptor then [PodRam, GpuVram] else [PodRam]
+         in assert
+              (ExecutionPlan.compiledPlacementEnforcedResources placement == expectedResources)
+              ( "Linux GPU placement "
+                  <> Text.unpack (modelId descriptor)
+                  <> " is bound to the wrong resource set: "
+                  <> show (ExecutionPlan.compiledPlacementEnforcedResources placement)
+              )
+    )
+    (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
+  assert
+    ( any
+        (requiresGpu . ExecutionPlan.compiledPlacementDescriptor)
+        (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
+    )
+    "Linux GPU catalog places at least one device-using model, so the dual-resource arm is exercised"
 
 assertCatalogEngineResolution :: RuntimeMode -> IO ()
 assertCatalogEngineResolution mode =
@@ -13494,6 +14119,26 @@ linuxCpuUnitInferenceMemoryBudget =
         podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
       }
 
+linuxGpuUnitInferenceMemoryBudget :: InferenceMemoryBudget
+linuxGpuUnitInferenceMemoryBudget =
+  DualEnforcedBudget
+    PodMemoryLimit
+      { podMemoryLimitResource = PodRam,
+        podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+        podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
+      }
+    PodMemoryLimit
+      { podMemoryLimitResource = GpuVram,
+        podMemoryLimitSource = "linux-gpu-vram-budget",
+        podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
+      }
+
+-- | Every alternative the reflected substrate decoder expects for the
+-- inference-memory budget union. The renderer must be able to emit each one.
+inferenceMemoryBudgetAlternatives :: [Text.Text]
+inferenceMemoryBudgetAlternatives =
+  ["HostEnforced", "SubstrateEnforced", "DualEnforced"]
+
 mangleLastChar :: Text.Text -> Text.Text
 mangleLastChar token =
   let lastDotIndex = Text.length token - Text.length (Text.takeWhileEnd (/= '.') token) - 1
@@ -13569,11 +14214,49 @@ assertDhallSchemaReflection =
       case schema of
         SubstrateSchema -> do
           assert
-            ("HostEnforced" `Text.isInfixOf` rendered && "SubstrateEnforced" `Text.isInfixOf` rendered)
-            "substrate schema reflects both inference-memory union alternatives"
+            ( "HostEnforced" `Text.isInfixOf` rendered
+                && "SubstrateEnforced" `Text.isInfixOf` rendered
+                && "DualEnforced" `Text.isInfixOf` rendered
+            )
+            "substrate schema reflects every inference-memory union alternative"
           assert
             (not ("podLimitMib" `Text.isInfixOf` rendered) && not ("kind" `Text.isInfixOf` rendered))
             "substrate schema excludes the retired text discriminator and zero-filled union fields"
+          -- Phase 8 Sprint 8.9: the renderer writes the budget union's type
+          -- annotation as text while the decoder derives it from the Haskell
+          -- ADT. Nothing in the type system ties them together, so pin the
+          -- agreement here: every alternative the renderer can emit must be an
+          -- alternative the reflected decoder expects, and every alternative
+          -- the decoder expects must be one the renderer can emit.
+          schemaPaths <- discoverPaths
+          mapM_
+            ( \(budgetLabel, budgetMode, budget) -> do
+                let renderedBudget =
+                      TextEncoding.decodeUtf8
+                        ( renderGeneratedDemoConfigPayload
+                            schemaPaths
+                            budgetMode
+                            False
+                            Engine
+                            budget
+                        )
+                mapM_
+                  ( \alternative ->
+                      assert
+                        (alternative `Text.isInfixOf` renderedBudget)
+                        ( "the rendered "
+                            <> budgetLabel
+                            <> " payload omits the union alternative "
+                            <> Text.unpack alternative
+                            <> " that the reflected decoder expects"
+                        )
+                  )
+                  inferenceMemoryBudgetAlternatives
+            )
+            [ ("host-enforced", AppleSilicon, appleUnitInferenceMemoryBudget),
+              ("substrate-enforced", LinuxCpu, linuxCpuUnitInferenceMemoryBudget),
+              ("dual-enforced", LinuxGpu, linuxGpuUnitInferenceMemoryBudget)
+            ]
         _ -> pure ()
 
 dhallSchemaRequiredFields :: DhallSchema -> [Text.Text]

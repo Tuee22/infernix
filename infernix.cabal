@@ -43,6 +43,7 @@ library
         Infernix.Bridge.Result
         Infernix.Cluster.Discover
         Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.Invoke
         Infernix.Cluster.PublishImages
         Infernix.Config
         Infernix.Conversation.Event
@@ -130,12 +131,13 @@ library
         Infernix.Engines.Provisioning
         Infernix.Engines.Provisioning.Internal
         Infernix.Python.MutationLock.Internal
+        Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.ExecutionPlan.Internal
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
-        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture
         Infernix.Runtime.Enforcer.Internal
@@ -223,6 +225,7 @@ test-suite infernix-unit
         Infernix.Cluster.Command
         Infernix.Cluster.Discover
         Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.Invoke
         Infernix.Cluster.LifecycleLock
         Infernix.Cluster.MutationRecovery
         Infernix.Cluster.PublishImages
@@ -288,6 +291,7 @@ test-suite infernix-unit
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
         Infernix.Objects.Upload
+        Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.ProjectInit
@@ -298,7 +302,7 @@ test-suite infernix-unit
         Infernix.Runtime.Cache
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
-        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture
         Infernix.Runtime.Daemon
@@ -379,6 +383,7 @@ test-suite infernix-artifact-transaction
     hs-source-dirs:   test/artifact-transaction src
     other-modules:
         Infernix.Cluster.LifecycleLock
+        Infernix.DescriptorSpace
         Infernix.Engines.Artifact
         Infernix.Engines.Artifact.Capability
         Infernix.Engines.Artifact.Identity
@@ -414,6 +419,7 @@ test-suite infernix-apple-materializer
         Infernix.Bootstrap.Models
         Infernix.Cluster.Command
         Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.Invoke
         Infernix.Cluster.LifecycleLock
         Infernix.Cluster.Subprocess
         Infernix.Cluster.Subprocess.Activity
@@ -445,6 +451,7 @@ test-suite infernix-apple-materializer
         Infernix.HostTools
         Infernix.Internal.Util
         Infernix.Models
+        Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.Python
@@ -481,10 +488,11 @@ test-suite infernix-capped-engine-observer
     hs-source-dirs:   test/capped-engine-observer src
     other-modules:
         Infernix.Error
+        Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.Runtime.CappedEngine.Cleanup
-        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.OutputCapture
 
     default-language: GHC2021
@@ -539,6 +547,7 @@ test-suite infernix-integration
         Infernix.Cluster.Command
         Infernix.Cluster.Discover
         Infernix.Cluster.ImageFingerprint
+        Infernix.Cluster.Invoke
         Infernix.Cluster.LifecycleLock
         Infernix.Cluster.MutationRecovery
         Infernix.Cluster.PublishImages
@@ -604,6 +613,7 @@ test-suite infernix-integration
         Infernix.Objects.Presigned
         Infernix.Objects.Sts
         Infernix.Objects.Upload
+        Infernix.DescriptorSpace
         Infernix.ProcessIdentity
         Infernix.ProcessIdentity.Internal
         Infernix.ProjectInit
@@ -614,7 +624,7 @@ test-suite infernix-integration
         Infernix.Runtime.Cache
         Infernix.Runtime.CappedEngine
         Infernix.Runtime.CappedEngine.Cleanup
-        Infernix.Runtime.CappedEngine.DarwinObserver
+        Infernix.Runtime.CappedEngine.FixedObserver
         Infernix.Runtime.CappedEngine.Internal
         Infernix.Runtime.CappedEngine.OutputCapture
         Infernix.Runtime.Daemon

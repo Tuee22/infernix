@@ -28,6 +28,7 @@ module Infernix.Cluster.Command
     ClusterName (..),
     NodeName (..),
     ContainerName (..),
+    ModelSnapshotBootstrapSpec (..),
     Namespace (..),
     ResourceName (..),
     PodName (..),
@@ -52,6 +53,7 @@ module Infernix.Cluster.Command
     GpuProbe (..),
     ImageInspectField (..),
     ContainerInspectField (..),
+    WebDependencyToolchain (..),
     PodQuery (..),
     SecretField (..),
     PostgresAction (..),
@@ -148,6 +150,10 @@ module Infernix.Cluster.Command
     publishInspectId,
     publishLogin,
     publishCopyDigest,
+    poetryModelSnapshotBootstrap,
+    gitListTrackedFiles,
+    nodeVersionProbe,
+    npmInstallWebDependencies,
     operatorKubectlCommand,
   )
 where
@@ -208,6 +214,10 @@ data ClusterOperation
   | ImagePublicationPushOperation
   | ImagePublicationRemoveOperation
   | ImagePublicationCopyOperation
+  | ModelSnapshotBootstrapOperation
+  | SourceInventoryOperation
+  | WebToolchainProbeOperation
+  | WebDependencyInstallOperation
   deriving (Eq, Show)
 
 newtype ClusterName = ClusterName {unClusterName :: String}
@@ -304,6 +314,42 @@ data ContainerInspectField
   = KindNetworkIpv4
   | MountSourceAt !FilePath
   | ContainerPaused
+  deriving (Eq, Show)
+
+-- | Phase 6 Sprint 6.44 — the coordinator's model-weight snapshot bootstrap.
+-- The upstream download plus MinIO upload is the longest-running external
+-- command the runtime issues, and it used to run through a raw unbounded
+-- spawn: a stalled upstream origin hung the coordinator's bootstrap loop with
+-- no deadline at all. Modelling it as a closed command puts it under the same
+-- required timeout and total 'CommandOutcome' as every other external command.
+data ModelSnapshotBootstrapSpec = ModelSnapshotBootstrapSpec
+  { modelSnapshotModelId :: !String,
+    modelSnapshotDownloadUrl :: !String,
+    modelSnapshotMinioEndpoint :: !String,
+    modelSnapshotAccessKeyId :: !String,
+    modelSnapshotSecretAccessKey :: !String,
+    modelSnapshotRegion :: !String,
+    modelSnapshotBucket :: !String
+  }
+  deriving (Eq, Show)
+
+-- | Phase 6 Sprint 6.44 follow-on — which npm toolchain the web dependency
+-- install runs under.
+--
+-- @npm install@ for the web workspace used to be reached through a generic
+-- @runWorkflowCommand@ that accepted a caller-supplied executable and argv.
+-- The genericity was an artifact: its only caller passed one fixed argument
+-- vector, chosen between two fixed shapes by a host-node version observation.
+-- Modelling that observation as a closed two-constructor index keeps the
+-- choice while removing the caller-supplied surface entirely — the renderer
+-- owns both argument vectors.
+data WebDependencyToolchain
+  = -- | The host's own @node@ satisfies the web toolchain minimum, so npm runs
+    -- the workspace install directly.
+    HostNodeToolchain
+  | -- | The host's @node@ is too old, so npm provisions a pinned
+    -- @node@ \/ @npm@ pair for the duration of the install.
+    PinnedNodeToolchain
   deriving (Eq, Show)
 
 data PodQuery
@@ -487,6 +533,10 @@ data ClusterCommand
   | PublishInspectId !ImageRef
   | PublishLogin !RegistryHost !RegistryCredentials
   | PublishCopyDigest !Architecture !RegistryAuthFile !ImageRef !ImageRef
+  | PoetryModelSnapshotBootstrap !ModelSnapshotBootstrapSpec
+  | GitListTrackedFiles !FilePath
+  | NodeVersionProbe
+  | NpmInstallWebDependencies !WebDependencyToolchain
 
 data OperatorKubectlCommand = OperatorKubectlCommand !KubeTarget ![String]
 
@@ -778,6 +828,25 @@ publishCopyDigest ::
   ClusterCommand
 publishCopyDigest = PublishCopyDigest
 
+poetryModelSnapshotBootstrap :: ModelSnapshotBootstrapSpec -> ClusterCommand
+poetryModelSnapshotBootstrap = PoetryModelSnapshotBootstrap
+
+-- | Enumerate the tracked working-tree inventory for @infernix lint files@.
+-- The operand is the repository root, which the renderer places only inside
+-- git's fixed @-c safe.directory=@ option; it never becomes a new token.
+gitListTrackedFiles :: FilePath -> ClusterCommand
+gitListTrackedFiles = GitListTrackedFiles
+
+-- | Observe the host @node@ version. Fixed argv, no operand.
+nodeVersionProbe :: ClusterCommand
+nodeVersionProbe = NodeVersionProbe
+
+-- | Install the web workspace's npm dependencies from the repository root
+-- under the closed toolchain index. Neither the executable nor any argument
+-- comes from the caller.
+npmInstallWebDependencies :: WebDependencyToolchain -> ClusterCommand
+npmInstallWebDependencies = NpmInstallWebDependencies
+
 -- | Validate the sole operator-supplied raw argument vector. The recorded
 -- kubeconfig is always prepended by the renderer, and target-switching or
 -- local-file-writing global flags are rejected in both split and
@@ -1042,6 +1111,10 @@ clusterCommandOperation = \case
   PublishInspectId {} -> ImagePublicationInspectOperation
   PublishLogin {} -> ImagePublicationLoginOperation
   PublishCopyDigest {} -> ImagePublicationCopyOperation
+  PoetryModelSnapshotBootstrap {} -> ModelSnapshotBootstrapOperation
+  GitListTrackedFiles {} -> SourceInventoryOperation
+  NodeVersionProbe -> WebToolchainProbeOperation
+  NpmInstallWebDependencies {} -> WebDependencyInstallOperation
 
 -- | Validate every caller-provided operand before a semantic command is
 -- compiled. Renderers may concatenate validated values into fixed option
@@ -1266,6 +1339,12 @@ validateClusterCommand = \case
     validatePath "registry authentication file" (registryAuthFilePath authFile)
     validateImageRef sourceImage
     validateImageRef targetImage
+  PoetryModelSnapshotBootstrap snapshotSpec ->
+    validateModelSnapshotBootstrapSpec snapshotSpec
+  GitListTrackedFiles repositoryRoot ->
+    validatePath "git repository root" repositoryRoot
+  NodeVersionProbe -> Right ()
+  NpmInstallWebDependencies {} -> Right ()
 
 validateClusterName :: ClusterName -> Either String ()
 validateClusterName = validateAtom "cluster name" . unClusterName
@@ -1395,6 +1474,17 @@ validateRegistryCredentials :: RegistryCredentials -> Either String ()
 validateRegistryCredentials credentials = do
   validateUsername (registryUsername credentials)
   validatePassword (registryPassword credentials)
+
+validateModelSnapshotBootstrapSpec :: ModelSnapshotBootstrapSpec -> Either String ()
+validateModelSnapshotBootstrapSpec snapshotSpec = do
+  validateAtom "model snapshot model id" (modelSnapshotModelId snapshotSpec)
+  validateUrl (Url (modelSnapshotDownloadUrl snapshotSpec))
+  validateUrl (Url (modelSnapshotMinioEndpoint snapshotSpec))
+  validateAtom "model snapshot region" (modelSnapshotRegion snapshotSpec)
+  validateAtom "model snapshot bucket" (modelSnapshotBucket snapshotSpec)
+  -- Credential diagnostics deliberately name only the field, never its value.
+  validateUsername (Username (modelSnapshotAccessKeyId snapshotSpec))
+  validatePassword (Password (modelSnapshotSecretAccessKey snapshotSpec))
 
 validateControlPlaneBuildSpec :: ControlPlaneBuildSpec -> Either String ()
 validateControlPlaneBuildSpec buildSpec = do
@@ -1980,6 +2070,76 @@ renderClusterCommand resolveTool = \case
         "docker://" <> unImageRef targetImage
       ]
       ""
+  PoetryModelSnapshotBootstrap snapshotSpec ->
+    fromRepositoryRoot
+      ( commandSpecRedacted
+          HostPoetry
+          [ "--directory",
+            "python",
+            "run",
+            "bootstrap-model-snapshot",
+            "--model-id",
+            modelSnapshotModelId snapshotSpec,
+            "--download-url",
+            modelSnapshotDownloadUrl snapshotSpec,
+            "--minio-endpoint",
+            modelSnapshotMinioEndpoint snapshotSpec,
+            "--minio-access-key",
+            modelSnapshotAccessKeyId snapshotSpec,
+            "--minio-secret-key",
+            modelSnapshotSecretAccessKey snapshotSpec,
+            "--minio-region",
+            modelSnapshotRegion snapshotSpec,
+            "--models-bucket",
+            modelSnapshotBucket snapshotSpec
+          ]
+          ""
+          ( "poetry run bootstrap-model-snapshot --model-id "
+              <> modelSnapshotModelId snapshotSpec
+              <> " (MinIO credentials redacted)"
+          )
+      )
+  GitListTrackedFiles repositoryRoot ->
+    fromRepositoryRoot $
+      commandSpec
+        HostGit
+        [ "-c",
+          "safe.directory=" <> repositoryRoot,
+          "ls-files",
+          "-z"
+        ]
+        ""
+  NodeVersionProbe ->
+    commandSpec HostNode ["--version"] ""
+  NpmInstallWebDependencies toolchain ->
+    fromRepositoryRoot $
+      commandSpec HostNpm (webDependencyInstallArguments toolchain) ""
+
+-- | The fixed npm argument vector for the web workspace install.
+webWorkspaceInstallArguments :: [String]
+webWorkspaceInstallArguments =
+  ["--prefix", "web", "install", "--no-audit", "--no-fund"]
+
+-- | Both closed shapes of the web dependency install. The pinned-toolchain
+-- shape asks npm to provision a known-good @node@ \/ @npm@ pair and then run
+-- the same fixed workspace install under it. Every token on both sides is a
+-- literal owned by this renderer, so the embedded shell program has no
+-- interpolation point and needs no quoting: the arguments are drawn from
+-- 'webWorkspaceInstallArguments', which contains no whitespace or shell
+-- metacharacters.
+webDependencyInstallArguments :: WebDependencyToolchain -> [String]
+webDependencyInstallArguments toolchain =
+  case toolchain of
+    HostNodeToolchain -> webWorkspaceInstallArguments
+    PinnedNodeToolchain ->
+      [ "exec",
+        "--package=node@22",
+        "--package=npm@10",
+        "--",
+        "sh",
+        "-lc",
+        unwords ("npm" : webWorkspaceInstallArguments)
+      ]
 
 renderOperatorKubectlCommand ::
   (HostTool -> FilePath) ->

@@ -11,6 +11,7 @@ module Infernix.Lint.HaskellStyle
     nativeArtifactInvocationKernelOwnershipViolations,
     provisioningKernelOwnershipViolations,
     unsafeNativeBoundaryViolations,
+    unboundedDescriptorSpawnViolations,
     unboundedEngineSpawnViolations,
   )
 where
@@ -906,6 +907,7 @@ capabilityGatingViolations sourceFile numberedLines =
     <> emptySubprocessEnvViolations sourceFile numberedLines
     <> unboundedExecViolations sourceFile numberedLines
     <> unboundedEngineSpawnViolations sourceFile numberedLines
+    <> unboundedDescriptorSpawnViolations sourceFile numberedLines
     <> unboundedHttpViolations sourceFile numberedLines
     <> threadDelayViolations sourceFile numberedLines
 
@@ -980,16 +982,26 @@ unboundedExecViolations sourceFile numberedLines
         containsToken needle lineValue
       ]
 
+-- | Sprint 6.44 closed a real hole here. Token matching is whole-token, so
+-- @withCreateProcess@ never matched @createProcess@ and a non-exempt module
+-- could bracket an unbounded spawn in plain sight; @HostTools.hs@ already used
+-- exactly that call. @runInteractiveProcess@, @runProcess@, and
+-- @cleanupProcess@ are the remaining public @System.Process@ launch and
+-- teardown primitives with the same property.
 forbiddenUnboundedExecTokens :: [String]
 forbiddenUnboundedExecTokens =
   [ "readCreateProcessWithExitCode",
     "readProcessWithExitCode",
     "readProcess",
     "createProcess",
+    "withCreateProcess",
+    "runInteractiveProcess",
+    "runProcess",
     "waitForProcess",
     "spawnProcess",
     "callProcess",
-    "callCommand"
+    "callCommand",
+    "cleanupProcess"
   ]
 
 -- | Phase 1 Sprint 1.20 — Apple engine artifacts may provision only through
@@ -1231,6 +1243,7 @@ forbiddenEngineSpawnTokens :: [String]
 forbiddenEngineSpawnTokens =
   [ "readCreateProcessWithExitCode",
     "createProcess",
+    "withCreateProcess",
     "waitForProcess"
   ]
 
@@ -1238,20 +1251,96 @@ forbiddenEngineSpawnTokens =
 cappedEngineKernelFile :: FilePath
 cappedEngineKernelFile = "src/Infernix/Runtime/CappedEngine/Internal.hs"
 
-darwinObserverKernelFile :: FilePath
-darwinObserverKernelFile =
-  "src/Infernix/Runtime/CappedEngine/DarwinObserver.hs"
+fixedObserverKernelFile :: FilePath
+fixedObserverKernelFile =
+  "src/Infernix/Runtime/CappedEngine/FixedObserver.hs"
 
--- | The engine-spawn rule exempts the capped-engine kernel (the sole legitimate
--- engine spawn) plus every non-engine raw-spawn surface the bounded-command rule
--- already tracks (cluster commands, host prereqs/tools, Poetry/venv setup,
--- workflow tooling, engine materialization/smoke). Reusing the bounded-command
--- exemption set keeps the two gates shrinking in lockstep: a migration that
--- removes a raw spawn from one list removes it from both, and only a brand-new
--- raw engine spawn — which must carry a 'MemoryGrant' — is left with nowhere to
--- hide but the capped-engine kernel.
+-- | The engine-spawn gate's exemption set is /exactly/ the bounded-command
+-- gate's, and Sprint 6.44's follow-on states that as a decision rather than
+-- leaving it looking like an oversight.
+--
+-- Sprint 6.44 recorded an intent to make this set "strictly smaller" than
+-- 'unboundedExecExemptedFiles'. That is not achievable with this rule's
+-- detection strategy, and the honest record matters more than the aspiration.
+-- Both gates match the same raw @System.Process@ tokens on the same source
+-- lines; nothing in a token tells the two rules apart. So for any file that
+-- legitimately retains a /non-engine/ raw spawn — an operator passthrough, a
+-- long-lived host daemon, a pre-manifest host probe — removing it from the
+-- engine set would make the engine rule fire on a line that is not an engine
+-- spawn at all. The only way to pass would be to delete a legitimate spawn or
+-- to weaken a rule, and the doctrine forbids both. The two sets therefore
+-- coincide by construction, and this definition says so directly instead of
+-- implying a narrowing through a redundant cons: 'cappedEngineKernelFile' is
+-- already a member of 'unboundedExecExemptedFiles', so consing it produced a
+-- duplicate, not a wider set.
+--
+-- Separating the gates needs a strictly stronger detector, not a smaller list.
+-- Two designs would work: a per-site annotation that marks a spawn as
+-- engine-launching (so the engine rule keys on intent rather than on the
+-- primitive), or an AST pass that resolves what each spawn actually executes
+-- (the @check-code@ pass already demonstrates that shape for the realness
+-- contract). Either would let the engine gate cover files the exec gate must
+-- still exempt. Until one exists, the coupling is load-bearing in one useful
+-- direction: a migration that removes a raw spawn from the exec list removes it
+-- from both, and a brand-new raw engine spawn — which must carry a
+-- 'MemoryGrant' — still has nowhere to hide but the capped-engine kernel.
 unboundedEngineSpawnExemptedFiles :: [FilePath]
-unboundedEngineSpawnExemptedFiles = cappedEngineKernelFile : unboundedExecExemptedFiles
+unboundedEngineSpawnExemptedFiles = unboundedExecExemptedFiles
+
+-- | Sprint 6.44 follow-on (bounded descriptor space) — a spawn kernel that sets
+-- @close_fds@ must observe the descriptor bound before it spawns.
+--
+-- @close_fds@ is unsupported by @posix_spawn@, so @process@ forks and, in the
+-- child, closes every descriptor from 3 up to @sysconf(_SC_OPEN_MAX)@ — the soft
+-- @RLIMIT_NOFILE@ — before @exec@. That walk is linear in a limit the process
+-- inherits rather than chooses, and containerd hands a pod @1073741816@, which
+-- was measured at 313 s per spawn. The observer's 50 ms sampling cadence and 5 s
+-- deadline turn that into an enforcement failure with two empty captured
+-- streams, which reads as a hang rather than as a resource bound.
+--
+-- The correction bounds the resource instead of weakening the isolation:
+-- 'Infernix.DescriptorSpace.establishBoundedDescriptorSpace' lowers the soft
+-- limit before the process opens its first descriptor, so the child's walk still
+-- covers the entire descriptor space and @close_fds@ keeps its exact meaning.
+-- This rule is the structural half — it keeps a /new/ @close_fds@ spawn surface
+-- from appearing without the fail-closed observation, so an unbounded process
+-- image produces a named error rather than a stall. It is file-scoped like its
+-- sibling rules, so it does not catch a second unguarded spawn added to a file
+-- that already observes the bound. Canonical doctrine:
+-- documents/architecture/managed_state_transitions.md.
+unboundedDescriptorSpawnViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedDescriptorSpawnViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedDescriptorSpawnExemptedFiles = []
+  | observesDescriptorBound = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": `close_fds` spawn without a preceding Infernix.DescriptorSpace.requireBoundedDescriptorSpace observation; the forked child closes every descriptor up to the soft RLIMIT_NOFILE before exec, which is 313 s per spawn at a containerd pod's 1073741816, so an unbounded process image must fail closed by name instead of stalling (see documents/architecture/managed_state_transitions.md)"
+      | (lineNumber, _) <- closeFdsSites
+      ]
+  where
+    codeLines =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue)
+      ]
+    closeFdsSites =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- codeLines,
+        containsToken "close_fds" lineValue
+      ]
+    observesDescriptorBound =
+      any
+        (containsToken "requireBoundedDescriptorSpace" . snd)
+        codeLines
+
+-- | The descriptor-bound rule exempts only the module that owns the bound (it
+-- names the primitive it exports) and this lint module (it names both tokens as
+-- literals).
+unboundedDescriptorSpawnExemptedFiles :: [FilePath]
+unboundedDescriptorSpawnExemptedFiles =
+  [ "src/Infernix/DescriptorSpace.hs",
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
 
 -- | Sprint 4.29 (managed-state-transition doctrine) — reject raw streaming HTTP
 -- reads of an upstream body outside the bounded model-download wrapper. The
@@ -1325,12 +1414,19 @@ threadDelayExemptedFiles =
     "src/Infernix/Runtime/Worker.hs",
     -- Daemon: startup settle + idle park / heartbeat.
     "src/Infernix/Runtime/Daemon.hs",
-    -- Adapter setup: Poetry/venv provisioning backoff.
-    "src/Infernix/Python.hs",
     -- Demo API: bounded object-readiness backoff.
     "src/Infernix/Demo/Api.hs"
   ]
 
+-- | Every file allowed to hold a raw @System.Process@ spawn, and why.
+--
+-- Sprint 6.44's follow-on closed this list out. The two rows it named as
+-- "mechanically migratable" are gone — 'Lint/Files.hs' and 'Workflow.hs' now
+-- run their commands through the closed catalog — and the three that remain
+-- are recorded here as settled scope decisions, not as backlog. Each surviving
+-- row is a named kernel or a stated boundary, and every raw spawn behind those
+-- rows now carries a required total deadline, so "exempt from the closed
+-- catalog" no longer means "unbounded".
 unboundedExecExemptedFiles :: [FilePath]
 unboundedExecExemptedFiles =
   [ -- Owns the bounded-command kernel (the one legitimate raw spawn surface).
@@ -1340,20 +1436,49 @@ unboundedExecExemptedFiles =
     "src/Infernix/Runtime/CappedEngine/Internal.hs",
     -- Owns the fixed Apple footprint observers. The module does not accept a
     -- caller-supplied executable, arguments, environment, or working directory.
-    darwinObserverKernelFile,
+    fixedObserverKernelFile,
     -- Names the forbidden tokens as literals; exempt it.
     "src/Infernix/Lint/HaskellStyle.hs",
-    -- Remaining runtime / host-tool spawn surfaces are different domains
-    -- (long-lived inference runners, host prerequisite probes, Python tooling)
-    -- not yet owned by the cluster bounded-command kernel.
+    -- Two surfaces that are deliberately outside the closed catalog's scope,
+    -- named individually because the scope decision differs for each.
+    --
+    -- 'withRuntimeServiceDaemon' starts the long-lived `infernix service` host
+    -- daemon. A required /total/ deadline is the wrong shape for a process
+    -- whose whole purpose is to outlive the command that started it; the
+    -- bounded-command kernel's contract is "run to completion within a
+    -- timeout", which this can never satisfy. Its lifetime is instead bounded
+    -- structurally: it is bracketed with terminate + wait, so it cannot outlive
+    -- the region that started it.
+    --
+    -- 'runCommandWithCwdAndEnvRemovingWithPaths' is the operator passthrough
+    -- behind `infernix test ...` and `infernix kubectl ...`. Its executable and
+    -- argv come from the operator's own invocation, it must stream to the
+    -- operator's terminal rather than capture, and it must exit with the
+    -- child's code. Bounding an operator's own `cabal test` run with a deadline
+    -- the operator did not choose would be a defect, not a safeguard, and the
+    -- closed catalog cannot model a command whose tokens are the operator's.
+    --
+    -- The one CLI capture that is /not/ a passthrough — the demo-UI `curl`
+    -- fetch — does carry a required deadline.
     "src/Infernix/CLI.hs",
-    "src/Infernix/Engines/LinuxNative.hs",
+    -- Apple host prerequisite reconciliation: `brew install <closed formula>`,
+    -- `docker context show`, and `docker info --format {{json .}}`. All three
+    -- have fully fixed argv and fixed literal Homebrew executables, so the
+    -- objection is not caller-supplied tokens — it is ordering. They run on an
+    -- Apple host *before* any host manifest or Docker context exists, because
+    -- reconciling exactly those things is their job. A closed `ClusterCommand`
+    -- compiles against 'clusterSubprocessEnv', which fails closed without a
+    -- manifest, so routing them through the catalog would make the bootstrap
+    -- depend on the artifact it is bootstrapping. That is a boundary, not a
+    -- backlog item. All three carry required deadlines instead.
     "src/Infernix/HostPrereqs.hs",
-    "src/Infernix/HostTools.hs",
-    "src/Infernix/Lint/Files.hs",
-    "src/Infernix/Python.hs",
-    "src/Infernix/Runtime/Pulsar.hs",
-    "src/Infernix/Workflow.hs"
+    -- A named kernel: owns the pre-manifest fixed host probes. The three
+    -- generic runners that used to live here had no callers left anywhere in
+    -- the repository and were deleted rather than migrated. The two remaining
+    -- invocations — `sysctl -n hw.memsize` and `colima list --json` — carry
+    -- fixed argv and a required deadline, and run during `infernix init`,
+    -- before the manifest a closed command would need exists.
+    "src/Infernix/HostTools.hs"
   ]
 
 -- | Phase 0 Sprint 0.13 (managed-state-transition doctrine) — the escape-token
@@ -1495,13 +1620,14 @@ allowedSetupEnvLine lineValue =
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
 -- bare-name @proc "<command>"@ invocations whose name matches a
 -- known external tool. The supported flow routes every invocation
--- through `Infernix.HostTools.runHostTool` so the absolute path
+-- through a closed `ClusterCommand` (or, before the host manifest exists,
+-- `Infernix.HostTools`) so the absolute path
 -- comes from the typed `HostConfig.toolPaths.*` record.
 bareNameProcViolations :: FilePath -> [(Int, String)] -> [String]
 bareNameProcViolations sourceFile numberedLines
   | sourceFile `elem` bareNameProcExemptedFiles = []
   | otherwise =
-      [ sourceFile <> ":" <> show lineNumber <> ": forbidden bare-name `proc " <> show toolName <> "`; route through HostTools.runHostTool"
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden bare-name `proc " <> show toolName <> "`; resolve the executable through a closed ClusterCommand, or through Infernix.HostTools for a pre-manifest host probe"
       | (lineNumber, lineValue) <- numberedLines,
         not (isCommentLine lineValue),
         toolName <- forbiddenBareProcCommands,

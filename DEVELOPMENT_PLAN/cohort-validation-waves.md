@@ -124,6 +124,150 @@ retained-state teardown.
 | Y | Apple Silicon + Linux CPU | **Typed Execution Plan Apple/CPU sign-off.** The governed no-repo-owned-native-source correction supersedes `eae424…` / `a0d1…` and interrupted Apple attempt 5. The `filelock` lifecycle boundary, all-Haskell typed subprocess replacement, and bounded fixed `/usr/bin/top` plus `/usr/bin/footprint` Apple observer are implemented. Phase 1's bounded provisioning and smoke-bound sibling transaction are present, but five adversarial reviews have rejected successive drafts. Review #5 rejected the escaping writer/lock boundary and arbitrary activation callback, plus remaining pathname-recursive or unbounded closure, recovery, package-discovery, and nested-capture paths. The live correction audit additionally found that capped-engine cleanup reaped its group leader before later numeric PGID cleanup; an exact retained helper-owned group identity through termination, absence proof, and designated-owner reap is now required. It also found that Linux evidence omitted the system loader and recursive library closure and that the root-bound writer returned to pathname effects with an intermediate-parent swap window. The measured Core ML artifact is about 1.7 GiB, so the full-root per-command snapshot copy is rejected; exact candidate/final execution must use a descriptor-retained generation lease, and dead-owner activity recovery must precede new writer authority. Full-materializer cleanup/recovery proof remains open. The direct Darwin `proc_pid_rusage` FFI sampler and old embedded Apple bridge evidence are superseded. Phase 0's focused correction proof, final review, and Stage 1 closed on 2026-07-27. | Blocked by active Phase 1 artifact/materializer, descriptor-retained writer and generation lease, dead-owner activity recovery, complete target closure, and exact engine-group correction, fresh review/Stage 1, Apple rematerialization/cohort, and paired `linux-cpu`; then Phase 2 in numerical order; both later Wave Y lanes remain | Close Phase 1 on Apple plus `linux-cpu`; then Phase 2's ordered closure; then Phase 4 Apple/CPU sign-off |
 | Z | CUDA Linux + Linux CPU | **Typed Execution Plan NVIDIA sign-off.** Phase 6 Sprint 6.44: verified per-process-group VRAM enforcement, independent RAM/VRAM grants, bounded provisioning, zero non-kernel raw-spawn imports/exemptions, adversarial CUDA ceiling breach with typed terminal failure, worker survival, and subsequent smaller inference. Consumes the committed Phase 4 Apple/CPU attestation without rerunning Apple. | Planned | Pending |
 
+## Wave Z: Phase 6 Sprint 6.44 NVIDIA Enforcement Sign-Off (Open)
+
+**Machine**: CUDA Linux (RTX 5090, driver 570.x) — the selected accelerator for this wave is
+`linux-gpu`, paired with `linux-cpu`. This is the first wave whose selected accelerator is
+`linux-gpu` since the typed-execution-plan reopen, and the first that is runnable on the current
+development host without a machine switch.
+
+**Scope**: Phase 6 Sprint 6.44 (verified NVIDIA per-process-group VRAM enforcement and raw-spawn
+exemption reduction) plus Phase 8 Sprint 8.9, whose behavioral evidence is consumed from this wave
+rather than from a wave of its own — Sprint 8.9's own validation rule forbids it from creating a
+dual-accelerator gate. Under Section Q's single-accelerator-per-phase rule this wave selects
+`linux-gpu`; the Apple accelerator evidence for Phases 1, 2, and 4 stays with Wave Y and no result
+here substitutes for it.
+
+**Frozen state**: the 2026-08-02 source whose complete machine-independent gate set is GREEN
+(`cabal build all --enable-tests` under `-Wall -Werror`; `infernix-unit`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, and `infernix-compile-fail`
+at 6 positive / 81 negative; `infernix-haskell-style` including the realness rules; and
+`lint files|chart|proto|docs` plus `docs check`).
+
+**What this wave must prove, beyond an ordinary green run**:
+
+1. `linux-gpu` compiles an execution plan and stages its catalog. This lane has been fail-closed by
+   construction — `GpuDualResourceBudgetRequired` for every config — so a green pre-cluster gate is
+   itself new evidence, not a regression check.
+2. Every device-using row is admitted against **both** limits and watched by **both** enforcers, and
+   every over-budget row is a clean typed `ModelMemoryLimitExceeded` naming which of the two
+   resources rejected it.
+3. The paired `linux-cpu` full suite against the same frozen state, to prove the dual-budget and
+   observer-kernel changes did not regress the CPU lane.
+
+**What this wave explicitly does NOT prove.** The adversarial CUDA ceiling breach is *not* covered,
+and a green run here must not be read as covering it — but the reason is narrower than it first
+appeared, and the corrected reason is recorded because it changes what would close the gap:
+
+- `test/integration/Spec.hs` has no runtime ceiling-breach case at all — every catalog row is
+  classified as either compiler-unavailable (typed `ModelMemoryLimitExceeded`) or `completed`, and a
+  runtime breach of an *admitted* ceiling is neither.
+- The unit suite **does** reach the device inside this cohort. `/usr/bin/nvidia-smi` and
+  `libcuda.so.1` are both present in the launcher image and the Sprint 6.44 live NVIDIA assertions ran
+  and passed here — the `skipping the live NVIDIA VRAM watchdog assertions` line is absent from the
+  run log. That is a property of the **host Docker daemon** rather than of `compose.yaml`: this host
+  sets `"default-runtime": "nvidia"`, so containers get the driver injected without a `--gpus` flag.
+  A host whose default runtime is `runc` would skip those assertions instead, so this coverage is
+  host-configuration-dependent and must not be recorded as unconditional.
+- The real gap is therefore that **no fixture allocates device memory past a ceiling**. The seam and
+  harness pattern already exist (`nvidiaWatchdogOutcomeForTest`, mirroring
+  `runLinuxWatchdogBreachAssertions`); only the allocating child is missing.
+
+Closing it is Sprint 6.44 remaining-work item 2. It is a source change, so it needs its own frozen
+state and a follow-up cohort; this wave should record a partial closure naming exactly which
+deliverable is still unproven.
+
+**Attempt 1 (2026-08-03) — FAILED, and the failure was a real defect in Sprint 6.44.** Image
+`sha256:4a02f58cbd749c17560ea5dc781aa40c44d0260f0759a732f0e106da146e4c7e` (6.4 GB) cleared the clean
+in-image build, `haskell-style-check: ok`, `infernix-unit` PASS (the live NVIDIA assertions genuinely
+ran here — the skip line is absent), Kind cluster creation, Harbor publication of every image
+including the three GPU engine images, preload, and Keycloak/PostgreSQL. It then failed at
+`deploy-final-phase` with `infernix-engine` at `0 of 1 updated replicas are available`, and tore the
+cluster down cleanly.
+
+Cause, confirmed by reading the live pod rather than inferring: the engine pod's cgroup `memory.max`
+is 16384 MiB, while runtime refinement requires the outer envelope to equal
+`childBudget + linuxOuterEnvelopeHeadroomMib` exactly. Sprint 6.44 reused the `linux-cpu` 4096 MiB
+child budget, so every GPU placement produced `OuterEnvelopeTooLarge 5120 16384` and no engine ever
+became ready. Three other explanations — unschedulable GPU, a missing node label, and four engine
+Deployments contending for one device — were checked and refuted first; the GPU plugin works and the
+worker advertises `nvidia.com/gpu=1`. Full detail is in the Sprint 6.44 section.
+
+Fixed by deriving the GPU child budget from the pod limit, and guarded by a new unit assertion
+covering **both** lanes that was negative-tested against the original value. Because
+`compose.yaml` bind-mounts only `./.data` and `/workspace` is baked image content, the fix requires
+an exact-source image rebuild before attempt 2.
+
+**Attempt 2 (2026-08-03) — stopped at harness seizure, and the stop was correct.** Exact-source image
+`sha256:17afdfdb77fe13bcbfa0b4556205fd924eae4094eb2fe49e31ddcc2afadd9485` (6.40 GB) passed the clean
+in-image build, `haskell-style-check: ok`, and `infernix-unit` PASS — the latter now including the
+new both-lane engine-envelope guard. It then refused before publishing its reservation:
+
+> test harness cluster-slot seizure refused before reservation publication: the live cluster
+> inventory is not HarnessOwned for runtime linux-gpu
+
+That refusal is **Sprint 6.43's fail-closed seizure working on live infrastructure**, and it is
+recorded here as unplanned behavioral evidence for that sprint: an `OperatorOwned` Kind cluster was
+present, and `infernix test all` declined to destroy it instead of tearing it down. The operator
+cluster existed because of an operator-side sequencing mistake during the attempt-1 diagnosis — a
+`cluster down` was started while the diagnostic `cluster up` was still running, so the bring-up
+completed afterwards and left a cluster behind. After a clean `./bootstrap/linux-gpu.sh down` the
+inventory is empty and `authorizeClusterOwnership` returns `Right ()` on the empty-inventory arm, so
+the retained `clusterOwner: operator` in the persisted state does not block a subsequent harness run.
+
+**Attempt 4 (2026-08-03) — FAILED on a second, distinct Sprint 6.44 defect.** With the envelope fix
+baked, the run again reached `deploy-final-phase` and timed out on `infernix-engine` at 0/1. A
+diagnostic bring-up then captured the engine pod in steady state — `restarts=3`, identical error each
+time, so not a startup race:
+
+> generated substrate runtime plan could not be refined against live enforcement:
+> NvidiaSamplerUnavailable "llm-qwen25-awq" :| [NvidiaSamplerUnavailable "llm-smollm2-safetensors",
+> NvidiaSamplerUnavailable "llm-tinyllama-gguf", NvidiaSamplerUnavailable "llm-tinyllama-gptq",
+> NvidiaSamplerUnavailable "speech-faster-whisper-ct2"]
+
+Those are exactly the five GPU placements that fit the 4096 MiB VRAM budget, and the absence of any
+`OuterEnvelopeTooLarge` confirms the attempt-1 fix worked. `verifyNvidiaVramSampler` fails
+**permanently inside the engine pod**, while every input measured by hand in that same pod says it
+should succeed: `nvidia-smi --query-gpu=memory.total` returns `32607` with exit 0, empty stderr, and
+~30 ms latency against a 5 s deadline; `--query-compute-apps` returns empty output with exit 0, which
+the parser accepts as a valid "no compute application" observation; and the `/proc` group walk finds
+a live member for the daemon's own group with nothing unreadable.
+
+Four hypotheses were raised and each refuted by evidence rather than argument: an unschedulable GPU
+(the device plugin comes up and the worker advertises `nvidia.com/gpu=1`); a missing
+`infernix.runtime/gpu` node label (present); four engine Deployments contending for one device (the
+lifecycle already sets per-engine replicas to 0 at final phase); and a startup race (refuted by the
+identical repeat crashes).
+
+**The instrumentation gap this exposed is itself a Sprint 6.44 defect and is fixed.**
+`NvidiaSamplerUnavailable` names the placement but discarded the probe's reason, so each hypothesis
+cost a full image-plus-cohort cycle. `probeNvidiaVramSampler` now returns the reason and the
+refinement boundary logs it, distinguishing a device-observation failure, a non-positive VRAM total,
+an empty `/proc` group walk, and a failed `/proc` group walk. The next run diagnoses itself.
+
+**Attempt 5 blocked on an unrelated build flake.** The instrumented image build failed at
+`npm --prefix web run build` with spago reporting that its entire PureScript package set — `aff`,
+`affjax`, `prelude`, and eighteen more — "do not exist in the package index". This session changed
+only Haskell sources, and two earlier builds of the same `web/` tree succeeded, so it is a registry
+or network flake rather than a source defect. A retry is the correct response.
+
+**Root cause of the attempt-4/5 failure, confirmed 2026-08-03.** The self-diagnosing probe reported
+that the fixed `/usr/bin/nvidia-smi` observer exceeded its 5-second deadline with **empty** captured
+stdout and stderr, while the same command by hand in the same pod returns in 26-28 ms. The child was
+stalling before `exec`. The measured difference is `RLIMIT_NOFILE`: **1073741816** in the containerd
+engine pod versus **1024** in the docker launcher container. `close_fds = True` closes every
+descriptor up to that limit before `exec`; a direct measurement with the same library gives 0 ms at
+rlimit 1024 and 133 ms at 524288, which extrapolates to roughly **4.5 minutes per spawn** at the
+pod's limit. See the Sprint 6.44 section for the full detail, including the unverified question of
+whether the capped-engine and bounded-command kernels — which set the same flag — pay the same cost.
+
+**Status**: Open, and **no cohort has passed**. Attempt 1 found and fixed a real envelope defect;
+attempt 2 fail-closed correctly on operator-owned infrastructure; attempt 3 was killed before cluster
+work; attempts 4 and 5 hit the `close_fds` stall, whose root cause is now measured but deliberately
+**not** fixed in this session, because the remedy touches an isolation property shared by three
+enforcement kernels and needs its own validation cycles. Sprints 6.44 and 8.9 remain
+`Active — Validation Only`.
+
 ## Wave Y: Phase 1, Phase 2, Then Typed Execution Plan Apple/CPU Sign-Off (Active — Validation Only)
 
 > **Current status (2026-08-02; supersedes the historical Wave Y summary row above).** Phase 1,

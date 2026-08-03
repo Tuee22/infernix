@@ -3,18 +3,28 @@
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
--- | Package-internal kernel for the fixed Apple physical-footprint observers.
--- Callers cannot supply an executable, arguments, environment, or working
--- directory. The raw process authority and cleanup operations stay enclosed
--- in this module.
-module Infernix.Runtime.CappedEngine.DarwinObserver
-  ( DarwinObserverKernelTest (..),
+-- | Package-internal kernel for the fixed public-tool memory observers: the
+-- Apple @\/usr\/bin\/top@ plus @\/usr\/bin\/footprint@ physical-footprint pair
+-- and the NVIDIA @\/usr\/bin\/nvidia-smi@ VRAM pair. Callers cannot supply an
+-- executable, arguments, environment, or working directory — the request
+-- vocabulary is a closed enum and 'FixedObserverSpec' is unexported. The raw
+-- process authority and cleanup operations stay enclosed in this module.
+module Infernix.Runtime.CappedEngine.FixedObserver
+  ( FixedObserverKernelTest (..),
+    NvidiaComputeApp (..),
+    nvidiaComputeAppGroupBytes,
+    observeNvidiaComputeApps,
+    observeNvidiaDeviceTotalMib,
     parseFootprintPhysicalBytes,
+    parseNvidiaComputeApps,
+    parseNvidiaDeviceTotalMib,
     parseTopProcessGroupMembers,
+    probeNvidiaVramObserver,
     probePhysicalFootprintObserver,
     processGroupPhysicalFootprintBytes,
-    runDarwinObserverFixtureModeIfRequested,
-    runDarwinObserverKernelTest,
+    runFixedObserverFixtureModeIfRequested,
+    runFixedObserverKernelTest,
+    verifyNvidiaVramObserver,
     verifyPhysicalFootprintObserver,
   )
 where
@@ -57,6 +67,7 @@ import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
 import GHC.Clock (getMonotonicTimeNSec)
+import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
 import Infernix.Error
   ( onExceptionPreservingPrimary,
     runCleanupsPreservingFailures,
@@ -119,7 +130,7 @@ import System.Timeout (timeout)
 import System.Posix.Process (getProcessGroupID)
 #endif
 
-data DarwinObserverKernelTest
+data FixedObserverKernelTest
   = ObserverNormalCompletion
   | ObserverNonzeroCompletion
   | ObserverTimeoutCleanup
@@ -130,14 +141,18 @@ data DarwinObserverKernelTest
   | ObserverOutputBoundsCleanup
   deriving (Bounded, Enum, Eq, Show)
 
--- The two fixed observation requests exist only where their public tools do.
--- On any other platform the three public entry points below answer
--- unavailable, so this request vocabulary and the helper chain it drives are
--- unreachable and would fail @-Wunused-top-binds@ under @-Werror@.
+-- The fixed observation requests exist only where their public tools do: the
+-- Apple pair on Darwin, the NVIDIA pair everywhere else. A request vocabulary
+-- for the absent platform would be unreachable and would fail
+-- @-Wunused-top-binds@ under @-Werror@, so each platform compiles only its own.
 #if defined(darwin_HOST_OS)
 data FixedObserverRequest
   = DiscoverProcessGroup CPid
   | MeasureProcessFootprint CPid
+#else
+data FixedObserverRequest
+  = QueryNvidiaComputeApps
+  | QueryNvidiaDeviceMemory
 #endif
 
 data FixedObserverSpec = FixedObserverSpec
@@ -253,6 +268,78 @@ probePhysicalFootprintObserver =
   pure (Left "Apple physical-footprint observation is unavailable on this platform")
 #endif
 
+-- | One NVIDIA compute application as @nvidia-smi@ attributes it. The process
+-- id is reported in the *caller's* PID namespace: NVML resolves each compute
+-- context against the reading process's namespace and omits the contexts it
+-- cannot resolve, so an engine pod observes exactly its own namespace's
+-- compute applications and never another container's.
+data NvidiaComputeApp = NvidiaComputeApp
+  { nvidiaComputeAppProcessId :: CPid,
+    nvidiaComputeAppUsedMib :: Word64
+  }
+  deriving (Eq, Show)
+
+-- | Observe every NVIDIA compute application visible in this PID namespace.
+-- The caller intersects the result with the engine process group it already
+-- enumerates from @\/proc@; this observer deliberately performs no group
+-- discovery of its own, so the NVIDIA lane spawns one fixed command per sample
+-- rather than the Darwin lane's per-member pair.
+observeNvidiaComputeApps :: IO (Either Text [NvidiaComputeApp])
+#if defined(darwin_HOST_OS)
+observeNvidiaComputeApps =
+  pure (Left "NVIDIA compute-application observation is unavailable on this platform")
+#else
+observeNvidiaComputeApps = do
+  deadline <- deadlineFromNow observerSampleTimeoutMicros
+  output <- runFixedObserverRequest deadline QueryNvidiaComputeApps
+  pure (output >>= parseNvidiaComputeApps)
+#endif
+
+-- | Observe the installed NVIDIA device's total VRAM (MiB). This is the outer
+-- envelope a VRAM grant must fit inside, the GPU analogue of the pod cgroup
+-- memory limit read for the resident-set lane.
+observeNvidiaDeviceTotalMib :: IO (Either Text Int)
+#if defined(darwin_HOST_OS)
+observeNvidiaDeviceTotalMib =
+  pure (Left "NVIDIA device observation is unavailable on this platform")
+#else
+observeNvidiaDeviceTotalMib = do
+  deadline <- deadlineFromNow observerSampleTimeoutMicros
+  output <- runFixedObserverRequest deadline QueryNvidiaDeviceMemory
+  pure (output >>= parseNvidiaDeviceTotalMib)
+#endif
+
+-- | Startup probe for the NVIDIA VRAM sampler. Both fixed requests must
+-- succeed: the device envelope must be positive and the compute-application
+-- query must parse. An empty compute-application list is a valid observation —
+-- no compute context exists yet at probe time — so it is not a probe failure.
+-- The per-execution watchdog still treats every later sampling failure as
+-- terminal; this probe is an observation, not permanent evidence.
+probeNvidiaVramObserver :: IO (Either Text Int)
+#if defined(darwin_HOST_OS)
+probeNvidiaVramObserver =
+  pure (Left "NVIDIA VRAM observation is unavailable on this platform")
+#else
+probeNvidiaVramObserver = do
+  observedTotal <- observeNvidiaDeviceTotalMib
+  case observedTotal of
+    Left reason -> pure (Left reason)
+    Right totalMib
+      | totalMib <= 0 ->
+          pure (Left "NVIDIA device reported a non-positive total VRAM")
+      | otherwise -> do
+          computeApps <- observeNvidiaComputeApps
+          pure (totalMib <$ computeApps)
+#endif
+
+verifyNvidiaVramObserver :: IO Bool
+verifyNvidiaVramObserver = do
+  observed <- probeNvidiaVramObserver
+  pure $
+    case observed of
+      Right totalMib -> totalMib > 0
+      Left _ -> False
+
 #if defined(darwin_HOST_OS)
 
 discoverProcessGroupMembers ::
@@ -271,6 +358,8 @@ measureProcessFootprint deadline processId = do
   output <- runFixedObserverRequest deadline (MeasureProcessFootprint processId)
   pure (output >>= parseFootprintPhysicalBytes)
 
+#endif
+
 runFixedObserverRequest ::
   ObserverDeadline ->
   FixedObserverRequest ->
@@ -285,7 +374,13 @@ runFixedObserverRequest deadline request =
   where
     spec = fixedObserverSpec request
 
+-- | The closed command catalog. Every arm hardcodes an absolute public-tool
+-- path and a literal argument vector; the only variable text is a process id
+-- rendered as a decimal integer. Enforcement must not be redirectable, so the
+-- executable is pinned here rather than resolved from the host-tools manifest
+-- that the operator-facing prerequisite probes use.
 fixedObserverSpec :: FixedObserverRequest -> FixedObserverSpec
+#if defined(darwin_HOST_OS)
 fixedObserverSpec request =
   case request of
     DiscoverProcessGroup processGroup ->
@@ -321,6 +416,32 @@ fixedObserverSpec request =
           observerStdoutLimit = maximumFootprintOutputBytes,
           observerRequiresFixtureGate = False
         }
+#else
+fixedObserverSpec request =
+  case request of
+    QueryNvidiaComputeApps ->
+      FixedObserverSpec
+        { observerExecutable = nvidiaSmiExecutable,
+          observerArguments =
+            [ "--query-compute-apps=pid,used_gpu_memory",
+              "--format=csv,noheader,nounits"
+            ],
+          observerLabel = "fixed " <> nvidiaSmiExecutable <> " compute-application observer",
+          observerStdoutLimit = maximumNvidiaOutputBytes,
+          observerRequiresFixtureGate = False
+        }
+    QueryNvidiaDeviceMemory ->
+      FixedObserverSpec
+        { observerExecutable = nvidiaSmiExecutable,
+          observerArguments =
+            [ "--query-gpu=memory.total",
+              "--format=csv,noheader,nounits"
+            ],
+          observerLabel = "fixed " <> nvidiaSmiExecutable <> " device-memory observer",
+          observerStdoutLimit = maximumNvidiaOutputBytes,
+          observerRequiresFixtureGate = False
+        }
+#endif
 
 successfulObserverOutput ::
   FixedObserverSpec ->
@@ -369,8 +490,6 @@ successfulObserverOutput spec observerRun =
                 <> renderCapturedDiagnostic captured
             )
 
-#endif
-
 requireDrainCapture ::
   Text ->
   Either SomeException DrainCapture ->
@@ -380,13 +499,11 @@ requireDrainCapture streamName result =
     Right capture -> Right capture
     Left failure ->
       Left
-        ( "Apple observer "
+        ( "fixed observer "
             <> streamName
             <> " drain failed: "
             <> Text.pack (displayException failure)
         )
-
-#if defined(darwin_HOST_OS)
 
 renderCapturedDiagnostic :: CapturedStreams -> Text
 renderCapturedDiagnostic captured =
@@ -422,8 +539,6 @@ captureSynchronousFailure label action = do
                     <> Text.pack (displayException failure)
                 )
             )
-
-#endif
 
 runFixedObserver ::
   ObserverDeadline ->
@@ -491,6 +606,12 @@ forkDrain byteLimit handleValue resultVariable =
 
 spawnFixedObserver :: FixedObserverSpec -> IO SpawnedObserver
 spawnFixedObserver spec = do
+  -- The observer samples on a 50 ms cadence against a 5 s total deadline, so
+  -- it is the kernel an unbounded descriptor space starves first: the
+  -- pre-'exec' walk 'close_fds' performs is linear in the soft RLIMIT_NOFILE,
+  -- which is 1073741816 in a containerd pod. Fail closed and name the kernel
+  -- rather than time out with two empty captured streams.
+  _ <- requireBoundedDescriptorSpace (observerLabel spec)
   created <-
     createProcess
       (proc (observerExecutable spec) (observerArguments spec))
@@ -1019,7 +1140,31 @@ validProcessId processId =
   let value = fromIntegral processId :: Integer
    in value > 0 && value <= toInteger maximumPosixProcessId
 
-#if defined(darwin_HOST_OS)
+-- | Sum, in bytes, the device memory NVIDIA attributes to the given process
+-- group members. Compute applications outside the member list belong to other
+-- processes in this PID namespace and are deliberately not attributed here;
+-- the caller supplies the membership it observed from @\/proc@. Every MiB
+-- conversion and accumulation is overflow-checked, so an implausible sample is
+-- a diagnosed rejection rather than a wrapped-around under-count that would
+-- silently disable the ceiling.
+nvidiaComputeAppGroupBytes ::
+  [CPid] ->
+  [NvidiaComputeApp] ->
+  Either Text Word64
+nvidiaComputeAppGroupBytes members = foldM accumulate 0
+  where
+    memberSet = Set.fromList members
+    accumulate total computeApp
+      | nvidiaComputeAppProcessId computeApp `Set.notMember` memberSet = Right total
+      | nvidiaComputeAppUsedMib computeApp > maxBound `div` bytesPerObserverMib =
+          Left "NVIDIA compute-application byte conversion overflowed Word64"
+      | otherwise =
+          case checkedAddWord64 total (nvidiaComputeAppUsedMib computeApp * bytesPerObserverMib) of
+            Nothing -> Left "NVIDIA process-group VRAM total overflowed Word64"
+            Just nextTotal -> Right nextTotal
+
+bytesPerObserverMib :: Word64
+bytesPerObserverMib = 1048576
 
 checkedAddWord64 :: Word64 -> Word64 -> Maybe Word64
 checkedAddWord64 left right
@@ -1030,12 +1175,93 @@ isObserverWhitespace :: Char -> Bool
 isObserverWhitespace character =
   character `elem` (" \t\r\n" :: String)
 
-#endif
+-- | Parse @nvidia-smi --query-compute-apps=pid,used_gpu_memory@ in
+-- @csv,noheader,nounits@ form. Each retained row is @\<pid\>, \<mib\>@. An
+-- empty payload is a valid observation of "no compute application", which is
+-- what a freshly started device reports; every other shape — a malformed row,
+-- a non-decimal field, a duplicate pid, an out-of-range pid, or a row count
+-- past the bound — is a rejection, never a silently dropped sample.
+parseNvidiaComputeApps :: ByteString -> Either Text [NvidiaComputeApp]
+parseNvidiaComputeApps contents
+  | ByteString.length contents > maximumNvidiaOutputBytes =
+      Left "NVIDIA compute-application output exceeded its byte bound"
+  | length outputLines > maximumNvidiaOutputLines =
+      Left "NVIDIA compute-application output exceeded its line bound"
+  | any ((> maximumObserverLineBytes) . ByteString.length) outputLines =
+      Left "NVIDIA compute-application output contained an oversized line"
+  | length rows > maximumNvidiaProcessRows =
+      Left "NVIDIA compute-application output exceeded its row bound"
+  | otherwise = do
+      parsedRows <- traverse parseRow rows
+      let processIds = map nvidiaComputeAppProcessId parsedRows
+      if length (List.nub processIds) /= length processIds
+        then Left "NVIDIA compute-application output repeated a process id"
+        else Right parsedRows
+  where
+    outputLines = ByteString8.lines contents
+    rows =
+      [ trimmed
+      | lineValue <- outputLines,
+        let trimmed = trimObserverBytes lineValue,
+        not (ByteString.null trimmed)
+      ]
+    parseRow row =
+      case map trimObserverBytes (ByteString8.split ',' row) of
+        [processIdToken, usedMibToken] -> do
+          processId <- parsePositiveProcessId "NVIDIA compute-application" processIdToken
+          usedMib <- parseDecimalWord64 usedMibToken
+          pure
+            NvidiaComputeApp
+              { nvidiaComputeAppProcessId = processId,
+                nvidiaComputeAppUsedMib = usedMib
+              }
+        _ ->
+          Left
+            ( "NVIDIA compute-application output row was not a pid,used_gpu_memory pair: "
+                <> renderBytes row
+            )
 
-runDarwinObserverKernelTest ::
-  DarwinObserverKernelTest ->
+-- | Parse @nvidia-smi --query-gpu=memory.total@ in @csv,noheader,nounits@
+-- form. Exactly one positive device row is required: a host with no device, a
+-- host whose device reports nothing, and a multi-device host are all
+-- rejections rather than an assumed envelope.
+parseNvidiaDeviceTotalMib :: ByteString -> Either Text Int
+parseNvidiaDeviceTotalMib contents
+  | ByteString.length contents > maximumNvidiaOutputBytes =
+      Left "NVIDIA device-memory output exceeded its byte bound"
+  | otherwise =
+      case rows of
+        [] -> Left "NVIDIA device-memory output named no device"
+        [row] -> do
+          totalMib <- parseDecimalWord64 row
+          if totalMib == 0
+            then Left "NVIDIA device reported a non-positive total VRAM"
+            else
+              if totalMib > fromIntegral (maxBound :: Int)
+                then Left "NVIDIA device-memory total exceeded the representable range"
+                else Right (fromIntegral totalMib)
+        _ ->
+          Left
+            "NVIDIA device-memory output named more than one device; per-device VRAM enforcement requires exactly one"
+  where
+    rows =
+      [ trimmed
+      | lineValue <- ByteString8.lines contents,
+        let trimmed = trimObserverBytes lineValue,
+        not (ByteString.null trimmed)
+      ]
+
+trimObserverBytes :: ByteString -> ByteString
+trimObserverBytes =
+  ByteString8.dropWhile isObserverWhitespace
+    . ByteString8.reverse
+    . ByteString8.dropWhile isObserverWhitespace
+    . ByteString8.reverse
+
+runFixedObserverKernelTest ::
+  FixedObserverKernelTest ->
   IO (Either Text ())
-runDarwinObserverKernelTest testCase = do
+runFixedObserverKernelTest testCase = do
   result <- try @SomeException (runKernelTest testCase)
   case result of
     Right () -> pure (Right ())
@@ -1044,7 +1270,7 @@ runDarwinObserverKernelTest testCase = do
         Just _ -> throwIO failure
         Nothing -> pure (Left (Text.pack (displayException failure)))
 
-runKernelTest :: DarwinObserverKernelTest -> IO ()
+runKernelTest :: FixedObserverKernelTest -> IO ()
 runKernelTest testCase =
   case testCase of
     ObserverNormalCompletion ->
@@ -1367,8 +1593,8 @@ parseFixture value =
     "output-overflow" -> Just FixtureOutputOverflow
     _ -> Nothing
 
-runDarwinObserverFixtureModeIfRequested :: IO Bool
-runDarwinObserverFixtureModeIfRequested = do
+runFixedObserverFixtureModeIfRequested :: IO Bool
+runFixedObserverFixtureModeIfRequested = do
   arguments <- getArgs
   case arguments of
     [modeArgument, fixtureArgument]
@@ -1470,11 +1696,11 @@ observerFixtureGate = "start\n"
 
 observerFixtureModeArgument :: String
 observerFixtureModeArgument =
-  "__infernix-internal-darwin-observer-fixture-v1"
+  "__infernix-internal-fixed-observer-fixture-v1"
 
 synchronousFixtureFailureMarker :: String
 synchronousFixtureFailureMarker =
-  "injected synchronous Darwin observer fixture failure"
+  "injected synchronous fixed observer fixture failure"
 
 fixtureNonzeroExitCode :: Int
 fixtureNonzeroExitCode = 23
@@ -1484,12 +1710,8 @@ fixtureNonzeroExitCode = 23
 fixtureBlockingIntervalMicros :: Int
 fixtureBlockingIntervalMicros = 60000000
 
-#if defined(darwin_HOST_OS)
-
 observerSampleTimeoutMicros :: Int
 observerSampleTimeoutMicros = 5000000
-
-#endif
 
 observerCleanupTimeoutMicros :: Int
 observerCleanupTimeoutMicros = 2000000
@@ -1511,6 +1733,26 @@ maximumTopOutputBytes = 8 * 1024 * 1024
 
 maximumFootprintOutputBytes :: Int
 maximumFootprintOutputBytes = 256 * 1024
+
+-- | @nvidia-smi@ emits one short CSV row per compute application or device, so
+-- its bounds are far tighter than the Darwin @top@ full-process-table dump.
+maximumNvidiaOutputBytes :: Int
+maximumNvidiaOutputBytes = 256 * 1024
+
+maximumNvidiaOutputLines :: Int
+maximumNvidiaOutputLines = 4096
+
+maximumNvidiaProcessRows :: Int
+maximumNvidiaProcessRows = 1024
+
+-- | The fixed NVIDIA observation tool. Pinned as an absolute path for the same
+-- reason as @\/usr\/bin\/top@: enforcement must not follow a caller-supplied,
+-- manifest-supplied, or @PATH@-resolved executable. Only the non-Darwin
+-- request vocabulary names it, so the constant lives with that vocabulary.
+#if !defined(darwin_HOST_OS)
+nvidiaSmiExecutable :: FilePath
+nvidiaSmiExecutable = "/usr/bin/nvidia-smi"
+#endif
 
 maximumFixtureOutputBytes :: Int
 maximumFixtureOutputBytes = 64 * 1024

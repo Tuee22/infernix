@@ -184,9 +184,15 @@ The implemented/target substrate split is:
   kills only the child execution group on breach; the pod cgroup is a larger verified outer
   envelope covering the daemon, admitted child ceiling, and polling overshoot, never the
   per-request breach classifier; Phase 4 owns adversarial behavioral proof;
-- `linux-gpu`: the target pairs RAM enforcement with per-process-group NVIDIA accounting. That
-  accounting is not implemented; compilation/refinement fails closed instead of treating a pod
-  limit or CUDA exit as VRAM evidence, and Phase 6 owns the correction.
+- `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting (Phase 6
+  Sprint 6.44). A device-using model compiles two independently indexed grants from a
+  `DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough
+  for the admitted VRAM ceiling, and the capped-engine kernel runs one watchdog per grant. A pod
+  limit or a CUDA exit code is still never accepted as VRAM evidence: an unavailable sampler is
+  `NvidiaSamplerUnavailable` at refinement and `EngineEnforcementUnavailable` at run time. A
+  `linux-gpu` model that does *not* use the device stays on the resident-set lane alone, because a
+  VRAM grant it would never consume is not evidence of anything. The adversarial CUDA breach proof is
+  owned by the `linux-gpu` behavioral cohort.
 
 If a mechanism cannot be verified, refinement fails and the engine member never becomes ready. A
 pod-wide capacity value or CUDA OOM classification is not evidence that an individual model ceiling
@@ -392,9 +398,14 @@ The completed implementation must prove:
 - runtime tests refuse readiness when the selected enforcer is absent or ineffective;
 - adversarial Apple, Linux CPU, and CUDA tests exceed each declared ceiling and observe a typed,
   terminal per-request failure while the host and daemon remain alive;
-- Phase 6 confines production `System.Process` imports to the bounded command, capped engine, and
-  bounded provisioning kernels;
-- Phase 6 removes raw-spawn lint exemptions outside those kernels;
+- production `System.Process` use is confined to the bounded command, capped engine, fixed
+  public-tool observer, and bounded provisioning kernels, plus the CLI-passthrough and host-tool
+  surfaces that remain explicitly exempt;
+- Sprint 6.44 shrank the raw-spawn exemption set — the runtime transport module's Docker address
+  probe and its model-weight snapshot bootstrap became closed bounded commands, and the two rows that
+  no longer contained any raw spawn were deleted — and closed the whole-token gap that had let
+  `withCreateProcess` through; the remaining exempt modules are named with the design decision each
+  still needs;
 - the machine-independent gates and each owning phase's selected accelerator plus `linux-cpu` gate
   pass.
 

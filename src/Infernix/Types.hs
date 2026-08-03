@@ -52,6 +52,7 @@ module Infernix.Types
     hostPartitionPhysicalMib,
     hostPartitionVmReserveMib,
     inferenceMemoryBudgetCapacityMib,
+    inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
     inferenceMemoryBudgetResourceText,
     inferenceMemoryBudgetSource,
@@ -357,6 +358,13 @@ clusterLifecyclePresent lifecycle = case lifecycle of
 -- harness's seizure of the slot fails closed on an operator's running cluster
 -- instead of destroying it. Canonical doctrine:
 -- documents/architecture/managed_state_transitions.md.
+--
+-- Sprint 6.45 — this type is additionally used promoted (@DataKinds@) as the
+-- owner index of @Infernix.Cluster.ClusterTeardownAuthority@, selected at a mint
+-- site by the @Infernix.Cluster.SClusterOwner@ singleton. The index only stops
+-- an authority minted for one owner from being substituted where the other is
+-- required; which owner a live cluster actually has stays a runtime observation.
+-- Adding or renaming a constructor therefore changes a kind as well as a type.
 data ClusterOwner
   = -- | brought up by an operator's @infernix cluster up@; the safe default a
     -- pre-migration (ownerless) persisted document decodes to, so an unowned
@@ -728,9 +736,17 @@ instance FromJSON PodMemoryLimit where
 -- observer against a checked 'HostMemoryPartition'; @linux-cpu@ / @linux-gpu@
 -- are substrate-enforced by the pod cgroup / VRAM limit the descriptive
 -- 'PodMemoryLimit' records.
+-- @linux-gpu@ is the one substrate whose models consume two independent
+-- physical resources at once, so it carries two independent limits:
+-- 'DualEnforcedBudget' names the pod cgroup RAM limit first and the NVIDIA
+-- device VRAM limit second. Both are required — the execution-plan compiler
+-- mints one resource-indexed grant per limit and the capped-engine kernel runs
+-- one watchdog per grant — so a GPU model can never be admitted against RAM
+-- alone or VRAM alone.
 data InferenceMemoryBudget
   = HostEnforcedBudget HostMemoryPartition
   | SubstrateEnforcedBudget PodMemoryLimit
+  | DualEnforcedBudget PodMemoryLimit PodMemoryLimit
   deriving (Eq, Show)
 
 -- | The stable source string recorded for a host-enforced admission decision.
@@ -749,6 +765,12 @@ instance ToJSON InferenceMemoryBudget where
         [ "kind" .= ("substrate-enforced" :: Text),
           "podLimit" .= podLimit
         ]
+    DualEnforcedBudget podLimit vramLimit ->
+      object
+        [ "kind" .= ("dual-enforced" :: Text),
+          "podLimit" .= podLimit,
+          "vramLimit" .= vramLimit
+        ]
 
 instance FromJSON InferenceMemoryBudget where
   parseJSON = withObject "InferenceMemoryBudget" $ \value -> do
@@ -758,25 +780,47 @@ instance FromJSON InferenceMemoryBudget where
         HostEnforcedBudget <$> value .: "partition"
       "substrate-enforced" ->
         SubstrateEnforcedBudget <$> value .: "podLimit"
+      "dual-enforced" ->
+        DualEnforcedBudget <$> value .: "podLimit" <*> value .: "vramLimit"
       _ -> fail ("Unsupported inference memory budget kind: " <> Text.unpack kind)
 
 -- | The admission capacity (MiB) a budget draws from: the partition's inference
 -- capacity for a host-enforced budget, or the pod/VRAM limit for a
 -- substrate-enforced one.
+-- | The capacity of a budget's __primary__ admission resource. For a dual
+-- budget the primary is the VRAM limit: it is the defining constraint of the
+-- GPU substrate and the smaller of the two in every supported configuration.
+-- Admission itself never uses this projection for a dual budget — the
+-- execution-plan compiler matches the arm and admits each grant against its own
+-- limit — so the projection exists for observability and single-resource error
+-- payloads, not for the enforcement decision.
 inferenceMemoryBudgetCapacityMib :: InferenceMemoryBudget -> Int
 inferenceMemoryBudgetCapacityMib budget = case budget of
   HostEnforcedBudget partition -> hostPartitionInferenceCapacityMib partition
   SubstrateEnforcedBudget podLimit -> podMemoryLimitMib podLimit
+  DualEnforcedBudget _ vramLimit -> podMemoryLimitMib vramLimit
 
 inferenceMemoryBudgetResource :: InferenceMemoryBudget -> InferenceMemoryResource
 inferenceMemoryBudgetResource budget = case budget of
   HostEnforcedBudget _ -> UnifiedHostRam
   SubstrateEnforcedBudget podLimit -> podMemoryLimitResource podLimit
+  DualEnforcedBudget _ vramLimit -> podMemoryLimitResource vramLimit
 
 inferenceMemoryBudgetSource :: InferenceMemoryBudget -> Text
 inferenceMemoryBudgetSource budget = case budget of
   HostEnforcedBudget _ -> hostMemoryPartitionSource
   SubstrateEnforcedBudget podLimit -> podMemoryLimitSource podLimit
+  DualEnforcedBudget _ vramLimit -> podMemoryLimitSource vramLimit
+
+-- | Every limit a budget names, in enforcement order. A dual budget yields its
+-- pod RAM limit and its VRAM limit; the single-resource arms yield one entry.
+-- Config validation walks this so a new arm cannot silently escape the
+-- positive-quantity and named-source checks.
+inferenceMemoryBudgetPodLimits :: InferenceMemoryBudget -> [PodMemoryLimit]
+inferenceMemoryBudgetPodLimits budget = case budget of
+  HostEnforcedBudget _ -> []
+  SubstrateEnforcedBudget podLimit -> [podLimit]
+  DualEnforcedBudget podLimit vramLimit -> [podLimit, vramLimit]
 
 -- | Phase 4 Sprint 4.31 — a required per-model peak-resident memory footprint
 -- (MiB). The constructor is hidden; 'mkModelMemoryFootprint' rejects a

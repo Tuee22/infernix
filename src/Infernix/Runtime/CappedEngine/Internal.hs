@@ -21,10 +21,14 @@ module Infernix.Runtime.CappedEngine.Internal
     nativeArtifactInvocation,
     missingResidentRecheckForTest,
     linuxWatchdogOutcomeForTest,
+    nvidiaWatchdogOutcomeForTest,
+    observeNvidiaDeviceVramMib,
+    probeNvidiaVramSampler,
     parseResidentBytesForTest,
     renderNativeArtifactArgumentsForTest,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
+    verifyNvidiaVramSampler,
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
   )
@@ -47,6 +51,7 @@ import Control.Monad (foldM, unless, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
+import Data.Either (isRight)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List qualified as List
 import Data.Text (Text)
@@ -56,6 +61,7 @@ import Foreign.C.Error (Errno (Errno), ePIPE, eSRCH)
 import GHC.IO.Exception (IOErrorType (ResourceVanished), IOException (IOError, ioe_errno, ioe_type))
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (dataRoot, repoRoot))
+import Infernix.DescriptorSpace (requireBoundedDescriptorSpace)
 import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.ExecutionPlan.Internal
@@ -75,6 +81,11 @@ import Infernix.ExecutionPlan.Internal
       ),
   )
 import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
+-- The @\/proc@ resident-set reader is reachable only from the Linux pair, so
+-- its imports belong to the branch that uses it. The fixed public-tool
+-- observer kernel is reachable from both branches: the Apple footprint pair on
+-- Darwin, the NVIDIA VRAM pair elsewhere.
+import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.CappedEngine.OutputCapture qualified as OutputCapture
 import Infernix.Types
   ( EngineBinding
@@ -102,13 +113,7 @@ import System.Process
     terminateProcess,
     waitForProcess,
   )
-
--- The Apple footprint observer is reachable only from the Apple watchdog and
--- its startup probe, and the @\/proc@ resident-set reader only from the Linux
--- pair, so each import belongs to the branch that uses it.
-#if defined(darwin_HOST_OS)
-import Infernix.Runtime.CappedEngine.DarwinObserver qualified as DarwinObserver
-#else
+#if !defined(darwin_HOST_OS)
 import Data.Char (isDigit)
 import Data.List (elemIndices)
 import System.IO.Error (isDoesNotExistError)
@@ -318,6 +323,7 @@ withSerializedEngineExecution (EngineExecutionAuthority token) action =
 data WatchdogSpec
   = AppleFootprintWatchdog Int
   | LinuxProcessGroupRssWatchdog Int
+  | NvidiaVramWatchdog Int
 
 data EngineHandle s = EngineHandle
   { engineStdin :: Maybe Handle,
@@ -1121,8 +1127,9 @@ maximumEngineOutputFailureChars = 4096
 
 -- | Eliminate the existential executable placement while retaining each
 -- enforcer/grant resource index. A GPU placement must satisfy both independent
--- grants; until a per-process NVIDIA sampler exists, it fails closed before
--- spawn rather than treating a pod limit or exit code as VRAM enforcement.
+-- grants: the pod resident-set watchdog and the NVIDIA per-process-group VRAM
+-- watchdog each run against their own admitted ceiling, and neither a pod limit
+-- nor an exit code is ever accepted as a substitute for the other's evidence.
 executableWatchdogs :: ExecutableModel -> Either Text [WatchdogSpec]
 executableWatchdogs (ExecutableModel _ _ _ resources) =
   case resources of
@@ -1142,8 +1149,8 @@ watchdogForGrant (EnforcedGrant enforcer grant) =
       positiveWatchdog ceilingMib AppleFootprintWatchdog
     (LinuxProcessGroupRssWatchdogEnforcer _, MemoryGrant (MemoryCeiling ceilingMib)) ->
       positiveWatchdog ceilingMib LinuxProcessGroupRssWatchdog
-    (NvidiaVramAccountingEnforcer _, MemoryGrant (MemoryCeiling _)) ->
-      Left "NVIDIA per-process VRAM enforcement is unavailable"
+    (NvidiaVramAccountingEnforcer _, MemoryGrant (MemoryCeiling ceilingMib)) ->
+      positiveWatchdog ceilingMib NvidiaVramWatchdog
 
 positiveWatchdog :: Int -> (Int -> WatchdogSpec) -> Either Text WatchdogSpec
 positiveWatchdog ceilingMib constructor
@@ -1160,6 +1167,10 @@ withCappedEngine watchdogs command action =
     -- Keep the rank-2 action monomorphic at the bracketed region's handle.
     runInRegion = action
     acquire = do
+      -- 'withStdioPipes' sets close_fds, whose pre-'exec' descriptor walk is
+      -- linear in the soft RLIMIT_NOFILE. An engine launch inside a containerd
+      -- pod would otherwise spend 313 s before the adapter's first instruction.
+      _ <- requireBoundedDescriptorSpace "capped engine launch"
       (maybeIn, maybeOut, maybeErr, processHandle) <-
         createProcess (withStdioPipes (engineCreateProcess command))
       maybeProcessGroup <- getPid processHandle
@@ -1276,6 +1287,8 @@ runCeilingWatchdog watchdog processHandle processGroup terminationRef =
       runAppleWatchdog ceilingMib processHandle processGroup terminationRef
     LinuxProcessGroupRssWatchdog ceilingMib ->
       runLinuxWatchdog ceilingMib processHandle processGroup terminationRef
+    NvidiaVramWatchdog ceilingMib ->
+      runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef
 
 runAppleWatchdog ::
   Int ->
@@ -1288,7 +1301,7 @@ runAppleWatchdog ceilingMib processHandle processGroup terminationRef = loop
   where
     ceilingBytes = mibToBytes ceilingMib
     loop = do
-      sample <- DarwinObserver.processGroupPhysicalFootprintBytes processGroup
+      sample <- FixedObserver.processGroupPhysicalFootprintBytes processGroup
       case sample of
         Right footprint
           | footprint > ceilingBytes ->
@@ -1357,6 +1370,51 @@ runLinuxWatchdog ceilingMib processHandle processGroup terminationRef = loop
               loop
 #endif
 
+runNvidiaWatchdog ::
+  Int ->
+  ProcessHandle ->
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  IO ()
+#if defined(darwin_HOST_OS)
+runNvidiaWatchdog _ processHandle processGroup terminationRef =
+  failSamplerIfRunning
+    processHandle
+    processGroup
+    terminationRef
+    "NVIDIA per-process-group VRAM enforcement is unavailable on this platform"
+#else
+runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef = loop
+  where
+    ceilingBytes = mibToBytes ceilingMib
+    loop = do
+      sample <- processGroupVramBytes processGroup
+      case sample of
+        Left reason ->
+          failSamplerIfRunning processHandle processGroup terminationRef reason
+        Right Nothing ->
+          -- No live group member was observed. If the engine has exited this is
+          -- the ordinary end of enforcement and 'failSamplerIfRunning' returns
+          -- quietly; if it has not, the sampler cannot account for a process
+          -- that is still running, which is the same loss class as a 'Left' and
+          -- must fail closed rather than silently disable the VRAM ceiling.
+          failSamplerIfRunning
+            processHandle
+            processGroup
+            terminationRef
+            "NVIDIA VRAM sampler observed no live group member for a running engine"
+        Right (Just vramBytes)
+          | vramBytes > ceilingBytes ->
+              terminateForWatchdog
+                processHandle
+                processGroup
+                terminationRef
+                (CeilingBreached ceilingMib)
+          | otherwise -> do
+              threadDelay watchdogIntervalMicros
+              loop
+#endif
+
 -- | Package-test seam for the real Linux watchdog. The seam accepts an
 -- already-created grouped child, mints no execution authority, and exposes
 -- only the typed terminal classification after the production loop returns.
@@ -1368,6 +1426,30 @@ linuxWatchdogOutcomeForTest ::
 linuxWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
   terminationRef <- newIORef Nothing
   runLinuxWatchdog ceilingMib processHandle processGroup terminationRef
+  termination <- readIORef terminationRef
+  pure $
+    case termination of
+      Just (CeilingBreached observedCeilingMib) ->
+        Just (EngineExceededCeiling observedCeilingMib)
+      Just (EnforcementUnavailable reason) ->
+        Just (EngineEnforcementUnavailable reason)
+      Just (OutputLimitExceeded outputStream) ->
+        Just (EngineOutputLimitExceeded outputStream)
+      Just (OutputCaptureFailed outputStream reason) ->
+        Just (EngineOutputCaptureFailed outputStream reason)
+      Nothing -> Nothing
+
+-- | Package-test seam for the real NVIDIA VRAM watchdog, mirroring
+-- 'linuxWatchdogOutcomeForTest': an already-created grouped child in, the typed
+-- terminal classification out, no execution authority minted.
+nvidiaWatchdogOutcomeForTest ::
+  Int ->
+  ProcessHandle ->
+  CPid ->
+  IO (Maybe EngineOutcome)
+nvidiaWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
+  terminationRef <- newIORef Nothing
+  runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef
   termination <- readIORef terminationRef
   pure $
     case termination of
@@ -1461,7 +1543,7 @@ watchdogIntervalMicros = 50000
 verifyPhysicalFootprintSampler :: IO Bool
 #if defined(darwin_HOST_OS)
 verifyPhysicalFootprintSampler =
-  DarwinObserver.verifyPhysicalFootprintObserver
+  FixedObserver.verifyPhysicalFootprintObserver
 #else
 verifyPhysicalFootprintSampler = pure False
 #endif
@@ -1482,7 +1564,140 @@ verifyProcessGroupRssSampler = do
       Left _ -> False
 #endif
 
+-- | Startup probe for the NVIDIA per-process-group VRAM sampler: the fixed
+-- @nvidia-smi@ device-memory and compute-application queries must both
+-- succeed, and the @\/proc@ group enumeration the sampler intersects them with
+-- must work for this process's own group. The per-execution watchdog still
+-- treats every later sampling failure as terminal.
+verifyNvidiaVramSampler :: IO Bool
+#if defined(darwin_HOST_OS)
+verifyNvidiaVramSampler = pure False
+#else
+verifyNvidiaVramSampler = isRight <$> probeNvidiaVramSampler
+#endif
+
+-- | The same startup probe as 'verifyNvidiaVramSampler', but retaining the
+-- reason it failed.
+--
+-- Sprint 6.44 originally exposed only the @Bool@, and refinement turned that
+-- into a bare @NvidiaSamplerUnavailable <modelId>@ carrying no diagnosis. A
+-- `linux-gpu` engine then crash-looped on exactly that error while every input
+-- measured by hand inside the same pod — tool exit status, empty stderr, 30 ms
+-- latency against a 5 s deadline, and a healthy @\/proc@ group walk — said the
+-- probe should succeed. An enforcement probe that fails closed without saying
+-- why forces a multi-hour cohort cycle per hypothesis, so the reason is now
+-- carried and logged at the refinement boundary.
+probeNvidiaVramSampler :: IO (Either Text Int)
+#if defined(darwin_HOST_OS)
+probeNvidiaVramSampler =
+  pure (Left "NVIDIA VRAM enforcement is unavailable on this platform")
+#else
+probeNvidiaVramSampler = do
+  observed <- FixedObserver.probeNvidiaVramObserver
+  case observed of
+    Left reason -> pure (Left ("NVIDIA device observation failed: " <> reason))
+    Right totalMib
+      | totalMib <= 0 ->
+          pure (Left "NVIDIA device reported a non-positive total VRAM")
+      | otherwise -> do
+          processGroup <- getProcessGroupID
+          members <- processGroupMembers processGroup
+          pure $
+            case members of
+              Right (_ : _) -> Right totalMib
+              Right [] ->
+                Left
+                  ( "the /proc process-group walk observed no live member for this daemon's own group ("
+                      <> Text.pack (show (fromIntegral processGroup :: Integer))
+                      <> ")"
+                  )
+              Left reason ->
+                Left ("the /proc process-group walk failed: " <> reason)
+#endif
+
+-- | Observe the installed NVIDIA device's total VRAM (MiB) as the outer
+-- envelope a VRAM grant must fit inside — the GPU analogue of the cgroup
+-- memory limit read for the resident-set lane. 'Nothing' is an absent
+-- observation, which the refinement boundary rejects rather than assumes.
+observeNvidiaDeviceVramMib :: IO (Maybe Int)
+observeNvidiaDeviceVramMib = do
+  observed <- FixedObserver.observeNvidiaDeviceTotalMib
+  pure $
+    case observed of
+      Right totalMib | totalMib > 0 -> Just totalMib
+      _ -> Nothing
+
 #if !defined(darwin_HOST_OS)
+
+-- | Sum the device memory NVIDIA attributes to the child process group. NVML
+-- resolves each compute context in the reading process's PID namespace and
+-- omits the contexts it cannot resolve, so an engine pod observes exactly its
+-- own namespace and never another container's. Membership comes from the same
+-- @\/proc@ walk the resident-set lane uses, so the NVIDIA lane spawns one fixed
+-- command per sample and performs no process discovery of its own.
+--
+-- 'Nothing' means no live group member was observed at all — the same
+-- exit-race signal the resident-set sampler returns. A live member with no
+-- compute context is @Just 0@: the child exists but has not allocated device
+-- memory yet, which is an ordinary early-execution observation, not a loss.
+processGroupVramBytes :: CPid -> IO (Either Text (Maybe Word64))
+processGroupVramBytes processGroup = do
+  memberResult <- processGroupMembers processGroup
+  case memberResult of
+    Left reason -> pure (Left reason)
+    Right [] -> pure (Right Nothing)
+    Right members -> do
+      computeAppResult <- FixedObserver.observeNvidiaComputeApps
+      pure $
+        case computeAppResult of
+          Left reason -> Left reason
+          Right computeApps ->
+            Just <$> FixedObserver.nvidiaComputeAppGroupBytes members computeApps
+
+-- | Enumerate the live members of a process group from @\/proc@. Terminal
+-- (zombie or dead) tasks still count as members — the group has not gone away
+-- — but they hold no device memory. Enumeration, read, and parse failures are
+-- enforcement failures, never an empty result.
+processGroupMembers :: CPid -> IO (Either Text [CPid])
+processGroupMembers processGroup = do
+  procEntriesResult <- try (Directory.listDirectory "/proc")
+  case procEntriesResult of
+    Left (ioException :: IOException) ->
+      pure
+        ( Left
+            ( "unable to enumerate /proc for VRAM enforcement: "
+                <> Text.pack (show ioException)
+            )
+        )
+    Right procEntries ->
+      foldProcessEntries (filter (all isDigit) procEntries) []
+  where
+    targetGroup = fromIntegral processGroup :: Integer
+
+    foldProcessEntries [] members = pure (Right (reverse members))
+    foldProcessEntries (pidText : remaining) members = do
+      statResult <- readProcFile ("/proc/" <> pidText <> "/stat")
+      case statResult of
+        Left reason -> pure (Left reason)
+        Right Nothing -> foldProcessEntries remaining members
+        Right (Just statContents) ->
+          case parseProcessStateAndGroup statContents of
+            Left reason -> pure (Left (procParseError pidText "stat" reason))
+            Right (_, processGroupValue)
+              | processGroupValue /= targetGroup ->
+                  foldProcessEntries remaining members
+              | otherwise ->
+                  -- The directory name is only known to be all digits, so an
+                  -- out-of-range value would silently truncate through
+                  -- 'fromInteger' and could then falsely match a compute
+                  -- application's pid. Enforcement fails closed on it instead.
+                  case readInteger pidText of
+                    Just processId
+                      | processId > 0,
+                        processId <= toInteger (maxBound :: CPid) ->
+                          foldProcessEntries remaining (fromInteger processId : members)
+                    _ ->
+                      pure (Left (procParseError pidText "stat" "invalid process id"))
 
 -- | Sum resident bytes for every live member of the child process group. A
 -- vanished proc entry is an ordinary exit race; permission, enumeration, or

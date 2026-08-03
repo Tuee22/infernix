@@ -43,6 +43,8 @@ import Infernix.Models
     engineMembersForMode,
     enginePoolsForMode,
     linuxEngineInferenceRamBudgetMib,
+    linuxEngineInferenceVramBudgetMib,
+    linuxGpuEngineInferenceRamBudgetMib,
     requestTopicsForMode,
     resultTopicForMode,
   )
@@ -275,11 +277,16 @@ resolveInferenceMemoryBudget paths runtimeMode =
         )
     LinuxGpu ->
       pure
-        ( SubstrateEnforcedBudget
+        ( DualEnforcedBudget
+            PodMemoryLimit
+              { podMemoryLimitResource = PodRam,
+                podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+                podMemoryLimitMib = linuxGpuEngineInferenceRamBudgetMib
+              }
             PodMemoryLimit
               { podMemoryLimitResource = GpuVram,
                 podMemoryLimitSource = "linux-gpu-vram-budget",
-                podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
+                podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
               }
         )
 
