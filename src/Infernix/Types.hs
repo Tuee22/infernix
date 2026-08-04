@@ -11,6 +11,9 @@ module Infernix.Types
     DaemonConfig (..),
     DaemonRole (..),
     DemoConfig (..),
+    EngineAdapterType (..),
+    engineAdapterTypeId,
+    parseEngineAdapterType,
     EngineBinding (..),
     EngineMember (..),
     EnginePool (..),
@@ -23,6 +26,9 @@ module Infernix.Types
     HostMemoryPartition,
     ModelMemoryFootprint,
     PodMemoryLimit (..),
+    PodMemoryLimitSource (..),
+    podMemoryLimitSourceText,
+    parsePodMemoryLimitSource,
     LifecyclePhase (..),
     LifecycleTransition (..),
     ModelDescriptor (..),
@@ -546,7 +552,6 @@ data CacheManifest = CacheManifest
 
 data DemoConfig = DemoConfig
   { configRuntimeMode :: RuntimeMode,
-    configEdgePort :: Int,
     configMapName :: Text,
     generatedPath :: FilePath,
     mountedPath :: FilePath,
@@ -703,6 +708,45 @@ instance FromJSON HostMemoryPartition where
       Right partition -> pure partition
       Left partitionError -> fail partitionError
 
+-- | Phase 8 Sprint 8.9 — which already-enforced substrate limit a
+-- 'PodMemoryLimit' describes.
+--
+-- This was a free 'Text' with no refiner anywhere: the generated wire carried
+-- it verbatim, the only validation was a non-blank check in the execution-plan
+-- compiler, and the value flowed out through the proto envelope and into the
+-- browser as user-visible provenance. The production set was always exactly
+-- these two, and an enforcer source is a property of the code that enforces it,
+-- so the closed sum is the honest type. The host-enforced arm's source is
+-- 'hostMemoryPartitionSource' and is deliberately absent here: a pod limit
+-- cannot name the host partition.
+data PodMemoryLimitSource
+  = -- | the engine pod's cgroup memory limit (@linux-cpu@, and the RAM half of
+    -- @linux-gpu@)
+    ClusterEnginePodMemoryLimit
+  | -- | the NVIDIA device VRAM budget (the device half of @linux-gpu@)
+    LinuxGpuVramBudget
+  deriving (Eq, Ord, Read, Show)
+
+podMemoryLimitSourceText :: PodMemoryLimitSource -> Text
+podMemoryLimitSourceText limitSource = case limitSource of
+  ClusterEnginePodMemoryLimit -> "cluster-engine-pod-memory-limit"
+  LinuxGpuVramBudget -> "linux-gpu-vram-budget"
+
+parsePodMemoryLimitSource :: Text -> Maybe PodMemoryLimitSource
+parsePodMemoryLimitSource rawValue = case Text.toLower rawValue of
+  "cluster-engine-pod-memory-limit" -> Just ClusterEnginePodMemoryLimit
+  "linux-gpu-vram-budget" -> Just LinuxGpuVramBudget
+  _ -> Nothing
+
+instance ToJSON PodMemoryLimitSource where
+  toJSON = String . podMemoryLimitSourceText
+
+instance FromJSON PodMemoryLimitSource where
+  parseJSON = withText "PodMemoryLimitSource" $ \rawValue ->
+    case parsePodMemoryLimitSource rawValue of
+      Just limitSource -> pure limitSource
+      Nothing -> fail ("Unsupported pod memory limit source: " <> Text.unpack rawValue)
+
 -- | Phase 4 Sprint 4.31 — the descriptive substrate-enforced limit. On
 -- @linux-cpu@ / @linux-gpu@ the pod cgroup memory limit / CUDA allocator bound
 -- the engine subprocess inside its own container, so host death is already
@@ -710,7 +754,7 @@ instance FromJSON HostMemoryPartition where
 -- observability.
 data PodMemoryLimit = PodMemoryLimit
   { podMemoryLimitResource :: InferenceMemoryResource,
-    podMemoryLimitSource :: Text,
+    podMemoryLimitSource :: PodMemoryLimitSource,
     podMemoryLimitMib :: Int
   }
   deriving (Eq, Read, Show)
@@ -753,36 +797,61 @@ data InferenceMemoryBudget
 hostMemoryPartitionSource :: Text
 hostMemoryPartitionSource = "host-memory-partition-inference-capacity"
 
+-- | Phase 8 Sprint 8.9 — the JSON projection of the budget names its alternative
+-- with a __key__, not with a string value under a shared @kind@ key.
+--
+-- This is the JSON analogue of the Dhall union the generated wire already uses:
+-- an unrecognized alternative is a structural mismatch that no reader can
+-- silently misread as a known one, and a reader that omits an arm fails to find
+-- its key rather than falling through a string comparison. The retired encoding
+-- was @{"kind": "dual-enforced", …}@; the browser-tier reader in
+-- @web/playwright/inference.spec.js@ is the only consumer and moves with it.
 instance ToJSON InferenceMemoryBudget where
   toJSON budget = case budget of
     HostEnforcedBudget partition ->
-      object
-        [ "kind" .= ("host-enforced" :: Text),
-          "partition" .= partition
-        ]
+      object ["hostEnforced" .= object ["partition" .= partition]]
     SubstrateEnforcedBudget podLimit ->
-      object
-        [ "kind" .= ("substrate-enforced" :: Text),
-          "podLimit" .= podLimit
-        ]
+      object ["substrateEnforced" .= object ["podLimit" .= podLimit]]
     DualEnforcedBudget podLimit vramLimit ->
       object
-        [ "kind" .= ("dual-enforced" :: Text),
-          "podLimit" .= podLimit,
-          "vramLimit" .= vramLimit
+        [ "dualEnforced"
+            .= object
+              [ "podLimit" .= podLimit,
+                "vramLimit" .= vramLimit
+              ]
         ]
 
 instance FromJSON InferenceMemoryBudget where
   parseJSON = withObject "InferenceMemoryBudget" $ \value -> do
-    kind <- value .: "kind"
-    case Text.toLower kind of
-      "host-enforced" ->
-        HostEnforcedBudget <$> value .: "partition"
-      "substrate-enforced" ->
-        SubstrateEnforcedBudget <$> value .: "podLimit"
-      "dual-enforced" ->
-        DualEnforcedBudget <$> value .: "podLimit" <*> value .: "vramLimit"
-      _ -> fail ("Unsupported inference memory budget kind: " <> Text.unpack kind)
+    hostEnforced <- value .:? "hostEnforced"
+    substrateEnforced <- value .:? "substrateEnforced"
+    dualEnforced <- value .:? "dualEnforced"
+    case (hostEnforced, substrateEnforced, dualEnforced) of
+      (Just arm, Nothing, Nothing) ->
+        HostEnforcedBudget <$> arm .: "partition"
+      (Nothing, Just arm, Nothing) ->
+        SubstrateEnforcedBudget <$> arm .: "podLimit"
+      (Nothing, Nothing, Just arm) ->
+        DualEnforcedBudget <$> arm .: "podLimit" <*> arm .: "vramLimit"
+      (Nothing, Nothing, Nothing) -> do
+        -- Name the retirement rather than surfacing a bare "no alternative"
+        -- error, matching the targeted Dhall migration diagnostic in
+        -- 'Infernix.Substrate.Internal'.
+        retiredKind <- value .:? "kind"
+        case retiredKind :: Maybe Text of
+          Just retiredLabel ->
+            fail
+              ( "inference memory budget uses the retired flat kind="
+                  <> Text.unpack retiredLabel
+                  <> " encoding; the alternative is now the object key "
+                  <> "hostEnforced, substrateEnforced, or dualEnforced"
+              )
+          Nothing -> fail exactlyOneAlternative
+      _ -> fail exactlyOneAlternative
+    where
+      exactlyOneAlternative =
+        "inference memory budget must carry exactly one of hostEnforced, "
+          <> "substrateEnforced, or dualEnforced"
 
 -- | The admission capacity (MiB) a budget draws from: the partition's inference
 -- capacity for a host-enforced budget, or the pod/VRAM limit for a
@@ -809,8 +878,8 @@ inferenceMemoryBudgetResource budget = case budget of
 inferenceMemoryBudgetSource :: InferenceMemoryBudget -> Text
 inferenceMemoryBudgetSource budget = case budget of
   HostEnforcedBudget _ -> hostMemoryPartitionSource
-  SubstrateEnforcedBudget podLimit -> podMemoryLimitSource podLimit
-  DualEnforcedBudget _ vramLimit -> podMemoryLimitSource vramLimit
+  SubstrateEnforcedBudget podLimit -> podMemoryLimitSourceText (podMemoryLimitSource podLimit)
+  DualEnforcedBudget _ vramLimit -> podMemoryLimitSourceText (podMemoryLimitSource vramLimit)
 
 -- | Every limit a budget names, in enforcement order. A dual budget yields its
 -- pod RAM limit and its VRAM limit; the single-resource arms yield one entry.
@@ -1035,10 +1104,45 @@ instance FromJSON EngineMember where
       <*> value .: "location"
       <*> value .: "pools"
 
+-- | Phase 8 Sprint 8.9 — how an engine binding's adapter is executed.
+--
+-- Like 'PodMemoryLimitSource' this was raw 'Text' end to end: no parser, no
+-- smart constructor, and a domain closed only by a @Set@ membership check in
+-- the execution-plan compiler plus string dispatch in two runtime modules. The
+-- sole generator only ever produced these two, and the runtime can only
+-- /execute/ these two, so the closed sum removes both the check and its
+-- unreachable failure arm.
+data EngineAdapterType
+  = -- | launch the engine's own executable directly
+    NativeProcessRunner
+  | -- | drive a Python adapter over its stdio protocol
+    PythonStdio
+  deriving (Eq, Ord, Read, Show)
+
+engineAdapterTypeId :: EngineAdapterType -> Text
+engineAdapterTypeId adapterType = case adapterType of
+  NativeProcessRunner -> "native-process-runner"
+  PythonStdio -> "python-stdio"
+
+parseEngineAdapterType :: Text -> Maybe EngineAdapterType
+parseEngineAdapterType rawValue = case Text.toLower rawValue of
+  "native-process-runner" -> Just NativeProcessRunner
+  "python-stdio" -> Just PythonStdio
+  _ -> Nothing
+
+instance ToJSON EngineAdapterType where
+  toJSON = String . engineAdapterTypeId
+
+instance FromJSON EngineAdapterType where
+  parseJSON = withText "EngineAdapterType" $ \rawValue ->
+    case parseEngineAdapterType rawValue of
+      Just adapterType -> pure adapterType
+      Nothing -> fail ("Unsupported engine adapter type: " <> Text.unpack rawValue)
+
 data EngineBinding = EngineBinding
   { engineBindingName :: Text,
     engineBindingAdapterId :: Text,
-    engineBindingAdapterType :: Text,
+    engineBindingAdapterType :: EngineAdapterType,
     engineBindingAdapterLocator :: Text,
     engineBindingAdapterEntrypoint :: Text,
     engineBindingSetupEntrypoint :: Text,
@@ -1352,7 +1456,6 @@ instance ToJSON DemoConfig where
   toJSON demoConfig =
     object
       [ "runtimeMode" .= configRuntimeMode demoConfig,
-        "edgePort" .= configEdgePort demoConfig,
         "configMapName" .= configMapName demoConfig,
         "generatedPath" .= generatedPath demoConfig,
         "mountedPath" .= mountedPath demoConfig,
@@ -1412,18 +1515,12 @@ instance FromJSON DemoConfig where
     modelsBucketValue <- value .:? "models_bucket" .!= defaultModelsBucket
     modelBootstrapTopicValue <-
       value .:? "model_bootstrap_topic" .!= defaultModelBootstrapTopic
-    inferenceMemoryBudgetValue <-
-      do
-        maybeBudget <- value .:? "inferenceMemoryBudget"
-        case maybeBudget of
-          Just budget -> pure budget
-          Nothing -> do
-            legacyBudgetMib <- value .:? "inferenceRamBudgetMib" .!= 0
-            case legacyInferenceMemoryBudget runtimeModeValue legacyBudgetMib of
-              Right budget -> pure budget
-              Left budgetError -> fail budgetError
-    (DemoConfig runtimeModeValue <$> value .: "edgePort")
-      <*> value .: "configMapName"
+    -- Phase 8 Sprint 8.9: the budget is required. The retired
+    -- @inferenceRamBudgetMib@ scalar fallback defaulted to @0@ when both keys
+    -- were absent, so a malformed document decoded to a silent zero-MiB budget
+    -- instead of failing. Nothing in the repo ever produced that key.
+    inferenceMemoryBudgetValue <- value .: "inferenceMemoryBudget"
+    (DemoConfig runtimeModeValue <$> value .: "configMapName")
       <*> value .: "generatedPath"
       <*> value .: "mountedPath"
       <*> value .: "demo_ui"
@@ -1440,17 +1537,6 @@ instance FromJSON DemoConfig where
       <*> value .: "engines"
       <*> value .: "models"
       <*> pure inferenceMemoryBudgetValue
-
--- | Decode a pre-Sprint-4.31 config that still carries a bare
--- @inferenceRamBudgetMib@ integer into the enforcer-named budget. On
--- @apple-silicon@ the integer becomes the inference capacity of a synthesized
--- 'HostMemoryPartition' (headroom held back at 'minHostHeadroomMib'); on Linux it
--- becomes the substrate-enforced pod / VRAM limit.
-legacyInferenceMemoryBudget :: RuntimeMode -> Int -> Either String InferenceMemoryBudget
-legacyInferenceMemoryBudget runtimeMode availableMib = case runtimeMode of
-  AppleSilicon -> HostEnforcedBudget <$> hostPartitionForCapacity availableMib
-  LinuxCpu -> Right (SubstrateEnforcedBudget (PodMemoryLimit PodRam "legacy-inferenceRamBudgetMib" (max 0 availableMib)))
-  LinuxGpu -> Right (SubstrateEnforcedBudget (PodMemoryLimit GpuVram "legacy-inferenceRamBudgetMib" (max 0 availableMib)))
 
 -- | Synthesize a valid 'HostMemoryPartition' whose inference capacity is a given
 -- MiB value, holding back exactly 'minHostHeadroomMib' of headroom and no VM

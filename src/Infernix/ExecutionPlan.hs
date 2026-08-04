@@ -147,7 +147,6 @@ data ConfigError
   | BlankModelBootstrapTopic
   | ModelsBucketMismatch Text Text
   | ModelBootstrapTopicMismatch Text Text
-  | InvalidEdgePort Int
   | BlankConfigMapName
   | BlankGeneratedPath
   | BlankMountedPath
@@ -166,7 +165,6 @@ data ConfigError
   | InvalidEngineBinding Text
   | UnsupportedEngineBinding RuntimeMode Text
   | EngineBindingMismatch Text EngineBinding EngineBinding
-  | UnsupportedEngineAdapterType Text Text
   | InvalidModelDescriptor Text
   | InvalidModelId Text
   | InvalidMatrixRowId Text
@@ -386,7 +384,7 @@ compileResources runtimeModeValue budget model =
             (LinuxProcessGroupRssWatchdogPlan podLimit)
             <$> admitGrant
               PodRamWitness
-              (podMemoryLimitSource podLimit)
+              (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
               model
               (podMemoryLimitMib podLimit)
     -- Phase 6 Sprint 6.44 — a @linux-gpu@ model that actually uses the device
@@ -403,13 +401,13 @@ compileResources runtimeModeValue budget model =
                 (LinuxProcessGroupRssWatchdogPlan podLimit)
                 <$> admitGrant
                   PodRamWitness
-                  (podMemoryLimitSource podLimit)
+                  (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
                   model
                   (podMemoryLimitMib podLimit)
                 <*> pure (NvidiaVramAccountingPlan vramLimit)
                 <*> admitGrant
                   NvidiaVramWitness
-                  (podMemoryLimitSource vramLimit)
+                  (Types.podMemoryLimitSourceText (podMemoryLimitSource vramLimit))
                   model
                   (podMemoryLimitMib vramLimit)
             else
@@ -417,7 +415,7 @@ compileResources runtimeModeValue budget model =
                 (LinuxProcessGroupRssWatchdogPlan podLimit)
                 <$> admitGrant
                   PodRamWitness
-                  (podMemoryLimitSource podLimit)
+                  (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
                   model
                   (podMemoryLimitMib podLimit)
     _ ->
@@ -540,7 +538,6 @@ compilerErrors config =
            | not (blankText (modelBootstrapTopic config)),
              modelBootstrapTopic config /= defaultModelBootstrapTopic
            ]
-        <> [InvalidEdgePort (configEdgePort config) | configEdgePort config < 0 || configEdgePort config > 65535]
         <> [BlankConfigMapName | blankText (configMapName config)]
         <> [BlankGeneratedPath | all isSpace (generatedPath config)]
         <> [BlankMountedPath | all isSpace (mountedPath config)]
@@ -566,12 +563,6 @@ compilerErrors config =
                binding
            | (binding, Just canonicalBinding) <- canonicalBindings,
              binding /= canonicalBinding
-           ]
-        <> [ UnsupportedEngineAdapterType
-               (engineBindingName binding)
-               (engineBindingAdapterType binding)
-           | binding <- engines config,
-             engineBindingAdapterType binding `Set.notMember` supportedAdapterTypes
            ]
         <> [ InvalidModelDescriptor (modelId model)
            | model <- models config,
@@ -606,7 +597,6 @@ compilerErrors config =
         blankText
         [ engineBindingName binding,
           engineBindingAdapterId binding,
-          engineBindingAdapterType binding,
           engineBindingAdapterLocator binding,
           engineBindingAdapterEntrypoint binding,
           engineBindingSetupEntrypoint binding,
@@ -620,8 +610,6 @@ compilerErrors config =
         || any invalidRequestField (requestShape model)
     invalidRequestField requestField =
       blankText (name requestField) || blankText (label requestField)
-    supportedAdapterTypes =
-      Set.fromList ["native-process-runner", "python-stdio"]
     structuralErrors =
       map DuplicateModelId (duplicates modelIds)
         <> map DuplicateMatrixRowId (duplicates matrixIds)
@@ -847,8 +835,9 @@ memoryEnforcerErrors budget =
     <> dualArmErrors
   where
     podLimitErrors podLimit =
+      -- Phase 8 Sprint 8.9 removed the non-empty-source check: the source is a
+      -- closed sum now, so a blank one is not a constructible term.
       [InvalidMemoryEnforcer "substrate memory limit must be positive" | podMemoryLimitMib podLimit <= 0]
-        <> [InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty" | Text.null (Text.strip (podMemoryLimitSource podLimit))]
         <> [InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM" | podMemoryLimitResource podLimit == Types.UnifiedHostRam]
     dualArmErrors =
       case budget of

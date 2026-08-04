@@ -261,12 +261,36 @@ rlimit 1024 and 133 ms at 524288, which extrapolates to roughly **4.5 minutes pe
 pod's limit. See the Sprint 6.44 section for the full detail, including the unverified question of
 whether the capped-engine and bounded-command kernels — which set the same flag — pay the same cost.
 
+**Scope widened 2026-08-03 (second update).** This wave now also carries **Phase 6 Sprint 6.45**,
+whose four deliverables are code-side closed, and the **completed remainder of Phase 8 Sprint 8.9**
+(the generated-wire union migration, `Natural` quantities, `configEdgePort` removal, the key-named
+Aeson budget alternative, and the engine-only-refinement decision). Both consume this wave rather
+than opening one of their own: Sprint 6.45's cohort gate is "selected accelerator plus `linux-cpu`",
+which is exactly this wave, and Sprint 8.9's own rule forbids it from creating a dual-accelerator
+gate.
+
+Two consequences for what a green run here now means:
+
+- The `linux-gpu` half gained real weight for Sprint 8.9. The Playwright over-budget assertion had
+  **no `dual-enforced` arm**, so it returned null for every `linux-gpu` budget and the caller skipped
+  the assertion entirely — it has been passing vacuously on this lane since Sprint 6.44 introduced
+  the dual arm. This is the first wave in which that assertion actually executes on `linux-gpu`.
+- Sprint 6.45's on-resource checkout identity is exercised end to end for the first time: the harness
+  stamps the identity at cluster creation and reads it back at teardown, in a launcher container
+  where the identity is the host-side bind-mount source rather than the container-internal
+  `/workspace`. Attempt 2's unplanned fail-closed seizure is the closest prior evidence, and it
+  predates the identity entirely.
+
 **Status**: Open, and **no cohort has passed**. Attempt 1 found and fixed a real envelope defect;
 attempt 2 fail-closed correctly on operator-owned infrastructure; attempt 3 was killed before cluster
-work; attempts 4 and 5 hit the `close_fds` stall, whose root cause is now measured but deliberately
-**not** fixed in this session, because the remedy touches an isolation property shared by three
-enforcement kernels and needs its own validation cycles. Sprints 6.44 and 8.9 remain
-`Active — Validation Only`.
+work; attempts 4 and 5 hit the `close_fds` stall. That stall is now **fixed and guarded** by
+`Infernix.DescriptorSpace` (Sprint 6.44, 2026-08-03) — the soft `RLIMIT_NOFILE` is bounded to 16384
+before any descriptor is opened, proven end to end by the eight self-exec observer kernel tests
+completing in 3.7 s inside a container at the pod's real 1073741816 limit. Attempt 6 has **not been
+run**: every source change since attempt 5 — the descriptor bound, the CUDA breach fixture, the
+raw-spawn migrations, Sprint 6.45's identity, and Sprint 8.9's wire migration — needs one exact-source
+image rebuild, and the wave must start from that frozen state. Sprints 6.44, 6.45, and 8.9 all remain
+`Active — Validation Only` on this wave alone.
 
 ## Wave Y: Phase 1, Phase 2, Then Typed Execution Plan Apple/CPU Sign-Off (Active — Validation Only)
 

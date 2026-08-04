@@ -26,6 +26,7 @@ import Infernix.Types
     InferenceMemoryBudget (HostEnforcedBudget, SubstrateEnforcedBudget),
     InferenceMemoryResource (PodRam),
     PodMemoryLimit (..),
+    PodMemoryLimitSource (..),
     RuntimeMode (AppleSilicon, LinuxCpu),
     hostPartitionForCapacity,
   )
@@ -88,7 +89,7 @@ runDemoConfigParserProperties paths = do
         SubstrateEnforcedBudget
           PodMemoryLimit
             { podMemoryLimitResource = PodRam,
-              podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+              podMemoryLimitSource = ClusterEnginePodMemoryLimit,
               podMemoryLimitMib = 65536
             }
       appleBudget = HostEnforcedBudget (requireHostPartition 65536)

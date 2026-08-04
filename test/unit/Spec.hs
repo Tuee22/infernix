@@ -23,6 +23,7 @@ import Data.ByteString.Base64 qualified
 import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
+import Data.ByteString.Lazy.Char8 qualified as LazyChar8
 import Data.Char (isHexDigit, isUpper)
 import Data.Either (isLeft, isRight)
 import Data.IORef qualified as IORef
@@ -43,7 +44,7 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.CLI (runtimeConfigRestorePlan, writeGeneratedPursContracts)
-import Infernix.Cluster (HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
@@ -1356,12 +1357,32 @@ main = do
               True
               Coordinator
               linuxCpuUnitInferenceMemoryBudget
-          demoConfig = generatedDemoConfig {configEdgePort = 30090}
+          demoConfig = generatedDemoConfig
       Lazy.writeFile demoConfigPath (encodeDemoConfig demoConfig)
       demoConfigContents <- readFile demoConfigPath
+      -- Phase 8 Sprint 8.9: every enum-like choice is a Dhall union value, so
+      -- the wire spelling is an alternative label rather than a quoted string.
       assert
-        ("runtimeMode = \"linux-cpu\"" `isInfixOf` demoConfigContents)
-        "generated substrate materialization writes Dhall record fields"
+        ("runtimeMode = < AppleSilicon | LinuxCpu | LinuxGpu >.LinuxCpu" `isInfixOf` demoConfigContents)
+        "generated substrate materialization writes Dhall union alternatives, not text tags"
+      assert
+        ( not ("runtimeMode = \"" `isInfixOf` demoConfigContents)
+            && not ("daemonRole = \"" `isInfixOf` demoConfigContents)
+            && not ("adapterType = \"" `isInfixOf` demoConfigContents)
+            && not ("fieldType = \"" `isInfixOf` demoConfigContents)
+            && not ("runtimeLane = \"" `isInfixOf` demoConfigContents)
+            && not ("pulsarConnectionMode = \"" `isInfixOf` demoConfigContents)
+            && not ("subscription = \"" `isInfixOf` demoConfigContents)
+            && not ("source = \"" `isInfixOf` demoConfigContents)
+            && not ("resource = \"" `isInfixOf` demoConfigContents)
+        )
+        "no generated enum-like field is written as a quoted text tag"
+      assert
+        (not ("edgePort" `isInfixOf` demoConfigContents))
+        "the generated execution plan no longer carries the never-read edgePort placeholder"
+      assert
+        (not (" = +" `isInfixOf` demoConfigContents))
+        "generated quantities are Natural literals, so no Integer sign prefix is written"
       assert
         (not ("\"runtimeMode\":" `isInfixOf` demoConfigContents))
         "generated substrate materialization no longer writes banner-prefixed JSON"
@@ -1373,6 +1394,30 @@ main = do
       assert
         (not (null (engineDaemons decodedJsonConfig)))
         "public JSON demo-config decode preserves engine daemon metadata"
+      -- Phase 8 Sprint 8.9: the JSON projection of the budget names its
+      -- alternative with a key, not with a string under a shared `kind` key.
+      -- `/api/demo-config` is the only surface that carries it and the
+      -- Playwright reader is its only consumer, so pin the shape here.
+      let renderedBudgetJson =
+            LazyChar8.unpack
+              (Aeson.encode (inferenceMemoryBudget demoConfig))
+      assert
+        ( "substrateEnforced" `isInfixOf` renderedBudgetJson
+            && not ("\"kind\"" `isInfixOf` renderedBudgetJson)
+        )
+        "the budget JSON names its alternative with an object key, not a kind text tag"
+      assert
+        ( ( Aeson.decode (Aeson.encode (inferenceMemoryBudget demoConfig)) ::
+              Maybe InferenceMemoryBudget
+          )
+            == Just (inferenceMemoryBudget demoConfig)
+        )
+        "the budget JSON round-trips through the key-named alternative encoding"
+      assert
+        ( retiredBudgetJsonDiagnosticNamesRetirement
+            "{\"kind\":\"substrate-enforced\",\"podLimit\":{\"resource\":\"pod-ram\",\"source\":\"cluster-engine-pod-memory-limit\",\"limitMib\":4096}}"
+        )
+        "a retired kind-tagged budget JSON payload is named as retired, not surfaced as a bare missing-alternative error"
       let decodedConfig = demoConfig
       assert (configRuntimeMode decodedConfig == LinuxCpu) "demo-config decode preserves runtime mode"
       assert (demoUiEnabled decodedConfig) "demo-config decode preserves the demo UI flag"
@@ -1534,7 +1579,7 @@ main = do
               True
               Engine
               appleUnitInferenceMemoryBudget
-          decodedAppleConfig = generatedAppleConfig {configEdgePort = 30090}
+          decodedAppleConfig = generatedAppleConfig
       Lazy.writeFile appleConfigPath (encodeDemoConfig decodedAppleConfig)
       compiledApplePlan <-
         decodeCompiledRuntimePlanFile appleConfigPath
@@ -3725,6 +3770,17 @@ main = do
       providerToolDirectory = toolFixtureRoot </> "provider"
       exactToolDirectory = toolFixtureRoot </> "exact"
       fixtureDockerPath = providerToolDirectory </> "docker"
+      -- Sprint 6.45: the checkout identity the stubbed Docker daemon serves
+      -- back for @docker cp <node>:/etc/infernix/. <dir>@. A fixture that
+      -- simulates a live cluster writes its own repo root here; writing a
+      -- different root simulates a cluster created by another checkout, and
+      -- removing the file simulates one created before the identity existed.
+      fixtureClusterIdentityPath = toolFixtureRoot </> "cluster-checkout-identity"
+      writeFixtureClusterIdentity checkoutRoot = do
+        createDirectoryIfMissing True (takeDirectory fixtureClusterIdentityPath)
+        writeFile fixtureClusterIdentityPath (checkoutRoot <> "\n")
+      clearFixtureClusterIdentity =
+        removeTestPathIfPresent fixtureClusterIdentityPath
       shadowKubectlPath = providerToolDirectory </> "kubectl"
       fixtureKindPath = exactToolDirectory </> "kind"
       fixtureNvkindPath = exactToolDirectory </> "nvkind"
@@ -3736,7 +3792,24 @@ main = do
         fixturePermissions <- getPermissions path
         setPermissions path fixturePermissions {executable = True}
   removeTestPathIfPresent toolFixtureRoot
-  writeExecutableFixture fixtureDockerPath "#!/bin/sh\nexit 0\n"
+  writeExecutableFixture
+    fixtureDockerPath
+    ( "#!/bin/sh\n"
+        <> "if [ \"$1\" = cp ]; then\n"
+        <> "  case \"$2\" in\n"
+        <> "    *:/etc/infernix/.)\n"
+        <> "      [ -f "
+        <> show fixtureClusterIdentityPath
+        <> " ] || exit 1\n"
+        <> "      mkdir -p \"$3\"\n"
+        <> "      cp "
+        <> show fixtureClusterIdentityPath
+        <> " \"$3/cluster-checkout-identity\"\n"
+        <> "      ;;\n"
+        <> "  esac\n"
+        <> "fi\n"
+        <> "exit 0\n"
+    )
   writeExecutableFixture
     shadowKubectlPath
     "#!/bin/sh\nprintf 'shadow-kubectl\\n'\n"
@@ -7696,6 +7769,9 @@ main = do
             (fail ("timed out waiting for " <> label))
             pure
   createDirectoryIfMissing True ownershipRuntimeRoot
+  -- Sprint 6.45: every cluster this matrix simulates was created by this
+  -- fixture's own checkout, so the stubbed daemon serves that identity back.
+  writeFixtureClusterIdentity ownershipRoot
   writeExecutableFixture
     fixtureKindPath
     "#!/bin/sh\nprintf 'infernix-apple-silicon\\n'\n"
@@ -8503,6 +8579,91 @@ main = do
     "harness runtime cleanup preserves bounded-command activity proofs while removing ordinary metadata"
   removeFile cleanupProofActivitySentinel
   releaseHarnessClusterSlotAt cleanupProofPaths (Just AppleSilicon)
+  -- Sprint 6.45: the cross-checkout guard, exercised behaviourally through the
+  -- real seize/release path rather than only through the pure decision
+  -- function. The lifecycle lock, the harness reservation, and the persisted
+  -- state are all repo-local while the Kind cluster is machine-global, so a
+  -- second checkout holding a leftover HarnessOwned record used to be able to
+  -- authorize teardown of the operator's live cluster. The identity the
+  -- stubbed daemon serves back is what now distinguishes them.
+  let crossCheckoutRoot = ownershipRoot </> "cross-checkout"
+      crossCheckoutRuntimeRoot = crossCheckoutRoot </> ".data" </> "runtime"
+      crossCheckoutPaths =
+        ownershipPaths
+          { repoRoot = crossCheckoutRoot,
+            buildRoot = crossCheckoutRoot </> ".build",
+            dataRoot = crossCheckoutRoot </> ".data",
+            runtimeRoot = crossCheckoutRuntimeRoot,
+            kindRoot = crossCheckoutRoot </> ".data" </> "kind",
+            helmConfigRoot = crossCheckoutRoot </> ".data" </> "helm" </> "config",
+            helmCacheRoot = crossCheckoutRoot </> ".data" </> "helm" </> "cache",
+            helmDataRoot = crossCheckoutRoot </> ".data" </> "helm" </> "data",
+            resultsRoot = crossCheckoutRoot </> ".data" </> "results",
+            modelCacheRoot = crossCheckoutRoot </> ".data" </> "model-cache"
+          }
+      crossCheckoutStatePath =
+        crossCheckoutRuntimeRoot </> "cluster-state.state"
+      crossCheckoutReservationPath =
+        crossCheckoutRuntimeRoot </> "locks" </> "harness-cluster-slot.reserved"
+      crossCheckoutKindLog = crossCheckoutRoot </> "kind.log"
+      foreignCheckoutRoot = ownershipRoot </> "other-checkout"
+      crossCheckoutHarnessState =
+        mstState
+          { clusterLifecycle = ClusterReady,
+            clusterOwner = HarnessOwned,
+            clusterRuntimeMode = LinuxCpu
+          }
+      writeLiveCrossCheckoutKindStub =
+        writeExecutableFixture
+          fixtureKindPath
+          ( "#!/bin/sh\n"
+              <> "printf '%s\\n' \"$*\" >> "
+              <> show crossCheckoutKindLog
+              <> "\n"
+              <> "if [ \"$1\" = get ] && [ \"$2\" = clusters ]; then\n"
+              <> "  printf 'infernix-linux-cpu\\n'\n"
+              <> "fi\n"
+          )
+      -- Publish the harness reservation against an absent inventory, then make
+      -- the cluster appear live and hand the release a slot identity to judge.
+      refusedCrossCheckoutRelease :: IO () -> IO Bool
+      refusedCrossCheckoutRelease prepareSlotIdentity = do
+        removeTestPathIfPresent crossCheckoutKindLog
+        writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+        writeFixtureClusterIdentity crossCheckoutRoot
+        seizeHarnessClusterSlotAt crossCheckoutPaths (Just LinuxCpu)
+        writeClusterStateFile crossCheckoutStatePath crossCheckoutHarnessState
+        writeLiveCrossCheckoutKindStub
+        prepareSlotIdentity
+        releaseOutcome <-
+          try @IOException
+            (releaseHarnessClusterSlotAt crossCheckoutPaths (Just LinuxCpu))
+        kindInvocations <- System.IO.readFile' crossCheckoutKindLog
+        reservationRetained <- doesFileExist crossCheckoutReservationPath
+        -- Restore an owned, absent slot so the fence can be released cleanly.
+        writeFixtureClusterIdentity crossCheckoutRoot
+        writeExecutableFixture fixtureKindPath "#!/bin/sh\nexit 0\n"
+        releaseHarnessClusterSlotAt crossCheckoutPaths (Just LinuxCpu)
+        pure
+          ( isLeft releaseOutcome
+              && not ("delete cluster" `isInfixOf` kindInvocations)
+              && reservationRetained
+          )
+  removeTestPathIfPresent crossCheckoutRoot
+  createDirectoryIfMissing True crossCheckoutRuntimeRoot
+  foreignSlotRefused <-
+    refusedCrossCheckoutRelease (writeFixtureClusterIdentity foreignCheckoutRoot)
+  assert
+    foreignSlotRefused
+    "a harness holding a matching HarnessOwned record still cannot tear down a cluster another checkout created"
+  unidentifiedSlotRefused <-
+    refusedCrossCheckoutRelease clearFixtureClusterIdentity
+  assert
+    unidentifiedSlotRefused
+    "a harness cannot tear down a live cluster that carries no checkout identity at all"
+  writeFixtureClusterIdentity crossCheckoutRoot
+  removeTestPathIfPresent crossCheckoutRoot
+  writeFixtureClusterIdentity ownershipRoot
   let missingClaimPathError =
         "chmod: claim path: No such file or directory"
       runClaimPermissionRepairFixture attemptResults = do
@@ -8593,6 +8754,9 @@ main = do
           Right _ -> False
   removeTestPathIfPresent mutationRoot
   createDirectoryIfMissing True mutationRuntimeRoot
+  -- Sprint 6.45: this fixture is its own checkout, so the stubbed daemon must
+  -- serve its root back as the live cluster's creating identity.
+  writeFixtureClusterIdentity mutationRoot
   writeExecutableFixture
     fixtureKindPath
     "#!/bin/sh\nprintf 'infernix-apple-silicon\\n'\n"
@@ -9023,6 +9187,11 @@ main = do
       snapshotLiveMarker = snapshotFaultRoot </> "cluster-live"
       snapshotDeleteMarker = snapshotFaultRoot </> "kind-delete-invoked"
       snapshotModePath = snapshotFaultRoot </> "docker-mode"
+      -- Sprint 6.45: this fixture's stubbed daemon serves back its own checkout
+      -- identity, so the harness recognises the simulated cluster as one it
+      -- created rather than refusing it as a foreign slot.
+      snapshotClusterIdentityPath =
+        snapshotFaultRoot </> "cluster-checkout-identity"
       snapshotPausedRoot = snapshotFaultRoot </> "paused-workers"
       snapshotCancellationReady =
         snapshotFaultRoot </> "cancel-after-first-pause.ready"
@@ -9165,6 +9334,18 @@ main = do
         <> "    exit 0\n"
         <> "    ;;\n"
         <> "  cp)\n"
+        <> "    case \"$2\" in\n"
+        <> "      *:/etc/infernix/.)\n"
+        <> "        [ -f "
+        <> show snapshotClusterIdentityPath
+        <> " ] || exit 1\n"
+        <> "        /bin/mkdir -p \"$3\"\n"
+        <> "        /bin/cp "
+        <> show snapshotClusterIdentityPath
+        <> " \"$3/cluster-checkout-identity\"\n"
+        <> "        exit 0\n"
+        <> "        ;;\n"
+        <> "    esac\n"
         <> "    if [ \"$3\" != "
         <> show incomingSnapshotRoot
         <> " ]; then\n"
@@ -9203,6 +9384,7 @@ main = do
         <> "esac\n"
         <> "exit 0\n"
     )
+  writeFile snapshotClusterIdentityPath (snapshotFaultRoot <> "\n")
   writeFile snapshotModePath "cancel-after-first-pause\n"
   seizeHarnessClusterSlotAt snapshotFaultPaths (Just AppleSilicon)
   createDirectoryIfMissing True (committedSnapshotRoot </> "nested" </> "empty")
@@ -9393,6 +9575,26 @@ main = do
   -- persisted ownership. An absent slot remains available to the first creator,
   -- while every live cluster requires a matching present owner record.
   let mstRuntimeMode = clusterRuntimeMode mstState
+      -- Sprint 6.45: authorization now also consumes the checkout identity the
+      -- live cluster carries. The pre-existing assertions below are about the
+      -- owner record, so they run against a slot this checkout created; the
+      -- cross-checkout assertions that follow them vary the two identities
+      -- independently.
+      mstCheckout = clusterCheckoutIdentityFromHostRoot "/home/operator/infernix"
+      authorizeOwnSlot ::
+        ClusterOwner ->
+        RuntimeMode ->
+        [RuntimeMode] ->
+        Maybe ClusterState ->
+        Either ClusterOwnershipRefusal ClusterSlotAdmission
+      authorizeOwnSlot owner runtimeMode presentRuntimeModes maybeState =
+        authorizeClusterOwnership
+          owner
+          runtimeMode
+          presentRuntimeModes
+          maybeState
+          mstCheckout
+          (ClusterSlotIdentifiedAs mstCheckout)
       replayPhase =
         LifecyclePhase
           { lifecyclePhaseTransition = LifecycleBringUp,
@@ -9464,43 +9666,101 @@ main = do
     )
     "an unreadable kubeconfig authorizes delete-and-recreate only while exact pre-workload replay intent is required"
   assert
-    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] Nothing))
+    (isRight (authorizeOwnSlot HarnessOwned mstRuntimeMode [] Nothing))
     "an actually absent unrecorded slot authorizes the harness as first creator"
   assert
-    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] (Just mstState)))
+    (isRight (authorizeOwnSlot HarnessOwned mstRuntimeMode [] (Just mstState)))
     "an actually absent slot ignores a stale other-owner record for first-creator behavior"
   assert
-    (isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
+    (isRight (authorizeOwnSlot HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
     "a live HarnessOwned cluster authorizes the harness"
   assert
-    (isRight (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
+    (isRight (authorizeOwnSlot OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
     "a live OperatorOwned cluster authorizes the operator"
   assert
-    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
+    (isLeft (authorizeOwnSlot HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState)))
     "a live OperatorOwned cluster refuses harness takeover and teardown"
   assert
-    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
+    (isLeft (authorizeOwnSlot OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterOwner = HarnessOwned}))))
     "a live HarnessOwned cluster refuses operator takeover, teardown, and kubectl passthrough"
   assert
-    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] Nothing))
+    (isLeft (authorizeOwnSlot OperatorOwned mstRuntimeMode [mstRuntimeMode] Nothing))
     "a live cluster without matching persisted state fails closed for the operator"
   assert
-    (isRight (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
+    (isRight (authorizeOwnSlot OperatorOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
     "a live cluster preserves its recorded owner through an interrupted lifecycle transition"
   assert
-    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
+    (isLeft (authorizeOwnSlot HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just (mstState {clusterLifecycle = ClusterAbsent}))))
     "a live cluster with an absent lifecycle still refuses the other owner"
   assert
-    ( isRight (authorizeClusterOwnership HarnessOwned mstRuntimeMode [] Nothing)
-        && isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState))
+    ( isRight (authorizeOwnSlot HarnessOwned mstRuntimeMode [] Nothing)
+        && isLeft (authorizeOwnSlot HarnessOwned mstRuntimeMode [mstRuntimeMode] (Just mstState))
     )
     "a harness cleanup recheck refuses an operator that wins the slot after initial seizure"
   assert
-    (isLeft (authorizeClusterOwnership HarnessOwned mstRuntimeMode [AppleSilicon] (Just (mstState {clusterOwner = HarnessOwned, clusterRuntimeMode = AppleSilicon}))))
+    (isLeft (authorizeOwnSlot HarnessOwned mstRuntimeMode [AppleSilicon] (Just (mstState {clusterOwner = HarnessOwned, clusterRuntimeMode = AppleSilicon}))))
     "a live cluster in another runtime cannot be ignored by a harness operation"
   assert
-    (isLeft (authorizeClusterOwnership OperatorOwned mstRuntimeMode [mstRuntimeMode, AppleSilicon] (Just mstState)))
+    (isLeft (authorizeOwnSlot OperatorOwned mstRuntimeMode [mstRuntimeMode, AppleSilicon] (Just mstState)))
     "two live Infernix runtimes are an invariant breach that fails closed"
+  -- Sprint 6.45: the cross-checkout guard. The lifecycle lock, the harness
+  -- reservation, and the persisted state are all repo-local, while the Kind
+  -- cluster they protect is machine-global, so the ownership record alone
+  -- cannot tell "my cluster" from "the other checkout's cluster". These
+  -- fixtures are the two distinct checkouts that difference requires.
+  let secondCheckout = clusterCheckoutIdentityFromHostRoot "/home/operator/infernix-second"
+      harnessState = mstState {clusterOwner = HarnessOwned}
+      authorizeFrom checkoutIdentity slotIdentity owner state =
+        authorizeClusterOwnership
+          owner
+          mstRuntimeMode
+          [mstRuntimeMode]
+          (Just state)
+          checkoutIdentity
+          slotIdentity
+      refusalReasonOf outcome =
+        case outcome of
+          Left refusal -> Just (ownershipRefusalReason refusal)
+          Right _ -> Nothing
+  assert
+    ( refusalReasonOf
+        (authorizeFrom secondCheckout (ClusterSlotIdentifiedAs mstCheckout) HarnessOwned harnessState)
+        == Just (ForeignCheckoutSlot mstCheckout)
+        && refusalReasonOf
+          (authorizeFrom secondCheckout (ClusterSlotIdentifiedAs mstCheckout) OperatorOwned mstState)
+          == Just (ForeignCheckoutSlot mstCheckout)
+    )
+    "a second checkout cannot authorize a cluster it did not create, even holding a leftover matching owner record"
+  assert
+    ( authorizeFrom mstCheckout (ClusterSlotIdentifiedAs mstCheckout) HarnessOwned harnessState
+        == Right ClusterSlotOwned
+        && authorizeFrom mstCheckout (ClusterSlotIdentifiedAs mstCheckout) OperatorOwned mstState
+          == Right ClusterSlotOwned
+    )
+    "the creating checkout still authorizes its own cluster for either owner"
+  assert
+    ( refusalReasonOf (authorizeFrom mstCheckout ClusterSlotUnidentified HarnessOwned harnessState)
+        == Just UnidentifiedClusterSlot
+        && authorizeFrom mstCheckout ClusterSlotUnidentified OperatorOwned mstState
+          == Right ClusterSlotAdoptable
+    )
+    "a cluster created before the identity existed is adoptable by the operator and refused to the harness"
+  assert
+    ( authorizeClusterOwnership HarnessOwned mstRuntimeMode [] (Just harnessState) secondCheckout ClusterSlotUnidentified
+        == Right ClusterSlotAbsent
+        && authorizeClusterOwnership HarnessOwned mstRuntimeMode [] Nothing secondCheckout (ClusterSlotIdentifiedAs mstCheckout)
+          == Right ClusterSlotAbsent
+    )
+    "an absent inventory has no resource to identify and stays available to the first creator"
+  assert
+    ( clusterCheckoutIdentityFromHostRoot "/home/operator/infernix/"
+        == clusterCheckoutIdentityFromHostRoot "/home/operator/infernix"
+        && clusterCheckoutIdentityFromHostRoot "/home/operator//infernix"
+          == clusterCheckoutIdentityFromHostRoot "/home/operator/infernix"
+        && clusterCheckoutIdentityFromHostRoot "/home/operator/infernix"
+          /= clusterCheckoutIdentityFromHostRoot "/home/operator/infernix-second"
+    )
+    "checkout identity compares host roots after normalization, so a trailing or doubled separator is not a different checkout"
   assert
     ( isRight
         (authorizeHarnessReservationAccess OperatorOwned 100 True Nothing)
@@ -10807,7 +11067,7 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
         SubstrateEnforcedBudget
           ( PodMemoryLimit
               { podMemoryLimitResource = PodRam,
-                podMemoryLimitSource = "unit-zero-budget",
+                podMemoryLimitSource = ClusterEnginePodMemoryLimit,
                 podMemoryLimitMib = 0
               }
           )
@@ -10815,7 +11075,7 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
         SubstrateEnforcedBudget
           ( PodMemoryLimit
               { podMemoryLimitResource = PodRam,
-                podMemoryLimitSource = "unit-negative-budget",
+                podMemoryLimitSource = ClusterEnginePodMemoryLimit,
                 podMemoryLimitMib = -1
               }
           )
@@ -10839,6 +11099,39 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
   assertRetiredSubstrateShapeDiagnostic
     legacyBudgetPath
     "text-discriminated `kind =` inference-memory-budget record"
+  -- Phase 8 Sprint 8.9: the same targeted diagnostic now covers the retired
+  -- text-tagged enums. A stale payload from a pre-union binary must name its
+  -- retired shape and the regenerating command rather than surfacing a bare
+  -- structural Dhall type error. `daemonRole` is the sharpest case: its three
+  -- retired aliases (`frontend`, `cluster`, `host`) are values a union cannot
+  -- express at all, so a stale file carrying one has no other diagnosis.
+  let retiredEnumCases =
+        [ ( "legacy-text-runtime-mode",
+            "runtimeMode = < AppleSilicon | LinuxCpu | LinuxGpu >.LinuxCpu",
+            "runtimeMode = \"linux-cpu\"",
+            "text-tagged `runtimeMode` field"
+          ),
+          ( "legacy-text-daemon-role",
+            "daemonRole = < Coordinator | Engine | Webapp >.Coordinator",
+            "daemonRole = \"cluster\"",
+            "text-tagged `daemonRole` field"
+          )
+        ]
+  mapM_
+    ( \(caseLabel, currentSpelling, retiredSpelling, expectedShape) -> do
+        let retiredPath = root </> ("execution-plan-" <> caseLabel <> ".dhall")
+        assert
+          (currentSpelling `isInfixOf` renderedSubstrateConfig)
+          ( "the generated payload no longer writes the current union spelling for "
+              <> caseLabel
+              <> "; the retired-shape fixture below would be vacuous"
+          )
+        writeFile
+          retiredPath
+          (replaceFirstSubstring currentSpelling retiredSpelling renderedSubstrateConfig)
+        assertRetiredSubstrateShapeDiagnostic retiredPath expectedShape
+    )
+    retiredEnumCases
   assertCompiledRuntimePlanDecodeFailsForConfig
     root
     "zero-substrate-budget"
@@ -10921,6 +11214,38 @@ assertCompiledRuntimePlanDecodeFailsForConfig root label demoConfig = do
   assertCompiledRuntimePlanDecodeFails
     configPath
     ("execution-plan decoder rejects " <> label)
+
+-- | Phase 8 Sprint 8.9 — a retired @kind@-tagged budget JSON payload must be
+-- named as retired rather than surfaced as a bare missing-alternative error.
+retiredBudgetJsonDiagnosticNamesRetirement :: String -> Bool
+retiredBudgetJsonDiagnosticNamesRetirement payload =
+  case Aeson.eitherDecode (LazyChar8.pack payload) :: Either String InferenceMemoryBudget of
+    Left decodeError -> "retired flat kind=" `isInfixOf` decodeError
+    Right _ -> False
+
+-- | Whether an attempted execution-plan decode failed, naming the given field.
+decodeFailureMentions :: String -> Either SomeException a -> Bool
+decodeFailureMentions fieldName attempted =
+  case attempted of
+    Left decodeFailure -> fieldName `isInfixOf` show decodeFailure
+    Right _ -> False
+
+-- | Replace the first occurrence of a substring. Used to age a freshly
+-- generated payload back to a retired spelling, so the migration diagnostic is
+-- tested against a file that is otherwise exactly what the binary writes.
+replaceFirstSubstring :: String -> String -> String -> String
+replaceFirstSubstring needle replacement haystack =
+  case breakOnSubstring needle haystack of
+    Nothing -> haystack
+    Just (before, after) -> before <> replacement <> after
+
+breakOnSubstring :: String -> String -> Maybe (String, String)
+breakOnSubstring needle = go []
+  where
+    go _ [] = Nothing
+    go seen rest@(nextChar : laterChars)
+      | needle `isPrefixOf` rest = Just (reverse seen, drop (length needle) rest)
+      | otherwise = go (nextChar : seen) laterChars
 
 assertCompiledRuntimePlanDecodeFails :: FilePath -> String -> IO ()
 assertCompiledRuntimePlanDecodeFails configPath message = do
@@ -11133,12 +11458,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         SubstrateEnforcedBudget (podLimitFor resource source limitMib)
       dualBudget podResource vramResource =
         DualEnforcedBudget
-          (podLimitFor podResource "linux-process-group-rss-watchdog" 65536)
-          (podLimitFor vramResource "nvidia-vram-accounting" 65536)
+          (podLimitFor podResource ClusterEnginePodMemoryLimit 65536)
+          (podLimitFor vramResource LinuxGpuVramBudget 65536)
       linuxCpuConfig =
         executionPlanConfigForRuntime
           LinuxCpu
-          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
           singleAppleConfig
       linuxCpuGpuModel =
         model
@@ -11149,7 +11474,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       linuxCpuGpuConfig =
         executionPlanConfigForRuntime
           LinuxCpu
-          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
           (singleAppleConfig {models = [linuxCpuGpuModel]})
       linuxGpuModel =
         model
@@ -11160,12 +11485,12 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       linuxGpuWithPodBudget =
         executionPlanConfigForRuntime
           LinuxGpu
-          (podBudget PodRam "linux-process-group-rss-watchdog" 65536)
+          (podBudget PodRam ClusterEnginePodMemoryLimit 65536)
           (singleAppleConfig {models = [linuxGpuModel]})
       linuxGpuWithVramBudget =
         executionPlanConfigForRuntime
           LinuxGpu
-          (podBudget GpuVram "nvidia-vram-accounting" 65536)
+          (podBudget GpuVram LinuxGpuVramBudget 65536)
           (singleAppleConfig {models = [linuxGpuModel]})
       linuxGpuWithSwappedDualBudget =
         executionPlanConfigForRuntime
@@ -11233,11 +11558,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
               | engineDaemon <- engineDaemons singleAppleConfig
               ]
           }
-  _ <-
-    expectCompiledExecutionPlan
-      root
-      "zero-edge-port"
-      (singleAppleConfig {configEdgePort = 0})
   assertExecutionPlanIdentifierCoverage
     root
     singleAppleConfig
@@ -11315,16 +11635,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "model-bootstrap-topic-drift"
     (ExecutionPlan.ModelBootstrapTopicMismatch defaultModelBootstrapTopic "persistent://infernix/unit/bootstrap")
     (singleAppleConfig {modelBootstrapTopic = "persistent://infernix/unit/bootstrap"})
-  assertExecutionPlanError
-    root
-    "negative-edge-port"
-    (ExecutionPlan.InvalidEdgePort (-1))
-    (singleAppleConfig {configEdgePort = -1})
-  assertExecutionPlanError
-    root
-    "oversized-edge-port"
-    (ExecutionPlan.InvalidEdgePort 65536)
-    (singleAppleConfig {configEdgePort = 65536})
   assertExecutionPlanError
     root
     "blank-config-map-name"
@@ -11435,11 +11745,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "invalid-engine-binding"
     (ExecutionPlan.InvalidEngineBinding (engineBindingName binding))
     (singleAppleConfig {engines = [binding {engineBindingAdapterId = " "}]})
-  assertExecutionPlanError
-    root
-    "unsupported-engine-adapter-type"
-    (ExecutionPlan.UnsupportedEngineAdapterType (engineBindingName binding) "unit-unsupported-adapter")
-    (singleAppleConfig {engines = [binding {engineBindingAdapterType = "unit-unsupported-adapter"}]})
   assertExecutionPlanError
     root
     "invalid-model-descriptor"
@@ -11651,11 +11956,20 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "zero-pool-max-inflight"
     (ExecutionPlan.InvalidPoolMaxInflight poolIdValue 0)
     (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = 0}]})
-  assertExecutionPlanError
-    root
-    "negative-pool-max-inflight"
-    (ExecutionPlan.InvalidPoolMaxInflight poolIdValue (-1))
-    (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = -1}]})
+  -- Phase 8 Sprint 8.9: a negative quantity used to render as a Dhall Integer
+  -- and be caught by the compiler after decode. Quantities are Natural now, so
+  -- the wire language cannot express it at all and the decode boundary rejects
+  -- it first. Assert the stronger property rather than the retired one.
+  negativeInflightDecode <-
+    try @SomeException
+      ( compileExecutionPlanFixture
+          root
+          "negative-pool-max-inflight"
+          (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = -1}]})
+      )
+  assert
+    (decodeFailureMentions "maxInflightPerMember" negativeInflightDecode)
+    "a negative generated quantity is unrepresentable in the wire language and fails at the decode boundary"
   assertExecutionPlanError
     root
     "model-without-eligible-member"
@@ -11665,7 +11979,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "apple-pod-budget-mismatch"
     (ExecutionPlan.RuntimeBudgetMismatch AppleSilicon PodRam)
-    (singleAppleConfig {inferenceMemoryBudget = podBudget PodRam "unit-pod-budget" 65536})
+    (singleAppleConfig {inferenceMemoryBudget = podBudget PodRam ClusterEnginePodMemoryLimit 65536})
   assertExecutionPlanError
     root
     "linux-host-budget-mismatch"
@@ -11675,7 +11989,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "linux-vram-budget-mismatch"
     (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu GpuVram)
-    (linuxCpuConfig {inferenceMemoryBudget = podBudget GpuVram "unit-vram-budget" 65536})
+    (linuxCpuConfig {inferenceMemoryBudget = podBudget GpuVram LinuxGpuVramBudget 65536})
   assertExecutionPlanError
     root
     "gpu-dual-resource-budget-required"
@@ -11698,14 +12012,9 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     linuxGpuWithSwappedDualBudget
   assertExecutionPlanError
     root
-    "blank-memory-enforcer-source"
-    (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer source must be non-empty")
-    (linuxCpuConfig {inferenceMemoryBudget = podBudget PodRam " " 65536})
-  assertExecutionPlanError
-    root
     "unified-host-substrate-enforcer"
     (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM")
-    (linuxCpuConfig {inferenceMemoryBudget = podBudget UnifiedHostRam "unit-invalid-enforcer" 65536})
+    (linuxCpuConfig {inferenceMemoryBudget = podBudget UnifiedHostRam ClusterEnginePodMemoryLimit 65536})
   let availableMib = inferenceMemoryBudgetCapacityMib (inferenceMemoryBudget singleAppleConfig)
       requiredMib = availableMib + 1
   oversizedFootprint <-
@@ -11771,7 +12080,7 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   -- remains a hard config error rather than silently admitting device work
   -- against one limit.
   let linuxGpuSingleResourcePath = root </> "execution-plan-linux-gpu-single-resource.dhall"
-      linuxGpuSingleResourceBudget = podBudget GpuVram "nvidia-vram-accounting" 65536
+      linuxGpuSingleResourceBudget = podBudget GpuVram LinuxGpuVramBudget 65536
   BS.writeFile
     linuxGpuSingleResourcePath
     (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuSingleResourceBudget)
@@ -11794,8 +12103,8 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   let linuxGpuConfigPath = root </> "execution-plan-linux-gpu-catalog.dhall"
       linuxGpuDualCatalogBudget =
         DualEnforcedBudget
-          (podLimitFor PodRam "cluster-engine-pod-memory-limit" 4096)
-          (podLimitFor GpuVram "linux-gpu-vram-budget" 4096)
+          (podLimitFor PodRam ClusterEnginePodMemoryLimit 4096)
+          (podLimitFor GpuVram LinuxGpuVramBudget 4096)
   BS.writeFile
     linuxGpuConfigPath
     (renderGeneratedDemoConfigPayload paths LinuxGpu False Engine linuxGpuDualCatalogBudget)
@@ -11919,14 +12228,15 @@ engineBindingSelectionError configError =
     ExecutionPlan.InvalidEngineBinding _ -> True
     ExecutionPlan.UnsupportedEngineBinding _ _ -> True
     ExecutionPlan.EngineBindingMismatch {} -> True
-    ExecutionPlan.UnsupportedEngineAdapterType _ _ -> True
     ExecutionPlan.UnknownSelectedEngine _ _ -> True
     _ -> False
 
-alternateAdapterType :: Text.Text -> Text.Text
-alternateAdapterType adapterType
-  | adapterType == "python-stdio" = "native-process-runner"
-  | otherwise = "python-stdio"
+-- Phase 8 Sprint 8.9: the adapter type is a closed sum, so "the other one" is
+-- a total function rather than a string flip with an implicit default.
+alternateAdapterType :: EngineAdapterType -> EngineAdapterType
+alternateAdapterType adapterType = case adapterType of
+  PythonStdio -> NativeProcessRunner
+  NativeProcessRunner -> PythonStdio
 
 assertExecutionPlanIdentifierCoverage ::
   FilePath ->
@@ -12111,7 +12421,6 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.BlankModelBootstrapTopic -> "BlankModelBootstrapTopic"
     ExecutionPlan.ModelsBucketMismatch _ _ -> "ModelsBucketMismatch"
     ExecutionPlan.ModelBootstrapTopicMismatch _ _ -> "ModelBootstrapTopicMismatch"
-    ExecutionPlan.InvalidEdgePort _ -> "InvalidEdgePort"
     ExecutionPlan.BlankConfigMapName -> "BlankConfigMapName"
     ExecutionPlan.BlankGeneratedPath -> "BlankGeneratedPath"
     ExecutionPlan.BlankMountedPath -> "BlankMountedPath"
@@ -12130,7 +12439,6 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.InvalidEngineBinding _ -> "InvalidEngineBinding"
     ExecutionPlan.UnsupportedEngineBinding _ _ -> "UnsupportedEngineBinding"
     ExecutionPlan.EngineBindingMismatch {} -> "EngineBindingMismatch"
-    ExecutionPlan.UnsupportedEngineAdapterType _ _ -> "UnsupportedEngineAdapterType"
     ExecutionPlan.InvalidModelDescriptor _ -> "InvalidModelDescriptor"
     ExecutionPlan.InvalidModelId _ -> "InvalidModelId"
     ExecutionPlan.InvalidMatrixRowId _ -> "InvalidMatrixRowId"
@@ -14016,7 +14324,6 @@ unitGeneratedDemoConfig ::
 unitGeneratedDemoConfig paths mode demoEnabled daemonRole budget =
   DemoConfig
     { configRuntimeMode = mode,
-      configEdgePort = 0,
       configMapName = "infernix-demo-config",
       generatedPath = Config.generatedDemoConfigPath paths,
       mountedPath = Config.watchedDemoConfigPath,
@@ -14115,7 +14422,7 @@ linuxCpuUnitInferenceMemoryBudget =
   SubstrateEnforcedBudget
     PodMemoryLimit
       { podMemoryLimitResource = PodRam,
-        podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+        podMemoryLimitSource = ClusterEnginePodMemoryLimit,
         podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
       }
 
@@ -14124,12 +14431,12 @@ linuxGpuUnitInferenceMemoryBudget =
   DualEnforcedBudget
     PodMemoryLimit
       { podMemoryLimitResource = PodRam,
-        podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+        podMemoryLimitSource = ClusterEnginePodMemoryLimit,
         podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
       }
     PodMemoryLimit
       { podMemoryLimitResource = GpuVram,
-        podMemoryLimitSource = "linux-gpu-vram-budget",
+        podMemoryLimitSource = LinuxGpuVramBudget,
         podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
       }
 
@@ -14138,6 +14445,46 @@ linuxGpuUnitInferenceMemoryBudget =
 inferenceMemoryBudgetAlternatives :: [Text.Text]
 inferenceMemoryBudgetAlternatives =
   ["HostEnforced", "SubstrateEnforced", "DualEnforced"]
+
+-- | Phase 8 Sprint 8.9 — every alternative the reflected substrate decoder must
+-- expect once the generated wire's enum-like choices are unions rather than
+-- Text. One entry per alternative of each migrated enum, so a field that
+-- reverted to Text — which would still round-trip and so escape every other
+-- assertion — fails here.
+generatedWireUnionAlternatives :: [Text.Text]
+generatedWireUnionAlternatives =
+  [ -- runtimeMode (top level, pool, member, model)
+    "AppleSilicon",
+    "LinuxCpu",
+    "LinuxGpu",
+    -- daemonRole (top level and every daemon record)
+    "Coordinator",
+    "Engine",
+    "Webapp",
+    -- engine-pool subscription
+    "Shared",
+    "Exclusive",
+    "Failover",
+    -- pulsarConnectionMode
+    "ConfiguredTransport",
+    "PublicationEdgeAutoDiscovery",
+    -- model runtimeLane
+    "AppleSiliconHost",
+    "KindLinuxCpu",
+    "KindLinuxGpuGpu",
+    "KindLinuxGpuShared",
+    -- request-shape fieldType
+    "TextField",
+    -- engine-binding adapterType
+    "NativeProcessRunner",
+    "PythonStdio",
+    -- substrate limit record resource + source
+    "UnifiedHostRam",
+    "PodRam",
+    "GpuVram",
+    "ClusterEnginePodMemoryLimit",
+    "LinuxGpuVramBudget"
+  ]
 
 mangleLastChar :: Text.Text -> Text.Text
 mangleLastChar token =
@@ -14222,6 +14569,24 @@ assertDhallSchemaReflection =
           assert
             (not ("podLimitMib" `Text.isInfixOf` rendered) && not ("kind" `Text.isInfixOf` rendered))
             "substrate schema excludes the retired text discriminator and zero-filled union fields"
+          -- Phase 8 Sprint 8.9: every enum-like choice is a union in the
+          -- reflected decoder too, not just in the renderer. A field that
+          -- silently reverted to Text would still round-trip, so assert the
+          -- alternatives are present and that the retired placeholder is gone.
+          mapM_
+            ( \alternativeName ->
+                assert
+                  (alternativeName `Text.isInfixOf` rendered)
+                  ( "substrate schema reflects the union alternative "
+                      <> Text.unpack alternativeName
+                  )
+            )
+            generatedWireUnionAlternatives
+          assert
+            ( not ("edgePort" `Text.isInfixOf` rendered)
+                && not ("Integer" `Text.isInfixOf` rendered)
+            )
+            "substrate schema drops the never-read edgePort placeholder and renders quantities as Natural"
           -- Phase 8 Sprint 8.9: the renderer writes the budget union's type
           -- annotation as text while the decoder derives it from the Haskell
           -- ADT. Nothing in the type system ties them together, so pin the

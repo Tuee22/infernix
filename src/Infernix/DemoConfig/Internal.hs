@@ -202,7 +202,6 @@ renderGeneratedDemoConfigPayloadWithModels paths runtimeMode demoUiEnabledValue 
     ( encodeDemoConfig
         DemoConfig
           { configRuntimeMode = runtimeMode,
-            configEdgePort = 0,
             configMapName = "infernix-demo-config",
             generatedPath = Config.generatedDemoConfigPath paths,
             mountedPath = Config.watchedDemoConfigPath,
@@ -271,7 +270,7 @@ resolveInferenceMemoryBudget paths runtimeMode =
         ( SubstrateEnforcedBudget
             PodMemoryLimit
               { podMemoryLimitResource = PodRam,
-                podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+                podMemoryLimitSource = ClusterEnginePodMemoryLimit,
                 podMemoryLimitMib = linuxEngineInferenceRamBudgetMib
               }
         )
@@ -280,12 +279,12 @@ resolveInferenceMemoryBudget paths runtimeMode =
         ( DualEnforcedBudget
             PodMemoryLimit
               { podMemoryLimitResource = PodRam,
-                podMemoryLimitSource = "cluster-engine-pod-memory-limit",
+                podMemoryLimitSource = ClusterEnginePodMemoryLimit,
                 podMemoryLimitMib = linuxGpuEngineInferenceRamBudgetMib
               }
             PodMemoryLimit
               { podMemoryLimitResource = GpuVram,
-                podMemoryLimitSource = "linux-gpu-vram-budget",
+                podMemoryLimitSource = LinuxGpuVramBudget,
                 podMemoryLimitMib = linuxEngineInferenceVramBudgetMib
               }
         )
@@ -473,8 +472,6 @@ validateDemoConfigAllowingEmptyModels = validateDemoConfig True
 
 validateDemoConfig :: Bool -> DemoConfig -> Either String DemoConfig
 validateDemoConfig allowEmptyModels demoConfig
-  | configEdgePort demoConfig < 0 || configEdgePort demoConfig > 65535 =
-      Left "edgePort must be between 0 and 65535"
   | Text.null (Text.strip (configMapName demoConfig)) =
       Left "configMapName must not be blank"
   | null (requestTopics demoConfig) =
@@ -569,7 +566,6 @@ validateDemoConfig allowEmptyModels demoConfig
         (Text.null . Text.strip)
         [ engineBindingName engineBinding,
           engineBindingAdapterId engineBinding,
-          engineBindingAdapterType engineBinding,
           engineBindingAdapterLocator engineBinding,
           engineBindingAdapterEntrypoint engineBinding,
           engineBindingSetupEntrypoint engineBinding,

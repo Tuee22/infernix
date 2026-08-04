@@ -93,11 +93,23 @@ Read first:
 - cluster ownership and mutation-position by construction: the persisted cluster state names its owner
   (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
   ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
-  teardown authority can neither escape its region nor be reused. The *owner* discrimination itself is
-  a fail-closed evidence check performed under that same held lease — the persisted owner and the live
-  Kind inventory are reread and compared inside the lock, not encoded in the authority's type — so
-  `infernix test all` fails closed on an operator's running cluster instead of destroying it. Making
-  the owner a type index is open follow-on work (Phase 6 Sprint 6.45). The `ClusterLifecycle` machine
+  teardown authority can neither escape its region nor be reused. `ClusterTeardownAuthority` is now
+  indexed by a promoted `ClusterOwner` as well as its lock region, so an authority minted for the
+  harness is not the same type as one minted for the operator and cannot be substituted for it — a
+  compile-fail fixture pins that. Be precise about what the index does *not* buy: it decides nothing
+  about who owns a *live* cluster. That remains a fail-closed evidence check under the same held
+  lease — the persisted owner and the live Kind inventory are reread and compared inside the lock —
+  so `infernix test all` fails closed on an operator's running cluster by a checked refusal, not by
+  GHC. Ownership evidence now travels *with* the protected resource: the Kind cluster name is
+  machine-global while the lock, reservation, and persisted state are repo-local, so Sprint 6.45
+  records the creating checkout's host-side repo root inside the control-plane node at
+  `/etc/infernix/cluster-checkout-identity` and every authorization reads it back and requires
+  agreement. Relocating the lock and renaming the cluster were both rejected: neither works inside a
+  launcher container, where every checkout is baked with the same in-container repo root, so a
+  path-derived identity collides instead of discriminating. The identity resolver fails closed
+  rather than reusing the `/workspace` fallback for that reason. A cluster created before the
+  identity existed is adoptable by the operator (stamped under the same held lease) and refused to
+  the harness, which must prove the slot is its own before tearing it down. The `ClusterLifecycle` machine
   carries a first-class `ClusterMutating` position, so a killed `infernix test all` leaves a persisted,
   detectable, reconcilable dirty cluster (`cluster status` reports the mutation-incomplete phase and the
   next `cluster up` uncordons drained nodes and scales deployments back) rather than a false

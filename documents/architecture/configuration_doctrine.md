@@ -154,9 +154,17 @@ annotation is written once and selected by every arm, a unit assertion pins the 
 against the alternatives the reflected decoder expects, and a payload written by a pre-union
 generator now fails with a diagnostic that names the retired shape and tells the operator to
 regenerate it with `infernix init` (or `infernix test init`) instead of surfacing a bare structural
-Dhall type error. The remaining generated-wire migration is the enum-like text fields
-(`runtimeMode`, `daemonRole`, `adapterType`, and the rest) and `Integer`-to-`Natural` quantities;
-those are still refined by post-decode smart constructors rather than by the wire type.
+Dhall type error. **Sprint 8.9 finished the generated-wire migration on 2026-08-03.** Every
+enum-like field is now a Dhall union rather than `Text` refined after decode — `runtimeMode`,
+`daemonRole`, `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape
+`fieldType`, engine-binding `adapterType`, and the `resource` and `source` fields inside the
+substrate limit record — every quantity is `Natural` rather than `Integer`, and the never-read
+`edgePort` placeholder is removed from the language rather than refined. The targeted migration
+diagnostic covers each retired text spelling, which matters most for `daemonRole`: its three retired
+aliases (`frontend`, `cluster`, `host`) are values a union cannot express, so a stale payload
+carrying one has no other diagnosis. See
+[typed_execution_plan.md](typed_execution_plan.md) for the full field inventory and the two
+mechanical traps the round-trip caught.
 
 The new execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
 validates model placements, routes, engine bindings, daemon wiring, and admission accounting into
@@ -166,7 +174,7 @@ host/cgroup envelope before refining engine work into `RuntimePlan` / `Executabl
 subscription and launch accept only those refined capabilities. Phase 1 Sprint 1.19 has implemented
 that core; its 2026-07-25 gate and review remain historical evidence for that source, not reusable
 evidence for the current worktree after the all-Haskell lifecycle/subprocess correction. The fresh
-complete Stage 1 must cover it again. Phase 8 Sprint 8.9 owns the final generated-schema migration.
+complete Stage 1 must cover it again. Phase 8 Sprint 8.9's generated-schema migration is complete.
 
 The same compiled plan owns messaging authority. There is no supported raw topic publisher;
 coordinator and engine consumers turn unavailable, empty-model, unknown-model, wrong-route, and

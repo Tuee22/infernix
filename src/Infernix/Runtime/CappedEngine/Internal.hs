@@ -88,7 +88,8 @@ import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.CappedEngine.OutputCapture qualified as OutputCapture
 import Infernix.Types
-  ( EngineBinding
+  ( EngineAdapterType (..),
+    EngineBinding
       ( engineBindingAdapterId,
         engineBindingAdapterType
       ),
@@ -462,7 +463,7 @@ canonicalPythonWorkerBinding
       (selectedEngine descriptor) of
       Just canonicalBinding
         | canonicalBinding == engineBinding
-            && engineBindingAdapterType canonicalBinding == "python-stdio" ->
+            && engineBindingAdapterType canonicalBinding == PythonStdio ->
             Right canonicalBinding
       _ ->
         Left

@@ -39,6 +39,11 @@ module Infernix.Cluster
     releaseHarnessClusterSlot,
     releaseHarnessClusterSlotAt,
     authorizeClusterOwnership,
+    ClusterCheckoutIdentity (..),
+    clusterCheckoutIdentityFromHostRoot,
+    ClusterSlotIdentity (..),
+    ClusterSlotAdmission (..),
+    ClusterOwnershipRefusalReason (..),
     authorizeHarnessReservationAccess,
     authorizeRuntimeConfigWriteAccess,
     uncordonResultsProveReady,
@@ -146,7 +151,7 @@ import Network.HTTP.Types.Status (statusCode)
 import Network.HTTP.Types.URI (urlEncode)
 import Network.Socket qualified as Socket
 import System.Directory (createDirectoryIfMissing, doesDirectoryExist, doesFileExist, getTemporaryDirectory, listDirectory, removeFile, removePathForcibly, renameDirectory, renameFile)
-import System.FilePath (addTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
+import System.FilePath (addTrailingPathSeparator, dropTrailingPathSeparator, normalise, takeDirectory, takeFileName, (</>))
 import System.IO (hClose, hIsClosed, hPutStr, openBinaryTempFile)
 import System.IO.Error (isDoesNotExistError)
 import System.Info qualified
@@ -698,6 +703,11 @@ clusterUpForOwner ownerSingleton maybeRuntimeMode = do
         reservationAccess
         presentRuntimeModes
         recordedState
+    -- Sprint 6.45 — a live cluster that predates the on-resource identity is
+    -- adopted here, under the same held lease that authorized it, so the very
+    -- next authorization is a positive identity match rather than another
+    -- adoption.
+    adoptClusterSlotIfUnidentified teardownAuthority paths runtimeMode
     clusterUpWithPulsarBootstrapRepair lifecycleLock teardownAuthority ownerSingleton paths runtimeMode
 
 clusterUpWithPulsarBootstrapRepair ::
@@ -1419,6 +1429,70 @@ matchingClusterState runtimeMode maybeState =
       | clusterRuntimeMode state == runtimeMode -> Just state
     _ -> Nothing
 
+-- | Sprint 6.45 — the identity of the checkout that created a cluster, as it
+-- is recorded /on the cluster itself/.
+--
+-- The value is the checkout's host-side repository root: the one identity that
+-- is both per-checkout and machine-unique in /both/ supported execution
+-- contexts. On an Apple host it is the operator's real repo path. Inside a
+-- Linux launcher container it is the bind-mount source the host Docker daemon
+-- resolved for @\/workspace@, /not/ the container-internal path — every
+-- launcher container is baked with @hostRepoRoot = \/workspace@, so any
+-- identity derived from an in-container path collides across checkouts instead
+-- of discriminating them.
+newtype ClusterCheckoutIdentity = ClusterCheckoutIdentity
+  { unClusterCheckoutIdentity :: FilePath
+  }
+  deriving (Eq, Show)
+
+-- | Normalise a host-side repository root into a comparable identity. Exposed
+-- so a test can build two distinct checkout identities without a Docker
+-- daemon.
+clusterCheckoutIdentityFromHostRoot :: FilePath -> ClusterCheckoutIdentity
+clusterCheckoutIdentityFromHostRoot =
+  ClusterCheckoutIdentity . dropTrailingPathSeparator . normalise
+
+-- | What the live protected resource says about who created it.
+--
+-- 'ClusterSlotUnidentified' covers a cluster created before the identity
+-- existed /and/ one whose control-plane node cannot be read at all. Both are
+-- treated identically on purpose: neither can prove the slot belongs to the
+-- caller.
+data ClusterSlotIdentity
+  = ClusterSlotUnidentified
+  | ClusterSlotIdentifiedAs !ClusterCheckoutIdentity
+  deriving (Eq, Show)
+
+-- | The positive outcome of an ownership authorization, which also says what
+-- the caller still owes the resource.
+data ClusterSlotAdmission
+  = -- | No Infernix cluster is live; the slot is available to the first
+    -- creator, which stamps its identity as part of creating it.
+    ClusterSlotAbsent
+  | -- | A live cluster carries this checkout's identity.
+    ClusterSlotOwned
+  | -- | A live cluster carries no identity and the operator is entitled to
+    -- adopt it. The caller must stamp before mutating, so the next
+    -- authorization is a positive match rather than another adoption.
+    ClusterSlotAdoptable
+  deriving (Eq, Show)
+
+-- | Why an ownership authorization was refused.
+data ClusterOwnershipRefusalReason
+  = -- | The live inventory and the persisted ownership record disagree with
+    -- the request: wrong runtime, wrong owner, missing record, or more than
+    -- one live Infernix cluster.
+    OwnerRecordMismatch
+  | -- | The live cluster was created by a different checkout. This is the
+    -- cross-checkout defect Sprint 6.45 exists to close: the lifecycle lock,
+    -- the harness reservation, and the persisted state are all repo-local,
+    -- while the Kind cluster they claim to protect is machine-global.
+    ForeignCheckoutSlot !ClusterCheckoutIdentity
+  | -- | The live cluster carries no identity and the requesting owner is not
+    -- entitled to adopt it.
+    UnidentifiedClusterSlot
+  deriving (Eq, Show)
+
 -- | Why an operation was refused: an actually-present cluster is not recorded
 -- as belonging to the requested owner. A missing owner means the live Kind
 -- cluster has no matching persisted state, which also fails closed.
@@ -1426,41 +1500,256 @@ data ClusterOwnershipRefusal = ClusterOwnershipRefusal
   { ownershipRequestedOwner :: ClusterOwner,
     ownershipRecordedOwner :: Maybe ClusterOwner,
     ownershipRequestedRuntimeMode :: RuntimeMode,
-    ownershipPresentRuntimeModes :: [RuntimeMode]
+    ownershipPresentRuntimeModes :: [RuntimeMode],
+    ownershipRefusalReason :: ClusterOwnershipRefusalReason
   }
   deriving (Eq, Show)
 
--- | Authorize an owner against the complete Kind inventory for this data root
--- and the single persisted ownership record. An absent inventory is available
--- to the first creator. Exactly one live cluster is authorized only when its
--- runtime and owner both match; two supported runtimes being live is an
--- invariant breach that always fails closed.
+-- | Authorize an owner against the complete Kind inventory for this data root,
+-- the single persisted ownership record, and — since Sprint 6.45 — the
+-- identity carried by the live cluster itself. An absent inventory is
+-- available to the first creator. Exactly one live cluster is authorized only
+-- when its runtime, its owner, /and/ its recorded checkout all match; two
+-- supported runtimes being live is an invariant breach that always fails
+-- closed.
+--
+-- The identity comparison is what makes the guard cover the resource it
+-- protects. Without it, a second checkout holding a leftover @HarnessOwned@
+-- state file authorizes against the operator's live cluster using its own
+-- state, and deletes it.
+--
+-- An unidentified live cluster predates the identity, so it cannot be matched.
+-- The two owners are deliberately not symmetric there:
+--
+--   * @OperatorOwned@ may /adopt/ it. The operator is acting at their own
+--     terminal on their own host, and refusing would strand a running cluster
+--     behind a manual @kind delete@.
+--
+--   * @HarnessOwned@ may not. The harness is the destructive actor in the
+--     defect above — an unattended @infernix test all@ that tears down
+--     whatever it finds — so it is required to prove the slot is its own, and
+--     an unidentified slot is exactly the proof it lacks.
 authorizeClusterOwnership ::
   ClusterOwner ->
   RuntimeMode ->
   [RuntimeMode] ->
   Maybe ClusterState ->
-  Either ClusterOwnershipRefusal ()
-authorizeClusterOwnership requestedOwner requestedRuntimeMode presentRuntimeModes maybeState =
+  ClusterCheckoutIdentity ->
+  ClusterSlotIdentity ->
+  Either ClusterOwnershipRefusal ClusterSlotAdmission
+authorizeClusterOwnership requestedOwner requestedRuntimeMode presentRuntimeModes maybeState localIdentity slotIdentity =
   case presentRuntimeModes of
-    [] -> Right ()
+    [] -> Right ClusterSlotAbsent
     [presentRuntimeMode] ->
       case maybeState of
         Just state
           | presentRuntimeMode == requestedRuntimeMode,
             clusterRuntimeMode state == presentRuntimeMode,
             clusterOwner state == requestedOwner ->
-              Right ()
-        _ -> Left refusal
-    _ -> Left refusal
+              admitIdentifiedSlot
+        _ -> Left (refusal OwnerRecordMismatch)
+    _ -> Left (refusal OwnerRecordMismatch)
   where
-    refusal =
+    admitIdentifiedSlot =
+      case slotIdentity of
+        ClusterSlotIdentifiedAs recordedIdentity
+          | recordedIdentity == localIdentity -> Right ClusterSlotOwned
+          | otherwise -> Left (refusal (ForeignCheckoutSlot recordedIdentity))
+        ClusterSlotUnidentified ->
+          case requestedOwner of
+            OperatorOwned -> Right ClusterSlotAdoptable
+            HarnessOwned -> Left (refusal UnidentifiedClusterSlot)
+    refusal reason =
       ClusterOwnershipRefusal
         { ownershipRequestedOwner = requestedOwner,
           ownershipRecordedOwner = clusterOwner <$> maybeState,
           ownershipRequestedRuntimeMode = requestedRuntimeMode,
-          ownershipPresentRuntimeModes = presentRuntimeModes
+          ownershipPresentRuntimeModes = presentRuntimeModes,
+          ownershipRefusalReason = reason
         }
+
+-- | Render the refusal reason as the operator-facing tail of the diagnostic,
+-- naming the remedy where one exists.
+clusterOwnershipRefusalDetail :: ClusterOwnershipRefusal -> String
+clusterOwnershipRefusalDetail refusal =
+  case ownershipRefusalReason refusal of
+    OwnerRecordMismatch -> ""
+    ForeignCheckoutSlot recordedIdentity ->
+      "; the live cluster was created by the checkout at "
+        <> unClusterCheckoutIdentity recordedIdentity
+        <> ", not by this one. Tear it down from that checkout, or remove it with "
+        <> "'kind delete cluster'"
+    UnidentifiedClusterSlot ->
+      "; the live cluster carries no checkout identity, so the harness cannot "
+        <> "prove it created it. Run 'infernix cluster down' as the operator to "
+        <> "remove it, or 'infernix cluster up' to adopt it into this checkout"
+
+-- | Where a cluster's creating-checkout identity lives inside its
+-- control-plane node.
+--
+-- A directory rather than a bare file because the closed command catalog's
+-- read-back primitive is @docker cp \<node>:\<dir>\/. \<local>@; writing the
+-- marker into its own directory keeps that copy to a single small file. The
+-- path is inside the node's own filesystem, not a bind mount, so it is
+-- created by the Docker daemon that owns the cluster and is readable by any
+-- process that can reach that daemon — which is exactly the sharing boundary
+-- the guard has to cover.
+clusterSlotIdentityDirectory :: FilePath
+clusterSlotIdentityDirectory = "/etc/infernix"
+
+clusterSlotIdentityFileName :: FilePath
+clusterSlotIdentityFileName = "cluster-checkout-identity"
+
+-- | This checkout's identity.
+--
+-- Fails closed rather than falling back. 'resolveHostRepoRoot' answers
+-- @\/workspace@ when the launcher container's bind-mount lookup fails, which
+-- is the correct conservative answer for /rendering a path/ but the worst
+-- possible answer for an /identity/: every launcher container would claim the
+-- same one, so two checkouts would silently authorize against each other's
+-- clusters — the defect this exists to close.
+localClusterCheckoutIdentity :: Paths -> IO ClusterCheckoutIdentity
+localClusterCheckoutIdentity paths
+  | not (isBakedLinuxOuterContainerManifest paths) =
+      pure (clusterCheckoutIdentityFromHostRoot (repoRoot paths))
+  | otherwise = do
+      launcherContainer <- currentLauncherContainerName
+      mountResult <-
+        tryClusterCommand
+          paths
+          ( Command.dockerInspectContainerField
+              (Command.ContainerName launcherContainer)
+              (Command.MountSourceAt (repoRoot paths </> ".data"))
+          )
+      case trim <$> mountResult of
+        Right hostDataRoot
+          | not (null hostDataRoot) ->
+              pure (clusterCheckoutIdentityFromHostRoot (takeDirectory hostDataRoot))
+        _ ->
+          ioError
+            ( userError
+                ( "cannot determine this checkout's host-side identity: the launcher container "
+                    <> launcherContainer
+                    <> " has no host bind-mount source for "
+                    <> (repoRoot paths </> ".data")
+                    <> ". Every launcher container is baked with the same in-container repo root, "
+                    <> "so proceeding would let this checkout authorize cluster teardown against "
+                    <> "another checkout's cluster."
+                )
+            )
+
+-- | A private scratch directory for the identity read-back. Kept off the
+-- repo-visible bind mounts for the same reason 'withKindScratchKubeconfig'
+-- is, and keyed by pid so two Infernix processes on one host cannot read into
+-- each other's copy.
+withClusterIdentityScratchDirectory :: Paths -> RuntimeMode -> (FilePath -> IO a) -> IO a
+withClusterIdentityScratchDirectory paths runtimeMode action = do
+  scratchRoot <- getTemporaryDirectory
+  readerPid <- getProcessID
+  let scratchDirectory =
+        scratchRoot
+          </> ( "infernix-cluster-identity-"
+                  <> kindClusterName paths runtimeMode
+                  <> "-"
+                  <> show (fromIntegral readerPid :: Int)
+              )
+  removePathForcibly scratchDirectory
+  createDirectoryIfMissing True scratchDirectory
+  finallyPreservingPrimary
+    (action scratchDirectory)
+    (removePathForcibly scratchDirectory)
+
+-- | Read the checkout identity off the live cluster.
+--
+-- Any failure — no such cluster, control-plane container removed, marker never
+-- written — is 'ClusterSlotUnidentified'. That is deliberate: the read proves
+-- ownership, so an unreadable resource proves nothing and the caller's
+-- fail-closed arm applies.
+readClusterSlotIdentity :: Paths -> RuntimeMode -> IO ClusterSlotIdentity
+readClusterSlotIdentity paths runtimeMode =
+  withClusterIdentityScratchDirectory paths runtimeMode $ \scratchDirectory -> do
+    copyResult <-
+      tryClusterCommand
+        paths
+        ( Command.dockerCopyFromNode
+            (Command.NodeName (kindControlPlaneNodeName paths runtimeMode))
+            clusterSlotIdentityDirectory
+            scratchDirectory
+        )
+    case copyResult of
+      Left _ -> pure ClusterSlotUnidentified
+      Right _ -> do
+        let markerPath = scratchDirectory </> clusterSlotIdentityFileName
+        markerExists <- doesFileExist markerPath
+        if not markerExists
+          then pure ClusterSlotUnidentified
+          else do
+            recorded <- trim <$> readFile markerPath
+            pure
+              ( if null recorded
+                  then ClusterSlotUnidentified
+                  else ClusterSlotIdentifiedAs (clusterCheckoutIdentityFromHostRoot recorded)
+              )
+
+-- | Read the identity of whichever single Infernix cluster is live. More than
+-- one live runtime is already an invariant breach that
+-- 'authorizeClusterOwnership' refuses on the inventory alone, so there is no
+-- identity to attribute.
+observeClusterSlotIdentity :: Paths -> [RuntimeMode] -> IO ClusterSlotIdentity
+observeClusterSlotIdentity paths presentRuntimeModes =
+  case presentRuntimeModes of
+    [presentRuntimeMode] -> readClusterSlotIdentity paths presentRuntimeMode
+    _ -> pure ClusterSlotUnidentified
+
+-- | Stamp this checkout's identity onto the live cluster. Idempotent, and
+-- called both immediately after creation and when an operator adopts a cluster
+-- that predates the identity.
+stampClusterSlotIdentity :: Paths -> RuntimeMode -> IO ()
+stampClusterSlotIdentity paths runtimeMode = do
+  identity <- localClusterCheckoutIdentity paths
+  let controlPlaneNode = Command.NodeName (kindControlPlaneNodeName paths runtimeMode)
+  runClusterCommand
+    paths
+    (Command.dockerMakeDirectory controlPlaneNode clusterSlotIdentityDirectory)
+  runClusterCommand
+    paths
+    ( Command.dockerWriteFile
+        controlPlaneNode
+        (clusterSlotIdentityDirectory </> clusterSlotIdentityFileName)
+        (Command.filePayload (unClusterCheckoutIdentity identity <> "\n"))
+    )
+
+-- | Adopt a live cluster that carries no identity, when the authority says
+-- this owner is entitled to. A no-op for every other admission, so callers can
+-- apply it unconditionally on the bring-up path.
+--
+-- Adoption /upgrades/ the evidence on a cluster that already passed the
+-- ownership check, so a failed stamp is reported and not fatal. Aborting here
+-- would put a damaged control-plane node — the one case that can fail — ahead
+-- of the bring-up path's own recovery, which is what repairs it. Leaving the
+-- slot unidentified keeps the harness fenced, which is the property that
+-- matters.
+adoptClusterSlotIfUnidentified ::
+  ClusterTeardownAuthority owner s ->
+  Paths ->
+  RuntimeMode ->
+  IO ()
+adoptClusterSlotIfUnidentified authority paths runtimeMode =
+  case teardownAuthorityAdmission authority of
+    ClusterSlotAdoptable -> do
+      stampResult <- try (stampClusterSlotIdentity paths runtimeMode)
+      case stampResult of
+        Right () -> pure ()
+        Left stampError ->
+          putStrLn
+            ( "warning: could not record this checkout's identity on the existing "
+                <> kindClusterName paths runtimeMode
+                <> " cluster ("
+                <> displayException (stampError :: SomeException)
+                <> "); it stays unidentified, so 'infernix test all' will refuse it"
+            )
+    ClusterSlotOwned -> pure ()
+    ClusterSlotAbsent -> pure ()
 
 clusterOwnerLabel :: ClusterOwner -> String
 clusterOwnerLabel OperatorOwned = "operator"
@@ -1513,7 +1802,12 @@ withClusterOwnerSingleton owner use =
 data ClusterTeardownAuthority (owner :: ClusterOwner) s = ClusterTeardownAuthority
   { teardownAuthorityOwner :: SClusterOwner owner,
     teardownAuthorityRuntimeMode :: RuntimeMode,
-    teardownAuthorityReservationAccess :: ClusterReservationAccess
+    teardownAuthorityReservationAccess :: ClusterReservationAccess,
+    -- | Sprint 6.45 — what the live cluster's own checkout identity said at
+    -- mint time. 'ClusterSlotAdoptable' is the only value that leaves the
+    -- caller something to do: stamp this checkout's identity onto the cluster
+    -- before mutating it.
+    teardownAuthorityAdmission :: ClusterSlotAdmission
   }
 
 type role ClusterTeardownAuthority nominal nominal
@@ -1564,8 +1858,28 @@ requireClusterOwnership ::
 requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwnerSingleton reservationAccess presentRuntimeModes maybeState = do
   case leasePayload lifecycleLock of
     ClusterMutationLocked -> pure ()
-  case (reservationAccessOwner reservationAccess == requestedOwner, authorizeClusterOwnership requestedOwner runtimeMode presentRuntimeModes maybeState) of
-    (True, Right ()) -> pure (ClusterTeardownAuthority requestedOwnerSingleton runtimeMode reservationAccess)
+  -- Sprint 6.45 — the identity is read from the live resource under the held
+  -- lease, alongside the inventory and the persisted record, so every mint
+  -- decides on evidence gathered inside the same critical section.
+  localIdentity <- localClusterCheckoutIdentity paths
+  slotIdentity <- observeClusterSlotIdentity paths presentRuntimeModes
+  case ( reservationAccessOwner reservationAccess == requestedOwner,
+         authorizeClusterOwnership
+           requestedOwner
+           runtimeMode
+           presentRuntimeModes
+           maybeState
+           localIdentity
+           slotIdentity
+       ) of
+    (True, Right admission) ->
+      pure
+        ( ClusterTeardownAuthority
+            requestedOwnerSingleton
+            runtimeMode
+            reservationAccess
+            admission
+        )
     (False, _) ->
       ioError
         ( userError
@@ -1586,6 +1900,7 @@ requireClusterOwnership lifecycleLock paths runtimeMode action requestedOwnerSin
                 <> clusterOwnerLabel (ownershipRequestedOwner refusal)
                 <> " at "
                 <> dataRoot paths
+                <> clusterOwnershipRefusalDetail refusal
             )
         )
   where
@@ -2260,18 +2575,23 @@ preauthorizeHarnessClusterSlot paths maybeRuntimeMode = do
           requestedRuntimeMode
           presentRuntimeModes
           recordedState
+  localIdentity <- localClusterCheckoutIdentity paths
+  slotIdentity <- observeClusterSlotIdentity paths presentRuntimeModes
   case authorizeClusterOwnership
     HarnessOwned
     runtimeMode
     presentRuntimeModes
-    recordedState of
-    Right () -> pure ()
-    Left _ ->
+    recordedState
+    localIdentity
+    slotIdentity of
+    Right _ -> pure ()
+    Left refusal ->
       ioError
         ( userError
             ( "test harness cluster-slot seizure refused before reservation publication: "
                 <> "the live cluster inventory is not HarnessOwned for runtime "
                 <> Text.unpack (runtimeModeId runtimeMode)
+                <> clusterOwnershipRefusalDetail refusal
             )
         )
 
@@ -3140,8 +3460,20 @@ recreatePreWorkloadKindCluster lifecycleLock recoveryEvidence paths edgePortValu
         runtimeMode
       createKindCluster paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue
 
+-- | Create the Kind cluster and immediately record which checkout created it.
+--
+-- Sprint 6.45 — the stamp is part of creation rather than a later bring-up
+-- step because the window between the two is the only interval in which a
+-- foreign checkout could observe the cluster as unidentified.
 createKindCluster :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Int, Int, Int)
-createKindCluster paths runtimeMode = case runtimeMode of
+createKindCluster paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue = do
+  publishedPorts <-
+    createKindClusterNodes paths runtimeMode edgePortValue harborPortValue pulsarHttpPortValue
+  stampClusterSlotIdentity paths runtimeMode
+  pure publishedPorts
+
+createKindClusterNodes :: Paths -> RuntimeMode -> Int -> Int -> Int -> IO (Int, Int, Int)
+createKindClusterNodes paths runtimeMode = case runtimeMode of
   LinuxGpu -> createLinuxGpuCluster paths
   _ -> go
   where

@@ -79,13 +79,69 @@ evidence:
   acquisition; nominal roles on the lease and authorization types prevent `Data.Coerce` from
   erasing the region. The effect-adjacent check rereads reservation access and requires the exact
   captured record, including owner PID, process group, and birth identity, before revalidating
-  owner/runtime. The 2026-08-02 final cross-phase review corrected an over-claim here: the region is
-  type-indexed, but the *owner* is an ordinary field of `ClusterTeardownAuthority`, so an authority
-  minted for `HarnessOwned` and one minted for `OperatorOwned` have the same type. Tearing down an
-  `OperatorOwned` cluster from the harness is refused by an evidence check under the held lease, not
-  by the type checker, and none of the three teardown compile-fail fixtures asserts otherwise —
-  they exercise only the region parameter. Promoting `ClusterOwner` so the discrimination is a type
-  error is Phase 6 Sprint 6.45 work;
+  owner/runtime. The 2026-08-02 final cross-phase review corrected an over-claim here — the owner was
+  an ordinary field, so an authority minted for `HarnessOwned` and one minted for `OperatorOwned` had
+  the same type — and Sprint 6.45 closed that half on 2026-08-03: `ClusterOwner` is promoted, and
+  `ClusterTeardownAuthority (owner :: ClusterOwner) s` is indexed by it with
+  `type role ... nominal nominal`. `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry the
+  same index. The owner field is now the singleton `SClusterOwner owner` rather than a bare value, so
+  the index and the value it stands for cannot drift, and `requireClusterOwnership` — still the sole
+  mint — takes the singleton and returns the correspondingly indexed authority. A fourth compile-fail
+  fixture, `fail-cannot-substitute-cluster-teardown-owner`, shares the region variable so the *only*
+  thing GHC rejects is the owner, and rejects it with `Couldn't match type 'HarnessOwned' with
+  'OperatorOwned'`.
+
+  Be equally precise about what the index does **not** buy, because that is the over-claim this work
+  exists to retire. Substituting one owner's authority for the other's is now a type error. Deciding
+  who owns a *live* cluster is not, and cannot be: that is discovered at run time by rereading the
+  persisted record and the Kind inventory under the held lease, so tearing down an `OperatorOwned`
+  cluster from the harness is still refused by a checked `ioError`, not by the type checker. No
+  runtime check was weakened to add the index. Where the owner is only known at run time —
+  `withPersistedClusterMutation`, which reads it inside the lock — a rank-2
+  `withClusterOwnerSingleton` selects the singleton *from the owner just read*, so no index is
+  fabricated.
+
+  Sprint 6.45 closed the cross-checkout half on 2026-08-03, and it is a value-level guard by
+  necessity rather than by preference. The defect was that ownership evidence did not travel with
+  the resource: `clusterLifecycleLockPath`, `harnessReservationPath`, and `clusterStatePath` all
+  derive from the per-checkout `runtimeRoot`, while `kindClusterName` drops its `dataRoot`
+  discriminator for the default `.data` layout that every ordinary checkout uses — so two checkouts
+  locked different inodes while contending for one machine-global Kind cluster, and each authorized
+  against the *other's* live inventory using its *own* state file. A killed harness run leaves a
+  `HarnessOwned` state file behind, so a second checkout starting `infernix test all` could observe
+  the operator's live cluster, match it against that leftover record, and delete it.
+
+  Both mechanisms the sprint originally proposed were rejected on analysis, and the reason is worth
+  keeping: neither works in *both* supported execution contexts. Relocating the lock to a
+  machine-scoped path is unreachable from inside a launcher container, and the container's baked
+  manifest gives every checkout `hostRepoRoot = /workspace` and `hostDataRoot = /workspace/.data`,
+  so a path-derived identity actively *collides* there — which also means the cluster-name
+  discriminator does not discriminate on the lane where contention is most likely. What the two
+  contexts genuinely share is the Docker daemon, so the identity lives on the protected resource:
+  `stampClusterSlotIdentity` records the creating checkout's **host-side** repository root inside the
+  control-plane node at `/etc/infernix/cluster-checkout-identity`, and `readClusterSlotIdentity`
+  reads it back through the same closed `ClusterCommand` catalog. No new command constructor and no
+  new host-manifest field were needed, so an operator's already-generated `./infernix-host.dhall`
+  keeps decoding.
+
+  `localClusterCheckoutIdentity` **fails closed** rather than reusing `resolveHostRepoRoot`'s
+  fallback. Answering `/workspace` is the right conservative answer when *rendering a path* and the
+  worst possible answer for an *identity*, because every launcher container would then claim the
+  same one. `authorizeClusterOwnership` consumes the local identity and the observed slot identity
+  alongside the inventory and the persisted record, and returns a `ClusterSlotAdmission` rather than
+  `()`. `requireClusterOwnership` — still the sole mint — reads both under the held lease, so every
+  authority is minted from evidence gathered inside one critical section.
+
+  The two owners are deliberately asymmetric on a cluster that predates the identity. The operator
+  may **adopt** it, because refusing would strand a running cluster behind a manual `kind delete`;
+  adoption stamps this checkout's identity under the same lease that authorized it, so the next
+  authorization is a positive match. The harness may **not**: it is the destructive actor in the
+  defect above — an unattended `infernix test all` that tears down whatever it finds — so it must
+  prove the slot is its own, and an unidentified slot is exactly the proof it lacks. An unreadable
+  control-plane node is treated as unidentified for the same reason. Adoption itself is reported
+  and not fatal, because it upgrades evidence on a cluster that already passed the ownership check;
+  aborting there would put a damaged node ahead of the bring-up path's own recovery, and leaving the
+  slot unidentified keeps the harness fenced, which is the property that matters;
 - the readiness-sentinel commit takes a `PayloadVerified`, so a sentinel written without proof does not
   typecheck;
 - the lifecycle lock is acquired only through the library-internal

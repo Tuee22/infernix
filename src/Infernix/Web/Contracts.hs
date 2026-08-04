@@ -841,7 +841,7 @@ engineBindingFromInternal internalBinding =
   EngineBinding
     { engine = Types.engineBindingName internalBinding,
       adapterId = Types.engineBindingAdapterId internalBinding,
-      adapterType = Types.engineBindingAdapterType internalBinding,
+      adapterType = Types.engineAdapterTypeId (Types.engineBindingAdapterType internalBinding),
       adapterLocator = Types.engineBindingAdapterLocator internalBinding,
       adapterEntrypoint = Types.engineBindingAdapterEntrypoint internalBinding,
       setupEntrypoint = Types.engineBindingSetupEntrypoint internalBinding,

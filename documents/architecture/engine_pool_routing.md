@@ -99,40 +99,51 @@ each pool a distinct model id, and declares every member it references in `engin
 (`validateDemoConfig` rejects a mixed-substrate list, a reused model id, or an undeclared member such
 as `mac-mini-2` below).
 
-```dhall
-enginePools =
-  [ { id = "apple-llm"
-    , runtimeMode = "apple-silicon"
-    , models = [ "llm-smollm2-safetensors" ]
-    , members = [ "mac-studio-1", "mac-mini-2" ]
-    , subscription = "shared"
-    , maxInflightPerMember = 1
-    }
-  , { id = "linux-gpu-vllm"
-    , runtimeMode = "linux-gpu"
-    , models = [ "llm-smollm2-safetensors" ]
-    , members = [ "vllm" ]
-    , subscription = "shared"
-    , maxInflightPerMember = 1
-    }
-  ]
+Phase 8 Sprint 8.9 made `runtimeMode` and `subscription` Dhall unions rather than `Text`, so an
+alternative is written as a label selected from the union type, not as a quoted string.
 
-engineMembers =
-  [ { id = "mac-studio-1"
-    , runtimeMode = "apple-silicon"
-    , location = "control-plane-host"
-    , pools = [ "apple-llm" ]
+```dhall
+let RuntimeMode = < AppleSilicon | LinuxCpu | LinuxGpu >
+
+let Subscription = < Shared | Exclusive | Failover >
+
+in  { enginePools =
+        [ { id = "apple-llm"
+          , runtimeMode = RuntimeMode.AppleSilicon
+          , models = [ "llm-smollm2-safetensors" ]
+          , members = [ "mac-studio-1", "mac-mini-2" ]
+          , subscription = Subscription.Shared
+          , maxInflightPerMember = 1
+          }
+        , { id = "linux-gpu-vllm"
+          , runtimeMode = RuntimeMode.LinuxGpu
+          , models = [ "llm-smollm2-safetensors" ]
+          , members = [ "vllm" ]
+          , subscription = Subscription.Shared
+          , maxInflightPerMember = 1
+          }
+        ]
+    , engineMembers =
+        [ { id = "mac-studio-1"
+          , runtimeMode = RuntimeMode.AppleSilicon
+          , location = "control-plane-host"
+          , pools = [ "apple-llm" ]
+          }
+        , { id = "vllm"
+          , runtimeMode = RuntimeMode.LinuxGpu
+          , location = "cluster-pod"
+          , pools = [ "linux-gpu-vllm" ]
+          }
+        ]
     }
-  , { id = "vllm"
-    , runtimeMode = "linux-gpu"
-    , location = "cluster-pod"
-    , pools = [ "linux-gpu-vllm" ]
-    }
-  ]
 ```
 
+The binary writes the union type inline at every field rather than binding a `let`; the bindings
+above are only to keep the illustration readable.
+
 The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). `maxInflightPerMember` is a
-**validated per-member invariant** (parsed, rendered, and asserted `> 0`); it does not yet change
+**validated per-member invariant**: it is `Natural` on the wire since Sprint 8.9, so a negative value
+is not representable at all, and it is still asserted `> 0` after decode; it does not yet change
 runtime concurrency — each engine consumer hardcodes `receiverQueueSize = 1`, so the effective
 per-consumer in-flight is 1 regardless of the configured value (wiring the field into the consumer
 permits is tracked future work). It never bounds model memory; that is handled separately by the

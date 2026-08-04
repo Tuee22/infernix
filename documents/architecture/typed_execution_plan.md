@@ -46,10 +46,40 @@ Neither proof substitutes for the other.
 
 ## Closed Dhall Language
 
-The final reflected schema uses proper alternatives. Phase 8 Sprint 8.9 owns the remaining
-generated-Dhall migration from text/bool alternatives and `Integer` quantities; the Haskell
-compiler already models resource/enforcer alternatives as indexed ADTs. The target memory shape is
-equivalent to:
+The final reflected schema uses proper alternatives. **Phase 8 Sprint 8.9 completed the
+generated-Dhall migration on 2026-08-03**: every enum-like choice in the substrate wire is a Dhall
+union rather than `Text` refined after decode, every quantity is `Natural` rather than `Integer`,
+and the last zero-filled placeholder is gone. The migrated fields are `runtimeMode` (four wire
+positions), `daemonRole` (two), `pulsarConnectionMode`, engine-pool `subscription`, model
+`runtimeLane`, request-shape `fieldType`, engine-binding `adapterType`, and the `resource` and
+`source` fields inside the substrate limit record.
+
+Two of those had **no refiner at all** before this sprint — `adapterType` and `source` were raw
+`Text` from wire to consumer, closed only by a `Set` membership check and a non-blank check
+respectively — so they gained domain types (`EngineAdapterType`, `PodMemoryLimitSource`) rather than
+only a wire union. Both checks were then deleted along with their failure arms: an unsupported
+adapter type and a blank enforcer source are no longer constructible terms, so
+`UnsupportedEngineAdapterType`, the runtime's `unsupported_engine_runner` arm, and the non-empty
+source check are gone rather than left unreachable.
+
+`configEdgePort` is removed outright rather than refined. It was generated as a literal `+0` on
+every payload and had exactly two consumers, both of which were range checks on the value it was
+hardcoded to; the port the system actually uses is `ClusterState.edgePort`, which is chosen during
+`cluster up` and never travelled through this language. Refining a field no consumer reads would
+have dressed up a placeholder instead of removing one.
+
+Two mechanical facts are worth recording because both were found by round-tripping rather than by
+review. A Dhall union alternative is a **label**, so the wire spelling necessarily changes from
+`"apple-silicon"` to `AppleSilicon`; a stale payload therefore reports its retired shape through the
+targeted migration diagnostic instead of a bare structural type error, and `daemonRole` is the
+sharpest case because its three retired aliases (`frontend`, `cluster`, `host`) are values a union
+cannot express at all. And `genericAutoWith` dispatches on a datatype's GHC-Generics shape, so a
+**single-constructor** mirror derives as a record rather than as a one-alternative union;
+`fieldType` needs an explicitly built union decoder, which the generate-then-decode round trip is
+what catches.
+
+The Haskell compiler already models resource/enforcer alternatives as indexed ADTs. The target
+memory shape is equivalent to:
 
 ```dhall
 let HostPartition =
@@ -126,6 +156,26 @@ Compilation validates at least:
 `RuntimePlan` exposes a `Map ModelId ExecutableModel`, not a raw catalog, for engine consumption and
 launch. A model cannot enter a compiled route unless its placement compiled, and cannot launch unless
 its enforcer refined successfully.
+
+**Refinement is engine-only, and that is the intended end state rather than a gap.** Phase 8 Sprint
+8.9 left this as an open doctrine question; it is settled here. All three roles compile the plan at
+startup. Only the engine refines it, before publishing readiness. The coordinator publishes
+readiness on the compiled plan and the webapp builds no plan beyond compilation, because refinement
+is not a stronger validation of the same thing — it is an observation of *the refining process's
+own machine*: the live sampler probes, the host partition, this process's own cgroup `memory.max`,
+and the observed device VRAM. Its pod arm is an exact match against the hosting pod's `memory.max`,
+so refining in a coordinator pod would either fail against a limit that is legitimately different or
+succeed against a ceiling no inference will ever run under — the second outcome being worse, because
+it manufactures evidence about a resource the process does not use.
+
+The property refinement exists to establish is that a launch cannot happen without a matching live
+enforcer, and it is discharged where launches happen: refinement mints the single-flight
+`EngineExecutionAuthority`, and `publishedResultFromRequest` — the one choke point both the
+websocket and filesystem-spool paths pass through — requires it. Neither non-engine role launches an
+inference subprocess: the coordinator's loops are `CompiledRuntimePlan`-typed and its
+`drainInferenceTopic` hard-errors on a coordinator capability, and the webapp only publishes to
+Pulsar. So Sprint 8.9's deliverable 4 ("startup compiles and refines the generated plan before
+publishing readiness") is scoped to the role that launches inference, and reads as satisfied.
 
 Capacity rejection is request-local rather than a whole-daemon startup failure. The compiler
 accounts for every input model in exactly one of two disjoint maps: a `CompiledPlacement` that may

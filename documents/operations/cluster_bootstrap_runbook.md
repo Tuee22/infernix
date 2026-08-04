@@ -261,6 +261,38 @@ transaction roots while either lifecycle command is active.
 - expect retained durable state under `./.data/` to remain intact; the named rebuildable
   Harbor/Patroni subset above may be removed after writer quiescence and recreated on bring-up
 
+### Cluster reuse across checkouts on one host
+
+The Kind cluster is named `infernix-<runtime>` on the shared Docker daemon, so it is
+machine-global, while the lifecycle lock, the harness reservation, and the persisted state are
+repo-local. Since Sprint 6.45 the creating checkout's host-side repository root is recorded on the
+cluster itself, inside the control-plane node at `/etc/infernix/cluster-checkout-identity`, and
+every ownership decision reads it back and requires agreement.
+
+What operators will see:
+
+- `infernix cluster up` and `infernix cluster down` in the checkout that created the cluster behave
+  exactly as before
+- any operation from a *different* checkout is refused, naming the checkout that created the
+  cluster: `the live cluster was created by the checkout at <path>, not by this one`. Tear it down
+  from that checkout, or remove it with `kind delete cluster`
+- a cluster created **before** this identity existed carries no marker. `infernix cluster up`
+  adopts it into the current checkout and stamps the marker; `infernix cluster down` removes it as
+  before. `infernix test all` refuses it, because the harness must prove the cluster is its own
+  before tearing it down — the refusal names both remedies. This is a one-time step after
+  upgrading; every cluster created since is stamped at creation
+- a cluster whose control-plane container is missing or unreadable is treated the same as an
+  unidentified one, and for the same reason: the read is what proves ownership, so an unreadable
+  resource proves nothing
+- if the identity cannot be recorded during adoption, bring-up prints a warning and continues; the
+  cluster stays unidentified, so `infernix test all` will keep refusing it until a later
+  `cluster up` succeeds in stamping it
+
+Inside a Linux launcher container the identity is the host-side bind-mount source, not the
+container-internal `/workspace`, because every launcher container is baked with the same
+in-container repo root. If that translation cannot be resolved, the command fails closed rather
+than claiming a colliding identity.
+
 ## Durable-Context Demo Bring-Up
 
 When the active substrate's generated `.dhall` carries `demo_ui = true`, `cluster up`

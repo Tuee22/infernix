@@ -3248,11 +3248,20 @@ cohort is unaffected because it enters through the launcher entrypoint.
 
 ---
 
-## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Planned]
+## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Active — Validation Only]
 
-**Status**: Planned — opened 2026-08-02 by Sprint 6.43's final cross-phase review, which confirmed
-three findings the sprint's own deliverables claim are already closed.
-**Code-side closure**: Not started
+**Status**: Active — opened 2026-08-02 by Sprint 6.43's final cross-phase review, which confirmed
+three findings the sprint's own deliverables claim are already closed. **All four deliverables are
+code-side closed on 2026-08-03**: deliverables 3 and 4 (the type-indexed teardown owner and its
+compile-fail fixture) landed first, and deliverables 1 and 2 (the cross-checkout guard) landed as
+on-resource checkout identity — see [Landed implementation (deliverables 1 and 2,
+2026-08-03)](#landed-implementation-deliverables-1-and-2-2026-08-03) below. The cohort is the only
+remaining item.
+**Code-side closure**: Complete. The machine-independent gate set is GREEN on this source:
+`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
+(6 positive / 82 negative), `infernix-haskell-style` (`haskell-style-check: ok`), and
+`lint files|chart|proto|docs` plus `docs check`
 **Cohort gate**: selected accelerator plus `linux-cpu`
 **Blocked by**: nothing — dependencies are satisfied; this is ordered after Sprint 6.43's landed
 implementation and before Sprint 6.43 can reach `Done`
@@ -3368,9 +3377,121 @@ recorded here as insufficient rather than implemented as a partial fix.
   tears down only its own
 - machine-independent gates plus the selected accelerator and `linux-cpu` cohorts
 
+### Landed implementation (deliverables 3 and 4, 2026-08-03)
+
+`ClusterOwner` is promoted and `ClusterTeardownAuthority (owner :: ClusterOwner) s` is indexed by it
+with `type role ... nominal nominal`; `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry
+the same index rather than leaving the recovery arm phantom, because that arm already stores an
+authority. The owner field is the singleton `SClusterOwner owner` rather than a bare value, so the
+index and the value cannot drift, and `requireClusterOwnership` stays the sole mint. The public
+entry points (`clusterUp`/`clusterUpHarness`/`clusterDown`/`clusterDownHarness`) keep their existing
+`IO ()` types and simply pass `SOperatorOwned`/`SHarnessOwned`, so `CLI.hs` is untouched.
+
+**No runtime check was removed or weakened to add the index** — that was the explicit constraint,
+because the value check is what actually protects an operator's cluster. `authorizeClusterOwnership`
+is unchanged, still takes a plain `ClusterOwner`, and still runs against freshly reread state and
+inventory under the held lease, as does `revalidateClusterTeardownAuthority`. Where the owner is only
+known at run time — `withPersistedClusterMutation` reads it inside the lock — a rank-2
+`withClusterOwnerSingleton` selects the singleton *from the owner just read*, so no index is
+fabricated from a static guess.
+
+The fourth compile-fail fixture, `fail-cannot-substitute-cluster-teardown-owner`, deliberately shares
+the region type variable so the only property under test is the owner. GHC 9.12.4 rejects it with
+`Couldn't match type 'HarnessOwned' with 'OperatorOwned'`, a spelling already present in
+`typeMismatchDiagnostics`, so the assertion needed no weakening and no new diagnostic class. The
+three pre-existing teardown fixtures were updated to the new arity with the owner left as a free type
+variable, so they keep testing only the region parameter. The compile-fail suite is **6 positive /
+82 negative** (was 6 / 81).
+
+One incidental change is recorded because it was forced rather than chosen: `GADTs` implies
+`MonoLocalBinds`, which de-generalized one existing local `where` binding in
+`withPersistedClusterMutation`. It was given an explicit local signature rather than reaching for
+`NoMonoLocalBinds`, which would have silently relaxed the whole module.
+
+**What the index does not buy**, stated here so this sprint does not replace one over-claim with
+another: substituting one owner's authority for the other's across the teardown/bring-up call graph
+is now a type error and the compile-fail suite detects its regression. Deciding who owns a *live*
+cluster is still a runtime evidence check under the held lease, and a teardown of a genuinely
+`OperatorOwned` cluster is refused by a checked `ioError`, not by GHC.
+
+### Landed implementation (deliverables 1 and 2, 2026-08-03)
+
+The guard now covers the resource it protects. The identity is recorded **on the cluster**, and
+`authorizeClusterOwnership` — still the sole decision function, still pure — consumes it alongside
+the inventory and the persisted record.
+
+**The identity is the checkout's host-side repository root, and resolving it fails closed.** That is
+the one value that is both per-checkout and machine-unique in both supported execution contexts. On
+an Apple host it is the operator's real repo path. Inside a Linux launcher container it is the
+bind-mount source the host Docker daemon resolved for `/workspace`. `localClusterCheckoutIdentity`
+deliberately does **not** reuse `resolveHostRepoRoot`, which answers `/workspace` when that lookup
+fails: that is the right conservative answer for rendering a path and the worst possible answer for
+an identity, because every launcher container would then claim the same one — which is precisely the
+collision the design analysis above identified as fatal to both originally proposed options.
+
+**The carrier needed no new command and no new manifest field.** `stampClusterSlotIdentity` writes
+the identity into the control-plane node at `/etc/infernix/cluster-checkout-identity` using the
+existing `dockerMakeDirectory` + `dockerWriteFile` pair, and `readClusterSlotIdentity` reads it back
+with the existing `dockerCopyFromNode`. A directory rather than a bare file because the catalog's
+read-back primitive is directory-contents-only (`docker cp <node>:<dir>/. <local>`); adding a
+single-file primitive would have added a constructor for no gain. Because all three reuse existing
+`DockerExecOperation`/`DockerCopyOperation` classifications, the generated host-manifest schema is
+unchanged and an operator's already-generated `./infernix-host.dhall` keeps decoding — the same
+constraint Sprint 6.44's migrations respected.
+
+Note this supersedes the design analysis's *candidate* mechanism rather than following it.
+`ContainerInspectField`'s `MountSourceAt` can only read a mount that exists, and the Kind
+`extraMounts` block is emitted only when `kindUsesHostBindMounts` is true — Linux outer-container
+only. Reading an incidental bind mount would therefore have identified nothing on Apple. A
+deliberate marker identifies every cluster on every substrate.
+
+**The stamp is part of creation.** `createKindCluster` now wraps the previous body
+(`createKindClusterNodes`, both the `kind` and `nvkind` arms) and stamps immediately on success,
+because the interval between creation returning and any later bring-up step is the only window in
+which a foreign checkout could observe the cluster as unidentified.
+
+**`authorizeClusterOwnership` returns a `ClusterSlotAdmission` instead of `()`**
+(`ClusterSlotAbsent` / `ClusterSlotOwned` / `ClusterSlotAdoptable`), and `ClusterOwnershipRefusal`
+gains a `ClusterOwnershipRefusalReason` (`OwnerRecordMismatch` / `ForeignCheckoutSlot` /
+`UnidentifiedClusterSlot`) that the diagnostic renders with the remedy. `requireClusterOwnership`
+reads both the local identity and the live slot identity under the held lease, so every mint decides
+on evidence gathered inside one critical section, and the admission travels on the
+`ClusterTeardownAuthority` so the bring-up path knows whether it still owes the resource a stamp.
+
+**The grandfathering decision is made, and it is asymmetric on purpose.** A cluster created before
+the identity existed carries no marker, and an unreadable control-plane node is treated identically
+— the read is what proves ownership, so an unreadable resource proves nothing.
+
+- `OperatorOwned` **adopts** it: refusing would strand a running cluster behind a manual
+  `kind delete`, and the operator is acting at their own terminal on their own host.
+  `adoptClusterSlotIfUnidentified` stamps under the same lease that authorized the bring-up, so the
+  next authorization is a positive match rather than another adoption.
+- `HarnessOwned` is **refused**. The harness is the destructive actor in the defect this sprint
+  exists to close — an unattended `infernix test all` that tears down whatever it finds — so it must
+  prove the slot is its own. The refusal names both remedies (`infernix cluster down` to remove,
+  `infernix cluster up` to adopt). This is a one-time step per pre-existing cluster after upgrading.
+
+Adoption itself is reported and not fatal. It upgrades evidence on a cluster that *already* passed
+the ownership check, so aborting would put a damaged control-plane node — the only thing that can
+fail there — ahead of the bring-up path's own recovery, which is what repairs it. Leaving the slot
+unidentified keeps the harness fenced, which is the property that matters.
+
+**Validation evidence.** Five pure assertions cover the decision surface: a second checkout refused
+against both a leftover `HarnessOwned` record and an `OperatorOwned` one; the creating checkout
+still authorized for either owner; the adopt/refuse asymmetry on an unidentified slot; an absent
+inventory unaffected by any identity; and identity normalization (a trailing or doubled separator is
+not a different checkout). Two further assertions are **behavioural**, running the real
+seize/release path with a stubbed Docker daemon that serves an identity back: a harness holding a
+matching `HarnessOwned` record cannot tear down a cluster another checkout created, and cannot tear
+down an unidentified one — in both cases the reservation is retained and no `kind delete cluster` is
+issued. The unit fixtures that simulate a live cluster now serve their own checkout identity, which
+is itself evidence the guard is live: before those fixtures were updated, every one of them failed
+closed.
+
 ### Remaining Work
 
-All of it; this sprint is newly opened.
+- **Cohort**: selected accelerator plus `linux-cpu`, consumed jointly with Sprint 6.44's wave
+  against one frozen source.
 
 ## Documentation Requirements
 

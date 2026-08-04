@@ -11,6 +11,94 @@
 See [development_plan_standards.md](development_plan_standards.md) for the maintenance rules that
 govern this plan.
 
+## Cross-checkout cluster ownership and the union-typed generated wire (2026-08-03)
+
+Execution resumed in numerical order over the open phases. Phases 1, 2, and 4 are each
+`Active — Validation Only` with an **Apple-hardware** residual and the active development host is a
+CUDA Linux box (RTX 5090), so none of the three had an item that could be worked here. Phases 6 and
+8 were the actionable ones, and both are now code-side closed.
+
+**Phase 6 Sprint 6.45 is complete on all four deliverables — the High cross-checkout defect is
+closed by putting the identity on the resource.** The defect was that ownership evidence did not
+travel with the thing it protects: the lifecycle lock, the harness reservation, and the persisted
+state all derive from the per-checkout `runtimeRoot`, while `kindClusterName` drops its `dataRoot`
+discriminator for the default `.data` layout every ordinary checkout uses. Two checkouts therefore
+locked different inodes while contending for one machine-global Kind cluster, and a killed harness
+run left a `HarnessOwned` state file that a second checkout could match against the *operator's*
+live cluster and delete it.
+
+Both mechanisms the sprint proposed were rejected on analysis, and the reason is the useful part:
+neither works in both execution contexts. A machine-scoped lock is unreachable from inside a
+launcher container, and the baked manifest gives every launcher container
+`hostRepoRoot = /workspace`, so a path-derived identity *collides* across checkouts rather than
+discriminating them — which also means the cluster-name discriminator does not discriminate on the
+lane where contention is most likely. What the two contexts genuinely share is the Docker daemon, so
+the creating checkout's **host-side** repository root is now stamped inside the control-plane node at
+`/etc/infernix/cluster-checkout-identity` and read back at every authorization. It needed no new
+command constructor and no new host-manifest field — `dockerMakeDirectory`, `dockerWriteFile`, and
+`dockerCopyFromNode` already exist and already map to existing policy fields — so an operator's
+already-generated `./infernix-host.dhall` keeps decoding.
+
+Two decisions inside that are worth stating rather than leaving implicit. The identity resolver
+**fails closed** instead of reusing `resolveHostRepoRoot`'s `/workspace` fallback: answering
+`/workspace` is correct when rendering a path and is the worst possible answer for an identity.
+And grandfathering is **asymmetric by owner**: an operator adopts a pre-identity cluster, because
+refusing would strand a running cluster behind a manual `kind delete`, while the harness is refused,
+because it is the destructive actor in the defect and must prove the slot is its own. The design
+analysis's candidate mechanism — reading back an incidental bind-mount source via `MountSourceAt` —
+was superseded rather than followed: those `extraMounts` are emitted only when
+`kindUsesHostBindMounts` is true, so it would have identified nothing on Apple.
+
+The guard is proven live rather than only asserted. Two behavioural fixtures drive the real
+seize/release path against a stubbed daemon that serves an identity back, and both a foreign
+checkout and an unidentified slot are refused with the reservation retained and no
+`kind delete cluster` issued. More telling: every pre-existing unit fixture that simulates a live
+cluster **failed closed** the first time the suite ran, until each was given its own checkout
+identity.
+
+**Phase 8 Sprint 8.9 finished the generated-wire migration.** Nine enum-like fields became Dhall
+unions, seven quantities became `Natural`, and `configEdgePort` was **removed rather than refined** —
+it was generated as a literal `+0` on every payload and its only two consumers were range checks on
+the value it was hardcoded to, while the port the system actually uses is `ClusterState.edgePort`,
+which never travelled through this language. Two of the nine fields had no refiner *anywhere*
+(`adapterType` and `source` were raw `Text` wire-to-consumer), so both gained domain types, and
+their weak guards were **deleted rather than left unreachable**: `UnsupportedEngineAdapterType`, the
+runtime's `unsupported_engine_runner` arm, and the non-empty-source check are gone because none of
+them is a constructible term now.
+
+Two of this sprint's premises were wrong, and correcting them found a real defect. Item 4 said the
+web UI reads the budget JSON and that retiring the `kind` discriminator was a coordinated
+Haskell-plus-PureScript change: there is **no PureScript decoder for the budget** at all. The only
+browser-tier consumer is a plain-JS Playwright helper — and that helper had **no `dual-enforced`
+arm**, so it returned null for every `linux-gpu` budget and the caller skipped the over-budget
+assertion entirely. The GPU lane's browser-side memory-limit check had been passing **vacuously**
+since Sprint 6.44 introduced the dual arm. The rewritten reader handles all three alternatives and
+mirrors `compileResources` exactly, including that a device-using model is admitted against pod RAM
+first, so the pod limit is the one an error names when both limits are exceeded.
+
+Item 5 is decided rather than deferred: engine-only refinement is the intended end state.
+Refinement is not a stronger validation of the compiled plan — it is an observation of the refining
+process's *own* pod, and its pod arm exact-matches that pod's `memory.max`. Refining in a
+coordinator pod would either fail against a legitimately different limit or succeed against a
+ceiling no inference will run under, which is worse because it manufactures evidence about a
+resource the process does not use.
+
+Two mechanical traps were caught by round-tripping rather than by review, and both would otherwise
+have shipped. `genericAutoWith` dispatches on GHC-Generics shape, so a **single-constructor** mirror
+derives as a record, not a one-alternative union — `fieldType` decoded as `{}` against a
+`< TextField >` annotation, and the failure only surfaced when a regenerated `./infernix.dhall` was
+decoded through a real command. And because a Dhall alternative is a label, the wire spelling
+necessarily changes, so `retiredSubstrateMarkers` gained one entry per retired text field;
+`daemonRole` is the sharpest, since its three retired aliases (`frontend`, `cluster`, `host`) are
+values a union cannot express at all.
+
+The complete machine-independent gate set is GREEN on this source: `cabal build all --enable-tests`
+under `-Wall -Werror`, `infernix-unit`, `infernix-execution-plan-internal`,
+`infernix-capped-engine-observer`, `infernix-compile-fail` (6 positive / 82 negative),
+`infernix-haskell-style` (`haskell-style-check: ok`), and `lint files|chart|proto|docs` plus
+`docs check`. Both phases now hold a single remaining item each, and it is the same one: the
+`linux-gpu` plus `linux-cpu` cohorts against one frozen exact-source rebuild.
+
 ## Sprint 6.44 residual closure: bounded descriptor space and the CUDA breach fixture (2026-08-03)
 
 Execution resumed in numerical order. Phases 1, 2, and 4 are each `Active — Validation Only` with an
@@ -1908,9 +1996,9 @@ recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 | 3 | Done | No work in this reopen |
 | 4 | Active — Validation Only | Sprint 4.32 code-side closure and the Linux behavioral half are GREEN. The opaque single-flight authority and fail-closed sampler-loss path are implemented; the live 64 MiB/16 MiB watchdog breach returns typed `EngineExceededCeiling`, reaps non-successfully, and a subsequent child succeeds. Exact image `sha256:dfc0e2b6251e2d7ed74712253e06d2f9fbc60b649ac162b44dac030aca43a979` (20,125,723,532 bytes) passed uninterrupted `./bootstrap/linux-cpu.sh test`: style/realness, Python, Haskell unit, web `83/83`, full integration/HA/lifecycle, and routed Playwright `16/16` (44.6 m; catalog matrix 42.9 m), with clean teardown. Apple breach/observer hardware evidence is the only remaining Phase 4 gate. |
 | 5 | Done | No work in this reopen |
-| 6 | Active — Validation Only | Sprint 6.44 is **code-side closed on 2026-08-02** and no longer blocked. `linux-gpu` compiled no execution plan at all before this sprint: every `LinuxGpu` config failed with `GpuDualResourceBudgetRequired`, `compileResources` had no `LinuxGpu` arm, and `watchdogForGrant` returned a hard `Left "NVIDIA per-process VRAM enforcement is unavailable"`. Now a device-using model compiles two independently indexed grants from a `DualEnforcedBudget` and runs under two live watchdogs; `DarwinObserver` is generalized to `FixedObserver`, a fixed bounded public-tool kernel owning both the Apple `/usr/bin/top` + `/usr/bin/footprint` pair and the NVIDIA `/usr/bin/nvidia-smi` pair behind an unexported spec; and per-process-group attribution was **measured, not assumed** — NVML resolves compute contexts in the reading process's PID namespace, so an engine pod sees its own namespace's pids and never another container's. Sprint 6.44 also migrated both `Runtime/Pulsar.hs` raw spawns onto bounded closed commands (including an unbounded Poetry-driven model download), deleted three raw-spawn exemption rows, and closed a real whole-token gap that had let `withCreateProcess` through. Remaining: the selected `linux-gpu` plus `linux-cpu` cohort with its adversarial CUDA breach case, and five named raw-spawn exemptions whose migration needs a doctrine decision (CLI passthrough, host tools, Apple prereqs, workflow tooling, files lint). Sprint 6.43's owner-atomic implementation is landed; its final cross-phase review is recorded in the phase document | Sprint 6.43's final cross-phase review ran on 2026-08-02 over four independent adversarial lenses with two-angle refutation: seven findings raised, three refuted, **four confirmed**. One was fixed with the review (the `linux-gpu` engine-Deployment rotation ran outside `withPersistedClusterMutation`, so a kill left a false steady-state). Three opened **Sprint 6.45**: a High cross-checkout defect — the Kind cluster name is machine-global while the lifecycle lock, reservation, and persisted state are repo-local, so a second checkout can authorize against the operator's inventory using its own leftover state and delete the operator's cluster — its reverse-direction twin, and the disproof of the documented "tearing down an `OperatorOwned` cluster does not typecheck" claim (the region is type-indexed; the owner is an ordinary field, so the refusal is a runtime check under the held lease). The doctrine wording in `CLAUDE.md`, `AGENTS.md`, and `managed_state_transitions.md` is corrected to what the code does | **Sprint 6.44's adversarial CUDA breach deliverable is not covered by any suite and the cohort cannot cover it** — the integration suite has no runtime ceiling-breach case, and the unit suite's live NVIDIA assertions skip inside the cohort because the outer launcher container has no GPU by design; closing it needs an in-engine-pod case | **Cohort attempt 1 (2026-08-03) failed and found a real Sprint 6.44 defect**: the GPU engine pod's 16 GiB cgroup limit against a reused 4 GiB `linux-cpu` child budget produced `OuterEnvelopeTooLarge 5120 16384` on every GPU placement, so no engine became ready. Invisible to every machine-independent gate because `linux-gpu` compiled no plan at all before the sprint. Fixed by deriving the GPU budget from the pod limit and guarded by a new both-lane unit assertion that was negative-tested against the original value | A second cohort defect is now root-caused by measurement: the fixed `nvidia-smi` observer stalls before `exec` because `close_fds = True` walks the containerd pod's `RLIMIT_NOFILE` of 1073741816 (~4.5 min/spawn extrapolated from 133 ms at 524288), versus 1024 in the launcher container — which is why every machine-independent gate passes. **No fix applied**: the same flag is set in the capped-engine and bounded-command kernels, so the remedy is a doctrine decision needing its own validation, and whether those kernels pay the same cost is explicitly unverified |
+| 6 | Active — Validation Only | **Sprint 6.44 and Sprint 6.45 are both code-side closed; the shared cohort is the only item left.** Sprint 6.44: (a) the `close_fds` stall is fixed by bounding the resource rather than weakening the isolation — `Infernix.DescriptorSpace` lowers the soft `RLIMIT_NOFILE` to 16384 before any descriptor is opened, so the child's pre-`exec` walk still closes the entire descriptor space while costing 4.9 ms instead of a **measured 313 s** at a containerd pod's 1073741816; (b) the adversarial CUDA ceiling breach is covered by `runNvidiaVramBreachAssertions`, GREEN against the RTX 5090 and negative-tested; (c) the raw-spawn exemption decision is made, nine rows → seven. **Sprint 6.45 is now complete on all four deliverables (2026-08-03).** Deliverables 3/4 promoted `ClusterOwner` and indexed `ClusterTeardownAuthority` by it (6 positive / 82 negative compile-fail). Deliverables 1/2 — the High cross-checkout defect — close by putting the identity **on the resource**: the creating checkout's host-side repo root is stamped inside the control-plane node at `/etc/infernix/cluster-checkout-identity` and read back at every authorization, using existing closed commands and existing policy fields, so no host-manifest schema changed. Both originally proposed mechanisms were rejected on analysis: neither the lock relocation nor the cluster-name discriminator works inside a launcher container, where every checkout is baked with the same in-container repo root and a path-derived identity *collides*. The identity resolver fails closed rather than reusing that colliding fallback. A pre-identity cluster is adoptable by the operator and refused to the harness — the harness is the destructive actor, so it must prove the slot is its own. Five pure assertions plus two behavioural ones (a foreign checkout and an unidentified slot both refused through the real seize/release path, reservation retained, no `kind delete`). Remaining: the `linux-gpu` plus `linux-cpu` cohorts against an exact-source rebuild |
 | 7 | Done | No work in this reopen |
-| 8 | Active — Validation Only | Sprint 8.9 is **code-side closed on 2026-08-02**. Its premise was partly out of date on arrival — the budget was already a proper two-arm union — so the plan is corrected rather than left claiming retired work. Landed: the third `DualEnforced` arm Sprint 6.44's dual capability needed, one shared rendered union type replacing a literal duplicated per arm, a schema-reflection assertion that pins the rendered payload against the alternatives the decoder expects (renderer/decoder drift was previously undetectable), a targeted migration diagnostic that names a retired flat payload's shape and the regenerating command instead of surfacing a bare Dhall type error, and removal of the dead `legacyDhall` decoder branch. Remaining and now named explicitly: the generated wire's text enums, `Integer`-vs-`Natural` quantities, the zero-filled `edgePort`, the still-flat Aeson `kind` encoding the web UI reads, and the coordinator/webapp readiness-refinement question. Behavioral evidence is consumed from the Sprint 6.44 wave, per this sprint's own no-dual-accelerator-gate rule |
+| 8 | Active — Validation Only | Sprint 8.9 is **code-side closed on 2026-08-03**, completing the generated-wire migration the 2026-08-02 pass had named as follow-on work. Every enum-like field is a Dhall union rather than `Text` refined after decode (`runtimeMode`, `daemonRole`, `pulsarConnectionMode`, `subscription`, `runtimeLane`, `fieldType`, `adapterType`, plus `resource`/`source` inside the substrate limit record), every quantity is `Natural`, and `configEdgePort` is **removed rather than refined** — it was a literal `+0` whose only consumers were range checks on the value it was hardcoded to. Two fields had no refiner at all and gained domain types (`EngineAdapterType`, `PodMemoryLimitSource`); their guards were deleted rather than left unreachable. The Aeson budget now names its alternative with a key instead of a `kind` text tag, and the dead `inferenceRamBudgetMib` fallback is gone. **Item 4's premise was wrong and is corrected**: there is no PureScript decoder for the budget, so this was a Haskell-plus-Playwright-JS change — and the survey found a real hole behind that framing, namely that the JS reader had no `dual-enforced` arm, so the `linux-gpu` over-budget assertion had been passing **vacuously** since Sprint 6.44. Item 5 is decided: engine-only refinement is the intended end state, because refinement observes the refining process's own pod, and its pod arm exact-matches that pod's `memory.max`. Two traps were caught by round-tripping, not review: a single-constructor mirror derives as a record rather than a one-alternative union, and the union spelling change needs one retired-shape marker per retired text field. Behavioral evidence is consumed from the Sprint 6.44 wave |
 | 9 | Done | No work in this reopen |
 
 ## Prior Closure Evidence By Phase

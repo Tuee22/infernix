@@ -420,11 +420,12 @@ fail-open delete are recorded in
 
 ## Sprint 8.9: Generated Proper-Union Execution Plan [Active — Validation Only]
 
-**Status**: Active — code-side closed on 2026-08-02 for the execution-plan budget language; the
-remaining generated-wire text enums are named as explicit follow-on work below rather than left
-implied. Behavioral evidence is consumed from the Phase 6 Sprint 6.44 cohort, per this sprint's own
-validation rule that it must not create a dual-accelerator gate of its own.
-**Code-side closure**: Complete for the budget union. The machine-independent gate set is GREEN
+**Status**: Active — **code-side closed on 2026-08-03**. The 2026-08-02 pass closed the budget
+union; this pass closed the five items it named as explicit follow-on work, so the whole generated
+execution-plan language is now union-typed. Behavioral evidence is consumed from the Phase 6 Sprint
+6.44 cohort, per this sprint's own validation rule that it must not create a dual-accelerator gate
+of its own.
+**Code-side closure**: Complete. The machine-independent gate set is GREEN
 (`cabal build all --enable-tests`, `infernix-unit`, `infernix-execution-plan-internal`,
 `infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style`, and
 `lint files|chart|proto|docs` plus `docs check`).
@@ -499,29 +500,97 @@ entry point for the whole generated substrate language.
 - legacy flat payloads fail with a targeted migration diagnostic — **GREEN**
 - machine-independent gates pass — **GREEN**
 
+### Landed implementation (items 1-5, 2026-08-03)
+
+**1. Every enum-like wire field is a Dhall union.** `runtimeMode` (four wire positions),
+`daemonRole` (two), `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`,
+request-shape `fieldType`, engine-binding `adapterType`, and the `resource` and `source` fields
+inside the substrate limit record. Each has a `Dhall*` mirror in `Substrate/Internal.hs` whose
+constructors carry a type-specific prefix that `dhallEnumInterpretOptions` strips, so the wire
+alternative is the suffix and several mirrors can name alternatives the domain types also name.
+Refinement became a total case match, so `parseEnum` is deleted along with every one of its failure
+messages: an unsupported spelling is now a structural decode error, not a post-decode string
+rejection. Each rendered union type is built from the same exhaustive list the value renderer uses,
+so a record annotation cannot drift from the values it annotates.
+
+**Two of the nine fields had no refiner at all**, which changed what "migrate the wire" had to mean
+for them. `adapterType` and `source` were raw `Text` from wire to consumer — the first closed only
+by a `Set` membership check in the compiler and string dispatch in two runtime modules, the second
+only by a non-blank check — so both gained domain types (`Types.EngineAdapterType`,
+`Types.PodMemoryLimitSource`) rather than only a wire union. Their guards were then **deleted, not
+left unreachable**: `UnsupportedEngineAdapterType`, the runtime's `unsupported_engine_runner` arm,
+and the `substrate memory enforcer source must be non-empty` check are gone, because none of them
+is a constructible term any more. The unit assertions that covered them are replaced by assertions
+about what is now unrepresentable, not deleted silently.
+
+**2. Every quantity is `Natural`.** Seven fields moved off `dhallInteger`'s `+N` rendering; the
+decoder converts through `naturalToInt`, which fails closed above `maxBound :: Int` rather than
+wrapping a large wire value into a small positive one. `Natural` bounds the bottom only, so
+positivity checks that reject zero stay. The negative-`maxInflightPerMember` unit case is rewritten
+rather than removed: it used to assert a compiler error and now asserts the stronger property, that
+the value is unrepresentable in the wire language and fails at the decode boundary.
+
+**3. `configEdgePort` is removed, not refined.** It was generated as a literal `+0` on every payload
+and its only two consumers were range checks on the value it was hardcoded to; the port the system
+actually uses is `ClusterState.edgePort`, chosen during `cluster up`, which never travelled through
+this language. Refining a field no consumer reads would have dressed up a placeholder instead of
+removing one. `InvalidEdgePort` and the `validateDemoConfig` range check went with it.
+
+**4. The Aeson budget names its alternative with a key**, `{"substrateEnforced": {...}}` rather than
+`{"kind": "substrate-enforced", ...}` — the JSON analogue of the Dhall union, where an unrecognized
+alternative is a structural mismatch instead of a string comparison that falls through. The dead
+`inferenceRamBudgetMib` fallback is deleted; it had no producer anywhere in the repo, no test, and a
+`.!= 0` default that decoded a malformed document to a silent zero-MiB budget.
+
+*This sprint's premise for item 4 was wrong and is corrected here.* There is **no PureScript decoder
+for the budget** — no budget type is in `contractSumTypes` and `web/src` never calls
+`/api/demo-config` — so this was a Haskell-plus-Playwright-JS change, not a coordinated
+Haskell-plus-PureScript one, and the generated-contract pipeline was not involved. What the survey
+did find is a real pre-existing hole that the item's framing had hidden: `inferenceMemoryBudgetAdmission`
+in `web/playwright/inference.spec.js` had **no `dual-enforced` arm at all**, so it returned null for
+every `linux-gpu` budget and the caller skipped the over-budget assertion entirely — the GPU lane's
+browser-side memory-limit check had been passing vacuously since Sprint 6.44 added the dual arm. The
+rewritten reader handles all three alternatives and mirrors `compileResources` exactly: a model that
+does not require the device is admitted against pod RAM alone, and a device-using model against pod
+RAM first and VRAM second, so the pod limit is the one an error names when both are exceeded.
+
+**5. Engine-only refinement is the intended end state**, decided rather than left open. All three
+roles compile the plan; only the engine refines it. Refinement is not a stronger validation of the
+same object — it is an observation of *the refining process's own machine* (live samplers, the host
+partition, this process's cgroup `memory.max`, observed device VRAM), and its pod arm is an exact
+match against the hosting pod's `memory.max`. Refining in a coordinator pod would therefore either
+fail against a legitimately different limit or, worse, succeed against a ceiling no inference will
+run under — manufacturing evidence about a resource the process does not use. The property
+refinement exists to establish is discharged where launches happen: it mints the single-flight
+`EngineExecutionAuthority` that `publishedResultFromRequest` requires, and neither non-engine role
+launches an inference subprocess. Deliverable 4 is therefore scoped to the role that launches
+inference, and reads as satisfied. Recorded in
+[../documents/architecture/typed_execution_plan.md](../documents/architecture/typed_execution_plan.md).
+
+**Two mechanical facts were found by round-tripping rather than by review**, and both are recorded
+because either would have shipped silently. A Dhall alternative is a *label*, so `genericAutoWith`
+on a **single-constructor** mirror derives a record, not a one-alternative union — `fieldType`
+decoded as `{}` against a `< TextField >` annotation and needs an explicitly built union decoder.
+And the wire spelling necessarily changes from `"apple-silicon"` to `AppleSilicon`, so
+`retiredSubstrateMarkers` gained one entry per retired text spelling; `daemonRole` is the sharpest,
+because its three retired aliases (`frontend`, `cluster`, `host`) are values a union cannot express
+at all, so a stale payload carrying one has no other diagnosis.
+
+**Evidence.** Beyond the gate set: the generated `./infernix.dhall` was regenerated and decoded
+end-to-end through `infernix cluster status` (which is what caught the `fieldType` derivation
+defect); the schema-reflection pin now asserts all 23 union alternatives appear in the reflected
+decoder, plus the absence of `edgePort` and of any `Integer`; the wire assertions check the union
+spelling is present and that no enum-like field is written as a quoted tag; the retired-shape
+diagnostic is asserted for both a retired budget payload and two retired enum spellings, each
+guarded by a prior assertion that the current spelling is really present so the fixture cannot go
+vacuous; and the budget JSON is asserted to round-trip, to carry no `kind` key, and to name the
+retired flat encoding when one is supplied.
+
 ### Remaining Work
 
-1. **The rest of the generated wire is still text-tagged**, and this is now stated explicitly rather
-   than implied by "the final schema must not encode alternatives as text tags". Every top-level
-   enum-like choice — `runtimeMode`, `daemonRole`, `adapterType`, `fieldType`, `subscription`,
-   `pulsarConnectionMode`, `runtimeLane` — plus the two `Text` fields *inside* the substrate limit
-   record (`resource`, `source`) remain `Text` refined by post-decode smart constructors. The host
-   manifest already generates both an enum-only union and a payload-carrying union, so it is the
-   working template.
-2. **Quantities are `Integer`, not `Natural`.** Negative and zero values are representable in the
-   wire language and rejected only after decode.
-3. **`configEdgePort` is generated as a literal `0`** and accepted by the compiler — the last
-   zero-filled placeholder in the generated language. It needs a decision: refine it, or move it out
-   of the generated language as a runtime-supplied value.
-4. **The Aeson side still carries a `"kind"` discriminator** plus an `inferenceRamBudgetMib` legacy
-   scalar fallback, and the web UI reads that JSON shape. The Dhall migration therefore did not
-   remove the flat encoding system-wide; retiring it is a coordinated Haskell-plus-PureScript change.
-5. **Readiness refinement is engine-only.** The coordinator publishes readiness on a compiled but
-   unrefined plan, and the webapp role never builds a compiled plan at all. Whether deliverable 4
-   ("startup compiles and refines the generated plan before publishing readiness") is meant to cover
-   all three roles, or whether engine-only refinement is the intended end state, is an open doctrine
-   question — the coordinator does not launch engines, so it has no enforcer to refine against.
-6. **Cohort evidence** is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave.
+1. **Cohort evidence** is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave.
+   The `linux-gpu` half now carries real weight for this sprint: the browser-side over-budget
+   assertion runs on that lane for the first time.
 
 ---
 

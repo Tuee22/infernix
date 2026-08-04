@@ -727,7 +727,7 @@ residentPodLimit :: PodMemoryLimit
 residentPodLimit =
   PodMemoryLimit
     { podMemoryLimitResource = Types.PodRam,
-      podMemoryLimitSource = "execution-plan-internal-test",
+      podMemoryLimitSource = Types.ClusterEnginePodMemoryLimit,
       podMemoryLimitMib = residentCeilingMib
     }
 
@@ -735,7 +735,7 @@ gpuPodLimit :: PodMemoryLimit
 gpuPodLimit =
   PodMemoryLimit
     { podMemoryLimitResource = Types.GpuVram,
-      podMemoryLimitSource = "execution-plan-internal-test",
+      podMemoryLimitSource = Types.ClusterEnginePodMemoryLimit,
       podMemoryLimitMib = gpuCeilingMib
     }
 
@@ -831,7 +831,6 @@ sampleConfig :: DemoConfig
 sampleConfig =
   DemoConfig
     { configRuntimeMode = AppleSilicon,
-      configEdgePort = 0,
       configMapName = "execution-plan-internal",
       generatedPath = ".build/execution-plan-internal.dhall",
       mountedPath = "/opt/infernix/execution-plan-internal.dhall",

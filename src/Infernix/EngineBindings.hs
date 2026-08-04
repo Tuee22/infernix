@@ -9,7 +9,8 @@ where
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Types
-  ( EngineBinding (..),
+  ( EngineAdapterType (..),
+    EngineBinding (..),
     RuntimeMode (..),
   )
 
@@ -82,8 +83,8 @@ bindingForSupportedAdapter selectedEngineValue adapter =
   let adapterId = supportedAdapterId adapter
       pythonNative = supportedAdapterIsPython adapter
       adapterType
-        | pythonNative = "python-stdio"
-        | otherwise = "native-process-runner"
+        | pythonNative = PythonStdio
+        | otherwise = NativeProcessRunner
       adapterLocator
         | pythonNative = "adapters/" <> adapterModuleName adapterId <> ".py"
         | otherwise = adapterId

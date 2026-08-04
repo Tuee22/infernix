@@ -1641,27 +1641,56 @@ function expectedResultRenderKind(model) {
 // capacity (resource unified-host-ram); a substrate-enforced budget draws from
 // the descriptive PodMemoryLimit. (The pre-4.31 flat { kind: "enforced",
 // availableMib } shape is gone.)
-function inferenceMemoryBudgetAdmission(budget) {
+//
+// Phase 8 Sprint 8.9: the alternative is now a KEY, not a string under a shared
+// `kind` key, matching `ToJSON InferenceMemoryBudget`. The dual-enforced arm is
+// also read for the first time — it has existed since Sprint 6.44, and until now
+// this function returned null for it, which silently skipped the whole
+// over-budget assertion on every `linux-gpu` run.
+function podLimitAdmission(podLimit) {
+  if (!podLimit) return null;
+  return {
+    availableMib: Number(podLimit.limitMib),
+    resource: podLimit.resource,
+    source: podLimit.source,
+  };
+}
+
+function inferenceMemoryBudgetAdmission(budget, model) {
   if (!budget) return null;
-  if (budget.kind === "host-enforced") {
+  if (budget.hostEnforced) {
     return {
-      availableMib: Number(budget.partition?.inferenceCapacityMib),
+      availableMib: Number(budget.hostEnforced.partition?.inferenceCapacityMib),
       resource: "unified-host-ram",
       source: "host-memory-partition-inference-capacity",
     };
   }
-  if (budget.kind === "substrate-enforced") {
-    return {
-      availableMib: Number(budget.podLimit?.limitMib),
-      resource: budget.podLimit?.resource,
-      source: budget.podLimit?.source,
-    };
+  if (budget.substrateEnforced) {
+    return podLimitAdmission(budget.substrateEnforced.podLimit);
+  }
+  if (budget.dualEnforced) {
+    // Mirrors `compileResources` in src/Infernix/ExecutionPlan.hs: a model that
+    // does not require the device is admitted against pod RAM alone, and a
+    // device-using model is admitted against pod RAM FIRST and VRAM second, so
+    // the pod limit is the one an error names whenever both are exceeded.
+    const podAdmission = podLimitAdmission(budget.dualEnforced.podLimit);
+    if (!model?.requiresGpu) return podAdmission;
+    const requiredMib = Number(model?.modelRamFootprintMib);
+    if (
+      podAdmission &&
+      Number.isFinite(requiredMib) &&
+      Number.isFinite(podAdmission.availableMib) &&
+      requiredMib > podAdmission.availableMib
+    ) {
+      return podAdmission;
+    }
+    return podLimitAdmission(budget.dualEnforced.vramLimit);
   }
   return null;
 }
 
 function expectedModelMemoryLimitExceeded(model, demoConfig) {
-  const admission = inferenceMemoryBudgetAdmission(demoConfig?.inferenceMemoryBudget);
+  const admission = inferenceMemoryBudgetAdmission(demoConfig?.inferenceMemoryBudget, model);
   if (!admission) return null;
   const requiredMib = Number(model?.modelRamFootprintMib);
   const availableMib = admission.availableMib;

@@ -111,14 +111,16 @@ runExecutableInferenceWorker paths executableModel request cacheObservation
   | requestModelId request /= executableModelId executableModel =
       pure (Left (requestModelMismatchError executableModel request))
   | otherwise =
+      -- Phase 8 Sprint 8.9: the adapter type is a closed sum, so this dispatch
+      -- is total and the former "unsupported engine runner" arm is gone. It
+      -- used to be reachable only by a config that named an adapter the runtime
+      -- cannot execute, which the wire language no longer expresses.
       case engineBindingAdapterType engineBinding of
-        "python-stdio" ->
+        PythonStdio ->
           ensurePythonEngineSetupReady paths modelRuntimeMode engineBinding
             >> runPythonWorker paths executableModel request cacheObservation
-        "native-process-runner" ->
+        NativeProcessRunner ->
           runNativeWorker paths executableModel request cacheObservation
-        adapterType ->
-          pure (unsupportedEngineRunner engineBinding adapterType)
   where
     model = executableModelDescriptor executableModel
     engineBinding = executableModelEngine executableModel
@@ -200,18 +202,6 @@ engineOutputStreamLabel outputStream =
   case outputStream of
     EngineStandardOutput -> "standard-output"
     EngineStandardError -> "standard-error"
-
-unsupportedEngineRunner :: EngineBinding -> Text -> Either ErrorResponse Text
-unsupportedEngineRunner engineBinding adapterType =
-  Left
-    ErrorResponse
-      { errorCode = "unsupported_engine_runner",
-        message =
-          "Unsupported engine adapter type for "
-            <> engineBindingAdapterId engineBinding
-            <> ": "
-            <> adapterType
-      }
 
 runPythonWorker ::
   Paths ->
