@@ -142,7 +142,11 @@ The validation plan minimizes switching between the Apple Silicon and CUDA-capab
 > plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
 > `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
 > check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. *Cohort sign-off* (Axis 2) is
+> machine, it is the gate to begin the *next* phase's implementation. That set runs under a declared
+> toolchain memory ceiling
+> ([bounded_host_memory.md](../architecture/bounded_host_memory.md)), and the gate asserts the
+> ceiling exists and is observed rather than asserting that no exhaustion occurred. *Cohort
+> sign-off* (Axis 2) is
 > the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
 > and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
 > `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The

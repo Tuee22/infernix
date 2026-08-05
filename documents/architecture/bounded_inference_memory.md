@@ -1,12 +1,18 @@
 # Bounded Inference Memory
 
 **Status**: Authoritative source
-**Referenced by**: [../../AGENTS.md](../../AGENTS.md), [../../CLAUDE.md](../../CLAUDE.md), [realness_contract.md](realness_contract.md), [managed_state_transitions.md](managed_state_transitions.md), [runtime_modes.md](runtime_modes.md), [daemon_topology.md](daemon_topology.md)
+**Referenced by**: [../../AGENTS.md](../../AGENTS.md), [../../CLAUDE.md](../../CLAUDE.md), [bounded_host_memory.md](bounded_host_memory.md), [realness_contract.md](realness_contract.md), [managed_state_transitions.md](managed_state_transitions.md), [runtime_modes.md](runtime_modes.md), [daemon_topology.md](daemon_topology.md)
 
-> **Purpose**: Define the code-level "memory-safety by construction" invariant — an inference engine
-> subprocess cannot run without typed evidence that admitted it, and its actual resident memory is
-> bounded to the admitted ceiling — so that an over-budget model is a clean per-request `status=failed`
-> and a host out-of-memory kill is structurally unrepresentable.
+> **Purpose**: Define the code-level "memory-safety by construction" invariant for the inference row
+> of the host-memory capacity ledger — an inference engine subprocess cannot run without typed
+> evidence that admitted it, and its actual resident memory is held to the admitted ceiling — so that
+> an over-budget model is a clean per-request `status=failed` rather than an unmanaged resource
+> transition.
+
+> **Scope.** This document owns *one claimant* on physical host memory: a serialized inference. The
+> ledger itself, the other claimants, and the statement of which host out-of-memory conditions are
+> and are not made unrepresentable live in [bounded_host_memory.md](bounded_host_memory.md). Nothing
+> here asserts that a host out-of-memory kill is impossible.
 
 > **Reopened target contract.** The invariant below is the required end state. The current worktree
 > has resource-indexed compilation/refinement plus Apple, Linux CPU, **and NVIDIA VRAM** watchdog
@@ -20,10 +26,12 @@
 
 ## TL;DR
 
-- A **host OOM is an unmanaged resource transition**: an inference admitted on a *static estimate* but
-  then run with no structural tie to an *enforced* ceiling can consume more host memory than the budget
-  that admitted it and take the whole process tree down with it (a `SIGKILL` that bypasses cleanup and
-  leaves the cluster orphaned).
+- An **unenforced admission is an unmanaged resource transition**: an inference admitted on a *static
+  estimate* but then run with no structural tie to an *enforced* ceiling can consume more host memory
+  than the budget that admitted it and take the whole process tree down with it (a `SIGKILL` that
+  bypasses cleanup and leaves the cluster orphaned). Closing that gap removes *this* claimant as a
+  cause of host exhaustion; it does not remove the others, which
+  [bounded_host_memory.md](bounded_host_memory.md) enumerates.
 - The invariant, the memory analog of the bounded-command kernel
   ([managed_state_transitions.md](managed_state_transitions.md): `runBoundedCommand` under a required
   `Timeout`): compilation mints a resource-indexed `MemoryGrant`, live refinement pairs it with the
@@ -31,8 +39,8 @@
   Running an engine from raw configuration or a bare grant does not typecheck.
 - A breach of the ceiling at runtime is a **clean, typed, terminal per-request failure**
   (`status=failed` with `InferenceError.ModelMemoryLimitExceeded`) — the same fail-clean shape the
-  [realness contract](realness_contract.md) gives for engine-logic failures — never a host kill and
-  never a retryable transient.
+  [realness contract](realness_contract.md) gives for engine-logic failures — never a kill of the
+  daemon that admitted it and never a retryable transient.
 - Enforcement rides on **GHC module export lists plus `-Wall -Werror`** (opaque `MemoryGrant`, the raw
   engine spawn unexported), with the `unboundedEngineSpawnViolations` line-based lint backing the raw
   spawn primitive that has no type-level chokepoint.
@@ -65,7 +73,7 @@ pairs that grant with a live `Enforcer` for the same resource and therefore has 
   callers cannot create independent locks or concurrently reuse one admitted placement. Until then,
   resource/enforcer coherence is construction-safe but aggregate one-model-at-a-time capacity is an
   operational invariant, not a type-level one.
-- **The ceiling is OS-enforced behind one typed interface.** On `apple-silicon` (host-native, no
+- **The ceiling is measured and terminated behind one typed interface.** On `apple-silicon` (host-native, no
   cgroups) a package-internal observer discovers exact process-group membership with fixed
   `/usr/bin/top` output and measures each member's physical bytes with fixed
   `/usr/bin/footprint`, all under one total deadline and bounded captures; the watchdog `SIGKILL`s
@@ -114,7 +122,7 @@ type makes the capacity tradeoff explicit (running an oversized model requires e
 | Types | GHC module export lists (opaque `CompiledRuntimePlan`, `RuntimePlan`, `ExecutableModel`, and resource-indexed grant/enforcer types) under `-Wall -Werror` | constructing or relabeling a grant; refining from caller-fabricated observations; launching from a raw model/config record; a bare-`Int`/absent-zero footprint; a budget with no named enforcer |
 | Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
 | Serialization (Phase 4 target) | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
-| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group VRAM accounting (`linux-gpu`) | actual resident memory exceeding the admitted ceiling without a clean, typed, terminal per-request failure — i.e. a host OOM |
+| OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group VRAM accounting (`linux-gpu`) | actual resident memory of an admitted engine exceeding its ceiling without a clean, typed, terminal per-request failure. This is sample-and-kill on a fixed cadence, not a kernel-imposed allocation ceiling: a breach is detected and terminated, not prevented |
 | Partition | `HostMemoryPartition` smart constructor | `vmReserve + hostHeadroom + inferenceCapacity` oversubscribing physical RAM; a headroom too small to cover the OS and the routed end-to-end browser |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `withCreateProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitives that have no type-level chokepoint. Sprint 6.44 added `withCreateProcess` after finding that whole-token matching had let a bracketed unbounded spawn through |
 
@@ -179,8 +187,10 @@ typed `ModelMemoryLimitExceeded` per-request failure. The device's total VRAM is
 grant must fit inside, the GPU analogue of the cgroup memory limit read for the resident-set lane;
 an absent or non-positive envelope is a refinement rejection (`NvidiaEnvelopeUnavailable` /
 `NvidiaEnvelopeTooSmall`), never an assumed value.
-Until the later behavioral/enforcement work passes, a host OOM remains representable despite the
-landed resource/enforcer type coherence.
+Until the later behavioral/enforcement work passes, this claimant can still contribute to host
+exhaustion despite the landed resource/enforcer type coherence. A host out-of-memory condition
+remains representable for the further reasons enumerated in
+[bounded_host_memory.md](bounded_host_memory.md) — most of which no work in this phase can close.
 
 The superseded surfaces — `admitModelMemory :: … -> Maybe`, the unenforced budget arm, the bare-`Int`
 footprint, the raw unbounded engine spawns, and the fixed `appleHostReserveMib = 3072` host reserve —
@@ -203,8 +213,10 @@ models rather than invalidating the whole catalog.
   exhaustive compiler placement-or-unavailable accounting, and live-refinement failures.
 - The Phase 4 cohort full-suite (`infernix test all` on the selected `apple-silicon` accelerator plus
   `linux-cpu`) is the CPU/Apple behavioral
-  proof: the full per-model real-inference lane completes with zero host OOM, and an over-capacity model
-  produces a typed `status=failed` `ModelMemoryLimitExceeded` rather than a `SIGKILL`.
+  proof: the full per-model real-inference lane completes without exhausting the host, and an
+  over-capacity model produces a typed `status=failed` `ModelMemoryLimitExceeded` rather than a
+  `SIGKILL`. Completing without exhaustion is a sample of this lane's behaviour, not evidence that a
+  bound exists; the bound is proved by the typed gates above.
 - `infernix lint docs` keeps this document registered and its cross-references resolving; the reopened
   phase and sprint status is tracked in `DEVELOPMENT_PLAN/`.
 

@@ -122,9 +122,13 @@ The supported workflow keeps day-to-day phase work local to one hardware cohort 
 > plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
 > `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
 > check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. **That set has one declared
-> prerequisite: `infernix init` must have written the repo-root `./infernix-host.dhall` host
-> manifest.** `cabal test infernix-haskell-style` resolves `cabal` through
+> machine, it is the gate to begin the *next* phase's implementation. **That set has two declared
+> prerequisites. First, `infernix init` must have written the repo-root `./infernix-host.dhall` host
+> manifest. Second, the toolchain must run under a declared memory ceiling
+> ([bounded_host_memory.md](../architecture/bounded_host_memory.md)): `cabal build all` is the
+> largest memory consumer in the gate set, and an uncapped run of it exhausted a 124.94 GiB
+> development host. The gate asserts that a ceiling exists and is observed — completing without
+> exhausting the host is a sample, not a bound.** `cabal test infernix-haskell-style` resolves `cabal` through
 > `HostConfig.toolPaths.cabal`, and its only non-manifest fallbacks are the fixed container-layout
 > paths in `Infernix.HostTools`; a host whose toolchain lives under an ordinary user home has no
 > fallback and the gate cannot run. Widening those candidates is not available, because deriving a
@@ -200,7 +204,10 @@ the shared adapter project:
   `down` noticeably slower than Linux
 - the Apple direct reference build calls `cabal` with `--installdir=./.build` and lets cabal use
   its natural `dist-newstyle` builddir at the project root, which materializes
-  `./.build/infernix`
+  `./.build/infernix`. It runs under the declared build ceiling
+  ([bounded_host_memory.md](../architecture/bounded_host_memory.md)); on the Apple lane that ceiling
+  is a runtime heap cap plus a bounded job count, because Darwin provides neither cgroups nor an
+  enforced address-space limit
 - bootstrap `down` commands delegate to `infernix cluster down` and preserve `./.build/`,
   `./.data/`, the Apple host binary, Linux substrate images, and installed Docker or CUDA
   prerequisites

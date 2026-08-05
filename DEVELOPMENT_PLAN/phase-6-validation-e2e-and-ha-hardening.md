@@ -3493,6 +3493,64 @@ closed.
 - **Cohort**: selected accelerator plus `linux-cpu`, consumed jointly with Sprint 6.44's wave
   against one frozen source.
 
+## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Planned]
+
+**Status**: Planned — consumes the kernel from Phase 1 Sprint 1.21.
+**Blocked by**: Sprint 1.21
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/HaskellStyle.hs`,
+`test/compile-fail/`, `src/Infernix/BuildMemory.hs`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`,
+`documents/development/haskell_style.md`, `documents/development/testing_strategy.md`
+
+### Objective
+
+Make a toolchain spawn without a declared ceiling fail to typecheck, and resolve the enforcement
+mechanism per lane rather than assuming one.
+
+`runCommandWithCwdAndEnvRemovingWithPaths` is the operator passthrough behind `infernix test ...`
+and `infernix kubectl ...`, and it is exempt from the raw-spawn lint. That exemption is recorded as
+a decision about **deadlines**, and the reasoning is sound: bounding an operator's own run with a
+deadline they did not choose would be a defect. Memory is a different kind of quantity — it is a
+property of the operator's own machine, derived from its measured physical RAM, and its absence is
+what destroyed that machine. This sprint adds the memory dimension without touching the deadline
+decision.
+
+The victim rank is the third leg and is deliberately the weakest. `oom_badness` is per-process while
+the hazard is per-tree, so a rank that leaves a build below the cluster pods is inert against the
+ordinary shape of a parallel build. It is applied to the spawned child, never to the lock-holding
+CLI image or a daemon it starts, and it changes who dies rather than how much is allocated.
+
+### Deliverables
+
+- a closed `ToolchainInvocation` vocabulary as the only way to name the toolchain, consumed by
+  `runToolchainCommand` under a rank-2 spawn authority so a ceiling cannot escape its region or be
+  reused; the raw spawn unexported from the passthrough path
+- `unboundedToolchainSpawnViolations`, structurally a copy of `unboundedDescriptorSpawnViolations`:
+  a toolchain spawn surface with no observation of the declared ceiling is a violation
+- negative-compilation fixtures proving a spawn without a plan, a plan substituted across region
+  tags, and a reused escaped authority all fail to compile
+- the per-lane mechanism resolver: a cgroup scope bounding the aggregate on Linux host-native, the
+  container's own limit in the outer container, a runtime heap cap plus bounded concurrency on
+  Darwin, and a named refusal when none resolves
+- the child victim rank, platform-indexed so Darwin is an explicit rather than a silent no-op
+
+### Validation
+
+- `cabal test infernix-haskell-style` runs the new lint, **verified to fail** with the doctrine
+  diagnostic on a reintroduced uncapped toolchain spawn injected into `src/Infernix/CLI.hs` and
+  reverted after the negative-test confirmation
+- `cabal test infernix-compile-fail` accepts the positive fixtures and rejects all three negatives
+- `cabal build all` under `-Wall -Werror`, `infernix lint files/docs/chart/proto`
+
+### Remaining Work
+
+The nested builds that produce the setup helper, the formatter tools, and the compile-fail fixtures
+each carry their own job count and are not covered by this boundary; the committed ceiling in
+`cabal.project` partially covers them, but the setup helper's own compilation is not. Named in the
+doctrine's `Current Status` as deferred.
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**

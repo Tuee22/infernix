@@ -129,6 +129,21 @@ Read first:
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
+- bounded host memory: every host toolchain process runs under a declared memory ceiling derived
+  from measured physical RAM, and a ceiling is inseparable from the concurrency it is multiplied by
+  — a per-process cap under `jobs: $ncpus` bounds the host at `jobs × cap`, not at `cap`.
+  Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
+  exhausted a 124.94 GiB development host on 2026-08-03 while the kernel, which selects per process
+  and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
+  The compiler runtime reserves 1024.65 GiB of address space by default, so the built executable
+  declares a bounded reservation before any memory limit is installable at all. The mechanism is
+  resolved per lane and fails closed when unavailable: a cgroup scope bounds the aggregate of a
+  build tree on Linux, while Darwin has neither cgroups nor an enforced address-space limit and gets
+  a runtime heap cap plus bounded concurrency only. This does **not** make a host out-of-memory
+  condition impossible — page cache, kernel slab, the OOM-protected container runtime, and every
+  process infernix did not start remain outside the bound — and the doctrine names what it does not
+  bound rather than overstating the guarantee. Canonical doctrine:
+  [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution
@@ -136,7 +151,9 @@ Read first:
   launcher for `linux-cpu` or `linux-gpu`
 - do not use host `cabal` builds for Linux or CUDA validation; direct
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-  is the Apple Silicon host-native reference path only
+  is the Apple Silicon host-native reference path only, and every host `cabal` invocation runs
+  under the declared build ceiling
+  ([documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md))
 - do not install Xcode on the Apple host and do not rely on Tart for new Apple engine work. The
   target Apple Metal/Core ML materialization path is headless without VM startup, user keychain
   state, Xcode UI flows, or repo-owned native source: use typed engine-artifact manifests and

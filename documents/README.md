@@ -23,9 +23,13 @@
   code-level "evidence, not hope" invariant — every operation that acts on a system state consumes
   typed evidence that the state's transition completed, so races and flakes (unmanaged state
   transitions) are structurally unrepresentable
+- [architecture/bounded_host_memory.md](architecture/bounded_host_memory.md) defines the
+  host-memory capacity ledger and the declared-ceiling invariant — every memory-consuming process
+  this repository starts runs under a ceiling derived from measured physical RAM — and states
+  precisely which host out-of-memory conditions that does and does not make unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
-  target "memory-safety by construction" invariant and identifies the current per-substrate
-  enforcement gaps reopened by the execution-plan refactor
+  target "memory-safety by construction" invariant for the inference row of that ledger, and
+  identifies the current per-substrate enforcement gaps reopened by the execution-plan refactor
 - [architecture/typed_execution_plan.md](architecture/typed_execution_plan.md) defines the closed
   generated-Dhall execution language, raw-to-compiled plan boundary, live enforcer refinement, and
   capability-gated command, provisioning, routing, and inference surfaces
@@ -164,7 +168,13 @@
 - `documents/architecture/managed_state_transitions.md` owns the state-transition and evidence
   discipline — the "evidence, not hope" invariant that every state-acting operation consumes typed
   evidence — generalizing the results-side `documents/architecture/realness_contract.md`.
-- `documents/architecture/bounded_inference_memory.md` owns the inference-memory-safety discipline —
+- `documents/architecture/bounded_host_memory.md` owns the host-memory capacity ledger — the
+  declared-ceiling invariant that every memory-consuming process this repository starts runs under
+  a ceiling derived from measured physical RAM, that a ceiling is inseparable from the concurrency
+  it is multiplied by, and that the enforcement mechanism is resolved per lane rather than assumed.
+  It is also the canonical home for the scope statement naming what is *not* bounded, so no other
+  document asserts that a host out-of-memory condition is impossible.
+- `documents/architecture/bounded_inference_memory.md` owns the inference row of that ledger —
   the "memory-safety by construction" invariant that compilation mints a resource-indexed
   `MemoryGrant`, live refinement pairs it with a matching `Enforcer`, and public engine launch
   accepts only the resulting opaque `ExecutableModel` whose capped-engine region applies the

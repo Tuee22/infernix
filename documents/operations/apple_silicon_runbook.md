@@ -72,7 +72,10 @@ must already point at a native arm64 daemon before Docker-backed cluster work be
 Direct reference path:
 
 - build both Haskell binaries with
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
+  which runs under the declared build ceiling
+  ([bounded host memory](../architecture/bounded_host_memory.md)) — the toolchain is a named account
+  on host RAM, and an uncapped build is what exhausted a development host on 2026-08-03
 - run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
 - run `./.build/infernix cluster up`
 - run `./.build/infernix test all`
@@ -196,7 +199,10 @@ Direct reference path:
   (`engineExecutionLock`) and admits each inference against the typed `InferenceMemoryBudget`
   (see the "Inference Memory Budget and Host-Memory Admission" section): an over-budget model
   publishes a clean `status=failed` real `InferenceResult` with typed `ModelMemoryLimitExceeded`
-  quantities instead of launching, so peak resident memory is bounded to one admitted model.
+  quantities instead of launching, so peak *inference* resident memory is held to one admitted
+  model. The host's other claimants — most notably the toolchain that runs the direct reference
+  build above — are owned by
+  [bounded host memory](../architecture/bounded_host_memory.md).
   This disk cache (LRU in `python/adapters/model_cache.py`) remains a separate bounded host-daemon
   resource and is purgeable; disk-cache purging is independent of the RAM budget, which is resolved
   from a checked `HostMemoryPartition` splitting host physical RAM into the colima VM pledge, the
@@ -350,7 +356,10 @@ Playwright browser, and worst-case watchdog overshoot), and the remaining `infer
 physical − vmReserve − headroom. The smart constructor **rejects** oversubscription (capacity < 0) and
 a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom (the
 exact gap a routed-E2E run OOMed on) is not constructible. This replaced the fixed
-`appleHostReserveMib = 3072` reserve, which did not cover the routed browser and allowed a host OOM. On
+`appleHostReserveMib = 3072` reserve, which did not cover the routed browser and allowed a host OOM.
+`headroom` covers the four co-tenants named above and **not** the Haskell toolchain, which is a
+separate declared account under
+[bounded host memory](../architecture/bounded_host_memory.md). On
 a 64 GiB host with a 48 GiB Colima pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB, so
 the heavy diffusion rows (`image-*` footprint 12288, `video-*` footprint 28672) fail-close cleanly at
 admission rather than racing the watchdog.

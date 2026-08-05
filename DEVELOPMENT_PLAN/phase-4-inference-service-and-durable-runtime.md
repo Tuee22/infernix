@@ -2520,6 +2520,57 @@ produced by the superseded FFI sampler is likewise historical evidence only.
 
 ---
 
+## Sprint 4.33: Inference Memory Scope Correction [Planned]
+
+**Status**: Planned — documentation and validation-criteria scope only; no runtime behavior change.
+**Implementation**: `documents/architecture/bounded_inference_memory.md`,
+`DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Bring this phase's memory claims and validation criteria into line with what its implementation
+actually proves.
+
+Two defects, both in the criteria rather than the code. First, this phase's closure evidence
+includes statements that a never-out-of-memory guarantee is proven on Apple hardware and that the
+catalog completes with zero host out-of-memory kill. Those are true of the inference lane as run and
+false as global statements: the enforcement is a fixed-cadence sampler over an admitted engine's
+process group, and the incident that motivated this correction came from a process this phase never
+governed.
+
+Second, and more important as a gate: **completing without exhausting the host is a sample, not a
+bound.** The full-suite runs that produced that evidence were performed with no memory ceiling on the
+largest consumer present. A criterion that asserts an absence of failure passes by luck whenever the
+sample is unrepresentative, and this one was.
+
+### Deliverables
+
+- the never-out-of-memory claims in `cohort-validation-waves.md` and
+  `legacy-tracking-for-deletion.md` annotated as historical for their narrower recorded inference
+  scope, following the established convention of annotating prior wave evidence rather than
+  rewriting it
+- this phase's validation criteria restated to assert that the ceiling exists and is observed —
+  the typed gates, the negative-compilation fixtures, and the adversarial breach fixture — rather
+  than asserting that no exhaustion occurred
+- the enforcement table row and the `by construction` language scoped to admission, with runtime
+  enforcement described as measurement and termination on a fixed cadence
+
+### Validation
+
+- `infernix lint docs`; no remaining claim in this phase or its owned documents asserts that a host
+  out-of-memory kill is structurally unrepresentable
+- the surviving honest statements are preserved rather than rewritten
+
+### Remaining Work
+
+The partition still carries no build term, so the sum of declared claims is not checked against
+physical memory. That is deferred and named in the doctrine's `Current Status`; it is not closed by
+this sprint.
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**

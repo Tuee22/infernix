@@ -74,7 +74,8 @@ Available Apple Silicon commands:
   ${SCRIPT_LABEL} down
   ${SCRIPT_LABEL} purge
 
-Direct reference commands:
+Direct reference commands (the cabal invocation runs under the declared build ceiling in
+cabal.project; see documents/architecture/bounded_host_memory.md):
   cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
   ./.build/infernix init
   ./.build/infernix cluster up

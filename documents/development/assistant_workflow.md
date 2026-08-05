@@ -37,7 +37,9 @@ this canonical list.
   lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor publication, validation,
   and teardown remain `infernix`-owned
 - use direct host `cabal` only for the Apple Silicon host-native control plane; do not use host
-  `cabal` for Linux or CUDA validation — use the containerized outer-control-plane path
+  `cabal` for Linux or CUDA validation — use the containerized outer-control-plane path. Every host
+  `cabal` invocation runs under the declared build ceiling
+  ([../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md))
 - never use cross-architecture emulation for development or validation; do not create or switch
   Docker contexts or provision a Colima VM on Apple Silicon (the existing native arm64 daemon is used)
 - do not install Xcode or rely on Tart for Apple engine work; the Apple Metal/Core ML path is
@@ -124,13 +126,35 @@ this canonical list.
   Canonical:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
   [../architecture/typed_execution_plan.md](../architecture/typed_execution_plan.md)
+- bounded host memory: every host toolchain process runs under a declared ceiling derived from
+  measured physical RAM, and a ceiling is inseparable from the concurrency it is multiplied by — a
+  per-process cap under `jobs: $ncpus` bounds the host at `jobs × cap`, not at `cap`. Inference is
+  one claimant on host RAM; the toolchain is another, and an uncapped `cabal build` exhausted a
+  124.94 GiB development host on 2026-08-03. The compiler runtime reserves 1024.65 GiB of address
+  space by default, so the built executable declares a bounded reservation before any memory limit
+  is installable. The mechanism is resolved per lane and fails closed when unavailable: a cgroup
+  scope bounds the aggregate on Linux, while Darwin has neither cgroups nor an enforced
+  address-space limit and gets a runtime heap cap plus bounded concurrency only. This does **not**
+  make a host out-of-memory condition impossible; the doctrine names what it does not bound.
+  Canonical:
+  [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md)
+- `close_fds` is only bounded because the descriptor space is: `Infernix.DescriptorSpace` lowers the
+  soft `RLIMIT_NOFILE` to a 16384 ceiling as the first action of every process image, before the
+  internal self-exec dispatch and before any descriptor is opened, because the forked child closes
+  every descriptor up to that limit before `exec` — 313 s per spawn at a containerd pod's
+  1073741816, measured. Every spawn kernel observes the bound immediately before `createProcess`,
+  and the `unboundedDescriptorSpawnViolations` lint keeps a new `close_fds` surface from skipping
+  it. Canonical:
+  [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 
 ## Supported Build And Operator Workflows
 
 - prefer the supported stage-0 bootstrap entrypoints:
   `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
 - use direct host builds only for the Apple Silicon host-native control plane:
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
+  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
+  under the declared build ceiling
+  ([../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md))
 - on supported Linux and CUDA paths, do not build or validate with host `cabal`; use the
   containerized Linux outer-control-plane path through `./bootstrap/linux-cpu.sh`,
   `./bootstrap/linux-gpu.sh`, or

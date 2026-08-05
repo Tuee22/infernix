@@ -1,8 +1,9 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — Sprint 0.18 closed the no-repo-owned-native-source doctrine, governed workflow
-mirror, and correction evidence reset on 2026-07-27. Sprint 0.17 and Sprints 0.1-0.16 retain their
-recorded narrower closure.
+**Status**: Done — Sprint 0.19 reopened and re-closed this phase for the bounded-host-memory
+doctrine and its governance surface on 2026-08-04. Sprint 0.18 closed the
+no-repo-owned-native-source doctrine, governed workflow mirror, and correction evidence reset on
+2026-07-27; Sprint 0.17 and Sprints 0.1-0.16 retain their recorded narrower closure.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -23,6 +24,22 @@ recorded narrower closure.
 Phase 0 closes the documentation bootstrap only. Later phases still own follow-on documentation
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
+
+> **Bounded-host-memory reopen (2026-08-04).** A host-side `cabal build` from this checkout reached
+> 109.46 GiB resident on a 124.94 GiB development host and wedged it for five and a half hours. The
+> kernel destroyed 111 Kubernetes pod processes and never selected the build: `oom_badness` is
+> per-process and the build ran at `oom_score_adj` 0 against pods at 996-1000. The forensic finding
+> that forces a governance reopen is not the incident but its cause — the toolchain is a first-class
+> claimant on host RAM that appears in no partition, no budget, and no type, so it could not exceed
+> a limit it never had. The same review found `bounded_inference_memory.md` asserting in its purpose
+> block that a host out-of-memory kill is structurally unrepresentable while stating the opposite
+> later in the same file. Phase 0 reopens under [Sprint 0.19](#sprint-019-bounded-host-memory-doctrine-done)
+> to author the capacity-ledger doctrine, register it, narrow every over-claiming statement in the
+> governed suite to what is actually proven, and mirror the new non-negotiable rule. This is
+> machine-independent (Axis-1 only: `infernix lint docs` / `docs check` / `cabal build all`); it has
+> no accelerator gate and blocks no accelerator phase, and it **re-closes in the same change** that
+> authors the doctrine, exactly as Sprints 0.11 and 0.13-0.15 did. The implementation it governs is
+> owned by Phase 1 Sprint 1.21 and Phase 6 Sprint 6.46.
 
 > **Realness reopen (governed-doc reconciliation).** The realness-by-construction program (Phases
 > 1/4/6) changed the model bindings and replaced the "real-output proof remains a substrate
@@ -709,8 +726,10 @@ doctrine — author the
 in `src/Infernix/Lint/Docs.hs`, and `documents/README.md`), and add the new non-negotiable rule to the
 three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror plus `assistant_workflow.md` — encoding
 evidence, not hope. An inference engine subprocess runs only under a typed `MemoryGrant` minted by
-`admitModelMemory`, the capped-engine kernel bounds its resident memory to the admitted `MemoryCeiling`,
-and an over-budget model is a clean `status=failed` `ModelMemoryLimitExceeded`, never a host OOM.
+`admitModelMemory`, the capped-engine kernel measures its resident memory against the admitted
+`MemoryCeiling` and terminates on breach, and an over-budget model is a clean `status=failed`
+`ModelMemoryLimitExceeded` rather than an unmanaged resource transition. That scope is one claimant
+on host memory; the ledger and the host toolchain account are owned by Sprint 0.19.
 Governance is honest current-state: the doc and mirror record the target while naming the enforcing code
 as `Planned` Phase 4/6 work. The doctrine is canonical at
 [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md).
@@ -1000,6 +1019,84 @@ Closure evidence (2026-07-27):
 
 None. Phase 1 Sprint 1.20 is now Active. Phase 2 remains blocked by Phase 1 and retains its own
 ordered phase review, validation, Apple, and `linux-cpu` closure requirements.
+
+---
+
+## Sprint 0.19: Bounded Host Memory Doctrine [Done]
+
+**Status**: Done — the capacity-ledger doctrine, its lint registration, the governed-suite scope
+corrections, and the three-way non-negotiable mirror landed on 2026-08-04. Machine-independent
+(Axis-1 only); no accelerator gate.
+**Implementation**: `documents/architecture/bounded_host_memory.md`, `src/Infernix/Lint/Docs.hs`,
+`documents/README.md`, `documents/documentation_standards.md`, the root-document mirror
+**Docs to update**: `documents/architecture/bounded_host_memory.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/managed_state_transitions.md`,
+`documents/architecture/realness_contract.md`, `documents/architecture/runtime_modes.md`,
+`documents/development/assistant_workflow.md`, `documents/development/local_dev.md`,
+`documents/development/testing_strategy.md`, `documents/engineering/build_artifacts.md`,
+`documents/operations/apple_silicon_runbook.md`, `README.md`, `AGENTS.md`, `CLAUDE.md`
+
+### Objective
+
+Establish the host-memory capacity ledger as a governed doctrine, and make the suite's memory
+language honest.
+
+Infernix partitions physical host RAM and names exactly one claimant: a single serialized
+inference. `minHostHeadroomMib` enumerates who the residual `headroom` covers — the OS, the
+control-plane binary, the routed end-to-end browser, worst-case watchdog overshoot — and the
+Haskell toolchain is not among them. A ledger with one row cannot overflow on a claimant it does
+not model, which is why the process that exhausted the host was never in breach of anything.
+
+Two governance obligations follow. First, a canonical home for the ledger, the declared-ceiling
+invariant, and the per-lane enforcement mechanism, stated so that the concurrency multiplier is
+inseparable from the ceiling: a per-process cap under `jobs: $ncpus` bounds the host at
+`jobs × cap`. Second, a scope statement strong enough that no document in the suite again claims a
+host out-of-memory kill is impossible — the enforcement it would rest on is a fixed-cadence sampler
+for inference, and for everything the repository does not start there is no enforcement at all.
+
+### Deliverables
+
+- `documents/architecture/bounded_host_memory.md` authored as the canonical home: the ledger and
+  its claimants, the three-clause invariant, the per-lane enforcement table, a `Bounded build
+  memory` subsection modelled on the bounded-descriptor-space section of
+  [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md),
+  the named residual review-obligations, and a `What this does not bound` section that is the
+  suite's only home for that statement
+- the doc registered in `requiredDocs` and given a `DocumentStructureRule` in
+  `src/Infernix/Lint/Docs.hs`, indexed in `documents/README.md`, and added to the update-rule set in
+  `documents/documentation_standards.md`
+- the self-contradiction in `bounded_inference_memory.md` resolved by scoping that document to the
+  inference row and moving the global statement to the parent doctrine
+- every "OS-enforced" / "by construction" claim about *runtime* memory enforcement restated as what
+  it is — measurement and termination on a fixed cadence — across `managed_state_transitions.md`,
+  `runtime_modes.md`, `realness_contract.md`, and `apple_silicon_runbook.md`
+- a glossary note recording that "bounded" elsewhere in this suite means time, captured output, and
+  descriptor space, never memory
+- the new non-negotiable rule mirrored byte-identically into `AGENTS.md` and `CLAUDE.md` with the
+  canonical form in `documents/development/assistant_workflow.md`, and the existing host-`cabal`
+  rule extended with the ceiling clause
+- the `Infernix.DescriptorSpace` passage restored to the canonical
+  `assistant_workflow.md` list, which the two mirrors carried but their source did not
+
+### Validation
+
+- `infernix lint docs` passes with the new document registered, structured, and cross-linked, and
+  `cabal build all` under `-Wall -Werror` accepts the `Lint/Docs.hs` registration
+- `diff CLAUDE.md AGENTS.md` differs only at the title, `Supersedes`, `Purpose`, and intro lines, so
+  the mirror remains byte-identical from the non-negotiable rules onward
+- the governed suite contains no remaining claim that a host out-of-memory kill is structurally
+  unrepresentable; the surviving honest statements in `typed_execution_plan.md` and `README.md` are
+  preserved rather than rewritten
+
+### Remaining Work
+
+None in this sprint. The doctrine it establishes is implemented by Phase 1 Sprint 1.21 (the
+build-memory kernel, the bounded runtime reservation, and the generated ceiling) and Phase 6
+Sprint 6.46 (the toolchain spawn boundary, its lint, and the per-lane mechanism resolver). The
+deferred ledger rows — the partition's missing build term, the unchecked sum of cluster pod limits
+against node allocatable, and the uncapped nested builds — are named in the doctrine's
+`Current Status` so they are not mistaken for closed.
 
 ---
 

@@ -43,6 +43,11 @@ of the supported artifact contract.
   `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
   which lets cabal use its natural `dist-newstyle` builddir at the project root while installing
   the launcher binaries under `./.build/`
+- every host toolchain invocation runs under the declared build ceiling owned by
+  [bounded_host_memory.md](../architecture/bounded_host_memory.md). The declared quantity is a
+  budget for the toolchain account together with its job count, never a bare per-process cap: the
+  worst case is `jobs × cap`, so a per-process ceiling stated without its concurrency is not a bound
+  on the host
 - on the supported outer-container path, cabal-home and the cabal builddir live at the toolchain's
   natural in-image locations (`/root/.cabal/`, `dist-newstyle/`); they are not bind-mounted to the
   host

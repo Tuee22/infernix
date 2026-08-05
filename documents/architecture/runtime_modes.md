@@ -177,8 +177,10 @@ state-transition doctrine generalizes; its canonical home is
 [Managed State Transitions](managed_state_transitions.md).
 
 **Memory-safety by construction.** The admission above proves a request *fits* before launch; the
-capped-engine kernel additionally bounds the engine subprocess's *actual* resident memory to that
-decision, closing a gap a full-suite run once exercised as a host OOM-kill. Compilation and live
+capped-engine kernel additionally measures the engine subprocess's *actual* resident memory against
+that decision and terminates it on breach, closing a gap a full-suite run once exercised as a host
+OOM-kill. "By construction" describes the *admission* — an engine cannot launch without a matching
+grant and enforcer — not the runtime enforcement, which is a fixed-cadence sampler. Compilation and live
 refinement create an `ExecutableModel` carrying the matching resource-indexed grant/enforcer pair over a
 checked `HostMemoryPartition` (physical minus the co-tenant pledge minus a headroom that covers the OS
 and the routed end-to-end browser, rejecting oversubscription) with a required `ModelMemoryFootprint`
@@ -224,8 +226,9 @@ target shape is the three-role daemon model codified in
   HA-shaped platform defaults and own the HA evidence. This single-replica sizing bounds the
   control-plane Harbor/Pulsar/coordinator/demo services; the on-host `infernix service` inference
   RAM is separately bounded by the typed resource-admission policy (see Per-Substrate Inference
-  Memory Budget and Phase 4 Sprint 4.27), so peak inference memory stays within budget by
-  construction. The chart ships
+  Memory Budget and Phase 4 Sprint 4.27), so peak *inference* memory stays within its declared
+  budget. Host memory as a whole has other claimants — including the host toolchain — and is owned
+  by [bounded host memory](bounded_host_memory.md). The chart ships
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
   `clusterServiceEnabled` returns `False` on every substrate, and
   `finalPhaseDeployments` waits on

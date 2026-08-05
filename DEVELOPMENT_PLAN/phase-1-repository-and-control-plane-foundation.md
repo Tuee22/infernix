@@ -3781,6 +3781,70 @@ identity remains unchanged and closes Sprint 0.18 only.
 
 ---
 
+## Sprint 1.21: Bounded Host Build Memory Kernel [Planned]
+
+**Status**: Planned — the doctrine it implements is closed by Phase 0 Sprint 0.19; no unmet
+blocker remains for the machine-independent half.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `infernix.cabal`, `cabal.project`,
+`src/Infernix/HostConfig.hs`, `src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/ProjectInit.hs`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`,
+`documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`
+
+### Objective
+
+Give the host toolchain a declared account on physical memory, and make a ceiling that was never
+divided by its concurrency impossible to construct.
+
+The declared quantity is a budget for the toolchain account together with the job count it will be
+multiplied by. `deriveBuildMemoryPlan` is the single mint and the only producer of the
+hidden-constructor `BuildMemoryPlan`; `planRtsHeapMib` and `planProcessAddressMib` are accessors on
+that type alone, so a per-process ceiling cannot exist without the budget and concurrency that
+produced it. This is the sprint that refuses the obvious wrong fix: a 48 GiB per-process heap cap
+under `jobs: $ncpus` on a 32-core host permits 1536 GiB.
+
+The kernel is only installable because the built executable declares a bounded runtime address-space
+reservation first. Measured on the development host: the compiler runtime reserves 1024.65 GiB by
+default and 1.45 GiB under an explicit reservation size, at identical resident memory. Without that,
+lowering the process's own address-space limit succeeds and then kills it on its next allocation,
+so the establish-at-startup-and-inherit pattern that `Infernix.DescriptorSpace` uses does not
+otherwise transfer.
+
+### Deliverables
+
+- a bounded runtime address-space reservation on the built executable, so a memory limit is
+  installable in the process image at all
+- a calibrated ceiling and bounded job count committed to `cabal.project` and the compile-fixture
+  project, covering a fresh clone and an operator's own direct `cabal` invocation
+- `Infernix.BuildMemory` exporting `BuildMemoryBudget`, `BuildConcurrency`, and `BuildMemoryPlan`
+  abstractly with `deriveBuildMemoryPlan` as the only mint, following the hidden-constructor,
+  lower-only, fail-closed shape of `Infernix.DescriptorSpace`
+- physical-memory facts in the host manifest, measured rather than declared — `/proc/meminfo`
+  intersected with the current cgroup limit on Linux, `hw.memsize` on Darwin — reusing the existing
+  cgroup reader in `Infernix.Runtime.Enforcer`
+- the per-machine ceiling generated into the untracked `cabal.project.local` by `infernix init`,
+  derived from those facts, superseding the hand-written stopgap
+
+### Validation
+
+- the calibration run: the smallest ceiling under which `cabal build all` completes, including the
+  largest module compiled in six components, recorded with its measured peak resident memory. The
+  shipped value is a measured multiple of that, and the measurement is what is maintained
+- `cabal test infernix-unit` proves the bound is inherited through the compiler chain, that an
+  unresolvable ceiling is a named refusal, and that establishing it never raises a tighter
+  host-imposed limit
+- an adversarial over-allocation under the ceiling exits non-zero and cleanly with no global
+  out-of-memory condition
+- `cabal build all` under `-Wall -Werror`, `infernix lint docs`
+
+### Remaining Work
+
+The Apple lane's mechanism is unmeasured and is proved by its cohort wave, not by this gate set:
+Darwin aliases the address-space limit to an advisory resident-set limit, has no cgroups, and has no
+equivalent global out-of-memory killer, so its bound is a runtime heap cap plus bounded concurrency
+and the aggregate is arithmetic rather than enforcement.
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**

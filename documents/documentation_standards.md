@@ -168,9 +168,17 @@ Rules:
   are admin-gated versus per-user), update `documents/architecture/access_control_doctrine.md`,
   `documents/engineering/edge_routing.md`, `documents/architecture/web_ui_architecture.md`, and the
   relevant phase document in the same change
+- when the host-memory capacity ledger changes (the declared build budget and its concurrency, the
+  per-lane enforcement mechanism, the victim rank, or the statement of what is not bounded), update
+  `documents/architecture/bounded_host_memory.md`, `documents/architecture/bounded_inference_memory.md`,
+  `documents/development/local_dev.md`, `documents/development/testing_strategy.md`,
+  `documents/engineering/build_artifacts.md`, the three-way `README.md` / `AGENTS.md` / `CLAUDE.md`
+  mirror with `documents/development/assistant_workflow.md`, and the relevant phase document in the
+  same change
 - when the inference-memory-safety contract changes (the `MemoryGrant` / capped-engine chokepoint, the
   `HostMemoryPartition`, the required `ModelMemoryFootprint`, the enforcer-typed `InferenceMemoryBudget`,
   or the admission policy), update `documents/architecture/bounded_inference_memory.md`,
+  `documents/architecture/bounded_host_memory.md`,
   `documents/architecture/typed_execution_plan.md`,
   `documents/architecture/runtime_modes.md`, `documents/architecture/daemon_topology.md`,
   `documents/operations/apple_silicon_runbook.md`, the `documents/architecture/realness_contract.md`

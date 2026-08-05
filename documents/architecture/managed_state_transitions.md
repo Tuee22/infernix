@@ -23,8 +23,12 @@
   `ModelMemoryLimitExceeded`, closed ADTs rather than integer sentinels) is the in-repo precedent this
   doctrine generalizes; [bounded inference memory](bounded_inference_memory.md) carries the same
   bounded-primitive shape to the inference subprocess itself — an opaque `ExecutableModel` carrying
-  a matching resource-indexed grant/enforcer pair and OS-enforced `MemoryCeiling`, the memory analog
-  of `runBoundedCommand` under a `Timeout`.
+  a matching resource-indexed grant/enforcer pair and a measured, watchdog-terminated
+  `MemoryCeiling`, the memory analog
+  of `runBoundedCommand` under a `Timeout`. The analogy has one limit worth stating: a deadline is a
+  property of a single process and composes trivially, whereas a ceiling on one process says nothing
+  about the host, so memory additionally needs a declared budget and an admission rule over
+  concurrent claims — owned by [bounded host memory](bounded_host_memory.md).
 - Enforcement rides on **GHC module export lists plus `-Wall -Werror`** — the sound, compile-checked
   lever. The governed lints are line-based and cannot see scope; the type system does. Line-based
   capability-gating lints back the raw primitives that have no type-level chokepoint: `unboundedExecViolations`

@@ -91,11 +91,11 @@ Package-owned live observations pair the grant with its matching enforcer inside
 closed ADT branch in `ResultPayload`, not successful inline output or a parsed string, and must be
 published without launching the engine while smaller compiled placements continue to run.
 
-The **enforcement half** targets making an admitted request's actual resident memory and aggregate
-execution authority incapable of causing a host OOM-kill. It is owned by
+The **enforcement half** targets removing an admitted request's actual resident memory and aggregate
+execution authority as a cause of host exhaustion. It is owned by
 [bounded_inference_memory.md](bounded_inference_memory.md): compilation and live refinement create an
 `ExecutableModel` carrying a matching resource-indexed grant/enforcer pair, and the package-internal
-capped-engine kernel OS-bounds its `MemoryCeiling`, over a checked `HostMemoryPartition` with a
+capped-engine kernel measures and terminates against its `MemoryCeiling`, over a checked `HostMemoryPartition` with a
 required `ModelMemoryFootprint` and an enforcer-typed budget. Phase 4 retains adversarial
 Apple/Linux CPU proof and encapsulated serialization; Phase 6 retains GPU enforcement.
 
@@ -119,4 +119,8 @@ Apple/Linux CPU proof and encapsulated serialization; Phase 6 retains GPU enforc
   this contract from inference results to system state transitions.
 - [bounded_inference_memory.md](bounded_inference_memory.md) — the enforcement half of the memory
   contract: an executable capability carries the matching indexed grant/enforcer pair; Phases 4 and
-  6 own the remaining behavioral proof required to make a host OOM unrepresentable.
+  6 own the remaining behavioral proof that an *admitted inference* cannot exceed its ceiling
+  without a typed failure.
+- [bounded_host_memory.md](bounded_host_memory.md) — the capacity ledger that inference is one row
+  of, and the canonical statement of which host out-of-memory conditions are not bounded by any
+  phase.

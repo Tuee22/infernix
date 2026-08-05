@@ -578,6 +578,11 @@ Direct host `cabal install --installdir=./.build ... all:exes` is the Apple Sili
 reference path only. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation
 commands run through the outer-container launcher.
 
+Every host toolchain invocation runs under a declared memory ceiling derived from measured physical
+RAM, together with the job count it is multiplied by — the toolchain is a named account on host
+memory, not a residual. See
+[documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md).
+
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -873,6 +878,15 @@ this section is an orientation summary.
   capabilities. Until Phases 4/6/8 close their owned behavior, enforcement, and wire-format work,
   the landed capability core and watchdogs are not proof that every resource-exhaustion state is
   unrepresentable
+- host memory has more than one claimant, and inference is only one of them. The host toolchain is
+  the other large one: an uncapped `cabal build` from this checkout reached 109.46 GiB resident on a
+  124.94 GiB machine, and the kernel — which selects per process and ranks a build below every
+  cluster pod — destroyed 111 pod processes without ever touching it. Every host toolchain process
+  now runs under a declared ceiling derived from measured physical RAM together with its job count,
+  because a per-process cap under a host-core-count job setting bounds the host at `jobs × cap`. The
+  ledger, the per-lane enforcement mechanism, and an explicit statement of which out-of-memory
+  conditions remain *outside* the bound are owned by
+  [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - cluster lifecycle and image-publication commands use closed semantic commands with generated
   per-operation timeout/retry policies and one capability-gated command kernel. The all-Haskell
   lifecycle-lock and subprocess implementations are present, and the obsolete subprocess C source
