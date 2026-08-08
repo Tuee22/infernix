@@ -9,7 +9,7 @@
 ## TL;DR
 
 - The target generated Dhall describes a closed execution plan, not a bag of descriptive settings.
-  Phase 8 Sprint 8.9 owns the remaining migration from the transitional descriptive wire shape to
+  The wire carries no transitional descriptive shape to
   proper Dhall unions and `Natural` quantities.
 - The current Haskell capability core already models resource and enforcer alternatives as indexed
   ADTs; text tags plus zeroed inapplicable fields are forbidden in the final generated language.
@@ -46,8 +46,7 @@ Neither proof substitutes for the other.
 
 ## Closed Dhall Language
 
-The final reflected schema uses proper alternatives. **Phase 8 Sprint 8.9 completed the
-generated-Dhall migration on 2026-08-03**: every enum-like choice in the substrate wire is a Dhall
+The reflected schema uses proper alternatives: every enum-like choice in the substrate wire is a Dhall
 union rather than `Text` refined after decode, every quantity is `Natural` rather than `Integer`,
 and the last zero-filled placeholder is gone. The migrated fields are `runtimeMode` (four wire
 positions), `daemonRole` (two), `pulsarConnectionMode`, engine-pool `subscription`, model
@@ -174,19 +173,17 @@ enforcer, and it is discharged where launches happen: refinement mints the singl
 websocket and filesystem-spool paths pass through — requires it. Neither non-engine role launches an
 inference subprocess: the coordinator's loops are `CompiledRuntimePlan`-typed and its
 `drainInferenceTopic` hard-errors on a coordinator capability, and the webapp only publishes to
-Pulsar. So Sprint 8.9's deliverable 4 ("startup compiles and refines the generated plan before
+Pulsar. So the requirement ("startup compiles and refines the generated plan before
 publishing readiness") is scoped to the role that launches inference, and reads as satisfied.
 
 Capacity rejection is request-local rather than a whole-daemon startup failure. The compiler
 accounts for every input model in exactly one of two disjoint maps: a `CompiledPlacement` that may
 advance to live refinement, or an explicit `UnavailableModel` carrying the compiler-produced
-`InferenceError` (normally `ModelMemoryLimitExceeded`). It never
-uses filtering or `mapMaybe` to lose an over-capacity model. Only the placement map feeds routing;
-the unavailable map is the required source of the typed terminal rejection for an explicitly
-requested configured model. The coordinator now emits that rejection without attempting to derive
-a nonexistent engine route; the 2026-07-25 Phase 1 gate historically proved that behavior for its
-source. The all-Haskell lifecycle/subprocess correction supersedes that gate as current-worktree
-evidence, so the fresh complete Stage 1 must prove it again.
+`InferenceError` (normally `ModelMemoryLimitExceeded`). It never uses filtering or `mapMaybe` to
+lose an over-capacity model. Only the placement map feeds routing; the unavailable map is the
+required source of the typed terminal rejection for an explicitly requested configured model. The
+all-Haskell lifecycle/subprocess correction supersedes that gate as current-worktree evidence, so
+the fresh complete Stage 1 must prove it again.
 
 Request consumption is likewise total on both coordinator and engine paths. An empty model id,
 unknown model, or route/capability mismatch produces a failed `InferenceResult`; malformed protobuf
@@ -235,7 +232,7 @@ The implemented/target substrate split is:
   envelope covering the daemon, admitted child ceiling, and polling overshoot, never the
   per-request breach classifier; Phase 4 owns adversarial behavioral proof;
 - `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting (Phase 6
-  Sprint 6.44). A device-using model compiles two independently indexed grants from a
+  A device-using model compiles two independently indexed grants from a
   `DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough
   for the admitted VRAM ceiling, and the capped-engine kernel runs one watchdog per grant. A pod
   limit or a CUDA exit code is still never accepted as VRAM evidence: an unavailable sampler is
@@ -369,57 +366,6 @@ Provisioning and smoke work use a separate `ProvisioningGrant` with a timeout, r
 ceiling, and output bound; they do not receive a module-wide exemption from inference or command
 enforcement.
 
-## Current Status
-
-This doctrine is the target contract opened by the Typed Execution Plan refactor. Phase 1 Sprint
-1.19 historically closed its own source-matched scope on 2026-07-25. That result predates the
-all-Haskell lifecycle-lock and subprocess correction and is not current-worktree Stage 1 evidence;
-a fresh source review and complete source-matched Stage 1 are in progress. The current worktree has
-resource-indexed grants/enforcers, exhaustive placement-or-unavailable accounting, a
-`CompiledRuntimePlan -> RuntimePlan` live-refinement boundary, exact host-partition drift checks,
-opaque compiled daemon wiring, hidden raw Dhall decoders and routing helpers, nominal resource
-roles, exact runtime-scoped engine bindings, canonical identifiers, and engine commands derived
-only from an executable model's compiled binding. The launch boundary also derives runtime and
-model identity from that executable capability and rejects a mismatched request before side
-effects. The normal coordinator and engine paths now return terminal failed results for unavailable,
-empty-model, unknown-model, wrong-route, and malformed requests before source removal or
-acknowledgement. Opaque plan-derived bootstrap publication, consumer-side
-model/URL/timestamp revalidation, cross-family topic-collision rejection, removal of the raw topic
-publisher, and explicit UTF-8 substrate emission are also present. The closing gate covered the
-production/integration build, unit/internal/compile-fail/style suites (4 positive and 27 negative
-compile fixtures), installed files/docs/chart/proto lints and docs check, Python `check-code`, web
-contract/build/bundle coverage with 83/83 unit tests, and `git diff --check`; that historical gate
-must not be reused for this correction. Phase 0's accepted correction review and complete Stage 1
-closed on 2026-07-27. Phase 2 Sprint 2.16 is blocked by active Phase 1 in numerical order. Its
-implemented all-Haskell lifecycle-lock and typed supervision replacement are present, while its
-phase-owned focused adversarial gate, fresh final review, complete source-matched Stage 1, and both
-Wave Y cohort lanes remain open. The
-in-review implementation includes the proper
-command-policy unions and all 36 generated
-fields, the closed command/operator-kubectl split, opaque policy and command compilers, exact
-required-tool resolution, renderer-owned cwd/Kind environment, kernel-owned base environment,
-total deadline/retry fold, process-group cleanup, pre-render operand validation, structured
-manifest encoding, and secret-safe stdin/protected-auth-file transport. `Cluster.hs` no
-longer owns a raw process-spawn helper, and all production `Cluster.hs` and `Cluster.PublishImages`
-call sites use the semantic builders. Its pre-audit machine-independent result is superseded, and
-Phase 2 must finish focused validation and source review before the source freezes, the full proof
-gate runs, and both cohort lanes close. The
-broader implementation also does not yet satisfy the full execution-plan contract:
-
-- Linux CPU execution has a process-group RSS watchdog plus an exact larger cgroup envelope, but
-  still awaits the Phase 4 adversarial breach/survival proof;
-- process-local serialization is still supplied by caller-owned daemon locking rather than an
-  opaque execution authority, so Phase 4 must make concurrent reuse of one executable capability
-  unrepresentable;
-- GPU VRAM does not have a verified per-process enforcer;
-- engine materialization and smoke modules retain raw-spawn exemptions;
-- the generated Dhall execution alternatives still await the proper-union/`Natural` migration
-  owned by Phase 8 Sprint 8.9.
-
-Implementation status and ordered closure gates live in
-[DEVELOPMENT_PLAN/README.md](../../DEVELOPMENT_PLAN/README.md). Until those sprints close, existing
-limits remain defense-in-depth, not proof that resource exhaustion is unrepresentable.
-
 ## Validation
 
 The completed implementation must prove:
@@ -451,7 +397,7 @@ The completed implementation must prove:
 - production `System.Process` use is confined to the bounded command, capped engine, fixed
   public-tool observer, and bounded provisioning kernels, plus the CLI-passthrough and host-tool
   surfaces that remain explicitly exempt;
-- Sprint 6.44 shrank the raw-spawn exemption set — the runtime transport module's Docker address
+- The raw-spawn exemption set is narrow — the runtime transport module's Docker address
   probe and its model-weight snapshot bootstrap became closed bounded commands, and the two rows that
   no longer contained any raw spawn were deleted — and closed the whole-token gap that had let
   `withCreateProcess` through; the remaining exempt modules are named with the design decision each

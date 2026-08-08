@@ -283,6 +283,10 @@ RUN printf '%s\n' \
     '    , homeDirectory = "/root"' \
     '    , kindRoot = "/workspace/.data/runtime/kind"' \
     '    }' \
+    ', memory =' \
+    '    { physicalMemoryMib = 0' \
+    '    , effectiveMemoryMib = 0' \
+    '    }' \
     ', commandPolicies =' \
     '    { kindRead = { timeoutMicros = 120000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \
     '    , kindCreate = { timeoutMicros = 1800000000, retry = < Never | Bounded : { attempts : Natural, backoffMicros : Natural } >.Never, failureClass = < Fatal | TransientThenFatal | IdempotentAbsence >.Fatal }' \

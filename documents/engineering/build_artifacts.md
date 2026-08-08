@@ -25,9 +25,9 @@
   `./infernix.dhall` and `./infernix-host.dhall`, while `infernix test init` owns
   `./infernix.test.dhall`.
 
-## Current Status
+## Artifact Layout
 
-The worktree follows the supported artifact layout directly: the host path stages
+The host path stages
 `./.build/infernix`, the Linux substrate images own
 `/usr/local/bin/infernix*` and image-local outer-container build state, generated frontend
 contracts stay under `web/src/Generated/`, and runtime result or cache-manifest state uses
@@ -95,16 +95,15 @@ Xcode UI flows, or installs toolchains. MLX, ONNX Runtime,
 CTranslate2, PyTorch MPS paths, and Audiveris continue to prefer prebuilt host wheels or binaries
 when available.
 
-Current implementation note: Phase 1 Sprint 1.14 removed the Sprint 1.13 `hostTart` host-manifest
-field, the `AppleTart` prerequisite, and the Tart VM argument builders. The retained
-`infernix internal materialize-metal-engines` helper writes a typed `engine-artifact.json` manifest
-for each allowlisted Apple adapter into its final engine root. Sprint 1.20 removed the standalone
-bridge root, embedded native source, generated native files, and compiler scripts. Sprint 1.15
+There is no `hostTart` host-manifest field, no `AppleTart` prerequisite, and no Tart VM argument
+builder. The `infernix internal materialize-metal-engines` helper writes a typed
+`engine-artifact.json` manifest for each allowlisted Apple adapter into its final engine root. There
+is no standalone bridge root, embedded native source, generated native file, or compiler script.
 replaced the former Apple
 validation-wrapper roots with real native runners: llama.cpp/whisper.cpp delegate to host CLIs,
 CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs the pinned macOS
 arm64 app. The correction's focused direct upstream MLX and coremltools preflights are green, but
-fresh installed-root and routed Apple evidence remains open. Historical Apple integration evidence
+Apple integration evidence
 from the prior lane validates pinned Apple
 host-engine `Exclusive` duplicate rejection, proves same-machine Apple `Shared` subscription
 coexistence, and covers Apple production `demo_ui = false` assertions. It also proves the
@@ -133,13 +132,9 @@ Activation fsyncs the complete candidate and parent directory around sibling ren
 prior exact root through final-path revalidation, rolls back on synchronous failure or asynchronous
 cancellation, and reconciles only unambiguous complete `.previous` / `.tmp` crash residue. The
 focused transaction, full-materializer, and compile-boundary suites are being expanded with the
-active Sprint 1.20 correction; no earlier inventory or result closes the current source. Fresh final
+the materialization surface. Fresh final
 review, exact-source complete Stage 1, and real Apple rematerialization/runtime plus paired
-`linux-cpu` cohort evidence remain. Linux native roots exercise runtime-backed
-payload smoke over the image-baked native layer, Apple native roots exercise real runner smoke, and
-Wave L closed the routed full-suite Apple real-output gate for its then-active catalog. Wave K closed
-the Linux routed full-suite real-output delivery that consumes the Linux payloads through the service
-path for its then-active catalog; Wave P closed proof for post-replacement MT3 rows added on 2026-06-30.
+`linux-cpu` cohort evidence remain.
 
 ## Linux Native Engine Artifacts
 
@@ -165,8 +160,7 @@ Runtime/CTranslate2/faster-whisper Python environment, and Audiveris app jars pl
 image-architecture Temurin 25 JRE to be present and loadable. Runtime compiles a distinct
 target-specific invocation for each CLI, Python, and JVM family. Artifact-producing invocations use
 an owned output directory, descriptor-bounded output discovery, and Haskell-owned credentialed
-MinIO upload. The reopened Phases 4/6 own fresh full routed real-output delivery for this corrected
-direct-target topology. Historical Wave K and Wave P results do not close it.
+MinIO upload.
 
 ## Generated Demo Config Publication
 

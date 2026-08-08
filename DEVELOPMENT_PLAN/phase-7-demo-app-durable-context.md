@@ -44,7 +44,7 @@ path, realizing the
 and the [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md);
 Sprint 7.26 adds a per-user Files navigational view scoped to `users/<sub>/`; and Sprint 7.27 adds
 in-browser MIDI/MusicXML/ZIP rendering. Sprint 7.25 (delivered jointly with
-[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md), the `/minio/s3`
+[Phase 3 Sprint 3.13](phase-3-platform-services-and-edge-routing.md), the `/minio/s3`
 de-exposure) is code-side closed 2026-06-24 and cohort-closed by
 [Wave M](cohort-validation-waves.md) on 2026-06-29; Sprints 7.26 and 7.27 build on it and are closed
 by the same wave. The Sprint 7.9 presigned-URL prose describes the superseded
@@ -3015,7 +3015,7 @@ Gates green: `cabal build all`, `cabal test infernix-unit`, `cabal test infernix
 `infernix lint files/chart/docs/proto`, `infernix docs check` (host toolchain); `node --check` on the
 rewritten JS. The web unit suite + bundle and `poetry run check-code` are unaffected by 7.25 (no
 PureScript or Python changes) and run in the Wave M container batch. Delivered jointly with
-[Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md). **Note:** the implementation
+[Phase 3 Sprint 3.13](phase-3-platform-services-and-edge-routing.md). **Note:** the implementation
 keeps `ArtifactDownloadGrant` (minus its URL field) as the disposition carrier and uses the file-local
 `putMinioObjectBytes`/`getMinioObjectBytes` signers rather than `Infernix.Objects.Upload`'s
 `ObjectUploadConfig`-typed helpers, matching the established `Demo/Api.hs` MinIO-access pattern; the
@@ -3052,7 +3052,7 @@ cross-user access is impossible by construction.
 
 ### Remaining Work
 
-None. Delivered jointly with [Phase 3 Sprint 3.13](phase-3-ha-platform-services-and-edge-routing.md)
+None. Delivered jointly with [Phase 3 Sprint 3.13](phase-3-platform-services-and-edge-routing.md)
 and closed by [Wave M](cohort-validation-waves.md).
 
 ### Documentation Requirements
@@ -3353,7 +3353,6 @@ None. The Sprint 7.29 reopen work closed by [Wave V](cohort-validation-waves.md)
 - [../documents/development/demo_app_test_plan.md](../documents/development/demo_app_test_plan.md) — new authoritative test plan
 - [../documents/development/frontend_contracts.md](../documents/development/frontend_contracts.md) — new ADTs and Haskell-first logic discipline
 - [../documents/development/testing_strategy.md](../documents/development/testing_strategy.md) — three validation layers cross-link
-- [../documents/development/chaos_testing.md](../documents/development/chaos_testing.md) — per-role chaos cases (frontend, coordinator, engine, engine-node drain)
 - [../documents/development/purescript_policy.md](../documents/development/purescript_policy.md) — new view modules note
 
 **Reference docs to create/update:**

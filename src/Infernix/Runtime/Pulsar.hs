@@ -175,7 +175,7 @@ import Infernix.ExecutionPlan
     lookupCompiledEngineDaemon,
     lookupCompiledPlacement,
     lookupExecutableModel,
-    lookupUnavailableModel,
+    lookupRuntimeUnavailableModel,
     runtimePlanCompiledPlan,
     unavailableModelDescriptor,
     unavailableModelReason,
@@ -1551,7 +1551,6 @@ drainInferenceTopic paths capability maybeEngineKVCache =
         (userError "coordinator topic capability cannot execute inference")
     EngineTopicCapability runtimePlan authority compiledDaemon requestTopicValue _ -> do
       let runtimeMode = daemonTopicCapabilityRuntimeMode capability
-          compiledPlan = runtimePlanCompiledPlan runtimePlan
           resultTopicValue = compiledDaemonResultTopic compiledDaemon
           requestDirectory = topicDirectoryPath paths requestTopicValue
       requestDirectoryPresent <- doesDirectoryExist requestDirectory
@@ -1574,7 +1573,7 @@ drainInferenceTopic paths capability maybeEngineKVCache =
                 maybeRejection =
                   if Text.null modelIdValue
                     then Just (emptyModelIdRejectionResult runtimeMode protoRequest)
-                    else memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest
+                    else memoryAdmissionRejection runtimeMode runtimePlan modelIdValue protoRequest
             publishedResult <-
               case maybeRejection of
                 Just rejection -> pure rejection
@@ -1958,9 +1957,11 @@ reconcileSupportedNamespacesCore transport = do
   -- bytes) matches Pulsar's documented small-namespace default.
   ensureNamespaceCompactionThreshold manager adminBaseUrl "infernix/demo" (100 * 1024 * 1024)
   -- Phase 7 Sprint 7.7: enable broker-side message deduplication on
-  -- both supported namespaces. The full exactly-once contract also
-  -- requires the producer to send a stable @producerName@ plus a
-  -- monotonically increasing @sequenceId@ within that producer scope.
+  -- both supported namespaces. Phase 6 Sprint 6.47 narrowed what this buys:
+  -- delivery is at-least-once with an effectively-once *observable outcome*,
+  -- and dedup is the effect-layer half of that. It also requires the producer
+  -- to send a stable @producerName@ plus a monotonically increasing
+  -- @sequenceId@ within that producer scope.
   -- WebSocket publishers express the sequence baseline through the
   -- @initialSequenceId@ URL parameter; frontend mutation producers use
   -- one-message mutation-scoped names so arbitrary client keys remain
@@ -2602,7 +2603,7 @@ consumeTopicSession transport paths capability maybeEngineKVCache = do
             let maybeRejection =
                   if Text.null modelIdValue
                     then Just (emptyModelIdRejectionResult runtimeMode decodedRequest)
-                    else memoryAdmissionRejection runtimeMode compiledPlan modelIdValue decodedRequest
+                    else memoryAdmissionRejection runtimeMode runtimePlan modelIdValue decodedRequest
             publishedResult <-
               case maybeRejection of
                 Just rejection -> pure rejection
@@ -2645,7 +2646,6 @@ consumeTopicSession transport paths capability maybeEngineKVCache = do
             pure ()
     requestTopicValue = daemonTopicCapabilityTopic capability
     runtimeMode = daemonTopicCapabilityRuntimeMode capability
-    compiledPlan = daemonTopicCapabilityCompiledPlan capability
     subscriptionType = serviceConsumerSubscriptionType capability
 
 publishCoordinatorAdmissionRejection ::
@@ -4804,17 +4804,24 @@ emptyModelIdRejectionTimestamp =
     Just timestamp -> timestamp
     Nothing -> error "internal: failed to parse fixed epoch timestamp"
 
--- | Return the compiler's explicit admission rejection for an unavailable
--- model. Admission is never recomputed from raw configuration at execution
--- time; the compiled plan accounts for every configured model exactly once.
+-- | Return this engine's explicit admission rejection for a model its own
+-- machine could not fund. Admission is never recomputed from raw configuration
+-- at execution time; the refined plan accounts for every placed model exactly
+-- once, as either an executable or an unavailable entry.
+--
+-- Phase 4 Sprint 4.34: this reads the refined plan rather than the compiled
+-- one, so it is reachable only from the engine request path. The coordinator no
+-- longer holds an admission verdict to apply on the executing machine's behalf,
+-- and the typed 'ModelMemoryLimitExceeded' the browser renders now originates
+-- on the machine that actually refused the work.
 memoryAdmissionRejection ::
   RuntimeMode ->
-  CompiledRuntimePlan ->
+  RuntimePlan ->
   Text.Text ->
   ProtoInference.InferenceRequest ->
   Maybe InferenceResult
-memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
-  case lookupUnavailableModel modelIdValue compiledPlan of
+memoryAdmissionRejection runtimeMode runtimePlan modelIdValue protoRequest =
+  case lookupRuntimeUnavailableModel modelIdValue runtimePlan of
     Nothing -> Nothing
     Just unavailable ->
       Just
@@ -4825,6 +4832,13 @@ memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
             protoRequest
         )
 
+-- | The coordinator's own rejections: a request naming no model, and a request
+-- naming a model the compiled graph does not place.
+--
+-- Phase 4 Sprint 4.34: memory admission is deliberately absent. Whether a model
+-- fits is a fact about the machine that will execute it, and the coordinator is
+-- not that machine, so a placed-but-unfundable model is forwarded to its pool
+-- and refused there with the typed error.
 coordinatorAdmissionRejection ::
   RuntimeMode ->
   CompiledRuntimePlan ->
@@ -4833,9 +4847,6 @@ coordinatorAdmissionRejection ::
 coordinatorAdmissionRejection runtimeMode compiledPlan protoRequest
   | Text.null modelIdValue =
       Just (emptyModelIdRejectionResult runtimeMode protoRequest)
-  | Just rejection <-
-      memoryAdmissionRejection runtimeMode compiledPlan modelIdValue protoRequest =
-      Just rejection
   | Just _ <- lookupCompiledPlacement modelIdValue compiledPlan =
       Nothing
   | otherwise =

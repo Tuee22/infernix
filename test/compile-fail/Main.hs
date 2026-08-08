@@ -151,10 +151,30 @@ failingFixtures =
     typeMismatchFixture "fail-vram-enforcer-pod-grant" "VramEnforcerPodGrant.hs" "NvidiaVram",
     typeMismatchFixture "fail-pod-enforcer-vram-grant" "PodEnforcerVramGrant.hs" "PodRam",
     typeMismatchFixture "fail-compiled-plan-is-not-runtime-plan" "CompiledPlanIsNotRuntimePlan.hs" "CompiledRuntimePlan",
+    removedExportFixture
+      "fail-cannot-admit-without-observation"
+      "CannotAdmitWithoutObservation.hs"
+      "RuntimeObservation",
+    removedExportFixture
+      "fail-compiled-placement-has-no-resources"
+      "CompiledPlacementHasNoResources.hs"
+      "compiledPlacementEnforcedResources",
     typeMismatchFixture "fail-planned-enforcer-is-not-live" "PlannedEnforcerIsNotLive.hs" "EnforcerPlan",
     typeMismatchFixture "fail-raw-worker-route" "RawWorkerRoute.hs" "ModelDescriptor",
     typeMismatchFixture "fail-cannot-coerce-cluster-teardown-authority" "CannotCoerceClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture "fail-cannot-coerce-cluster-lifecycle-lease" "CannotCoerceClusterLifecycleLease.hs" "Lease",
+    constructorFixture
+      "fail-cannot-construct-toolchain-spawn-authority"
+      "CannotConstructToolchainSpawnAuthority.hs"
+      "ToolchainSpawnAuthority",
+    typeMismatchFixture
+      "fail-cannot-escape-toolchain-spawn-authority"
+      "CannotEscapeToolchainSpawnAuthority.hs"
+      "ToolchainSpawnAuthority",
+    typeMismatchFixture
+      "fail-cannot-substitute-toolchain-spawn-region"
+      "CannotSubstituteToolchainSpawnRegion.hs"
+      "ToolchainSpawnAuthority",
     typeMismatchFixture "fail-cannot-escape-cluster-teardown-authority" "CannotEscapeClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture "fail-cannot-reuse-cluster-teardown-authority" "CannotReuseClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture

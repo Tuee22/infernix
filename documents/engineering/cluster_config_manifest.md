@@ -153,7 +153,7 @@ the same realm's signing keys; it may use the in-cluster Keycloak Service, but i
 Service port and the same `/auth/realms/<realm>/protocol/openid-connect/certs` path.
 
 `minio.endpoint` is the in-cluster Service URL used by coordinator/bootstrap code and the webapp
-object-proxy to talk to MinIO from inside Kubernetes. Phase 3 Sprint 3.13 removed the
+object-proxy to talk to MinIO from inside Kubernetes. There is no
 `minio.presignPublicEndpoint` field: there is no browser-facing presign base because the browser
 never receives a presigned MinIO URL — the webapp `/api/objects` proxy signs against the internal
 `minio.endpoint` and streams bytes itself.

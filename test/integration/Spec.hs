@@ -26,7 +26,6 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
-import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Cluster
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
@@ -36,7 +35,6 @@ import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Error
   ( bracketPreservingPrimary,
     finallyPreservingPrimary,
-    onExceptionPreservingPrimary,
     runCleanupsPreservingFailures,
   )
 import Infernix.ExecutionPlan qualified as ExecutionPlan
@@ -57,14 +55,9 @@ import Infernix.Runtime.Pulsar
     RawTopicMessage (..),
     compactTopicAndWait,
     discoverPulsarTransport,
-    modelBootstrapRequestAttemptKey,
-    prepareModelBootstrapRequest,
     publishDemoClientMessage,
     publishInferenceRequest,
-    publishModelBootstrapRequest,
     rawTopicInferenceRequestIds,
-    rawTopicInferenceRequestPromptIds,
-    rawTopicInferenceResultCausalRefs,
     readNamespaceCompactionThreshold,
     readPublishedInferenceResultMaybe,
     readRawTopicPayloads,
@@ -263,48 +256,57 @@ exerciseRuntimeMode paths runtimeMode = do
       ensureLinuxGpuRepresentativeEngineDeployment paths runtimeMode activeModels representativeModelId
       validateDurableTopicFamilyRoundTrips paths runtimeMode representativeModelId
 
+      -- Phase 4 Sprint 4.34 retired the Apple host-engine coexistence case with
+      -- the engine-lock waiver that made it runnable. It asserted that two engine
+      -- daemons on one machine share a `Shared` subscription; one engine process
+      -- per machine is a correctness rule, so that is now a refusal rather than a
+      -- property. The backpressure case survives because it is about broker
+      -- permits, not about two engines on one box.
       when (requiresHostServiceHarness paths runtimeMode) $ do
-        reportStep ("apple host engine shared subscription coexistence: " <> showRuntimeMode runtimeMode)
-        validateAppleHostEngineSharedSubscriptionCoexistence paths (generatedDemoConfigPath state) compiledPlan
         reportStep ("apple shared subscription backlog backpressure: " <> showRuntimeMode runtimeMode)
         validateAppleSharedSubscriptionBackpressure paths compiledPlan
 
+      -- Phase 6 Sprint 6.47 retired the failure-injection tail that used to run
+      -- here: frontend pod replacement, coordinator failover, engine pod
+      -- replacement, engine node drain, model-bootstrap failover/deduplication,
+      -- Harbor recovery, MinIO durability, routed Pulsar recovery, and Postgres
+      -- failover. Every one of them asserted a recovery property of a replicated
+      -- topology that no longer exists: one process per role per machine and one
+      -- instance per platform service means there is no surviving replica to
+      -- promote, and instance loss is restore-from-backup. **This reduces what a
+      -- green run proves**, and that reduction is recorded in
+      -- DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md rather than presented
+      -- as a coverage-neutral cleanup.
+      --
+      -- What stays, and why each is not an HA property:
+      --   * pool placement — the engine-pool graph, not recovery;
+      --   * shared-subscription backpressure — broker permits over a test-owned
+      --     subscription with synthetic consumers; it injects no failure, and
+      --     the collapsed topology does not invalidate it;
+      --   * multi-user throughput — no failure injection at all;
+      --   * Postgres lifecycle rebinding — storage determinism (PV inventory and
+      --     PVC rebinding identity across a lifecycle cycle), which is Phase 2
+      --     doctrine;
+      --   * the no-Pending-replica check — Phase 3 Sprint 3.16's positive proof.
       when (runtimeMode == LinuxCpu) $ do
         reportStep "linux engine pool placement"
         validateLinuxEnginePoolPlacement state runtimeMode compiledPlan
         reportStep "linux shared subscription backlog backpressure"
         validateLinuxSharedSubscriptionBackpressure paths runtimeMode compiledPlan
-        reportStep "frontend pod replacement preserves durable state"
-        validateFrontendPodReplacementPreservesDurableState paths state runtimeMode compiledPlan representativeModelId
-        reportStep "coordinator failover preserves durable prompt dispatch"
-        validateCoordinatorFailoverDurablePrompt paths state runtimeMode compiledPlan representativeModelId
-        reportStep "engine pod replacement preserves durable prompt result"
-        validateEnginePodReplacementDurablePrompt paths state runtimeMode compiledPlan representativeModelId
-        reportStep "engine node drain preserves durable prompt result"
-        validateEngineNodeDrainDurablePrompt paths state runtimeMode compiledPlan representativeModelId
-        reportStep "model bootstrap failover and deduplication"
-        validateModelBootstrapDeduplication paths state runtimeMode compiledPlan representativeModelId
         reportStep "multi-user durable prompt throughput"
         validateMultiUserDurablePromptThroughput paths runtimeMode representativeModelId
-        reportStep "harbor recovery"
-        validateHarborRecovery state
-        reportStep "minio durability"
-        validateMinioDurability state
-        reportStep "routed pulsar recovery"
-        validateRoutedPulsarRecovery paths state runtimeMode compiledPlan activeModelIds
-        reportStep "postgres failover"
-        validatePostgresFailover state
         reportStep "postgres lifecycle rebinding"
         validatePostgresLifecycleRebinding paths runtimeMode state
-        -- Phase 7 Sprint 7.14 (2026-05-31): Linux engine
-        -- one-engine-per-node enforcement. The chart deploys
-        -- `infernix-engine` with `requiredDuringSchedulingIgnoredDuringExecution`
-        -- pod anti-affinity keyed by hostname; scaling the deployment
-        -- past the available engine-capable node count must leave the
-        -- extra replica `Pending` with the anti-affinity rejection
-        -- message in its scheduler events.
-        reportStep "linux engine anti-affinity enforcement"
-        validateLinuxEngineAntiAffinityEnforcement paths state
+        -- Phase 3 Sprint 3.16: the required pod anti-affinity is deleted with
+        -- the topology it constrained, so this case is inverted rather than
+        -- retired. What is asserted now is the observable proof that the
+        -- constraint is gone rather than merely unsatisfied: every deployed
+        -- workload is fully scheduled, with no `Pending` replica anywhere in
+        -- the platform namespace. A leftover anti-affinity rule would show up
+        -- here as exactly the `Pending` engine replica the retired case used to
+        -- require.
+        reportStep "single-node topology schedules every workload"
+        validateNoPendingWorkloadReplicas state
 
       statusOutput <- captureInfernixOutput ["cluster", "status"]
       assert ("clusterPresent: True" `isInfixOf` statusOutput) "cluster status reports the cluster presence"
@@ -375,18 +377,21 @@ validateCatalogModelInference paths state runtimeMode compiledPlan modelIdValue 
       assert
         (resultRuntimeMode resultValue == runtimeMode)
         ("service daemon preserves the runtime mode in published results for " <> modelIdValue)
-      case ExecutionPlan.lookupUnavailableModel (Text.pack modelIdValue) compiledPlan of
-        Just unavailable -> do
-          let expectedError = ExecutionPlan.unavailableModelReason unavailable
+      -- Phase 4 Sprint 4.34: admission now happens on the engine, so the
+      -- harness states its expectation as a prediction from the declared
+      -- budget and holds the engine's published result to it. The engine, not
+      -- this process, is the authority on whether the model fits.
+      case ExecutionPlan.predictedAdmissionRejection compiledPlan (Text.pack modelIdValue) of
+        Just expectedError -> do
           assert
             (status resultValue == "failed")
-            "an unavailable compiled model publishes a failed terminal result"
+            "a model the executing machine cannot fund publishes a failed terminal result"
           assert
             (inferenceError (payload resultValue) == Just expectedError)
-            "an unavailable compiled model publishes the compiler's typed admission error"
+            "a model the executing machine cannot fund publishes the engine's typed admission error"
           assert
             (isNothing (inlineOutput (payload resultValue)) && isNothing (objectRef (payload resultValue)))
-            "an unavailable compiled model does not masquerade as real output"
+            "a model the executing machine cannot fund does not masquerade as real output"
           putStrLn
             ( "resource memory admission fail-closed for "
                 <> modelIdValue
@@ -997,12 +1002,20 @@ requireLinuxGpuPerEngineDeploymentName model =
 -- rotates the shared engine Deployment and every per-engine Deployment between
 -- replica counts, which is exactly the class of cluster mutation the
 -- `ClusterMutating` position exists for. It previously ran outside
--- `withPersistedClusterMutation`, unlike its two sibling chaos sites, so a
--- SIGKILL anywhere in the rotation left the persisted state reading
--- `ClusterReady` while the live cluster had engine Deployments scaled to zero —
--- the exact false steady-state the doctrine forbids. The marker now brackets the
--- whole rotation so a killed run leaves a detectable dirty cluster the next
--- `cluster up` reconciles by scaling the deployments back to their chart counts.
+-- `withPersistedClusterMutation`, so a SIGKILL anywhere in the rotation left the
+-- persisted state reading `ClusterReady` while the live cluster had engine
+-- Deployments scaled to zero — the exact false steady-state the doctrine
+-- forbids. The marker brackets the whole rotation so a killed run leaves a
+-- detectable dirty cluster the next `cluster up` reconciles by scaling the
+-- deployments back to their chart counts.
+--
+-- Phase 6 Sprint 6.47: this is now the suite's **only** integration exemplar of
+-- the crash-safe cluster-mutation bracket. Its two former siblings — the
+-- engine-deployment over-scale case and the node-drain case — were chaos cases
+-- and were deleted with the replicated topology they asserted recovery for. The
+-- doctrine outlives its examples, so it is re-exemplared here on a real non-HA
+-- caller rather than left without one; the unit suite retains the bracket's own
+-- crash/reconcile assertions independently of any cluster.
 prepareLinuxGpuEngineDeployment :: Paths -> [Text.Text] -> Maybe Text.Text -> IO ()
 prepareLinuxGpuEngineDeployment paths perEngineNames maybeEngineName = do
   mutationState <-
@@ -1436,101 +1449,6 @@ conversationResultPayloadsForPrompt promptMessageId messages =
     Contracts.inferenceResultUserPromptMessageId resultPayload == promptMessageId
   ]
 
-waitForPromptPipelineCounts :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO PromptPipelineCounts
-waitForPromptPipelineCounts paths runtimeMode compiledPlan promptRef = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail ("timed out waiting for prompt pipeline counts for " <> Text.unpack promptIdText)
-      | otherwise = do
-          counts <- readPromptPipelineCounts paths runtimeMode compiledPlan promptRef
-          if promptPipelineComplete counts
-            then do
-              threadDelay 2000000
-              readPromptPipelineCounts paths runtimeMode compiledPlan promptRef
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-    promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
-    maybeBatchTopic = batchTopicForPrompt compiledPlan promptRef
-    promptPipelineComplete counts =
-      promptPipelineRequestCount counts >= 1
-        && maybe True (const (promptPipelineBatchCount counts >= 1)) maybeBatchTopic
-        && promptPipelineResultCount counts >= 1
-        && promptPipelineConversationResultCount counts >= 1
-
-readPromptPipelineCounts :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO PromptPipelineCounts
-readPromptPipelineCounts paths runtimeMode compiledPlan promptRef = do
-  requestTopic <-
-    case ExecutionPlan.compiledPlanRequestTopics compiledPlan of
-      topic : _ -> pure topic
-      [] -> fail ("no request topic configured for " <> showRuntimeMode runtimeMode)
-  let promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
-      resultTopic = ExecutionPlan.compiledPlanResultTopic compiledPlan
-      conversationTopic = durablePromptConversationTopic (durablePromptRefContext promptRef)
-  requestMessages <- readRawTopicPayloads paths runtimeMode Nothing requestTopic 1024
-  batchMessages <-
-    case batchTopicForPrompt compiledPlan promptRef of
-      Nothing -> pure []
-      Just batchTopic -> readRawTopicPayloads paths runtimeMode Nothing batchTopic 1024
-  resultMessages <- readRawTopicPayloads paths runtimeMode Nothing resultTopic 1024
-  conversationMessages <- readRawTopicPayloads paths runtimeMode Nothing conversationTopic 256
-  pure
-    PromptPipelineCounts
-      { promptPipelineRequestCount =
-          length
-            [ ()
-            | requestPromptId <- rawTopicInferenceRequestPromptIds requestMessages,
-              requestPromptId == promptIdText
-            ],
-        promptPipelineBatchCount =
-          length
-            [ ()
-            | requestPromptId <- rawTopicInferenceRequestPromptIds batchMessages,
-              requestPromptId == promptIdText
-            ],
-        promptPipelineResultCount =
-          length
-            [ ()
-            | resultCausalRef <- rawTopicInferenceResultCausalRefs resultMessages,
-              resultCausalRef == promptIdText
-            ],
-        promptPipelineConversationResultCount =
-          length (conversationResultPayloadsForPrompt (durablePromptRefMessageId promptRef) conversationMessages)
-      }
-
-batchTopicForPrompt :: ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> Maybe Text.Text
-batchTopicForPrompt compiledPlan promptRef = do
-  placement <-
-    ExecutionPlan.lookupCompiledPlacement
-      (durablePromptModelId (durablePromptRefContext promptRef))
-      compiledPlan
-  pure
-    ( ExecutionPlan.engineRouteTopic
-        (NonEmpty.head (ExecutionPlan.compiledPlacementRoutes placement))
-    )
-
-assertPromptPipelineExactlyOnce :: Paths -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> DurablePromptRef -> IO ()
-assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef = do
-  counts <- waitForPromptPipelineCounts paths runtimeMode compiledPlan promptRef
-  assert
-    (promptPipelineRequestCount counts == 1)
-    ("exactly one inference request is published for " <> Text.unpack promptIdText <> ": " <> show counts)
-  case batchTopicForPrompt compiledPlan promptRef of
-    Nothing -> pure ()
-    Just _ ->
-      assert
-        (promptPipelineBatchCount counts == 1)
-        ("exactly one inference batch is published for " <> Text.unpack promptIdText <> ": " <> show counts)
-  assert
-    (promptPipelineResultCount counts == 1)
-    ("exactly one inference result is published for " <> Text.unpack promptIdText <> ": " <> show counts)
-  assert
-    (promptPipelineConversationResultCount counts == 1)
-    ("exactly one conversation result is written for " <> Text.unpack promptIdText <> ": " <> show counts)
-  where
-    promptIdText = Contracts.unMessageId (durablePromptRefMessageId promptRef)
-
 -- | Phase 6 Sprint 6.33 (2026-06-24) — family-aware, fail-closed assertion for
 -- a durable-conversation inference result. The chaos / throughput / HA
 -- scenarios drive a real prompt through the service loop; this TRUSTS the
@@ -1593,217 +1511,6 @@ resultFamilyForRepresentativeModel runtimeMode representativeModelId =
     Nothing ->
       fail ("model " <> representativeModelId <> " is not in the " <> showRuntimeMode runtimeMode <> " catalog")
 
-validateFrontendPodReplacementPreservesDurableState :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
-validateFrontendPodReplacementPreservesDurableState paths state runtimeMode compiledPlan representativeModelId = do
-  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
-  waitForDeploymentReadyReplicasAtLeast state "infernix-demo" 2
-  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "frontend"
-  let draftsTopic = ConversationTopic.draftsMetadataTopicName ConversationTopic.defaultDemoTopicNamespace (durablePromptUserId context)
-      draftText = "draft survives frontend pod replacement " <> durablePromptToken context
-      draftEvent = Contracts.DraftUpdated (durablePromptContextId context) draftText
-  publishDemoClientMessage
-    paths
-    runtimeMode
-    Nothing
-    (durablePromptUserId context)
-    (Contracts.ClientUpdateDraft (durablePromptContextId context) draftText)
-  draftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
-  assertTopicHasDecoded draftMessages draftEvent "draft event is durable before frontend replacement"
-  oldPod <- requirePodByPrefix state "platform" "infernix-demo-"
-  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
-  waitForRollout state "deployment/infernix-demo"
-  _ <- waitForPodByPrefix state "platform" "infernix-demo-" (Just oldPod)
-  _ <- waitForRoutedDemoConfig paths state
-  durableDraftMessages <- waitForRawTopicMessages paths runtimeMode draftsTopic 1
-  assertTopicHasDecoded durableDraftMessages draftEvent "draft event remains readable after frontend replacement"
-  waitForDispatcherDiscovery
-  promptRef <- submitDurablePrompt paths runtimeMode context "frontend-post-replacement"
-  resultPayload <-
-    waitForConversationResultPayloadForPrompt
-      paths
-      runtimeMode
-      (durablePromptConversationTopic context)
-      (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultFamily resultPayload "durable prompt still completes after frontend pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
-
-validateCoordinatorFailoverDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
-validateCoordinatorFailoverDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
-  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
-  waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
-  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "coordinator"
-  waitForDispatcherDiscovery
-  promptRef <- submitDurablePrompt paths runtimeMode context "coordinator-failover"
-  oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
-  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
-  waitForRollout state "deployment/infernix-coordinator"
-  _ <- waitForPodByPrefix state "platform" "infernix-coordinator-" (Just oldPod)
-  resultPayload <-
-    waitForConversationResultPayloadForPrompt
-      paths
-      runtimeMode
-      (durablePromptConversationTopic context)
-      (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through coordinator pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
-
-validateEnginePodReplacementDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
-validateEnginePodReplacementDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
-  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
-  waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-  context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine"
-  waitForDispatcherDiscovery
-  promptRef <- submitDurablePrompt paths runtimeMode context "engine-replacement"
-  oldPod <- requirePodByPrefix state "platform" "infernix-engine-"
-  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
-  waitForRollout state "deployment/infernix-engine"
-  _ <- waitForPodByPrefix state "platform" "infernix-engine-" (Just oldPod)
-  resultPayload <-
-    waitForConversationResultPayloadForPrompt
-      paths
-      runtimeMode
-      (durablePromptConversationTopic context)
-      (durablePromptRefMessageId promptRef)
-  assertCompletedResultPayload resultFamily resultPayload "durable prompt completes through engine pod replacement"
-  assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
-
-validateEngineNodeDrainDurablePrompt :: Paths -> ClusterState -> RuntimeMode -> ExecutionPlan.CompiledRuntimePlan -> String -> IO ()
-validateEngineNodeDrainDurablePrompt paths state runtimeMode compiledPlan representativeModelId = do
-  resultFamily <- resultFamilyForRepresentativeModel runtimeMode representativeModelId
-  waitForDeploymentReadyReplicasAtLeast state "infernix-engine" 2
-  -- Sprint 6.43: persist a first-class ClusterMutating position across the
-  -- cordon + drain so a SIGKILL mid-mutation leaves a detectable dirty cluster
-  -- the next `cluster up` reconciles.
-  mutationState <-
-    maybe
-      (fail "engine-node-drain requires a freshly persisted cluster state")
-      pure
-      =<< loadClusterState paths
-  withPersistedClusterMutation paths mutationState "engine-node-drain" "draining an engine node while a durable prompt is in flight" $ \freshState -> do
-    (_, nodeName) <- prepareEngineDrainTargetNode freshState
-    let restore =
-          runKubectl freshState ["uncordon", nodeName]
-            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-engine" 2
-            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-coordinator" 2
-            >> waitForDeploymentReadyReplicasAtLeast freshState "infernix-demo" 2
-            >> waitForDrainSensitivePulsarRollouts freshState
-    ( do
-        runKubectl
-          freshState
-          [ "drain",
-            nodeName,
-            "--ignore-daemonsets",
-            "--delete-emptydir-data",
-            "--force",
-            "--timeout=180s"
-          ]
-        waitForDeploymentReadyReplicasAtLeast freshState "infernix-engine" 1
-        waitForDeploymentReadyReplicasAtLeast freshState "infernix-coordinator" 1
-        waitForDeploymentReadyReplicasAtLeast freshState "infernix-demo" 1
-        waitForDrainSensitivePulsarRollouts freshState
-        _ <- waitForRoutedDemoConfig paths freshState
-        context <- createDurablePromptContext paths runtimeMode (Text.pack representativeModelId) "engine-drain"
-        waitForDispatcherDiscovery
-        promptRef <- submitDurablePrompt paths runtimeMode context "engine-node-drain"
-        resultPayload <-
-          waitForConversationResultPayloadForPrompt
-            paths
-            runtimeMode
-            (durablePromptConversationTopic context)
-            (durablePromptRefMessageId promptRef)
-        assertCompletedResultPayload resultFamily resultPayload "durable prompt completes while an engine node is drained"
-        assertPromptPipelineExactlyOnce paths runtimeMode compiledPlan promptRef
-      )
-      `finallyPreservingPrimary` restore
-
-validateModelBootstrapDeduplication ::
-  Paths ->
-  ClusterState ->
-  RuntimeMode ->
-  ExecutionPlan.CompiledRuntimePlan ->
-  String ->
-  IO ()
-validateModelBootstrapDeduplication paths state runtimeMode compiledPlan representativeModelId = do
-  waitForDeploymentReadyReplicasAtLeast state "infernix-coordinator" 2
-  let modelIdText = Text.pack representativeModelId
-      readyTopic =
-        ConversationTopic.modelBootstrapReadyTopicName ConversationTopic.systemTopicNamespace modelIdText
-  bootstrapCapability <-
-    prepareModelBootstrapRequest compiledPlan modelIdText
-      >>= either
-        (fail . ("could not prepare the compiled model-bootstrap request: " <>))
-        pure
-  let requestAttemptKey = modelBootstrapRequestAttemptKey bootstrapCapability
-  baselineReadyMessageIds <-
-    bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
-  publishModelBootstrapRequest paths bootstrapCapability
-  oldPod <- requirePodByPrefix state "platform" "infernix-coordinator-"
-  runKubectl state ["-n", "platform", "delete", "pod", oldPod]
-  publishModelBootstrapRequest paths bootstrapCapability
-  publishModelBootstrapRequest paths bootstrapCapability
-  waitForRollout state "deployment/infernix-coordinator"
-  _ <- waitForPodByPrefix state "platform" "infernix-coordinator-" (Just oldPod)
-  newReadyMessageIds <-
-    waitForNewBootstrapReadyMessageIds
-      paths
-      runtimeMode
-      readyTopic
-      modelIdText
-      requestAttemptKey
-      baselineReadyMessageIds
-  assert
-    (Set.size newReadyMessageIds == 1)
-    ( "model-bootstrap producer dedup yields exactly one new ready event for the authorized request attempt, saw "
-        <> show (Set.size newReadyMessageIds)
-    )
-
-waitForNewBootstrapReadyMessageIds ::
-  Paths ->
-  RuntimeMode ->
-  Text.Text ->
-  Text.Text ->
-  Text.Text ->
-  Set.Set Text.Text ->
-  IO (Set.Set Text.Text)
-waitForNewBootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey baselineMessageIds = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail ("timed out waiting for model-bootstrap ready event on " <> Text.unpack readyTopic)
-      | otherwise = do
-          observedMessageIds <-
-            bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
-          let newMessageIds =
-                observedMessageIds `Set.difference` baselineMessageIds
-          if Set.null newMessageIds
-            then do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-            else do
-              threadDelay 2000000
-              settledMessageIds <-
-                bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey
-              pure (settledMessageIds `Set.difference` baselineMessageIds)
-
-bootstrapReadyMessageIds ::
-  Paths ->
-  RuntimeMode ->
-  Text.Text ->
-  Text.Text ->
-  Text.Text ->
-  IO (Set.Set Text.Text)
-bootstrapReadyMessageIds paths runtimeMode readyTopic modelIdText requestAttemptKey = do
-  messages <- readRawTopicPayloads paths runtimeMode Nothing readyTopic 64
-  pure
-    ( Set.fromList
-        [ rawTopicMessageId rawMessage
-        | rawMessage <- messages,
-          Right readyEvent <- [Aeson.eitherDecodeStrict' (rawTopicMessagePayload rawMessage)],
-          BootstrapModels.readyEventModelId readyEvent == modelIdText,
-          BootstrapModels.readyEventRequestAttemptKey readyEvent == Just requestAttemptKey
-        ]
-    )
-
 data ThroughputMatrix = ThroughputMatrix
   { throughputUserCount :: Int,
     throughputContextsPerUser :: Int,
@@ -1818,6 +1525,9 @@ defaultThroughputMatrix =
       throughputPromptsPerContext = 2
     }
 
+-- Phase 6 Sprint 6.47 retained this case when the failure-injection tail was
+-- deleted. It injects no failure at all: it measures fan-in batching, fan-out,
+-- per-context ordering, and bounded p95 latency under concurrent load.
 validateMultiUserDurablePromptThroughput :: Paths -> RuntimeMode -> String -> IO ()
 validateMultiUserDurablePromptThroughput =
   validateMultiUserDurablePromptThroughputWith defaultThroughputMatrix
@@ -2471,61 +2181,6 @@ reportStep message = do
   putStrLn ("integration-step: " <> message)
   hFlush stdout
 
-validateHarborRecovery :: ClusterState -> IO ()
-validateHarborRecovery state = do
-  harborCorePod <- requirePodByPrefix state "platform" "infernix-harbor-core-"
-  runKubectl state ["-n", "platform", "delete", "pod", harborCorePod]
-  waitForRollout state "deployment/infernix-harbor-core"
-  _ <- waitForPodByPrefix state "platform" "infernix-harbor-core-" (Just harborCorePod)
-  validateHarborBackedImagePull state
-
-validateHarborBackedImagePull :: ClusterState -> IO ()
-validateHarborBackedImagePull state = do
-  serviceImage <-
-    trim
-      <$> kubectlOutputForState
-        state
-        [ "-n",
-          "platform",
-          "get",
-          "deployment",
-          "infernix-coordinator",
-          "-o",
-          "jsonpath={.spec.template.spec.containers[0].image}"
-        ]
-  let podName = "harbor-pull-smoke"
-  runKubectlWithInput
-    state
-    ["-n", "platform", "apply", "-f", "-"]
-    ( unlines
-        [ "apiVersion: v1",
-          "kind: Pod",
-          "metadata:",
-          "  name: " <> podName,
-          "  namespace: platform",
-          "spec:",
-          "  restartPolicy: Never",
-          "  containers:",
-          "    - name: pull-smoke",
-          "      image: " <> serviceImage,
-          "      imagePullPolicy: Always",
-          "      command: [\"sh\", \"-lc\", \"sleep 20\"]"
-        ]
-    )
-  waitForPodReady state "platform" podName
-  runKubectl state ["-n", "platform", "delete", "pod", podName, "--ignore-not-found=true"]
-
-validateMinioDurability :: ClusterState -> IO ()
-validateMinioDurability state = do
-  (minioPod, mountPath) <- requirePodWithMountByPrefix state "platform" "infernix-minio" "data"
-  assert (not (null mountPath)) "minio data volume mount path is discoverable"
-  let sentinelPath = mountPath <> "/ha-smoke/minio-sentinel.txt"
-  runKubectl state ["-n", "platform", "exec", minioPod, "--", "sh", "-lc", "mkdir -p " <> mountPath <> "/ha-smoke && printf minio-durable > " <> sentinelPath]
-  runKubectl state ["-n", "platform", "delete", "pod", minioPod]
-  waitForPodReady state "platform" minioPod
-  sentinelContents <- trim <$> kubectlOutputForState state ["-n", "platform", "exec", minioPod, "--", "sh", "-lc", "cat " <> sentinelPath]
-  assert (sentinelContents == "minio-durable") "minio data written before pod replacement remains available afterward"
-
 usesDetachedRetainedSnapshot :: Paths -> RuntimeMode -> Bool
 usesDetachedRetainedSnapshot paths runtimeMode =
   case runtimeMode of
@@ -2828,58 +2483,6 @@ remotePathExists state podName pathValue =
         pathValue
       ]
 
-validateRoutedPulsarRecovery ::
-  Paths ->
-  ClusterState ->
-  RuntimeMode ->
-  ExecutionPlan.CompiledRuntimePlan ->
-  [String] ->
-  IO ()
-validateRoutedPulsarRecovery paths state runtimeMode compiledPlan activeModelIds =
-  case activeModelIds of
-    firstModelId : secondModelId : _ -> do
-      -- Entry guard: the broker StatefulSet must be fully reconciled before we
-      -- act on it. Upstream chaos steps (notably the engine node drain) can
-      -- evict broker pods without re-establishing broker-tier health, so a bare
-      -- `delete pod <ordinal>` here races a still-reconciling StatefulSet.
-      runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
-      publishAndRequireResultWithRetry paths runtimeMode compiledPlan firstModelId "pulsar-pre-restart"
-      -- Restart the broker tier through the controller rather than hard-deleting
-      -- a hardcoded pod ordinal: never assumes a specific ordinal is present and
-      -- never aborts on a transient NotFound, while still proving routed
-      -- inference survives a broker restart.
-      runKubectl state ["-n", "platform", "rollout", "restart", "statefulset/infernix-infernix-pulsar-broker"]
-      runKubectl state ["-n", "platform", "rollout", "status", "statefulset/infernix-infernix-pulsar-broker", "--timeout=600s"]
-      publishAndRequireResultWithRetry paths runtimeMode compiledPlan secondModelId "pulsar-post-restart"
-    _ -> fail "need at least two catalog entries to validate routed Pulsar recovery"
-
-publishAndRequireResult ::
-  Paths ->
-  RuntimeMode ->
-  ExecutionPlan.CompiledRuntimePlan ->
-  String ->
-  String ->
-  IO ()
-publishAndRequireResult paths _runtimeMode compiledPlan modelIdValue inputValue = do
-  let requestUserIdValue = "integration-direct-user"
-      requestContextIdValue = Text.pack ("direct-" <> sanitizeFileToken modelIdValue)
-  requestIdValue <-
-    publishInferenceRequest
-      paths
-      compiledPlan
-      InferenceRequest
-        { requestModelId = Text.pack modelIdValue,
-          inputText = Text.pack inputValue,
-          inputObjectRef = Nothing,
-          requestUserId = Just requestUserIdValue,
-          requestContextId = Just requestContextIdValue
-        }
-  maybeResult <- waitForPublishedResult paths compiledPlan requestIdValue
-  case maybeResult of
-    Nothing -> fail ("pulsar roundtrip did not publish a result for " <> modelIdValue)
-    Just resultValue ->
-      assert (resultModelId resultValue == Text.pack modelIdValue) ("pulsar roundtrip preserves the selected model id for " <> modelIdValue)
-
 withRuntimeServiceDaemonIfNeeded :: Paths -> RuntimeMode -> IO a -> IO a
 withRuntimeServiceDaemonIfNeeded paths runtimeMode action
   | requiresHostServiceHarness paths runtimeMode =
@@ -2937,80 +2540,48 @@ requiresHostServiceHarness :: Paths -> RuntimeMode -> Bool
 requiresHostServiceHarness paths runtimeMode =
   Config.controlPlaneContext paths /= Config.OuterContainer && runtimeMode == AppleSilicon
 
--- | Phase 7 Sprint 7.14 (2026-05-31): Linux engine pod anti-affinity chaos case.
--- The chart's `infernix-engine` Deployment carries
--- `requiredDuringSchedulingIgnoredDuringExecution` anti-affinity keyed by
--- hostname (`topologyKey: kubernetes.io/hostname`), so scaling the deployment
--- past the available engine-capable node count must leave the extra replica
--- `Pending` with a scheduler `FailedScheduling` event naming pod anti-affinity.
--- The supported recovery is to scale back to the original replica count and
--- wait for the deployment to roll back to ready.
-validateLinuxEngineAntiAffinityEnforcement :: Paths -> ClusterState -> IO ()
-validateLinuxEngineAntiAffinityEnforcement paths state = do
-  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-  -- Sprint 6.43: persist a ClusterMutating position across the over-scale so a
-  -- SIGKILL mid-mutation leaves a detectable dirty cluster the next `cluster up`
-  -- reconciles (scaling the deployment back to its chart replica count).
-  mutationState <-
-    maybe
-      (fail "engine-deployment-over-scale requires a freshly persisted cluster state")
-      pure
-      =<< loadClusterState paths
-  withPersistedClusterMutation paths mutationState "engine-deployment-over-scale" "over-scaling the engine deployment past available nodes" $ \freshState -> do
-    originalReplicas <- deploymentSpecReplicas freshState "infernix-engine"
-    let surplusReplicas = originalReplicas + 1
-        restore =
-          runKubectl freshState ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show originalReplicas]
-            >> runKubectl freshState ["-n", "platform", "rollout", "status", "deployment/infernix-engine", "--timeout=900s"]
-    ( do
-        runKubectl freshState ["-n", "platform", "scale", "deployment/infernix-engine", "--replicas=" <> show surplusReplicas]
-        pendingPod <- waitForPendingEnginePod freshState
-        events <-
-          kubectlOutputForState
-            freshState
-            [ "-n",
-              "platform",
-              "get",
-              "events",
-              "--field-selector",
-              "involvedObject.name=" <> pendingPod,
-              "-o",
-              "jsonpath={range .items[*]}{.reason}|{.message}{\"\\n\"}{end}"
-            ]
-        assert
-          ("FailedScheduling" `isInfixOf` events)
-          "the surplus engine pod surfaces a FailedScheduling scheduler event under anti-affinity"
-        assert
-          ("anti-affinity" `isInfixOf` events || "AntiAffinity" `isInfixOf` events)
-          "the FailedScheduling event names pod anti-affinity as the reason"
-      )
-      `finallyPreservingPrimary` restore
-
-waitForPendingEnginePod :: ClusterState -> IO String
-waitForPendingEnginePod state = go (60 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail "timed out waiting for a Pending infernix-engine pod after scaling the deployment past available engine nodes"
-      | otherwise = do
-          podLines <-
-            lines
-              <$> kubectlOutputForState
-                state
-                [ "-n",
-                  "platform",
-                  "get",
-                  "pods",
-                  "-l",
-                  "app.kubernetes.io/name=infernix-engine",
-                  "-o",
-                  "jsonpath={range .items[*]}{.metadata.name}|{.status.phase}{\"\\n\"}{end}"
-                ]
-          case find (\line -> "|Pending" `isInfixOf` line) podLines of
-            Just match -> pure (takeWhile (/= '|') match)
-            Nothing -> do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
+-- | Phase 3 Sprint 3.16: the positive proof that the single-node topology
+-- schedules.
+--
+-- The retired case scaled `infernix-engine` past the node count and required the
+-- surplus replica to sit `Pending` with a `FailedScheduling` event naming pod
+-- anti-affinity. That asserted a constraint this repository no longer wants: one
+-- engine process per machine is a correctness rule about KV caches and admission,
+-- not a placement preference the scheduler is asked to enforce, and expressing it
+-- as anti-affinity produced a `Pending` pod instead of preventing a second
+-- process.
+--
+-- This replacement is deliberately the *inverse* assertion, and it is weaker in
+-- one specific way that is recorded rather than glossed: it proves nothing about
+-- what happens if an operator raises `engine.replicaCount` themselves. It proves
+-- only that the deployed topology has no unsatisfiable placement constraint left
+-- in it — which is exactly the residue a partial collapse would leave behind.
+validateNoPendingWorkloadReplicas :: ClusterState -> IO ()
+validateNoPendingWorkloadReplicas state = do
+  podLines <-
+    filter (not . null)
+      . lines
+      <$> kubectlOutputForState
+        state
+        [ "-n",
+          "platform",
+          "get",
+          "pods",
+          "--no-headers",
+          "-o",
+          "custom-columns=NAME:.metadata.name,PHASE:.status.phase"
+        ]
+  let pendingPods =
+        [ podName
+        | podLine <- podLines,
+          podName : phaseValue : _ <- [words podLine],
+          phaseValue == "Pending"
+        ]
+  assert
+    (null pendingPods)
+    ( "the collapsed single-node topology schedules every workload; these pods are Pending: "
+        <> unwords pendingPods
+    )
 
 data EnginePodPlacement = EnginePodPlacement
   { enginePodPlacementPodName :: String,
@@ -3037,7 +2608,6 @@ validateLinuxEnginePoolPlacement state runtimeMode compiledPlan = do
         ]
   let placements = mapMaybe parseEnginePodPlacement podPlacementLines
       runningPlacements = filter ((== "Running") . enginePodPlacementPhase) placements
-      placementNodeNames = nub (map enginePodPlacementNodeName runningPlacements)
       compiledEngineDaemons = ExecutionPlan.compiledPlanEngineDaemons compiledPlan
       compiledRoutes =
         concatMap
@@ -3056,9 +2626,25 @@ validateLinuxEnginePoolPlacement state runtimeMode compiledPlan = do
               )
           )
   assert (runtimeMode == LinuxCpu) "linux engine placement validation runs on the linux-cpu cohort"
-  assert (length runningPlacements >= 2) "linux-cpu has at least two running engine pods for placement validation"
-  assert (length placementNodeNames >= 2) "linux-cpu engine pods are placed on distinct Kubernetes worker nodes"
-  assert (memberIds == ["linux-cpu-engine"]) "linux-cpu keeps one logical engine member id independent of pod count"
+  -- Phase 3 Sprint 3.16 follow-on: inverted, not retired. The retired form
+  -- required at least two running engine pods on at least two distinct worker
+  -- nodes, which asserted the replicated topology this sprint deletes — and it
+  -- asserted it as a *floor*, so the collapse could not satisfy it at all. The
+  -- companion line said the member id held "independent of pod count", which is
+  -- the doctrine violation written down as an invariant: two engine pods
+  -- sharing one member id are two KV caches and two copies of every loaded
+  -- weight, each admitting work against the whole machine's observed capacity.
+  --
+  -- One engine process per machine is the rule, so the exact count is the
+  -- assertion. The node-spread assertion is deleted rather than inverted: it
+  -- expressed the anti-affinity constraint, and with one pod there is nothing
+  -- to spread.
+  assert
+    (length runningPlacements == 1)
+    ( "linux-cpu runs exactly one engine pod, one engine process per machine; running pods: "
+        <> show (map enginePodPlacementPodName runningPlacements)
+    )
+  assert (memberIds == ["linux-cpu-engine"]) "linux-cpu compiles exactly one engine member id"
   assert
     (all ((== "cluster-pod") . ExecutionPlan.compiledDaemonLocation) compiledEngineDaemons)
     "linux engine members are cluster-pod members"
@@ -3091,65 +2677,6 @@ splitPipes value =
   case break (== '|') value of
     (segment, []) -> [segment]
     (segment, _ : rest) -> segment : splitPipes rest
-
--- | Phase 7 Sprint 7.24 Wave J: prove the normal Apple host-engine
--- pool route admits multiple live Shared consumers on one stable
--- broker subscription. Both processes consume the same route and daemon
--- capability from the validated generated execution plan.
-validateAppleHostEngineSharedSubscriptionCoexistence ::
-  Paths ->
-  FilePath ->
-  ExecutionPlan.CompiledRuntimePlan ->
-  IO ()
-validateAppleHostEngineSharedSubscriptionCoexistence paths configPath compiledPlan = do
-  infernixExecutable <- resolveInfernixExecutable
-  (memberIdValue, modelIdValue, sharedTopic) <-
-    requireCompiledSharedRoute (Just "llm-smollm2-safetensors") compiledPlan
-  transport <-
-    maybe
-      (fail "Pulsar transport was unavailable for apple shared-subscription coexistence validation")
-      pure
-      =<< discoverPulsarTransport paths AppleSilicon Nothing
-  withLoggedServiceDaemon
-    paths
-    infernixExecutable
-    ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", configPath]
-    (runtimeRoot paths </> "service" </> "host-service-shared-a.log")
-    ( \memberAProcessHandle memberALogPath -> do
-        waitForProcessLogContains memberAProcessHandle memberALogPath ("serviceEngineMemberId: " <> Text.unpack memberIdValue)
-        waitForProcessLogContains memberAProcessHandle memberALogPath "serviceSubscriptionMode: websocket-pulsar"
-        withLoggedServiceDaemon
-          paths
-          infernixExecutable
-          ["service", "--role", "engine", "--engine-name", Text.unpack memberIdValue, "--config", configPath]
-          (runtimeRoot paths </> "service" </> "host-service-shared-b.log")
-          ( \memberBProcessHandle memberBLogPath -> do
-              waitForProcessLogContains memberBProcessHandle memberBLogPath ("serviceEngineMemberId: " <> Text.unpack memberIdValue)
-              waitForProcessLogContains memberBProcessHandle memberBLogPath "serviceSubscriptionMode: websocket-pulsar"
-              assertPulsarSharedSubscriptionConsumerCount transport sharedTopic 2
-              requestIdValue <-
-                publishInferenceRequest
-                  paths
-                  compiledPlan
-                  InferenceRequest
-                    { requestModelId = modelIdValue,
-                      inputText = "shared apple host engine subscription",
-                      inputObjectRef = Nothing,
-                      requestUserId = Nothing,
-                      requestContextId = Nothing
-                    }
-              maybeSharedResult <-
-                waitForPublishedResult
-                  paths
-                  compiledPlan
-                  requestIdValue
-              case maybeSharedResult of
-                Nothing -> fail "shared apple host engine daemons did not publish a validation result"
-                Just sharedResult -> do
-                  assert (resultModelId sharedResult == modelIdValue) "shared apple host engine daemon publishes the selected model id"
-                  assert (status sharedResult == "completed") "shared apple host engine daemon completes the validation request"
-          )
-    )
 
 -- | Phase 7 Sprint 7.24 Wave J: prove the Shared subscription's
 -- broker-native permit/backlog behavior with one busy logical Apple
@@ -3349,13 +2876,6 @@ ackIntegrationPulsarMessage connection messageIdValue =
         )
     )
 
-assertPulsarSharedSubscriptionConsumerCount :: PulsarTransport -> Text.Text -> Int -> IO ()
-assertPulsarSharedSubscriptionConsumerCount transport topicValue =
-  assertPulsarSubscriptionConsumerCount
-    transport
-    topicValue
-    (integrationServiceSubscriptionName topicValue)
-
 assertPulsarSubscriptionConsumerCount :: PulsarTransport -> Text.Text -> String -> Int -> IO ()
 assertPulsarSubscriptionConsumerCount transport topicValue subscriptionName expectedCount = go (120 :: Int) Nothing
   where
@@ -3409,19 +2929,6 @@ pulsarSubscriptionConsumerCount subscriptionName statsPayload = do
   Aeson.Array consumersArray <- AesonKeyMap.lookup (AesonKey.fromString "consumers") subscriptionObject
   pure (length consumersArray)
 
-integrationServiceSubscriptionName :: Text.Text -> String
-integrationServiceSubscriptionName topicValue =
-  "infernix-service-" <> sanitizePulsarSubscriptionSegment topicValue
-
-sanitizePulsarSubscriptionSegment :: Text.Text -> String
-sanitizePulsarSubscriptionSegment =
-  map replaceSeparator . Text.unpack
-  where
-    replaceSeparator '/' = '_'
-    replaceSeparator ':' = '_'
-    replaceSeparator '.' = '_'
-    replaceSeparator character = character
-
 withLoggedServiceDaemon :: Paths -> FilePath -> [String] -> FilePath -> (ProcessHandle -> FilePath -> IO a) -> IO a
 withLoggedServiceDaemon paths infernixExecutable args logPath action =
   withLoggedProcess
@@ -3465,27 +2972,6 @@ stopChildProcess processHandle =
       void (waitForProcess processHandle)
     ]
 
-waitForProcessLogContains :: ProcessHandle -> FilePath -> String -> IO ()
-waitForProcessLogContains processHandle logPath needle = go (600 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = do
-          logSnapshot <- readFileIfPresent logPath
-          fail ("timed out waiting for service log line: " <> needle <> "\n" <> logSnapshot)
-      | otherwise = do
-          maybeExitCode <- getProcessExitCode processHandle
-          case maybeExitCode of
-            Just exitCode -> do
-              logSnapshot <- readFileIfPresent logPath
-              fail ("service daemon exited before log line " <> needle <> " (" <> show exitCode <> ")\n" <> logSnapshot)
-            Nothing -> do
-              logSnapshot <- readFileIfPresent logPath
-              if needle `isInfixOf` logSnapshot
-                then pure ()
-                else do
-                  threadDelay 100000
-                  go (remainingAttempts - 1)
-
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
   infernixExecutable <- resolveInfernixExecutable
@@ -3514,41 +3000,10 @@ expectedInferenceDispatchMode runtimeMode =
     AppleSilicon -> "pulsar-bridge-to-host-daemon"
     _ -> "pulsar-bridge-to-cluster-daemon"
 
-publishAndRequireResultWithRetry ::
-  Paths ->
-  RuntimeMode ->
-  ExecutionPlan.CompiledRuntimePlan ->
-  String ->
-  String ->
-  IO ()
-publishAndRequireResultWithRetry paths runtimeMode compiledPlan modelIdValue inputValue = go (24 :: Int) Nothing
-  where
-    go remainingAttempts maybeLastError = do
-      result <- try (publishAndRequireResult paths runtimeMode compiledPlan modelIdValue inputValue) :: IO (Either SomeException ())
-      case result of
-        Right _ -> pure ()
-        Left err
-          | remainingAttempts <= 1 ->
-              fail
-                ( "pulsar roundtrip never recovered for "
-                    <> modelIdValue
-                    <> maybe "" (" after transient failures: " <>) maybeLastError
-                )
-          | otherwise -> do
-              threadDelay 5000000
-              go (remainingAttempts - 1) (Just (displayException err))
-
-validatePostgresFailover :: ClusterState -> IO ()
-validatePostgresFailover state = do
-  runKubectl state ["-n", "platform", "rollout", "status", "deployment/infernix-postgres-operator", "--timeout=900s"]
-  runKubectl state ["-n", "platform", "rollout", "status", "deployment/harbor-postgresql-pgbouncer", "--timeout=900s"]
-  primaryBefore <- harborPostgresPrimaryPod state
-  bindingsBefore <- postgresPvcBindings state
-  assert (not (Map.null bindingsBefore)) "operator-managed PostgreSQL PVC bindings are present before failover"
-  runKubectl state ["-n", "platform", "delete", "pod", primaryBefore]
-  primaryAfter <- waitForDifferentHarborPrimaryPod state primaryBefore
-  assert (primaryAfter /= primaryBefore) "Patroni failover elects a replacement primary pod"
-
+-- Phase 6 Sprint 6.47 retained this case when the failure-injection tail was
+-- deleted. Its subject is **storage determinism**, not availability: the PV
+-- inventory and the PVC rebinding identity across a lifecycle cycle, which is
+-- Phase 2 doctrine. It injects no failure and does not depend on a replica.
 validatePostgresLifecycleRebinding :: Paths -> RuntimeMode -> ClusterState -> IO ()
 validatePostgresLifecycleRebinding paths runtimeMode state = do
   inventoryBefore <- postgresPersistentVolumeInventory state
@@ -3628,37 +3083,6 @@ parsePersistentVolumeInventory lineValue =
 harborPostgresPersistentVolumePrefix :: String
 harborPostgresPersistentVolumePrefix = "platform-infernix-harbor-postgresql-"
 
-harborPostgresPrimaryPod :: ClusterState -> IO String
-harborPostgresPrimaryPod state =
-  trim
-    <$> kubectlOutputForState
-      state
-      [ "-n",
-        "platform",
-        "get",
-        "pods",
-        "-l",
-        "postgres-operator.crunchydata.com/cluster=harbor-postgresql,postgres-operator.crunchydata.com/role=primary",
-        "--no-headers",
-        "-o",
-        "custom-columns=:metadata.name"
-      ]
-
-waitForDifferentHarborPrimaryPod :: ClusterState -> String -> IO String
-waitForDifferentHarborPrimaryPod state previousPrimary = go (72 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = fail "Harbor PostgreSQL primary pod never changed after deleting the previous primary"
-      | otherwise = do
-          currentPrimary <- harborPostgresPrimaryPod state
-          if null currentPrimary || currentPrimary == previousPrimary
-            then do
-              threadDelay 5000000
-              go (remainingAttempts - 1)
-            else do
-              waitForPodReady state "platform" currentPrimary
-              pure currentPrimary
-
 kubectlOutputForState :: ClusterState -> [String] -> IO String
 kubectlOutputForState state args = do
   (exitCode, stdoutOutput, stderrOutput) <-
@@ -3676,15 +3100,6 @@ runKubectl state args = do
       "kubectl"
       (["--kubeconfig", kubeconfigPath state] <> args)
       ""
-  assert (exitCode == ExitSuccess) ("kubectl command succeeded: " <> stderrOutput)
-
-runKubectlWithInput :: ClusterState -> [String] -> String -> IO ()
-runKubectlWithInput state args inputPayload = do
-  (exitCode, _, stderrOutput) <-
-    readProcessWithExitCode
-      "kubectl"
-      (["--kubeconfig", kubeconfigPath state] <> args)
-      inputPayload
   assert (exitCode == ExitSuccess) ("kubectl command succeeded: " <> stderrOutput)
 
 waitForRollout :: ClusterState -> String -> IO ()
@@ -3706,67 +3121,11 @@ deploymentSpecReplicas state deploymentName =
         "jsonpath={.spec.replicas}"
       ]
 
-waitForDeploymentReadyReplicasAtLeast :: ClusterState -> String -> Int -> IO ()
-waitForDeploymentReadyReplicasAtLeast state deploymentName expectedReplicas = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail ("timed out waiting for deployment/" <> deploymentName <> " ready replicas >= " <> show expectedReplicas)
-      | otherwise = do
-          readyReplicas <- deploymentReadyReplicas state deploymentName
-          if readyReplicas >= expectedReplicas
-            then pure ()
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-
-deploymentReadyReplicas :: ClusterState -> String -> IO Int
-deploymentReadyReplicas state deploymentName =
-  parseOptionalNonNegativeInt ("deployment/" <> deploymentName <> " status.readyReplicas")
-    . trim
-    <$> kubectlOutputForState
-      state
-      [ "-n",
-        "platform",
-        "get",
-        "deployment",
-        deploymentName,
-        "-o",
-        "jsonpath={.status.readyReplicas}"
-      ]
-
-parseOptionalNonNegativeInt :: String -> String -> Int
-parseOptionalNonNegativeInt _ "" = 0
-parseOptionalNonNegativeInt label value = parseNonNegativeInt label value
-
 parseNonNegativeInt :: String -> String -> Int
 parseNonNegativeInt label value =
   case reads value of
     [(parsed, "")] | parsed >= (0 :: Int) -> parsed
     _ -> error ("unable to parse " <> label <> " as a non-negative integer: " <> value)
-
-requirePodWithMountByPrefix :: ClusterState -> String -> String -> String -> IO (String, String)
-requirePodWithMountByPrefix state namespaceName prefixValue mountName = do
-  maybePod <- findPodWithMountByPrefix state namespaceName prefixValue mountName
-  case maybePod of
-    Just podDetails -> pure podDetails
-    Nothing -> fail ("did not find pod with prefix " <> prefixValue <> " and mount " <> mountName)
-
-findPodWithMountByPrefix :: ClusterState -> String -> String -> String -> IO (Maybe (String, String))
-findPodWithMountByPrefix state namespaceName prefixValue mountName = do
-  podNames <-
-    filter (isPrefixOf prefixValue) . filter (not . null) . map trim . lines
-      <$> kubectlOutputForState
-        state
-        ["-n", namespaceName, "get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"]
-  go podNames
-  where
-    go [] = pure Nothing
-    go (podName : remainingPods) = do
-      mountPath <- podMountPathForVolume state namespaceName podName mountName
-      if null mountPath
-        then go remainingPods
-        else pure (Just (podName, mountPath))
 
 podMountPathForVolume :: ClusterState -> String -> String -> String -> IO String
 podMountPathForVolume state namespaceName podName mountName =
@@ -3782,194 +3141,12 @@ podMountPathForVolume state namespaceName podName mountName =
         "jsonpath={.spec.containers[0].volumeMounts[?(@.name==\"" <> mountName <> "\")].mountPath}"
       ]
 
-requirePodByPrefix :: ClusterState -> String -> String -> IO String
-requirePodByPrefix state namespaceName prefixValue = do
-  maybePod <- findPodByPrefix state namespaceName prefixValue
-  case maybePod of
-    Just podName -> pure podName
-    Nothing -> fail ("did not find pod with prefix " <> prefixValue)
-
-findPodByPrefix :: ClusterState -> String -> String -> IO (Maybe String)
-findPodByPrefix state namespaceName prefixValue = do
-  podNames <-
-    filter (not . null) . map trim . lines
-      <$> kubectlOutputForState
-        state
-        ["-n", namespaceName, "get", "pods", "--no-headers", "-o", "custom-columns=:metadata.name"]
-  pure (find (isPrefixOf prefixValue) podNames)
-
-listReadyEnginePodNodes :: ClusterState -> IO [(String, String, String, String)]
-listReadyEnginePodNodes state = do
-  podLines <-
-    lines
-      <$> kubectlOutputForState
-        state
-        [ "-n",
-          "platform",
-          "get",
-          "pods",
-          "-l",
-          "app.kubernetes.io/name=infernix-engine",
-          "-o",
-          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.nodeName}{\"\\t\"}{.status.phase}{\"\\t\"}{range .status.conditions[?(@.type==\"Ready\")]}{.status}{end}{\"\\n\"}{end}"
-        ]
-  pure (filter isReadyEnginePodNode (mapMaybe parseReadyPodNode podLines))
-
-prepareEngineDrainTargetNode :: ClusterState -> IO (String, String)
-prepareEngineDrainTargetNode state = do
-  readyEnginePodNodes <- listReadyEnginePodNodes state
-  case readyEnginePodNodes of
-    [] -> fail "did not find a Ready infernix-engine pod with an assigned node"
-    (podName, nodeName, _, _) : _ -> do
-      maybeSafePodNode <- findEngineDrainTargetAvoidingPulsar state readyEnginePodNodes
-      case maybeSafePodNode of
-        Just (safePodName, safeNodeName, _, _) -> pure (safePodName, safeNodeName)
-        Nothing -> do
-          ( do
-              runKubectl state ["cordon", nodeName]
-              relocateDrainSensitivePulsarPodsFromNode state nodeName
-              waitForDrainSensitivePulsarPodsOffNode state nodeName
-              waitForDrainSensitivePulsarRollouts state
-              remainingCriticalPods <- drainSensitivePulsarPodsOnNode state nodeName
-              case remainingCriticalPods of
-                [] -> pure (podName, nodeName)
-                _ ->
-                  fail
-                    ( "engine node drain target "
-                        <> nodeName
-                        <> " still hosts Pulsar pods after relocation: "
-                        <> intercalate ", " (map podNodePlacementPodName remainingCriticalPods)
-                    )
-            )
-            `onExceptionPreservingPrimary` runKubectl state ["uncordon", nodeName]
-
-findEngineDrainTargetAvoidingPulsar :: ClusterState -> [(String, String, String, String)] -> IO (Maybe (String, String, String, String))
-findEngineDrainTargetAvoidingPulsar state readyEnginePodNodes = do
-  pulsarPods <- drainSensitivePulsarPodPlacements state
-  let pulsarNodes = Set.fromList (map podNodePlacementNodeName pulsarPods)
-  pure (find (\(_, nodeName, _, _) -> not (Set.member nodeName pulsarNodes)) readyEnginePodNodes)
-
-relocateDrainSensitivePulsarPodsFromNode :: ClusterState -> String -> IO ()
-relocateDrainSensitivePulsarPodsFromNode state nodeName =
-  forM_ drainSensitivePulsarStatefulSets $ \(podPrefix, workloadName) -> do
-    podsOnNode <-
-      filter ((== nodeName) . podNodePlacementNodeName)
-        <$> platformPodNodePlacementsByPrefixes state [podPrefix]
-    forM_ podsOnNode $ \placement ->
-      runKubectl
-        state
-        [ "-n",
-          "platform",
-          "delete",
-          "pod",
-          podNodePlacementPodName placement,
-          "--timeout=300s"
-        ]
-    unless (null podsOnNode) $
-      runKubectl state ["-n", "platform", "rollout", "status", workloadName, "--timeout=600s"]
-
-waitForDrainSensitivePulsarRollouts :: ClusterState -> IO ()
-waitForDrainSensitivePulsarRollouts state =
-  forM_ drainSensitivePulsarStatefulSets $ \(_, workloadName) ->
-    runKubectl state ["-n", "platform", "rollout", "status", workloadName, "--timeout=600s"]
-
-waitForDrainSensitivePulsarPodsOffNode :: ClusterState -> String -> IO ()
-waitForDrainSensitivePulsarPodsOffNode state nodeName = go (120 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 =
-          fail ("timed out waiting for drain-sensitive Pulsar pods to leave " <> nodeName)
-      | otherwise = do
-          remainingPods <- drainSensitivePulsarPodsOnNode state nodeName
-          if null remainingPods
-            then pure ()
-            else do
-              threadDelay 1000000
-              go (remainingAttempts - 1)
-
-drainSensitivePulsarPodsOnNode :: ClusterState -> String -> IO [PodNodePlacement]
-drainSensitivePulsarPodsOnNode state nodeName =
-  filter ((== nodeName) . podNodePlacementNodeName) <$> drainSensitivePulsarPodPlacements state
-
-drainSensitivePulsarPodPlacements :: ClusterState -> IO [PodNodePlacement]
-drainSensitivePulsarPodPlacements state =
-  platformPodNodePlacementsByPrefixes state (map fst drainSensitivePulsarStatefulSets)
-
-drainSensitivePulsarStatefulSets :: [(String, String)]
-drainSensitivePulsarStatefulSets =
-  [ ("infernix-infernix-pulsar-zookeeper-", "statefulset/infernix-infernix-pulsar-zookeeper"),
-    ("infernix-infernix-pulsar-bookie-", "statefulset/infernix-infernix-pulsar-bookie"),
-    ("infernix-infernix-pulsar-broker-", "statefulset/infernix-infernix-pulsar-broker"),
-    ("infernix-infernix-pulsar-proxy-", "statefulset/infernix-infernix-pulsar-proxy")
-  ]
-
 data PodNodePlacement = PodNodePlacement
   { podNodePlacementPodName :: String,
     podNodePlacementNodeName :: String,
     podNodePlacementPhase :: String
   }
   deriving (Eq, Show)
-
-platformPodNodePlacementsByPrefixes :: ClusterState -> [String] -> IO [PodNodePlacement]
-platformPodNodePlacementsByPrefixes state podPrefixes = do
-  podLines <-
-    lines
-      <$> kubectlOutputForState
-        state
-        [ "-n",
-          "platform",
-          "get",
-          "pods",
-          "-o",
-          "jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.nodeName}{\"\\t\"}{.status.phase}{\"\\n\"}{end}"
-        ]
-  pure
-    [ placement
-    | placement <- mapMaybe parsePodNodePlacement podLines,
-      any (`isPrefixOf` podNodePlacementPodName placement) podPrefixes,
-      not (null (podNodePlacementNodeName placement))
-    ]
-
-parsePodNodePlacement :: String -> Maybe PodNodePlacement
-parsePodNodePlacement lineValue =
-  case splitTabs lineValue of
-    [podName, nodeName, phaseValue]
-      | not (null podName) ->
-          Just
-            PodNodePlacement
-              { podNodePlacementPodName = podName,
-                podNodePlacementNodeName = nodeName,
-                podNodePlacementPhase = phaseValue
-              }
-    _ -> Nothing
-
-parseReadyPodNode :: String -> Maybe (String, String, String, String)
-parseReadyPodNode lineValue =
-  case splitTabs lineValue of
-    [podName, nodeName, phaseValue, readyValue]
-      | not (null podName) && not (null nodeName) ->
-          Just (podName, nodeName, phaseValue, readyValue)
-    _ -> Nothing
-
-isReadyEnginePodNode :: (String, String, String, String) -> Bool
-isReadyEnginePodNode (_, _, phaseValue, readyValue) =
-  phaseValue == "Running" && readyValue == "True"
-
-waitForPodByPrefix :: ClusterState -> String -> String -> Maybe String -> IO String
-waitForPodByPrefix state namespaceName prefixValue maybePreviousPod = go (72 :: Int)
-  where
-    go remainingAttempts
-      | remainingAttempts <= 0 = fail ("timed out waiting for pod with prefix " <> prefixValue)
-      | otherwise = do
-          maybePod <- findPodByPrefix state namespaceName prefixValue
-          case maybePod of
-            Just podName
-              | maybePreviousPod /= Just podName -> do
-                  waitForPodReady state namespaceName podName
-                  pure podName
-            _ -> do
-              threadDelay 5000000
-              go (remainingAttempts - 1)
 
 waitForPodReady :: ClusterState -> String -> String -> IO ()
 waitForPodReady state namespaceName podName =

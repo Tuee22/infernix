@@ -41,8 +41,8 @@ This repository serves two aligned purposes:
 - Python is restricted to the shared Poetry project at `python/pyproject.toml` and the shared
   adapter tree under `python/adapters/`; the canonical quality entrypoint is
   `poetry run check-code`, which runs mypy strict, black check, and ruff strict in sequence
-- one Kind and Helm workflow for the HA testing and demo ground
-- one mandatory local HA topology: Harbor, MinIO, Pulsar, Prometheus, Grafana, and per-service
+- one Kind and Helm workflow for the testing and demo ground
+- one single-node local platform topology: Harbor, MinIO, Pulsar, and per-service
   operator-managed PostgreSQL on Kind
 - one Prometheus metrics plane that every other platform, control-plane, and inference service
   syncs with, plus one Grafana visualization surface that can use its own PostgreSQL backend under
@@ -80,9 +80,7 @@ This repository serves two aligned purposes:
   version-4 distinct-boot incoming-intent filename carries those same helper identities across a
   crash before the activity payload is written. The supervisor owns the arbitrary target by
   unreaped `ProcessHandle` and PID; the persisted pin identity is the exact recovery authority for
-  its process group. The obsolete subprocess C source and Cabal declaration are removed code-side,
-  and Phase 0's accepted correction review and complete Stage 1 are green. The active Phase 1 and
-  blocked Phase 2 phase-owned review, Stage 1, and cohort evidence remain
+  its process group. There is no repository-owned subprocess C source or Cabal native declaration.
 - Apple engine provisioning uses a second hidden authority over that same bounded subprocess
   kernel. An opaque nominal `ProvisioningGrant s` and indexed `ProvisioningSession s result` stay
   inside a rank-2 region; callers select only closed Poetry, Python/venv, exact-package, Audiveris,
@@ -119,8 +117,7 @@ init`; commands fail fast with a "run init" reminder when it is absent.
   `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
   music-transcription, image, video, audio-generation, and OMR artifact families. Realness is
   guaranteed by construction — the engine code cannot return a fabricated result (any
-  missing-weights/load/engine failure raises → `failed`), enforced by the realness lint and delivered
-  by the reopened Phases 1/4/6
+  missing-weights/load/engine failure raises → `failed`), enforced by the realness lint
 - routes requests into validated engine-pool lanes while leaving engine-local batching and runtime
   memory policy to the selected engine member
 - stores large outputs in MinIO and returns references when appropriate
@@ -251,9 +248,11 @@ never transits this admin-gated edge; see
 is its only browser-facing surface. The signed-in shell also offers `Delete account`, which first calls
 `DELETE /api/account` to synchronously remove the caller's `infernix-demo-objects` prefix and
 demo Pulsar topics, then starts Keycloak's `kc_action=delete_account` action.
-The frontend and coordinator Deployments scale horizontally with replicas ≥ 2 under HA defaults.
-Engine-pool placement is substrate-specific: Linux pools use Kubernetes placement rules and
-anti-affinity, while Apple pools use durable host ids. On `linux-gpu`, framework-specific pools may
+Each role runs one process per machine; horizontal scale is adding a machine to the fleet, not
+raising a replica count. Every machine consumes the same `Shared` pool topic and admits work against
+its own observed capacity, so one engine per machine is a correctness rule rather than a scheduling
+preference. Engine-pool placement is substrate-specific: Linux pools use Kubernetes scheduling,
+while Apple pools use durable member ids. On `linux-gpu`, framework-specific pools may
 still render as `infernix-engine-<engine>` Deployments, but routing is derived from the typed pool
 graph rather than from handwritten topic strings.
 **No daemon has a PVC** — durable state lives only in MinIO and Pulsar. Model
@@ -409,10 +408,7 @@ Notes:
   request-time inference never starts virtualization or installs toolchains. The legacy `tart` /
   `hostTart` / `AppleTart` and fixed native bridge implementations have been removed; the retained
   `materialize-metal-engines` helper is the Tart-free, bounded candidate-root materialization
-  surface. Phase 1 Sprint 1.20 remains under active correction after five rejected source reviews;
-  all earlier focused-suite counts and results are superseded. A settled source review, fresh
-  exact-source complete Stage 1, real Apple rematerialization/runtime smoke, and paired Apple plus
-  `linux-cpu` cohorts remain. See
+  surface. See
   [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md)
 
 ### Linux CPU host prerequisites
@@ -776,17 +772,16 @@ lifecycle surface.
 - every non-Harbor pod pulls from local Harbor
 - Harbor and only the storage or support services Harbor needs are the allowed direct-upstream
   bootstrap exception before the Harbor-backed pull contract takes over
-- `cluster up` always deploys the mandatory local HA topology: 3x Harbor application-plane services
-  where the selected chart supports them, 4x MinIO, 3x Pulsar HA surfaces where the selected
-  chart supports them, Prometheus, Grafana, and a dedicated operator-managed Patroni PostgreSQL
-  cluster for each service that requires durable PostgreSQL storage
+- `cluster up` always deploys the single-node local platform topology: one instance of each Harbor
+  application-plane service, MinIO, and Pulsar surface, plus a dedicated operator-managed PostgreSQL
+  cluster for each service that requires durable PostgreSQL storage. The operator is the deployment
+  and lifecycle mechanism, not a high-availability one: instance loss is restore-from-backup
 - every other platform, control-plane, and inference service with metrics syncs with Prometheus;
   Grafana reads from Prometheus and may use its own dedicated PostgreSQL backend under the same
   Patroni and Percona-operator rules
 - services that can self-deploy PostgreSQL disable that embedded database path and target a
   dedicated operator-managed cluster instead
-- repo-owned Helm values suppress hard pod anti-affinity and equivalent hard scheduling constraints
-  as needed for local Kind scheduling
+- repo-owned Helm values declare no pod anti-affinity or equivalent hard scheduling constraints
 - `cluster down` removes cluster state without deleting authoritative data under `./.data/`;
   bootstrap `down` commands preserve `./.build/`, `./.data/`, the host-level container build,
   the Apple host binary, and installed Docker or CUDA prerequisites
@@ -873,9 +868,9 @@ this section is an orientation summary.
   on 2026-07-25, but that result is not post-correction Phase 2 evidence. The
   stronger memory-safety construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
-  is reopened around a compiled/refined execution plan, encapsulated serialized execution, exact
+  rests on a compiled and refined execution plan, encapsulated serialized execution, exact
   per-model Linux enforcement, verified GPU VRAM enforcement, and resource-indexed launch
-  capabilities. Until Phases 4/6/8 close their owned behavior, enforcement, and wire-format work,
+  capabilities. Even so,
   the landed capability core and watchdogs are not proof that every resource-exhaustion state is
   unrepresentable
 - host memory has more than one claimant, and inference is only one of them. The host toolchain is
@@ -954,9 +949,8 @@ contracts.
   typed inference errors classified separately from successful output payloads. Realness is
   guaranteed by construction — the engine code is structurally incapable of returning a fabricated
   result (the realness lint forbids it). Cohort waves prove the catalog that existed when they ran;
-  rows added later, including the 2026-06-30 MT3 replacements, require the active Wave O rerun before
-  their full integration/e2e proof is claimed. Rows whose real engine is not yet landed are explicit
-  residuals. One DRY
+  A row is an explicit residual only when its achievability is uncertain; a row that is merely
+  unbuilt stays declared-runnable and fails closed. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
   `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
   [documents/development/testing_strategy.md](documents/development/testing_strategy.md)
@@ -1036,8 +1030,8 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   the owning Phase 4/6 full per-model real-inference lanes must complete with zero host
   out-of-memory kill, an over-capacity model surfacing that same typed rejection rather than a
   `SIGKILL`. Realness is guaranteed by construction — the engine code cannot
-  fabricate a result (enforced by the realness lint); delivery across substrates is owned by the
-  reopened Phases 1/4/6, and rows whose real engine is not yet landed are explicit residuals. The
+  fabricate a result (enforced by the realness lint), and a row is an explicit residual only when
+  its achievability is uncertain. The
   union-coverage invariant ("every row real on at least one substrate") is mechanically checked under
   `infernix lint docs`
 - Apple, CPU, and CUDA runtime lanes must be validated as first-class targets rather than narrowing
@@ -1053,7 +1047,7 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 - read [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
   for the "evidence, not hope" state-transition doctrine that makes races and flakes unrepresentable
 - read [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
-  for the reopened "memory-safety by construction" target and current enforcement gaps
+  for the "memory-safety by construction" invariant and the enforcement surfaces it requires
 - read [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
   for the generated-Dhall target, compiled coordinator boundary, and runtime evidence required before
   engine consumption or process launch

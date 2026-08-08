@@ -65,31 +65,22 @@ inventory.
 On the `apple-silicon` substrate the worker dispatches to Apple-native engine entrypoints, not to a
 generic placeholder branch. The runtime worker invokes the selected Python adapter or native runner,
 streams model weights from the eagerly pre-staged `infernix-models` MinIO bucket via
-`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness is
-guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by the
-realness lint). On `apple-silicon` there are no in-cluster engine pods. The execution-plan compiler
-accounts for each configured model as a fitting placement or explicit unavailable model against the
-checked host partition; package-owned live observations then refine fitting placements into
-`ExecutableModel`. The supported daemon runs fresh engine subprocesses under a process-local
+`adapters.model_cache.get_model_path`, and publishes the typed per-family result surface. Realness
+is guaranteed by construction — the Apple engine code cannot return a fabricated result (enforced by
+the realness lint). On `apple-silicon` there are no in-cluster engine pods. The execution-plan
+compiler accounts for each configured model as a fitting placement or explicit unavailable model
+against the checked host partition; package-owned live observations then refine fitting placements
+into `ExecutableModel`. The supported daemon runs fresh engine subprocesses under a process-local
 serialization lock and an Apple physical-footprint watchdog. A configured over-capacity model must
 publish a clean typed `ModelMemoryLimitExceeded` result without launch, while smaller compiled
 placements keep serving. Phase 4 still owns encapsulating the serialization authority and the
 adversarial breach-and-survival proof. The fail-clean realness contract for host memory on
 `apple-silicon` was introduced by
-[../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)
-Sprint 4.26 (inference RAM admission + bounded peak) paired with
-[../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
-Sprint 6.37 (memory-bounded validation lane), with the later typed-error work historically closed by
-Sprints 4.27 / 6.38. The current capability/enforcer reopen is Phase 1 Sprint 1.19 followed by
-Phase 4 Sprint 4.32. See the
-Per-Substrate Inference RAM Budget section below for the updated budget contract. Phase 1 Sprint
-1.15 materializes real Apple native engine roots, replacing the former
-validation wrappers; Wave L records routed real-output proof for the then-active Apple catalog. Apple native engine artifacts resolve from
-`./.data/engines/<adapterId>/` and the supported materialization target is Tart-free: a typed
-engine-artifact manifest surface uses public upstream MLX GPU execution and coremltools device
-observation without repository-owned native source. The former Tart and native bridge helper paths
-have been removed; the retained command name writes typed manifests without a VM dependency. The
-canonical homes are
+See the Per-Substrate Inference RAM Budget section below for the budget contract. Apple native engine artifacts resolve from `./.data/engines/<adapterId>/` and the
+supported materialization target is Tart-free: a typed engine-artifact manifest surface uses public
+upstream MLX GPU execution and coremltools device observation without repository-owned native
+source. The former Tart and native bridge helper paths have been removed; the retained command name
+writes typed manifests without a VM dependency. The canonical homes are
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md),
 [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), and
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md).
@@ -104,10 +95,8 @@ Runtime revalidates that evidence before launch and compiles only target-specifi
 The image build installs the native payload layer for llama.cpp and whisper.cpp using the image
 architecture (`linux/amd64` or `linux/arm64`), plus Basic Pitch's ONNX model, ONNX
 Runtime/CTranslate2 Python dependencies, faster-whisper, and Audiveris app jars with an
-image-architecture Temurin 25 JRE. The reopened Phases 4/6 own fresh full routed `linux-gpu` plus
-`linux-cpu` real-output delivery for this direct-target topology, with realness enforced in the
-engine code by the realness lint. Wave K and Wave P are historical evidence for their source-matched
-catalogs and do not close the active correction.
+image-architecture Temurin 25 JRE. Realness for this direct-target topology is enforced in the
+engine code by the realness lint.
 
 ## Per-Substrate Inference Memory Budget
 
@@ -211,64 +200,54 @@ target shape is the three-role daemon model codified in
 [daemon_topology.md](daemon_topology.md):
 
 - Apple host-native execution context means the supported `cluster up`, `cluster status`, and
-  validation commands run through `./.build/infernix` on the host; it does not mean the supported
-  clustered service daemons stay host-resident after reconcile
-- `cluster up` deploys the **coordinator** Deployment (`infernix-coordinator`) on every supported
-  substrate. The **frontend** Deployment (`infernix-demo`) is gated by `demo_ui`. The **engine**
-  role runs as an in-cluster `infernix-engine` Deployment on Linux
-  substrates through Kubernetes engine pools; on `linux-gpu`, Python-native framework work can use
-  pool-specific or per-engine Deployments selected by derived pool/model topics. Repo-owned
-  `linux-gpu` lifecycle values may keep heavyweight per-engine deployments at zero replicas on the
-  single-GPU lane and validation scales one at a time. Apple silicon runs eligible engine-pool
-  members as on-host `infernix service` daemons. Host-native Apple generated Helm values use one
-  local Harbor/Pulsar/coordinator/demo replica on the already selected native arm64 Docker daemon
-  so the real Apple engine gate fits constrained Colima memory; Linux generated values retain the
-  HA-shaped platform defaults and own the HA evidence. This single-replica sizing bounds the
-  control-plane Harbor/Pulsar/coordinator/demo services; the on-host `infernix service` inference
-  RAM is separately bounded by the typed resource-admission policy (see Per-Substrate Inference
-  Memory Budget and Phase 4 Sprint 4.27), so peak *inference* memory stays within its declared
-  budget. Host memory as a whole has other claimants — including the host toolchain — and is owned
-  by [bounded host memory](bounded_host_memory.md). The chart ships
-  `chart/templates/deployment-{coordinator,engine,demo}.yaml`,
-  `clusterServiceEnabled` returns `False` on every substrate, and
-  `finalPhaseDeployments` waits on
-  `deployment/infernix-{coordinator,engine}` plus the Linux GPU
-  per-engine Deployment set when rendered. The Apple lane's
-  cluster coordinator publishes Apple-native work to derived pool/model topics consumed by
-  eligible on-host engine members.
-- on `apple-silicon`, the clustered `infernix-demo` path runs from the
-  `infernix-linux-cpu:local` image family while reading the cluster-role deployment mirror derived
-  from the initialized `apple-silicon` runtime config
-- the direct `infernix service` command remains the Apple host engine-role entrypoint and
-  consumes the generated engine-role metadata, pool/member assignments, result topic, and engine
-  bindings from the active `.dhall`. Generated engine-role metadata is derived from the validated
-  pool/member graph and serialized in the substrate file; raw batch-topic metadata is not part of
-  the supported surface
-- `/api/publication` keeps `apiUpstream.mode: cluster-demo` for the stable routed browser host,
-  reports `daemonLocation: cluster-pod` for the in-cluster coordinator daemon on every substrate,
-  reports `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the
-  inference lane with `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
-  `pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
-  Deployment)
-- cluster-resident daemons read the Pulsar WebSocket and admin transport from the mounted
-  `ClusterConfig`; host-side tooling that runs outside a pod auto-discovers Pulsar's direct,
-  un-gated proxy NodePort transport (the real `/admin/v2` and `/ws/v2` surfaces, not the
-  Keycloak-JWT-gated `/pulsar/admin` Envoy edge) when no mounted manifest is present and the cluster
-  exists — Apple host-native runs resolve it from the published cluster state on the loopback
-  NodePort, and the Linux outer-container flows reach the same proxy NodePort on the control-plane
-  node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
-  topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent
-- direct host runs and cluster-resident placements both launch the same process-isolated
-  engine-worker contract; commands derive only from the engine binding carried by
-  `ExecutableModel`, with no adapter-command override. Compiled unavailable models must return typed
-  `ModelMemoryLimitExceeded`; the normal coordinator path now does so without engine launch and
-  passed the complete source-matched Phase 1 gate on 2026-07-25. Fitting models launch only through
-  the refined executable capability
-- empty-model, unknown-model, wrong-route, and malformed coordinator/engine inputs also terminate
-  as failed results before their file source is removed or Pulsar message acknowledged; no fallback
-  engine route exists
-- switching runtime modes changes generated catalog content and engine bindings, not the service
-  placement contract
+validation commands run through `./.build/infernix` on the host; it does not mean the supported
+clustered service daemons stay host-resident after reconcile - `cluster up` deploys the
+**coordinator** Deployment (`infernix-coordinator`) on every supported substrate. The **frontend**
+Deployment (`infernix-demo`) is gated by `demo_ui`. The **engine** role runs as an in-cluster
+`infernix-engine` Deployment on Linux substrates through Kubernetes engine pools; on `linux-gpu`,
+Python-native framework work can use pool-specific or per-engine Deployments selected by derived
+pool/model topics. Repo-owned `linux-gpu` lifecycle values may keep heavyweight per-engine
+deployments at zero replicas on the single-GPU lane and validation scales one at a time. Apple
+silicon runs eligible engine-pool members as on-host `infernix service` daemons. Host-native Apple
+generated Helm values use one local Harbor/Pulsar/coordinator/demo replica on the already selected
+native arm64 Docker daemon so the real Apple engine gate fits constrained Colima memory; Linux
+generated values retain the single-node platform defaults on every lane. This single-replica sizing
+bounds the control-plane Harbor/Pulsar/coordinator/demo services; the on-host `infernix service`
+inference RAM is separately bounded by the typed resource-admission policy (see Per-Substrate
+Inference Memory Budget), so peak *inference* memory stays within its
+declared budget. Host memory as a whole has other claimants — including the host toolchain — and is
+owned by [bounded host memory](bounded_host_memory.md). The chart ships
+`chart/templates/deployment-{coordinator,engine,demo}.yaml`, `clusterServiceEnabled` returns `False`
+on every substrate, and `finalPhaseDeployments` waits on `deployment/infernix-{coordinator,engine}`
+plus the Linux GPU per-engine Deployment set when rendered. The Apple lane's cluster coordinator
+publishes Apple-native work to derived pool/model topics consumed by eligible on-host engine
+members. - on `apple-silicon`, the clustered `infernix-demo` path runs from the
+`infernix-linux-cpu:local` image family while reading the cluster-role deployment mirror derived
+from the initialized `apple-silicon` runtime config - the direct `infernix service` command remains
+the Apple host engine-role entrypoint and consumes the generated engine-role metadata, pool/member
+assignments, result topic, and engine bindings from the active `.dhall`. Generated engine-role
+metadata is derived from the validated pool/member graph and serialized in the substrate file; raw
+batch-topic metadata is not part of the supported surface - `/api/publication` keeps
+`apiUpstream.mode: cluster-demo` for the stable routed browser host, reports `daemonLocation:
+cluster-pod` for the in-cluster coordinator daemon on every substrate, reports
+`inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the inference lane with
+`inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
+`pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
+Deployment) - cluster-resident daemons read the Pulsar WebSocket and admin transport from the
+mounted `ClusterConfig`; host-side tooling that runs outside a pod auto-discovers Pulsar's direct,
+un-gated proxy NodePort transport (the real `/admin/v2` and `/ws/v2` surfaces, not the
+Keycloak-JWT-gated `/pulsar/admin` Envoy edge) when no mounted manifest is present and the cluster
+exists — Apple host-native runs resolve it from the published cluster state on the loopback
+NodePort, and the Linux outer-container flows reach the same proxy NodePort on the control-plane
+node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
+topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent - direct
+host runs and cluster-resident placements both launch the same process-isolated engine-worker
+contract; commands derive only from the engine binding carried by `ExecutableModel`, with no
+adapter-command override. Fitting models launch only through the refined executable capability -
+empty-model, unknown-model, wrong-route, and malformed coordinator/engine inputs also terminate as
+failed results before their file source is removed or Pulsar message acknowledged; no fallback
+engine route exists - switching runtime modes changes generated catalog content and engine bindings,
+not the service placement contract
 
 ## Cross-References
 

@@ -67,10 +67,8 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   encode/decode roundtrips and wire-shape assertions across every Phase 7 type to keep the
   lockstep mechanically enforced.
 
-**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
-route + `presignPublicEndpoint`). The browser receives only object refs and the webapp performs
-every MinIO read/write server-side; the grant carries no presigned URL. Wave M closed the browser
-object-proxy evidence; Wave N closed Phase 7 Sprint 7.28 generated artifact object ownership.
+The browser receives only object refs and the webapp performs every MinIO read/write server-side;
+the grant carries no presigned URL.
 
 ## Validation
 

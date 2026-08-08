@@ -6,12 +6,13 @@
 > **Purpose**: Define the supported object-storage contract: which MinIO
 > buckets exist, what they hold, who reads and writes them, and how the
 > coordinator's eager model-cache staging workflow populates platform model
-> weights (on startup from the mounted `infernix.dhall`, with exactly-once semantics) while engine
+> weights (on startup from the mounted `infernix.dhall`; at-least-once delivery plus producer dedup
+> and the `.ready` guard make the effective upload single) while engine
 > software artifacts stay separate from model weights.
 
-## Current Status
+## Bucket Contract
 
-The implemented object-storage contract uses three MinIO buckets:
+The object-storage contract uses three MinIO buckets:
 `infernix-models` for platform model weights, `infernix-engine-artifacts` for immutable
 content-addressed engine software payloads, and `infernix-demo-objects` for user uploads and
 engine-generated demo artifacts. Engine software payloads are distinct from model weights and
@@ -53,12 +54,10 @@ The supported shape uses three MinIO buckets and nothing else:
   single-mediator contract and
   [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md) for
   the per-user `sub`-prefix isolation rule, and [../tools/minio.md](../tools/minio.md) for the
-  bucket layout. **Current Status**: browser upload/download proxying is implemented (Phase 7 Sprint
-  7.25 webapp object-proxy; Phase 3 Sprint 3.13 removed the `/minio/s3` route +
-  `presignPublicEndpoint`). Sprint 7.28 makes the engine/coordinator path derive every generated
-  output target under `users/<sub>/contexts/<ctx>/generated/`; Wave N closes the full selected
-  `linux-gpu` plus `linux-cpu` cohort validation.
-- Phase 9 Sprint 9.7 adds an IAM-layer defense-in-depth for per-user `infernix-demo-objects`
+  bucket layout. The browser reaches object bytes only through the webapp proxy, and the
+  engine/coordinator path derives every generated output target under
+  `users/<sub>/contexts/<ctx>/generated/`.
+- An IAM-layer defense-in-depth covers per-user `infernix-demo-objects`
   operations: when `cluster.minio.stsPerUser` is enabled, the object-proxy first exchanges the
   shared root credential for a short-lived MinIO STS credential scoped to `users/<sub>/*` (an inline
   `AssumeRole` session policy), in addition to the server-side `pathBelongsToUser` check. The
@@ -157,13 +156,10 @@ the supported contract. Text outputs from the LLM and speech families
 ride inline in the protobuf result message and never touch object
 storage.
 
-Sprint 7.28 makes this target Haskell-owned:
-`WorkerRequest` carries the generated-output prefix derived from
-`userId` + `contextId`, Python adapters reject missing or invalid
-generated-output targets, native-process-runner artifact uploads use the
-same prefix, and the result bridge rejects raw or cross-user generated
-object refs. Wave N closes the full selected `linux-gpu` plus
-`linux-cpu` cohort validation.
+The target is Haskell-owned: `WorkerRequest` carries the generated-output prefix
+derived from `userId` + `contextId`, Python adapters reject missing or invalid generated-output
+targets, native-process-runner artifact uploads use the same prefix, and the result bridge rejects
+raw or cross-user generated object refs.
 
 Non-text INPUTS are carried the same way: an audio or image input is
 staged into `infernix-demo-objects` under the per-user `uploads/`
@@ -249,10 +245,7 @@ Browsers fetch generated artifacts exclusively through the webapp's
 bucket. Those endpoints stream the bytes
 server-side and the browser never receives a presigned MinIO URL (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
-**Current Status**: implemented for browser reads (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed
-the `/minio/s3` route). Sprint 7.28 now also derives generated-artifact write targets under the same
-user/context prefix, and Wave N closes the full selected `linux-gpu` plus `linux-cpu` cohort
-validation.
+Browser reads and generated-artifact writes both resolve under the same user/context prefix.
 
 ## Routed Surface
 
@@ -264,9 +257,8 @@ over the cluster-internal endpoint and streams artifact bytes through
 its own `/api/objects/{upload,download}` surface; the browser holds only
 the webapp origin and never a presigned MinIO URL (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
-**Current Status**: implemented for browser-originated object operations (Phase 7 Sprint 7.25; Phase 3
-Sprint 3.13 removed the `/minio/s3` route + `presignPublicEndpoint`); generated engine artifact
-prefix ownership is closed by Phase 7 Sprint 7.28 and Wave N. The supported
+Browser-originated object operations and generated engine-artifact prefix ownership follow the same
+rule. The supported
 MIME contract for browser-rendered artifacts (image, audio, video,
 text/JSON preview, browser-native PDF, MIDI / MusicXML / ZIP-stem
 rendering, and generic-binary download) lives in
@@ -279,29 +271,20 @@ The routed Linux GPU E2E flow validates the server-side
 
 ## Validation
 
-- `infernix lint docs` enforces this doc's metadata block and
-  cross-reference resolution.
-- `infernix test integration` covers the model-cache staging workflow:
-  the coordinator eagerly stages the mounted config's models at startup so `infernix-models` is
-  populated before serving, and the `.ready` sentinel appears exactly once even under concurrent
-  staging (and under the fallback path's concurrent requests from N engine pods).
-- `infernix test integration` covers the `emptyDir` DISK LRU eviction
-  policy in the adapter helper on the Linux engine pod: sustained load
-  does not exhaust ephemeral storage and does not restart the engine pod.
-  This validated bound is DISK-only. Model memory is covered by separate
-  resource-admission tests that assert typed `ModelMemoryLimitExceeded`
-  rather than parsing output text or treating a missing result as
-  capacity failure.
-- `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a real
-  Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
-  Keycloak users with the same context id and display name.
-- Phase 7 Sprint 7.28 unit and integration-build validation covers Haskell-derived generated-output
-  prefixes for Python adapters, native process runners, and the result bridge so artifact outputs
-  cannot bypass the `users/<sub>/contexts/<ctx>/generated/` layout; Wave N closes the full selected
-  `linux-gpu` plus `linux-cpu` routed real-output validation.
-- Production-shape test (`demo_ui = false`) confirms `infernix-models`
-  and `infernix-engine-artifacts` are present, `infernix-demo-objects`
-  is absent, and no daemon has a PVC.
+- `infernix lint docs` enforces this doc's metadata block and cross-reference resolution. -
+`infernix test integration` covers the model-cache staging workflow: the coordinator eagerly stages
+the mounted config's models at startup so `infernix-models` is populated before serving, and the
+`.ready` sentinel has a single effective writer even under concurrent staging (and under the
+fallback path's concurrent requests from N engine pods). - `infernix test integration` covers the
+`emptyDir` DISK LRU eviction policy in the adapter helper on the Linux engine pod: sustained load
+does not exhaust ephemeral storage and does not restart the engine pod. This validated bound is
+DISK-only. Model memory is covered by separate resource-admission tests that assert typed
+`ModelMemoryLimitExceeded` rather than parsing output text or treating a missing result as capacity
+failure. - `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a
+real Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
+Keycloak users with the same context id and display name. - Production-shape test (`demo_ui =
+false`) confirms `infernix-models` and `infernix-engine-artifacts` are present,
+`infernix-demo-objects` is absent, and no daemon has a PVC.
 
 ## Cross-References
 

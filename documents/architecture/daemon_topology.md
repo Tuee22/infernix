@@ -1,13 +1,14 @@
 # Daemon Topology
 
 **Status**: Authoritative source
-**Referenced by**: [durable_context_design.md](durable_context_design.md), [demo_app_design.md](demo_app_design.md), [runtime_modes.md](runtime_modes.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [../engineering/implementation_boundaries.md](../engineering/implementation_boundaries.md), [../engineering/portability.md](../engineering/portability.md), [../engineering/k8s_storage.md](../engineering/k8s_storage.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../development/chaos_testing.md](../development/chaos_testing.md), [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md), [../tools/pulsar.md](../tools/pulsar.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md)
+**Referenced by**: [durable_context_design.md](durable_context_design.md), [demo_app_design.md](demo_app_design.md), [runtime_modes.md](runtime_modes.md), [overview.md](overview.md), [web_ui_architecture.md](web_ui_architecture.md), [../engineering/implementation_boundaries.md](../engineering/implementation_boundaries.md), [../engineering/portability.md](../engineering/portability.md), [../engineering/k8s_storage.md](../engineering/k8s_storage.md), [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md), [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md), [../tools/pulsar.md](../tools/pulsar.md), [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md), [../../DEVELOPMENT_PLAN/system-components.md](../../DEVELOPMENT_PLAN/system-components.md)
 
 > **Purpose**: Define the supported three-role daemon model — stateless
 > frontend, stateless coordinator, and pooled stateful engine execution —
 > used by every durable-context application on every supported
-> substrate, including HA replica policy, per-substrate placement,
-> library footprint per role, and failure semantics.
+> substrate, including fleet topology and member identity, delivery
+> semantics, per-substrate placement, library footprint per role, and
+> failure semantics.
 
 ## TL;DR
 
@@ -30,43 +31,28 @@
 - Production deployments (`demo_ui = false`) omit the frontend and demo-only
   surfaces, not the coordinator.
 
-## Current Status
+## Compiled Startup Contract
 
-The role topology is implemented. Service startup compiles the mounted runtime config into opaque
-placements and `CompiledDaemon` capabilities. Coordinators route through that compiled graph;
-engine members additionally refine it against live host/cgroup observations and launch only
-`ExecutableModel` values. Engine members that cannot verify their declared enforcer never become
-ready. Phase 4 retains the Apple/Linux CPU behavioral proof and encapsulated serialization authority;
-Phase 6 retains NVIDIA enforcement.
+Service startup compiles the mounted runtime config into opaque placements and `CompiledDaemon`
+capabilities. Coordinators route through that compiled graph; engine members additionally refine it
+against live host and cgroup observations and launch only `ExecutableModel` values. An engine member
+that cannot verify its declared enforcer never becomes ready.
 
-The three-role contract is the supported shape. The implementation uses
+The three-role contract is the supported shape. It uses
 `chart/templates/deployment-{coordinator,engine,demo}.yaml`, keeps `clusterServiceEnabled` false on
-every substrate, and has code-side support for the engine-pool model defined in
-[engine_pool_routing.md](engine_pool_routing.md). Coordinator handoff derives pool/model topics
-from compiled placements and matching daemon capabilities rather than raw
-`enginePools` / `engineMembers` metadata; the demo frontend runs as the `Webapp`
-role through `infernix service --role webapp`. Apple silicon runs the `Coordinator` role in
-cluster and engine members as on-host daemons; Linux substrates run coordinator and engine members
-as separate in-cluster workloads. The coordinator's runtime Pulsar
-wiring (per-context
-dispatcher Failover subscription, result-bridge Failover subscription,
-model-bootstrap Failover subscription against `infernix-models`, and
-WebSocket-originated event publication) is implemented. `Infernix.Runtime.KVCache`
-backs the engine runtime and native worker harness with reducer/hash-backed
-prefix verification decisions, and `Infernix.Runtime.Daemon` owns daemon-role
-orchestration. Failover consumer names stay process-qualified under stable
-subscription names via `Infernix.Runtime.Pulsar.Failover`. Unit coverage
-proves runtime rebuild/reuse decisions; the integration suite validates the current
-coordinator/engine durable prompt flow, engine pod replacement, engine node drain, exact broker
-counts, throughput, and production-shape deployment. The current Apple integration pass proves one
-pinned Apple host member route with broker-enforced `Exclusive` duplicate rejection, same-machine
-Apple host-member coexistence on a real `Shared` subscription, and Apple production
-`demo_ui = false` route/publication assertions, and the single-host logical `Shared`
-backlog/backpressure harness using real Pulsar WebSocket consumers. Current Linux CPU integration
-proves Kubernetes-observed pool placement and shared-subscription backlog/backpressure. Wave J
-closed its Linux GPU/CUDA routing scope on 2026-06-20; the new per-process NVIDIA memory-enforcement
-scope belongs to Phase 6 Sprint 6.44. Physical Apple multi-host membership is
-hardware-deferred proof while no second Apple host is available.
+every substrate, and implements the engine-pool model defined in
+[engine_pool_routing.md](engine_pool_routing.md). Coordinator handoff derives pool and model topics
+from compiled placements and matching daemon capabilities rather than from raw routing metadata; the
+demo frontend runs as the `Webapp` role through `infernix service --role webapp`. Apple silicon runs
+the `Coordinator` role in cluster with engine members as on-host daemons; Linux substrates run
+coordinator and engine members as separate in-cluster workloads.
+
+The coordinator's Pulsar wiring is the per-context dispatcher Failover subscription, the
+result-bridge Failover subscription, the model-bootstrap Failover subscription against
+`infernix-models`, and WebSocket-originated event publication. `Infernix.Runtime.KVCache` backs the
+engine runtime and native worker harness with reducer and hash-backed prefix-verification decisions,
+and `Infernix.Runtime.Daemon` owns daemon-role orchestration. Failover consumer names stay
+process-qualified under stable subscription names via `Infernix.Runtime.Pulsar.Failover`.
 
 ## Roles and Responsibilities
 
@@ -135,7 +121,7 @@ pool-router consumer:
 The coordinator never imports any application namespace; it never
 runs an inference engine; it owns no GPU or Metal resources; **it
 has no PVC** (Pulsar subscription cursors are broker-side durable).
-Multiple replicas are an HA primitive — Pulsar Failover guarantees
+Pulsar Failover guarantees
 exactly one active subscriber per topic at a time, so multiple
 coordinator pods do not race.
 Each Failover subscription keeps a stable subscription name as the
@@ -175,8 +161,8 @@ The product-agnostic inference executor. Owns:
   bytes-loading code. LRU eviction inside the cache keeps usage under
   `sizeLimit`. This bounds only the on-disk weight footprint; it is not
   a model-memory bound. Resident memory during model execution is governed separately by typed
-  runtime admission (see **Failure Semantics per Role** and the reopened
-  [Phase 4 Sprint 4.27](../../DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md)).
+  runtime admission (see **Failure Semantics per Role** and
+  [bounded_inference_memory.md](bounded_inference_memory.md)).
 - The node's **KV cache, in-memory only**, scoped to
   `(contextId, prefixHash)`
 - `prefixHash` verification before KV-cache reuse; rebuild from
@@ -209,28 +195,50 @@ conversation primitives, dispatcher helpers, result bridge helper, and
 bootstrap helper so those modules cannot import demo, runtime, auth,
 object-presign, or WebSocket modules.
 
-## HA and Node-Policy Contract
+## Fleet Topology and Member Identity
 
-| Role | Deployment kind | Default replicas | Anti-affinity | PodDisruptionBudget | Node resource shape | Persistent state |
-|---|---|---|---|---|---|---|
-| Frontend | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no special resources | **no PVC** |
-| Coordinator | `Deployment` | ≥ 2 | `preferredDuringSchedulingIgnoredDuringExecution` on its own label, `topologyKey: kubernetes.io/hostname` | `maxUnavailable: 1` | no GPU | **no PVC** (Pulsar subscription cursors are broker-side durable) |
-| Engine | Linux: `Deployment`; Apple: host daemon member | Linux: ≤ number of engine-capable nodes per deployment; Apple: one member per stable host id | Linux: **`requiredDuringSchedulingIgnoredDuringExecution`** on its own label, `topologyKey: kubernetes.io/hostname`; Apple: host-id uniqueness plus pinned-topic `Exclusive` ownership when exact-host routing is used | Linux: `maxUnavailable: 1`; Apple: host process supervised outside Kubernetes | linux-cpu: explicit `engine.resources` CPU/memory requests and limits (`2Gi` request / `4Gi` limit by default, `768Mi` request / `3584Mi` limit in the Apple-hosted `linux-cpu` local validation profile), compiler admission uses the configured engine-pod capacity, and refinement verifies a process-group RSS sampler plus the live outer cgroup envelope; linux-gpu generated lifecycle values retain their pod/GPU placement shape, but executable promotion currently fails closed until independently indexed pod-RAM and VRAM enforcement lands; apple-silicon: no in-cluster engine pod, so active compiled placements run on the on-host `infernix service` daemon after checked host-partition refinement. Oversized catalog entries remain explicit unavailable models instead of invalidating the whole daemon. | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache` with `sizeLimit: {{ .Values.engine.modelCache.sizeLimit }}` (default `64Gi`), and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
+The supported shape is a **fleet of machines, each running exactly one engine process**, all
+consuming the same pool topic through a `Shared` subscription. A machine is the unit of capacity, of
+model cache, and of configuration. There is no within-role replication: every role runs one process
+per machine, and horizontal scale is adding a machine, not adding a replica.
 
-**Linux engine placement rule.** Two engines from the same Linux engine Deployment on one node would
-mean:
+| Role | Deployment kind | Processes | Node resource shape | Persistent state |
+|---|---|---|---|---|
+| Frontend | `Deployment` | one | no special resources | **no PVC** |
+| Coordinator | `Deployment` | one | no GPU | **no PVC** (Pulsar subscription cursors are broker-side durable) |
+| Engine | Linux: `Deployment`; Apple: host daemon member | **one per machine** | linux-cpu: explicit `engine.resources` CPU/memory requests and limits; the executing machine admits against its own observed capacity and refinement verifies a process-group RSS sampler plus the live outer cgroup envelope; linux-gpu retains its pod/GPU placement shape; apple-silicon: no in-cluster engine pod, so active compiled placements run on the on-host `infernix service` daemon after checked host-partition refinement. Oversized catalog entries remain explicit unavailable models instead of invalidating the whole daemon. | **no PVC**; Linux uses a single `emptyDir` volume `model-cache` mounted at `/model-cache`, and Apple uses a derived host-local model cache; both are rebuilt from `infernix-models` |
 
-1. Two KV caches indexed by the same `(contextId, prefixHash)` space,
-   competing for memory.
+**One engine per machine.** Two engines on one machine would mean:
+
+1. Two KV caches indexed by the same `(contextId, prefixHash)` space, competing for memory.
 2. Two copies of every loaded model's weights in memory.
 3. Two adapter processes contending for the same accelerator handles.
 
-None of these costs translate to throughput gain on the supported
-adapters. The required Linux anti-affinity rule lets `engine.replicaCount`
-function as a "how many eligible Linux nodes do we have" knob: if the
-requested replica count exceeds available engine-capable nodes, the
-excess pods remain `Pending` until new nodes appear or the count is
-lowered.
+None of these costs translate to throughput gain on the supported adapters, and a second engine
+additionally asserts the machine's whole observed capacity twice — each process resolves the same
+physical RAM and admits against it independently, so both can pass admission for work that together
+exceeds the box. The rule is therefore a correctness rule, not a scheduling preference, and it is
+enforced by the machine contract naming exactly one engine identity rather than by Kubernetes
+placement.
+
+**Member identity fails closed.** A daemon that cannot establish which member it is refuses to
+start. It does not adopt a default, and it does not select the first entry of a catalog: two
+machines that both resolved the same identity would each assert the other's capacity as their own,
+and nothing downstream would detect it — the broker sees two ordinary `Shared` consumers with
+distinct process-qualified names. Identity is asserted by the machine's own contract and claimed
+against the broker, because a host-local lock cannot exclude a second machine.
+
+**Linux GPU per-engine images.** Framework-specific Linux GPU pools may still render as
+`infernix-engine-<engine>` Deployments whose image contains exactly one isolated framework venv.
+That split is an image and dependency-isolation boundary; pool membership and model routing are
+derived from the typed engine-pool graph.
+
+**Apple silicon symmetry.** On Apple substrates engine members are on-host `infernix service`
+daemons with stable host ids, not Kubernetes pods. Normal Apple model pools use `Shared`
+subscriptions across distinct host ids so broker-native permits distribute work. Broker permits
+remain a concurrency/backpressure mechanism; memory capacity is checked by the executing machine's
+runtime admission policy immediately before launch and returns typed `ModelMemoryLimitExceeded`
+when the model does not fit. Exact-host routes use derived per-host topics with `Exclusive`.
 
 **Linux GPU per-engine images.** Framework-specific Linux GPU pools may still render as
 `infernix-engine-<engine>` Deployments whose image contains exactly one isolated framework venv.
@@ -256,10 +264,10 @@ state on the operator's machine, not durable cluster state.
 
 | Substrate | `demo_ui` | Frontend pod | Coordinator pod | Engine placement |
 |---|---|---|---|---|
-| `apple-silicon` | `true` | `infernix-demo` in cluster (single replica — HA-sized-down for Colima) | `infernix-coordinator` in cluster (single replica — HA-sized-down for Colima) | Apple host-daemon pool members selected by host id |
-| `apple-silicon` | `false` | absent | `infernix-coordinator` in cluster | Apple host-daemon pool members selected by host id |
-| `linux-cpu` | `true` | `infernix-demo` in cluster (replicas >= 2) | `infernix-coordinator` in cluster (replicas >= 2) | Kubernetes engine pools; the supported local HA lane renders two workers and two engines |
-| `linux-cpu` | `false` | absent | `infernix-coordinator` in cluster | Kubernetes engine pools |
+| `apple-silicon` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | the on-host `infernix service` engine, one per machine, selected by member id |
+| `apple-silicon` | `false` | absent | `infernix-coordinator` in cluster | the on-host `infernix service` engine, one per machine, selected by member id |
+| `linux-cpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | Kubernetes engine pools, one engine process per machine |
+| `linux-cpu` | `false` | absent | `infernix-coordinator` in cluster | Kubernetes engine pools, one engine process per machine |
 | `linux-gpu` | `true` | `infernix-demo` in cluster | `infernix-coordinator` in cluster | Kubernetes GPU engine pools, including framework-specific Deployments when configured |
 | `linux-gpu` | `false` | absent | `infernix-coordinator` in cluster | Kubernetes GPU engine pools, including framework-specific Deployments when configured |
 
@@ -310,7 +318,7 @@ Subscription primitives used at each hop:
 - **Reader** (frontend): cursor-based, no shared subscription state
   across pods; any pod hosts any WS session.
 - **Failover** (coordinator): exactly one active subscriber per topic
-  at a time; Pulsar promotes a surviving replica on crash and
+  at a time; Pulsar promotes a surviving consumer on crash and
   redelivers unacked messages.
 - **Shared** (engine pools): Pulsar distributes pool work to eligible members according to permits
   and receiver backlog. Messages are acknowledged only after materialization, inference, and result
@@ -366,6 +374,32 @@ engine pod on whatever the batch topic delivers.
 When a deployment does not need broker-level batching, the coordinator still owns the routing
 decision and publishes one request per batch message. Engines do not bypass the validated pool graph.
 
+## Delivery Semantics
+
+**The contract is at-least-once delivery with an effectively-once observable outcome.** This is
+stated here rather than left implied, because every recovery property in the failure table below
+depends on it and a future change that moved the acknowledgement would silently delete them.
+
+- **Acknowledgement follows the terminal event, never precedes it.** An engine acknowledges a pool
+  message only after materialization, inference, and durable result publication succeed. A domain
+  failure is itself a terminal event: an adapter error, an unknown model, a malformed request, or an
+  admission rejection each publish a `status=failed` result and *then* acknowledge, so a request that
+  cannot succeed is answered rather than redelivered forever.
+- **The exposure this leaves is duplicate compute, not lost work.** If a machine dies mid-inference
+  the message is unacknowledged, the broker redelivers it to another `Shared` consumer, and the
+  request is executed a second time. That is the intended trade.
+- **Duplicates are collapsed at the effect, not at the delivery.** Producer-side broker
+  deduplication and the conversation bridge's per-context cursor mean a redelivered request produces
+  no second conversation event, so at-least-once delivery is observed as effectively-once output.
+- **Redelivery is the only recovery path.** Request publishes carry a deduplicating sequence id
+  derived from the originating prompt, so a re-dispatch from a recovered process is dropped by the
+  broker by design. Nothing else in the pipeline can replace an unacknowledged message.
+
+At-most-once was considered and rejected. Prompt resolution requires a terminal event; there is no
+client-side deadline and no server-side reaper, so a request discarded before its result is published
+leaves a prompt that never resolves and no error the user can see. Acknowledging early would also
+delete the recovery path above, on which the fleet's tolerance of a machine loss entirely rests.
+
 ## Failure Semantics per Role
 
 Recovery in every failure mode relies on three primitives that all
@@ -386,12 +420,12 @@ readiness wait returns typed evidence for the state it gates rather than a bare 
 | Failure | What happens | What recovers |
 |---|---|---|
 | Frontend pod crash | WS connections drop | Client reconnects to any replica; new pod re-derives Readers from the JWT; state replays from Pulsar. Pending submits replay via `clientIdempotencyKey`; reducer dedup catches duplicates. The WS pod acks a client submit only after Pulsar confirms the publish, so "acked then crashed" implies "already on the log." |
-| Coordinator pod crash | Failover subscription's active replica is unreachable | Pulsar promotes a surviving coordinator replica; unacked conversation events redelivered to the new active dispatcher; unacked inference results redelivered to the new active result-bridge; producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. |
+| Coordinator crash | The Failover subscription's active consumer is unreachable | Pulsar promotes the next eligible consumer when one exists, and redelivers unacked conversation events to the active dispatcher and unacked inference results to the active result-bridge; producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. With one coordinator per fleet, recovery is that consumer restarting and resuming from its durable cursor. |
 | Engine member crash | Active engine member disappears | Pulsar redelivers the unacked pool-topic message to another eligible member when the route is a `Shared` pool. The receiving engine has a KV-cache miss on that request's `prefixHash` and rebuilds from the conversation log; producer dedup on `inference.result.<mode>` prevents a duplicate result if the original engine had partially published. |
-| Engine node drain | Engine members on that node go away | Kubernetes placement and PDBs protect Linux pools; Apple host daemons stop granting permits or unsubscribe while draining. Pulsar redelivery and KV-cache rebuild are the same as the member-crash case for shared pools. A node a test harness drained is tracked as a `ClusterMutating` position and uncordoned on the next `cluster up`. Wave X (2026-07-24) historically closes that 2026-07-23 scope, not the 2026-07-25 owner-atomic reservation/teardown correction or its all-Haskell lifecycle-lock/subprocess replacement. The implementation is present, but focused validation, fresh source review, complete source-matched Stage 1, and Wave Y remain in progress; Phase 6 validation is ordered after Phases 2 and 4. See [Managed State Transitions](managed_state_transitions.md). |
-| Engine model-memory admission failure | The compiler classifies a configured model above the active resource capacity as `UnavailableModel` | The normal coordinator path publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib` and `availableMib`, without selecting a batch route or launching an engine; smaller compiled placements continue serving. The 2026-07-25 Phase 1 gate historically proved this for its source, but it is superseded as current-worktree evidence by the all-Haskell lifecycle/subprocess correction and must be covered by the fresh Stage 1. Phase 4 owns Apple/Linux CPU survival proof, and Phase 6 owns the dual RAM/VRAM GPU path. |
+| Engine node drain | Engine members on that node go away | Remaining fleet machines continue to consume the shared pool topic; Apple host daemons stop granting permits or unsubscribe while draining. Pulsar redelivery and KV-cache rebuild are the same as the member-crash case for shared pools. A node a test harness drained is tracked as a `ClusterMutating` position and uncordoned on the next `cluster up` — see [Managed State Transitions](managed_state_transitions.md). |
+| Engine model-memory admission failure | Plan refinement on the executing machine classifies a placed model above that machine's own resource capacity as `UnavailableModel` | The engine publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib` and `availableMib`, without launching an engine process; the coordinator forwards the request to its pool rather than vetoing it, because a machine that will not run the work has no verdict to give. Smaller admitted placements continue serving; a machine that admits none of its placements refuses to start. |
 | Invalid inference request | A coordinator or engine receives an empty model id, unknown model, wrong-route model, or malformed protobuf | Empty/unknown/wrong-route requests publish a terminal failed `InferenceResult`; malformed bytes publish a typed malformed failed result. File-spool sources are removed and Pulsar messages acknowledged only after terminal result persistence/publication. |
-| Pulsar broker / MinIO / IdP outage | Standard HA recovery (3-broker Pulsar, 4-replica MinIO, HA-deployed IdP) | Frontend caches JWKS with short TTL so brief IdP outages do not break existing sessions; the rest of the path uses Pulsar's own HA. |
+| Pulsar broker / MinIO / IdP outage | A platform dependency is unavailable | Frontend caches JWKS with short TTL so brief IdP outages do not break existing sessions. The platform services are deployed single-node on the supported substrate, so an outage is an outage: recovery is restart, and durability comes from their own storage rather than from replication. |
 
 ## Apple Silicon Mapping
 
@@ -428,10 +462,13 @@ special case.
 
 ### Engine Memory Admission
 
-The execution-plan compiler performs model-memory admission against the substrate-specific
-`InferenceMemoryBudget`. It accounts for every configured model as either a `CompiledPlacement` or
-an explicit `UnavailableModel`; one oversized entry does not invalidate the whole config or prevent
-smaller placements from serving.
+Execution-plan compilation is pure graph validation: it accounts for every configured model as a
+`CompiledPlacement`, deciding where a model may run and never whether a machine can fund it.
+Model-memory admission happens during plan refinement, on the machine that will execute, against
+that machine's `InferenceMemoryBudget`. Refinement accounts for every placed model as either an
+`ExecutableModel` or an explicit `UnavailableModel`; one oversized entry does not invalidate the
+whole config or prevent smaller placements from serving, and a machine that admits none of its
+placements refuses to start rather than reporting ready and rejecting every request.
 
 The active budget is a typed value, not an integer sentinel:
 `HostEnforcedBudget HostMemoryPartition | SubstrateEnforcedBudget PodMemoryLimit`. There is no
@@ -480,19 +517,19 @@ assignments.
 
 The three-role contract is validated by:
 
-- `infernix lint chart` against the role-specific Deployment
-  templates and PodDisruptionBudgets
+- `infernix lint chart` against the role-specific Deployment templates
 - `infernix test integration` for the dispatcher → engine → result-bridge
   writeback path
-- `infernix test integration` chaos tests for frontend pod replacement,
-  coordinator pod replacement, engine pod replacement, engine-node drain,
-  bootstrap deduplication, and engine anti-affinity (defined in
-  [../development/chaos_testing.md](../development/chaos_testing.md))
+- `infernix test integration` for engine-pool placement and broker-native
+  shared-subscription backpressure — both properties of the pool graph rather
+  than of recovery
 - a production-shape test that deploys `demo_ui = false` and asserts the coordinator plus engine-pool
   workloads are present while demo-only workloads and routes are absent
-- a scheduling negative-test that demonstrates k8s rejects a second
-  engine pod on the same node when the required anti-affinity rule
-  is in force
+- a scheduling check that every deployed workload is fully scheduled, with no `Pending` replica in
+  the `platform` namespace. That is the observable proof the retired engine pod anti-affinity is
+  **gone** rather than merely unsatisfied: expressing one-engine-per-machine as a placement
+  constraint produced a `Pending` pod instead of preventing a second process, which is why the rule
+  now lives in the machine contract and in the host-local engine lock
 
 `infernix lint docs` enforces the metadata block and cross-link
 resolution of this doc.
@@ -511,7 +548,6 @@ resolution of this doc.
 - [../engineering/k8s_storage.md](../engineering/k8s_storage.md) — manual-storage doctrine and PVC ownership
 - [../operations/cluster_bootstrap_runbook.md](../operations/cluster_bootstrap_runbook.md) — operator-facing pod inventory
 - [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md) — Apple host workflow
-- [../development/chaos_testing.md](../development/chaos_testing.md) — per-role chaos cases
 - [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md) — validation surface
 - [../tools/pulsar.md](../tools/pulsar.md) — Pulsar topic contract
 - [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md) — phase plan for the supported three-role pod split

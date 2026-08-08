@@ -9,10 +9,24 @@
 ## Architecture Baseline
 
 The repository target closes around the explicit-init runtime-config architecture: the one-binary role model,
-mandatory local HA platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
+single-node platform services, Harbor-first image flow, manual storage doctrine, Pulsar-only
 production surface, Gateway-owned routing, Haskell-owned frontend contracts, substrate-specific
 validation, and a daemon-role model where the coordinator owns Pulsar routing while
 substrate-neutral engine pools run inference on Kubernetes workloads or Apple host daemons.
+
+> **Bounded host build memory landed (2026-08-06).** The host toolchain is now a declared account
+> on measured physical RAM rather than an unmodelled draw on `headroom`. `Infernix.BuildMemory`
+> makes `deriveBuildMemoryPlan` the only mint of a `BuildMemoryPlan`, so a per-process ceiling has
+> no inhabitant that was not divided by the job count it is multiplied by; the built executable
+> declares a bounded runtime address-space reservation, without which lowering the process's own
+> `RLIMIT_AS` succeeds and then kills it on its next allocation; the host manifest gained a measured
+> `memory` record (`/proc/meminfo` intersected with the cgroup maximum on Linux, `hw.memsize` on
+> Darwin); and `infernix init` derives the untracked per-machine `cabal.project.local` from it.
+> `cabal.project` carries a calibrated floor for a fresh clone. The floor is a measured multiple:
+> a complete clean `cabal build all --enable-tests` peaked at 1328 MiB resident in the largest single
+> compiler process. The *spawn* boundary — a closed toolchain invocation vocabulary that makes
+> starting a build from a bare command list not typecheck — is Phase 6 Sprint 6.46 and is not
+> claimed yet, and the Apple lane's mechanism is unmeasured until its cohort wave.
 
 > **No-native-source correction and evidence reset (2026-07-26).** Repository-owned native
 > implementation source is forbidden in native files or embedded/generated payloads, as are Cabal
@@ -465,7 +479,7 @@ the execution-ordered buildout lives at
   cluster-resident Apple inference execution
 - `infernix init --demo-ui false` can emit `demo_ui = false`; omitting that flag keeps the default
   demo-enabled output
-- Harbor-first bootstrap, Gateway-owned routing, mandatory local HA platform services,
+- Harbor-first bootstrap, Gateway-owned routing, single-node platform services,
   operator-managed Patroni PostgreSQL, manual `infernix-manual` storage, Haskell-owned frontend
   contracts, the shared Python adapter project, and untracked generated outputs all remain
   mandatory doctrine
@@ -783,9 +797,10 @@ The plan keeps control-plane execution context separate from substrate.
 - the staged `.dhall` tells each daemon its substrate, whether its `daemonRole` is `Coordinator` or
   `Engine`, and the validated pool/member assignments and derived topics it may use. Engine daemon
   metadata is derived internally from those assignments rather than exposed as a legacy projection
-- the supported HA defaults: coordinator `replicaCount >= 2` with soft anti-affinity, Linux engine
-  placement governed by Kubernetes rules, Apple engine placement governed by host ids, and per-role
-  coordinator plus engine-pool knobs in `chart/values.yaml`. Pulsar-owned topics, `Shared`
+- the supported fleet defaults: one process per role per machine, Linux engine placement governed
+  by Kubernetes scheduling, Apple engine placement governed by member ids, and per-role coordinator
+  plus engine-pool knobs in `chart/values.yaml`. Horizontal scale is adding a machine, not raising a
+  replica count. Pulsar-owned topics, `Shared`
   subscriptions on normal pool topics, `Exclusive` on pinned member topics, and per-context
   `Failover` subscriptions on coordinator-owned topics
   keep request handoff, inference, and result-publication ownership unambiguous
@@ -942,10 +957,10 @@ through `infernix test init`.
 - [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md)
 - [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
 - [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
-- [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
+- [phase-3-platform-services-and-edge-routing.md](phase-3-platform-services-and-edge-routing.md)
 - [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
 - [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md)
-- [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
+- [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
 - [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md)
 - [phase-8-zero-tracked-dhall-config-and-eager-model-cache.md](phase-8-zero-tracked-dhall-config-and-eager-model-cache.md)
 - [phase-9-access-control-and-monitoring.md](phase-9-access-control-and-monitoring.md)

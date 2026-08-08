@@ -69,6 +69,8 @@ library
         Infernix.Evidence.Lease
         Infernix.Evidence.Readiness
         Infernix.HostConfig
+        Infernix.HostMemory
+        Infernix.BuildMemory
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util
@@ -196,7 +198,7 @@ executable infernix
     main-is:          Main.hs
     hs-source-dirs:   app
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:      -Wall -Werror -threaded -with-rtsopts=-xr1024M
     build-depends:
         base >=4.18 && <4.23,
         bytestring >=0.11 && <0.13,
@@ -278,6 +280,8 @@ test-suite infernix-unit
         Infernix.ExecutionPlan.Internal
         Infernix.ExecutionPlan.Properties
         Infernix.HostConfig
+        Infernix.HostMemory
+        Infernix.BuildMemory
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util
@@ -337,7 +341,7 @@ test-suite infernix-unit
         Proto.Infernix.Runtime.Inference_Fields
 
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:      -Wall -Werror -threaded -rtsopts
     build-depends:
         aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
@@ -600,6 +604,8 @@ test-suite infernix-integration
         Infernix.ExecutionPlan.Internal
         Infernix.ExecutionPlan.Properties
         Infernix.HostConfig
+        Infernix.HostMemory
+        Infernix.BuildMemory
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util

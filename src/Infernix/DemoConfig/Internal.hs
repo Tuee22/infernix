@@ -6,6 +6,7 @@ module Infernix.DemoConfig.Internal
     decodeDemoConfigFile,
     materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
+    materializeBuildMemoryCeilingFile,
     materializeHostManifestFile,
     materializeHostSecrets,
     observeAppleHostMemoryPartition,
@@ -26,14 +27,15 @@ import Data.ByteString.Char8 qualified as ByteStringChar8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isSpace)
 import Data.List (intercalate, nub)
-import Data.Maybe (isNothing)
 import Data.Text qualified as Text
+import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
 import Infernix.DemoConfig.Colima (colimaPledgeMibFromJsonLines)
 import Infernix.EngineRouting (engineMemberRequestTopics)
 import Infernix.HostConfig (HostConfig)
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostMemory qualified as HostMemory
 import Infernix.HostTools qualified as HostTools
 import Infernix.Models
   ( appleFallbackInferenceRamBudgetMib,
@@ -124,20 +126,69 @@ writeProjectConfigFile filePath payload = do
 -- `infernix init` and `internal materialize-substrate`. No auto-generate-
 -- if-absent backstop remains anywhere; commands that need the manifest fail
 -- fast naming `infernix init` when it is missing.
+--
+-- Phase 1 Sprint 1.21 — the manifest now also carries measured host memory
+-- facts, and the measurement is fail-closed: a manifest that records an
+-- unmeasured host would fund a build ceiling that only looks derived from
+-- physical RAM. The tool paths of the record about to be written are the ones
+-- the Darwin probe uses, because the file it is about to write does not exist
+-- yet.
 materializeHostManifestFile :: Paths -> IO FilePath
 materializeHostManifestFile paths = do
   let filePath = Config.hostConfigPath paths
   operatorHome <- resolveOperatorHomeDirectory
-  let hostConfig = case Config.controlPlaneContext paths of
+  let unmeasuredHostConfig = case Config.controlPlaneContext paths of
         Config.OuterContainer ->
           HostConfig.defaultLinuxOuterContainerHostConfig (Text.pack "/root")
         _ ->
           HostConfig.defaultAppleHostNativeHostConfig
             (Text.pack (Config.repoRoot paths))
             (Text.pack operatorHome)
+  observed <- HostMemory.observeHostMemoryFacts unmeasuredHostConfig
+  memoryFacts <-
+    case observed of
+      Right facts -> pure facts
+      Left reason ->
+        ioError
+          ( userError
+              ( "cannot materialize "
+                  <> filePath
+                  <> " without measured host memory: "
+                  <> reason
+              )
+          )
+  let hostConfig = unmeasuredHostConfig {HostConfig.hostMemory = memoryFacts}
       payload = ByteStringChar8.pack (HostConfig.renderHostConfig hostConfig)
   writeProjectConfigFile filePath payload
   pure filePath
+
+-- | Phase 1 Sprint 1.21: `infernix init` owns the per-machine build ceiling at
+-- untracked repo-root @cabal.project.local@.
+--
+-- The file is generated rather than hand-written because both of its numbers
+-- have to come from the same derivation: a job count and a per-process cap
+-- written independently is exactly the failure the bounded-host-memory
+-- doctrine exists to prevent. It supersedes the committed @cabal.project@
+-- floor, which a fresh clone needs before any binary exists.
+materializeBuildMemoryCeilingFile :: Paths -> IO FilePath
+materializeBuildMemoryCeilingFile paths = do
+  let filePath = Config.repoRoot paths </> "cabal.project.local"
+  hostConfig <- HostConfig.decodeHostConfigFile (Config.hostConfigPath paths)
+  case HostMemory.buildMemoryPlanForHost hostConfig of
+    Left reason ->
+      ioError
+        ( userError
+            ( "cannot generate "
+                <> filePath
+                <> ": "
+                <> reason
+            )
+        )
+    Right plan -> do
+      writeProjectConfigFile
+        filePath
+        (ByteStringChar8.pack (BuildMemory.renderCabalProjectLocal plan))
+      pure filePath
 
 -- | Phase 8 Sprint 8.3: `infernix init` owns creation of the host worker
 -- secret material under @./.data/runtime/secrets/@. This replaces the old
@@ -314,10 +365,22 @@ resolveAppleHostMemoryPartitionBudget paths = do
       Right (physicalMib, colimaMib) ->
         case mkHostMemoryPartition physicalMib colimaMib minHostHeadroomMib of
           Right resolvedPartition -> pure resolvedPartition
-          -- Discovery worked but the colima pledge plus headroom oversubscribe
-          -- physical RAM: fail closed with zero inference capacity rather than
-          -- racing the watchdog.
-          Left _ -> requireFallbackPartition 0
+          -- Phase 4 Sprint 4.34: discovery worked and the answer is that this
+          -- host cannot fund any inference. The retired behaviour substituted a
+          -- zero-capacity partition, which is not a smaller budget — it is a
+          -- daemon that starts, passes every check, and answers nothing, because
+          -- every model's positive footprint exceeds zero. Name the measurement
+          -- and the remedy instead.
+          Left partitionError ->
+            ioError
+              ( userError
+                  ( "this host cannot fund any inference capacity: "
+                      <> partitionError
+                      <> ". Reduce the Colima memory pledge or run on a host with"
+                      <> " more physical RAM; a zero-capacity partition is refused"
+                      <> " rather than compiled into a plan that can answer nothing."
+                  )
+              )
       -- Host discovery failed: keep bring-up validatable with the conservative
       -- fallback capacity (the real partition replaces it whenever discovery works).
       Left _ -> requireFallbackPartition appleFallbackInferenceRamBudgetMib
@@ -474,16 +537,10 @@ validateDemoConfig :: Bool -> DemoConfig -> Either String DemoConfig
 validateDemoConfig allowEmptyModels demoConfig
   | Text.null (Text.strip (configMapName demoConfig)) =
       Left "configMapName must not be blank"
-  | null (requestTopics demoConfig) =
-      Left "request_topics must not be empty"
-  | any (Text.null . Text.strip) (requestTopics demoConfig) =
-      Left "request_topics must not contain blank values"
-  | Text.null (Text.strip (resultTopic demoConfig)) =
-      Left "result_topic must not be blank"
-  | null (engines demoConfig) =
-      Left "engines must not be empty"
-  | any invalidEngineBinding (engines demoConfig) =
-      Left "every engine binding must declare non-blank engine, adapterId, adapterType, adapterLocator, adapterEntrypoint, setupEntrypoint, and projectDirectory values"
+  -- Phase 8 Sprint 8.10: the topics, the engine list, the engine daemons, the
+  -- per-entity runtime mode and location, and the pool in-flight knob are
+  -- derived by the binary, so the guards that only ever caught a generated copy
+  -- disagreeing with the derivation are retired with those fields.
   | null (models demoConfig) && not allowEmptyModels =
       Left "models must not be empty"
   | any invalidRequestShape (models demoConfig) =
@@ -494,10 +551,6 @@ validateDemoConfig allowEmptyModels demoConfig
       Left "coordinator metadata must declare the coordinator role"
   | daemonConfigRole (webappDaemon demoConfig) /= Webapp =
       Left "webapp metadata must declare the webapp role"
-  | invalidDaemonConfig (coordinatorDaemon demoConfig) =
-      Left "coordinator metadata must declare role, location, request topics, and result topic"
-  | invalidDaemonConfig (webappDaemon demoConfig) =
-      Left "webapp metadata must declare role, location, request topics, and result topic"
   | null (enginePools demoConfig) =
       Left "enginePools must not be empty"
   | null (engineMembers demoConfig) =
@@ -516,10 +569,6 @@ validateDemoConfig allowEmptyModels demoConfig
       Left ("engine pools must declare at least one member id: " <> intercalate ", " emptyPoolMemberIds)
   | emptyMemberPoolIds /= [] =
       Left ("engine members must declare at least one pool id: " <> intercalate ", " emptyMemberPoolIds)
-  | wrongRuntimePoolIds /= [] =
-      Left ("engine pools use the wrong runtimeMode: " <> intercalate ", " wrongRuntimePoolIds)
-  | wrongRuntimeMemberIds /= [] =
-      Left ("engine members use the wrong runtimeMode: " <> intercalate ", " wrongRuntimeMemberIds)
   | ambiguousPoolModelIds /= [] =
       Left ("engine pool model ownership is ambiguous: " <> intercalate ", " ambiguousPoolModelIds)
   | unknownPoolModelIds /= [] && not bootstrapEmptyModels =
@@ -534,43 +583,17 @@ validateDemoConfig allowEmptyModels demoConfig
       Left ("engine member pool links must be bidirectional: " <> intercalate ", " memberPoolLinksMissingFromPools)
   | failoverPoolIds /= [] =
       Left ("engine pools must not use Failover subscriptions: " <> intercalate ", " failoverPoolIds)
-  | invalidInflightPoolIds /= [] =
-      Left ("engine pools must set maxInflightPerMember greater than zero: " <> intercalate ", " invalidInflightPoolIds)
   | unroutableModelIds /= [] =
       Left ("models without eligible engine members: " <> intercalate ", " unroutableModelIds)
-  | null (engineDaemons demoConfig) =
-      Left "engine metadata must not be empty"
-  | any invalidDaemonConfig (engineDaemons demoConfig) =
-      Left "every engine metadata entry must declare role, location, request topics, and result topic"
-  | engineDaemonsWithoutMembers /= [] =
-      Left ("engine daemons reference unknown member ids: " <> intercalate ", " engineDaemonsWithoutMembers)
-  | configRuntimeMode demoConfig == AppleSilicon && isNothing primaryEngineDaemon =
-      Left "apple-silicon configs must include engine metadata"
-  | configRuntimeMode demoConfig == AppleSilicon && maybe True (null . daemonConfigRequestTopics) primaryEngineDaemon =
-      Left "apple-silicon engine metadata must consume assigned pool topics"
-  | any runtimeMismatch (models demoConfig) =
-      Left "every model runtimeMode must match the demo config runtimeMode"
   | missingEngineBindings /= [] =
       Left ("missing engine bindings for selected engines: " <> intercalate ", " missingEngineBindings)
   | duplicateModelIds /= [] =
       Left ("duplicate model ids detected: " <> intercalate ", " duplicateModelIds)
   | duplicateMatrixRows /= [] =
       Left ("duplicate matrix row ids detected: " <> intercalate ", " duplicateMatrixRows)
-  | duplicateEngineNames /= [] =
-      Left ("duplicate engine bindings detected: " <> intercalate ", " duplicateEngineNames)
   | otherwise = Right demoConfig
   where
     bootstrapEmptyModels = allowEmptyModels && null (models demoConfig)
-    invalidEngineBinding engineBinding =
-      any
-        (Text.null . Text.strip)
-        [ engineBindingName engineBinding,
-          engineBindingAdapterId engineBinding,
-          engineBindingAdapterLocator engineBinding,
-          engineBindingAdapterEntrypoint engineBinding,
-          engineBindingSetupEntrypoint engineBinding,
-          Text.pack (engineBindingProjectDirectory engineBinding)
-        ]
     invalidRequestShape model =
       null (requestShape model)
         || any invalidField (requestShape model)
@@ -582,16 +605,6 @@ validateDemoConfig allowEmptyModels demoConfig
         && activeDaemonRole demoConfig
           /= daemonConfigRole (webappDaemon demoConfig)
         && all ((/= activeDaemonRole demoConfig) . daemonConfigRole) (engineDaemons demoConfig)
-    invalidDaemonConfig daemonConfig =
-      Text.null (Text.strip (daemonConfigLocation daemonConfig))
-        || null (daemonConfigRequestTopics daemonConfig)
-        || any (Text.null . Text.strip) (daemonConfigRequestTopics daemonConfig)
-        || Text.null (Text.strip (daemonConfigResultTopic daemonConfig))
-    primaryEngineDaemon =
-      case engineDaemons demoConfig of
-        firstEngineDaemon : _ -> Just firstEngineDaemon
-        [] -> Nothing
-    runtimeMismatch model = runtimeMode model /= configRuntimeMode demoConfig
     missingEngineBindings =
       [ Text.unpack engineName
       | engineName <- nub (map selectedEngine (models demoConfig)),
@@ -599,7 +612,6 @@ validateDemoConfig allowEmptyModels demoConfig
       ]
     duplicateModelIds = duplicates (map (Text.unpack . modelId) (models demoConfig))
     duplicateMatrixRows = duplicates (map (Text.unpack . matrixRowId) (models demoConfig))
-    duplicateEngineNames = duplicates (map (Text.unpack . engineBindingName) (engines demoConfig))
     duplicatePoolIds = duplicates (map (Text.unpack . enginePoolId) (enginePools demoConfig))
     duplicateMemberIds = duplicates (map (Text.unpack . engineMemberId) (engineMembers demoConfig))
     knownModelIds = map modelId (models demoConfig)
@@ -629,16 +641,6 @@ validateDemoConfig allowEmptyModels demoConfig
       [ Text.unpack (engineMemberId member)
       | member <- engineMembers demoConfig,
         null (engineMemberPoolIds member)
-      ]
-    wrongRuntimePoolIds =
-      [ Text.unpack (enginePoolId pool)
-      | pool <- enginePools demoConfig,
-        enginePoolRuntimeMode pool /= configRuntimeMode demoConfig
-      ]
-    wrongRuntimeMemberIds =
-      [ Text.unpack (engineMemberId member)
-      | member <- engineMembers demoConfig,
-        engineMemberRuntimeMode member /= configRuntimeMode demoConfig
       ]
     ambiguousPoolModelIds =
       duplicates
@@ -686,23 +688,11 @@ validateDemoConfig allowEmptyModels demoConfig
       | pool <- enginePools demoConfig,
         enginePoolSubscriptionType pool == ConsumerFailover
       ]
-    invalidInflightPoolIds =
-      [ Text.unpack (enginePoolId pool)
-      | pool <- enginePools demoConfig,
-        enginePoolMaxInflightPerMember pool <= 0
-      ]
     unroutableModelIds =
       [ Text.unpack modelIdValue
       | modelIdValue <- knownModelIds,
         not (modelHasEligibleMember modelIdValue)
       ]
-    engineDaemonsWithoutMembers =
-      nub
-        [ Text.unpack memberId
-        | daemonConfig <- engineDaemons demoConfig,
-          Just memberId <- [daemonConfigMemberId daemonConfig],
-          memberId `notElem` knownMemberIds
-        ]
     modelHasEligibleMember modelIdValue =
       any (poolHasEligibleMember modelIdValue) (enginePools demoConfig)
     poolHasEligibleMember modelIdValue pool =

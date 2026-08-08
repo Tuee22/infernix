@@ -799,6 +799,32 @@ validateInvocationBinding
       (nativeInvocationRuntimeMode invocation == runtimeMode descriptor)
       "native artifact invocation runtime binding changed"
 
+-- | The two llama.cpp flags whose correctness is lane-specific, because the
+-- two lanes run different llama.cpp builds from different sources: Linux uses
+-- the image-pinned b9704 payload, Apple uses whatever
+-- @materialize-metal-engines@ installed under @native/bin@.
+--
+-- On Linux both flags are retired, each for a measured reason against b9704.
+-- @--log-disable@ silences the runner's only failure channel: a failed model
+-- load produces 0 bytes on both streams with it, and names the exact GGUF path
+-- without it — that blindness is what made the first `linux-cpu` cohort
+-- failure undiagnosable. @--no-conversation@ is rejected outright by b9704's
+-- @llama-cli@ and, under the @llama-completion@ front-end the Linux target now
+-- names, would leak the chat-template marker into published output.
+--
+-- Apple keeps both until an @apple-silicon@ cohort can measure its own binary.
+-- That lane is not merely unvalidated here, it is *differently* built, and
+-- changing an argv for a binary nobody has run is how the defect above was
+-- introduced. The Apple half is named follow-on work rather than assumed
+-- equivalent: its @llama-cli@ is very likely the same post-split chat front-end
+-- and therefore likely carries the same realness defect.
+llamaLaneSpecificArguments :: RuntimeMode -> [String]
+llamaLaneSpecificArguments runtimeModeValue =
+  case runtimeModeValue of
+    AppleSilicon -> ["--no-conversation", "--log-disable"]
+    LinuxCpu -> []
+    LinuxGpu -> []
+
 renderNativeArtifactArguments ::
   FilePath ->
   NativeArtifactInvocation ->
@@ -813,24 +839,24 @@ renderNativeArtifactArguments installRoot invocation =
           NativeArtifactObjectRef _ ->
             Left "llama-cpp-cli requires inline text input"
       pure
-        [ "--model",
-          nativeModelPayloadPath cache invocation,
-          "--prompt",
-          Text.unpack prompt,
-          "--n-predict",
-          "32",
-          "--ctx-size",
-          "512",
-          "--threads",
-          "1",
-          "--gpu-layers",
-          "0",
-          "--no-display-prompt",
-          "--no-conversation",
-          "--single-turn",
-          "--simple-io",
-          "--log-disable"
-        ]
+        ( [ "--model",
+            nativeModelPayloadPath cache invocation,
+            "--prompt",
+            Text.unpack prompt,
+            "--n-predict",
+            "32",
+            "--ctx-size",
+            "512",
+            "--threads",
+            "1",
+            "--gpu-layers",
+            "0",
+            "--no-display-prompt",
+            "--single-turn",
+            "--simple-io"
+          ]
+            <> llamaLaneSpecificArguments (nativeInvocationRuntimeMode invocation)
+        )
     "whisper-cpp-cli" -> do
       cache <- requireNativeArtifactCache invocation
       inputFile <-

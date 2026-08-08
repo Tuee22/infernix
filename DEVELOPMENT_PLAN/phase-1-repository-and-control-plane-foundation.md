@@ -1,5 +1,10 @@
 # Phase 1: Repository and Control-Plane Foundation
 
+**Status**: Active — Validation Only. Sprint 1.20's `linux-cpu` cohort closed on exact image
+`sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67` and its remaining half is
+Apple accelerator evidence. Sprint 1.21 (bounded host build-memory kernel) is code-side closed on
+2026-08-06 and `Active` only for the Apple lane's unmeasured mechanism, which its cohort wave owns.
+
 ## Current validation run (2026-07-31)
 
 Sprint 1.20 remains Active, but the previously RED supported `linux-cpu` launcher build is now
@@ -3781,12 +3786,20 @@ identity remains unchanged and closes Sprint 0.18 only.
 
 ---
 
-## Sprint 1.21: Bounded Host Build Memory Kernel [Planned]
+## Sprint 1.21: Bounded Host Build Memory Kernel [Active]
 
-**Status**: Planned — the doctrine it implements is closed by Phase 0 Sprint 0.19; no unmet
-blocker remains for the machine-independent half.
-**Implementation**: `src/Infernix/BuildMemory.hs`, `infernix.cabal`, `cabal.project`,
-`src/Infernix/HostConfig.hs`, `src/Infernix/DemoConfig/Internal.hs`, `src/Infernix/ProjectInit.hs`
+**Status**: Active — code-side closed; the Apple lane's mechanism is validation-only and belongs to
+its cohort wave.
+**Code-side closure**: the kernel, the calibrated committed floor, the measured manifest facts, and
+the generated per-machine ceiling are implemented and GREEN on the machine-independent gate set
+(`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
+`infernix lint files|chart|proto|docs`).
+**Cohort gate**: `apple-silicon` — Wave Y. Darwin's mechanism is a runtime heap cap plus bounded
+concurrency and nothing here measures it.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`, `infernix.cabal`,
+`cabal.project`, `test/compile-fail/cabal.project`, `src/Infernix/HostConfig.hs`,
+`src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/DemoConfig/Internal.hs`,
+`src/Infernix/ProjectInit.hs`, `src/Infernix/CLI.hs`, `docker/Dockerfile`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
 `documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`
 
@@ -3804,44 +3817,88 @@ under `jobs: $ncpus` on a 32-core host permits 1536 GiB.
 
 The kernel is only installable because the built executable declares a bounded runtime address-space
 reservation first. Measured on the development host: the compiler runtime reserves 1024.65 GiB by
-default and 1.45 GiB under an explicit reservation size, at identical resident memory. Without that,
-lowering the process's own address-space limit succeeds and then kills it on its next allocation,
-so the establish-at-startup-and-inherit pattern that `Infernix.DescriptorSpace` uses does not
-otherwise transfer.
+default and 1.15 GiB under `-xr1G`, at identical resident memory. Without that, lowering the
+process's own address-space limit succeeds and then kills it on its next allocation, so the
+establish-at-startup-and-inherit pattern that `Infernix.DescriptorSpace` uses does not otherwise
+transfer.
 
 ### Deliverables
 
-- a bounded runtime address-space reservation on the built executable, so a memory limit is
-  installable in the process image at all
-- a calibrated ceiling and bounded job count committed to `cabal.project` and the compile-fixture
-  project, covering a fresh clone and an operator's own direct `cabal` invocation
-- `Infernix.BuildMemory` exporting `BuildMemoryBudget`, `BuildConcurrency`, and `BuildMemoryPlan`
+All five are implemented.
+
+- **A bounded runtime address-space reservation on the built executable.** The `infernix` executable
+  carries `-with-rtsopts=-xr1024M`; the linked binary is verified to carry it. `toolchainReservationFitsEveryPlan`
+  pins the invariant that the reservation stays below the smallest per-process ceiling the mint can
+  produce, and the unit suite asserts it rather than trusting two constants to stay in agreement.
+- **A calibrated ceiling and bounded job count committed to `cabal.project` and the compile-fixture
+  project**, covering a fresh clone and an operator's own direct `cabal` invocation. Both files carry
+  `jobs: 4` plus `ghc-options: +RTS -M4096M -xr12288M -RTS`, and both state the product rather than
+  the per-process number alone. The compile-fixture project is one of the nested builds the doctrine
+  names as outside the outer ceiling, so it carries its own.
+- **`Infernix.BuildMemory`** exporting `BuildMemoryBudget`, `BuildConcurrency`, and `BuildMemoryPlan`
   abstractly with `deriveBuildMemoryPlan` as the only mint, following the hidden-constructor,
-  lower-only, fail-closed shape of `Infernix.DescriptorSpace`
-- physical-memory facts in the host manifest, measured rather than declared — `/proc/meminfo`
-  intersected with the current cgroup limit on Linux, `hw.memsize` on Darwin — reusing the existing
-  cgroup reader in `Infernix.Runtime.Enforcer`
-- the per-machine ceiling generated into the untracked `cabal.project.local` by `infernix init`,
-  derived from those facts, superseding the hand-written stopgap
+  lower-only, fail-closed shape of `Infernix.DescriptorSpace`. `establishBoundedBuildMemory` writes
+  the hard limit as well as the soft one — a bound a child can raise back is not a bound — and
+  `requireBoundedBuildMemory` is the fail-closed observation at the point of use.
+- **Physical-memory facts in the host manifest, measured rather than declared.** `Infernix.HostMemory`
+  reads `MemTotal` from `/proc/meminfo` and intersects it with the cgroup v2 maximum on Linux, and
+  `sysctl -n hw.memsize` on Darwin, reusing the cgroup reader lifted out of
+  `Infernix.Runtime.Enforcer` into `Infernix.Runtime.Enforcer.Internal`. `infernix init` refuses to
+  write a manifest it could not measure.
+- **The per-machine ceiling generated into the untracked `cabal.project.local` by `infernix init`**,
+  derived from those facts, superseding the hand-written stopgap, which is deleted. `internal
+  materialize-substrate` writes it too, so the launcher image's own build is bounded by the same
+  derivation. On the 124.94 GiB development host that is a 63967 MiB account divided by 8 jobs into
+  a 7995 MiB heap cap and a 23985 MiB address-space reservation.
+
+Two decisions inside are worth stating rather than leaving implicit.
+
+**The account is a claim on resident memory, and the address-space ceiling is derived from it rather
+than the other way round.** The runtime reserves about three quarters of an address-space limit and
+its copying collector needs two semispaces, so usable heap tracks an address-space limit at roughly a
+third of it. Carrying both numbers independently would let them drift; the plan therefore derives
+`planProcessAddressMib` from `planRtsHeapMib` through one `heapToAddressSpaceMultiplier`.
+
+**A stale host manifest is a named refusal, not a raw Dhall type error, and the named remedy is
+`delete and re-run infernix init`.** Adding a record to the manifest breaks every previously
+generated file, and startup deliberately fails closed on a manifest it cannot decode rather than
+falling through to convention defaults that could misclassify the execution context. Making
+`infernix init` itself tolerant was considered and rejected: `init` is reached only after several
+earlier startup paths have already loaded the manifest, so tolerance would have to be threaded
+through all of them to buy an operator one `rm`.
 
 ### Validation
 
-- the calibration run: the smallest ceiling under which `cabal build all` completes, including the
-  largest module compiled in six components, recorded with its measured peak resident memory. The
-  shipped value is a measured multiple of that, and the measurement is what is maintained
-- `cabal test infernix-unit` proves the bound is inherited through the compiler chain, that an
-  unresolvable ceiling is a named refusal, and that establishing it never raises a tighter
-  host-imposed limit
-- an adversarial over-allocation under the ceiling exits non-zero and cleanly with no global
-  out-of-memory condition
-- `cabal build all` under `-Wall -Werror`, `infernix lint docs`
+- **The calibration run.** A complete clean `cabal build all --enable-tests` — 611 module
+  compilations across six components, so the largest module in `src/` is compiled six times — peaked
+  at **1328 MiB** resident in the largest single compiler process and **1798 MiB** summed across every
+  concurrent compiler and `cabal` process, in 8 m 13 s. The shipped 4096 MiB per-process floor is
+  3.1 times the single-process peak. The measurement, not the number, is what is maintained.
+- `cabal test infernix-unit` proves the bound is inherited through the compiler chain (a spawned
+  child reports the identical limit, and the real `ghc` compiles a module under it), that an
+  unresolvable ceiling is a named refusal, that establishing it never raises a tighter host-imposed
+  limit, and that the generated `cabal.project.local` states its job count, its per-process cap, and
+  their product.
+- An adversarial over-allocation under the ceiling exits non-zero and cleanly, with no global
+  out-of-memory condition. Every case that installs a ceiling runs in a re-exec of the suite binary
+  with an explicit `+RTS -xr` reservation, because the suite's own image takes the default
+  1024.65 GiB and could not lower its own limit below it.
+- `cabal build all --enable-tests` under `-Wall -Werror` and `infernix lint docs` are GREEN, and the
+  whole gate set above ran under the new committed floor rather than the retired stopgap.
 
 ### Remaining Work
 
 The Apple lane's mechanism is unmeasured and is proved by its cohort wave, not by this gate set:
 Darwin aliases the address-space limit to an advisory resident-set limit, has no cgroups, and has no
 equivalent global out-of-memory killer, so its bound is a runtime heap cap plus bounded concurrency
-and the aggregate is arithmetic rather than enforcement.
+and the aggregate is arithmetic rather than enforcement. Until Wave Y records a result, no claim in
+this sprint covers it.
+
+The toolchain *spawn boundary* — the closed invocation vocabulary that makes starting a build from a
+bare command list not typecheck, plus the `unboundedToolchainSpawnViolations` lint and the child
+victim rank — is Phase 6 Sprint 6.46 and is deliberately not claimed here. Until it lands, the
+ceiling is installed by the committed and generated project files rather than by an evidence-gated
+spawn.
 
 ---
 

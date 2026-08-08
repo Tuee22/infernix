@@ -75,25 +75,19 @@ The raw destructive, commit, and spawn primitives are **not exported**; the only
 evidence:
 
 - the retained-state scrub takes a `WriterQuiesced` lease, so a scrub against a live writer is not a
-  constructible term;
-- cluster teardown consumes an opaque `ClusterTeardownAuthority s` minted from
-  `Lease s ClusterMutationLocked`, persisted owner, requested runtime, exact reservation access, and
-  global live-runtime inventory. `PreWorkloadKindRecovery s` and `KindDeleteAuthorization s` retain
-  the same region, so authority cannot escape or be reused under another lifecycle-lock
-  acquisition; nominal roles on the lease and authorization types prevent `Data.Coerce` from
-  erasing the region. The effect-adjacent check rereads reservation access and requires the exact
-  captured record, including owner PID, process group, and birth identity, before revalidating
-  owner/runtime. The 2026-08-02 final cross-phase review corrected an over-claim here — the owner was
-  an ordinary field, so an authority minted for `HarnessOwned` and one minted for `OperatorOwned` had
-  the same type — and Sprint 6.45 closed that half on 2026-08-03: `ClusterOwner` is promoted, and
-  `ClusterTeardownAuthority (owner :: ClusterOwner) s` is indexed by it with
-  `type role ... nominal nominal`. `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry the
-  same index. The owner field is now the singleton `SClusterOwner owner` rather than a bare value, so
-  the index and the value it stands for cannot drift, and `requireClusterOwnership` — still the sole
-  mint — takes the singleton and returns the correspondingly indexed authority. A fourth compile-fail
-  fixture, `fail-cannot-substitute-cluster-teardown-owner`, shares the region variable so the *only*
-  thing GHC rejects is the owner, and rejects it with `Couldn't match type 'HarnessOwned' with
-  'OperatorOwned'`.
+constructible term; - cluster teardown consumes an opaque `ClusterTeardownAuthority s` minted from
+`Lease s ClusterMutationLocked`, persisted owner, requested runtime, exact reservation access, and
+global live-runtime inventory. `PreWorkloadKindRecovery s` and `KindDeleteAuthorization s` retain
+the same region, so authority cannot escape or be reused under another lifecycle-lock acquisition;
+nominal roles on the lease and authorization types prevent `Data.Coerce` from erasing the region.
+The effect-adjacent check rereads reservation access and requires the exact captured record,
+including owner PID, process group, and birth identity, before revalidating owner/runtime. nominal
+nominal`. `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry the same index. The owner
+field is now the singleton `SClusterOwner owner` rather than a bare value, so the index and the
+value it stands for cannot drift, and `requireClusterOwnership` — still the sole mint — takes the
+singleton and returns the correspondingly indexed authority. A fourth compile-fail fixture,
+`fail-cannot-substitute-cluster-teardown-owner`, shares the region variable so the *only* thing GHC
+rejects is the owner, and rejects it with `Couldn't match type 'HarnessOwned' with 'OperatorOwned'`.
 
   Be equally precise about what the index does **not** buy, because that is the over-claim this work
   exists to retire. Substituting one owner's authority for the other's is now a type error. Deciding
@@ -105,15 +99,14 @@ evidence:
   `withClusterOwnerSingleton` selects the singleton *from the owner just read*, so no index is
   fabricated.
 
-  Sprint 6.45 closed the cross-checkout half on 2026-08-03, and it is a value-level guard by
-  necessity rather than by preference. The defect was that ownership evidence did not travel with
-  the resource: `clusterLifecycleLockPath`, `harnessReservationPath`, and `clusterStatePath` all
-  derive from the per-checkout `runtimeRoot`, while `kindClusterName` drops its `dataRoot`
-  discriminator for the default `.data` layout that every ordinary checkout uses — so two checkouts
-  locked different inodes while contending for one machine-global Kind cluster, and each authorized
-  against the *other's* live inventory using its *own* state file. A killed harness run leaves a
-  `HarnessOwned` state file behind, so a second checkout starting `infernix test all` could observe
-  the operator's live cluster, match it against that leftover record, and delete it.
+  The defect was that ownership evidence did not travel with the resource:
+  `clusterLifecycleLockPath`, `harnessReservationPath`, and `clusterStatePath` all derive from the
+  per-checkout `runtimeRoot`, while `kindClusterName` drops its `dataRoot` discriminator for the
+  default `.data` layout that every ordinary checkout uses — so two checkouts locked different
+  inodes while contending for one machine-global Kind cluster, and each authorized against the
+  *other's* live inventory using its *own* state file. A killed harness run leaves a `HarnessOwned`
+  state file behind, so a second checkout starting `infernix test all` could observe the operator's
+  live cluster, match it against that leftover record, and delete it.
 
   Both mechanisms the sprint originally proposed were rejected on analysis, and the reason is worth
   keeping: neither works in *both* supported execution contexts. Relocating the lock to a
@@ -299,7 +292,7 @@ operator's idle `ClusterReady`: an interrupted (SIGKILLed) `infernix test all` l
 persisted, so `cluster status` reports a mutation-incomplete (dirty) phase rather than a false
 `steady-state`, and the next `cluster up` reconciles it — uncordoning drained nodes and scaling
 deployments back — through the same reconcile-on-next-start repair the interrupted-bring-up path uses.
-The exported chaos-mutation bracket does not trust the caller's previously loaded `ClusterState`.
+The exported cluster-mutation bracket does not trust the caller's previously loaded `ClusterState`.
 While holding the lifecycle lock it rereads the state, complete Kind inventory, and owner
 reservation; only an exact live `ClusterReady` owner/runtime match may publish `ClusterMutating`.
 The body receives that freshly validated state, and `ClusterReady` is restored from it only after
@@ -364,7 +357,7 @@ retained cache.
 
 ### Bounded descriptor space
 
-A bounded command is not bounded if its own spawn is unbounded, and until Phase 6 Sprint 6.44's
+A bounded command is not bounded if its own spawn is unbounded. Until this doctrine's
 follow-on it was not. Every spawn kernel here sets `close_fds = True` so a child inherits nothing but
 the standard streams it is handed. `close_fds` is a configuration `posix_spawn` cannot express, so
 `process` falls back to fork/exec and, in the forked child, closes every descriptor from 3 up to
@@ -394,177 +387,57 @@ real artifact — a probe that fabricates is the same forbidden mask the [realne
 contract](realness_contract.md) rejects), and **bottom** (every operation forces its evidence, so a
 `undefined`-forge is an immediate loud crash, never a silent unmanaged action).
 
-## Current Status
+### Command and lifecycle boundaries
 
-The raw cluster spawn primitive is now confined to `Infernix.Cluster.Subprocess`, and both that
-module and `Infernix.Cluster.Command` are library-internal `other-modules`; `Cluster.hs` no longer
-owns a raw `System.Process` helper. The integration suite reaches only a non-destructive
-unit-returning quiescence check exported by `Infernix.Cluster`, while the unit component compiles the
-two internal source modules directly. Compile-fail fixtures prove that an external component cannot
-import either capability module. The closed command language, separate read-only operator-kubectl
-type (an allowlist rejects mutating verbs, mutating grouped subcommands, plugins, `exec`, and
-kubectl global profile/cache flags capable of caller-selected local writes),
-36-field generated command-policy record, opaque `CommandPolicyPlan` / `BoundedCommand` compilers,
-total deadline, retry fold, and process-group cleanup are implemented. Production call-site
-migration in `Cluster.hs` and `Cluster.PublishImages` is complete. Operand validation runs before
-rendering; generated
-publication policy owns all retry attempts under one total deadline. Kind delete likewise owns its
-generated ten-minute/three-attempt/two-second-backoff policy without a caller loop, performs
-same-lock-region effect-adjacent authority revalidation with an exact reservation reread, and
-accepts a terminal non-zero only after observed absence. Spawn failures cannot mint
-idempotent-absence success; passwords travel through stdin or a mode-0600 temporary auth file
-rather than argv. Harbor registry verification is a closed `PublishVerifyRegistry` command whose
-generated policy bounds the authenticated platform-selected skopeo `docker://` -> `dir:` copy.
-Each empty verification destination and auth file is below a fresh birth-identity-owned mode-0700
-directory. Primary-preserving brackets remove every protected path on normal return, failure, and
-asynchronous cancellation; a later publication reconciles a SIGKILL-stranded directory only after
-the recorded owner birth identity is absent. Unit coverage fixes the command/tool/argv/platform,
-redaction, absolute destination, permission, concurrency, and cleanup boundaries. The final Sprint
-2.16 adversarial audit reopened target-exec provenance, parent-death supervision, parent-side
-forced cleanup, and the real readiness-deadline kernel before source freeze. It later removed the
-cached-Docker-pull `PublishVerifyPull` witness described above. The subsequent all-Haskell
-architectural correction removed the repository-owned lifecycle-lock C shim and replaced it with
-the internal `filelock` wrapper. The public `System.Process` helper topology, bounded
-standard-stream framing, and typed session protocol described above are implemented, and the
-obsolete subprocess C file and Cabal declaration are removed. All source review, digest, Stage 1,
-and cohort evidence from before that replacement remains superseded. Focused adversarial
-validation, final source review, and the complete source-matched correction gate closed Phase 0
-Sprint 0.18 on 2026-07-27. Sprint 2.16 remains blocked by active Phase 1, then retains its own
-ordered final review, complete Stage 1, and Wave Y evidence.
-The Harbor `/v2/` startup observation is also folded through `awaitReadinessObservable` under an
-explicit 120-second stall and ceiling deadline with five-second polls. HTTP `200`, `401`, and `403`
-are measured API-ready; every other HTTP response is measured non-ready; and a transport exception
-is unobservable, so it can neither mint readiness nor masquerade as a measured response. The `/v2/`
-probe and authenticated artifact-metadata request each carry a required five-second response
-timeout. The handwritten publication `threadDelay` loop is retired, and
-`Cluster/PublishImages.hs` is no longer exempt from the raw-delay lint.
-The Linux launcher's inline `InfernixHost` payload includes the same complete 36-field default policy
-record; unit coverage extracts and strictly decodes that actual Dockerfile payload so launcher
-schema drift cannot reach `materialize-substrate`.
-Apple artifact provisioning now uses its separate opaque rank-2 grant/session boundary over the
-same bounded self-exec kernel. The Apple facade, artifact transaction, and provisioning modules
-cannot import `System.Process`, invoke raw process primitives, delegate to the legacy unbounded
-Poetry helpers, or call `runBoundedCommand` outside the provisioning facade; the
-`appleArtifactProvisioningViolations` style rule enforces that boundary. Sprint 1.20 is actively
-correcting the one-shot runtime capability, exact executable and package snapshot, current-recipe
-binding, descriptor-anchored artifact traversal, recursive Mach-O closure, and crash-recoverable
-Audiveris mount transaction. Its focused suite and compile-fixture inventories are therefore
-work-in-progress, and no earlier case count or result is reusable. Final source review, a fresh
-exact-source complete Stage 1, and Apple plus paired `linux-cpu` cohort evidence remain mandatory.
+The extracted contract, stated as requirements rather than as progress:
 
-This is the governing contract, and its code-side implementation has landed across the ten reopened
-phases tracked in
-[../../DEVELOPMENT_PLAN/README.md](../../DEVELOPMENT_PLAN/README.md) (Managed-State-Transition Doctrine
-Reopen), each code-side closed 2026-07-16 on the machine-independent gate set with its
-single-accelerator cohort full-suite the remaining wave residual. The doctrine and the escape-token
-lint are **Phase 0** (Sprint 0.13); the evidence and command kernels are **Phase 1** (Sprint 1.16);
-the typed `ClusterLifecycle` machine plus fail-closed versioned aeson persistence plus the
-`WriterQuiesced` lease-gated teardown are **Phase 2** (Sprint 2.14); the readiness kernel and typed
-subprocess-env seam are **Phase 3** (Sprint 3.14); the `PayloadVerified` sentinel gating, typed
-`awaitModelBootstrapReady`, and native-runner `HOME`/`TMPDIR` are **Phase 4** (Sprint 4.28); the
-single-sourced client-side readiness contract is **Phase 5** (Sprint 5.12); the capability-gating lint
-plus routed managed-transition coverage is **Phase 6** (Sprint 6.39); the `ClusterState` /
-`LifecycleProgress` field retirement plus the `DemoBucketsProvisioned` object-proxy gate and proven
-`.ready` sentinel are **Phase 7** (Sprint 7.29); the typed `WarmModelCacheOutcome` readiness plus
-fail-closed config-side reads are **Phase 8** (Sprint 8.7); and the `withValidAdminToken` region lease
-and typed `StsSession` leased value are **Phase 9** (Sprint 9.10). The superseded surfaces are recorded
-in
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-
-A **flake-driven follow-on reopen** (2026-07-19, the Bounded-Command Application & Bounded-HTTP wave)
-applies these kernels at two sites the 2026-07-18 cohort run proved unguarded — a Harbor `docker pull`
-verify hang and a rate-limited upstream model download. It is code-side closed 2026-07-19 on the
-machine-independent gate set (apple-silicon), and
-[Wave V](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) closed the single-accelerator plus
-`linux-cpu` cohort on 2026-07-20: the bounded-HTTP `DownloadOutcome` kernel is **Phase 1** (Sprint
-1.17); the bounded
-Harbor publish exec plus the `BlobServable` witness and the `harborTagMetadataPresent` /
-`observeRegistryApi` demotion are **Phase 3** (Sprint 3.15); the classified-download consumer fold
-plus the integrity-witnessed `PayloadVerified` are **Phase 4** (Sprint 4.29); and the
-`unboundedExecViolations` and `unboundedHttpViolations` capability-gating lints are **Phase 6**
-(Sprint 6.40). The `ProcessMonitor` retirement, the shared `retryCommandOutput` primitive, the
-eager-model-cache barrier, the full individual bounded-wait migration (the twelve remaining
-hand-rolled `go n` readiness loops across `Cluster.hs`, `Runtime/Pulsar.hs`, and `CLI.hs` — every one
-now folded onto `awaitReadiness` under either an attempt-derived `budgetDeadline` or an explicit
-wall-clock-plus-poll-cap `pollLimitedDeadline` for intentionally blocking probes), and the
-`threadDelayViolations` lint gate (raw `threadDelay` is a build error outside the readiness kernel and
-a deliberately shrinking backoff/heartbeat exemption list, keeping `CLI.hs` and
-`Cluster/PublishImages.hs` clean) are all migrated
-onto the bounded-command / `awaitReadiness` kernels (**Phase 6** Sprint 6.41, code-side closed
-2026-07-19, machine-independent and adversarially reviewed). The 2026-07-25 Phase 2 audit then
-corrected the readiness kernel itself: it measures a monotonic wall clock, includes probe duration,
-interrupts a hung probe at the remaining stall/ceiling budget, and preserves an independent maximum
-poll cap for both measured and wholly unobservable streams. The cap is not a quota: the real wall
-deadline can stop a slow probe stream before every permitted poll runs, and prior advancing progress
-then classifies as `NotReady`. The shared `budgetDeadline :: Int -> Int -> Deadline` bridge supplies
-both that real wall budget and an exact maximum attempt cap for short probes;
-`pollLimitedDeadline` requires callers with an intentional per-probe timeout to state the larger
-total wall budget explicitly. An unbounded probe or bare-recursion readiness wait is therefore
-unrepresentable.
-
-A second **flake-driven follow-on reopen** (2026-07-22, the Observable-Readiness wave) closes the last
-representable invalid state the readiness surface still permitted: a probe that could not *observe* a
-remote system was forced to launder that fault into a definite not-ready count (or, at the observation
-layer, a definite absence), which stalled the retained-second-`cluster up` warm-model-cache barrier at
-"11/16" and, on the Python side, let a fallible cache-revalidation read *delete* a valid retained
-`.ready` sentinel. It is code-side closed 2026-07-22 on the machine-independent gate set
-(apple-silicon): the `PollOutcome` observable-poll channel on `awaitReadinessObservable` (with
-`awaitReadiness` preserved as a behaviour-identical `Measured`-lift, so the sixteen existing waits are
-unchanged) is **Phase 1** (Sprint 1.18); the tri-state `SentinelObservation` warm-model-cache probe,
-the `SentinelCensus` that refuses to emit a readiness count while any sentinel is unobservable, and the
-Python `CacheValidity` evidence-gated cache deletion are **Phase 8** (Sprint 8.8). The
-single-accelerator (apple-silicon) plus `linux-cpu` behavioral cohort proof closed under
-[Wave W](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-07-24.
-
-A third **follow-on reopen** (2026-07-23, the Cluster-Ownership & Mutation-Position wave) closes a DSL
-smell an externally-killed `infernix test all` exposed: because `ClusterState` had no owner and
-`ClusterLifecycle` had no mutating position, a test-mutated cluster (a drained node, an over-scaled
-deployment) was the same term as an operator's idle `ClusterReady`, so a killed run left a dirty cluster
-reading as a clean `steady-state`; and `runClusterOwnedValidation`'s unconditional `clusterDown` plus
-the shared operator cluster identity (the test resolves the operator's `infernix.dhall`/`.data`/cluster
-name via `findRepoRoot`) meant even a clean `infernix test all` destroyed an operator's running cluster.
-The doctrine adds the typed `ClusterOwner` (`OperatorOwned | HarnessOwned`) with an evidence-gated
-seizure that fails closed on an operator cluster, the first-class `ClusterMutating` position with
-reconcile-on-next-`cluster up`, and the crash-safe `withTestHarnessConfig` backup reconcile. The
-doctrine doc + governance mirror landed first — **Phase 0** (Sprint 0.16, doc-only, `Done`) — and the
-enforcing code was extended by the 2026-07-25 owner-atomic correction: the `ClusterOwner` field,
-`ClusterMutating` position, fail-closed persistence (the `clusterOwner` field decodes to the safe
-default `OperatorOwned` on a pre-migration document, so an unowned-but-present cluster is protected, not
-destroyed), global three-runtime Kind inventory, and owner/runtime-indexed teardown authority are
-**Phase 2** (Sprint 2.15). The harness publishes a process-group reservation with a verified,
-persisted owner birth identity under the lifecycle lock before taking over `infernix.dhall`;
-operator mutations and a second live harness fail closed, while an unverifiable live group remains
-fenced. Each bounded command has a separately grouped anchor; the implemented replacement moves the
-supervisor and self-exec pin out of their containing groups only after their provisional exact
-identities reach parent custody. The parent durably publishes their final version-3 activity
-identities before the typed session may spend its one-shot target-start authority. Only proven
-absence of every recorded anchor, supervisor, and pin-led target group permits a later harness to reclaim
-the reservation before crash-backup reconciliation.
-The
-evidence-gated seizure (`seizeHarnessClusterSlot` over a hidden-constructor
-`ClusterTeardownAuthority` consumed by the unexported raw teardown), the chaos-mutation
-`ClusterMutating` transitions (`withPersistedClusterMutation`), and the crash-safe config swap
-(`reconcileInterruptedHarnessState` plus the reservation-gated config transaction) are
-**Phase 6** (Sprint 6.43). The all-Haskell lifecycle and bounded-subprocess replacements are
-implemented, and the obsolete subprocess C file and Cabal declaration are removed. Focused
-validation, source review, the fresh complete machine-independent gate, and cohort validation
-remain open. Wave X remains evidence only for the earlier scope.
-
-An image-owned Linux engine artifact now carries loader-closure evidence as part of its generation
-identity (**Phase 1**, Sprint 1.20). The payload-root digests an image target already recorded said
-nothing about the loader named by `PT_INTERP`, the resolution metadata in `/etc/ld.so.cache`, or the
-system libraries reached through `DT_NEEDED`, all of which live outside those roots — so two images
-with different `/lib` contents produced the same generation. `Infernix.Engines.Artifact.Loader`
-observes that closure through retained descriptors and
-`engineArtifactGenerationFingerprint` binds it, and the Linux installed smoke revalidates the
-complete recorded closure immediately before launch, failing closed on a manifest carrying none.
-`LD_LIBRARY_PATH` is never consulted: reading it would be an ambient environment read the
-configuration doctrine forbids, and an identity that depended on it would not be reproducible. This
-is a derivation of what the loader would resolve, not yet an observation of what it did — the
-`LD_DEBUG=libs` analogue of the Apple lane's `DYLD_PRINT_LIBRARIES` audit is not wired into the
-Linux smoke, and that gap remains open.
+- The raw cluster spawn primitive is confined to `Infernix.Cluster.Subprocess`. That module and
+  `Infernix.Cluster.Command` are library-internal `other-modules`, so an external component cannot
+  import either capability module — proved by compile-fail fixtures. The integration suite reaches
+  only a non-destructive, unit-returning quiescence check exported by `Infernix.Cluster`.
+- Operator `kubectl` is a **separate read-only command type**. Its allowlist rejects mutating verbs,
+  mutating grouped subcommands, plugins, `exec`, and the kubectl global profile and cache flags that
+  would permit a caller-selected local write.
+- Operand validation runs before rendering. Generated publication policy owns all retry attempts
+  under one total deadline; there is no caller-side retry loop. Kind delete owns its generated
+  policy the same way, performs same-lock-region effect-adjacent authority revalidation with an
+  exact reservation reread, and accepts a terminal non-zero **only after observed absence** — a
+  spawn failure can never mint idempotent-absence success.
+- Credentials travel through stdin or a mode-0600 temporary auth file, never argv. Each verification
+  destination and auth file sits below a fresh, birth-identity-owned mode-0700 directory.
+  Primary-preserving brackets remove every protected path on normal return, failure, and
+  asynchronous cancellation; a later publication reconciles a `SIGKILL`-stranded directory only once
+  the recorded owner birth identity is proven absent.
+- Registry verification is a closed `PublishVerifyRegistry` command whose generated policy bounds an
+  authenticated, platform-selected `docker://` → `dir:` copy.
+- Readiness is measured, never assumed. The Harbor `/v2/` startup observation folds through
+  `awaitReadinessObservable` under an explicit stall-and-ceiling deadline: HTTP `200`, `401`, and
+  `403` are measured API-ready; every other response is measured non-ready; and a transport
+  exception is **unobservable**, so it can neither mint readiness nor masquerade as a measured
+  response. The `/v2/` probe and the authenticated artifact-metadata request each carry a required
+  response timeout, and no handwritten delay loop substitutes for the kernel.
+- The Linux launcher's inline host payload carries the same complete generated command-policy
+  record, and unit coverage strictly decodes that actual payload so launcher schema drift cannot
+  reach substrate materialization.
+- Apple artifact provisioning is a second consumer of the same bounded self-exec kernel through its
+  own opaque rank-2 grant and session boundary. The Apple facade, artifact-transaction, and
+  provisioning modules cannot import `System.Process`, invoke raw process primitives, delegate to
+  unbounded helpers, or call `runBoundedCommand` outside the provisioning facade — enforced by the
+  `appleArtifactProvisioningViolations` rule.
 
 ## Validation
+
+**Harness SIGKILL mid-mutation.** A `HarnessOwned` run killed while it is actively mutating the
+cluster leaves a first-class `ClusterMutating` position persisted rather than an operator-idle
+`ClusterReady`. `cluster status` reports a mutation-incomplete phase, not a false `steady-state`, and
+the next `cluster up` reconciles it through the reconcile-on-next-start repair.
+
+**Bounded-command owner death and forced cleanup.** Machine-independent adversarial coverage proves
+parent death both before and after durable activity publication, stopped-supervisor and
+stopped-target-group cleanup, supervisor death, descendant termination, exact birth-identity
+recovery, and designated-owner reaping — without timing sleeps or PID-only evidence. Activity
+retires only after the anchor, supervisor, and target groups are proven absent.
+
 
 - `cabal build all` under `-Wall -Werror` is the primary proof: an operation reachable without its
   evidence, or a raw hatch called outside its evidence-taking wrapper, is a build error.
@@ -579,7 +452,7 @@ Linux smoke, and that gap remains open.
   supervisor and stopped target-group cleanup, supervisor death, target setup/exec provenance,
   genuine target exits 126/127, designated-owner reaping, pre-publication owner death with no target,
   helper, or activity residue, and post-publication recovery from exact persisted identities. The
-  complete focused and Phase 2 gates remain required before Sprint 2.16 may be marked done.
+  complete focused and phase gates are required before that scope may be marked done.
 - Lifecycle-lock tests require same-thread nesting, concurrent same-process thread contention,
   cross-process contention, normal and exceptional release, asynchronous cancellation release, and
   automatic kernel release after owner death. None may use a timing sleep as readiness evidence.
@@ -610,8 +483,7 @@ Linux smoke, and that gap remains open.
   implementation and header files, Cabal native-source fields and native-token CPP definitions,
   and embedded native source/writers/compiler invocations in other implementation languages.
   Upstream packages may contain their own native implementation; this repository may not.
-- `infernix lint docs` keeps this document registered and its cross-references resolving; the reopened
-  phase and sprint status is tracked in `DEVELOPMENT_PLAN/`.
+- `infernix lint docs` keeps this document registered and its cross-references resolving.
 
 ## Cross-References
 
@@ -627,5 +499,4 @@ Linux smoke, and that gap remains open.
   and the fail-closed versioned persistence.
 - [../engineering/testing.md](../engineering/testing.md) — the canonical lifecycle failure
   classification.
-- [../development/chaos_testing.md](../development/chaos_testing.md) — the SIGKILL-mid-mutation chaos
   case the `ClusterMutating` position and reconcile-on-next-`cluster up` cover.

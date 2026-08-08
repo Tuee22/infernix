@@ -67,7 +67,6 @@
 - `infernix internal dhall-schema host|cluster|secrets|substrate` - prints the Dhall type expression reflected from the binary's decoder for one packaged schema
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT` - publishes one inference request through Pulsar and waits for the matching result
 - `infernix internal playwright prepare-engine MODEL_ID` - selects the generated model's closed engine deployment under harness ownership
-- `infernix internal playwright replace-demo-pods` - replaces the fixed demo workload and waits for distinct ready pods under harness ownership
 <!-- infernix:command-registry:end -->
 
 ## Rules
@@ -141,31 +140,23 @@
 ## Lifecycle Progress Surface
 
 - `infernix cluster status` reports `lifecycleStatus: idle` together with `lifecyclePhase:
-  not-yet-reconciled`, `steady-state`, `mutation-incomplete` (dirty), or `cluster-absent`, plus a
-  `clusterOwner` (`OperatorOwned` or `HarnessOwned`) field, when no lifecycle action is running; a
-  `mutation-incomplete` (dirty) phase means a SIGKILLed `infernix test all` left its `HarnessOwned`
-  cluster mid-mutation and is not `steady-state`, and the next `cluster up` reconciles it
-- while `cluster up` or `cluster down` is active, `cluster status` reports `lifecycleStatus:
-  in-progress` plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
-  `lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`
-- the monitored long-running subprocess phases refresh `lifecycleHeartbeatAt` roughly every 30
-  seconds while they are still progressing; the current implementation applies that heartbeat
-  contract to the long Docker build, Harbor image publication, Kind-worker Harbor preload, and
-  Apple retained-state replay steps
-- elapsed wall time alone is not treated as failure on the supported path; treat a lifecycle
-  action as still progressing while the current `lifecycleHeartbeatAt` continues to refresh, and
-  treat it as stalled only when the command exits non-zero or the heartbeat stops moving across
-  multiple monitor intervals
-- the `cluster status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a
-  first-class `ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty
-  reading) alongside the persisted `ClusterOwner` — whose canonical home is
-  [Managed State Transitions](../architecture/managed_state_transitions.md). The 2026-07-23
-  `ClusterMutating` / `ClusterOwner` scope — including `cluster status` rendering the `clusterOwner`
-  and a `ClusterMutating` dirty phase — is historically closed by
-  [Wave X](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Wave X does not close the 2026-07-25
-  owner-atomic reservation/teardown correction. That correction remains under Phase 2 implementation
-  and source review; its new source-matched Stage 1 and Wave Y have not started, and Phase 6
-  validation is ordered after Phases 2 and 4.
+not-yet-reconciled`, `steady-state`, `mutation-incomplete` (dirty), or `cluster-absent`, plus a
+`clusterOwner` (`OperatorOwned` or `HarnessOwned`) field, when no lifecycle action is running; a
+`mutation-incomplete` (dirty) phase means a SIGKILLed `infernix test all` left its `HarnessOwned`
+cluster mid-mutation and is not `steady-state`, and the next `cluster up` reconciles it - while
+`cluster up` or `cluster down` is active, `cluster status` reports `lifecycleStatus: in-progress`
+plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`, `lifecycleHeartbeatAt`, and
+`lifecycleHeartbeatAgeSeconds` - the monitored long-running subprocess phases refresh
+`lifecycleHeartbeatAt` roughly every 30 seconds while they are still progressing; the current
+implementation applies that heartbeat contract to the long Docker build, Harbor image publication,
+Kind-worker Harbor preload, and Apple retained-state replay steps - elapsed wall time alone is not
+treated as failure on the supported path; treat a lifecycle action as still progressing while the
+current `lifecycleHeartbeatAt` continues to refresh, and treat it as stalled only when the command
+exits non-zero or the heartbeat stops moving across multiple monitor intervals - the `cluster
+status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a first-class
+`ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty reading)
+alongside the persisted `ClusterOwner` — whose canonical home is [Managed State
+Transitions](../architecture/managed_state_transitions.md).
 
 ## Cross-References
 

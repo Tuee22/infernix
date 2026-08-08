@@ -1,6 +1,15 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active — Validation Only. Sprint 8.9 (proper-union generated execution-plan schema
+**Status**: Active. Sprint 8.9 and Sprint 8.10 are both validation-only, sharing the `linux-gpu` plus
+`linux-cpu` rebuild. Sprint 8.10 (delete the derivable wire fields) is code-side closed on
+2026-08-07: Phase 4 Sprint 4.34's admission move discharged its blocker, and the reflected substrate
+schema went from 110 lines to 54 with every retired field absent rather than merely rejected.
+Sprint 8.11 remains `Blocked`, on a different and substantive blocker than the one it carried:
+executing 8.10 established that the machine contract it specifies — "the existing host manifest plus
+a `node` block" — has no home on the Linux lanes, where a pod's only host manifest is the one baked
+identically into every image, and where nothing yet makes two machines different members. That is a
+design decision needing a cluster lane, recorded in the sprint rather than guessed at in code.
+Sprint 8.9 (proper-union generated execution-plan schema
 migration) is code-side closed on 2026-08-02: the budget wire carries the third `DualEnforced` union
 arm Phase 6 Sprint 6.44's dual RAM/VRAM capability needed, the renderer emits one shared union type
 whose agreement with the reflected decoder is now asserted, a retired flat payload fails with a
@@ -591,6 +600,182 @@ retired flat encoding when one is supplied.
 1. **Cohort evidence** is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave.
    The `linux-gpu` half now carries real weight for this sprint: the browser-side over-budget
    assertion runs on that lane for the first time.
+
+---
+
+## Sprint 8.10: Delete The Derivable Wire Fields [Active — Validation Only]
+
+**Status**: Active — Validation Only. Code-side closed on 2026-08-07, once Phase 4 Sprint 4.34's
+admission move landed and the reduced contract could be built on the corrected shape rather than on
+the defect. The blocker it carried is discharged: the substrate limit's `resource` / `source` and the
+partition's headroom term are the budget's own shape, and deleting them while the coordinator still
+admitted from a plan-global budget would have hidden the veto instead of removing it.
+**Code-side closure**: GREEN on the machine-independent gate set — `cabal build all --enable-tests`
+under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`
+(6 positive / 87 negative), `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
+`infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
+`infernix lint files|chart|proto|docs`, `infernix docs check`.
+**Cohort gate**: the shared `linux-gpu` plus `linux-cpu` rebuild — the reduced wire changes every
+generated payload, so a cluster lane must decode one.
+**Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/Types.hs`,
+`src/Infernix/EngineRouting.hs`, `src/Infernix/Models.hs`, `src/Infernix/ExecutionPlan.hs`,
+`src/Infernix/DemoConfig/Internal.hs`, `test/unit/Spec.hs`
+**Docs to update**: none. The governed suite describes the doctrine — binary-generated, zero
+version-controlled `.dhall`, reflected schema — and never enumerated the field list, so there is
+nothing in `documents/` that this deletion contradicts.
+
+### Objective
+
+Remove every wire field that is a second copy of a fact the binary already derives.
+
+Dhall record types are not dependent — a field's type can never mention a sibling's value — so any
+pair of fields that must agree is a permanent illegal-state generator, and no amount of validation
+makes it otherwise. The equality checks that exist purely to catch such a disagreement are therefore
+retired **with** their fields, not before them: they were the symptom.
+
+This is the shape Sprint 8.9 already used when it removed a field rather than refining it.
+
+### Deliverables
+
+- `request_topics` / `result_topic` and their daemon-config mirrors, `engineDaemons`, `engines`, the
+  per-entity `runtimeMode` / `location` / `runtimeLane`, the per-pool in-flight knob, the
+  substrate-limit `resource` and `source` fields, and the partition's headroom term all leave the
+  wire; each gains a retired-shape marker so a stale file gets a migration diagnostic rather than a
+  bare Dhall type error
+- the mismatch checks that only guarded those duplications are deleted as unreachable
+- the Sprint 8.9 unit assertion that a negative in-flight value is unrepresentable is **retired with
+  the field**, rather than left asserting a property of something that no longer exists
+
+All three landed. The derivations live at the lowest module that can hold them —
+`requestTopicsForMode` / `resultTopicForMode` moved into `Infernix.EngineRouting` beside the pool and
+member topics, and `runtimeLaneForMode`, `engineMemberLocationForMode`, `clusterDaemonLocation`, and
+`defaultMaxInflightPerMember` into `Infernix.Types` — because `Infernix.Models` imports
+`Infernix.Substrate` and the decoder is the new consumer.
+
+Twenty-six `ConfigError` constructors went with their fields. Two decisions inside are recorded
+rather than left implicit. **The engine list is derived from the models' selected engines rather
+than from the compiled catalog**, which is stricter than the retired generator (an `--empty-models`
+bake now carries no engines either) and is what keeps `UnknownSelectedEngine` reachable: a selected
+engine with no canonical binding contributes nothing, so the compiler still names the model that
+asked for it. And **the retired per-entity `runtimeMode` marker matches on its leading `, `
+separator**, because the top-level `runtimeMode` is still on the wire and renders as
+`{ runtimeMode = ` — a bare `runtimeMode = ` marker would misfire on every current payload, which is
+exactly what the classifier's contract forbids.
+
+Two classes of check are retired as *unrepresentable* rather than merely unreached, and the
+distinction is the point. The coordinator-request and result topics can no longer be pointed at
+another family's topic, so two of the five `TopicFamilyCollision` fixtures had nothing left to
+express; they are replaced by the model-bootstrap axis, which is still declared. And a substrate
+limit claiming the wrong physical resource — a VRAM limit on `linux-cpu`, a swapped dual pair, a
+limit claiming unified host RAM — is not a constructible term, so those four fixtures are retired
+with the fields instead of being left asserting a property of something the wire cannot express.
+
+### Validation
+
+- `infernix internal dhall-schema substrate` diffed before and after: the retired fields must be
+  **absent from the reflected schema**, not merely rejected. If the schema is unchanged, the sprint
+  did not do what it claims
+- `cabal build all` under `-Wall -Werror` — changing the decoder shape makes GHC enumerate the work
+- a stale-shape file per retired field produces the migration diagnostic
+
+The diff is the evidence: the reflected schema went from **110 lines to 54**, and a freshly generated
+`./infernix.dhall` from **23074 bytes to 9943**. Every retired field is absent from the reflected
+schema, and a unit fixture asserts that absence by name so a field cannot quietly return. Eleven
+stale-shape fixtures inject one retired field each into a payload that is otherwise exactly what the
+binary writes, and assert the migration diagnostic names that exact field. The diagnostic was also
+proven on a real stale file rather than only on a fixture: the operator's already-generated
+`./infernix.dhall` in this checkout failed closed naming `request_topics`, and `infernix init`
+regenerated it.
+
+### Remaining Work
+
+None code-side. The cohort rebuild is the residual named above.
+
+---
+
+## Sprint 8.11: System And Machine Contracts [Blocked]
+
+**Status**: Blocked — its Sprint 8.10 dependency is discharged (code-side closed 2026-08-07), and
+execution then surfaced a substantive gap in this sprint's own design that has to be resolved before
+it can be built. **The machine contract has no home on the Linux lanes.** The sprint specifies it as
+"the existing host manifest plus a `node` block", and on `apple-silicon` that works — the engine is
+an on-host daemon reading the operator's real `./infernix-host.dhall`. On `linux-cpu` and
+`linux-gpu` it does not: the chart mounts only `cluster.dhall`, the cluster secrets, the substrate
+ConfigMap, and the publication state into engine and coordinator pods, and the only host manifest a
+pod can see is the one **baked into the image** at `/opt/infernix/dhall/InfernixHost.dhall` — byte
+identical in every pod on every machine. A per-machine contract that is the same in every pod is not
+a machine contract; it is the same collision Sprint 6.45 already recorded for the baked
+`hostRepoRoot = /workspace`, which "*collides* across checkouts rather than discriminating them".
+
+The gap runs one layer deeper than file placement, which is why it is a design decision rather than
+a mount to add. There is no per-machine identity on the Linux lanes at all: the engine workload is a
+`Deployment` with `replicas: {{ .Values.engine.replicaCount }}`, every replica gets the same
+`--engine-name` from the same `args` block, and `engineMembersForMode` compiles in one constant
+member id per runtime mode (`apple-host-default`, `linux-cpu-engine`, the per-engine GPU names).
+Sprint 4.34's fail-closed member identity refuses a daemon that *cannot say which member it is*, but
+on Linux nothing yet makes two boxes different members. Giving each machine its own contract
+therefore means giving each machine its own identity first — a per-node materialization surface and a
+per-node engine workload (a `DaemonSet`, or per-node `Deployment`s) — which is chart and lifecycle
+work whose only honest proof is a cluster lane.
+
+**Blocked by**: a per-machine identity and configuration surface on the Linux lanes. Resolving it
+requires a cluster lane to validate, so it belongs to [Wave AB](cohort-validation-waves.md) rather
+than to a machine-independent gate; the design analysis is recorded above rather than guessed at in
+code. Nothing in this sprint is implementable ahead of it: the pool record's stated guarantee ("a
+pool the system contract does not define is a decode-time type error") is a property of the machine
+contract selecting a pool by field access, the content pin is a property of pairing the two files,
+and the broker-registered digest is a property of the pin.
+**Implementation**: `src/Infernix/Substrate/Internal.hs`, `src/Infernix/HostConfig.hs`,
+`src/Infernix/ProjectInit.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/`
+**Docs to update**: `documents/architecture/configuration_doctrine.md`,
+`documents/engineering/host_tools_manifest.md`, `documents/engineering/cluster_config_manifest.md`
+
+### Objective
+
+Split the wire into a system contract every machine holds identically and a machine contract that
+describes one box, and make a fleet-wide disagreement detectable at the only place the fleet meets.
+
+Pools become a record rather than a list so a machine selects one by field access: a pool the system
+contract does not define is a decode-time type error, not a subscription to a topic nobody publishes
+to. The machine contract pins the system contract it was generated against by content hash, so a
+machine cannot be paired with a contract it has never seen. Both files stay binary-generated and
+untracked, so the pin is over generated text and the zero-version-controlled-`.dhall` rule is
+untouched.
+
+Be precise about what those two layers buy: both are **local**. They prove this machine's file
+matches this machine's copy of the contract; neither can see another machine's copy. A design that
+stops there has replaced several silent disagreement axes with one — a real reduction in blast
+radius and no improvement in detectability. The third layer is the one that closes it: the contract
+digest is registered in the Pulsar per-topic schema properties, and a daemon whose digest disagrees
+with the registered value refuses to start. The broker is the only place N machines meet, so that is
+where the check has to live.
+
+### Deliverables
+
+- the system contract: substrate mode plus the pool record whose values are model descriptors
+- the machine contract: the existing host manifest plus a `node` block naming this box's role,
+  required member id, served pools, and model-cache quota — which also resolves the standing
+  disagreement between the hard-coded host-path cache quota and the cluster default
+- the content pin, and the regeneration coupling it implies: a system-contract change moves the
+  hash, so every machine contract is regenerated
+- the contract digest registered in the topic schema properties, with a fail-closed check at daemon
+  start
+- the existing ledger row for the deployment-mirror filename consolidation is **adopted and closed**
+  by this sprint rather than duplicated, and the two documented mount paths collapse to one
+
+### Validation
+
+- `infernix internal dhall-schema substrate` and `... host` diffed before and after
+- a machine contract paired with a foreign system contract fails the pin
+- a daemon whose digest disagrees with the registered schema property refuses to start
+- round-trip: `infernix init` → decode → re-render → byte-compare
+
+### Remaining Work
+
+Everything. The sprint is not started, and the first thing it needs is the design decision named in
+its `Blocked by`: where a per-machine contract lives, and what makes two Linux machines different
+members, on a substrate whose engine workload is currently a replica-count `Deployment`. The digest
+check's behavioural proof needs a real broker and belongs to the cohort wave regardless.
 
 ---
 

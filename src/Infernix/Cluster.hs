@@ -57,7 +57,6 @@ module Infernix.Cluster
     pulsarBootstrapLogIndicatesDirtyState,
     renderHelmValues,
     runPlaywrightPrepareEngine,
-    runPlaywrightReplaceDemoPods,
     runKubectlCompat,
     writeGeneratedKindConfig,
   )
@@ -378,25 +377,26 @@ postgresOperatorDeployment = "deployment/infernix-postgres-operator"
 harborPostgresClusterName :: String
 harborPostgresClusterName = "harbor-postgresql"
 
+-- | Phase 3 Sprint 3.16: one Patroni instance per platform service, so one data
+-- claim rather than three.
 harborPostgresExpectedDataClaims :: Int
-harborPostgresExpectedDataClaims = 3
+harborPostgresExpectedDataClaims = 1
 
 harborPostgresStartupRepairGraceAttempts :: Int
 harborPostgresStartupRepairGraceAttempts = 18
 
-harborPostgresReplicaReinitGraceAttempts :: Int
-harborPostgresReplicaReinitGraceAttempts = harborPostgresStartupRepairGraceAttempts + 6
-
+-- | Phase 3 Sprint 3.16: 1 data claim + 1 pgBackRest repo claim.
 harborPostgresExpectedOperatorClaims :: Int
-harborPostgresExpectedOperatorClaims = 4
+harborPostgresExpectedOperatorClaims = 2
 
 -- | Phase 7 Sprint 7.1: keycloak-postgresql is a second Patroni Postgres
 -- cluster (operator-managed) that lands in FinalPhase, after Harbor.
--- It contributes 4 operator-managed PVCs (3 data + 1 pgbackrest repo),
--- so the FinalPhase reconcile waits for the combined Harbor + Keycloak
--- total before declaring the PV side ready.
+-- Phase 3 Sprint 3.16 collapsed it to one instance, so it contributes 2
+-- operator-managed PVCs (1 data + 1 pgbackrest repo), and the FinalPhase
+-- reconcile waits for the combined Harbor + Keycloak total before declaring the
+-- PV side ready.
 keycloakPostgresExpectedOperatorClaims :: Int
-keycloakPostgresExpectedOperatorClaims = 4
+keycloakPostgresExpectedOperatorClaims = 2
 
 finalPhaseExpectedOperatorClaims :: Int
 finalPhaseExpectedOperatorClaims =
@@ -430,22 +430,24 @@ instance FromJSON KeycloakAdminToken where
   parseJSON = withObject "KeycloakAdminToken" $ \value ->
     KeycloakAdminToken <$> value .: "access_token"
 
+-- | Phase 3 Sprint 3.16: one instance per platform service, so one zookeeper
+-- pod. The retired ordinals 1 and 2 named an ensemble that no longer exists;
+-- scanning for them found nothing and read as a clean scan.
 pulsarBootstrapRepairLogTargets :: [String]
 pulsarBootstrapRepairLogTargets =
   [ "infernix-infernix-pulsar-zookeeper-0",
-    "infernix-infernix-pulsar-zookeeper-1",
-    "infernix-infernix-pulsar-zookeeper-2",
     "infernix-infernix-pulsar-broker-0",
     "infernix-infernix-pulsar-bookie-0",
     "infernix-infernix-pulsar-recovery-0"
   ]
 
+-- | Phase 3 Sprint 3.16: the retired markers were ensemble-shaped —
+-- unresolvable bookie ordinals 1 and 2, and a @QuorumCoverage(e:2,w:2,a:2)@
+-- that a one-bookie managed ledger cannot produce. They are deleted with the
+-- topology that produced them rather than left as conditions nothing can meet.
 pulsarBootstrapDirtySingleLogMarkers :: [String]
 pulsarBootstrapDirtySingleLogMarkers =
   [ "Unable to load database on disk",
-    "Cannot resolve bookieId infernix-infernix-pulsar-bookie-1",
-    "Cannot resolve bookieId infernix-infernix-pulsar-bookie-2",
-    "QuorumCoverage(e:2,w:2,a:2)",
     "InvalidCookieException",
     "NoNode for /ledgers/cookies"
   ]
@@ -2997,56 +2999,6 @@ runPlaywrightPrepareEngine requestedModelId =
             ("deployment/infernix-engine-" <> Text.unpack engineName)
             (if Just engineName == maybeActiveEngine then 1 else 0)
 
--- | Replace the fixed demo workload and wait for a distinct ready pod set. The
--- closed command owns the label, namespace, delete flags, and readiness budget.
-runPlaywrightReplaceDemoPods :: IO ()
-runPlaywrightReplaceDemoPods =
-  withHarnessPlaywrightCluster $ \paths state -> do
-    originalPods <- playwrightDemoPods paths state
-    case NonEmpty.nonEmpty originalPods of
-      Nothing -> ioError (userError "Playwright demo replacement found no existing demo pods")
-      Just pods ->
-        runClusterCommand
-          paths
-          ( Command.kubectlDeletePods
-              (clusterKubeTarget state)
-              (Command.Namespace "platform")
-              pods
-          )
-    outcome <-
-      Readiness.awaitReadiness (Readiness.budgetDeadline 180 1000000) $ do
-        currentPods <- playwrightDemoPods paths state
-        let replacements = filter (`notElem` originalPods) currentPods
-            originalsGone = all (`notElem` currentPods) originalPods
-        pure $
-          if originalsGone && length replacements >= length originalPods
-            then Right (take (length originalPods) replacements)
-            else Left (Readiness.Progress (length replacements) (length originalPods) "replacement demo pods")
-    replacementPods <-
-      Readiness.foldReadiness
-        pure
-        (\_ -> ioError (userError "Timed out waiting for replacement demo pods"))
-        (\_ -> ioError (userError "Timed out waiting for replacement demo pods"))
-        outcome
-    forM_ replacementPods $ \podName ->
-      runClusterCommand
-        paths
-        ( Command.kubectlWaitPodReady
-            (clusterKubeTarget state)
-            (Command.Namespace "platform")
-            podName
-            180
-        )
-
-playwrightDemoPods :: Paths -> ClusterState -> IO [Command.PodName]
-playwrightDemoPods paths state =
-  map Command.PodName
-    . filter (not . null)
-    . lines
-    <$> captureClusterCommand
-      paths
-      (Command.kubectlListPods (clusterKubeTarget state) Command.PlaywrightDemoPods)
-
 withHarnessPlaywrightCluster :: (Paths -> ClusterState -> IO a) -> IO a
 withHarnessPlaywrightCluster action = do
   paths <- discoverClusterCommandPaths
@@ -4551,8 +4503,8 @@ waitForHarborDatabaseReadyWithRepair state = do
 
 -- | Sprint 6.41 (managed-state-transition doctrine): migrated onto the shared
 -- 'Readiness' kernel under the legacy 72-attempt × 5 s budget. The mid-loop
--- repair state (whether a startup restart or a replica reinit has already been
--- issued), the attempt counter the repair grace windows key on, and the retained
+-- repair state (whether a startup restart has already been issued), the attempt
+-- counter the repair grace window keys on, and the retained
 -- last non-empty error are carried in 'IORef's the probe threads, since the
 -- kernel's 'Progress' carries only counts. Readiness is now the kernel's positive
 -- outcome from a real all-pods-ready observation; the retained error is projected
@@ -4560,7 +4512,6 @@ waitForHarborDatabaseReadyWithRepair state = do
 waitForHarborPostgresPodsReady :: ClusterState -> IO ()
 waitForHarborPostgresPodsReady state = do
   restartIssuedRef <- newIORef False
-  reinitIssuedRef <- newIORef False
   attemptRef <- newIORef (0 :: Int)
   lastErrorRef <- newIORef ""
   let totalAttempts = 72 :: Int
@@ -4608,19 +4559,19 @@ waitForHarborPostgresPodsReady state = do
             -- Match the original's "no repair on the final attempt": it checks its
             -- @remainingAttempts <= 1@ give-up guard BEFORE the repair branch, so the
             -- last poll (which will Expire) must not issue the destructive startup
-            -- restart / replica reinit right as the wait gives up.
+            -- restart right as the wait gives up.
             when (attemptsElapsed < totalAttempts - 1) $ do
               restartIssued <- readIORef restartIssuedRef
-              reinitIssued <- readIORef reinitIssuedRef
-              (restarted, reinitialized) <-
-                repairHarborPostgresStartup
-                  allStartupPodsPresent
-                  attemptsElapsed
-                  restartIssued
-                  reinitIssued
-                  startupPods
+              restarted <-
+                if restartIssued
+                  then pure False
+                  else
+                    restartHarborPostgresStartupPodsIfStuck
+                      state
+                      allStartupPodsPresent
+                      attemptsElapsed
+                      startupPods
               when restarted (writeIORef restartIssuedRef True)
-              when reinitialized (writeIORef reinitIssuedRef True)
             retained <-
               atomicModifyIORef'
                 lastErrorRef
@@ -4636,27 +4587,6 @@ waitForHarborPostgresPodsReady state = do
                 <> Text.unpack (Readiness.progressDetail progress)
             )
         )
-
-    repairHarborPostgresStartup allStartupPodsPresent attemptsElapsed restartIssued reinitIssued startupPods = do
-      restarted <-
-        if restartIssued
-          then pure False
-          else
-            restartHarborPostgresStartupPodsIfStuck
-              state
-              allStartupPodsPresent
-              attemptsElapsed
-              startupPods
-      reinitialized <-
-        if reinitIssued || restarted
-          then pure False
-          else
-            reinitializeHarborPostgresReplicasIfStuck
-              state
-              attemptsElapsed
-              (restartIssued || restarted)
-              startupPods
-      pure (restarted, reinitialized)
 
 data HarborPostgresStartupPod = HarborPostgresStartupPod
   { harborPostgresStartupPodName :: String,
@@ -4726,82 +4656,6 @@ restartHarborPostgresStartupPodsIfStuck state _allStartupPodsPresent attemptsEla
                || harborPostgresStartupPodStatus startupPod == "Error"
                || harborPostgresStartupPodStatus startupPod == "Init:Error"
            )
-
-reinitializeHarborPostgresReplicasIfStuck :: ClusterState -> Int -> Bool -> [HarborPostgresStartupPod] -> IO Bool
-reinitializeHarborPostgresReplicasIfStuck state attemptsElapsed restartIssued startupPods = do
-  primaryPodName <- harborPostgresPrimaryPodNameMaybe state
-  if shouldReinitialize primaryPodName
-    then do
-      putStrLn
-        ( "repairing Harbor PostgreSQL replicas from leader: "
-            <> List.intercalate ", " (replicaPodNames primaryPodName)
-        )
-      ensureHarborPostgresReplicationRole state primaryPodName
-      result <-
-        runHarborPostgresReplicaReinit
-          state
-          primaryPodName
-          (NonEmpty.nonEmpty (map Command.PodName (replicaPodNames primaryPodName)))
-      case result of
-        Right _ -> pure ()
-        Left err ->
-          putStrLn
-            ( "Harbor PostgreSQL replica reinitialization command failed; continuing rollout wait: "
-                <> displayException err
-            )
-      pure True
-    else pure False
-  where
-    stuckDataPodNames =
-      [ harborPostgresStartupPodName startupPod
-      | startupPod <- startupPods,
-        not (harborPostgresStartupPodReady startupPod),
-        "harbor-postgresql-instance" `List.isPrefixOf` harborPostgresStartupPodName startupPod
-      ]
-    replicaPodNames primaryPodName =
-      filter (/= primaryPodName) stuckDataPodNames
-    shouldReinitialize primaryPodName =
-      restartIssued
-        && attemptsElapsed >= harborPostgresReplicaReinitGraceAttempts
-        && not (null primaryPodName)
-        && not (null (replicaPodNames primaryPodName))
-
-runHarborPostgresReplicaReinit ::
-  ClusterState ->
-  String ->
-  Maybe (NonEmpty.NonEmpty Command.PodName) ->
-  IO (Either IOException ())
-runHarborPostgresReplicaReinit state primaryPodName maybeReplicaPods =
-  case maybeReplicaPods of
-    Nothing -> pure (Right ())
-    Just replicaPods ->
-      try
-        ( runDiscoveredClusterCommand
-            ( \_ ->
-                Command.kubectlReinitPostgresReplicas
-                  (clusterKubeTarget state)
-                  (Command.PodName primaryPodName)
-                  replicaPods
-            )
-        )
-
-ensureHarborPostgresReplicationRole :: ClusterState -> String -> IO ()
-ensureHarborPostgresReplicationRole state primaryPodName = do
-  result <-
-    tryDiscoveredClusterCommand
-      ( \_ ->
-          Command.kubectlRunPostgresAction
-            (clusterKubeTarget state)
-            (Command.PodName primaryPodName)
-            Command.EnsureReplicationRole
-      )
-  case result of
-    Right _ -> pure ()
-    Left err ->
-      putStrLn
-        ( "Harbor PostgreSQL replication-role repair failed; continuing rollout wait: "
-            <> err
-        )
 
 -- | Sprint 6.41: migrated onto the shared 'Readiness' kernel under the legacy
 -- 72-attempt × 5 s budget. The resolved primary pod name is the kernel's readiness
@@ -5719,7 +5573,8 @@ reconcileOperatorManagedPersistentVolumes paths state = do
 
 -- | Phase 7 Sprint 7.1: second pass over operator-managed PVCs after the
 -- FinalPhase chart deploy applies the @keycloak-postgresql@ PerconaPGCluster
--- CR. The Percona operator creates 4 additional PVCs (3 data + 1
+-- CR. Phase 3 Sprint 3.16 collapsed that cluster to one instance, so the
+-- Percona operator creates 2 additional PVCs (1 data + 1
 -- pgbackrest repo) on the supported @infernix-manual@ storage class; we
 -- create the matching PVs and wait for them to bind so the Keycloak
 -- Deployment is not blocked behind a Pending database. Unlike the warmup
@@ -6242,11 +6097,17 @@ renderKindConfig paths runtimeMode edgePortValue harborPortValue pulsarHttpPortV
       | role == "control-plane" = "InitConfiguration"
       | otherwise = "JoinConfiguration"
 
+-- | Phase 3 Sprint 3.16 follow-on: one worker per supported lane. The
+-- retired @LinuxCpu -> 2@ existed to host a second engine replica under the
+-- required pod anti-affinity, and both of those are deleted; a second worker
+-- with nothing that must land on it is a node the topology does not use.
+--
+-- This is the same defect shape as the generated Helm overlay's replica
+-- counts: the sprint edited the tracked @kind/cluster-linux-cpu.yaml@, but a
+-- Kind cluster is created from 'renderKindConfig', so the tracked file is a
+-- reference document and this function is what deploys.
 kindWorkerCount :: RuntimeMode -> Int
-kindWorkerCount runtimeMode =
-  case runtimeMode of
-    LinuxCpu -> 2
-    _ -> 1
+kindWorkerCount _ = 1
 
 -- | Phase 2 Sprint 2.13: legacy host-repo-root env check
 -- retired. The supported control-plane-context detector is the typed
@@ -7330,6 +7191,15 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
           ]
       | otherwise = []
 
+    -- Phase 3 Sprint 3.16 follow-on: one process per role per machine, and
+    -- the generated overlay is where that rule has to be stated. Setting
+    -- `chart/values.yaml` to 1 does not deploy 1 — every phase render
+    -- supersedes the base values with this overlay, so a base default the
+    -- overlay contradicts is dead text on exactly the lanes the sprint's
+    -- cohort gate runs on. The retired values here (demo 2, coordinator 2,
+    -- linux-cpu engine 2) were the replicated topology's, and the
+    -- `linux-cpu` engine 2 additionally named a two-worker validation lane
+    -- that Sprint 3.16 deleted.
     repoWorkloadReplicaCount :: HelmDeployPhase -> Int
     repoWorkloadReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
@@ -7337,14 +7207,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
       HarborFinalPhase -> 0
       KeycloakStoragePhase -> 0
       PulsarReadyPhase -> 0
-      FinalPhase
-        | appleHostNativeLocalTopology -> 1
-        | otherwise -> 2
-    -- Phase 7 Sprint 7.7: zero out the coordinator + engine roles in
-    -- every pre-Pulsar phase, then come up with the supported supported
-    -- HA replicaCount (coordinator >= 2 for stateless coordination;
-    -- linux-cpu engines run at 2 on the two-worker CPU validation
-    -- lane; linux-gpu stays at 1 for single-GPU hosts).
+      FinalPhase -> 1
     repoCoordinatorReplicaCount :: HelmDeployPhase -> Int
     repoCoordinatorReplicaCount phaseValue = case phaseValue of
       WarmupPhase -> 0
@@ -7352,14 +7215,16 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
       HarborFinalPhase -> 0
       KeycloakStoragePhase -> 0
       PulsarReadyPhase -> 0
-      FinalPhase
-        | appleHostNativeLocalTopology -> 1
-        | otherwise -> 2
+      FinalPhase -> 1
     -- On Apple Silicon the engine role runs host-native (the same-binary
     -- host daemon launched from `./.build/infernix`); the cluster substrate
     -- must not deploy an in-cluster engine pod because it would compete with
     -- host engine members for the same Metal-backed work.
-    -- Linux substrates keep the in-cluster engine deployment.
+    -- Linux substrates keep the in-cluster engine deployment, at exactly one
+    -- process per machine: two engine pods on one box hold two KV caches and
+    -- two copies of every loaded weight, and each admits work independently
+    -- against the machine's whole observed capacity. Scale the fleet by
+    -- adding machines, never by raising this number.
     repoEngineReplicaCount :: HelmDeployPhase -> Int
     repoEngineReplicaCount phaseValue = case (phaseValue, clusterRuntimeMode state) of
       (WarmupPhase, _) -> 0
@@ -7368,7 +7233,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
       (KeycloakStoragePhase, _) -> 0
       (PulsarReadyPhase, _) -> 0
       (FinalPhase, AppleSilicon) -> 0
-      (FinalPhase, LinuxCpu) -> 2
       (FinalPhase, _) -> 1
     -- Phase 4 Sprint 4.17 follow-on (2026-06-11): the repo-owned
     -- linux-gpu lifecycle targets the documented single-worker,
@@ -7496,6 +7360,11 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
           "  trivy:",
           "    replicas: 0"
         ]
+      -- Phase 3 Sprint 3.16: the bootstrap phase raises the components the
+      -- warmup phase zeroed back to the chart default of one each. The retired
+      -- `registry: replicas: 3` was the last place a Harbor component was
+      -- deliberately brought up multi-replica; one instance per platform
+      -- service is now the shape everywhere.
       BootstrapPhase ->
         [ "harbor:",
           "  enableMigrateHelmHook: true",
@@ -7506,7 +7375,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
           "  jobservice:",
           "    replicas: 1",
           "  registry:",
-          "    replicas: 3",
+          "    replicas: 1",
           "  trivy:",
           "    replicas: " <> show (if appleHostedLinuxCpuLocalTopology then (0 :: Int) else 1)
         ]
@@ -7527,11 +7396,14 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
           "  enableMigrateHelmHook: true"
         ]
     -- Apple host-native validation runs the Linux control-plane workloads
-    -- on the operator's already-selected Colima daemon. On the default
-    -- 8 GiB daemon, the HA-shaped chart has no real node-spread value
-    -- and can starve the Apple real-engine gate before routed inference
-    -- starts. Keep Linux lanes HA-shaped; use a single-replica local
-    -- platform topology only for Apple host-native generated values.
+    -- on the operator's already-selected Colima daemon.
+    --
+    -- Phase 3 Sprint 3.16 promoted this block's single-replica shape from
+    -- exception to chart default, so every replica and quorum line it used to
+    -- carry is gone: repeating the default here would be a second place to
+    -- change. What remains is the one thing that is genuinely Apple-specific —
+    -- routing Harbor at the external Patroni primary — plus disabling the
+    -- upstream metrics stack.
     appleHostNativeLocalOverrides phaseValue
       | not appleHostNativeLocalTopology = []
       | not (appleHostNativeLocalPhase phaseValue) = []
@@ -7540,33 +7412,9 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "  database:",
             "    external:",
             "      host: harbor-postgresql-primary.platform.svc.cluster.local",
-            "  portal:",
-            "    replicas: 1",
-            "  core:",
-            "    replicas: 1",
-            "  jobservice:",
-            "    replicas: 1",
-            "  registry:",
-            "    replicas: 1",
-            "  trivy:",
-            "    replicas: 1",
             "pulsar:",
             "  victoria-metrics-k8s-stack:",
-            "    enabled: false",
-            "  zookeeper:",
-            "    replicaCount: 1",
-            "  bookkeeper:",
-            "    replicaCount: 1",
-            "  broker:",
-            "    replicaCount: 1",
-            "    configData:",
-            "      managedLedgerDefaultEnsembleSize: \"1\"",
-            "      managedLedgerDefaultWriteQuorum: \"1\"",
-            "      managedLedgerDefaultAckQuorum: \"1\"",
-            "  proxy:",
-            "    replicaCount: 1",
-            "  autorecovery:",
-            "    replicaCount: 1"
+            "    enabled: false"
           ]
     appleHostNativeLocalPhase phaseValue =
       case phaseValue of
@@ -7580,8 +7428,9 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
     -- native arm64 Docker daemon. Kind advertises one allocatable memory pool
     -- per node, but all node containers share the same Colima VM memory, so the
     -- generated validation topology must keep aggregate requests/limits below
-    -- that local envelope while preserving the two-replica repo daemons that
-    -- integration failover and node-drain cases exercise.
+    -- that local envelope. Replica counts are deliberately absent here: Phase 3
+    -- Sprint 3.16 made one process per role per machine the shape everywhere,
+    -- and a default repeated inside an override is a second place to change.
     appleHostedLinuxCpuLocalOverrides phaseValue
       | not appleHostedLinuxCpuLocalTopology = []
       | not (appleHostedLinuxCpuLocalPhase phaseValue) = []
@@ -7603,7 +7452,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "        limits:",
             "          memory: 128Mi",
             "  portal:",
-            "    replicas: 1",
             "    resources:",
             "      requests:",
             "        cpu: 25m",
@@ -7611,7 +7459,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 96Mi",
             "  core:",
-            "    replicas: 1",
             "    resources:",
             "      requests:",
             "        cpu: 100m",
@@ -7619,7 +7466,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 512Mi",
             "  jobservice:",
-            "    replicas: 1",
             "    resources:",
             "      requests:",
             "        cpu: 50m",
@@ -7627,7 +7473,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 256Mi",
             "  registry:",
-            "    replicas: 1",
             "    registry:",
             "      resources:",
             "        requests:",
@@ -7664,7 +7509,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "harborpg:",
             "  proxy:",
             "    pgBouncer:",
-            "      replicas: 3",
             "      resources:",
             "        requests:",
             "          cpu: 25m",
@@ -7710,7 +7554,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "keycloakpg:",
             "  proxy:",
             "    pgBouncer:",
-            "      replicas: 3",
             "      resources:",
             "        requests:",
             "          cpu: 25m",
@@ -7757,7 +7600,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "  victoria-metrics-k8s-stack:",
             "    enabled: false",
             "  zookeeper:",
-            "    replicaCount: 1",
             "    configData:",
             "      PULSAR_MEM: \"-Xms32m -Xmx96m\"",
             "      PULSAR_GC: " <> show localPulsarJvmGc,
@@ -7768,7 +7610,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 192Mi",
             "  bookkeeper:",
-            "    replicaCount: 1",
             "    metadata:",
             "      resources:",
             "        requests:",
@@ -7797,7 +7638,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 256Mi",
             "  broker:",
-            "    replicaCount: 1",
             "    resources:",
             "      requests:",
             "        memory: 256Mi",
@@ -7807,11 +7647,7 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "    configData:",
             "      PULSAR_MEM: \"-Xms128m -Xmx256m -XX:MaxDirectMemorySize=128m\"",
             "      PULSAR_GC: " <> show localPulsarJvmGc,
-            "      managedLedgerDefaultEnsembleSize: \"1\"",
-            "      managedLedgerDefaultWriteQuorum: \"1\"",
-            "      managedLedgerDefaultAckQuorum: \"1\"",
             "  proxy:",
-            "    replicaCount: 1",
             "    configData:",
             "      PULSAR_MEM: \"-Xms64m -Xmx128m -XX:MaxDirectMemorySize=64m\"",
             "      PULSAR_GC: " <> show localPulsarJvmGc,
@@ -7825,7 +7661,6 @@ renderHelmValues paths controlPlane state demoConfigPayload deployPhase =
             "      limits:",
             "        memory: 512Mi",
             "  autorecovery:",
-            "    replicaCount: 1",
             "    configData:",
             "      BOOKIE_MEM: \"-Xms64m -Xmx160m -XX:MaxDirectMemorySize=64m\"",
             "      PULSAR_GC: " <> show localPulsarJvmGc,

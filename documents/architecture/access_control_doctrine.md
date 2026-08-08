@@ -42,68 +42,44 @@ admin predicate. `sub`-scoped per-user surfaces never consult the role.
 | Operator consoles (Harbor `/harbor` + `/harbor/api`, Pulsar Admin `/pulsar/admin` + `/pulsar/ws`) | browser → Envoy **edge** (gateway NodePort 30090) | `SecurityPolicy/infernix-operator-routes-jwt`: JWT authentication **and** an `authorization` rule (`defaultAction: Deny`) allowing only tokens whose `realm_access.roles` include `infernix-admin` |
 | Admin monitoring panel + `/api/admin/overview`; cluster-wide model-cache surface `GET /api/cache` and the `/api/cache/{evict,rebuild}` mutations | browser → `infernix-demo` webapp | backend requires `jwtClaimsHasRealmRole "infernix-admin"` (`withAdminRequest`); 401 without a token, 403 for a valid non-admin token |
 | Per-user chat / artifacts / files / personal dashboard | browser → `infernix-demo` webapp | `sub`-derived, per-user (tenant isolation); no role needed |
-| Per-user object storage (upload / download / list / delete) | `infernix-demo` webapp → MinIO (internal endpoint) | server-side `pathBelongsToUser` on the verified `sub` **plus** (when `cluster.minio.stsPerUser`) a per-user MinIO STS credential scoped by an inline session policy to `users/<sub>/*` — the IAM layer is a second boundary, so the shared root credential is not the sole isolation (Sprint 9.7) |
-| MinIO S3 + Pulsar proxy **data plane** | Apple host worker → loopback NodePorts (MinIO 30011, Pulsar-proxy 30080) | **none at the edge** — trust-boundary-internal, `listenAddress: 127.0.0.1`, never transits the gateway. The loopback binding of every Kind data-plane + edge port mapping is enforced by `infernix lint chart` and a unit assertion over the generated Kind config (Sprint 9.4) |
+| Per-user object storage (upload / download / list / delete) | `infernix-demo` webapp → MinIO (internal endpoint) | server-side `pathBelongsToUser` on the verified `sub` **plus** (when `cluster.minio.stsPerUser`) a per-user MinIO STS credential scoped by an inline session policy to `users/<sub>/*` — the IAM layer is a second boundary, so the shared root credential is not the sole isolation |
+| MinIO S3 + Pulsar proxy **data plane** | Apple host worker → loopback NodePorts (MinIO 30011, Pulsar-proxy 30080) | **none at the edge** — trust-boundary-internal, `listenAddress: 127.0.0.1`, never transits the gateway. The loopback binding of every Kind data-plane + edge port mapping is enforced by `infernix lint chart` and a unit assertion over the generated Kind config |
 
 The last row is the reason admin-gating the edge is safe: the Apple host-native engine daemon reaches
 the cluster data plane directly on loopback (see
 [daemon_topology.md](daemon_topology.md) and `src/Infernix/Runtime/Pulsar.hs`), so it is unaffected by
 the Keycloak+admin gate on the browser edge (30090).
 
-> **Active residual (UAT).** A later UAT pass surfaced an account-switching issue: the old Sign out
-> path cleared only local SPA tokens and the `infernix_operator_token` cookie, leaving the upstream
-> Keycloak SSO browser session alive. A user trying to switch from a self-registered non-admin
-> account to the separate admin login could silently re-enter the non-admin session and continue
-> receiving 403s on admin surfaces. Sprint 9.9 is code-side closed: Sign out now redirects through
-> Keycloak OIDC logout with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`. Phase 9
-> stays `Active` until [Wave U](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) records routed
-> `linux-cpu` plus selected-accelerator evidence for that behavior.
+> **Sign-out must end the upstream session, not just the local one.** Clearing only the SPA tokens
+> and the `infernix_operator_token` cookie leaves the Keycloak SSO browser session alive, so a user
+> switching from a self-registered non-admin account to the admin login silently re-enters the
+> non-admin session and keeps receiving 403s on admin surfaces. Sign out therefore redirects through
+> Keycloak OIDC logout with `client_id`, `id_token_hint`, and `post_logout_redirect_uri`.
 
-## Current Status
+## Enforcement
 
-The admin/user role model is implemented under
-[Phase 9](../../DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md). The original
-RBAC/STS/dashboard surface is code-side closed (2026-07-06, machine-independent gates green —
-`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-`infernix lint chart|docs|files|proto`, `infernix docs check`, `poetry run check-code`):
+The admin/user split is enforced at every layer that can observe identity:
 
-- the realm role + mapper + hardcoded admin user, the `JwtClaims` role parse + `jwtClaimsHasRealmRole`
-  (unit-covered), and the edge `SecurityPolicy` admin `authorization` over all four operator routes;
-- the backend admin gate (`withAdminRequest`) on `GET /api/cache`, `POST /api/cache/{evict,rebuild}`,
-  and the new `GET /api/admin/overview` cluster-wide monitoring endpoint;
-- the SPA admin gating in `web/src/index.html` — the operator ribbon, the five infrastructure
-  summary cells, and the `#admin-panel` cluster monitoring card are admin-only, while every
-  authenticated user sees the per-user `#personal-dashboard`;
-- the Kind data-plane + edge loopback invariant enforced by `infernix lint chart` and a unit
+- the realm role plus mapper, the `JwtClaims` role parse and `jwtClaimsHasRealmRole`, and the edge
+  `SecurityPolicy` admin `authorization` over all four operator routes;
+- the backend admin gate (`withAdminRequest`) on `GET /api/cache`,
+  `POST /api/cache/{evict,rebuild}`, and the cluster-wide `GET /api/admin/overview`;
+- SPA admin gating in `web/src/index.html` — the operator ribbon, the infrastructure summary cells,
+  and the `#admin-panel` cluster monitoring card are admin-only, while every authenticated user sees
+  the per-user `#personal-dashboard`;
+- the Kind data-plane plus edge loopback invariant, enforced by `infernix lint chart` and a unit
   assertion over the generated Kind config;
-- the per-user MinIO STS scoped-credential machinery (`Infernix.Objects.Sts` + session-token
-  presigning), gated by `cluster.minio.stsPerUser` and wired into the object-proxy, unit-covered
-  for the policy document, the signed `AssumeRole` request, response parsing, and session-token
-  presigning.
-- Sprint 9.9 code-side closes the UAT logout/account-switching gap: the SPA records the Keycloak
-  `id_token`, clears local browser auth state, redirects through Keycloak logout, and has routed
-  Playwright coverage for non-admin sign-out followed by hardcoded-admin sign-in.
-
-Phase 9 is **Active**: [Wave Q](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) cohort-validated
-the original RBAC/STS/dashboard surface live on **both `apple-silicon` and `linux-cpu`** (2026-07-07).
-Each cohort's full `cluster up` proved unauthenticated 401 on every gated route; by-role 403
-(non-admin) / 2xx (admin) over the four operator routes + `/api/cache` + `/api/admin/overview`; the
-admin `realm_access.roles ⊇ infernix-admin` claim; the loopback data-plane split; per-user isolation;
-and the now-default-on per-user STS scoped-credential object path. The apple-silicon cohort
-additionally ran the routed Playwright RBAC / dashboard / lifecycle suite 7/7. Sprint 9.9's logout
-fix now waits on [Wave U](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) routed cohort proof.
+- per-user MinIO STS scoped credentials (`Infernix.Objects.Sts` plus session-token presigning), gated
+  by `cluster.minio.stsPerUser` and wired into the object-proxy;
+- sign-out clears local browser auth state and redirects through Keycloak logout carrying the
+  recorded `id_token`, so account switching cannot leave a stale session.
 
 ## Validation
 
-- `infernix lint chart` proves the rendered `SecurityPolicy` carries the admin `authorization` rule and
-  targets all four operator routes, and that every Kind data-plane + edge port mapping binds to
-  `127.0.0.1`; `infernix lint docs` keeps this doctrine's metadata consistent.
-- Unit coverage proves `realm_access.roles` decode and the admin predicate, the STS session policy
-  scopes to `users/<sub>/*`, the signed `AssumeRole` request and its response parse, session-token
-  presigning threads `X-Amz-Security-Token`, and the generated Kind config is loopback-bound
-  (`test/unit/Spec.hs`).
-- Wave Q proves, on the selected accelerator plus `linux-cpu`, that a non-admin token receives HTTP 403
-  on every operator route (and on `GET /api/cache`, `/api/cache/*`, `/api/admin/overview`) while an
-  admin token receives 2xx, that per-user surfaces stay scoped to the caller, that the Apple
-  host-worker loopback data plane keeps working while the edge is admin-gated, and — with
-  `cluster.minio.stsPerUser` enabled — that a cross-user prefix is denied at the MinIO IAM layer.
+- `infernix lint chart` proves the rendered `SecurityPolicy` carries the admin `authorization` rule
+and targets all four operator routes, and that every Kind data-plane + edge port mapping binds to
+`127.0.0.1`; `infernix lint docs` keeps this doctrine's metadata consistent. - Unit coverage proves
+`realm_access.roles` decode and the admin predicate, the STS session policy scopes to
+`users/<sub>/*`, the signed `AssumeRole` request and its response parse, session-token presigning
+threads `X-Amz-Security-Token`, and the generated Kind config is loopback-bound
+(`test/unit/Spec.hs`).

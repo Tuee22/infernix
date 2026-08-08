@@ -5,7 +5,7 @@ where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Char (isSpace, toLower)
-import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, tails)
 import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Infernix.CommandRegistry
@@ -54,7 +54,6 @@ requiredDocs =
     "documents/architecture/tenant_isolation_doctrine.md",
     "documents/architecture/typed_execution_plan.md",
     "documents/architecture/web_ui_architecture.md",
-    "documents/development/chaos_testing.md",
     "documents/development/frontend_contracts.md",
     "documents/development/haskell_style.md",
     "documents/development/assistant_workflow.md",
@@ -121,7 +120,22 @@ forbiddenPhrases =
     "npx playwright",
     "Harbor admin Basic-auth",
     "real-output proof remains",
-    "Wave I still owns replacing"
+    "Wave I still owns replacing",
+    -- Implementation-status vocabulary. The governed suite is prescriptive: it
+    -- declares the target, and the gap between that target and the code is
+    -- tracked in DEVELOPMENT_PLAN/ while tests carry reality. Each phrase below
+    -- reports schedule rather than contract, so each one is a status report
+    -- wearing a doctrine costume. See the Prescriptive Voice section of
+    -- documents/documentation_standards.md.
+    "reopened",
+    "code-side",
+    "superseded",
+    "in progress",
+    "implementation is present",
+    "remains open",
+    "not yet landed",
+    "as it exists today",
+    "remains Active"
   ]
 
 phaseDocs :: [FilePath]
@@ -129,13 +143,30 @@ phaseDocs =
   [ "DEVELOPMENT_PLAN/phase-0-documentation-and-governance.md",
     "DEVELOPMENT_PLAN/phase-1-repository-and-control-plane-foundation.md",
     "DEVELOPMENT_PLAN/phase-2-kind-cluster-storage-and-lifecycle.md",
-    "DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md",
+    "DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md",
     "DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md",
     "DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md",
-    "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md",
+    "DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md",
     "DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md",
     "DEVELOPMENT_PLAN/phase-8-zero-tracked-dhall-config-and-eager-model-cache.md",
     "DEVELOPMENT_PLAN/phase-9-access-control-and-monitoring.md"
+  ]
+
+-- | The non-phase plan documents whose relative links are validated.
+--
+-- 'validateRelativeLinks' previously ran only over 'requiredDocs',
+-- 'rootDocRules', and 'phaseDocs', so links from these six files were never
+-- checked. Every one of them links to phase documents by path, which made a
+-- phase rename silently green: the rename would resolve everywhere the linter
+-- looked and dangle everywhere it did not. Registering them closes that gap.
+planSupportDocs :: [FilePath]
+planSupportDocs =
+  [ "DEVELOPMENT_PLAN/README.md",
+    "DEVELOPMENT_PLAN/00-overview.md",
+    "DEVELOPMENT_PLAN/system-components.md",
+    "DEVELOPMENT_PLAN/cohort-validation-waves.md",
+    "DEVELOPMENT_PLAN/development_plan_standards.md",
+    "DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md"
   ]
 
 -- | Recursively list markdown files under a repo-relative directory, returning
@@ -289,7 +320,6 @@ documentStructureRules =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
             RequireSection "## The invariant",
             RequireSection "## Enforcement",
-            RequireSection "## Current Status",
             RequireSection "## Validation"
           ]
       },
@@ -299,7 +329,6 @@ documentStructureRules =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
             RequireSection "## The invariant",
             RequireSection "## Enforcement",
-            RequireSection "## Current Status",
             RequireSection "## Validation"
           ]
       },
@@ -308,7 +337,6 @@ documentStructureRules =
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
             RequireSection "## The Rule",
-            RequireSection "## Current Status",
             RequireSection "## Validation"
           ]
       },
@@ -316,7 +344,6 @@ documentStructureRules =
       { documentStructurePath = "documents/engineering/build_artifacts.md",
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
-            RequireSection "## Current Status",
             RequireSection "## Build Roots",
             RequireSection "## Generated Demo Config Publication",
             RequireSection "## Rules",
@@ -327,7 +354,6 @@ documentStructureRules =
       { documentStructurePath = "documents/engineering/docker_policy.md",
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
-            RequireSection "## Current Status",
             RequireSection "## Host Prerequisite Boundary",
             RequireSection "## Supported Usage",
             RequireSection "## Image Set",
@@ -339,7 +365,6 @@ documentStructureRules =
       { documentStructurePath = "documents/engineering/edge_routing.md",
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
-            RequireSection "## Current Status",
             RequireSection "## Route Inventory",
             RequireSection "## Gateway Ownership",
             RequireSection "## Port Selection Rules",
@@ -370,7 +395,6 @@ documentStructureRules =
       { documentStructurePath = "documents/engineering/portability.md",
         documentStructureRequirements =
           [ RequireOneOfSections ["## TL;DR", "## Executive Summary"],
-            RequireSection "## Current Status",
             RequireSection "## Portable Platform Invariants",
             RequireSection "## Supported Substrate Detail",
             RequireSection "## Validation"
@@ -408,7 +432,7 @@ monitoringStancePaths =
     "DEVELOPMENT_PLAN/README.md",
     "DEVELOPMENT_PLAN/00-overview.md",
     "DEVELOPMENT_PLAN/system-components.md",
-    "DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md"
+    "DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md"
   ]
 
 runDocsLint :: IO ()
@@ -443,6 +467,7 @@ runDocsLint = do
     validateGovernedDocumentMetadata relativePath contents
     validateRelativeLinks paths relativePath contents
     validateForbiddenPhrases relativePath contents
+    validateProhibitedStatusSection relativePath contents
     validateForbiddenConfigurationOverrideReferences relativePath contents
   forM_ rootDocRules $ \rule -> do
     contents <- readFile (repoRoot paths </> rootDocPath rule)
@@ -462,6 +487,15 @@ runDocsLint = do
   forM_ phaseDocs $ \relativePath -> do
     contents <- readFile (repoRoot paths </> relativePath)
     validatePhaseDoc relativePath contents
+    validateRelativeLinks paths relativePath contents
+  forM_ planSupportDocs $ \relativePath -> do
+    exists <- doesFileExist (repoRoot paths </> relativePath)
+    unless exists $
+      ioError
+        ( userError
+            ("plan support document is missing (update planSupportDocs): " <> relativePath)
+        )
+    contents <- readFile (repoRoot paths </> relativePath)
     validateRelativeLinks paths relativePath contents
 
 validateGovernedDocumentMetadata :: FilePath -> String -> IO ()
@@ -543,11 +577,115 @@ validateDhallSchemaDrift _paths =
         when (Text.null (Text.strip schemaText)) $
           ioError (userError (Text.unpack (dhallSchemaName schema) <> " Dhall schema rendered empty"))
 
+-- | Documents permitted to contain a forbidden phrase, because naming it is
+-- their subject.
+--
+-- Mirrors 'configurationOverrideReferenceAllowedPaths': the standard that
+-- defines the banned status vocabulary has to be able to spell it, and the
+-- ledger that records a retired surface has to be able to name what was
+-- retired. Keep this list to documents whose purpose is the prohibition
+-- itself.
+forbiddenPhraseAllowedPaths :: [FilePath]
+forbiddenPhraseAllowedPaths =
+  ["documents/documentation_standards.md"]
+
 validateForbiddenPhrases :: FilePath -> String -> IO ()
-validateForbiddenPhrases relativePath contents =
+validateForbiddenPhrases relativePath contents
+  | relativePath `elem` forbiddenPhraseAllowedPaths = pure ()
+  | otherwise =
+      when
+        (any (`isInfixOf` contents) forbiddenPhrases)
+        (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
+
+-- | Reject an implementation-status section heading in a governed document.
+--
+-- The governed suite is prescriptive: it declares the target architecture, and
+-- the gap between that target and the implementation is tracked in
+-- @DEVELOPMENT_PLAN\/@ while code and tests carry reality. A status section in
+-- a doctrine document reintroduces exactly the drift this rule exists to
+-- prevent, and it was previously *required* by a structure rule, so the
+-- rejection replaces that requirement rather than merely supplementing it.
+--
+-- Anchored to line start: an unanchored match would fire on any document that
+-- merely names the heading, including the standard that defines this rule.
+validateProhibitedStatusSection :: FilePath -> String -> IO ()
+validateProhibitedStatusSection relativePath contents = do
+  validateProhibitedStatusReferences relativePath contents
   when
-    (any (`isInfixOf` contents) forbiddenPhrases)
-    (ioError (userError ("forbidden retired-doctrine phrase found in " <> relativePath)))
+    (any isStatusHeading (lines contents))
+    ( ioError
+        ( userError
+            ( relativePath
+                <> " must not carry a '## Current Status' section: documents/ declares the "
+                <> "target and DEVELOPMENT_PLAN/ tracks implementation status"
+            )
+        )
+    )
+  where
+    isStatusHeading line = "## Current Status" `isPrefixOf` line
+
+-- | Reject wave, sprint, and dated-evidence references in a governed document.
+--
+-- These are the finest-grained form of the same defect the status-section
+-- rejection covers: a sprint number attached to a fact reports who delivered it,
+-- and a wave letter or a date reports when it was proved. Both belong to
+-- @DEVELOPMENT_PLAN\/@. The fact itself is contract and survives without the
+-- attribution -- "Phase 3 Sprint 3.13 removed the route" becomes "there is no
+-- route", which is both shorter and true independently of who did it.
+-- | Documents exempt from the wave/sprint/date rejection.
+--
+-- Two distinct reasons, kept in one list because both are permanent:
+-- 'documentation_standards.md' must be able to demonstrate the form it bans,
+-- and 'pulsar_ml_workflow.md' is the cross-project contract shared verbatim
+-- with the jitML sister project — editing it here would fork a document this
+-- repository does not solely own.
+statusReferenceAllowedPaths :: [FilePath]
+statusReferenceAllowedPaths =
+  [ "documents/documentation_standards.md",
+    "documents/architecture/pulsar_ml_workflow.md"
+  ]
+
+validateProhibitedStatusReferences :: FilePath -> String -> IO ()
+validateProhibitedStatusReferences relativePath contents
+  | relativePath `elem` statusReferenceAllowedPaths = pure ()
+  | otherwise =
+      go
+  where
+    go =
+      case filter (not . null . snd) (zipWith scan [1 :: Int ..] (lines contents)) of
+        [] -> pure ()
+        ((lineNumber, matched) : _) ->
+          ioError
+            ( userError
+                ( relativePath
+                    <> ":"
+                    <> show lineNumber
+                    <> " carries an implementation-status reference ("
+                    <> matched
+                    <> "): documents/ declares the target, so wave, sprint, and dated "
+                    <> "evidence belong in DEVELOPMENT_PLAN/"
+                )
+            )
+    scan lineNumber line = (lineNumber, firstMatch line)
+    firstMatch line
+      | Just rest <- afterToken "Wave " line, startsUpper rest = "Wave " <> take 1 rest
+      | Just rest <- afterToken "Sprint " line, isDottedNumber rest = "Sprint " <> takeWhile (/= ' ') rest
+      | Just rest <- afterToken "202" line, isDateTail rest = "20" <> take 6 ("2" <> rest)
+      | otherwise = ""
+    afterToken token line =
+      case filter (token `isPrefixOf`) (tails line) of
+        (hit : _) -> Just (drop (length token) hit)
+        [] -> Nothing
+    startsUpper rest = case rest of
+      (c : _) -> c `elem` ['A' .. 'Z']
+      _ -> False
+    isDottedNumber rest =
+      case span (`elem` ['0' .. '9']) rest of
+        (digits@(_ : _), '.' : more) -> not (null digits) && any (`elem` ['0' .. '9']) (take 1 more)
+        _ -> False
+    isDateTail rest = case rest of
+      (a : '-' : b : c : '-' : d : e : _) -> all (`elem` ['0' .. '9']) [a, b, c, d, e]
+      _ -> False
 
 validateForbiddenConfigurationOverrideReferences :: FilePath -> String -> IO ()
 validateForbiddenConfigurationOverrideReferences relativePath contents
@@ -813,6 +951,20 @@ validateTestingDocOwnership paths = do
 validateUnsupportedMonitoringStance :: Paths -> IO ()
 validateUnsupportedMonitoringStance paths = do
   forM_ monitoringStancePaths $ \relativePath -> do
+    -- Existence-guarded like the requiredDocs sweep in runDocsLint. A bare
+    -- readFile here turns a stale monitoringStancePaths entry -- a renamed
+    -- phase document, say -- into an uncaught `openFile: does not exist`
+    -- rather than the named diagnostic every other check in this module
+    -- produces, and the phase-plan drift guard cannot catch it because
+    -- isPhasePlanDoc accepts any DEVELOPMENT_PLAN/phase-*.md name.
+    exists <- doesFileExist (repoRoot paths </> relativePath)
+    unless exists $
+      ioError
+        ( userError
+            ( "monitoring-stance document is missing (update monitoringStancePaths): "
+                <> relativePath
+            )
+        )
     contents <- readFile (repoRoot paths </> relativePath)
     unless
       (monitoringUnsupportedStatement `isInfixOf` contents)

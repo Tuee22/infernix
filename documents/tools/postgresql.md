@@ -1,7 +1,7 @@
 # PostgreSQL
 
 **Status**: Authoritative source
-**Referenced by**: [harbor.md](harbor.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [harbor.md](harbor.md), [../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md)
 
 > **Purpose**: Record the supported operator-managed PostgreSQL contract for the local platform.
 
@@ -16,12 +16,16 @@
 - PostgreSQL claims explicitly use `storageClassName: infernix-manual`, which is backed by
   `kubernetes.io/no-provisioner`, and those claims bind to manually created PVs under
   `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
-- `infernix test integration` validates PostgreSQL readiness, replacement-primary failover, and
-  repeat lifecycle reuse of the same deterministic manually managed PV inventory and host paths
+- `infernix test integration` validates PostgreSQL readiness and repeat lifecycle reuse of the same
+  deterministic manually managed PV inventory and host paths
+- each operator-managed cluster runs **one instance** with one PgBouncer proxy. The Percona
+  operator remains the deployment mechanism and is **no longer retained as a high-availability
+  mechanism**: there is no replica to promote, so instance loss is restore-from-backup rather than
+  automatic failover. The replica-reinitialization repair path and the replication-role bootstrap
+  it depended on are deleted with the topology that required them
 - Harbor and Keycloak Percona clusters reference repo-owned `databaseInitSQL` ConfigMaps that
-  idempotently create `_crunchyrepl` as `LOGIN REPLICATION`, matching the Patroni replica
-  bootstrap role expected by the Percona image. The Harbor startup repair path reasserts the same
-  role on the current primary before forcing replica reinitialization.
+  idempotently create `_crunchyrepl` as `LOGIN REPLICATION`, matching the Patroni bootstrap role
+  the Percona image expects.
 - Harbor PostgreSQL bootstrap may recycle unready startup pods when they remain `Running` but fail
   Patroni readiness beyond the supported grace window. The recycle uses Kubernetes `--wait=false`
   deletes so StatefulSet immediate name reuse does not block lifecycle progress; readiness remains

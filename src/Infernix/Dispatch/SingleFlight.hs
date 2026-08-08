@@ -41,8 +41,11 @@ import Infernix.Web.Contracts
 --   result writeback and per-user MinIO scoping.
 -- * @inferenceUserPromptMessageId@ — the conversation-log @MessageId@ used as
 --   both the causal reference and the producer-dedup sequence ID for the
---   inference-request topic. Producer dedup keyed by this value guarantees
---   exactly-once dispatch across crashed dispatcher replicas.
+--   inference-request topic. Producer dedup keyed by this value collapses a
+--   redelivered dispatch **at the effect**: delivery is at-least-once, so a
+--   dispatcher lost mid-flight costs a redelivery, and the broker drops the
+--   duplicate publish rather than the pipeline preventing it (Phase 6 Sprint
+--   6.47 narrowed this claim from "exactly-once dispatch").
 -- * @inferenceClientIdempotencyKey@ — carried through so retries surface back
 --   to the original client request.
 -- * @inferenceConversationLogOffset@ — the message's broker offset on the

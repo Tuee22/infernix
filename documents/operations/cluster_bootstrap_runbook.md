@@ -153,7 +153,7 @@
   `infernix-demo` is present; when it does not, confirm `infernix-demo` is absent
 - when `demo_ui = True`, confirm `infernix-keycloak` is present, the Keycloak Patroni cluster is
   healthy, and `/auth` serves the routed Keycloak login page; the local demo default is one
-  Keycloak application pod backed by HA Patroni Postgres
+  Keycloak application pod backed by its own PostgreSQL cluster
 - confirm that `infernix kubectl get storageclass` shows only `infernix-manual`
 - confirm routes with `infernix cluster status`
 - inspect `./.data/runtime/publication.json` or `GET /api/publication` to confirm the routed
@@ -223,6 +223,25 @@ Kind deletion occurs while the frozen-source lease is still held. After deletion
 Harbor/Keycloak Patroni roots, Harbor Redis, and the MinIO `harbor-registry` bucket internals.
 Retained MinIO model/demo-object data and Pulsar data remain durable.
 
+### One-time MinIO layout migration
+
+A cluster created before the single-instance platform topology holds its MinIO data in the
+erasure-coded distributed layout that four instances produced. One instance uses a plain backend
+directory instead, and the two layouts are not interchangeable, so retained MinIO data does **not**
+survive this migration even though the snapshot machinery above copies it faithfully. The supported
+migration is a teardown and rebuild:
+
+```bash
+infernix cluster down
+infernix cluster up
+```
+
+`infernix-models` is repopulated by the coordinator's eager staging at startup and
+`infernix-engine-artifacts` by the next materialization, so both recover without operator action.
+`infernix-demo-objects` — user uploads and generated artifacts — is **lost**; export anything that
+matters first. This is a reduction in what an in-place upgrade can do, and it applies once. See
+[../tools/minio.md](../tools/minio.md).
+
 On the next absent-cluster bring-up, the lifecycle lock and a freshly rechecked
 `WriterQuiesced` lease reconcile `.incoming` / `.previous` residue before claim preparation. A
 complete initial `.incoming` may be promoted; a partial unmarked tree is discarded; `.previous`
@@ -265,7 +284,7 @@ transaction roots while either lifecycle command is active.
 
 The Kind cluster is named `infernix-<runtime>` on the shared Docker daemon, so it is
 machine-global, while the lifecycle lock, the harness reservation, and the persisted state are
-repo-local. Since Sprint 6.45 the creating checkout's host-side repository root is recorded on the
+repo-local. The creating checkout's host-side repository root is recorded on the
 cluster itself, inside the control-plane node at `/etc/infernix/cluster-checkout-identity`, and
 every ownership decision reads it back and requires agreement.
 

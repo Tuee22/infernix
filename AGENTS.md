@@ -43,9 +43,8 @@ Read first:
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode` — are unexported, so acting on an unmanaged state (a race or flake)
   does not typecheck; enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process
-  spawn is being migrated out of production `src/Infernix/` into
-  `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
-  is reopened, not closed. Canonical target:
+  spawn is routed through `Infernix.Cluster.Subprocess.runBoundedCommand`; the named exemptions are
+  declared carve-outs, not gaps. Canonical:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
 - no repo-owned native implementation source: version-controlled native sources are forbidden,
   including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants, CUDA, assembly,
@@ -116,7 +115,7 @@ Read first:
   `steady-state`; the test-harness `./infernix.dhall` swap reconciles a leftover `.harness-backup` on
   entry so a crash cannot leave the operator's config clobbered. Canonical doctrine:
   [documents/architecture/managed_state_transitions.md](documents/architecture/managed_state_transitions.md)
-- memory-safety by construction is reopened around the generated typed execution plan: compilation
+- memory-safety by construction rests on the generated typed execution plan: compilation
   mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
   `Enforcer`, and an inference subprocess can launch only from the resulting opaque
   `ExecutableModel`. The capped-engine kernel bounds actual resident memory to its
@@ -144,6 +143,22 @@ Read first:
   process infernix did not start remain outside the bound — and the doctrine names what it does not
   bound rather than overstating the guarantee. Canonical doctrine:
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
+- per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**
+  engine process, all consuming the same Pulsar `Shared` pool topic, each with its own model cache
+  and its own machine contract naming the pools it serves. One engine per machine is a correctness
+  rule, not a scheduling preference — two engines on one box hold two KV caches and two copies of
+  every loaded weight, and each independently admits work against the machine's whole observed
+  capacity. Member identity fails closed: a daemon that cannot establish which member it is refuses
+  to start rather than adopting a default. Memory admission happens on the machine that will
+  execute, never on the coordinator, and capacity is **observed, never declared**. Delivery is
+  **at-least-once with an effectively-once observable outcome**: acknowledgement follows the terminal
+  result, so a machine lost mid-inference costs a redelivery and duplicate compute rather than an
+  unanswered request — redelivery is the only recovery path the pipeline has, and no change may
+  acknowledge before the terminal event. There is no within-role replication and no repo-owned HA
+  topology; `Failover` as a Pulsar *subscription type* survives because it is how Pulsar provides the
+  coordination this relies on. Canonical doctrine:
+  [documents/architecture/daemon_topology.md](documents/architecture/daemon_topology.md) and
+  [documents/architecture/configuration_doctrine.md](documents/architecture/configuration_doctrine.md)
 - review `README.md`, `AGENTS.md`, and `CLAUDE.md` together when repository workflow guidance or
   the supported bootstrap entrypoints change
 - run `infernix lint docs` before closing documentation changes, using the active execution

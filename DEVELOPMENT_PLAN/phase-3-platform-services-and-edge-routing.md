@@ -1,10 +1,16 @@
-# Phase 3: HA Platform Services and Edge Routing
+# Phase 3: Platform Services and Edge Routing
 
-**Status**: Done — the Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen (Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 3.1-3.13 reopened and re-closed as recorded below
+**Status**: Active — Sprint 3.16 is code-side closed as of the 2026-08-07 generated-overlay
+correction and owns only its `linux-cpu` lifecycle cohort gate. Executing that gate found the
+sprint's headline deliverable unmet: the chart defaults were 1 but the generated Helm overlay still
+deployed the retired replicated counts, so a `linux-cpu` cluster ran two engine pods on one worker.
+The overlay is corrected and the rule is now pinned by a negative-tested unit guard against the text
+that deploys; see [Sprint 3.16](#sprint-316-single-node-platform-topology-active). The
+Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen (Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 3.1-3.13 reopened and re-closed as recorded below
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
-> **Purpose**: Define the mandatory local HA Harbor, MinIO, operator-managed PostgreSQL, and
-> Pulsar deployments; the Envoy Gateway installation that owns all browser-visible routing on one
+> **Purpose**: Define the mandatory local single-instance Harbor, MinIO, operator-managed
+> PostgreSQL, and Pulsar deployments; the Envoy Gateway installation that owns all browser-visible routing on one
 > localhost listener; the publication contract; and the route-registry cleanup that removes route
 > duplication across Haskell, Helm, route-oriented docs, and route-aware validation.
 
@@ -879,7 +885,7 @@ doctrine — evidence, not hope — to the publication surface.
 - the general readiness-wait migration onto `awaitReadiness` for the remaining Harbor/cluster waits
   (`waitForRegistry`, `loginHarborWithRetries`, `pushImageWithRetries`, and peers) and the
   `ProcessMonitor.hs` retirement are the broader hardening tracked by
-  [Sprint 6.41](phase-6-validation-e2e-and-ha-hardening.md); this sprint bounds the publish exec and
+  [Sprint 6.41](phase-6-validation-and-e2e-hardening.md); this sprint bounds the publish exec and
   mints blob-servability evidence at the flake site
 - the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
   apple-silicon plus linux-cpu full-suite validation of the bounded publish plus `BlobServable`
@@ -900,6 +906,161 @@ the Managed-State-Transition Doctrine reopen work, and
 Application & Bounded-HTTP reopen work that bounds the Harbor publish exec and mints `BlobServable`
 evidence, are both closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus
 linux-cpu full-suite `test all` green; no remaining work exists.
+
+---
+
+## Sprint 3.16: Single-Node Platform Topology [Active]
+
+**Status**: Active — code-side closed as of the 2026-08-07 generated-overlay correction; the cohort
+lifecycle run is the only item left. The sprint was previously recorded as code-side closed while
+one deliverable was unmet: executing its cohort gate found that the generated Helm overlay still
+deployed the retired replicated counts regardless of the chart defaults this sprint set. See the
+first `Deliverables` bullet.
+**Code-side closure**: the chart, the generated overlay, Kind topology, repair-path deletion, and
+the inverted scheduling case are implemented and GREEN on the machine-independent gate set
+(`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
+`infernix lint files|chart|proto|docs`).
+**Cohort gate**: `linux-cpu` — a full lifecycle on the one-worker topology, sharing the wave with
+Sprint 6.47.
+**Implementation**: `chart/values.yaml`, `chart/templates/deployment-{coordinator,engine}.yaml`,
+`chart/templates/keycloak/deployment.yaml`, `chart/templates/minio/statefulset.yaml`,
+`src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Command.hs`, `kind/cluster-linux-cpu.yaml`,
+`test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/daemon_topology.md`, `documents/tools/minio.md`,
+`documents/tools/postgresql.md`, `documents/tools/pulsar.md`,
+`documents/operations/cluster_bootstrap_runbook.md`
+
+### Objective
+
+Collapse the deployed topology to one process per role per machine and one instance per platform
+service, and delete the redundancy machinery that only existed to support the retired shape.
+
+The two existing local-topology override blocks already rendered exactly this for the Apple lanes;
+this sprint promoted them from exception to default rather than inventing a new shape. Both blocks
+shrank as a result: every replica and quorum line they carried is now the chart default and was
+deleted from the override, because a default repeated in an override is a second place to change.
+
+### Deliverables
+
+All landed.
+
+- **infernix roles**: demo / coordinator / engine replica counts are 1 **in the generated overlay as
+  well as in `chart/values.yaml`**; the required engine pod anti-affinity, the preferred coordinator
+  and Keycloak anti-affinity, and all five PodDisruptionBudgets are deleted; the second `linux-cpu`
+  Kind worker is removed **in `renderKindConfig` as well as in `kind/cluster-linux-cpu.yaml`**.
+
+  The Kind half is the same correction and the same shape, landed the same day. A Kind cluster is
+  created from `writeGeneratedKindConfig` → `renderKindConfig` → `kindWorkerCount`, and
+  `kindWorkerCount LinuxCpu` still returned 2, so the tracked `kind/cluster-linux-cpu.yaml` this
+  sprint edited down to one worker is a reference document that deploys nothing. The lane ran a
+  two-worker cluster. `kindWorkerCount` is now `_ -> 1` for every mode, pinned by a unit assertion
+  over real `renderKindConfig` output for all three modes and negative-tested against the retired
+  `LinuxCpu -> 2`.
+
+  The overlay half is a correction landed on 2026-08-07, and it is recorded rather than folded in
+  silently, because the original deliverable was **claimed and not met**. `chart/values.yaml` was set
+  to 1 for all three roles, but `renderHelmValues` in `src/Infernix/Cluster.hs` supersedes the base
+  values on every phase render, and it still emitted `repoWorkloadReplicaCount` 2,
+  `repoCoordinatorReplicaCount` 2, and `repoEngineReplicaCount (FinalPhase, LinuxCpu)` 2 — the
+  retired replicated topology, on exactly the lanes this sprint's cohort gate runs on. The base
+  default was dead text there, and the `linux-cpu` engine value named "the two-worker CPU validation
+  lane" in its own comment: a lane this sprint had already deleted. A `linux-cpu` cluster brought up
+  from this plan ran **two engine pods on one worker**, both resolving the single compiled member
+  `linux-cpu-engine` through the adoption arm in `requireCompiledDaemon` — two KV caches and two
+  copies of every loaded weight, which is the exact correctness rule the sprint exists to enforce.
+
+  **Why the sprint's own gates could not catch it, which is the more useful half.** The replacement
+  integration case `validateNoPendingWorkloadReplicas` asserts that no pod in `platform` is
+  `Pending`; with the anti-affinity deleted, a second engine pod schedules onto the one worker
+  without complaint, so a green cohort run and an unmet deliverable are indistinguishable from
+  there. And the unit suite asserted the *base values file text* — the only `replicaCount: 1`
+  assertion in it pinned Pulsar autorecovery — never the generated overlay that supersedes it. The
+  guard added with the fix is therefore stated against the text that deploys, as a property over
+  every emitted count (`overReplicatedRoles`, `test/unit/Spec.hs`): one process per role per machine
+  is cluster-wide, so a count above one is a defect wherever it appears. It was negative-tested by
+  reintroducing `(FinalPhase, LinuxCpu) -> 2` alone, which fails it by name.
+- **platform services to single-node**: Pulsar zookeeper / bookkeeper / broker / proxy /
+  autorecovery are 1, and the managed-ledger ensemble, write, and ack quorums are 1 in the base
+  chart rather than only in the Apple override; both Patroni instances and their pgBouncer proxies
+  are 1; the Harbor bootstrap registry replica count drops from 3 to 1 — it was the last place a
+  Harbor component was deliberately brought up multi-replica.
+- **MinIO to a single node**, with its migration shipped first. The StatefulSet renders per-replica
+  endpoints into the server command, so the CMD *shape* changes with the count: one instance is
+  `minio server /data` (a plain backend directory), two or more are one `http://…/data` endpoint
+  each (an erasure-coded distributed set). The layouts are not interchangeable, so this is a
+  teardown-and-rebuild. `documents/tools/minio.md` and the cluster runbook carry the operator
+  procedure, and both say plainly what does not survive it: `infernix-models` and
+  `infernix-engine-artifacts` are repopulated automatically, and `infernix-demo-objects` — user
+  uploads and generated artifacts — is lost.
+- **the now-dead repair paths deleted with their topology**: `reinitializeHarborPostgresReplicasIfStuck`,
+  `runHarborPostgresReplicaReinit`, `ensureHarborPostgresReplicationRole`, the
+  `harborPostgresReplicaReinitGraceAttempts` window, the `KubectlReinitPostgresReplicas` command and
+  its `patronictl reinit` argv, the `EnsureReplicationRole` postgres action and its SQL, and
+  `chart/templates/postgresql-replication-init.yaml`. The rollout waiters are re-derived: expected
+  Harbor data claims 3 → 1, and expected operator claims 4 → 2 per Patroni cluster.
+- **the boundary stated explicitly**: the Percona operator remains the deployment mechanism and is
+  no longer retained as a high-availability mechanism, so instance loss is restore-from-backup.
+  `documents/tools/postgresql.md` says so in those words.
+
+Two things found while deleting are worth recording, because both were conditions nothing could
+meet rather than dormant capability.
+
+**Two of the Pulsar dirty-state log markers were unsatisfiable.**
+`pulsarBootstrapDirtySingleLogMarkers` matched `Cannot resolve bookieId
+infernix-infernix-pulsar-bookie-1`, the same for `-2`, and `QuorumCoverage(e:2,w:2,a:2)`. A
+one-bookie managed ledger cannot emit any of the three. They are deleted with the ensemble that
+produced them. The same applies to `pulsarBootstrapRepairLogTargets`, which scanned zookeeper
+ordinals 1 and 2: scanning a pod that does not exist returns nothing and reads as a clean scan.
+
+**A second integration case asserted the retired topology as a floor, and is inverted with the
+same reasoning.** `validateLinuxEnginePoolPlacement` required *at least two* running engine pods on
+*at least two* distinct worker nodes. Stated as a floor, the collapse could not satisfy it at all —
+so the sprint's own cohort gate would have failed on the corrected topology, for the correct
+behaviour. Its companion line asserted that the member id held "independent of pod count", which is
+the doctrine violation written down as an invariant: two engine pods sharing one member id are two
+KV caches and two copies of every loaded weight, each admitting work against the whole machine's
+observed capacity. The case now asserts **exactly one** running engine pod and names it; the
+node-spread assertion is deleted rather than inverted, because it expressed the anti-affinity
+constraint and with one pod there is nothing to spread. Sprint 6.47 retired the chaos tail but did
+not reach this case, because it injects no failure.
+
+**The anti-affinity integration case is inverted rather than retired, and it is weaker in a way
+that is recorded.** The retired case scaled `infernix-engine` past the node count and required the
+surplus replica to sit `Pending` with a `FailedScheduling` event naming pod anti-affinity. That
+asserted the constraint this sprint deletes — and it asserted the wrong *kind* of thing: one engine
+process per machine is a correctness rule about KV caches and admission, so expressing it as a
+placement preference produced a `Pending` pod instead of preventing a second process. The
+replacement, `validateNoPendingWorkloadReplicas`, asserts the inverse: no pod in the `platform`
+namespace is `Pending`, which is the observable residue a partial collapse would leave behind. It
+proves nothing about an operator who raises `engine.replicaCount` themselves, and the case says so
+in its own comment rather than implying wider coverage.
+
+### Validation
+
+- `infernix lint chart` and `infernix lint files|proto|docs` plus `infernix docs check` are GREEN.
+- `cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, and
+  `infernix-haskell-style` are GREEN on this source, including the corrected base-chart
+  autorecovery assertion.
+- **The generated overlay's replica counts are pinned, and the pin was negative-tested.**
+  `overReplicatedRoles` reads every `replicaCount:` the overlay emits for `linux-cpu` FinalPhase,
+  `linux-gpu` FinalPhase, and a pre-final phase, and requires none above 1. A companion assertion
+  requires the reader to have found at least one real count, so the guard cannot pass vacuously if
+  the rendered shape changes. Reintroducing `repoEngineReplicaCount (FinalPhase, LinuxCpu) -> 2`
+  alone fails it by name.
+- **Cohort gate (pending):** a full `linux-cpu` lifecycle on the one-worker topology, in which
+  every workload schedules without a `Pending` replica. That is the observable proof the
+  anti-affinity constraint is gone rather than merely unsatisfied, and no machine-independent gate
+  can produce it.
+
+### Remaining Work
+
+The MinIO layout migration is operator-facing and cannot be automated by this sprint: an existing
+cluster must be torn down and rebuilt, and demo-bucket contents do not survive. That is a reduction
+in what an in-place upgrade can do and is recorded as such in the runbook rather than smoothed over.
+
+The rest of the chaos / HA validation surface — the failure-injection integration tail, its
+exclusively-owned helpers, and the Playwright pod-kill section — still asserts recovery properties
+of the retired topology. Retiring it is Phase 6 Sprint 6.47, which this sprint unblocks.
 
 ---
 

@@ -1,7 +1,7 @@
 # Pulsar
 
 **Status**: Authoritative source
-**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md), [../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md)
 
 > **Purpose**: Record the supported production topic contract and the current daemon
 > implementation.
@@ -57,17 +57,22 @@
 
 ## Production Inference Subscription Contract
 
+Delivery is **at-least-once with an effectively-once observable outcome**: an engine acknowledges a
+pool message only after the terminal result is published, so a machine lost mid-inference costs a
+redelivery and duplicate compute rather than an unanswered request, and producer-side dedup collapses
+the duplicate at the effect. Redelivery is the only recovery path the pipeline has, because request
+publishes carry a deduplicating sequence id that makes re-dispatch a no-op. The canonical statement
+and its rationale live in
+[../architecture/daemon_topology.md](../architecture/daemon_topology.md).
+
 The active `.dhall` config carries the production inference fields consumed by `infernix service`:
 
-- `daemonRole : Text` - the role selected by the colocated file for the daemon process
-- `coordinator` - coordinator-role metadata, including request topics, result topic, and location
-- `enginePools` - validated pool metadata used to derive legal publish topics and legal engine
-  subscriptions
-- `engine` or `engineMembers` - engine-role metadata, including pool membership, result topic, and
-  publication-edge auto-discovery mode for Apple host daemons
-- `request_topics : List Text` - topic names the cluster daemon watches for inbound inference
-  requests
-- `result_topic : Text` - the topic that completed results are written to
+- the **system contract** carries the substrate and the validated pool record whose values are the
+  model descriptors; every publish and subscribe topic is *derived* from
+  `(runtimeMode, pool id, model id, optional member id)` rather than written down, so two machines
+  cannot spell one topic differently
+- the **machine contract** carries this box's `node` block — its role, its required member id, and
+  the pools it serves — selected out of the system contract by field access
 - `engines : List EngineBinding` - the engines available to the worker dispatch layer; Python-native
   bindings execute through the named adapter entrypoints in the active substrate project
 - the optional `demo_ui : Bool` flag toggles the `infernix-demo` workload (production deployments
@@ -98,20 +103,17 @@ earlier `inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
 `inference.batch.apple-silicon.host` helper topics are removed from supported routing.
 
 The unit suite already validates invalid graph rejection and derived topic selection. Current Apple
-integration validates the pinned-member path on a real broker by starting one
-`infernix service --role engine --engine-name ... --config <isolated-dhall>` consumer, publishing
-to the derived member topic, and asserting a duplicate consumer receives the broker's `Exclusive`
-409 rejection. It also launches two same-machine Apple host-member daemons on one isolated derived
-pool/model topic, observes two real consumers on the `Shared` subscription through Pulsar admin
-stats, and completes an inference request; production `demo_ui = false` route/publication
-assertions also pass on Apple. Current Apple integration executes the single-host logical `Shared`
-backlog harness by holding one service-shaped WebSocket consumer unacked and asserting a second
-request reaches a free consumer on the same subscription. Current Linux CPU integration proves
-Kubernetes-observed pool placement and shared-subscription backlog/backpressure on unique derived
-pool/model topics. Historical Wave J closed its then-active Linux GPU/CUDA routing cohort; the
-current Linux GPU typed-execution-plan residual is owned by Phase 6 and fails plan compilation
-closed until dual RAM/VRAM enforcement exists. Physical Apple multi-host routing is
-hardware-deferred proof while no second Apple host is available.
+integration validates the pinned-member path on a real broker by starting one `infernix service
+--role engine --engine-name ... --config <isolated-dhall>` consumer, publishing to the derived
+member topic, and asserting a duplicate consumer receives the broker's `Exclusive` 409 rejection. It
+also launches two same-machine Apple host-member daemons on one isolated derived pool/model topic,
+observes two real consumers on the `Shared` subscription through Pulsar admin stats, and completes
+an inference request; production `demo_ui = false` route/publication assertions also pass on Apple.
+Current Apple integration executes the single-host logical `Shared` backlog harness by holding one
+service-shaped WebSocket consumer unacked and asserting a second request reaches a free consumer on
+the same subscription. Current Linux CPU integration proves Kubernetes-observed pool placement and
+shared-subscription backlog/backpressure on unique derived pool/model topics. Physical Apple
+multi-host routing is hardware-deferred proof while no second Apple host is available.
 
 All inference and model-bootstrap publication topology is plan-derived. The supported raw topic
 publisher has been removed; bootstrap publication consumes an opaque capability prepared from the
@@ -161,15 +163,18 @@ Rules:
 - the frontend pod's per-WS Pulsar **Reader** subscriptions on conversation and metadata
   topics give pod-failover-safe fan-out without sticky sessions; the per-context inference
   dispatcher in the coordinator pod uses a named **Failover** subscription so exactly one
-  coordinator replica is the active dispatcher per context at a time; the result-bridge in
+  coordinator process is the active dispatcher per context at a time; the result-bridge in
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
-  with the same semantics
+  with the same semantics. `Failover` is retained as a *subscription type* because it is how
+  Pulsar provides that single-active-consumer coordination; it is not a claim that a second
+  coordinator is standing by. One process per role per machine means a single-machine
+  deployment has exactly one coordinator, and its loss is a restart
 - engine-pool messages are acknowledged only after engine materialization, inference, and durable
   result publication succeed, while failed materialization leaves the message unacked or negatively
   acknowledged for redelivery
 - Failover ownership uses stable subscription names; individual
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
-  so multiple coordinator replicas do not present identical member names
+  so coordinators on different machines do not present identical member names
   during broker promotion
 - the integration suite publishes `ClientCreateContext`, `ClientUpdateDraft`, and
   `ClientCancelPrompt` through the real broker, reads them back with Pulsar Readers, asserts
@@ -188,14 +193,13 @@ Rules:
 ## Model-Bootstrap Topic
 
 A third Failover subscription type in the coordinator pod backs eager model-weight staging: the
-coordinator stages every model in the mounted `infernix.dhall` to MinIO on startup with exactly-once
+coordinator stages every model in the mounted `infernix.dhall` to MinIO on startup with effectively-once
 semantics, and the same subscription services fallback bootstrap requests for any unstaged model. The supported `infernix` tenant plus the
 `infernix/system` and `infernix/demo` namespaces (with deduplication enabled) are reconciled on
 daemon startup by `reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
 `persistent://infernix/system/model.bootstrap.request` topic is created during the same
 reconcile pass. The coordinator's bootstrap consumer + downloader + MinIO uploader runtime loop
-is exercised by the chaos suite, which proves failover and exactly-once behavior on a real
-cluster:
+is exercised on a real cluster by the integration suite:
 
 | Topic | Pattern | Purpose |
 |---|---|---|
@@ -207,8 +211,10 @@ Rules:
 - the `infernix/system` namespace is **always-on** (not demo-gated) — model weights are a
   platform-level concern, present even in production where `demo_ui = false`
 - the coordinator's bootstrap subscription is a Pulsar named **Failover** subscription —
-  exactly one coordinator replica processes a given `modelId` at a time; on crash, Pulsar
-  promotes a surviving replica and redelivers the unacked request
+  exactly one coordinator processes a given `modelId` at a time. On crash the unacked request is
+  redelivered: to another machine's coordinator if the fleet has one, and otherwise to the same
+  coordinator once it restarts. Redelivery is the recovery path; promotion is not guaranteed to
+  find a survivor
 - the coordinator is the only daemon role with outbound-internet egress; the request
   carries no upstream URL itself — the worker reads the URL from the active substrate's
   staged `.dhall` catalog, keyed by `modelId`
@@ -217,9 +223,10 @@ Rules:
   `modelId`, and decodes the typed payload
 - the `infernix-models/<modelId>/.ready` sentinel object in MinIO is written **last** so the
   upload is atomically visible; engines observe `.ready` and only then load weights
-- failure mode: if the worker dies mid-upload, the surviving replica re-checks MinIO; if
-  the `.ready` sentinel is already present (idempotent guard), the worker simply publishes
-  the ready event; otherwise the download restarts from scratch
+- failure mode: if the worker dies mid-upload, whichever coordinator next receives the
+  redelivered request re-checks MinIO; if the `.ready` sentinel is already present (idempotent
+  guard), the worker simply publishes the ready event; otherwise the download restarts from
+  scratch
 - conversation topics retain full ledger history on BookKeeper-backed local PVs; tiered MinIO
   offload is not configured today
 - inference dispatch reuses the existing shared `inference.request.<mode>` and

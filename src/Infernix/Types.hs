@@ -82,6 +82,10 @@ module Infernix.Types
     resultFamilyId,
     resultFamilyIsArtifact,
     runtimeLaneId,
+    runtimeLaneForMode,
+    clusterDaemonLocation,
+    engineMemberLocationForMode,
+    defaultMaxInflightPerMember,
     runtimeModeId,
   )
 where
@@ -199,6 +203,41 @@ runtimeLaneId AppleSiliconHost = "apple-silicon-host"
 runtimeLaneId KindLinuxCpu = "kind-linux-cpu"
 runtimeLaneId KindLinuxGpuGpu = "kind-linux-gpu-gpu"
 runtimeLaneId KindLinuxGpuShared = "kind-linux-gpu-shared"
+
+-- | The lane a model runs in, a total function of the runtime mode and whether
+-- the model uses the device. Phase 8 Sprint 8.10 retired the generated
+-- @runtimeLane@ field in favour of this derivation.
+runtimeLaneForMode :: RuntimeMode -> Bool -> RuntimeLane
+runtimeLaneForMode runtimeModeValue gpuRequired = case runtimeModeValue of
+  AppleSilicon -> AppleSiliconHost
+  LinuxCpu -> KindLinuxCpu
+  LinuxGpu
+    | gpuRequired -> KindLinuxGpuGpu
+    | otherwise -> KindLinuxGpuShared
+
+-- | Where a coordinator or webapp daemon runs. Both are in-cluster on every
+-- supported substrate, so this is a constant rather than a generated field.
+clusterDaemonLocation :: Text
+clusterDaemonLocation = "cluster-pod"
+
+-- | Where an engine member runs: on the Apple control-plane host, and in a pod
+-- on the Linux substrates. Phase 8 Sprint 8.10 retired the generated per-member
+-- @location@ field in favour of this derivation.
+engineMemberLocationForMode :: RuntimeMode -> Text
+engineMemberLocationForMode runtimeModeValue = case runtimeModeValue of
+  AppleSilicon -> "control-plane-host"
+  LinuxCpu -> clusterDaemonLocation
+  LinuxGpu -> clusterDaemonLocation
+
+-- | In-flight requests a pool grants one member at a time.
+--
+-- Phase 8 Sprint 8.10 retired the generated per-pool knob. One engine process
+-- per machine holds one KV cache and one copy of every loaded weight, so a
+-- second concurrent request on the same member competes with the first for the
+-- machine's whole admitted budget; the supported value is one, and a wire field
+-- that may only ever hold one value is a field with nothing to say.
+defaultMaxInflightPerMember :: Int
+defaultMaxInflightPerMember = 1
 
 parseRuntimeLane :: Text -> Maybe RuntimeLane
 parseRuntimeLane rawValue = case Text.toLower rawValue of
@@ -650,10 +689,17 @@ minHostHeadroomMib :: Int
 minHostHeadroomMib = 6144
 
 -- | The only 'HostMemoryPartition' mint. @physical = vmReserve + headroom +
--- inferenceCapacity@; a negative inference capacity means the VM pledge plus
--- headroom oversubscribe physical RAM (rejected), and a headroom below
+-- inferenceCapacity@; a non-positive inference capacity means the VM pledge plus
+-- headroom exhaust or oversubscribe physical RAM (rejected), and a headroom below
 -- 'minHostHeadroomMib' cannot cover the co-tenants (rejected). The resulting
 -- @inferenceCapacity@ is the admission budget the on-host engine draws from.
+--
+-- Phase 4 Sprint 4.34 tightened @> physical@ to @>= physical@. Exactly-equal
+-- reservations produced a constructible zero-capacity partition, and a
+-- zero-capacity partition is not a smaller budget — it is a daemon that starts,
+-- passes every check, and can answer nothing, because every model's positive
+-- footprint exceeds it. Refusing to construct it is the same argument the
+-- headroom floor already makes one line above.
 mkHostMemoryPartition :: Int -> Int -> Int -> Either String HostMemoryPartition
 mkHostMemoryPartition physicalMib vmReserveMib headroomMib
   | physicalMib <= 0 =
@@ -668,13 +714,13 @@ mkHostMemoryPartition physicalMib vmReserveMib headroomMib
             <> show minHostHeadroomMib
             <> " MiB)"
         )
-  | reservedMib > toInteger physicalMib =
+  | reservedMib >= toInteger physicalMib =
       Left
-        ( "host memory partition oversubscribes physical RAM: vmReserve "
+        ( "host memory partition leaves no inference capacity: vmReserve "
             <> show vmReserveMib
             <> " MiB + headroom "
             <> show headroomMib
-            <> " MiB exceed physical "
+            <> " MiB meet or exceed physical "
             <> show physicalMib
             <> " MiB"
         )
@@ -1542,22 +1588,28 @@ instance FromJSON DemoConfig where
 -- MiB value, holding back exactly 'minHostHeadroomMib' of headroom and no VM
 -- reserve. Used by the legacy-config and discovery-failure fallback paths where
 -- the real physical / VM-pledge split is unknown; the result is always
--- constructible when the requested capacity and mandatory headroom fit in the
--- platform 'Int'. An excessive legacy value is rejected rather than wrapping
--- into a valid-looking physical-memory partition.
+-- constructible when the requested capacity is positive and it plus the
+-- mandatory headroom fit in the platform 'Int'. An excessive legacy value is
+-- rejected rather than wrapping into a valid-looking physical-memory partition,
+-- and a non-positive one is rejected rather than normalized to zero
+-- (Phase 4 Sprint 4.34).
 hostPartitionForCapacity :: Int -> Either String HostMemoryPartition
-hostPartitionForCapacity capacityMib =
-  if physicalMib > toInteger (maxBound :: Int)
-    then
+hostPartitionForCapacity capacityMib
+  | capacityMib <= 0 =
+      Left
+        ( "host memory capacity must be positive, got "
+            <> show capacityMib
+            <> " MiB; a zero-capacity partition admits no model at all"
+        )
+  | physicalMib > toInteger (maxBound :: Int) =
       Left
         ( "host memory capacity "
-            <> show normalizedCapacityMib
+            <> show capacityMib
             <> " MiB plus required headroom exceeds the supported integer range"
         )
-    else mkHostMemoryPartition (fromInteger physicalMib) 0 minHostHeadroomMib
+  | otherwise = mkHostMemoryPartition (fromInteger physicalMib) 0 minHostHeadroomMib
   where
-    normalizedCapacityMib = max 0 capacityMib
-    physicalMib = toInteger normalizedCapacityMib + toInteger minHostHeadroomMib
+    physicalMib = toInteger capacityMib + toInteger minHostHeadroomMib
 
 -- | Supported always-on MinIO bucket name holding platform model weights.
 -- The coordinator's bootstrap Failover subscription is the only writer; engines

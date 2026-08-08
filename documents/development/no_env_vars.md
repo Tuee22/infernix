@@ -25,7 +25,7 @@
 
 ## Current Audit Note
 
-The June 2026 audit reopened Phase 6 Sprint 6.34 for remaining enforcement gaps, and the sprint is now
+The enforcement surface is now
 closed. `Setup.hs` no longer reads operator environment and keeps only a deterministic setup-local
 `PATH` mutation for proto-lens; bootstrap shell no longer accepts inherited command overrides or
 inherited `PATH` joins; Haskell-style Cabal invocations resolve through `HostConfig` or fixed
@@ -150,7 +150,7 @@ HOME_DIR="$(/usr/bin/getent passwd "$(/usr/bin/id -u)" | /usr/bin/cut -d: -f6)"
 The first line resets `PATH=/usr/bin:/bin` so the operator's ambient PATH cannot influence
 resolution. Every pre-binary command uses an absolute-path constant.
 
-Phase 6 Sprint 6.34 retired the inherited `BOOTSTRAP_*` command override defaults from the
+There are no inherited `BOOTSTRAP_*` command override defaults in the
 pre-doctrine bootstrap era. Shell entrypoints use literal absolute constants or derived absolute paths
 and cannot be configured by inherited environment variables.
 
@@ -227,7 +227,7 @@ The repo-local lint gates are:
   `HostConfig`/`HostToolPaths` schema), so it cannot drift from the tool set.
 - `src/Infernix/Lint/Docs.hs` — rejects governed-doc language that presents project-prefixed env
   names or shell path overrides as supported operator configuration outside the legacy-tracking
-  ledger and documented exception docs. Phase 6 Sprint 6.34 expanded its required-doc and phase-doc
+  ledger and documented exception docs. The check covers required-doc and phase-doc
   coverage so newly authoritative configuration and Phase 7 documents cannot drift outside the lint
   set.
 - `src/Infernix/Lint/Chart.hs` — rejects any `env:` block in

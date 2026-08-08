@@ -16,12 +16,6 @@
 - Generated trees are write-only outputs. They may be rebuilt, deleted, or linted, but they are
   not handwritten source-of-truth locations.
 
-## Current Status
-
-The current worktree follows this split directly: handwritten browser contracts live in
-`src/Infernix/Web/Contracts.hs`, repo-owned Python lives only under `python/adapters/`, chart
-assets stay under `chart/`, and generated outputs remain untracked.
-
 ## Ownership Matrix
 
 | Surface | Owner | Handwritten paths | Generated or derived outputs | Boundary rule |
@@ -70,7 +64,7 @@ inference platform. The shared library modules listed below are present in the w
 exercised by the Phase 7 unit suite; the coordinator daemon's runtime entrypoints
 (`Infernix.Bootstrap.Models` Pulsar subscription, `Infernix.Bridge.Result` Failover
 consumer, `Infernix.Dispatch.SingleFlight` per-context dispatcher) carry their real
-Pulsar+MinIO wiring under the chaos validation suite.
+Pulsar+MinIO wiring under the integration validation suite.
 
 - **Shared library (product-agnostic).** Concept-named modules under the `Infernix.` namespace,
   parameterized in topic namespace, bucket name, and JWT issuer/audience. Free of HTTP/WS

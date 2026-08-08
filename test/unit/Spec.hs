@@ -24,8 +24,8 @@ import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Char (isHexDigit, isUpper)
-import Data.Either (isLeft, isRight)
+import Data.Char (isHexDigit, isSpace, isUpper)
+import Data.Either (fromRight, isLeft, isRight)
 import Data.IORef qualified as IORef
 import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
 import Data.List.NonEmpty qualified as NonEmpty
@@ -43,6 +43,29 @@ import GHC.Conc (BlockReason (BlockedOnException), ThreadStatus (ThreadBlocked),
 import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
+import Infernix.BuildMemory
+  ( BuildMemoryPlan,
+    buildMemoryBoundLimitMib,
+    committedBuildJobs,
+    committedProcessAddressMib,
+    committedRtsHeapMib,
+    deriveBuildMemoryPlan,
+    establishBoundedBuildMemory,
+    heapToAddressSpaceMultiplier,
+    maximumBuildJobs,
+    minimumProcessAddressMib,
+    minimumProcessHeapMib,
+    mkBuildConcurrency,
+    mkBuildMemoryBudget,
+    planBudgetMib,
+    planJobs,
+    planProcessAddressMib,
+    planRtsHeapMib,
+    renderCabalProjectLocal,
+    requireBoundedBuildMemory,
+    toolchainAddressSpaceReservationMib,
+    toolchainReservationFitsEveryPlan,
+  )
 import Infernix.CLI (runtimeConfigRestorePlan, writeGeneratedPursContracts)
 import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
@@ -152,6 +175,7 @@ import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.ExecutionPlan.Properties qualified as ExecutionPlanProperties
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostMemory (parseMemTotalMib)
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
 import Infernix.HostTools qualified as HostTools
 import Infernix.Lint.Files
@@ -160,7 +184,7 @@ import Infernix.Lint.Files
     embeddedNativeSourceViolations,
     nativeSourcePathViolations,
   )
-import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unsafeNativeBoundaryViolations)
+import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
@@ -256,8 +280,8 @@ import System.Posix.IO qualified as PosixIO
 import System.Posix.IO.ByteString qualified as PosixByteString
 import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
 import System.Posix.Resource
-  ( Resource (ResourceOpenFiles),
-    ResourceLimit (ResourceLimit),
+  ( Resource (ResourceOpenFiles, ResourceTotalMemory),
+    ResourceLimit (ResourceLimit, ResourceLimitInfinity, ResourceLimitUnknown),
     ResourceLimits (softLimit),
     getResourceLimit,
     setResourceLimit,
@@ -452,6 +476,307 @@ dispatchCappedEngineMemoryFixture = do
       threadDelay 250000
       exitSuccess
     _ -> pure ()
+
+-- | Phase 1 Sprint 1.21 — the bounded host build-memory kernel.
+--
+-- Every case that installs a ceiling runs in a spawned child, never in this
+-- process image, and the reason is the property the module documents: a
+-- process cannot lower its own address-space limit below a reservation its
+-- runtime has already taken. This suite's own image reserves the default
+-- 1024.65 GiB, so lowering @RLIMIT_AS@ here would succeed and then kill the
+-- suite on its next allocation. The children are therefore re-execs of this
+-- same binary with an explicit @+RTS -xr@ reservation, which is exactly the
+-- shape the built @infernix@ executable bakes through @-with-rtsopts@.
+--
+-- The installed bound is also one-way within a process: 'establishBoundedBuildMemory'
+-- lowers the hard limit as well as the soft one, so it cannot be restored.
+-- That is deliberate — a bound a child can raise back is not a bound — and it
+-- is the second reason these cases are not run in-process.
+buildMemoryFixturePlan :: Int -> Int -> IO BuildMemoryPlan
+buildMemoryFixturePlan budgetMib jobs =
+  case mkBuildMemoryBudget budgetMib of
+    Left reason -> fail reason
+    Right budget ->
+      case mkBuildConcurrency jobs of
+        Left reason -> fail reason
+        Right concurrency ->
+          either fail pure (deriveBuildMemoryPlan budget concurrency)
+
+-- | The refusal has to name the spawning surface, so an unbounded process
+-- image is attributable from one line of output rather than from a compile
+-- that quietly grows to a third of the machine.
+buildMemoryRefusalNamesSurface :: Either IOException value -> Bool
+buildMemoryRefusalNamesSurface outcome =
+  case outcome of
+    Left failure ->
+      "unit build-memory negative case" `isInfixOf` displayException failure
+    Right _ -> False
+
+-- | A clean refusal is a positive exit status. GHC reports a signal death as a
+-- /negative/ 'ExitFailure', so this also rejects the process being killed
+-- rather than failing.
+isCleanFailureExit :: ExitCode -> Bool
+isCleanFailureExit exitCode =
+  case exitCode of
+    ExitFailure status -> status > 0
+    ExitSuccess -> False
+
+softAddressLimitMib :: IO (Maybe Integer)
+softAddressLimitMib = do
+  limits <- getResourceLimit ResourceTotalMemory
+  pure $
+    case softLimit limits of
+      ResourceLimit value -> Just (value `div` (1024 * 1024))
+      ResourceLimitInfinity -> Nothing
+      ResourceLimitUnknown -> Nothing
+
+dispatchBuildMemoryFixture :: IO ()
+dispatchBuildMemoryFixture = do
+  arguments <- getArgs
+  case arguments of
+    ["__infernix_unit_build_memory_bound_fixture", scratchDirectory] ->
+      runBuildMemoryBoundFixture scratchDirectory
+    ["__infernix_unit_build_memory_report_fixture"] -> do
+      observed <- softAddressLimitMib
+      putStrLn (maybe "unbounded" show observed)
+      exitSuccess
+    ["__infernix_unit_build_memory_overallocation_fixture"] -> do
+      -- Twice the ceiling the parent installed. Under the inherited limit the
+      -- runtime's reservation is clamped below the ceiling, so this request is
+      -- refused before a single page is touched: the failure is a non-zero
+      -- exit, not host memory pressure.
+      let payload = BS.replicate (24 * 1024 * 1024 * 1024) 65
+      BS.length payload `seq` exitSuccess
+    _ -> pure ()
+
+-- | The whole ceiling story, inside one child that installed it.
+runBuildMemoryBoundFixture :: FilePath -> IO ()
+runBuildMemoryBoundFixture scratchDirectory = do
+  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 2) 2
+  widerPlan <- buildMemoryFixturePlan (minimumProcessHeapMib * 16) 4
+
+  refused <-
+    try @IOException
+      (requireBoundedBuildMemory "unit build-memory negative case" plan)
+  assert
+    (buildMemoryRefusalNamesSurface refused)
+    "requireBoundedBuildMemory refuses an unbounded address space and names the spawning surface"
+
+  established <- establishBoundedBuildMemory plan
+  assert
+    (buildMemoryBoundLimitMib established == planProcessAddressMib plan)
+    "establishBoundedBuildMemory installs the derived per-process address-space ceiling"
+
+  observed <-
+    requireBoundedBuildMemory "unit build-memory positive case" plan
+  assert
+    (buildMemoryBoundLimitMib observed == planProcessAddressMib plan)
+    "requireBoundedBuildMemory observes the installed ceiling"
+
+  -- A wider derived plan must not widen an installed ceiling: the bound is
+  -- lower-only, exactly as the descriptor-space kernel is.
+  preserved <- establishBoundedBuildMemory widerPlan
+  assert
+    (planProcessAddressMib widerPlan > planProcessAddressMib plan)
+    "the wider fixture plan really is wider, so the preservation case is not vacuous"
+  assert
+    (buildMemoryBoundLimitMib preserved == planProcessAddressMib plan)
+    "establishBoundedBuildMemory never raises a tighter address-space limit"
+
+  executable <- getExecutablePath
+
+  -- Inherited across fork/exec without the child doing anything itself. The
+  -- child carries the default 1024.65 GiB reservation request, so its runtime
+  -- has to clamp to the inherited limit to start at all; that it reports the
+  -- limit at all is the clamping half of the proof.
+  (reportExit, reportedLimit, _) <-
+    readCreateProcessWithExitCode
+      (proc executable ["__infernix_unit_build_memory_report_fixture"])
+      ""
+  assert
+    (reportExit == ExitSuccess)
+    "a child started under the installed ceiling runs rather than failing to reserve"
+  assert
+    (filter (not . isSpace) reportedLimit == show (planProcessAddressMib plan))
+    "the per-process ceiling is inherited across fork and exec unchanged"
+
+  -- The real compiler, under the same inherited ceiling. This is the chain the
+  -- doctrine claims and it is checked rather than asserted: a compile that
+  -- needs more address space than the ceiling allows would fail here.
+  compilerPath <- firstExistingHostToolCandidate HostTools.HostGhc
+  case compilerPath of
+    Nothing ->
+      putStrLn
+        "build-memory: no ghc on this image; the compiler-chain case is skipped loudly"
+    Just ghcPath -> do
+      let sourcePath = scratchDirectory </> "BoundedBuildMemoryProbe.hs"
+          outputPath = scratchDirectory </> "BoundedBuildMemoryProbe"
+      createDirectoryIfMissing True scratchDirectory
+      writeFile sourcePath "module Main (main) where\nmain :: IO ()\nmain = pure ()\n"
+      (compileExit, _, compileErrors) <-
+        readCreateProcessWithExitCode
+          (proc ghcPath ["-v0", "-o", outputPath, sourcePath])
+          ""
+      assert
+        (compileExit == ExitSuccess)
+        ( "the compiler runs under the inherited per-process ceiling: "
+            <> compileErrors
+        )
+
+  -- Adversarial over-allocation under the ceiling: a clean non-zero exit, no
+  -- global out-of-memory condition. The explicit reservation request is larger
+  -- than the ceiling on purpose, so the runtime has to clamp it; the 24 GiB
+  -- request is then refused rather than committed.
+  (overExit, _, _) <-
+    readCreateProcessWithExitCode
+      ( proc
+          executable
+          [ "+RTS",
+            "-xr16384M",
+            "-RTS",
+            "__infernix_unit_build_memory_overallocation_fixture"
+          ]
+      )
+      ""
+  assert
+    (isCleanFailureExit overExit)
+    "an over-allocation under the installed ceiling exits non-zero and cleanly"
+
+  exitSuccess
+
+firstExistingHostToolCandidate :: HostTools.HostTool -> IO (Maybe FilePath)
+firstExistingHostToolCandidate tool = go (HostTools.hostToolFallbackCandidates tool)
+  where
+    go [] = pure Nothing
+    go (candidate : remaining) = do
+      present <- doesFileExist candidate
+      if present then pure (Just candidate) else go remaining
+
+-- | The pure half: the arithmetic, the committed floor, and the generated
+-- project file. None of it installs anything.
+runBuildMemoryAssertions :: FilePath -> IO ()
+runBuildMemoryAssertions unitTestRoot = do
+  assert
+    toolchainReservationFitsEveryPlan
+    "the executable's baked address-space reservation fits under every ceiling the mint can produce"
+  assert
+    (toolchainAddressSpaceReservationMib < minimumProcessAddressMib)
+    "the reservation invariant is stated in the same units the plan is"
+  assert
+    (minimumProcessAddressMib == minimumProcessHeapMib * heapToAddressSpaceMultiplier)
+    "the address-space floor is derived from the heap floor rather than declared separately"
+
+  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 4) 4
+  assert
+    (planRtsHeapMib plan == minimumProcessHeapMib)
+    "the per-process heap cap is the budget divided by the job count"
+  assert
+    ( planProcessAddressMib plan
+        == planRtsHeapMib plan * heapToAddressSpaceMultiplier
+    )
+    "the per-process address-space ceiling is derived from the heap cap"
+  assert
+    (planJobs plan * planRtsHeapMib plan <= planBudgetMib plan)
+    "the plan's worst case never exceeds the budget it divided"
+
+  -- The failure this module exists for: a per-process ceiling that was never
+  -- divided by its concurrency. A budget that cannot fund its job count at the
+  -- calibrated floor is refused by name, with both operands in the message.
+  let starved = mkBuildMemoryBudget (minimumProcessHeapMib * 4)
+  case starved of
+    Left reason -> assert False ("the fixture budget must be constructible: " <> reason)
+    Right budget ->
+      case mkBuildConcurrency 8 of
+        Left reason -> assert False ("8 jobs must be constructible: " <> reason)
+        Right concurrency ->
+          case deriveBuildMemoryPlan budget concurrency of
+            Right _ ->
+              assert
+                False
+                "deriveBuildMemoryPlan must refuse a budget that starves its job count"
+            Left reason -> do
+              assert
+                (show (minimumProcessHeapMib :: Int) `isInfixOf` reason)
+                "the starved-derivation refusal names the calibrated floor"
+              assert
+                ("8 jobs" `isInfixOf` reason)
+                "the starved-derivation refusal names the job count it divided by"
+
+  assert
+    (isLeft (mkBuildConcurrency (maximumBuildJobs + 1)))
+    "a job count above the account's cap is refused rather than silently clamped"
+  assert
+    (isLeft (mkBuildConcurrency 0))
+    "a zero job count is refused"
+  assert
+    (isLeft (mkBuildMemoryBudget (minimumProcessHeapMib - 1)))
+    "a budget that cannot fund one job is refused"
+
+  -- The committed floor in `cabal.project` and the compile-fixture project is
+  -- the same pair this module mints, so the two cannot drift apart.
+  assert
+    (committedRtsHeapMib == minimumProcessHeapMib)
+    "the committed cabal.project heap cap is the calibrated floor"
+  assert
+    ( committedProcessAddressMib
+        == committedRtsHeapMib * heapToAddressSpaceMultiplier
+    )
+    "the committed cabal.project address-space reservation is derived from its heap cap"
+  assert
+    (committedBuildJobs <= maximumBuildJobs)
+    "the committed job count is inside the account's cap"
+
+  let rendered = renderCabalProjectLocal plan
+  assert
+    (("jobs: " <> show (planJobs plan)) `isInfixOf` rendered)
+    "the generated cabal.project.local states its job count"
+  assert
+    (("-M" <> show (planRtsHeapMib plan) <> "M") `isInfixOf` rendered)
+    "the generated cabal.project.local states its per-process heap cap"
+  assert
+    (("-xr" <> show (planProcessAddressMib plan) <> "M") `isInfixOf` rendered)
+    "the generated cabal.project.local bounds the compiler's own address-space reservation"
+  assert
+    ("jobs x " `isInfixOf` rendered)
+    "the generated cabal.project.local states the product, because a per-process cap is not a host bound"
+
+  -- The measured Linux fact the ceiling is derived from.
+  assert
+    (parseMemTotalMib "MemTotal:       131004488 kB\nMemFree: 1 kB\n" == Just 127934)
+    "MemTotal is parsed from /proc/meminfo in MiB"
+  assert
+    (isNothing (parseMemTotalMib "MemFree:        131004488 kB\n"))
+    "a /proc/meminfo payload without MemTotal is not defaulted"
+  assert
+    (isNothing (parseMemTotalMib "MemTotal:       131004488 MB\n"))
+    "a MemTotal line in an unexpected unit is refused rather than reinterpreted"
+  assert
+    (isNothing (parseMemTotalMib "MemTotal:       0 kB\n"))
+    "a zero MemTotal is refused rather than funding a ceiling"
+
+  -- The behavioural half, in a child that can install the ceiling.
+  executable <- getExecutablePath
+  let scratchDirectory = unitTestRoot </> "build-memory"
+  createDirectoryIfMissing True scratchDirectory
+  (boundExit, boundOut, boundErrors) <-
+    readCreateProcessWithExitCode
+      ( proc
+          executable
+          [ "+RTS",
+            "-xr1024M",
+            "-RTS",
+            "__infernix_unit_build_memory_bound_fixture",
+            scratchDirectory
+          ]
+      )
+      ""
+  unless (null boundOut) (putStr boundOut)
+  assert
+    (boundExit == ExitSuccess)
+    ( "the bounded build-memory child proves install, refusal, inheritance, the "
+        <> "compiler chain, and a clean over-allocation failure: "
+        <> boundErrors
+    )
 
 -- | Phase 6 Sprint 6.44 follow-on — the bounded descriptor space.
 --
@@ -825,12 +1150,14 @@ main = do
   -- kernels the production binary uses, so they bound their descriptor
   -- space first. See "Infernix.DescriptorSpace".
   _ <- establishBoundedDescriptorSpace
+  dispatchBuildMemoryFixture
   dispatchCappedEngineMemoryFixture
   Subprocess.dispatchInternalSubprocessMode
   unitTestRoot <- testRootPath "unit"
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
   runDescriptorSpaceAssertions
+  runBuildMemoryAssertions unitTestRoot
   runLinuxWatchdogBreachAssertions
   runNvidiaWatchdogAssertions
   runNvidiaVramBreachAssertions
@@ -933,8 +1260,10 @@ main = do
   assert
     ( parseCommand ["internal", "playwright", "prepare-engine", "llm-qwen25"]
         == Right (InternalPlaywrightPrepareEngineCommand "llm-qwen25")
-        && parseCommand ["internal", "playwright", "replace-demo-pods"]
-          == Right InternalPlaywrightReplaceDemoPodsCommand
+        -- Phase 6 Sprint 6.47 retired `internal playwright replace-demo-pods`
+        -- with the frontend pod-replacement browser section that was its only
+        -- caller, so the closed harness vocabulary is one action.
+        && isLeft (parseCommand ["internal", "playwright", "replace-demo-pods"])
     )
     "the structured command registry parses only the closed Playwright harness actions"
   mapM_
@@ -1017,7 +1346,7 @@ main = do
   let expectedBasePulsarAutorecoveryBlock =
         unlines
           [ "  autorecovery:",
-            "    replicaCount: 3",
+            "    replicaCount: 1",
             "    podMonitor:",
             "      enabled: false",
             "    configData:",
@@ -1342,6 +1671,35 @@ main = do
       assert
         ("containerPort: 30080" `isInfixOf` generatedLinuxGpuKindConfig)
         "Phase 9 Sprint 9.4: generated Kind config exposes the Pulsar proxy data-plane NodePort mapping (30080)"
+      -- Phase 3 Sprint 3.16 regression guard, stated against the generator
+      -- rather than the tracked reference file. `kind/cluster-linux-cpu.yaml`
+      -- was edited down to one worker by the sprint, but a Kind cluster is
+      -- created from `renderKindConfig`, where `kindWorkerCount LinuxCpu`
+      -- still returned 2 — so the lane ran a two-worker cluster and the
+      -- tracked file was a reference document that deployed nothing. This is
+      -- the same shape as the generated Helm overlay's replica counts, and it
+      -- is pinned the same way: over every supported mode, against the text
+      -- that deploys.
+      linuxCpuGeneratedKindConfig <-
+        readFile =<< writeGeneratedKindConfig outerPaths LinuxCpu 30090 30002 30080
+      appleGeneratedKindConfig <-
+        readFile =<< writeGeneratedKindConfig outerPaths AppleSilicon 30090 30002 30080
+      let generatedWorkerCount configText =
+            length (filter (("- role: worker" ==) . dropWhile (== ' ')) (lines configText))
+      mapM_
+        ( \(modeLabel, configText) ->
+            assert
+              (generatedWorkerCount configText == 1)
+              ( "Sprint 3.16: the generated "
+                  <> modeLabel
+                  <> " Kind config declares exactly one worker node, one machine per lane; declared: "
+                  <> show (generatedWorkerCount configText)
+              )
+        )
+        [ ("linux-cpu", linuxCpuGeneratedKindConfig),
+          ("linux-gpu", generatedLinuxGpuKindConfig),
+          ("apple-silicon", appleGeneratedKindConfig)
+        ]
       let demoConfigPath = buildRoot paths </> "demo-config-test.dhall"
       createDirectoryIfMissing True (buildRoot paths)
       BS.writeFile
@@ -1386,9 +1744,25 @@ main = do
       assert
         (not ("\"runtimeMode\":" `isInfixOf` demoConfigContents))
         "generated substrate materialization no longer writes banner-prefixed JSON"
+      -- Phase 8 Sprint 8.10: the engine daemons, the topics, the engine list,
+      -- the per-entity runtime mode and location, the pool in-flight knob, the
+      -- model runtime lane, and the substrate limit's resource/source are all
+      -- derived by the binary, so none of them is written at all.
       assert
-        ("engineDaemons" `isInfixOf` demoConfigContents && not ("host_batch_topic" `isInfixOf` demoConfigContents))
-        "generated substrate materialization writes explicit daemon metadata and omits legacy host-batch fields"
+        ( not ("engineDaemons" `isInfixOf` demoConfigContents)
+            && not ("request_topics" `isInfixOf` demoConfigContents)
+            && not ("result_topic" `isInfixOf` demoConfigContents)
+            && not ("engines =" `isInfixOf` demoConfigContents)
+            && not (", runtimeMode =" `isInfixOf` demoConfigContents)
+            && not ("runtimeLane" `isInfixOf` demoConfigContents)
+            && not ("location =" `isInfixOf` demoConfigContents)
+            && not ("maxInflightPerMember" `isInfixOf` demoConfigContents)
+            && not ("headroomMib" `isInfixOf` demoConfigContents)
+            && not ("resource =" `isInfixOf` demoConfigContents)
+            && not ("source =" `isInfixOf` demoConfigContents)
+            && not ("host_batch_topic" `isInfixOf` demoConfigContents)
+        )
+        "generated substrate materialization omits every field the binary derives"
       decodedJsonConfig <-
         maybe (fail "public JSON demo config decode failed") pure (Aeson.decode (Aeson.encode demoConfig))
       assert
@@ -1513,11 +1887,6 @@ main = do
             decodedConfig {enginePools = firstPool {enginePoolSubscriptionType = ConsumerFailover} : secondPool : remainingPools}
           assertDemoConfigDecodeFails
             unitTestRoot
-            "invalid-inflight"
-            "InvalidPoolMaxInflight"
-            decodedConfig {enginePools = firstPool {enginePoolMaxInflightPerMember = 0} : secondPool : remainingPools}
-          assertDemoConfigDecodeFails
-            unitTestRoot
             "empty-member-responsibility"
             "EmptyMemberPools"
             decodedConfig {engineMembers = firstMember {engineMemberPoolIds = []} : remainingMembers}
@@ -1621,6 +1990,27 @@ main = do
       assert
         (isLeft (mkHostMemoryPartition 65536 0 (minHostHeadroomMib - 1)))
         "mkHostMemoryPartition rejects a headroom below the co-tenant floor"
+      -- Phase 4 Sprint 4.34: the exact case accepted before the sprint. The
+      -- reservations meet physical exactly, so the split is arithmetically valid
+      -- and its inference capacity is zero. A zero-capacity partition compiled a
+      -- plan, started a daemon, and left every model unavailable, because every
+      -- declared footprint is positive.
+      assert
+        (isLeft (mkHostMemoryPartition (49152 + minHostHeadroomMib) 49152 minHostHeadroomMib))
+        "mkHostMemoryPartition rejects a split whose reservations exactly exhaust physical RAM"
+      assert
+        ( either
+            (isInfixOf "leaves no inference capacity")
+            (const False)
+            (mkHostMemoryPartition (49152 + minHostHeadroomMib) 49152 minHostHeadroomMib)
+        )
+        "the zero-capacity refusal names what it refused rather than reporting oversubscription"
+      assert
+        (isLeft (hostPartitionForCapacity 0))
+        "hostPartitionForCapacity refuses a zero capacity rather than normalizing it"
+      assert
+        (isLeft (hostPartitionForCapacity (-1)))
+        "hostPartitionForCapacity refuses a negative capacity rather than clamping it to zero"
       assert
         (either (const False) ((== 65536 - 49152 - minHostHeadroomMib) . hostPartitionInferenceCapacityMib) (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
         "mkHostMemoryPartition derives inference capacity as physical - vmReserve - headroom"
@@ -1701,6 +2091,56 @@ main = do
             )
         )
         "unboundedDescriptorSpawnViolations exempts the module that owns the bound"
+      -- Phase 6 Sprint 6.46: the toolchain rule's structural half. The
+      -- behavioural half — that a reintroduced uncapped spawn in the real
+      -- `src/Infernix/CLI.hs` is rejected — is the same rule applied to the same
+      -- file path, so it is asserted here rather than by mutating tracked source.
+      assert
+        ( not
+            ( null
+                ( unboundedToolchainSpawnViolations
+                    "src/Infernix/CLI.hs"
+                    [ (1, "  resolved <- resolveCliHostTool paths HostCabal"),
+                      (2, "  created <- createProcess (proc resolved arguments)")
+                    ]
+                )
+            )
+        )
+        "unboundedToolchainSpawnViolations fires on a toolchain spawn that never observes the build-memory ceiling"
+      assert
+        ( null
+            ( unboundedToolchainSpawnViolations
+                "src/Infernix/CLI.hs"
+                [ (1, "  resolved <- resolveCliHostTool paths HostCabal"),
+                  (2, "  created <- withBoundedToolchainChild authority (createProcess (proc resolved arguments))")
+                ]
+            )
+        )
+        "unboundedToolchainSpawnViolations clears a toolchain spawn that holds the ceiling across the fork"
+      assert
+        ( null
+            ( unboundedToolchainSpawnViolations
+                "src/Infernix/CLI.hs"
+                [(1, "  parentDirectories = map takeDirectory [HostCabal, HostGhc]")]
+            )
+        )
+        "unboundedToolchainSpawnViolations ignores a HostCabal mention in a file that spawns nothing"
+      assert
+        ( null
+            ( unboundedToolchainSpawnViolations
+                "src/Infernix/CLI.hs"
+                [(1, "  -- HostCabal is discussed in this comment only"), (2, "  x = createProcess y")]
+            )
+        )
+        "unboundedToolchainSpawnViolations ignores HostCabal inside a comment"
+      assert
+        ( null
+            ( unboundedToolchainSpawnViolations
+                "src/Infernix/BuildMemory.hs"
+                [(1, "  toolchain = HostCabal"), (2, "  spawn = createProcess spec")]
+            )
+        )
+        "unboundedToolchainSpawnViolations exempts the module that owns the boundary"
       assert
         ( not
             ( null
@@ -2740,6 +3180,44 @@ main = do
     assert
       (expectedLinuxGpuEngineResources `isInfixOf` linuxGpuFinalValues)
       "linux-gpu final Helm values keep enough engine memory for the routed Wan diffusers row"
+    -- Phase 3 Sprint 3.16 regression guard. The sprint set every infernix role
+    -- to `replicaCount: 1` in `chart/values.yaml`, but the generated overlay
+    -- supersedes the base values on every phase render, and it still emitted
+    -- demo 2, coordinator 2, and `linux-cpu` engine 2 — the retired replicated
+    -- topology, on exactly the lanes the sprint's cohort gate runs on. The base
+    -- default was dead text.
+    --
+    -- The sprint's own replacement integration case cannot catch this:
+    -- `validateNoPendingWorkloadReplicas` asserts no pod is `Pending`, and with
+    -- the anti-affinity deleted a second engine pod schedules happily onto the
+    -- one worker. A green cluster lane and an unmet deliverable look identical
+    -- from there, so the rule is pinned here, against the text that deploys.
+    --
+    -- Stated as a property over every emitted count rather than as three exact
+    -- lines: one process per role per machine is cluster-wide, so a count above
+    -- one is a defect wherever it appears, including a platform service.
+    let renderedReplicaCounts :: String -> [(String, Int)]
+        renderedReplicaCounts values =
+          [ (trimmed, count)
+          | line <- lines values,
+            let trimmed = dropWhile (== ' ') line,
+            "replicaCount: " `isPrefixOf` trimmed,
+            Just count <- [readMaybe (drop (length ("replicaCount: " :: String)) trimmed)]
+          ]
+        overReplicatedRoles values =
+          [entry | entry@(_, count) <- renderedReplicaCounts values, count > 1]
+    assert
+      (not (null (renderedReplicaCounts linuxCpuFinalValues)))
+      "Sprint 3.16 guard reads real replica counts out of the linux-cpu final overlay rather than passing vacuously"
+    assert
+      (null (overReplicatedRoles linuxCpuFinalValues))
+      "Sprint 3.16: the generated linux-cpu final overlay deploys exactly one process per role per machine"
+    assert
+      (null (overReplicatedRoles linuxGpuFinalValues))
+      "Sprint 3.16: the generated linux-gpu final overlay deploys exactly one process per role per machine"
+    assert
+      (null (overReplicatedRoles linuxCpuPulsarReadyValues))
+      "Sprint 3.16: no pre-final generated overlay phase reintroduces a replicated role"
 
     let renderedChartPath = unitTestRoot </> "rendered-chart.yaml"
     writeFile renderedChartPath sampleRenderedChart
@@ -11132,6 +11610,77 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
         assertRetiredSubstrateShapeDiagnostic retiredPath expectedShape
     )
     retiredEnumCases
+  -- Phase 8 Sprint 8.10: a stale payload still carrying a field the binary now
+  -- derives must name that exact field and the regenerating command rather than
+  -- reporting a bare structural type error at whichever record the decoder
+  -- happened to reach first. Each case injects one retired field into a payload
+  -- that is otherwise exactly what the binary writes.
+  let retiredFieldAnchor = ", models_bucket = "
+      retiredFieldCases =
+        [ ( "retired-request-topics",
+            ", request_topics = [ \"persistent://infernix/demo/inference.request.linux-cpu\" ]\n",
+            "generated `request_topics` field, now derived from the runtime mode"
+          ),
+          ( "retired-result-topic",
+            ", result_topic = \"persistent://infernix/demo/inference.result.linux-cpu\"\n",
+            "generated `result_topic` field, now derived from the runtime mode"
+          ),
+          ( "retired-engine-daemons",
+            ", engineDaemons = ([] : List Text)\n",
+            "generated `engineDaemons` list, now derived from the engine members and the pool graph"
+          ),
+          ( "retired-engines",
+            ", engines = ([] : List Text)\n",
+            "generated `engines` list, now derived from the models' selected engines"
+          ),
+          ( "retired-per-entity-runtime-mode",
+            ", runtimeMode = < AppleSilicon | LinuxCpu | LinuxGpu >.LinuxCpu\n",
+            "per-entity `runtimeMode` field, now derived from the top-level runtime mode"
+          ),
+          ( "retired-runtime-lane",
+            ", runtimeLane = < AppleSiliconHost | KindLinuxCpu >.KindLinuxCpu\n",
+            "per-model `runtimeLane` field, now derived from the runtime mode and `requiresGpu`"
+          ),
+          ( "retired-location",
+            ", location = \"cluster-pod\"\n",
+            "per-daemon or per-member `location` field, now derived from the role and the runtime mode"
+          ),
+          ( "retired-max-inflight",
+            ", maxInflightPerMember = 1\n",
+            "per-pool `maxInflightPerMember` knob, which only ever held one supported value"
+          ),
+          ( "retired-limit-resource",
+            ", resource = < UnifiedHostRam | PodRam | GpuVram >.PodRam\n",
+            "substrate-limit `resource` field, now derived from the runtime mode and which half of the budget the limit occupies"
+          ),
+          ( "retired-limit-source",
+            ", source = < ClusterEnginePodMemoryLimit | LinuxGpuVramBudget >.ClusterEnginePodMemoryLimit\n",
+            "substrate-limit `source` field, now derived alongside its resource"
+          ),
+          ( "retired-partition-headroom",
+            ", headroomMib = 6144\n",
+            "host-partition `headroomMib` term, which only ever held the binary's own minimum"
+          )
+        ]
+  assert
+    (retiredFieldAnchor `isInfixOf` renderedSubstrateConfig)
+    "the generated payload no longer carries the retired-field injection anchor; the fixtures below would be vacuous"
+  mapM_
+    ( \(caseLabel, retiredField, expectedShape) -> do
+        let retiredPath = root </> ("execution-plan-" <> caseLabel <> ".dhall")
+        writeFile
+          retiredPath
+          ( replaceFirstSubstring
+              retiredFieldAnchor
+              (retiredField <> retiredFieldAnchor)
+              renderedSubstrateConfig
+          )
+        assertCompiledRuntimePlanDecodeFails
+          retiredPath
+          ("execution-plan decoder rejects a payload still carrying " <> caseLabel)
+        assertRetiredSubstrateShapeDiagnostic retiredPath expectedShape
+    )
+    retiredFieldCases
   assertCompiledRuntimePlanDecodeFailsForConfig
     root
     "zero-substrate-budget"
@@ -11157,7 +11706,7 @@ assertExecutionPlanWireAndQuantityProperties root substrateConfig hostConfig = d
     "fitting host-memory partitions preserve their exact inference capacity"
     ( forAll (choose (0, 65536)) $ \vmReserveMib ->
         forAll (choose (minHostHeadroomMib, minHostHeadroomMib + 8192)) $ \headroomMib ->
-          forAll (choose (0, 65536)) $ \capacityMib ->
+          forAll (choose (1, 65536)) $ \capacityMib ->
             let physicalMib = vmReserveMib + headroomMib + capacityMib
              in either
                   (const False)
@@ -11221,13 +11770,6 @@ retiredBudgetJsonDiagnosticNamesRetirement :: String -> Bool
 retiredBudgetJsonDiagnosticNamesRetirement payload =
   case Aeson.eitherDecode (LazyChar8.pack payload) :: Either String InferenceMemoryBudget of
     Left decodeError -> "retired flat kind=" `isInfixOf` decodeError
-    Right _ -> False
-
--- | Whether an attempted execution-plan decode failed, naming the given field.
-decodeFailureMentions :: String -> Either SomeException a -> Bool
-decodeFailureMentions fieldName attempted =
-  case attempted of
-    Left decodeFailure -> fieldName `isInfixOf` show decodeFailure
     Right _ -> False
 
 -- | Replace the first occurrence of a substring. Used to age a freshly
@@ -11315,20 +11857,20 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       "bark-supported-apple-plan"
       barkSupportedConfig
   assert
-    (isJust (ExecutionPlan.lookupCompiledPlacement barkModelIdValue barkSupportedPlan))
+    (isNothing (ExecutionPlan.predictedAdmissionRejection barkSupportedPlan barkModelIdValue))
     "Bark is admitted by the real 10 GiB Apple inference partition"
   barkConstrainedPlan <-
     expectCompiledExecutionPlan
       root
       "bark-constrained-apple-plan"
       barkConstrainedConfig
-  barkConstrainedUnavailable <-
+  barkConstrainedRejection <-
     maybe
       (fail "Bark remained admitted by a 5 GiB Apple inference budget")
       pure
-      (ExecutionPlan.lookupUnavailableModel barkModelIdValue barkConstrainedPlan)
+      (ExecutionPlan.predictedAdmissionRejection barkConstrainedPlan barkModelIdValue)
   assert
-    ( ExecutionPlan.unavailableModelReason barkConstrainedUnavailable
+    ( barkConstrainedRejection
         == ModelMemoryLimitExceeded
           { inferenceErrorModelId = barkModelIdValue,
             inferenceErrorRequiredMib = barkRequiredMib,
@@ -11352,11 +11894,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
       (fail "single-model execution-plan model has no request field")
       pure
       (listToMaybe (requestShape model))
-  requestTopic <-
-    maybe
-      (fail "single-model execution-plan config has no request topic")
-      pure
-      (listToMaybe (requestTopics singleAppleConfig))
   engineRouteTopicValue <-
     expectSingleton
       "single-model execution-plan engine route topic"
@@ -11409,15 +11946,10 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   let modelIdValue = modelId model
       poolIdValue = enginePoolId pool
       memberIdValue = engineMemberId member
-      wrongRuntime = LinuxCpu
       missingModelId = "unit-missing-model"
       missingEngineId = "unit-missing-engine"
       missingPoolId = "unit-missing-pool"
       missingMemberId = "unit-missing-member"
-      wrongDaemonLocation = "unit-wrong-daemon-location"
-      wrongDaemonRequestTopics = ["persistent://infernix/unit/wrong-request-topic"]
-      wrongDaemonResultTopic = "persistent://infernix/unit/wrong-result-topic"
-      memberlessDaemonLocation = "unit-memberless-engine"
       duplicateModel =
         model
           { matrixRowId = matrixRowId model <> "-duplicate"
@@ -11456,10 +11988,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           }
       podBudget resource source limitMib =
         SubstrateEnforcedBudget (podLimitFor resource source limitMib)
-      dualBudget podResource vramResource =
-        DualEnforcedBudget
-          (podLimitFor podResource ClusterEnginePodMemoryLimit 65536)
-          (podLimitFor vramResource LinuxGpuVramBudget 65536)
       linuxCpuConfig =
         executionPlanConfigForRuntime
           LinuxCpu
@@ -11492,11 +12020,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           LinuxGpu
           (podBudget GpuVram LinuxGpuVramBudget 65536)
           (singleAppleConfig {models = [linuxGpuModel]})
-      linuxGpuWithSwappedDualBudget =
-        executionPlanConfigForRuntime
-          LinuxGpu
-          (dualBudget GpuVram PodRam)
-          (singleAppleConfig {models = [linuxGpuModel]})
       invalidIdentifiers =
         [ ("path", "path/segment"),
           ("whitespace", "has whitespace"),
@@ -11507,57 +12030,17 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
           ("trailing-separator", "trailing-"),
           ("repeated-separator", "repeated--separator")
         ]
-      canonicalBindingDrifts =
-        [ ("adapter-id", binding {engineBindingAdapterId = engineBindingAdapterId binding <> "-drift"}),
-          ("adapter-type", binding {engineBindingAdapterType = alternateAdapterType (engineBindingAdapterType binding)}),
-          ("adapter-locator", binding {engineBindingAdapterLocator = engineBindingAdapterLocator binding <> ".drift"}),
-          ("adapter-entrypoint", binding {engineBindingAdapterEntrypoint = engineBindingAdapterEntrypoint binding <> "-drift"}),
-          ("setup-entrypoint", binding {engineBindingSetupEntrypoint = engineBindingSetupEntrypoint binding <> "-drift"}),
-          ("project-directory", binding {engineBindingProjectDirectory = engineBindingProjectDirectory binding <> "-drift"}),
-          ("python-native", binding {engineBindingPythonNative = not (engineBindingPythonNative binding)})
-        ]
-      arbitraryBinding =
-        binding
-          { engineBindingName = "arbitrary-engine"
-          }
-      lookalikeBinding =
-        binding
-          { engineBindingName = engineBindingName binding <> " extended"
-          }
       bootstrapReadyTopicValue =
         ConversationTopic.modelBootstrapReadyTopicName
           ConversationTopic.systemTopicNamespace
           modelIdValue
-      withCoordinatorRequestTopic topicValue =
-        singleAppleConfig
-          { requestTopics = [topicValue],
-            coordinatorDaemon =
-              (coordinatorDaemon singleAppleConfig)
-                { daemonConfigRequestTopics = [topicValue]
-                },
-            webappDaemon =
-              (webappDaemon singleAppleConfig)
-                { daemonConfigRequestTopics = [topicValue]
-                }
-          }
-      withResultTopic topicValue =
-        singleAppleConfig
-          { resultTopic = topicValue,
-            coordinatorDaemon =
-              (coordinatorDaemon singleAppleConfig)
-                { daemonConfigResultTopic = topicValue
-                },
-            webappDaemon =
-              (webappDaemon singleAppleConfig)
-                { daemonConfigResultTopic = topicValue
-                },
-            engineDaemons =
-              [ engineDaemon
-                  { daemonConfigResultTopic = topicValue
-                  }
-              | engineDaemon <- engineDaemons singleAppleConfig
-              ]
-          }
+      -- Phase 8 Sprint 8.10: the coordinator request topic and the shared result
+      -- topic are derived from the runtime mode, so neither can be pointed at
+      -- another family's topic any more — those two collision classes are
+      -- unrepresentable rather than merely unreached. The model-bootstrap topic
+      -- is still declared, so it is the collision axis that survives.
+      withModelBootstrapTopic topicValue =
+        singleAppleConfig {modelBootstrapTopic = topicValue}
   assertExecutionPlanIdentifierCoverage
     root
     singleAppleConfig
@@ -11566,59 +12049,24 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     pool
     member
     invalidIdentifiers
-  mapM_
-    ( \(label, driftedBinding) ->
-        assertExecutionPlanError
-          root
-          ("engine-binding-drift-" <> label)
-          (ExecutionPlan.EngineBindingMismatch (engineBindingName binding) binding driftedBinding)
-          (singleAppleConfig {engines = [driftedBinding]})
-    )
-    canonicalBindingDrifts
+  -- Phase 8 Sprint 8.10: the engine list is derived from the models' selected
+  -- engines, so a drifted, arbitrary, lookalike, or cross-runtime binding is no
+  -- longer expressible. What survives is the one fact a generated engine list
+  -- could ever have added: a model naming an engine this runtime has no
+  -- canonical binding for.
   assertExecutionPlanError
     root
-    "unsupported-arbitrary-engine-binding"
-    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName arbitraryBinding))
-    ( singleAppleConfig
-        { engines = [arbitraryBinding],
-          models = [model {selectedEngine = engineBindingName arbitraryBinding}]
-        }
-    )
+    "unknown-selected-engine"
+    (ExecutionPlan.UnknownSelectedEngine modelIdValue "arbitrary-engine")
+    (singleAppleConfig {models = [model {selectedEngine = "arbitrary-engine"}]})
   assertExecutionPlanError
     root
-    "unsupported-substring-lookalike-engine-binding"
-    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName lookalikeBinding))
-    ( singleAppleConfig
-        { engines = [lookalikeBinding],
-          models = [model {selectedEngine = engineBindingName lookalikeBinding}]
-        }
-    )
-  crossRuntimeBinding <-
-    maybe
-      (fail "Linux GPU vLLM binding is missing from the canonical engine catalog")
-      pure
-      (engineBindingForSelectedEngine LinuxGpu "vLLM")
-  assertExecutionPlanError
-    root
-    "unsupported-cross-runtime-engine-binding"
-    (ExecutionPlan.UnsupportedEngineBinding AppleSilicon (engineBindingName crossRuntimeBinding))
-    ( singleAppleConfig
-        { engines = [crossRuntimeBinding],
-          models = [model {selectedEngine = engineBindingName crossRuntimeBinding}]
-        }
-    )
+    "cross-runtime-selected-engine"
+    (ExecutionPlan.UnknownSelectedEngine modelIdValue "vLLM")
+    (singleAppleConfig {models = [model {selectedEngine = "vLLM"}]})
   assertExecutionPlanError root "empty-model-catalog" ExecutionPlan.EmptyModelCatalog (singleAppleConfig {models = []})
-  assertExecutionPlanError root "empty-engine-catalog" ExecutionPlan.EmptyEngineCatalog (singleAppleConfig {engines = []})
   assertExecutionPlanError root "empty-pool-catalog" ExecutionPlan.EmptyPoolCatalog (singleAppleConfig {enginePools = []})
   assertExecutionPlanError root "empty-member-catalog" ExecutionPlan.EmptyMemberCatalog (singleAppleConfig {engineMembers = []})
-  assertExecutionPlanError
-    root
-    "empty-engine-daemon-catalog"
-    ExecutionPlan.EmptyEngineDaemonCatalog
-    (singleAppleConfig {engineMembers = [], engineDaemons = []})
-  assertExecutionPlanError root "empty-request-topics" ExecutionPlan.EmptyRequestTopics (singleAppleConfig {requestTopics = []})
-  assertExecutionPlanError root "blank-request-topic" ExecutionPlan.BlankRequestTopic (singleAppleConfig {requestTopics = [" "]})
-  assertExecutionPlanError root "blank-result-topic" ExecutionPlan.BlankResultTopic (singleAppleConfig {resultTopic = " "})
   assertExecutionPlanError root "blank-models-bucket" ExecutionPlan.BlankModelsBucket (singleAppleConfig {modelsBucket = " "})
   assertExecutionPlanError
     root
@@ -11654,26 +12102,14 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     root
     "invalid-active-daemon-role"
     ExecutionPlan.InvalidActiveDaemonRole
+    -- Phase 8 Sprint 8.10: the engine daemons are derived and always declare
+    -- the engine role, so an undeclared active role is now expressible only
+    -- through the two daemons that still declare theirs.
     ( singleAppleConfig
-        { activeDaemonRole = Engine,
-          engineDaemons = [daemon {daemonConfigRole = Coordinator}]
+        { activeDaemonRole = Webapp,
+          webappDaemon = (webappDaemon singleAppleConfig) {daemonConfigRole = Coordinator}
         }
     )
-  assertExecutionPlanError
-    root
-    "invalid-coordinator-daemon"
-    (ExecutionPlan.InvalidDaemonConfig "coordinator")
-    (singleAppleConfig {coordinatorDaemon = (coordinatorDaemon singleAppleConfig) {daemonConfigLocation = " "}})
-  assertExecutionPlanError
-    root
-    "invalid-webapp-daemon"
-    (ExecutionPlan.InvalidDaemonConfig "webapp")
-    (singleAppleConfig {webappDaemon = (webappDaemon singleAppleConfig) {daemonConfigRequestTopics = []}})
-  assertExecutionPlanError
-    root
-    "invalid-engine-daemon"
-    (ExecutionPlan.InvalidDaemonConfig memberIdValue)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigResultTopic = " "}]})
   assertExecutionPlanError
     root
     "daemon-role-mismatch"
@@ -11698,53 +12134,18 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     )
   assertExecutionPlanError
     root
-    "daemon-location-mismatch"
-    (ExecutionPlan.DaemonLocationMismatch memberIdValue (engineMemberLocation member) wrongDaemonLocation)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigLocation = wrongDaemonLocation}]})
-  assertExecutionPlanError
-    root
-    "daemon-request-topics-mismatch"
-    (ExecutionPlan.DaemonRequestTopicsMismatch memberIdValue (daemonConfigRequestTopics daemon) wrongDaemonRequestTopics)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigRequestTopics = wrongDaemonRequestTopics}]})
-  assertExecutionPlanError
-    root
-    "daemon-result-topic-mismatch"
-    (ExecutionPlan.DaemonResultTopicMismatch memberIdValue (resultTopic singleAppleConfig) wrongDaemonResultTopic)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigResultTopic = wrongDaemonResultTopic}]})
-  assertExecutionPlanError
-    root
     "daemon-connection-mode-mismatch"
-    (ExecutionPlan.DaemonConnectionModeMismatch memberIdValue PublicationEdgeAutoDiscovery ConfiguredTransport)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigPulsarConnectionMode = ConfiguredTransport}]})
-  assertExecutionPlanError
-    root
-    "engine-daemon-member-missing"
-    (ExecutionPlan.EngineDaemonMemberMissing memberlessDaemonLocation)
+    (ExecutionPlan.DaemonConnectionModeMismatch "coordinator" ConfiguredTransport PublicationEdgeAutoDiscovery)
+    -- Phase 8 Sprint 8.10: the engine daemons are derived, so the connection
+    -- mode is only declared — and therefore only mismatchable — on the two
+    -- in-cluster daemons.
     ( singleAppleConfig
-        { engineDaemons =
-            [ daemon,
-              daemon
-                { daemonConfigLocation = memberlessDaemonLocation,
-                  daemonConfigMemberId = Nothing
-                }
-            ]
+        { coordinatorDaemon =
+            (coordinatorDaemon singleAppleConfig)
+              { daemonConfigPulsarConnectionMode = PublicationEdgeAutoDiscovery
+              }
         }
     )
-  assertExecutionPlanError
-    root
-    "missing-engine-daemon"
-    (ExecutionPlan.MissingEngineDaemon memberIdValue)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigMemberId = Just missingMemberId}]})
-  assertExecutionPlanError
-    root
-    "duplicate-engine-daemon-member"
-    (ExecutionPlan.DuplicateEngineDaemonMember memberIdValue)
-    (singleAppleConfig {engineDaemons = [daemon, daemon]})
-  assertExecutionPlanError
-    root
-    "invalid-engine-binding"
-    (ExecutionPlan.InvalidEngineBinding (engineBindingName binding))
-    (singleAppleConfig {engines = [binding {engineBindingAdapterId = " "}]})
   assertExecutionPlanError
     root
     "invalid-model-descriptor"
@@ -11771,11 +12172,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     )
   assertExecutionPlanError
     root
-    "duplicate-engine-id"
-    (ExecutionPlan.DuplicateEngineId (engineBindingName binding))
-    (singleAppleConfig {engines = [binding, binding]})
-  assertExecutionPlanError
-    root
     "duplicate-pool-id"
     (ExecutionPlan.DuplicatePoolId poolIdValue)
     (singleAppleConfig {enginePools = [pool, pool]})
@@ -11786,34 +12182,19 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (singleAppleConfig {engineMembers = [member, member]})
   assertExecutionPlanError
     root
-    "duplicate-request-topic"
-    (ExecutionPlan.DuplicateRequestTopic requestTopic)
-    (singleAppleConfig {requestTopics = [requestTopic, requestTopic]})
+    "bootstrap-engine-route-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision engineRouteTopicValue ["engine-route", "model-bootstrap-request"])
+    (withModelBootstrapTopic engineRouteTopicValue)
   assertExecutionPlanError
     root
-    "result-engine-route-topic-family-collision"
-    (ExecutionPlan.TopicFamilyCollision engineRouteTopicValue ["engine-route", "result"])
-    (withResultTopic engineRouteTopicValue)
+    "bootstrap-result-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision (resultTopic singleAppleConfig) ["model-bootstrap-request", "result"])
+    (withModelBootstrapTopic (resultTopic singleAppleConfig))
   assertExecutionPlanError
     root
-    "request-engine-route-topic-family-collision"
-    (ExecutionPlan.TopicFamilyCollision engineRouteTopicValue ["coordinator-request", "engine-route"])
-    (withCoordinatorRequestTopic engineRouteTopicValue)
-  assertExecutionPlanError
-    root
-    "request-result-topic-family-collision"
-    (ExecutionPlan.TopicFamilyCollision (resultTopic singleAppleConfig) ["coordinator-request", "result"])
-    (withCoordinatorRequestTopic (resultTopic singleAppleConfig))
-  assertExecutionPlanError
-    root
-    "request-bootstrap-ready-topic-family-collision"
-    (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["coordinator-request", "model-bootstrap-ready"])
-    (withCoordinatorRequestTopic bootstrapReadyTopicValue)
-  assertExecutionPlanError
-    root
-    "result-bootstrap-ready-topic-family-collision"
-    (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["model-bootstrap-ready", "result"])
-    (withResultTopic bootstrapReadyTopicValue)
+    "bootstrap-ready-topic-family-collision"
+    (ExecutionPlan.TopicFamilyCollision bootstrapReadyTopicValue ["model-bootstrap-ready", "model-bootstrap-request"])
+    (withModelBootstrapTopic bootstrapReadyTopicValue)
   assertDerivedRouteTopicCollision
     root
     singleAppleConfig
@@ -11873,16 +12254,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (singleAppleConfig {models = [model {selectedEngine = missingEngineId}]})
   assertExecutionPlanError
     root
-    "model-runtime-mismatch"
-    (ExecutionPlan.ModelRuntimeMismatch modelIdValue AppleSilicon wrongRuntime)
-    (singleAppleConfig {models = [model {runtimeMode = wrongRuntime}]})
-  assertExecutionPlanError
-    root
-    "model-runtime-lane-mismatch"
-    (ExecutionPlan.ModelRuntimeLaneMismatch modelIdValue AppleSilicon KindLinuxCpu)
-    (singleAppleConfig {models = [model {runtimeLane = KindLinuxCpu}]})
-  assertExecutionPlanError
-    root
     "unsupported-linux-cpu-gpu-requirement"
     (ExecutionPlan.UnsupportedGpuRequirement modelIdValue LinuxCpu)
     linuxCpuGpuConfig
@@ -11913,11 +12284,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     (singleAppleConfig {enginePools = [pool {enginePoolMemberIds = []}]})
   assertExecutionPlanError
     root
-    "unknown-daemon-member"
-    (ExecutionPlan.UnknownDaemonMember missingMemberId)
-    (singleAppleConfig {engineDaemons = [daemon {daemonConfigMemberId = Just missingMemberId}]})
-  assertExecutionPlanError
-    root
     "unplaced-model"
     (ExecutionPlan.UnplacedModel modelIdValue)
     (singleAppleConfig {enginePools = [pool {enginePoolModelIds = []}]})
@@ -11928,21 +12294,6 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     multiplyPlacedConfig
   assertExecutionPlanError
     root
-    "pool-runtime-mismatch"
-    (ExecutionPlan.PoolRuntimeMismatch poolIdValue AppleSilicon wrongRuntime)
-    (singleAppleConfig {enginePools = [pool {enginePoolRuntimeMode = wrongRuntime}]})
-  assertExecutionPlanError
-    root
-    "member-runtime-mismatch"
-    (ExecutionPlan.MemberRuntimeMismatch memberIdValue AppleSilicon wrongRuntime)
-    (singleAppleConfig {engineMembers = [member {engineMemberRuntimeMode = wrongRuntime}]})
-  assertExecutionPlanError
-    root
-    "member-location-mismatch"
-    (ExecutionPlan.MemberLocationMismatch memberIdValue AppleSilicon "unit-wrong-member-location")
-    (singleAppleConfig {engineMembers = [member {engineMemberLocation = "unit-wrong-member-location"}]})
-  assertExecutionPlanError
-    root
     "invalid-pool-subscription"
     (ExecutionPlan.InvalidPoolSubscription poolIdValue)
     (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerFailover}]})
@@ -11951,25 +12302,16 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "invalid-exclusive-pool-subscription"
     (ExecutionPlan.InvalidPoolSubscription poolIdValue)
     (singleAppleConfig {enginePools = [pool {enginePoolSubscriptionType = ConsumerExclusive}]})
-  assertExecutionPlanError
-    root
-    "zero-pool-max-inflight"
-    (ExecutionPlan.InvalidPoolMaxInflight poolIdValue 0)
-    (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = 0}]})
-  -- Phase 8 Sprint 8.9: a negative quantity used to render as a Dhall Integer
-  -- and be caught by the compiler after decode. Quantities are Natural now, so
-  -- the wire language cannot express it at all and the decode boundary rejects
-  -- it first. Assert the stronger property rather than the retired one.
-  negativeInflightDecode <-
-    try @SomeException
-      ( compileExecutionPlanFixture
-          root
-          "negative-pool-max-inflight"
-          (singleAppleConfig {enginePools = [pool {enginePoolMaxInflightPerMember = -1}]})
-      )
-  assert
-    (decodeFailureMentions "maxInflightPerMember" negativeInflightDecode)
-    "a negative generated quantity is unrepresentable in the wire language and fails at the decode boundary"
+  -- Phase 8 Sprint 8.10 retired this assertion with the field it was about: the
+  -- per-pool in-flight knob is no longer on the wire, so "a negative value is
+  -- unrepresentable" would be a claim about something that is not there. It is
+  -- not re-pointed at another quantity, because after the deletion every
+  -- remaining generated quantity is behind a checked constructor on the domain
+  -- side (`mkModelMemoryFootprint`, `mkHostMemoryPartition`, the positive
+  -- substrate limit), so a negative one cannot be built to render in the first
+  -- place. The surviving wire-level property — that quantities render as
+  -- `Natural` literals with no `+` sign prefix — is asserted at the
+  -- materialization boundary.
   assertExecutionPlanError
     root
     "model-without-eligible-member"
@@ -11985,11 +12327,14 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "linux-host-budget-mismatch"
     (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu UnifiedHostRam)
     (linuxCpuConfig {inferenceMemoryBudget = inferenceMemoryBudget singleAppleConfig})
-  assertExecutionPlanError
-    root
-    "linux-vram-budget-mismatch"
-    (ExecutionPlan.RuntimeBudgetMismatch LinuxCpu GpuVram)
-    (linuxCpuConfig {inferenceMemoryBudget = podBudget GpuVram LinuxGpuVramBudget 65536})
+  -- Phase 8 Sprint 8.10: which physical resource a substrate limit bounds, and
+  -- which policy set it, are derived from the runtime mode and from which half
+  -- of the budget the limit occupies. A limit claiming the wrong resource — a
+  -- VRAM limit on `linux-cpu`, a swapped dual pair, a substrate limit claiming
+  -- unified host RAM — is no longer a constructible term, so those four fixtures
+  -- are retired with the fields rather than left asserting a property of
+  -- something the wire cannot express. What survives is the arm choice, which is
+  -- still declared: a budget whose union arm does not match the runtime mode.
   assertExecutionPlanError
     root
     "gpu-dual-resource-budget-required"
@@ -12000,52 +12345,82 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
     "gpu-model-without-vram-enforcer"
     (ExecutionPlan.GpuModelWithoutVramEnforcer modelIdValue)
     linuxGpuWithPodBudget
-  assertExecutionPlanError
-    root
-    "gpu-dual-budget-with-swapped-resources"
-    (ExecutionPlan.InvalidMemoryEnforcer "dual memory enforcer must name a pod RAM limit first")
-    linuxGpuWithSwappedDualBudget
-  assertExecutionPlanError
-    root
-    "gpu-dual-budget-with-swapped-resources-vram-half"
-    (ExecutionPlan.InvalidMemoryEnforcer "dual memory enforcer must name a GPU VRAM limit second")
-    linuxGpuWithSwappedDualBudget
-  assertExecutionPlanError
-    root
-    "unified-host-substrate-enforcer"
-    (ExecutionPlan.InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM")
-    (linuxCpuConfig {inferenceMemoryBudget = podBudget UnifiedHostRam ClusterEnginePodMemoryLimit 65536})
   let availableMib = inferenceMemoryBudgetCapacityMib (inferenceMemoryBudget singleAppleConfig)
       requiredMib = availableMib + 1
   oversizedFootprint <-
     expectRight
       "construct an oversized execution-plan model footprint"
       (mkModelMemoryFootprint requiredMib)
-  let oversizedModel = model {modelRamFootprint = oversizedFootprint}
-      oversizedConfig = singleAppleConfig {models = [oversizedModel]}
+  -- Phase 4 Sprint 4.34: an all-over-capacity catalog still compiles, because
+  -- placement is graph validation and this process is not the machine that will
+  -- execute. The refusal it used to raise here now belongs to the engine's
+  -- refinement (`NoAdmissiblePlacement`), which is pinned in the
+  -- execution-plan-internal suite; what this fixture pins is that the compiler
+  -- places the model and predicts its rejection.
+  let allOversizedConfig =
+        singleAppleConfig {models = [model {modelRamFootprint = oversizedFootprint}]}
+  allOversizedPlan <-
+    expectCompiledExecutionPlan root "no-admissible-placement" allOversizedConfig
+  assert
+    ( map
+        (modelId . ExecutionPlan.compiledPlacementDescriptor)
+        (ExecutionPlan.compiledRuntimePlanPlacements allOversizedPlan)
+        == [modelIdValue]
+    )
+    "an over-capacity catalog is still placed by the compiler"
+  assert
+    (isJust (ExecutionPlan.predictedAdmissionRejection allOversizedPlan modelIdValue))
+    "an over-capacity catalog is predicted to be rejected by the machine that would execute it"
+  -- The unavailable-model accounting still has to work when *some* model is
+  -- admissible, so the fixture pairs the over-capacity model with the original.
+  let oversizedModelIdValue = modelIdValue <> "-oversized"
+      oversizedModel =
+        model
+          { modelId = oversizedModelIdValue,
+            matrixRowId = matrixRowId model <> "-oversized",
+            modelRamFootprint = oversizedFootprint
+          }
+      oversizedConfig =
+        singleAppleConfig
+          { models = [model, oversizedModel],
+            enginePools =
+              [pool {enginePoolModelIds = enginePoolModelIds pool <> [oversizedModelIdValue]}],
+            -- The derived per-model request topic is the pool topic suffixed with
+            -- the model id, so the engine daemon's declared topics have to grow
+            -- with the pool or the compiled graph disagrees with the daemon.
+            engineDaemons =
+              [ daemon
+                  { daemonConfigRequestTopics =
+                      daemonConfigRequestTopics daemon
+                        <> map (<> "-oversized") (daemonConfigRequestTopics daemon)
+                  }
+              ]
+          }
   oversizedPlan <- expectCompiledExecutionPlan root "one-unavailable-model" oversizedConfig
   assert
-    (null (ExecutionPlan.compiledRuntimePlanPlacements oversizedPlan))
-    "over-capacity execution-plan model is absent from compiled placements"
-  unavailable <-
+    ( sort (map (modelId . ExecutionPlan.compiledPlacementDescriptor) (ExecutionPlan.compiledRuntimePlanPlacements oversizedPlan))
+        == sort [modelIdValue, oversizedModelIdValue]
+    )
+    "both the fitting and the over-capacity model are placed, because placement is graph validation"
+  assert
+    (isNothing (ExecutionPlan.predictedAdmissionRejection oversizedPlan modelIdValue))
+    "the fitting execution-plan model is predicted to be admitted"
+  oversizedRejection <-
     maybe
-      (fail "over-capacity execution-plan model is missing from unavailable accounting")
+      (fail "over-capacity execution-plan model is missing from the predicted admission rejection")
       pure
-      (ExecutionPlan.lookupUnavailableModel modelIdValue oversizedPlan)
+      (ExecutionPlan.predictedAdmissionRejection oversizedPlan oversizedModelIdValue)
   assert
-    (ExecutionPlan.unavailableModelDescriptor unavailable == oversizedModel)
-    "unavailable execution-plan entry retains the exact configured model"
-  assert
-    ( ExecutionPlan.unavailableModelReason unavailable
+    ( oversizedRejection
         == ModelMemoryLimitExceeded
-          { inferenceErrorModelId = modelIdValue,
+          { inferenceErrorModelId = oversizedModelIdValue,
             inferenceErrorRequiredMib = requiredMib,
             inferenceErrorAvailableMib = availableMib,
             inferenceErrorResource = UnifiedHostRam,
             inferenceErrorSource = inferenceMemoryBudgetSource (inferenceMemoryBudget singleAppleConfig)
           }
     )
-    "unavailable execution-plan entry carries the exact typed admission failure"
+    "the predicted rejection carries the exact typed admission failure"
   assertCompiledExecutionPlanAccounting oversizedConfig oversizedPlan
   -- Keep the Linux fixture tied to the same public compiler boundary.
   linuxPlan <- expectCompiledExecutionPlan root "valid-linux-plan" linuxConfig
@@ -12060,13 +12435,13 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   assert
     (modelMemoryFootprintMib (modelRamFootprint barkLinuxDescriptor) == barkRequiredMib)
     "Linux CPU uses the same conservative 8 GiB Bark footprint"
-  barkLinuxUnavailable <-
+  barkLinuxRejection <-
     maybe
       (fail "Linux CPU admitted Bark despite its 4 GiB inference budget")
       pure
-      (ExecutionPlan.lookupUnavailableModel barkModelIdValue linuxPlan)
+      (ExecutionPlan.predictedAdmissionRejection linuxPlan barkModelIdValue)
   assert
-    ( ExecutionPlan.unavailableModelReason barkLinuxUnavailable
+    ( barkLinuxRejection
         == ModelMemoryLimitExceeded
           { inferenceErrorModelId = barkModelIdValue,
             inferenceErrorRequiredMib = barkRequiredMib,
@@ -12124,17 +12499,20 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
   -- The device-using models that exceed the VRAM half are rejected against the
   -- VRAM limit by name, not against the pod RAM limit that also applies.
   mapM_
-    ( \unavailableEntry ->
-        let reason = ExecutionPlan.unavailableModelReason unavailableEntry
-            descriptor = ExecutionPlan.unavailableModelDescriptor unavailableEntry
-         in assert
-              ( not (requiresGpu descriptor)
-                  || inferenceErrorResource reason == GpuVram
-                  || inferenceErrorResource reason == PodRam
+    ( \placement ->
+        let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
+         in mapM_
+              ( \reason ->
+                  assert
+                    ( not (requiresGpu descriptor)
+                        || inferenceErrorResource reason == GpuVram
+                        || inferenceErrorResource reason == PodRam
+                    )
+                    "Linux GPU capacity rejection names one of the two enforced resources"
               )
-              "Linux GPU capacity rejection names one of the two enforced resources"
+              (ExecutionPlan.predictedAdmissionRejection linuxGpuPlan (modelId descriptor))
     )
-    (ExecutionPlan.compiledRuntimePlanUnavailableModels linuxGpuPlan)
+    (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
 
   -- A `linux-gpu` model that requires the device is bound to BOTH resources; a
   -- model on the shared lane stays on the resident-set lane alone, because a
@@ -12144,12 +12522,14 @@ assertExecutionPlanCompilerCoverage paths root linuxConfig appleConfig = do
         let descriptor = ExecutionPlan.compiledPlacementDescriptor placement
             expectedResources =
               if requiresGpu descriptor then [PodRam, GpuVram] else [PodRam]
+            enforcedResources =
+              ExecutionPlan.compiledPlanPlacementEnforcedResources linuxGpuPlan placement
          in assert
-              (ExecutionPlan.compiledPlacementEnforcedResources placement == expectedResources)
+              (enforcedResources == expectedResources)
               ( "Linux GPU placement "
                   <> Text.unpack (modelId descriptor)
                   <> " is bound to the wrong resource set: "
-                  <> show (ExecutionPlan.compiledPlacementEnforcedResources placement)
+                  <> show enforcedResources
               )
     )
     (ExecutionPlan.compiledRuntimePlanPlacements linuxGpuPlan)
@@ -12213,9 +12593,7 @@ assertCatalogPlanCoverage mode demoConfig compiledPlan =
               <> Text.unpack (modelId descriptor)
           )
         assert
-          ( isJust (ExecutionPlan.lookupCompiledPlacement (modelId descriptor) compiledPlan)
-              || isJust (ExecutionPlan.lookupUnavailableModel (modelId descriptor) compiledPlan)
-          )
+          (isJust (ExecutionPlan.lookupCompiledPlacement (modelId descriptor) compiledPlan))
           ( "compiled plan omitted catalog model "
               <> Text.unpack (modelId descriptor)
           )
@@ -12225,18 +12603,8 @@ assertCatalogPlanCoverage mode demoConfig compiledPlan =
 engineBindingSelectionError :: ExecutionPlan.ConfigError -> Bool
 engineBindingSelectionError configError =
   case configError of
-    ExecutionPlan.InvalidEngineBinding _ -> True
-    ExecutionPlan.UnsupportedEngineBinding _ _ -> True
-    ExecutionPlan.EngineBindingMismatch {} -> True
     ExecutionPlan.UnknownSelectedEngine _ _ -> True
     _ -> False
-
--- Phase 8 Sprint 8.9: the adapter type is a closed sum, so "the other one" is
--- a total function rather than a string flip with an implicit default.
-alternateAdapterType :: EngineAdapterType -> EngineAdapterType
-alternateAdapterType adapterType = case adapterType of
-  PythonStdio -> NativeProcessRunner
-  NativeProcessRunner -> PythonStdio
 
 assertExecutionPlanIdentifierCoverage ::
   FilePath ->
@@ -12247,7 +12615,7 @@ assertExecutionPlanIdentifierCoverage ::
   EngineMember ->
   [(FilePath, Text.Text)] ->
   IO ()
-assertExecutionPlanIdentifierCoverage root demoConfig model binding pool member =
+assertExecutionPlanIdentifierCoverage root demoConfig model _binding pool member =
   mapM_
     ( \(label, invalidIdentifier) -> do
         assertExecutionPlanError
@@ -12260,11 +12628,6 @@ assertExecutionPlanIdentifierCoverage root demoConfig model binding pool member 
           ("invalid-matrix-row-id-" <> label)
           (ExecutionPlan.InvalidMatrixRowId invalidIdentifier)
           (demoConfig {models = [model {matrixRowId = invalidIdentifier}]})
-        assertExecutionPlanError
-          root
-          ("invalid-adapter-id-" <> label)
-          (ExecutionPlan.InvalidAdapterId (engineBindingName binding) invalidIdentifier)
-          (demoConfig {engines = [binding {engineBindingAdapterId = invalidIdentifier}]})
         assertExecutionPlanError
           root
           ("invalid-pool-id-" <> label)
@@ -12410,13 +12773,8 @@ executionPlanConfigErrorTag :: ExecutionPlan.ConfigError -> String
 executionPlanConfigErrorTag configError =
   case configError of
     ExecutionPlan.EmptyModelCatalog -> "EmptyModelCatalog"
-    ExecutionPlan.EmptyEngineCatalog -> "EmptyEngineCatalog"
     ExecutionPlan.EmptyPoolCatalog -> "EmptyPoolCatalog"
     ExecutionPlan.EmptyMemberCatalog -> "EmptyMemberCatalog"
-    ExecutionPlan.EmptyEngineDaemonCatalog -> "EmptyEngineDaemonCatalog"
-    ExecutionPlan.EmptyRequestTopics -> "EmptyRequestTopics"
-    ExecutionPlan.BlankRequestTopic -> "BlankRequestTopic"
-    ExecutionPlan.BlankResultTopic -> "BlankResultTopic"
     ExecutionPlan.BlankModelsBucket -> "BlankModelsBucket"
     ExecutionPlan.BlankModelBootstrapTopic -> "BlankModelBootstrapTopic"
     ExecutionPlan.ModelsBucketMismatch _ _ -> "ModelsBucketMismatch"
@@ -12425,31 +12783,17 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.BlankGeneratedPath -> "BlankGeneratedPath"
     ExecutionPlan.BlankMountedPath -> "BlankMountedPath"
     ExecutionPlan.InvalidActiveDaemonRole -> "InvalidActiveDaemonRole"
-    ExecutionPlan.InvalidDaemonConfig _ -> "InvalidDaemonConfig"
     ExecutionPlan.DaemonRoleMismatch {} -> "DaemonRoleMismatch"
     ExecutionPlan.DaemonMemberMismatch {} -> "DaemonMemberMismatch"
-    ExecutionPlan.DaemonLocationMismatch {} -> "DaemonLocationMismatch"
-    ExecutionPlan.DaemonRequestTopicsMismatch {} -> "DaemonRequestTopicsMismatch"
-    ExecutionPlan.DaemonResultTopicMismatch {} -> "DaemonResultTopicMismatch"
     ExecutionPlan.DaemonConnectionModeMismatch {} -> "DaemonConnectionModeMismatch"
-    ExecutionPlan.DaemonSubscriptionMismatch {} -> "DaemonSubscriptionMismatch"
-    ExecutionPlan.EngineDaemonMemberMissing _ -> "EngineDaemonMemberMissing"
-    ExecutionPlan.MissingEngineDaemon _ -> "MissingEngineDaemon"
-    ExecutionPlan.DuplicateEngineDaemonMember _ -> "DuplicateEngineDaemonMember"
-    ExecutionPlan.InvalidEngineBinding _ -> "InvalidEngineBinding"
-    ExecutionPlan.UnsupportedEngineBinding _ _ -> "UnsupportedEngineBinding"
-    ExecutionPlan.EngineBindingMismatch {} -> "EngineBindingMismatch"
     ExecutionPlan.InvalidModelDescriptor _ -> "InvalidModelDescriptor"
     ExecutionPlan.InvalidModelId _ -> "InvalidModelId"
     ExecutionPlan.InvalidMatrixRowId _ -> "InvalidMatrixRowId"
-    ExecutionPlan.InvalidAdapterId _ _ -> "InvalidAdapterId"
     ExecutionPlan.UnenforceableModelMemoryFootprint _ _ -> "UnenforceableModelMemoryFootprint"
     ExecutionPlan.DuplicateModelId _ -> "DuplicateModelId"
     ExecutionPlan.DuplicateMatrixRowId _ -> "DuplicateMatrixRowId"
-    ExecutionPlan.DuplicateEngineId _ -> "DuplicateEngineId"
     ExecutionPlan.DuplicatePoolId _ -> "DuplicatePoolId"
     ExecutionPlan.DuplicateMemberId _ -> "DuplicateMemberId"
-    ExecutionPlan.DuplicateRequestTopic _ -> "DuplicateRequestTopic"
     ExecutionPlan.DuplicatePoolModelReference _ _ -> "DuplicatePoolModelReference"
     ExecutionPlan.DuplicatePoolMemberReference _ _ -> "DuplicatePoolMemberReference"
     ExecutionPlan.DuplicateMemberPoolReference _ _ -> "DuplicateMemberPoolReference"
@@ -12460,22 +12804,15 @@ executionPlanConfigErrorTag configError =
     ExecutionPlan.EmptyPoolMembers _ -> "EmptyPoolMembers"
     ExecutionPlan.EmptyMemberPools _ -> "EmptyMemberPools"
     ExecutionPlan.UnknownSelectedEngine _ _ -> "UnknownSelectedEngine"
-    ExecutionPlan.ModelRuntimeMismatch {} -> "ModelRuntimeMismatch"
-    ExecutionPlan.ModelRuntimeLaneMismatch {} -> "ModelRuntimeLaneMismatch"
     ExecutionPlan.UnsupportedGpuRequirement _ _ -> "UnsupportedGpuRequirement"
     ExecutionPlan.DanglingPoolModel _ _ -> "DanglingPoolModel"
     ExecutionPlan.DanglingPoolMember _ _ -> "DanglingPoolMember"
     ExecutionPlan.DanglingMemberPool _ _ -> "DanglingMemberPool"
     ExecutionPlan.PoolMemberLinkMissing _ _ -> "PoolMemberLinkMissing"
     ExecutionPlan.MemberPoolLinkMissing _ _ -> "MemberPoolLinkMissing"
-    ExecutionPlan.UnknownDaemonMember _ -> "UnknownDaemonMember"
     ExecutionPlan.UnplacedModel _ -> "UnplacedModel"
     ExecutionPlan.MultiplyPlacedModel _ _ -> "MultiplyPlacedModel"
-    ExecutionPlan.PoolRuntimeMismatch {} -> "PoolRuntimeMismatch"
-    ExecutionPlan.MemberRuntimeMismatch {} -> "MemberRuntimeMismatch"
-    ExecutionPlan.MemberLocationMismatch {} -> "MemberLocationMismatch"
     ExecutionPlan.InvalidPoolSubscription _ -> "InvalidPoolSubscription"
-    ExecutionPlan.InvalidPoolMaxInflight _ _ -> "InvalidPoolMaxInflight"
     ExecutionPlan.ModelWithoutEligibleMember _ -> "ModelWithoutEligibleMember"
     ExecutionPlan.DuplicateDerivedRouteTopic _ _ -> "DuplicateDerivedRouteTopic"
     ExecutionPlan.TopicFamilyCollision _ _ -> "TopicFamilyCollision"
@@ -12487,23 +12824,20 @@ executionPlanConfigErrorTag configError =
 assertCompiledExecutionPlanAccounting :: DemoConfig -> ExecutionPlan.CompiledRuntimePlan -> IO ()
 assertCompiledExecutionPlanAccounting demoConfig compiledPlan = do
   let configuredModels = ExecutionPlan.compiledPlanConfiguredModels compiledPlan
-      availableModels = ExecutionPlan.compiledPlanAvailableModels compiledPlan
-      unavailableModels = ExecutionPlan.compiledRuntimePlanUnavailableModels compiledPlan
+      placedModels = ExecutionPlan.compiledPlanAvailableModels compiledPlan
       configuredIds = map modelId configuredModels
-      availableIds = map modelId availableModels
-      unavailableIds = map (modelId . ExecutionPlan.unavailableModelDescriptor) unavailableModels
-      accountedIds = availableIds <> unavailableIds
+      placedIds = map modelId placedModels
       configuredCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- configuredIds]
-      accountedCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- accountedIds]
+      placedCounts = MapStrict.fromListWith (+) [(modelIdValue, 1 :: Int) | modelIdValue <- placedIds]
   assert
     (configuredModels == models demoConfig)
     "compiled execution plan retains the exact configured model order"
+  -- Phase 4 Sprint 4.34: placement is exhaustive over the configured catalog,
+  -- because admission — the only thing that used to remove a model here — has
+  -- moved to the machine that will execute.
   assert
-    (accountedCounts == configuredCounts)
-    "compiled placements plus unavailable models account for every configured model exactly once"
-  assert
-    (null [modelIdValue | modelIdValue <- availableIds, modelIdValue `elem` unavailableIds])
-    "compiled placement and unavailable-model maps are disjoint"
+    (placedCounts == configuredCounts)
+    "compiled placements account for every configured model exactly once"
   assert
     (ExecutionPlan.compiledPlanRuntimeMode compiledPlan == configRuntimeMode demoConfig)
     "compiled execution plan preserves runtime mode"
@@ -12754,7 +13088,17 @@ executionPlanConfigForRuntime runtimeModeValue budget demoConfig =
       models =
         [ configuredModel
             { runtimeMode = runtimeModeValue,
-              runtimeLane = runtimeLaneForMode runtimeModeValue (requiresGpu configuredModel)
+              runtimeLane = runtimeLaneForMode runtimeModeValue (requiresGpu configuredModel),
+              -- Phase 8 Sprint 8.10: the engine list is derived from the models'
+              -- selected engines, so retargeting a fixture at another runtime has
+              -- to retarget the selected engine too. Otherwise the fixture reports
+              -- `UnknownSelectedEngine` for an engine the new runtime does not
+              -- have, instead of the property it exists to pin.
+              selectedEngine =
+                maybe
+                  (selectedEngine configuredModel)
+                  selectedEngine
+                  (findModel runtimeModeValue (modelId configuredModel))
             }
         | configuredModel <- models demoConfig
         ],
@@ -12771,15 +13115,6 @@ executionPlanConfigForRuntime runtimeModeValue budget demoConfig =
         AppleSilicon -> PublicationEdgeAutoDiscovery
         LinuxCpu -> ConfiguredTransport
         LinuxGpu -> ConfiguredTransport
-
-runtimeLaneForMode :: RuntimeMode -> Bool -> RuntimeLane
-runtimeLaneForMode runtimeModeValue gpuRequired =
-  case runtimeModeValue of
-    AppleSilicon -> AppleSiliconHost
-    LinuxCpu -> KindLinuxCpu
-    LinuxGpu
-      | gpuRequired -> KindLinuxGpuGpu
-      | otherwise -> KindLinuxGpuShared
 
 expectSingleton :: String -> [a] -> IO a
 expectSingleton label values =
@@ -14101,12 +14436,15 @@ assertLinuxHostBatchForwarding paths = do
   assert batchExists "linux handoff forwarding writes the request to the batch topic"
   assert (not resultExists) "linux handoff forwarding does not execute inference inline"
   assert (batchPayload == payloadBytes) "linux handoff forwarding preserves the request payload bytes"
+  -- Phase 4 Sprint 4.34: a model this substrate's budget cannot fund is still
+  -- placed, and the coordinator forwards it. It is the engine — the machine that
+  -- will execute — that refuses it, with the typed error. The retired shape had
+  -- the coordinator apply the executing machine's verdict on its behalf, which
+  -- is exactly the veto the admission split removes.
   let unavailableModelId = "audio-demucs-htdemucs"
-  unavailable <-
-    maybe
-      (fail "filesystem-forwarding plan did not retain the oversized Demucs model")
-      pure
-      (ExecutionPlan.lookupUnavailableModel unavailableModelId compiledPlan)
+  assert
+    (isJust (ExecutionPlan.predictedAdmissionRejection compiledPlan unavailableModelId))
+    "filesystem-forwarding plan places the oversized Demucs model but predicts its rejection"
   unavailablePool <-
     maybe
       (fail "generated Linux CPU pools omitted the oversized Demucs model")
@@ -14137,6 +14475,7 @@ assertLinuxHostBatchForwarding paths = do
         requestDirectory </> Text.unpack unavailableRequestId <.> "pb"
       unavailableBatchPath =
         unavailableBatchDirectory </> Text.unpack unavailableRequestId <.> "pb"
+  unavailablePayloadBytes <- BS.readFile unavailableRequestPath
   drainTopic paths coordinatorCapability
   unavailableSourceExists <- doesFileExist unavailableRequestPath
   unavailableBatchExists <- doesFileExist unavailableBatchPath
@@ -14145,22 +14484,19 @@ assertLinuxHostBatchForwarding paths = do
       paths
       compiledPlan
       unavailableRequestId
-  case unavailableResult of
-    Nothing ->
-      fail "coordinator admission rejection did not publish a terminal result"
-    Just resultValue -> do
-      assert
-        (status resultValue == "failed")
-        "coordinator admission rejection publishes a failed terminal result"
-      assert
-        (inferenceError (payload resultValue) == Just (ExecutionPlan.unavailableModelReason unavailable))
-        "coordinator admission rejection preserves the compiler's typed memory error"
+  assert
+    (isNothing unavailableResult)
+    "the coordinator publishes no verdict for a model another machine will admit"
   assert
     (not unavailableSourceExists)
-    "coordinator admission rejection removes the source request"
+    "coordinator forwarding removes the source request for an unfundable model"
   assert
-    (not unavailableBatchExists)
-    "coordinator admission rejection does not create a batch request"
+    unavailableBatchExists
+    "coordinator forwarding routes an unfundable model to its pool topic for the engine to refuse"
+  unavailableBatchPayload <- BS.readFile unavailableBatchPath
+  assert
+    (unavailableBatchPayload == unavailablePayloadBytes)
+    "coordinator forwarding preserves the unfundable request payload bytes"
   emptyModelResult <-
     assertCoordinatorRejection
       compiledPlan
@@ -14451,13 +14787,17 @@ inferenceMemoryBudgetAlternatives =
 -- Text. One entry per alternative of each migrated enum, so a field that
 -- reverted to Text — which would still round-trip and so escape every other
 -- assertion — fails here.
+-- | Phase 8 Sprint 8.10 narrowed this list with the wire: the model
+-- @runtimeLane@, the engine-binding @adapterType@, and the substrate limit's
+-- @resource@ / @source@ unions left the generated language entirely, so their
+-- alternatives are asserted absent rather than present.
 generatedWireUnionAlternatives :: [Text.Text]
 generatedWireUnionAlternatives =
-  [ -- runtimeMode (top level, pool, member, model)
+  [ -- runtimeMode (top level only)
     "AppleSilicon",
     "LinuxCpu",
     "LinuxGpu",
-    -- daemonRole (top level and every daemon record)
+    -- daemonRole (top level and the two in-cluster daemon records)
     "Coordinator",
     "Engine",
     "Webapp",
@@ -14468,19 +14808,28 @@ generatedWireUnionAlternatives =
     -- pulsarConnectionMode
     "ConfiguredTransport",
     "PublicationEdgeAutoDiscovery",
-    -- model runtimeLane
+    -- request-shape fieldType
+    "TextField"
+  ]
+
+-- | Phase 8 Sprint 8.10: every field that was a second copy of a fact the binary
+-- derives must be **absent from the reflected schema**, not merely rejected at
+-- decode. If the schema still names one of these, the sprint did not do what it
+-- claims.
+retiredGeneratedWireFields :: [Text.Text]
+retiredGeneratedWireFields =
+  [ "request_topics",
+    "result_topic",
+    "engineDaemons",
+    "runtimeLane",
+    "maxInflightPerMember",
+    "headroomMib",
+    "adapterType",
+    "adapterLocator",
+    "pythonNative",
     "AppleSiliconHost",
     "KindLinuxCpu",
-    "KindLinuxGpuGpu",
-    "KindLinuxGpuShared",
-    -- request-shape fieldType
-    "TextField",
-    -- engine-binding adapterType
-    "NativeProcessRunner",
-    "PythonStdio",
-    -- substrate limit record resource + source
     "UnifiedHostRam",
-    "PodRam",
     "GpuVram",
     "ClusterEnginePodMemoryLimit",
     "LinuxGpuVramBudget"
@@ -14582,6 +14931,15 @@ assertDhallSchemaReflection =
                   )
             )
             generatedWireUnionAlternatives
+          mapM_
+            ( \retiredField ->
+                assert
+                  (not (retiredField `Text.isInfixOf` rendered))
+                  ( "substrate schema still names the retired generated field "
+                      <> Text.unpack retiredField
+                  )
+            )
+            retiredGeneratedWireFields
           assert
             ( not ("edgePort" `Text.isInfixOf` rendered)
                 && not ("Integer" `Text.isInfixOf` rendered)
@@ -15550,7 +15908,7 @@ assertHostConfig testRoot = do
           appleJvmTarget
   assert
     ( llamaExecutable
-        == "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-cli"
+        == "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-completion"
         && null
           ( ArtifactTarget.nativeArtifactTargetLeadingArguments
               (catalogInstallRoot "llama-cpp-cli")
@@ -16679,6 +17037,7 @@ runNativeArtifactArgumentAssertions = do
           "llama-cpp-cli"
           Nothing
           Nothing
+      llamaArgumentList = fromRight [] llamaArguments
       whisperArguments =
         CappedEngineInternal.renderNativeArtifactArgumentsForTest
           "whisper-cpp-cli"
@@ -16710,13 +17069,24 @@ runNativeArtifactArgumentAssertions = do
             "--gpu-layers",
             "0",
             "--no-display-prompt",
-            "--no-conversation",
             "--single-turn",
-            "--simple-io",
-            "--log-disable"
+            "--simple-io"
           ]
     )
     "Sprint 1.20: llama.cpp receives its real bounded CLI grammar and cached payload path"
+  -- Phase 3 Sprint 3.16 cohort follow-on: pin the two flags whose removal is
+  -- load-bearing, so neither returns as a "harmless" tidy-up. Measured against
+  -- the pinned b9704 payload: `--log-disable` produces a failed model load with
+  -- 0 bytes on both streams, which is what made the first `linux-cpu` cohort
+  -- failure undiagnosable; `--no-conversation` is rejected by `llama-cli` at
+  -- runtime and leaks the chat-template marker into published output under
+  -- `llama-completion`.
+  assert
+    ( not (null llamaArgumentList)
+        && notElem "--log-disable" llamaArgumentList
+        && notElem "--no-conversation" llamaArgumentList
+    )
+    "llama.cpp argv carries neither --log-disable (silences the only failure channel) nor --no-conversation (leaks chat-template markers into published output)"
   assert
     ( whisperArguments
         == Right

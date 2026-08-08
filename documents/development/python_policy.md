@@ -98,7 +98,7 @@ single host installs every wheel. The gate stays machine-independent through one
 
 ## Per-Engine Framework Venvs
 
-Phase 4 Sprint 4.16 supersedes the earlier single-shared-venv assumption. Real per-family
+There is no single shared venv. Real per-family
 inference needs vLLM, PyTorch (CUDA), TensorFlow, JAX (CUDA), and Diffusers, whose pins are
 mutually incompatible (vLLM pins an exact torch; TF and JAX ship their own CUDA stacks; one Poetry
 lock cannot resolve `torch` from two indices). Each framework engine therefore installs into its
@@ -127,16 +127,14 @@ own isolated in-project venv:
   separate layer; a failed engine install removes its partial venv so the runtime falls back to the
   fail-fast path (a named cohort residual) rather than a broken venv. The linux-cpu image bakes
   `transformers` and `pytorch` with their `linux-cpu` groups and writes marker files for the baked
-  venvs. Under realness-by-construction (reopened Phase 4) every adapter runs the real model or
+  venvs. Under realness-by-construction every adapter runs the real model or
   raises → `failed`: deterministic fabricated-success paths are not permitted
   (the `check-code` realness pass forbids them), so a substrate that cannot run a row leaves it an
   explicit residual rather than a fabricated success. The music-transcription rows rebind to
   maintained PyTorch/ONNX models (basic-pitch ONNX/Core ML, MT3-PyTorch and MR-MT3 through
   `mt3-infer`, Omnizart through a modern PyTorch transcription model), eliminating the finicky
   TensorFlow `<2.15.1` / TF1-era / unmaintained-JAX pins; any row not yet rebound or not yet real
-  on a substrate is a named residual. The 2026-06-30 MT3 replacement rows are code-side bound for
-  all three substrates; post-replacement full-suite proof is tracked by
-  [Wave O](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+  on a substrate is a named residual. The MT3 replacement rows are bound for all three substrates.
 
 `find python -name '*.py' -type f` returns only files under `python/adapters/` and
 `python/native-runners/` (the Apple native-process runner `apple_native_runner.py`, itself
@@ -204,9 +202,7 @@ Current state:
   child process, and returns only bounded direct-owned output. Native artifact-producing processes
   receive non-secret cache and bucket hints plus an invocation-owned output directory; the Haskell
   worker accepts an output only after descriptor validation proves it is the expected bounded
-  regular file. The reopened Phases 4/6 own fresh routed full-suite real-output delivery against
-  live MinIO for this topology. Historical Wave K and Wave P evidence does not close the active
-  correction. Realness is enforced in the engine code by the realness lint.
+  regular file. Realness is enforced in the engine code by the realness lint.
 
 Adapters do not open network sockets and do not subscribe to the topic transport themselves; the
 Haskell worker owns those boundaries and treats the adapter as a pure request-to-response process.

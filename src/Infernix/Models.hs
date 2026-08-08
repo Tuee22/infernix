@@ -59,6 +59,7 @@ import Infernix.EngineBindings
   ( canonicalEngineBindingForSelectedEngine,
     canonicalEngineBindingsForMode,
   )
+import Infernix.EngineRouting (requestTopicsForMode, resultTopicForMode)
 import Infernix.ExecutionPlan (linuxOuterEnvelopeHeadroomMib)
 import Infernix.Routes qualified as Routes
 import Infernix.Substrate (encodeSubstrateConfig)
@@ -160,23 +161,6 @@ engineBindingsForMode runtimeMode =
     (canonicalEngineBindingsForMode runtimeMode)
   where
     selectedEngineNames = map selectedEngine (catalogForMode runtimeMode)
-
--- | Phase 7 Sprint 7.7 (legacy row 21): the supported default Pulsar
--- tenant + namespace for inference topics is @infernix/demo@. The
--- @infernix@ tenant and @infernix/demo@ namespace are reconciled by
--- 'Infernix.Runtime.Pulsar.reconcileSupportedNamespaces' at daemon
--- startup. The previous @persistent://public/default/@ prefix is
--- retired.
-defaultPulsarTopicPrefix :: Text
-defaultPulsarTopicPrefix = "persistent://infernix/demo/"
-
-requestTopicsForMode :: RuntimeMode -> [Text]
-requestTopicsForMode runtimeMode =
-  [defaultPulsarTopicPrefix <> "inference.request." <> runtimeModeId runtimeMode]
-
-resultTopicForMode :: RuntimeMode -> Text
-resultTopicForMode runtimeMode =
-  defaultPulsarTopicPrefix <> "inference.result." <> runtimeModeId runtimeMode
 
 -- | Phase 4 Sprint 4.17 — the per-engine engine name derived from an adapter
 -- id. The python-stdio framework adapters carry a @-python@ suffix
@@ -560,7 +544,7 @@ descriptorForMode runtimeMode row = do
               }
           ],
         runtimeMode = runtimeMode,
-        runtimeLane = laneFor runtimeMode (bindingRequiresGpu binding),
+        runtimeLane = runtimeLaneForMode runtimeMode (bindingRequiresGpu binding),
         requiresGpu = bindingRequiresGpu binding,
         notes = rowNotes row,
         modelRamFootprint = conservativeModelMemoryFootprint row binding
@@ -670,14 +654,6 @@ bindingForMode runtimeMode row = case runtimeMode of
   AppleSilicon -> appleBinding row
   LinuxCpu -> linuxCpuBinding row
   LinuxGpu -> linuxGpuBinding row
-
-laneFor :: RuntimeMode -> Bool -> RuntimeLane
-laneFor runtimeMode requiresGpu = case runtimeMode of
-  AppleSilicon -> AppleSiliconHost
-  LinuxCpu -> KindLinuxCpu
-  LinuxGpu
-    | requiresGpu -> KindLinuxGpuGpu
-    | otherwise -> KindLinuxGpuShared
 
 matrixRows :: [MatrixRow]
 matrixRows =

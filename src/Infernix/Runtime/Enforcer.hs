@@ -1,12 +1,8 @@
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Infernix.Runtime.Enforcer
   ( refineCompiledRuntimePlan,
   )
 where
 
-import Control.Exception (IOException, try)
-import Data.List (find)
 import Data.Map.Strict qualified as Map
 import Data.Text qualified as Text
 import Infernix.Config (Paths)
@@ -15,16 +11,17 @@ import Infernix.ExecutionPlan
   ( CompiledRuntimePlan,
     RefinementErrors,
     RuntimePlan,
+    compiledPlanPlacementEnforcementShape,
     refineRuntimePlan,
   )
 import Infernix.ExecutionPlan.Internal
-  ( CompiledPlacement (placementDescriptor, placementResources),
-    CompiledResources
-      ( CompiledGpuResources,
-        CompiledHostResources,
-        CompiledPodResources
-      ),
+  ( CompiledPlacement (placementDescriptor),
     CompiledRuntimePlan (compiledPlacements),
+    PlacementEnforcementShape
+      ( GpuEnforcementShape,
+        HostEnforcementShape,
+        PodEnforcementShape
+      ),
     PlacementObservation
       ( GpuPlacementObservation,
         HostPlacementObservation,
@@ -40,9 +37,8 @@ import Infernix.Runtime.CappedEngine
     verifyPhysicalFootprintSampler,
     verifyProcessGroupRssSampler,
   )
-import Infernix.Runtime.Enforcer.Internal (parseFiniteMib)
+import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
 import Infernix.Types (HostMemoryPartition, ModelDescriptor (modelId))
-import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 
 -- | Probe the enforcement mechanisms named by a compiled plan and refine it
@@ -57,10 +53,20 @@ refineCompiledRuntimePlan ::
   CompiledRuntimePlan ->
   IO (Either RefinementErrors (RuntimePlan, EngineExecutionAuthority))
 refineCompiledRuntimePlan paths compiledPlan = do
-  let placements = Map.elems (compiledPlacements compiledPlan)
-      needsHostSampler = any isHostPlacement placements
-      needsPodSampler = any isPodPlacement placements
-      needsNvidiaSampler = any isGpuPlacement placements
+  -- Phase 4 Sprint 4.34: which samplers to probe is derived from the runtime
+  -- mode, the declared budget, and whether the model uses the device — not from
+  -- a resource the placement carries, because after the admission split it
+  -- carries none. A placement whose mode and budget name no mechanism at all
+  -- gets no observation and is rejected by admission inside
+  -- 'refineRuntimePlan'; 'compilerErrors' already refuses that pair upstream.
+  let shapedPlacements =
+        [ (placement, compiledPlanPlacementEnforcementShape compiledPlan placement)
+        | placement <- Map.elems (compiledPlacements compiledPlan)
+        ]
+      shapes = [shape | (_, Just shape) <- shapedPlacements]
+      needsHostSampler = any isHostShape shapes
+      needsPodSampler = any isResidentShape shapes
+      needsNvidiaSampler = any isGpuShape shapes
   hostSamplerAvailable <-
     if needsHostSampler
       then verifyPhysicalFootprintSampler
@@ -100,42 +106,43 @@ refineCompiledRuntimePlan paths compiledPlan = do
       then observeNvidiaDeviceVramMib
       else pure Nothing
   let observations =
-        map
-          ( placementObservation
-              observedHostPartition
-              hostSamplerAvailable
-              podSamplerAvailable
-              outerLimitMib
-              nvidiaSamplerAvailable
-              observedVramMib
-          )
-          placements
+        [ placementObservation
+            observedHostPartition
+            hostSamplerAvailable
+            podSamplerAvailable
+            outerLimitMib
+            nvidiaSamplerAvailable
+            observedVramMib
+            (modelId (placementDescriptor placement))
+            shape
+        | (placement, Just shape) <- shapedPlacements
+        ]
   case refineRuntimePlan (RuntimeObservation observations) compiledPlan of
     Left errors -> pure (Left errors)
     Right runtimePlan -> do
       authority <- newEngineExecutionAuthority
       pure (Right (runtimePlan, authority))
 
-isHostPlacement :: CompiledPlacement -> Bool
-isHostPlacement placement =
-  case placementResources placement of
-    CompiledHostResources {} -> True
-    CompiledPodResources {} -> False
-    CompiledGpuResources {} -> False
+isHostShape :: PlacementEnforcementShape -> Bool
+isHostShape shape =
+  case shape of
+    HostEnforcementShape {} -> True
+    PodEnforcementShape {} -> False
+    GpuEnforcementShape {} -> False
 
-isPodPlacement :: CompiledPlacement -> Bool
-isPodPlacement placement =
-  case placementResources placement of
-    CompiledHostResources {} -> False
-    CompiledPodResources {} -> True
-    CompiledGpuResources {} -> True
+isResidentShape :: PlacementEnforcementShape -> Bool
+isResidentShape shape =
+  case shape of
+    HostEnforcementShape {} -> False
+    PodEnforcementShape {} -> True
+    GpuEnforcementShape {} -> True
 
-isGpuPlacement :: CompiledPlacement -> Bool
-isGpuPlacement placement =
-  case placementResources placement of
-    CompiledHostResources {} -> False
-    CompiledPodResources {} -> False
-    CompiledGpuResources {} -> True
+isGpuShape :: PlacementEnforcementShape -> Bool
+isGpuShape shape =
+  case shape of
+    HostEnforcementShape {} -> False
+    PodEnforcementShape {} -> False
+    GpuEnforcementShape {} -> True
 
 placementObservation ::
   Maybe HostMemoryPartition ->
@@ -144,7 +151,8 @@ placementObservation ::
   Maybe Int ->
   Bool ->
   Maybe Int ->
-  CompiledPlacement ->
+  Text.Text ->
+  PlacementEnforcementShape ->
   PlacementObservation
 placementObservation
   observedHostPartition
@@ -153,52 +161,17 @@ placementObservation
   outerLimitMib
   nvidiaSamplerAvailable
   observedVramMib
-  placement =
-    case placementResources placement of
-      CompiledHostResources {} ->
+  placementId
+  shape =
+    case shape of
+      HostEnforcementShape {} ->
         HostPlacementObservation placementId hostSamplerAvailable observedHostPartition
-      CompiledPodResources {} ->
+      PodEnforcementShape {} ->
         PodPlacementObservation placementId podSamplerAvailable outerLimitMib
-      CompiledGpuResources {} ->
+      GpuEnforcementShape {} ->
         GpuPlacementObservation
           placementId
           podSamplerAvailable
           outerLimitMib
           nvidiaSamplerAvailable
           observedVramMib
-    where
-      placementId = modelId (placementDescriptor placement)
-
-readCgroupMemoryLimitMib :: IO (Maybe Int)
-readCgroupMemoryLimitMib = do
-  maybeRelativePath <- readCurrentCgroupPath
-  case maybeRelativePath of
-    Nothing -> pure Nothing
-    Just relativePath ->
-      firstFiniteLimit
-        ["/sys/fs/cgroup" </> relativePath </> "memory.max"]
-
-readCurrentCgroupPath :: IO (Maybe FilePath)
-readCurrentCgroupPath = do
-  readResult <- try (readFile "/proc/self/cgroup")
-  pure $
-    case readResult of
-      Left (_ :: IOException) -> Nothing
-      Right contents ->
-        dropWhile (== '/')
-          . drop (length ("0::" :: String))
-          <$> find (startsWithUnifiedHierarchy . trimLine) (lines contents)
-  where
-    startsWithUnifiedHierarchy value = take 3 value == "0::"
-    trimLine = reverse . dropWhile (`elem` ['\r', '\n']) . reverse
-
-firstFiniteLimit :: [FilePath] -> IO (Maybe Int)
-firstFiniteLimit [] = pure Nothing
-firstFiniteLimit (path : remaining) = do
-  readResult <- try (readFile path)
-  case readResult of
-    Left (_ :: IOException) -> firstFiniteLimit remaining
-    Right contents ->
-      case parseFiniteMib contents of
-        Just limitMib -> pure (Just limitMib)
-        Nothing -> firstFiniteLimit remaining

@@ -15,6 +15,7 @@ module Infernix.ExecutionPlan.Internal
     ExecutableModel (..),
     MemoryCeiling (..),
     MemoryGrant (..),
+    PlacementEnforcementShape (..),
     PlacementObservation (..),
     RawRuntimeConfig (..),
     Resource (..),
@@ -139,18 +140,36 @@ data EngineRoute = EngineRoute
 newtype CompiledDaemon = CompiledDaemon DaemonConfig
   deriving (Eq, Show)
 
--- | A placement produced by pure graph validation and admission. It is not
--- executable until its expected enforcers are observed live.
+-- | The enforcement shape a placement takes on the machine that will execute
+-- it: which mechanism observes it and which declared limits its grants are
+-- admitted against. It is derived from the runtime mode, the declared budget,
+-- and whether the model uses the device — never from a placement, because a
+-- placement carries no resources.
+--
+-- Phase 4 Sprint 4.34: this value is what keeps the enforcer's sampler choice
+-- and the admitted grant from drifting apart. The enforcer must know which
+-- mechanism to probe /before/ it can admit anything, and admission must bind
+-- its grants to the same limits the probe verified; both read this one value.
+data PlacementEnforcementShape
+  = HostEnforcementShape HostMemoryPartition
+  | PodEnforcementShape PodMemoryLimit
+  | GpuEnforcementShape PodMemoryLimit PodMemoryLimit
+  deriving (Eq, Show)
+
+-- | A placement produced by pure graph validation. It names a model, its
+-- engine, and its eligible routes; it holds no memory grant, because admission
+-- is an observation of the machine that will execute and the compiler runs on
+-- every role.
 data CompiledPlacement = CompiledPlacement
   { placementDescriptor :: ModelDescriptor,
     placementEngine :: EngineBinding,
-    placementRoutes :: NonEmpty EngineRoute,
-    placementResources :: CompiledResources
+    placementRoutes :: NonEmpty EngineRoute
   }
   deriving (Eq, Show)
 
--- | A catalog model that was structurally valid but could not be admitted.
--- Keeping it in the plan prevents silent loss and makes accounting exhaustive.
+-- | A catalog model that was placed by the compiler but could not be admitted
+-- against the executing machine's capacity. Keeping it in the refined plan
+-- prevents silent loss and makes accounting exhaustive.
 data UnavailableModel = UnavailableModel
   { unavailableDescriptor :: ModelDescriptor,
     unavailableReason :: InferenceError
@@ -159,13 +178,15 @@ data UnavailableModel = UnavailableModel
 
 -- | The validated result of compiling raw configuration. The raw record is
 -- retained only package internally for narrow non-routing projections.
+--
+-- Every role compiles this value, so it carries no admission result: what a
+-- machine can fund is a fact about that machine, and the coordinator is not it.
 data CompiledRuntimePlan = CompiledRuntimePlan
   { compiledConfig :: DemoConfig,
     compiledCoordinator :: CompiledDaemon,
     compiledWebapp :: CompiledDaemon,
     compiledEngineDaemonMap :: Map Text CompiledDaemon,
-    compiledPlacements :: Map Text CompiledPlacement,
-    compiledUnavailable :: Map Text UnavailableModel
+    compiledPlacements :: Map Text CompiledPlacement
   }
   deriving (Eq, Show)
 
@@ -189,10 +210,14 @@ data ExecutableModel = ExecutableModel
   }
   deriving (Eq, Show)
 
--- | A plan whose executable entries all carry verified live capabilities.
+-- | A plan whose executable entries all carry verified live capabilities, and
+-- whose rejected entries name the executing machine's own refusal. Admission
+-- happens here rather than at compile time, so this is the only value that can
+-- answer "can this machine run this model".
 data RuntimePlan = RuntimePlan
   { runtimeCompiledPlan :: CompiledRuntimePlan,
-    runtimeExecutables :: Map Text ExecutableModel
+    runtimeExecutables :: Map Text ExecutableModel,
+    runtimeUnavailable :: Map Text UnavailableModel
   }
   deriving (Eq, Show)
 

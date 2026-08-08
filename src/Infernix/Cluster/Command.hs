@@ -91,7 +91,6 @@ module Infernix.Cluster.Command
     kubectlScaleDeployment,
     kubectlWaitPodReady,
     kubectlDeletePods,
-    kubectlReinitPostgresReplicas,
     kubectlRunPostgresAction,
     kubectlGetSecretField,
     kubectlGetCrd,
@@ -365,8 +364,7 @@ data SecretField
   deriving (Eq, Show)
 
 data PostgresAction
-  = EnsureReplicationRole
-  | DetectDirtyHarborMigration !Password
+  = DetectDirtyHarborMigration !Password
   | RepairDirtyHarborMigration !Password
   deriving (Eq)
 
@@ -475,7 +473,6 @@ data ClusterCommand
   | KubectlScaleDeployment !KubeTarget !Namespace !WorkloadRef !Int
   | KubectlWaitPodReady !KubeTarget !Namespace !PodName !Int
   | KubectlDeletePods !KubeTarget !Namespace !(NonEmpty PodName)
-  | KubectlReinitPostgresReplicas !KubeTarget !PodName !(NonEmpty PodName)
   | KubectlRunPostgresAction !KubeTarget !PodName !PostgresAction
   | KubectlGetSecretField !KubeTarget !Namespace !SecretName !SecretField
   | KubectlGetCrd !KubeTarget !ResourceName
@@ -613,13 +610,6 @@ kubectlWaitPodReady = KubectlWaitPodReady
 
 kubectlDeletePods :: KubeTarget -> Namespace -> NonEmpty PodName -> ClusterCommand
 kubectlDeletePods = KubectlDeletePods
-
-kubectlReinitPostgresReplicas ::
-  KubeTarget ->
-  PodName ->
-  NonEmpty PodName ->
-  ClusterCommand
-kubectlReinitPostgresReplicas = KubectlReinitPostgresReplicas
 
 kubectlRunPostgresAction :: KubeTarget -> PodName -> PostgresAction -> ClusterCommand
 kubectlRunPostgresAction = KubectlRunPostgresAction
@@ -1053,7 +1043,6 @@ clusterCommandOperation = \case
   KubectlScaleDeployment {} -> KubectlApplyOperation
   KubectlWaitPodReady {} -> KubectlWaitOperation
   KubectlDeletePods {} -> KubectlDeleteOperation
-  KubectlReinitPostgresReplicas {} -> KubectlExecOperation
   KubectlRunPostgresAction {} -> KubectlExecOperation
   KubectlGetSecretField {} -> KubectlReadOperation
   KubectlGetCrd {} -> KubectlReadOperation
@@ -1180,10 +1169,6 @@ validateClusterCommand = \case
     validateKubeTarget target
     validateNamespace namespaceName
     mapM_ validatePodName (NonEmpty.toList podNames)
-  KubectlReinitPostgresReplicas target primaryPod replicaPods -> do
-    validateKubeTarget target
-    validatePodName primaryPod
-    mapM_ validatePodName (NonEmpty.toList replicaPods)
   KubectlRunPostgresAction target primaryPod action -> do
     validateKubeTarget target
     validatePodName primaryPod
@@ -1452,7 +1437,6 @@ validateContainerInspectField inspectField =
 validatePostgresAction :: PostgresAction -> Either String ()
 validatePostgresAction action =
   case action of
-    EnsureReplicationRole -> Right ()
     DetectDirtyHarborMigration password -> validatePassword password
     RepairDirtyHarborMigration password -> validatePassword password
 
@@ -1706,25 +1690,6 @@ renderClusterCommand resolveTool = \case
       ( ["-n", unNamespace namespaceName, "delete", "pod"]
           <> map unPodName (NonEmpty.toList podNames)
           <> ["--ignore-not-found=true", "--wait=false"]
-      )
-      ""
-  KubectlReinitPostgresReplicas target primaryPod replicaPods ->
-    kubectlSpec
-      target
-      ( [ "-n",
-          "platform",
-          "exec",
-          unPodName primaryPod,
-          "-c",
-          "database",
-          "--",
-          "patronictl",
-          "-k",
-          "reinit",
-          "harbor-postgresql-ha"
-        ]
-          <> map unPodName (NonEmpty.toList replicaPods)
-          <> ["--force", "--wait", "--from-leader"]
       )
       ""
   KubectlRunPostgresAction target primaryPod action ->
@@ -2294,11 +2259,6 @@ renderPostgresAction ::
   RenderedCommandSpec
 renderPostgresAction target primaryPod action =
   case action of
-    EnsureReplicationRole ->
-      kubectlSpec
-        target
-        (postgresExecPrefix primaryPod <> ["sh", "-lc", replicationRoleRepairScript])
-        ""
     DetectDirtyHarborMigration password ->
       postgresPasswordScriptSpec
         target
@@ -2348,17 +2308,6 @@ postgresPasswordScriptSpec target primaryPod password script description =
         <> description
         <> "> <redacted>"
     )
-
-postgresExecPrefix :: PodName -> [String]
-postgresExecPrefix primaryPod =
-  [ "-n",
-    "platform",
-    "exec",
-    unPodName primaryPod,
-    "-c",
-    "database",
-    "--"
-  ]
 
 renderHelmUpgrade :: HelmUpgradeSpec -> [String]
 renderHelmUpgrade upgradeSpec =
@@ -2669,23 +2618,6 @@ dockerStreamImportScript :: String
 dockerStreamImportScript =
   "set -euo pipefail; \"$1\" image save \"$2\""
     <> " | \"$1\" exec -i \"$3\" ctr --namespace=k8s.io images import -"
-
-replicationRoleRepairScript :: String
-replicationRoleRepairScript =
-  unlines
-    [ "set -eu",
-      "psql -d postgres -v ON_ERROR_STOP=1 <<'SQL'",
-      "DO $$",
-      "BEGIN",
-      "  IF NOT EXISTS (SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = '_crunchyrepl') THEN",
-      "    CREATE ROLE _crunchyrepl WITH LOGIN REPLICATION;",
-      "  ELSE",
-      "    ALTER ROLE _crunchyrepl WITH LOGIN REPLICATION;",
-      "  END IF;",
-      "END",
-      "$$;",
-      "SQL"
-    ]
 
 detectDirtyHarborMigrationScript :: String
 detectDirtyHarborMigrationScript =

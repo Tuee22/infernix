@@ -1,7 +1,7 @@
 # Web Portal Surface
 
 **Status**: Authoritative source
-**Referenced by**: [api_surface.md](api_surface.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [api_surface.md](api_surface.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md)
 
 > **Purpose**: Describe the browser-visible routes and PureScript demo SPA behavior exposed
 > through the published routed surface.
@@ -44,15 +44,14 @@ On the real Kind path those routes are published by `Gateway/infernix-edge`,
 
 When the demo UI is enabled, the four operator routes (the Harbor portal, the Harbor API,
 `/pulsar/admin`, and `/pulsar/ws`) are **admin-gated** by
-`SecurityPolicy/infernix-operator-routes-jwt` (Phase 9). The policy validates the same Keycloak JWT
+`SecurityPolicy/infernix-operator-routes-jwt`. The policy validates the same Keycloak JWT
 the SPA uses for `/ws` and `/api/objects` — accepting either the `infernix_operator_token` cookie
 written by the SPA after login / refresh or an `Authorization: Bearer ...` header — **and** requires
 the `infernix-admin` realm role (`authorization: defaultAction: Deny` plus an `allow-infernix-admins`
 rule over the `realm_access.roles` claim). A valid JWT is therefore necessary but not sufficient: a
 self-registered (non-admin) token is denied **403**, and anonymous traffic is denied **401**.
 [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md) is the
-canonical contract for the admin-vs-user split. There is no `/minio/s3` edge route (Phase 3 Sprint
-3.13): MinIO is reachable only through the webapp `/api/objects` proxy.
+canonical contract for the admin-vs-user split. There is no `/minio/s3` edge route: MinIO is reachable only through the webapp `/api/objects` proxy.
 
 ## Durable Context Surface
 
@@ -76,11 +75,9 @@ when the active substrate's generated `.dhall` carries `demo_ui = false`:
   [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md),
   [api_surface.md](api_surface.md), and [../tools/minio.md](../tools/minio.md).
 
-  **Current Status.** Implemented (Phase 7 Sprint 7.25; code-side closed). The webapp object-proxy
-  is the live path, the browser-direct presigned-URL path is gone, and Phase 3 Sprint 3.13 removed
-  the `/minio/s3` route, its SecurityPolicy target, and the `presignPublicEndpoint` field. Wave M
-  closed the browser object-proxy evidence; Phase 7 Sprint 7.28 extends generated artifact object
-  ownership to the same user/context prefix, and Wave N closes the full cohort validation.
+  The webapp object-proxy is the live path, the browser-direct presigned-URL path is gone, and Phase
+  There is no `/minio/s3` route, no SecurityPolicy target for it, and no
+  `presignPublicEndpoint` field.
 
 The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
 cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
@@ -142,7 +139,7 @@ cannot set headers on. The admin cluster-wide monitoring panel reads the admin-g
 `/api/cache/{evict,rebuild}`.
 
 The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. The former
-`MinIO S3` ribbon link is removed (Phase 3 Sprint 3.13): MinIO is no longer browser-reachable;
+`MinIO S3` ribbon link is removed: MinIO is no longer browser-reachable;
 browser object access flows through the webapp's `/api/objects` endpoints
 (see [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
 
@@ -208,12 +205,9 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
 - switching runtime modes changes the generated catalog and selected engine bindings without
   changing the browser route structure
 
-**Current Status.** The webapp-mediated `/api/objects` byte proxy is implemented (Phase 7
-Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3` route): the SPA uploads and downloads
-through the webapp, never a presigned MinIO URL. The per-user `Files` navigational view backed by
-`GET /api/objects/list` + `DELETE /api/objects` is implemented by Phase 7 Sprint 7.26. Wave M closed
-that browser evidence; Phase 7 Sprint 7.28 covers generated artifact object
-ownership, and Wave N closes the full selected `linux-gpu` plus `linux-cpu` cohort validation.
+The webapp-mediated `/api/objects` byte proxy carries every artifact byte: the SPA uploads and
+downloads through the webapp, never a presigned MinIO URL. The per-user `Files` navigational view
+is backed by `GET /api/objects/list` + `DELETE /api/objects`.
 
 ## Cross-References
 

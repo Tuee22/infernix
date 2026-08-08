@@ -80,9 +80,10 @@ import Lens.Family2 (set, view)
 import Network.HTTP.Client (defaultManagerSettings, newManager)
 import Proto.Infernix.Runtime.Inference qualified as ProtoInference
 import Proto.Infernix.Runtime.Inference_Fields qualified as ProtoInferenceFields
-import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory)
+import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDirectory, renamePath)
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath (takeDirectory, takeExtension, (</>))
+import System.IO (IOMode (ReadMode), hFileSize, withFile)
 import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
 
@@ -613,13 +614,76 @@ downloadNativeModelCacheObject modelCacheConfig modelIdValue relativeKey = do
           { Contracts.objectBucket = workerMinioModelsBucket modelCacheConfig,
             Contracts.objectKey = modelIdValue <> "/" <> relativeKey
           }
-  destinationPresent <- doesFileExist destination
-  unless destinationPresent $ do
-    manager <- newManager defaultManagerSettings
-    now <- getCurrentTime
-    payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
-    createDirectoryIfMissing True (takeDirectory destination)
-    ByteString.writeFile destination payload
+  -- The retired form wrote the object straight to its final path and guarded
+  -- the whole download behind `doesFileExist destination`. Neither half is
+  -- safe on its own and together they fail open permanently: `writeFile` is
+  -- not atomic, so a download interrupted by a container restart, an OOM kill,
+  -- or a timeout leaves a short or empty file at the destination — and the
+  -- existence check then treats that wreckage as a populated cache forever,
+  -- because nothing ever re-downloads a path that exists. `.ready` is stamped
+  -- immediately afterwards, so the cache reports itself populated while the
+  -- model file is unusable. Observed on the `linux-cpu` cohort as
+  -- `gguf_init_from_reader: failed to read magic` against a
+  -- `/model-cache/<id>/payload` whose upstream MinIO object was verified
+  -- intact.
+  --
+  -- Staging into a sibling and renaming makes the destination's existence mean
+  -- what the existence check assumes: rename is atomic within one directory, so
+  -- a destination is either absent or complete. An interrupted attempt leaves
+  -- only the sibling, which the next attempt discards.
+  destinationBytes <- observedFileSize destination
+  case destinationBytes of
+    Just presentBytes | presentBytes > 0 -> pure ()
+    _ -> do
+      manager <- newManager defaultManagerSettings
+      now <- getCurrentTime
+      payload <- ObjectUpload.getObjectWithPresignedUrl (workerObjectUploadConfig modelCacheConfig) manager now objectRef
+      createDirectoryIfMissing True (takeDirectory destination)
+      -- An empty object is never a valid model file, and publishing one costs a
+      -- whole cohort cycle to diagnose. Refuse it here, where the bucket, key,
+      -- and destination are all still in hand, rather than letting the engine
+      -- discover it as an unreadable magic number.
+      when (ByteString.null payload) $
+        ioError
+          ( userError
+              ( "native model cache hydration refused an empty object: s3://"
+                  <> Text.unpack (workerMinioModelsBucket modelCacheConfig)
+                  <> "/"
+                  <> Text.unpack modelIdValue
+                  <> "/"
+                  <> Text.unpack relativeKey
+                  <> " -> "
+                  <> destination
+              )
+          )
+      let stagingPath = destination <> ".incoming"
+      ByteString.writeFile stagingPath payload
+      stagedBytes <- observedFileSize stagingPath
+      unless (stagedBytes == Just (ByteString.length payload)) $
+        ioError
+          ( userError
+              ( "native model cache hydration wrote "
+                  <> show stagedBytes
+                  <> " bytes for "
+                  <> destination
+                  <> " but the fetched object is "
+                  <> show (ByteString.length payload)
+                  <> " bytes"
+              )
+          )
+      renamePath stagingPath destination
+
+-- | The size of a regular file, or 'Nothing' when it is absent. Used to tell
+-- an absent cache entry from a present-but-empty one, which the retired
+-- existence check could not distinguish.
+observedFileSize :: FilePath -> IO (Maybe Int)
+observedFileSize path = do
+  present <- doesFileExist path
+  if present
+    then do
+      sizeResult <- try @SomeException (withFile path ReadMode hFileSize)
+      pure (either (const Nothing) (Just . fromIntegral) sizeResult)
+    else pure Nothing
 
 nativeRunnerContractReadyPath :: WorkerModelCacheConfig -> Text -> FilePath
 nativeRunnerContractReadyPath modelCacheConfig modelIdValue =
@@ -784,7 +848,7 @@ nativeRunnerResult model engineBinding request maybeModelCacheConfig exitCode st
                     <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
               }
         )
-    _ ->
+    ExitFailure failureCode ->
       pure
         ( Left
             ErrorResponse
@@ -792,7 +856,11 @@ nativeRunnerResult model engineBinding request maybeModelCacheConfig exitCode st
                 message =
                   "native engine worker failed: "
                     <> engineBindingAdapterId engineBinding
-                    <> Text.pack (stderrSuffix (ByteString8.pack stderrOutput))
+                    <> " (exit code "
+                    <> Text.pack (show failureCode)
+                    <> ")"
+                    <> Text.pack (capturedStreamSuffix "stderr" stderrOutput)
+                    <> Text.pack (capturedStreamSuffix "stdout" stdoutOutput)
               }
         )
 
@@ -1006,6 +1074,31 @@ stderrSuffix stderrOutput =
   case trimWhitespace (ByteString8.unpack stderrOutput) of
     Just message -> "\n" <> message
     Nothing -> ""
+
+-- | Bound on each captured stream republished in a native-runner failure.
+nativeFailureCaptureChars :: Int
+nativeFailureCaptureChars = 4096
+
+-- | Labelled, bounded capture for a failed native runner.
+--
+-- The retired failure message carried exactly one bit — that the child exited
+-- non-zero. It discarded the exit code, discarded stdout entirely, and relied
+-- on stderr, which some runners do not use for diagnostics at all: llama.cpp
+-- b9704 prints its model-load failure to stdout, and under the retired
+-- `--log-disable` argv wrote nothing to either stream. A `linux-cpu` cohort
+-- failure was therefore undiagnosable from the published result, and the
+-- cluster that produced it is gone by the time anyone reads the message.
+--
+-- Truncation is never synthesis: absent output stays absent, and a truncated
+-- slice says so.
+capturedStreamSuffix :: String -> String -> String
+capturedStreamSuffix label captured =
+  case trimWhitespace captured of
+    Nothing -> ""
+    Just message ->
+      case splitAt nativeFailureCaptureChars message of
+        (bounded, []) -> "\n" <> label <> ":\n" <> bounded
+        (bounded, _) -> "\n" <> label <> " (truncated):\n" <> bounded
 
 buildWorkerRequest :: Paths -> Maybe WorkerModelCacheConfig -> ExecutableModel -> InferenceRequest -> ProtoInference.WorkerRequest
 buildWorkerRequest paths maybeModelCacheConfig executableModel request =

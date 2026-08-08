@@ -1,6 +1,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications #-}
 
 -- | Phase 1 Sprint 1.11 — typed Haskell record for the
@@ -14,6 +15,8 @@ module Infernix.HostConfig
   ( HostConfig (..),
     HostToolPaths (..),
     HostFilesystem (..),
+    HostMemoryFacts (..),
+    unmeasuredHostMemoryFacts,
     HostExecutionContext (..),
     DhallRetryPolicy (..),
     DhallBoundedRetry (..),
@@ -104,6 +107,38 @@ data HostToolPaths = HostToolPaths
 
 instance Dhall.FromDhall HostToolPaths where
   autoWith _ = Dhall.genericAutoWith hostInterpretOptions
+
+-- | Phase 1 Sprint 1.21 — the measured host memory facts the bounded-build
+-- ceiling is derived from.
+--
+-- Both quantities are observations, never declarations.
+-- 'Infernix.HostMemory.observeHostMemoryFacts' reads @\/proc\/meminfo@ on Linux
+-- and @sysctl -n hw.memsize@ on Darwin for 'hostPhysicalMemoryMib', and
+-- intersects the Linux figure with the cgroup v2 maximum in force for
+-- 'hostEffectiveMemoryMib' — inside the outer launcher container the physical
+-- figure is the whole machine's and the container's own limit is the one a
+-- build actually gets.
+--
+-- 'unmeasuredHostMemoryFacts' is the shape the pure manifest defaults carry
+-- before measurement. It is zero on both fields, and every consumer rejects
+-- zero by name rather than substituting a guess, so a manifest that was never
+-- measured cannot fund a build ceiling.
+data HostMemoryFacts = HostMemoryFacts
+  { hostPhysicalMemoryMib :: Natural,
+    hostEffectiveMemoryMib :: Natural
+  }
+  deriving (Eq, Show, Generic)
+
+instance Dhall.FromDhall HostMemoryFacts where
+  autoWith _ = Dhall.genericAutoWith hostInterpretOptions
+
+-- | The unmeasured manifest shape. See 'HostMemoryFacts'.
+unmeasuredHostMemoryFacts :: HostMemoryFacts
+unmeasuredHostMemoryFacts =
+  HostMemoryFacts
+    { hostPhysicalMemoryMib = 0,
+      hostEffectiveMemoryMib = 0
+    }
 
 -- | Filesystem conventions the supported flow assumes.
 data HostFilesystem = HostFilesystem
@@ -211,6 +246,7 @@ data HostConfig = HostConfig
     hostArchitecture :: Text,
     hostToolPaths :: HostToolPaths,
     hostFilesystem :: HostFilesystem,
+    hostMemory :: HostMemoryFacts,
     hostCommandPolicies :: DhallCommandPolicies,
     hostPlaywrightHost :: Text,
     hostControlPlaneContext :: Text
@@ -244,6 +280,7 @@ hostFieldName rawFieldName =
     Just "Architecture" -> "hostArchitecture"
     Just "ToolPaths" -> "toolPaths"
     Just "Filesystem" -> "filesystem"
+    Just "Memory" -> "memory"
     Just "CommandPolicies" -> "commandPolicies"
     Just "PlaywrightHost" -> "playwrightHost"
     Just "ControlPlaneContext" -> "controlPlaneContext"
@@ -346,16 +383,57 @@ decodeHostConfigFile :: FilePath -> IO HostConfig
 decodeHostConfigFile filePath = do
   decoded <- try (Dhall.inputFile Dhall.auto filePath :: IO HostConfig)
   case decoded of
-    Left err ->
+    Left err -> do
+      -- Phase 1 Sprint 1.21: a manifest written by a pre-measurement binary
+      -- fails the schema with a raw structural Dhall type error that says
+      -- nothing about what to do. No `.dhall` is version-controlled, so a
+      -- payload missing a current field is always a stale file left by an
+      -- older binary and the fix is always to regenerate it. Name the retired
+      -- shape and the command before the generic diagnostic.
+      retiredShape <- classifyRetiredHostManifestShape filePath
       ioError
         ( userError
             ( "invalid generated host manifest Dhall at "
                 <> filePath
                 <> ":\n"
+                <> maybe "" (<> "\n") retiredShape
                 <> displayException (err :: SomeException)
             )
         )
     Right value -> pure value
+
+-- | Recognise a manifest that predates a current record and name it.
+--
+-- The check reads the file as text and looks only for the /absence/ of a
+-- current field, so it cannot misfire on a payload this binary wrote.
+classifyRetiredHostManifestShape :: FilePath -> IO (Maybe String)
+classifyRetiredHostManifestShape filePath = do
+  contents <- try (readFile filePath)
+  pure $
+    case contents of
+      Left (_ :: SomeException) -> Nothing
+      Right payload ->
+        case [description | (marker, description) <- retiredHostManifestMarkers, not (marker `Text.isInfixOf` Text.pack payload)] of
+          [] -> Nothing
+          description : _ ->
+            Just
+              ( "this file predates the "
+                  <> description
+                  <> ". No `.dhall` is version-controlled and startup fails"
+                  <> " closed on a manifest it cannot decode rather than"
+                  <> " misclassifying the execution context: delete this file"
+                  <> " and re-run `infernix init` to regenerate it with the"
+                  <> " current binary."
+              )
+
+-- | Current manifest records whose absence identifies a stale payload.
+retiredHostManifestMarkers :: [(Text, String)]
+retiredHostManifestMarkers =
+  [ ( "memory =",
+      "measured `memory` record (`physicalMemoryMib` / `effectiveMemoryMib`) "
+        <> "that the bounded host build ceiling is derived from"
+    )
+  ]
 
 -- | Serialize the typed record back to the Dhall source form.
 encodeHostConfig :: HostConfig -> LazyChar8.ByteString
@@ -367,6 +445,7 @@ renderHostConfig hostConfig =
   let HostConfig {..} = hostConfig
       HostToolPaths {..} = hostToolPaths
       HostFilesystem {..} = hostFilesystem
+      HostMemoryFacts {..} = hostMemory
       ctxRender = case hostExecutionContext of
         AppleHostNative -> "< AppleHostNative | LinuxOuterContainer >.AppleHostNative"
         LinuxOuterContainer -> "< AppleHostNative | LinuxOuterContainer >.LinuxOuterContainer"
@@ -428,6 +507,12 @@ renderHostConfig hostConfig =
             <> renderText "homeDirectory" hostHomeDirectory
             <> renderText "kindRoot" hostKindRoot
             <> "  }",
+          ", memory =",
+          "  { physicalMemoryMib = "
+            <> show hostPhysicalMemoryMib
+            <> "\n  , effectiveMemoryMib = "
+            <> show hostEffectiveMemoryMib
+            <> "\n  }",
           ", commandPolicies =",
           renderDhallCommandPolicies hostCommandPolicies,
           ", playwrightHost = " <> showT hostPlaywrightHost,
@@ -587,6 +672,7 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostHomeDirectory = homeDir,
             hostKindRoot = "/workspace/.data/runtime/kind"
           },
+      hostMemory = unmeasuredHostMemoryFacts,
       hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "127.0.0.1",
       hostControlPlaneContext = "outer-container"
@@ -656,6 +742,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostHomeDirectory = homeDir,
             hostKindRoot = repoRoot <> "/.data/runtime/kind"
           },
+      hostMemory = unmeasuredHostMemoryFacts,
       hostCommandPolicies = defaultDhallCommandPolicies,
       hostPlaywrightHost = "host.docker.internal",
       hostControlPlaneContext = "host-native"

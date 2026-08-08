@@ -1278,56 +1278,14 @@ test("browser artifact upload covers preview media PDF and download-only grants"
     (frame) => frame.tag === "ServerConversationPatch" && JSON.stringify(frame).includes(postReconnectPrompt),
   );
 
-  const podReplacementSentStartIndex = wsFrames.sent.length;
-  const podReplacementReceivedStartIndex = wsFrames.received.length;
-  await replaceDemoPods(infernixFixture);
-  await waitForSentFrameAfter(wsFrames, podReplacementSentStartIndex, (frame) => frame.tag === "ClientHello", 120000);
-  await waitForSentFrameAfter(
-    wsFrames,
-    podReplacementSentStartIndex,
-    (frame) => frame.tag === "ClientSubscribeContext" && frame.clientSubscribeContextId === subscribeFrame.clientSubscribeContextId,
-    120000,
-  );
-  await waitForReceivedFrameAfter(
-    wsFrames,
-    podReplacementReceivedStartIndex,
-    (frame) => frame.tag === "ServerConversationSnapshot" && JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId),
-    120000,
-  );
-
-  const postPodReplacementPrompt = `continue after frontend pod replacement ${randomUUID()}`;
-  const postPodReplacementSentStartIndex = wsFrames.sent.length;
-  const postPodReplacementReceivedStartIndex = wsFrames.received.length;
-  await fillDraftAndWaitForUpdate(
-    page,
-    wsFrames,
-    postPodReplacementSentStartIndex,
-    subscribeFrame.clientSubscribeContextId,
-    postPodReplacementPrompt,
-    120000,
-  );
-  await waitForReceivedFrameAfter(
-    wsFrames,
-    postPodReplacementReceivedStartIndex,
-    (frame) =>
-      frame.tag === "ServerDraftMapPatch" &&
-      JSON.stringify(frame).includes(subscribeFrame.clientSubscribeContextId) &&
-      JSON.stringify(frame).includes(postPodReplacementPrompt),
-    120000,
-  );
-  await expect(page.locator("textarea[name='prompt']")).toHaveValue(postPodReplacementPrompt, { timeout: 30000 });
-  await page.locator("form[data-role='chat-draft-editor']").evaluate((form) => form.requestSubmit());
-  await waitForSentFrameAfter(
-    wsFrames,
-    postPodReplacementSentStartIndex,
-    (frame) => frame.tag === "ClientSubmitPrompt" && frame.clientSubmitPromptPayload?.promptText === postPodReplacementPrompt,
-  );
-  await waitForReceivedFrameAfter(
-    wsFrames,
-    postPodReplacementReceivedStartIndex,
-    (frame) => frame.tag === "ServerConversationPatch" && JSON.stringify(frame).includes(postPodReplacementPrompt),
-    120000,
-  );
+  // Phase 6 Sprint 6.47 retired the frontend pod-replacement section that ran
+  // here. It killed the demo pods and asserted that the browser reconnected,
+  // resubscribed, and continued submitting — a recovery property of a replicated
+  // frontend that no longer exists. One process per role per machine means a
+  // killed demo pod is an outage until it restarts, not a failover. The
+  // WebSocket reconnect coverage immediately above survives: it drops the
+  // socket, not the pod, and reconnect is a client property rather than an HA
+  // one.
 
   const reloadDraftText = `restore this draft after reload ${randomUUID()}`;
   const reloadDraftSentStartIndex = wsFrames.sent.length;
@@ -2212,10 +2170,6 @@ async function waitForFrameAfter(frames, startIndex, predicate, direction, timeo
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(`Timed out waiting for ${direction} WebSocket frame after index ${startIndex}`);
-}
-
-async function replaceDemoPods(fixture) {
-  runInfernixInternal(fixture, ["playwright", "replace-demo-pods"], 240000);
 }
 
 async function fetchDemoConfig(request, baseUrl) {

@@ -54,7 +54,6 @@ data Command
   | InternalGeneratePursContractsCommand FilePath
   | InternalPulsarRoundTripCommand FilePath String String
   | InternalPlaywrightPrepareEngineCommand String
-  | InternalPlaywrightReplaceDemoPodsCommand
   deriving (Eq, Show)
 
 data CommandFamily = CommandFamily
@@ -393,11 +392,7 @@ internalCommandFamily =
                 ["internal", "playwright", "prepare-engine", modelIdValue] ->
                   Just (InternalPlaywrightPrepareEngineCommand modelIdValue)
                 _ -> Nothing
-            },
-          simpleCommand
-            "internal playwright replace-demo-pods"
-            "replaces the fixed demo workload and waits for distinct ready pods under harness ownership"
-            InternalPlaywrightReplaceDemoPodsCommand
+            }
         ]
     }
 

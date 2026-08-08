@@ -4,6 +4,8 @@ module Infernix.EngineRouting
   ( engineMemberRequestTopics,
     engineMemberPinnedTopicForMode,
     enginePoolTopicForMode,
+    requestTopicsForMode,
+    resultTopicForMode,
   )
 where
 
@@ -48,6 +50,21 @@ engineMemberPinnedTopicForMode runtimeMode memberId modelIdValue =
     <> topicSegment memberId
     <> ".model."
     <> topicSegment modelIdValue
+
+-- | The coordinator request topic and the shared result topic are functions of
+-- the runtime mode alone.
+--
+-- Phase 8 Sprint 8.10: they live here, beside the pool and member topics, so the
+-- generated wire can drop its copies. A generated field that must equal what the
+-- binary already derives is a permanent illegal-state generator; deriving it is
+-- the only shape with no disagreement to detect.
+requestTopicsForMode :: RuntimeMode -> [Text]
+requestTopicsForMode runtimeMode =
+  [defaultPulsarTopicPrefix <> "inference.request." <> runtimeModeId runtimeMode]
+
+resultTopicForMode :: RuntimeMode -> Text
+resultTopicForMode runtimeMode =
+  defaultPulsarTopicPrefix <> "inference.result." <> runtimeModeId runtimeMode
 
 defaultPulsarTopicPrefix :: Text
 defaultPulsarTopicPrefix = "persistent://infernix/demo/"

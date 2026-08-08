@@ -133,9 +133,11 @@ runDemoConfigParserProperties paths = do
           )
           label
     )
+    -- Phase 4 Sprint 4.34 removed the zero-capacity row: a zero-capacity
+    -- partition is no longer constructible, because a daemon that starts and
+    -- can answer nothing is a worse failure than one that refuses to start.
     [ ("the private validator accepts a fitting host budget", 65536),
-      ("the private validator leaves per-model admission to the compiler", 512),
-      ("the private validator preserves an explicitly enforced zero capacity", 0)
+      ("the private validator leaves per-model admission to the compiler", 512)
     ]
   putStrLn "private demo-config parser properties passed"
 

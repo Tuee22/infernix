@@ -29,6 +29,8 @@ import Dhall qualified
 import Dhall.Core qualified as DhallCore
 import GHC.Generics (Generic)
 import Infernix.DhallSchema.Reflection (renderDecoderExpected)
+import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
+import Infernix.EngineRouting (requestTopicsForMode, resultTopicForMode)
 import Infernix.ExecutionPlan (CompiledRuntimePlan, ConfigErrors, compileRuntimePlan)
 import Infernix.ExecutionPlan.Internal (RawRuntimeConfig (..))
 import Infernix.Types
@@ -101,10 +103,11 @@ classifyRetiredSubstrateShape filePath = do
               ( "this file carries the retired "
                   <> description
                   <> ". Every enum-like choice in the generated execution-plan"
-                  <> " language is now a Dhall union rather than a Text tag, and no"
-                  <> " `.dhall` is version-controlled: delete it and re-run"
-                  <> " `infernix init` (or `infernix test init` for the harness input)"
-                  <> " to regenerate it with the current binary."
+                  <> " language is a Dhall union rather than a Text tag, and every"
+                  <> " field the binary can derive has left the wire. No `.dhall` is"
+                  <> " version-controlled: delete it and re-run `infernix init`"
+                  <> " (or `infernix test init` for the harness input) to regenerate"
+                  <> " it with the current binary."
               )
 
 retiredSubstrateMarkers :: [(Text, String)]
@@ -126,7 +129,27 @@ retiredSubstrateMarkers =
     ("pulsarConnectionMode = \"", "text-tagged `pulsarConnectionMode` field"),
     ("adapterType = \"", "text-tagged engine-binding `adapterType` field"),
     ("fieldType = \"", "text-tagged request-shape `fieldType` field"),
-    ("edgePort = ", "retired generated `edgePort` field, which no consumer ever read")
+    ("edgePort = ", "generated `edgePort` field, which no consumer ever read"),
+    -- Phase 8 Sprint 8.10 deleted every field that was a second copy of a fact
+    -- the binary derives. Each one gets its own marker so a stale file names the
+    -- field it still carries rather than reporting a bare Dhall type error at
+    -- whichever record the decoder happened to reach first. The markers match
+    -- the retired spelling together with its `= ` so a field name that merely
+    -- appears inside a topic string cannot match.
+    ("request_topics = ", "generated `request_topics` field, now derived from the runtime mode"),
+    ("result_topic = ", "generated `result_topic` field, now derived from the runtime mode"),
+    ("engineDaemons = ", "generated `engineDaemons` list, now derived from the engine members and the pool graph"),
+    ("engines = ", "generated `engines` list, now derived from the models' selected engines"),
+    -- The top-level `runtimeMode` is still on the wire and renders as
+    -- `{ runtimeMode = `, so the retired per-entity copies are matched by their
+    -- leading `, ` separator instead.
+    (", runtimeMode = ", "per-entity `runtimeMode` field, now derived from the top-level runtime mode"),
+    ("runtimeLane = <", "per-model `runtimeLane` field, now derived from the runtime mode and `requiresGpu`"),
+    ("location = ", "per-daemon or per-member `location` field, now derived from the role and the runtime mode"),
+    ("maxInflightPerMember = ", "per-pool `maxInflightPerMember` knob, which only ever held one supported value"),
+    ("resource = <", "substrate-limit `resource` field, now derived from the runtime mode and which half of the budget the limit occupies"),
+    ("source = <", "substrate-limit `source` field, now derived alongside its resource"),
+    ("headroomMib = ", "host-partition `headroomMib` term, which only ever held the binary's own minimum")
   ]
 
 decodeCompiledRuntimePlanFile :: FilePath -> IO (Either ConfigErrors CompiledRuntimePlan)
@@ -150,14 +173,10 @@ data DhallDemoConfig = DhallDemoConfig
     dhallDaemonRole :: DhallDaemonRole,
     dhallCoordinator :: DhallDaemonConfig,
     dhallWebapp :: DhallDaemonConfig,
-    dhallEngineDaemons :: [DhallDaemonConfig],
     dhallEnginePools :: [DhallEnginePool],
     dhallEngineMembers :: [DhallEngineMember],
-    dhallConfigRequestTopics :: [Text],
-    dhallConfigResultTopic :: Text,
     dhallModelsBucket :: Text,
     dhallModelBootstrapTopic :: Text,
-    dhallEngines :: [DhallEngineBinding],
     dhallModels :: [DhallModelDescriptor],
     dhallInferenceMemoryBudget :: DhallInferenceMemoryBudget
   }
@@ -166,12 +185,13 @@ data DhallDemoConfig = DhallDemoConfig
 instance Dhall.FromDhall DhallDemoConfig where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
+-- | Phase 8 Sprint 8.10: the engine daemons left the wire entirely and the two
+-- in-cluster daemons kept only what is theirs to declare. Location and topics
+-- are functions of the runtime mode and the pool graph, so they are derived
+-- rather than mirrored.
 data DhallDaemonConfig = DhallDaemonConfig
   { dhallRole :: DhallDaemonRole,
-    dhallLocation :: Text,
     dhallMemberId :: Maybe Text,
-    dhallDaemonRequestTopics :: [Text],
-    dhallDaemonResultTopic :: Text,
     dhallPulsarConnectionMode :: DhallPulsarConnectionMode
   }
   deriving (Generic)
@@ -181,11 +201,9 @@ instance Dhall.FromDhall DhallDaemonConfig where
 
 data DhallEnginePool = DhallEnginePool
   { dhallPoolId :: Text,
-    dhallPoolRuntimeMode :: DhallRuntimeMode,
     dhallPoolModelIds :: [Text],
     dhallPoolMemberIds :: [Text],
-    dhallPoolSubscriptionType :: DhallConsumerSubscription,
-    dhallMaxInflightPerMember :: Natural
+    dhallPoolSubscriptionType :: DhallConsumerSubscription
   }
   deriving (Generic)
 
@@ -194,28 +212,11 @@ instance Dhall.FromDhall DhallEnginePool where
 
 data DhallEngineMember = DhallEngineMember
   { dhallMemberConfigId :: Text,
-    dhallMemberRuntimeMode :: DhallRuntimeMode,
-    dhallMemberLocation :: Text,
     dhallMemberPoolIds :: [Text]
   }
   deriving (Generic)
 
 instance Dhall.FromDhall DhallEngineMember where
-  autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
-
-data DhallEngineBinding = DhallEngineBinding
-  { dhallEngine :: Text,
-    dhallAdapterId :: Text,
-    dhallAdapterType :: DhallEngineAdapterType,
-    dhallAdapterLocator :: Text,
-    dhallAdapterEntrypoint :: Text,
-    dhallSetupEntrypoint :: Text,
-    dhallProjectDirectory :: Text,
-    dhallPythonNative :: Bool
-  }
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallEngineBinding where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
 data DhallModelDescriptor = DhallModelDescriptor
@@ -229,8 +230,6 @@ data DhallModelDescriptor = DhallModelDescriptor
     dhallDownloadUrl :: Text,
     dhallSelectedEngine :: Text,
     dhallRequestShape :: [DhallRequestField],
-    dhallModelRuntimeMode :: DhallRuntimeMode,
-    dhallRuntimeLane :: DhallRuntimeLane,
     dhallRequiresGpu :: Bool,
     dhallNotes :: Text,
     dhallModelRamFootprintMib :: Natural
@@ -251,20 +250,24 @@ data DhallInferenceMemoryBudget
 
 instance Dhall.FromDhall DhallInferenceMemoryBudget
 
+-- | Phase 8 Sprint 8.10: the headroom term left the wire. Every partition this
+-- binary has ever generated held back exactly 'minHostHeadroomMib', so the field
+-- was a second copy of a constant the binary owns.
 data DhallHostMemoryBudget = DhallHostMemoryBudget
   { dhallBudgetPhysicalMib :: Natural,
-    dhallBudgetVmReserveMib :: Natural,
-    dhallBudgetHeadroomMib :: Natural
+    dhallBudgetVmReserveMib :: Natural
   }
   deriving (Generic)
 
 instance Dhall.FromDhall DhallHostMemoryBudget where
   autoWith _ = Dhall.genericAutoWith dhallInterpretOptions
 
-data DhallSubstrateMemoryBudget = DhallSubstrateMemoryBudget
-  { dhallBudgetResource :: DhallInferenceMemoryResource,
-    dhallBudgetSource :: DhallPodMemoryLimitSource,
-    dhallBudgetLimitMib :: Natural
+-- | Phase 8 Sprint 8.10: a substrate limit carries only its quantity. Which
+-- physical resource it bounds and which policy set it are decided by the runtime
+-- mode and by which half of the budget the limit occupies, so a wire copy could
+-- only ever disagree with the derivation.
+newtype DhallSubstrateMemoryBudget = DhallSubstrateMemoryBudget
+  { dhallBudgetLimitMib :: Natural
   }
   deriving (Generic)
 
@@ -446,41 +449,6 @@ renderPulsarConnectionMode :: PulsarConnectionMode -> String
 renderPulsarConnectionMode =
   dhallEnumValue pulsarConnectionModeUnionType . pulsarConnectionModeAlternative
 
-data DhallRuntimeLane
-  = DhallRuntimeLaneAppleSiliconHost
-  | DhallRuntimeLaneKindLinuxCpu
-  | DhallRuntimeLaneKindLinuxGpuGpu
-  | DhallRuntimeLaneKindLinuxGpuShared
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallRuntimeLane where
-  autoWith _ = Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallRuntimeLane")
-
-runtimeLaneFromDhall :: DhallRuntimeLane -> RuntimeLane
-runtimeLaneFromDhall rawLane = case rawLane of
-  DhallRuntimeLaneAppleSiliconHost -> AppleSiliconHost
-  DhallRuntimeLaneKindLinuxCpu -> KindLinuxCpu
-  DhallRuntimeLaneKindLinuxGpuGpu -> KindLinuxGpuGpu
-  DhallRuntimeLaneKindLinuxGpuShared -> KindLinuxGpuShared
-
-runtimeLaneAlternative :: RuntimeLane -> String
-runtimeLaneAlternative lane = case lane of
-  AppleSiliconHost -> "AppleSiliconHost"
-  KindLinuxCpu -> "KindLinuxCpu"
-  KindLinuxGpuGpu -> "KindLinuxGpuGpu"
-  KindLinuxGpuShared -> "KindLinuxGpuShared"
-
-runtimeLaneUnionType :: String
-runtimeLaneUnionType =
-  dhallEnumUnionType
-    ( map
-        runtimeLaneAlternative
-        [AppleSiliconHost, KindLinuxCpu, KindLinuxGpuGpu, KindLinuxGpuShared]
-    )
-
-renderRuntimeLane :: RuntimeLane -> String
-renderRuntimeLane = dhallEnumValue runtimeLaneUnionType . runtimeLaneAlternative
-
 -- | The one mirror that cannot use the generic derivation.
 --
 -- @genericAutoWith@ dispatches on the datatype's GHC-Generics shape, and a
@@ -513,95 +481,6 @@ renderRequestFieldType :: RequestFieldType -> String
 renderRequestFieldType =
   dhallEnumValue requestFieldTypeUnionType . requestFieldTypeAlternative
 
-data DhallEngineAdapterType
-  = DhallEngineAdapterTypeNativeProcessRunner
-  | DhallEngineAdapterTypePythonStdio
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallEngineAdapterType where
-  autoWith _ = Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallEngineAdapterType")
-
-engineAdapterTypeFromDhall :: DhallEngineAdapterType -> EngineAdapterType
-engineAdapterTypeFromDhall rawAdapterType = case rawAdapterType of
-  DhallEngineAdapterTypeNativeProcessRunner -> NativeProcessRunner
-  DhallEngineAdapterTypePythonStdio -> PythonStdio
-
-engineAdapterTypeAlternative :: EngineAdapterType -> String
-engineAdapterTypeAlternative adapterType = case adapterType of
-  NativeProcessRunner -> "NativeProcessRunner"
-  PythonStdio -> "PythonStdio"
-
-engineAdapterTypeUnionType :: String
-engineAdapterTypeUnionType =
-  dhallEnumUnionType
-    (map engineAdapterTypeAlternative [NativeProcessRunner, PythonStdio])
-
-renderEngineAdapterType :: EngineAdapterType -> String
-renderEngineAdapterType =
-  dhallEnumValue engineAdapterTypeUnionType . engineAdapterTypeAlternative
-
-data DhallInferenceMemoryResource
-  = DhallInferenceMemoryResourceUnifiedHostRam
-  | DhallInferenceMemoryResourcePodRam
-  | DhallInferenceMemoryResourceGpuVram
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallInferenceMemoryResource where
-  autoWith _ =
-    Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallInferenceMemoryResource")
-
-inferenceMemoryResourceFromDhall :: DhallInferenceMemoryResource -> InferenceMemoryResource
-inferenceMemoryResourceFromDhall rawResource = case rawResource of
-  DhallInferenceMemoryResourceUnifiedHostRam -> UnifiedHostRam
-  DhallInferenceMemoryResourcePodRam -> PodRam
-  DhallInferenceMemoryResourceGpuVram -> GpuVram
-
-inferenceMemoryResourceAlternative :: InferenceMemoryResource -> String
-inferenceMemoryResourceAlternative resource = case resource of
-  UnifiedHostRam -> "UnifiedHostRam"
-  PodRam -> "PodRam"
-  GpuVram -> "GpuVram"
-
-inferenceMemoryResourceUnionType :: String
-inferenceMemoryResourceUnionType =
-  dhallEnumUnionType
-    (map inferenceMemoryResourceAlternative [UnifiedHostRam, PodRam, GpuVram])
-
-renderInferenceMemoryResource :: InferenceMemoryResource -> String
-renderInferenceMemoryResource =
-  dhallEnumValue inferenceMemoryResourceUnionType . inferenceMemoryResourceAlternative
-
-data DhallPodMemoryLimitSource
-  = DhallPodMemoryLimitSourceClusterEnginePodMemoryLimit
-  | DhallPodMemoryLimitSourceLinuxGpuVramBudget
-  deriving (Generic)
-
-instance Dhall.FromDhall DhallPodMemoryLimitSource where
-  autoWith _ =
-    Dhall.genericAutoWith (dhallEnumInterpretOptions "DhallPodMemoryLimitSource")
-
-podMemoryLimitSourceFromDhall :: DhallPodMemoryLimitSource -> PodMemoryLimitSource
-podMemoryLimitSourceFromDhall rawSource = case rawSource of
-  DhallPodMemoryLimitSourceClusterEnginePodMemoryLimit -> ClusterEnginePodMemoryLimit
-  DhallPodMemoryLimitSourceLinuxGpuVramBudget -> LinuxGpuVramBudget
-
-podMemoryLimitSourceAlternative :: PodMemoryLimitSource -> String
-podMemoryLimitSourceAlternative limitSource = case limitSource of
-  ClusterEnginePodMemoryLimit -> "ClusterEnginePodMemoryLimit"
-  LinuxGpuVramBudget -> "LinuxGpuVramBudget"
-
-podMemoryLimitSourceUnionType :: String
-podMemoryLimitSourceUnionType =
-  dhallEnumUnionType
-    ( map
-        podMemoryLimitSourceAlternative
-        [ClusterEnginePodMemoryLimit, LinuxGpuVramBudget]
-    )
-
-renderPodMemoryLimitSource :: PodMemoryLimitSource -> String
-renderPodMemoryLimitSource =
-  dhallEnumValue podMemoryLimitSourceUnionType . podMemoryLimitSourceAlternative
-
 -- | Convert a wire 'Natural' into the platform 'Int' the domain types use.
 --
 -- Phase 8 Sprint 8.9 moved every generated quantity from Dhall @Integer@ to
@@ -630,36 +509,23 @@ dhallFieldSuffixName :: Text -> Text
 dhallFieldSuffixName suffix =
   case suffix of
     "ConfigRuntimeMode" -> "runtimeMode"
-    "ConfigRequestTopics" -> "request_topics"
-    "ConfigResultTopic" -> "result_topic"
-    "DaemonRequestTopics" -> "request_topics"
-    "DaemonResultTopic" -> "result_topic"
-    "ModelRuntimeMode" -> "runtimeMode"
     "DemoUi" -> "demo_ui"
-    "RequestTopics" -> "request_topics"
-    "ResultTopic" -> "result_topic"
     "MemberId" -> "memberId"
     "ModelsBucket" -> "models_bucket"
     "ModelBootstrapTopic" -> "model_bootstrap_topic"
     "InferenceMemoryBudget" -> "inferenceMemoryBudget"
-    "BudgetResource" -> "resource"
-    "BudgetSource" -> "source"
     "BudgetPhysicalMib" -> "physicalMib"
     "BudgetVmReserveMib" -> "vmReserveMib"
-    "BudgetHeadroomMib" -> "headroomMib"
     "BudgetLimitMib" -> "limitMib"
     "BudgetPodLimit" -> "podLimit"
     "BudgetVramLimit" -> "vramLimit"
     "EnginePools" -> "enginePools"
     "EngineMembers" -> "engineMembers"
     "PoolId" -> "id"
-    "PoolRuntimeMode" -> "runtimeMode"
     "PoolModelIds" -> "models"
     "PoolMemberIds" -> "members"
     "PoolSubscriptionType" -> "subscription"
     "MemberConfigId" -> "id"
-    "MemberRuntimeMode" -> "runtimeMode"
-    "MemberLocation" -> "location"
     "MemberPoolIds" -> "pools"
     other -> lowerInitial other
 
@@ -669,22 +535,35 @@ lowerInitial value =
     Nothing -> value
     Just (firstCharacter, rest) -> Text.cons (toLower firstCharacter) rest
 
+-- | Rebuild the domain configuration from the reduced wire.
+--
+-- Phase 8 Sprint 8.10: every field this reconstructs was previously carried on
+-- the wire as a second copy of a fact the binary already derives. Dhall record
+-- types are not dependent — a field's type can never mention a sibling's value —
+-- so any pair of fields that must agree is a permanent illegal-state generator.
+-- Deriving them here is the only shape with no disagreement left to detect,
+-- which is why the equality checks that existed to catch such a disagreement are
+-- retired with the fields rather than before them.
 demoConfigFromDhall :: DhallDemoConfig -> Either String DemoConfig
 demoConfigFromDhall rawConfig = do
   let runtimeModeValue = runtimeModeFromDhall (dhallConfigRuntimeMode rawConfig)
       activeDaemonRoleValue = daemonRoleFromDhall (dhallDaemonRole rawConfig)
-  coordinatorDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallCoordinator rawConfig)
-  webappDaemonValue <- withDefaultConsumerSubscriptionType runtimeModeValue <$> daemonConfigFromDhall (dhallWebapp rawConfig)
-  parsedEngineDaemonValues <- traverse (fmap (withDefaultConsumerSubscriptionType runtimeModeValue) . daemonConfigFromDhall) (dhallEngineDaemons rawConfig)
-  enginePoolValues <- traverse enginePoolFromDhall (dhallEnginePools rawConfig)
-  engineMemberValues <- traverse engineMemberFromDhall (dhallEngineMembers rawConfig)
-  engineValues <- traverse engineBindingFromDhall (dhallEngines rawConfig)
-  modelValues <- traverse modelDescriptorFromDhall (dhallModels rawConfig)
-  memoryBudgetValue <- inferenceMemoryBudgetFromDhall (dhallInferenceMemoryBudget rawConfig)
+      derivedRequestTopics = requestTopicsForMode runtimeModeValue
+      derivedResultTopic = resultTopicForMode runtimeModeValue
+  coordinatorDaemonValue <-
+    withDefaultConsumerSubscriptionType runtimeModeValue
+      <$> clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic (dhallCoordinator rawConfig)
+  webappDaemonValue <-
+    withDefaultConsumerSubscriptionType runtimeModeValue
+      <$> clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic (dhallWebapp rawConfig)
+  enginePoolValues <- traverse (enginePoolFromDhall runtimeModeValue) (dhallEnginePools rawConfig)
+  engineMemberValues <- traverse (engineMemberFromDhall runtimeModeValue) (dhallEngineMembers rawConfig)
+  modelValues <- traverse (modelDescriptorFromDhall runtimeModeValue) (dhallModels rawConfig)
+  memoryBudgetValue <-
+    inferenceMemoryBudgetFromDhall runtimeModeValue (dhallInferenceMemoryBudget rawConfig)
   let engineDaemonValues =
-        if null parsedEngineDaemonValues
-          then deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues (dhallConfigResultTopic rawConfig)
-          else parsedEngineDaemonValues
+        deriveEngineDaemonConfigs runtimeModeValue enginePoolValues engineMemberValues derivedResultTopic
+      engineValues = deriveEngineBindings runtimeModeValue modelValues
   pure
     DemoConfig
       { configRuntimeMode = runtimeModeValue,
@@ -698,8 +577,8 @@ demoConfigFromDhall rawConfig = do
         engineDaemons = engineDaemonValues,
         enginePools = enginePoolValues,
         engineMembers = engineMemberValues,
-        requestTopics = dhallConfigRequestTopics rawConfig,
-        resultTopic = dhallConfigResultTopic rawConfig,
+        requestTopics = derivedRequestTopics,
+        resultTopic = derivedResultTopic,
         modelsBucket = dhallModelsBucket rawConfig,
         modelBootstrapTopic = dhallModelBootstrapTopic rawConfig,
         engines = engineValues,
@@ -707,29 +586,72 @@ demoConfigFromDhall rawConfig = do
         inferenceMemoryBudget = memoryBudgetValue
       }
 
-inferenceMemoryBudgetFromDhall :: DhallInferenceMemoryBudget -> Either String InferenceMemoryBudget
-inferenceMemoryBudgetFromDhall rawBudget =
+-- | The engine bindings a model set implies. A selected engine with no canonical
+-- binding produces no entry, so the compiler still reports it as
+-- @UnknownSelectedEngine@ against the model that named it — which is the only
+-- fact a generated engine list could ever have added.
+deriveEngineBindings :: RuntimeMode -> [ModelDescriptor] -> [EngineBinding]
+deriveEngineBindings runtimeModeValue modelValues =
+  nubOn
+    engineBindingName
+    [ binding
+    | model <- modelValues,
+      Just binding <-
+        [canonicalEngineBindingForSelectedEngine runtimeModeValue (selectedEngine model)]
+    ]
+
+nubOn :: (Eq key) => (value -> key) -> [value] -> [value]
+nubOn keyOf = go []
+  where
+    go _ [] = []
+    go seen (value : rest)
+      | keyOf value `elem` seen = go seen rest
+      | otherwise = value : go (keyOf value : seen) rest
+
+inferenceMemoryBudgetFromDhall ::
+  RuntimeMode ->
+  DhallInferenceMemoryBudget ->
+  Either String InferenceMemoryBudget
+inferenceMemoryBudgetFromDhall runtimeModeValue rawBudget =
   case rawBudget of
     HostEnforced hostBudget -> do
       physicalMib <-
         naturalToInt "inferenceMemoryBudget.physicalMib" (dhallBudgetPhysicalMib hostBudget)
       vmReserveMib <-
         naturalToInt "inferenceMemoryBudget.vmReserveMib" (dhallBudgetVmReserveMib hostBudget)
-      headroomMib <-
-        naturalToInt "inferenceMemoryBudget.headroomMib" (dhallBudgetHeadroomMib hostBudget)
-      HostEnforcedBudget <$> mkHostMemoryPartition physicalMib vmReserveMib headroomMib
+      HostEnforcedBudget <$> mkHostMemoryPartition physicalMib vmReserveMib minHostHeadroomMib
     SubstrateEnforced substrateBudget ->
-      SubstrateEnforcedBudget <$> podMemoryLimitFromDhall "inferenceMemoryBudget" substrateBudget
+      SubstrateEnforcedBudget
+        <$> podMemoryLimitFromDhall
+          "inferenceMemoryBudget"
+          PodRam
+          (residentLimitSourceForMode runtimeModeValue)
+          substrateBudget
     DualEnforced dualBudget ->
       DualEnforcedBudget
-        <$> podMemoryLimitFromDhall "inferenceMemoryBudget.podLimit" (dhallBudgetPodLimit dualBudget)
-        <*> podMemoryLimitFromDhall "inferenceMemoryBudget.vramLimit" (dhallBudgetVramLimit dualBudget)
+        <$> podMemoryLimitFromDhall
+          "inferenceMemoryBudget.podLimit"
+          PodRam
+          (residentLimitSourceForMode runtimeModeValue)
+          (dhallBudgetPodLimit dualBudget)
+        <*> podMemoryLimitFromDhall
+          "inferenceMemoryBudget.vramLimit"
+          GpuVram
+          LinuxGpuVramBudget
+          (dhallBudgetVramLimit dualBudget)
+
+-- | Which policy set a resident-memory limit. Only the cluster engine pod limit
+-- has ever named one; the VRAM half names its own source at its own call site.
+residentLimitSourceForMode :: RuntimeMode -> PodMemoryLimitSource
+residentLimitSourceForMode _ = ClusterEnginePodMemoryLimit
 
 podMemoryLimitFromDhall ::
   String ->
+  InferenceMemoryResource ->
+  PodMemoryLimitSource ->
   DhallSubstrateMemoryBudget ->
   Either String PodMemoryLimit
-podMemoryLimitFromDhall fieldPath substrateBudget = do
+podMemoryLimitFromDhall fieldPath resourceValue sourceValue substrateBudget = do
   limitMib <- naturalToInt (fieldPath <> ".limitMib") (dhallBudgetLimitMib substrateBudget)
   -- @Natural@ already excludes a negative limit on the wire; zero is still
   -- representable, so the positivity check stays.
@@ -738,10 +660,8 @@ podMemoryLimitFromDhall fieldPath substrateBudget = do
     else
       pure
         PodMemoryLimit
-          { podMemoryLimitResource =
-              inferenceMemoryResourceFromDhall (dhallBudgetResource substrateBudget),
-            podMemoryLimitSource =
-              podMemoryLimitSourceFromDhall (dhallBudgetSource substrateBudget),
+          { podMemoryLimitResource = resourceValue,
+            podMemoryLimitSource = sourceValue,
             podMemoryLimitMib = limitMib
           }
 
@@ -789,46 +709,49 @@ topicSegment =
       | isAlphaNum character || character == '-' || character == '_' || character == '.' = character
       | otherwise = '-'
 
-daemonConfigFromDhall :: DhallDaemonConfig -> Either String DaemonConfig
-daemonConfigFromDhall rawConfig = do
+-- | The two in-cluster daemons. Both run in a pod on every supported substrate
+-- and both consume the coordinator request topic and publish the shared result
+-- topic, so location and topics are derived rather than declared.
+clusterDaemonConfigFromDhall ::
+  [Text] ->
+  Text ->
+  DhallDaemonConfig ->
+  Either String DaemonConfig
+clusterDaemonConfigFromDhall derivedRequestTopics derivedResultTopic rawConfig = do
   let roleValue = daemonRoleFromDhall (dhallRole rawConfig)
       connectionModeValue =
         pulsarConnectionModeFromDhall (dhallPulsarConnectionMode rawConfig)
   pure
     DaemonConfig
       { daemonConfigRole = roleValue,
-        daemonConfigLocation = dhallLocation rawConfig,
+        daemonConfigLocation = clusterDaemonLocation,
         daemonConfigMemberId = dhallMemberId rawConfig,
-        daemonConfigRequestTopics = dhallDaemonRequestTopics rawConfig,
-        daemonConfigResultTopic = dhallDaemonResultTopic rawConfig,
+        daemonConfigRequestTopics = derivedRequestTopics,
+        daemonConfigResultTopic = derivedResultTopic,
         daemonConfigPulsarConnectionMode = connectionModeValue,
         daemonConfigConsumerSubscriptionType = Nothing
       }
 
-enginePoolFromDhall :: DhallEnginePool -> Either String EnginePool
-enginePoolFromDhall rawPool = do
-  maxInflight <-
-    naturalToInt
-      ("enginePools." <> Text.unpack (dhallPoolId rawPool) <> ".maxInflightPerMember")
-      (dhallMaxInflightPerMember rawPool)
+enginePoolFromDhall :: RuntimeMode -> DhallEnginePool -> Either String EnginePool
+enginePoolFromDhall runtimeModeValue rawPool =
   pure
     EnginePool
       { enginePoolId = dhallPoolId rawPool,
-        enginePoolRuntimeMode = runtimeModeFromDhall (dhallPoolRuntimeMode rawPool),
+        enginePoolRuntimeMode = runtimeModeValue,
         enginePoolModelIds = dhallPoolModelIds rawPool,
         enginePoolMemberIds = dhallPoolMemberIds rawPool,
         enginePoolSubscriptionType =
           consumerSubscriptionFromDhall (dhallPoolSubscriptionType rawPool),
-        enginePoolMaxInflightPerMember = maxInflight
+        enginePoolMaxInflightPerMember = defaultMaxInflightPerMember
       }
 
-engineMemberFromDhall :: DhallEngineMember -> Either String EngineMember
-engineMemberFromDhall rawMember =
+engineMemberFromDhall :: RuntimeMode -> DhallEngineMember -> Either String EngineMember
+engineMemberFromDhall runtimeModeValue rawMember =
   pure
     EngineMember
       { engineMemberId = dhallMemberConfigId rawMember,
-        engineMemberRuntimeMode = runtimeModeFromDhall (dhallMemberRuntimeMode rawMember),
-        engineMemberLocation = dhallMemberLocation rawMember,
+        engineMemberRuntimeMode = runtimeModeValue,
+        engineMemberLocation = engineMemberLocationForMode runtimeModeValue,
         engineMemberPoolIds = dhallMemberPoolIds rawMember
       }
 
@@ -849,24 +772,9 @@ defaultConsumerSubscriptionType runtimeMode daemonConfig
       ConsumerShared
   | otherwise = ConsumerShared
 
-engineBindingFromDhall :: DhallEngineBinding -> Either String EngineBinding
-engineBindingFromDhall rawBinding =
-  pure
-    EngineBinding
-      { engineBindingName = dhallEngine rawBinding,
-        engineBindingAdapterId = dhallAdapterId rawBinding,
-        engineBindingAdapterType = engineAdapterTypeFromDhall (dhallAdapterType rawBinding),
-        engineBindingAdapterLocator = dhallAdapterLocator rawBinding,
-        engineBindingAdapterEntrypoint = dhallAdapterEntrypoint rawBinding,
-        engineBindingSetupEntrypoint = dhallSetupEntrypoint rawBinding,
-        engineBindingProjectDirectory = Text.unpack (dhallProjectDirectory rawBinding),
-        engineBindingPythonNative = dhallPythonNative rawBinding
-      }
-
-modelDescriptorFromDhall :: DhallModelDescriptor -> Either String ModelDescriptor
-modelDescriptorFromDhall rawModel = do
-  let runtimeModeValue = runtimeModeFromDhall (dhallModelRuntimeMode rawModel)
-      runtimeLaneValue = runtimeLaneFromDhall (dhallRuntimeLane rawModel)
+modelDescriptorFromDhall :: RuntimeMode -> DhallModelDescriptor -> Either String ModelDescriptor
+modelDescriptorFromDhall runtimeModeValue rawModel = do
+  let runtimeLaneValue = runtimeLaneForMode runtimeModeValue (dhallRequiresGpu rawModel)
   requestShapeValue <- traverse requestFieldFromDhall (dhallRequestShape rawModel)
   -- Phase 4 Sprint 4.31: the footprint is required and positive; a model whose
   -- Dhall row carries an absent/zero footprint fails the decode closed.
@@ -914,14 +822,10 @@ renderSubstrateConfig demoConfig =
       ", daemonRole = " <> renderDaemonRole (activeDaemonRole demoConfig),
       ", coordinator = " <> renderDaemonConfig (coordinatorDaemon demoConfig),
       ", webapp = " <> renderDaemonConfig (webappDaemon demoConfig),
-      ", engineDaemons = " <> dhallList daemonConfigType renderDaemonConfig (engineDaemons demoConfig),
       ", enginePools = " <> dhallList enginePoolType renderEnginePool (enginePools demoConfig),
       ", engineMembers = " <> dhallList engineMemberType renderEngineMember (engineMembers demoConfig),
-      ", request_topics = " <> dhallList "Text" dhallText (requestTopics demoConfig),
-      ", result_topic = " <> dhallText (resultTopic demoConfig),
       ", models_bucket = " <> dhallText (modelsBucket demoConfig),
       ", model_bootstrap_topic = " <> dhallText (modelBootstrapTopic demoConfig),
-      ", engines = " <> dhallList engineBindingType renderEngineBinding (engines demoConfig),
       ", models = " <> dhallList modelDescriptorType renderModelDescriptor (models demoConfig),
       ", inferenceMemoryBudget = " <> renderInferenceMemoryBudget (inferenceMemoryBudget demoConfig),
       "}"
@@ -932,7 +836,7 @@ renderSubstrateConfig demoConfig =
 -- ADT and its decoder while some renderer keeps emitting a stale union type.
 inferenceMemoryBudgetUnionType :: String
 inferenceMemoryBudgetUnionType =
-  "< HostEnforced : { physicalMib : Natural, vmReserveMib : Natural, headroomMib : Natural }"
+  "< HostEnforced : { physicalMib : Natural, vmReserveMib : Natural }"
     <> " | SubstrateEnforced : "
     <> substrateMemoryBudgetRecordType
     <> " | DualEnforced : { podLimit : "
@@ -942,12 +846,7 @@ inferenceMemoryBudgetUnionType =
     <> " } >"
 
 substrateMemoryBudgetRecordType :: String
-substrateMemoryBudgetRecordType =
-  "{ resource : "
-    <> inferenceMemoryResourceUnionType
-    <> ", source : "
-    <> podMemoryLimitSourceUnionType
-    <> ", limitMib : Natural }"
+substrateMemoryBudgetRecordType = "{ limitMib : Natural }"
 
 renderInferenceMemoryBudget :: InferenceMemoryBudget -> String
 renderInferenceMemoryBudget budget =
@@ -959,8 +858,6 @@ renderInferenceMemoryBudget budget =
         <> dhallNatural (hostPartitionPhysicalMib partition)
         <> ", vmReserveMib = "
         <> dhallNatural (hostPartitionVmReserveMib partition)
-        <> ", headroomMib = "
-        <> dhallNatural (hostPartitionHeadroomMib partition)
         <> " }"
     SubstrateEnforcedBudget podLimit ->
       inferenceMemoryBudgetUnionType
@@ -977,11 +874,7 @@ renderInferenceMemoryBudget budget =
 
 renderPodMemoryLimit :: PodMemoryLimit -> String
 renderPodMemoryLimit podLimit =
-  "{ resource = "
-    <> renderInferenceMemoryResource (podMemoryLimitResource podLimit)
-    <> ", source = "
-    <> renderPodMemoryLimitSource (podMemoryLimitSource podLimit)
-    <> ", limitMib = "
+  "{ limitMib = "
     <> dhallNatural (podMemoryLimitMib podLimit)
     <> " }"
 
@@ -989,14 +882,8 @@ renderDaemonConfig :: DaemonConfig -> String
 renderDaemonConfig daemonConfig =
   "{ role = "
     <> renderDaemonRole (daemonConfigRole daemonConfig)
-    <> ", location = "
-    <> dhallText (daemonConfigLocation daemonConfig)
     <> ", memberId = "
     <> dhallOptional "Text" dhallText (daemonConfigMemberId daemonConfig)
-    <> ", request_topics = "
-    <> dhallList "Text" dhallText (daemonConfigRequestTopics daemonConfig)
-    <> ", result_topic = "
-    <> dhallText (daemonConfigResultTopic daemonConfig)
     <> ", pulsarConnectionMode = "
     <> renderPulsarConnectionMode (daemonConfigPulsarConnectionMode daemonConfig)
     <> " }"
@@ -1005,48 +892,20 @@ renderEnginePool :: EnginePool -> String
 renderEnginePool pool =
   "{ id = "
     <> dhallText (enginePoolId pool)
-    <> ", runtimeMode = "
-    <> renderRuntimeMode (enginePoolRuntimeMode pool)
     <> ", models = "
     <> dhallList "Text" dhallText (enginePoolModelIds pool)
     <> ", members = "
     <> dhallList "Text" dhallText (enginePoolMemberIds pool)
     <> ", subscription = "
     <> renderConsumerSubscription (enginePoolSubscriptionType pool)
-    <> ", maxInflightPerMember = "
-    <> dhallNatural (enginePoolMaxInflightPerMember pool)
     <> " }"
 
 renderEngineMember :: EngineMember -> String
 renderEngineMember member =
   "{ id = "
     <> dhallText (engineMemberId member)
-    <> ", runtimeMode = "
-    <> renderRuntimeMode (engineMemberRuntimeMode member)
-    <> ", location = "
-    <> dhallText (engineMemberLocation member)
     <> ", pools = "
     <> dhallList "Text" dhallText (engineMemberPoolIds member)
-    <> " }"
-
-renderEngineBinding :: EngineBinding -> String
-renderEngineBinding engineBinding =
-  "{ engine = "
-    <> dhallText (engineBindingName engineBinding)
-    <> ", adapterId = "
-    <> dhallText (engineBindingAdapterId engineBinding)
-    <> ", adapterType = "
-    <> renderEngineAdapterType (engineBindingAdapterType engineBinding)
-    <> ", adapterLocator = "
-    <> dhallText (engineBindingAdapterLocator engineBinding)
-    <> ", adapterEntrypoint = "
-    <> dhallText (engineBindingAdapterEntrypoint engineBinding)
-    <> ", setupEntrypoint = "
-    <> dhallText (engineBindingSetupEntrypoint engineBinding)
-    <> ", projectDirectory = "
-    <> dhallFilePath (engineBindingProjectDirectory engineBinding)
-    <> ", pythonNative = "
-    <> dhallBool (engineBindingPythonNative engineBinding)
     <> " }"
 
 renderModelDescriptor :: ModelDescriptor -> String
@@ -1071,10 +930,6 @@ renderModelDescriptor model =
     <> dhallText (selectedEngine model)
     <> ", requestShape = "
     <> dhallList requestFieldType renderRequestField (requestShape model)
-    <> ", runtimeMode = "
-    <> renderRuntimeMode (runtimeMode model)
-    <> ", runtimeLane = "
-    <> renderRuntimeLane (runtimeLane model)
     <> ", requiresGpu = "
     <> dhallBool (requiresGpu model)
     <> ", notes = "
@@ -1132,31 +987,13 @@ dhallText value =
 
 enginePoolType :: String
 enginePoolType =
-  "{ id : Text, runtimeMode : "
-    <> runtimeModeUnionType
-    <> ", models : List Text, members : List Text, subscription : "
+  "{ id : Text, models : List Text, members : List Text, subscription : "
     <> consumerSubscriptionUnionType
-    <> ", maxInflightPerMember : Natural }"
-
-daemonConfigType :: String
-daemonConfigType =
-  "{ role : "
-    <> daemonRoleUnionType
-    <> ", location : Text, memberId : Optional Text, request_topics : List Text, result_topic : Text, pulsarConnectionMode : "
-    <> pulsarConnectionModeUnionType
     <> " }"
 
 engineMemberType :: String
 engineMemberType =
-  "{ id : Text, runtimeMode : "
-    <> runtimeModeUnionType
-    <> ", location : Text, pools : List Text }"
-
-engineBindingType :: String
-engineBindingType =
-  "{ engine : Text, adapterId : Text, adapterType : "
-    <> engineAdapterTypeUnionType
-    <> ", adapterLocator : Text, adapterEntrypoint : Text, setupEntrypoint : Text, projectDirectory : Text, pythonNative : Bool }"
+  "{ id : Text, pools : List Text }"
 
 requestFieldType :: String
 requestFieldType =
@@ -1168,8 +1005,4 @@ modelDescriptorType :: String
 modelDescriptorType =
   "{ matrixRowId : Text, modelId : Text, displayName : Text, family : Text, description : Text, artifactType : Text, referenceModel : Text, downloadUrl : Text, selectedEngine : Text, requestShape : List "
     <> requestFieldType
-    <> ", runtimeMode : "
-    <> runtimeModeUnionType
-    <> ", runtimeLane : "
-    <> runtimeLaneUnionType
     <> ", requiresGpu : Bool, notes : Text, modelRamFootprintMib : Natural }"

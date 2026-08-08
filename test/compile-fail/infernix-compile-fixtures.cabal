@@ -646,3 +646,37 @@ executable fail-cannot-construct-engine-topic-capability
     import: fixture
     main-is: CannotConstructEngineTopicCapability.hs
     hs-source-dirs: fail
+
+executable fail-cannot-construct-toolchain-spawn-authority
+    import: fixture
+    main-is: CannotConstructToolchainSpawnAuthority.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-escape-toolchain-spawn-authority
+    import: fixture
+    main-is: CannotEscapeToolchainSpawnAuthority.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-substitute-toolchain-spawn-region
+    import: fixture
+    main-is: CannotSubstituteToolchainSpawnRegion.hs
+    hs-source-dirs:
+        fail
+        support
+    other-modules: DesiredApi
+
+executable fail-cannot-admit-without-observation
+    import: fixture
+    main-is: CannotAdmitWithoutObservation.hs
+    hs-source-dirs: fail
+
+executable fail-compiled-placement-has-no-resources
+    import: fixture
+    main-is: CompiledPlacementHasNoResources.hs
+    hs-source-dirs: fail

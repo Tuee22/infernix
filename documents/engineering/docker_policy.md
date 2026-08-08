@@ -34,9 +34,9 @@
   and uses typed engine-artifact manifests plus public upstream MLX/coremltools APIs, without
   repository-owned native source.
 
-## Current Status
+## Image Set Contract
 
-The current worktree follows the substrate-image policy directly: the image family
+The image family
 (`infernix-linux-cpu:local` and `infernix-linux-gpu:local`) comes from
 `docker/Dockerfile` and owns the control plane, the baked `web/dist/` bundle, and
 the Linux Playwright runtime. `compose.yaml` defines the single `infernix` service for both Linux

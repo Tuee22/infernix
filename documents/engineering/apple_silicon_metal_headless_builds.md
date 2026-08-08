@@ -21,47 +21,6 @@
   host-tool schema and prerequisite path. `infernix internal materialize-metal-engines` is the
   retained helper name, but it now writes typed headless engine-artifact manifests.
 
-## Current Status
-
-Phase 1 Sprint 1.14 completed the machine-independent cleanup: `HostConfig.hostTart`,
-`HostTool.HostTart`, and the `AppleTart` prerequisite are gone; the generated Linux host manifest no
-longer carries a `tart` field; and `infernix internal materialize-metal-engines` writes
-`engine-artifact.json` manifests under `./.data/engines/<adapterId>/` without invoking Tart. Sprint
-1.15 replaced the former Apple validation-wrapper payloads with real runner roots:
-`llama-cpp-cli` and `whisper-cpp-cli` copy the manifest-declared Homebrew Metal-capable CLIs into
-their candidate payloads and invoke only those artifact-local copies, `ctranslate2-native`
-and `onnx-runtime-native` hydrate Apple arm64 venvs, `mlx-native` hydrates `mlx-lm`, `coreml-native`
-hydrates Basic Pitch plus Apple Stable Diffusion Core ML support, and `jvm-native` downloads and
-installs the Audiveris macOS arm64 app from the pinned release DMG. Missing model payloads or failed
-native execution return non-zero; the realness lint forbids reintroducing fabricated Apple runner
-output.
-
-Phase 0's no-repo-owned-native-source correction gate closed on 2026-07-27. Sprint 1.20 has deleted
-the later-discovered repository-owned Objective-C/C/Metal source strings, their generated
-`.h`/`.m`/`.c` files, Clang scripts, and the standalone bridge artifact. The replacement smokes call
-public upstream APIs: MLX 0.32.0 has locally executed and synchronized `41 + 1` on
-`Device(gpu, 0)`, and coremltools 9.0 has reported Neural Engine, GPU, and CPU devices. The latter is
-a runtime/device observation, not model-inference evidence.
-
-The code-side materialization correction is now implemented. Every process operation is selected
-from a closed adapter/operation language and runs through an opaque `ProvisioningGrant s` inside an
-indexed rank-2 `ProvisioningSession s result`; that facade compiles to the existing all-Haskell
-self-exec bounded-command kernel. Candidate roots are hydrated with exact direct pins, relocated,
-smoked through their authoritative manifest `--smoke`, assigned exact resolved provenance, hashed
-from their actual payload tree, and only then activated by the fsynced sibling transaction.
-Synchronous failure, asynchronous cancellation, and recoverable crash residue preserve or restore
-the prior complete root.
-
-Sprint 1.20 remains Active. Its fresh final source review, exact-source complete Stage 1, real Apple
-rematerialization and installed runtime smokes, and correction-dependent Apple cohort have not yet
-passed. The direct local MLX/coremltools observations are preflight only.
-
-All earlier generated-bridge, bridge-load, runtime-compiled-kernel, and Objective-C Core ML smoke
-evidence is superseded because it depended on a now-forbidden implementation boundary. Wave L
-remains historical routed real-output proof for its then-active catalog; correction-dependent
-Apple closure is not claimed until a fresh Apple rerun records it in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
-
 ## Materialization Architecture
 
 The Apple build path separates execution from materialization:
@@ -153,9 +112,8 @@ release image is observed. A mount is treated as live only when its kernel devic
 the parent candidate filesystem; the bounded detach operation runs in the primary-preserving
 release path.
 
-Apple integration and e2e real-output proof for the then-active Apple catalog closed historically
-in Wave L. A post-correction Apple rerun is still required before claiming current materialization
-or full-suite proof.
+A post-correction Apple rerun is still required before claiming current materialization or
+full-suite proof.
 
 ## Storage Boundary
 
@@ -186,13 +144,13 @@ The Apple headless materialization lane closes only when:
 - failed materialization leaves no partial final install root and is retryable.
 
 The focused `infernix-artifact-transaction`, full-materializer, and compile-boundary suites are
-being expanded against the active Sprint 1.20 correction. Their earlier inventories and results
-are superseded and nonreusable. `appleArtifactProvisioningViolations` continues to enforce that
+covering the materialization surface. Their earlier inventories and results
+`appleArtifactProvisioningViolations` enforces that
 artifact modules cannot import `System.Process`, use raw spawn/wait primitives, delegate to the
 legacy unbounded Poetry helpers, or bypass the provisioning facade to call the bounded kernel
 directly.
 
-Sprint 1.20 stays Active until the final reviewed source identity passes those focused gates, the
+The materialization surface is closed once the reviewed source identity passes those focused gates, the
 complete Stage 1 gate, and real Apple
 rematerialization, installed upstream smokes, runtime loading, and the selected cohort are green
 against that same source.

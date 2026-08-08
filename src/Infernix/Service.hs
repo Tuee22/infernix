@@ -145,19 +145,33 @@ whenAppleRuntimeReady paths runtimeMode daemonRole =
 -- | Path of the engine-role exclusive lock under the durable runtime root.
 -- Each engine-role 'infernix service' process holds this lock for its
 -- lifetime so a second engine cannot start on the same host while the
--- first is alive. Linux substrates additionally rely on Kubernetes
--- required pod anti-affinity at the chart layer; the lock keeps the
--- supported contract uniform across substrates.
+-- first is alive.
+--
+-- Phase 4 Sprint 4.34 removed the @apple-silicon@ waiver. It existed to let one
+-- integration case run two host engine daemons on the same machine and assert
+-- that they coexist on one @Shared@ subscription; that assertion is retired with
+-- the waiver, because exactly one engine process per machine is a correctness
+-- rule and not a scheduling preference — two processes hold two KV caches and
+-- two copies of every loaded weight, and each admits work independently against
+-- the whole machine's observed capacity.
+--
+-- What this lock does and does not do is worth stating: it is a host-local file
+-- lock, so it excludes a second process on **this** machine and provably cannot
+-- exclude one on another machine claiming the same member identity. The
+-- cross-machine half is a broker-side member claim and is named as remaining
+-- work in Phase 4 Sprint 4.34. Kubernetes placement is no longer part of this
+-- contract at all: Phase 3 Sprint 3.16 deleted the engine pod anti-affinity,
+-- which expressed the rule as a constraint the scheduler could leave
+-- unsatisfied rather than as one that prevents a second process.
 engineLockPath :: Paths -> FilePath
 engineLockPath paths = runtimeRoot paths </> "engine.lock"
 
 acquireEngineLockIfEngineRole :: Paths -> RuntimeMode -> DaemonRole -> IO ()
-acquireEngineLockIfEngineRole paths runtimeMode daemonRole =
-  case (runtimeMode, daemonRole) of
-    (AppleSilicon, Engine) -> pure ()
-    (_, Engine) -> acquireEngineLock (engineLockPath paths)
-    (_, Coordinator) -> pure ()
-    (_, Webapp) -> pure ()
+acquireEngineLockIfEngineRole paths _runtimeMode daemonRole =
+  case daemonRole of
+    Engine -> acquireEngineLock (engineLockPath paths)
+    Coordinator -> pure ()
+    Webapp -> pure ()
 
 -- | Acquire an exclusive write lock on the supplied lock-file path. On
 -- contention the helper reads the existing holder's PID (written into the

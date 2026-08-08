@@ -12,6 +12,7 @@ module Infernix.Lint.HaskellStyle
     provisioningKernelOwnershipViolations,
     unsafeNativeBoundaryViolations,
     unboundedDescriptorSpawnViolations,
+    unboundedToolchainSpawnViolations,
     unboundedEngineSpawnViolations,
   )
 where
@@ -908,8 +909,10 @@ capabilityGatingViolations sourceFile numberedLines =
     <> unboundedExecViolations sourceFile numberedLines
     <> unboundedEngineSpawnViolations sourceFile numberedLines
     <> unboundedDescriptorSpawnViolations sourceFile numberedLines
+    <> unboundedToolchainSpawnViolations sourceFile numberedLines
     <> unboundedHttpViolations sourceFile numberedLines
     <> threadDelayViolations sourceFile numberedLines
+    <> predictedAdmissionViolations sourceFile numberedLines
 
 rawDestructiveViolations :: FilePath -> [(Int, String)] -> [String]
 rawDestructiveViolations sourceFile numberedLines
@@ -1342,6 +1345,76 @@ unboundedDescriptorSpawnExemptedFiles =
     "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
+-- | Phase 6 Sprint 6.46 (bounded host memory) — a surface that starts the
+-- compiler toolchain must observe the declared per-process ceiling.
+--
+-- The hazard this rule guards is not hypothetical: on 2026-08-03 a host-side
+-- @cabal build@ from this checkout reached 109.46 GiB resident on a 124.94 GiB
+-- host, wedged the machine for five and a half hours, and was never selected by
+-- the kernel because it ran at @oom_score_adj@ 0 while every cluster pod sat at
+-- 996-1000. It did not exceed its budget; it had no account it could exceed.
+--
+-- Structurally this is a copy of 'unboundedDescriptorSpawnViolations': it is
+-- file-scoped, it fires on the /naming/ of the toolchain rather than on a
+-- specific spawn expression, and it clears as soon as the file observes the
+-- boundary. It is the backstop for the type-level gate, not a replacement for
+-- it — 'Infernix.BuildMemory.ToolchainSpawnAuthority' and the closed
+-- 'Infernix.BuildMemory.ToolchainInvocation' vocabulary are what make an
+-- unbounded toolchain spawn unrepresentable; this rule keeps a /new/ surface
+-- from appearing beside them. Canonical doctrine:
+-- documents/architecture/bounded_host_memory.md.
+unboundedToolchainSpawnViolations :: FilePath -> [(Int, String)] -> [String]
+unboundedToolchainSpawnViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` unboundedToolchainSpawnExemptedFiles = []
+  | not spawnsAProcess = []
+  | observesToolchainCeiling = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": toolchain spawn surface names `HostCabal` without observing the declared build-memory ceiling; route it through Infernix.BuildMemory.withToolchainSpawnAuthority plus withBoundedToolchainChild so the per-process address-space ceiling is in force at fork and the child carries a raised out-of-memory victim rank (see documents/architecture/bounded_host_memory.md)"
+      | (lineNumber, _) <- toolchainSites
+      ]
+  where
+    codeLines =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue)
+      ]
+    toolchainSites =
+      [ (lineNumber, lineValue)
+      | (lineNumber, lineValue) <- codeLines,
+        containsToken "HostCabal" lineValue
+      ]
+    spawnsAProcess =
+      any
+        ( \(_, lineValue) ->
+            containsToken "createProcess" lineValue
+              || containsToken "readCreateProcessWithExitCode" lineValue
+        )
+        codeLines
+    observesToolchainCeiling =
+      any
+        (containsToken "withBoundedToolchainChild" . snd)
+        codeLines
+
+-- | The toolchain rule's declared exemptions.
+--
+-- Each is a decision rather than an unclosed migration.
+unboundedToolchainSpawnExemptedFiles :: [FilePath]
+unboundedToolchainSpawnExemptedFiles =
+  [ -- Owns the boundary and names both tokens as literals.
+    "src/Infernix/BuildMemory.hs",
+    -- Names the forbidden and required tokens as literals.
+    "src/Infernix/Lint/HaskellStyle.hs",
+    -- The pre-manifest host-tool probes. They run before the host manifest a
+    -- derived ceiling is measured against exists, and they never start a build:
+    -- the closed catalog is fixed-argv version probes under a required
+    -- deadline. Same shape as the raw-spawn gate's pre-manifest exemption.
+    "src/Infernix/HostTools.hs",
+    -- Composes PATH from the manifest's tool directories; the `HostCabal`
+    -- mention is a directory, not an invocation.
+    "src/Infernix/Cluster/Subprocess.hs"
+  ]
+
 -- | Sprint 4.29 (managed-state-transition doctrine) — reject raw streaming HTTP
 -- reads of an upstream body outside the bounded model-download wrapper. The
 -- model-weight download from an untrusted third-party origin must go through
@@ -1362,6 +1435,32 @@ unboundedHttpViolations sourceFile numberedLines
         not (isCommentLine lineValue),
         containsToken "withResponse" lineValue
       ]
+
+-- | Sprint 4.34 (machine-local admission) — keep memory admission on the
+-- machine that will execute. 'Infernix.ExecutionPlan.predictedAdmissionRejection'
+-- recomputes a machine's admission verdict from a declared budget, which is
+-- exactly the coordinator-side veto the admission split exists to remove. It is
+-- a validation-harness prediction only; production code reaches admission
+-- solely through the engine's refined plan. Canonical doctrine:
+-- documents/architecture/bounded_inference_memory.md.
+predictedAdmissionViolations :: FilePath -> [(Int, String)] -> [String]
+predictedAdmissionViolations sourceFile numberedLines
+  | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
+  | sourceFile `elem` predictedAdmissionExemptedFiles = []
+  | otherwise =
+      [ sourceFile <> ":" <> show lineNumber <> ": forbidden production use of `predictedAdmissionRejection`; memory admission belongs to the machine that will execute, so read the engine's refined plan (lookupRuntimeUnavailableModel) instead of recomputing a verdict from a declared budget (see documents/architecture/bounded_inference_memory.md)"
+      | (lineNumber, lineValue) <- numberedLines,
+        not (isCommentLine lineValue),
+        containsToken "predictedAdmissionRejection" lineValue
+      ]
+
+predictedAdmissionExemptedFiles :: [FilePath]
+predictedAdmissionExemptedFiles =
+  [ -- Defines the prediction and the admission it delegates to.
+    "src/Infernix/ExecutionPlan.hs",
+    -- Names the forbidden token as a literal; exempt it.
+    "src/Infernix/Lint/HaskellStyle.hs"
+  ]
 
 unboundedHttpExemptedFiles :: [FilePath]
 unboundedHttpExemptedFiles =

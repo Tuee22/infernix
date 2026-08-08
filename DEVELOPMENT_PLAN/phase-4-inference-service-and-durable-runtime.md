@@ -1,6 +1,16 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing)
+**Status**: Active — Sprint 4.35 (native runner front-end correction and failure diagnosability) is
+`Active` as of 2026-08-07, opened by a `linux-cpu` cohort failure found while executing Phase 3
+Sprint 3.16's gate: llama.cpp b9704 split `llama-cli` into an interactive chat front-end, so a
+*successful* Linux run published chat chrome as the model's answer — a realness-contract violation on
+the success path — while a failed one published one bit, because the argv silenced the only channel
+carrying the reason. Both are corrected on the Linux lanes and the same probable Apple defect is
+named as Wave Y work. Sprint 4.33 (inference memory scope correction) is `Done` as of 2026-08-06 and
+Sprint 4.34 (machine-local admission and fail-closed member identity) is `Active`: the admission
+move closed code-side on 2026-08-07, which unblocks Phase 8 Sprints 8.10/8.11, and only the
+broker-side member claim remains — named in that sprint's `Remaining Work`, with its behavioural
+proof owned by the cohort wave. Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing)
 is in its exact-source Linux validation gate after the ordered Phase 1 and Phase 2
 machine-independent work closed. Selected Apple hardware validation remains open. Phase 2's
 `d578…` / `a0d1…` final review and source-matched Stage 1 are historical GREEN evidence from a
@@ -23,7 +33,7 @@ partition, required footprint, budget-enforcer split) are code-side closed on th
 gate set (2026-07-21: `cabal build all` `-Wall -Werror`, `cabal test infernix-unit`,
 `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
 `poetry run check-code`), and both behavioral lanes are GREEN. On apple-silicon `infernix test
-integration` drove the full per-model lane with zero host OOM (13 real completions;
+integration` drove the full per-model lane without exhausting the host (13 real completions;
 `image-sdxl-turbo`/`image-apple-stable-diffusion-coreml` pre-admission typed-rejected at 12288 > 10240;
 `audio-bark-small` a live resident-ceiling breach under the now-superseded
 `proc_pid_rusage` sampler) and `infernix test e2e`
@@ -120,7 +130,7 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > with real Linux engines,
 > fixed weight provisioning, ONNX adoption where it is the mature free choice, and modern PyTorch
 > rebinds for the music-transcription rows. The guarantee is mechanically enforced by a new realness
-> lint owned with [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md).
+> lint owned with [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md).
 > The architectural contracts (typed dispatch, catalog, pool routing, cache, object storage) from
 > Sprints 4.1–4.20 stand and are **not** undone; only the faked engine internals are replaced. The
 > Linux real-output cohort gate is [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`);
@@ -140,7 +150,10 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > `modelRamFootprintMib`, `DemoConfig` carries a host-computed `inferenceRamBudgetMib`,
 > `validateDemoConfig` fails fast on an over-budget apple-silicon config, and the serialized engine
 > critical section rejects an over-budget model as a clean `status=failed` (`overRamBudgetRejection`).
-> The full-catalog Apple never-OOM cohort proof closed in [Wave R](cohort-validation-waves.md)
+> The full-catalog Apple cohort proof closed in [Wave R](cohort-validation-waves.md) — recorded at
+> the time as a "never-OOM" proof, and narrowed by Sprint 4.33 to what it actually shows: every
+> admitted row completed and no admitted row was terminated by the host, on a run that carried no
+> ceiling on the largest memory consumer present —
 > (paired with Phase 6 Sprint 6.37), and the current Linux full-suite reruns closed in
 > [Wave S](cohort-validation-waves.md). The retired unbounded path is tracked in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md). Sprint 4.27 supersedes the
@@ -1003,7 +1016,7 @@ artifact families return a typed MinIO object reference.
   `buildPayload` routes text to `inline_output` and artifacts to `object_ref`
 - `infernix test integration` and `infernix test e2e` assert the per-family result contract per
   active-substrate row (see
-  [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md))
+  [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md))
 - re-validated through the Wave I `linux-gpu` plus `linux-cpu` attestation
 
 ### Remaining Work
@@ -2183,8 +2196,11 @@ OOM. The raw engine spawns in `runNativeWorker` / `runWorkerInvocation` now rout
 negative-tested), `infernix lint files/docs/proto/chart`, `infernix docs check`, and
 `poetry run check-code`.
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
-that a full-suite `infernix test all` drives an over-capacity catalog with zero host OOM and every
-over-budget row cleanly typed-rejected as `ModelMemoryLimitExceeded`. Closed 2026-07-24.
+that a full-suite `infernix test all` drives an over-capacity catalog with every over-budget row
+cleanly typed-rejected as `ModelMemoryLimitExceeded`, and no admitted row terminated by the host.
+Closed 2026-07-24. Sprint 4.33 narrows what that closure claims: the run also completed without
+exhausting the host, and that observation is a **sample of the inference lane as run**, not evidence
+that a bound exists — it was recorded with no ceiling on the largest memory consumer present.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Runtime/Worker.hs`,
 `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Engines/AppleSilicon.hs`,
 `python/native-runners/apple_native_runner.py`
@@ -2229,9 +2245,10 @@ Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
   OOM-exit paths
 - `cabal test infernix-haskell-style` passes, including the Phase 6 Sprint 6.42
   `unboundedEngineSpawnViolations` lint that keeps new engine-spawn call sites off the raw primitives
-- `infernix test all` on apple-silicon plus linux-cpu proves no host OOM under a full over-capacity
-  catalog, with every over-budget row cleanly typed-rejected — closed under
-  [Wave W](cohort-validation-waves.md)
+- `infernix test all` on apple-silicon plus linux-cpu drives a full over-capacity catalog with every
+  over-budget row cleanly typed-rejected and no admitted row terminated by the host — closed under
+  [Wave W](cohort-validation-waves.md). Per Sprint 4.33 this is evidence that admission and the
+  ceiling behaved, not that a host out-of-memory condition is unrepresentable
 
 ### Remaining Work
 
@@ -2243,8 +2260,8 @@ watchdog, the Linux OOM-exit classifier) are landed, the raw engine spawns are r
 `runNativeWorker` / `runWorkerInvocation`, and unit coverage asserts grant mint on in-budget admission
 and typed rejection on over-budget. The apple-silicon plus linux-cpu behavioral cohort sign-off closed
 under [Wave W](cohort-validation-waves.md) on 2026-07-24 (a full-suite `infernix test all` completes an
-over-capacity catalog with zero host OOM and every over-budget row cleanly typed-rejected); no remaining
-work exists. The superseded proof-free admission and raw engine spawns are recorded in
+over-capacity catalog with every over-budget row cleanly typed-rejected and no admitted row terminated
+by the host); no remaining work exists. The superseded proof-free admission and raw engine spawns are recorded in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 Sprint 4.32 supersedes the direct-FFI sampler and its Apple-specific evidence.
 
@@ -2281,8 +2298,8 @@ set (GREEN 2026-07-21): `cabal build all` (`-Wall -Werror`), `cabal test inferni
 `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`, and
 the web unit suite (browser contract unchanged — the footprint remains a plain `Int` at the JS wire).
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
-that the checked partition admits the fitting catalog with zero host OOM while over-capacity rows are
-cleanly typed-rejected as `ModelMemoryLimitExceeded`. Closed 2026-07-24.
+that the checked partition admits the fitting catalog while over-capacity rows are cleanly
+typed-rejected as `ModelMemoryLimitExceeded`. Closed 2026-07-24.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Substrate.hs`,
 `src/Infernix/Models.hs`, `src/Infernix/Web/Contracts.hs`
 **Blocked by**: Sprint 4.30
@@ -2325,7 +2342,7 @@ Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
 - `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`,
   and the web unit suite pass with the regenerated contracts
 - `infernix test all` on apple-silicon plus linux-cpu proves the checked partition admits the fitting
-  catalog with zero host OOM and cleanly typed-rejects over-capacity rows — closed under
+  catalog and cleanly typed-rejects over-capacity rows — closed under
   [Wave W](cohort-validation-waves.md)
 
 ### Remaining Work
@@ -2520,10 +2537,11 @@ produced by the superseded FFI sampler is likewise historical evidence only.
 
 ---
 
-## Sprint 4.33: Inference Memory Scope Correction [Planned]
+## Sprint 4.33: Inference Memory Scope Correction [Done]
 
-**Status**: Planned — documentation and validation-criteria scope only; no runtime behavior change.
-**Implementation**: `documents/architecture/bounded_inference_memory.md`,
+**Status**: Done — documentation and validation-criteria scope only; no runtime behavior change, so
+there is no cohort gate.
+**Implementation**: `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`,
 `DEVELOPMENT_PLAN/cohort-validation-waves.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
 `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
@@ -2534,7 +2552,7 @@ Bring this phase's memory claims and validation criteria into line with what its
 actually proves.
 
 Two defects, both in the criteria rather than the code. First, this phase's closure evidence
-includes statements that a never-out-of-memory guarantee is proven on Apple hardware and that the
+included statements that a never-out-of-memory guarantee is proven on Apple hardware and that the
 catalog completes with zero host out-of-memory kill. Those are true of the inference lane as run and
 false as global statements: the enforcement is a fixed-cadence sampler over an admitted engine's
 process group, and the incident that motivated this correction came from a process this phase never
@@ -2547,27 +2565,294 @@ sample is unrepresentative, and this one was.
 
 ### Deliverables
 
-- the never-out-of-memory claims in `cohort-validation-waves.md` and
-  `legacy-tracking-for-deletion.md` annotated as historical for their narrower recorded inference
+All landed.
+
+- The never-out-of-memory claims in `cohort-validation-waves.md` and
+  `legacy-tracking-for-deletion.md` are annotated as historical for their narrower recorded inference
   scope, following the established convention of annotating prior wave evidence rather than
-  rewriting it
-- this phase's validation criteria restated to assert that the ceiling exists and is observed —
-  the typed gates, the negative-compilation fixtures, and the adversarial breach fixture — rather
-  than asserting that no exhaustion occurred
-- the enforcement table row and the `by construction` language scoped to admission, with runtime
-  enforcement described as measurement and termination on a fixed cadence
+  rewriting it. The wave ledger carries one scope block covering every "zero host OOM" record; the
+  cleanup ledger carries the retirement of the "never-OOM guarantee" wording itself.
+- This phase's validation criteria are restated. Six sites changed, and the replacement wording is
+  the load-bearing part: a cohort gate now claims that **every over-budget row is cleanly
+  typed-rejected and no admitted row was terminated by the host**, which is an assertion about the
+  ceiling behaving, rather than that no exhaustion occurred, which is an assertion about the sample.
+  The Sprint 4.30 and 4.31 gate lines and the Wave R and Wave W summaries all carry the narrower
+  claim.
+- The enforcement table row and the `by construction` language are scoped to admission, with runtime
+  enforcement described as measurement and termination on a fixed cadence. Both were already correct
+  in the governed suite when this sprint ran — the doctrine's OS row already says "sample-and-kill on
+  a fixed cadence, not a kernel-imposed allocation ceiling: a breach is detected and terminated, not
+  prevented", and `runtime_modes.md` already scopes "by construction" to the admission. This is
+  recorded as **already satisfied rather than newly done**, because claiming it as work would be the
+  same kind of over-statement the sprint exists to remove.
 
 ### Validation
 
-- `infernix lint docs`; no remaining claim in this phase or its owned documents asserts that a host
-  out-of-memory kill is structurally unrepresentable
-- the surviving honest statements are preserved rather than rewritten
+- `infernix lint docs` is GREEN, and no remaining claim in this phase or its owned documents asserts
+  that a host out-of-memory kill is structurally unrepresentable. The one surviving sentence
+  containing that phrase is this sprint's own objective, describing what was removed.
+- The surviving honest statements are preserved rather than rewritten: Wave R and Wave W still record
+  what they observed, with the scope of the observation named.
 
 ### Remaining Work
 
+None for this sprint's scope.
+
 The partition still carries no build term, so the sum of declared claims is not checked against
-physical memory. That is deferred and named in the doctrine's `Current Status`; it is not closed by
-this sprint.
+physical memory. That is deferred and named in the doctrine's `What this does not bound`; it is not
+closed by this sprint.
+
+---
+
+## Sprint 4.34: Machine-Local Admission and Fail-Closed Member Identity [Active]
+
+**Status**: Active — the admission move closed on 2026-08-07 and only the broker-side member claim
+remains, named below rather than implied.
+**Code-side closure**: the zero-capacity refusal, the at-least-one-admissible-placement check, the
+fail-closed member identity, the removal of the Apple engine-lock waiver, and the
+placement/admission split are implemented and GREEN on the machine-independent gate set
+(`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
+`infernix-compile-fail` (6 positive / 87 negative), `infernix-execution-plan-internal`,
+`infernix-capped-engine-observer`, `poetry run check-code`,
+`infernix lint files|chart|proto|docs`).
+**Cohort gate**: apple-silicon — Wave Y. The retired coexistence case and the reinstated Apple engine
+lock both change Apple behaviour and nothing here runs on Apple hardware.
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/ExecutionPlan.hs`,
+`src/Infernix/ExecutionPlan/Internal.hs`, `src/Infernix/ExecutionPlan/Properties.hs`,
+`src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Pulsar.hs`,
+`src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/DemoConfig/Internal.hs`,
+`src/Infernix/DemoConfig/Properties.hs`, `src/Infernix/Runtime/Daemon.hs`,
+`src/Infernix/Service.hs`, `test/compile-fail/`, `test/unit/Spec.hs`,
+`test/integration/Spec.hs`
+**Docs to update**: `documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/daemon_topology.md`, `documents/architecture/engine_pool_routing.md`
+
+### Objective
+
+Move memory admission to the machine that will execute, and make a daemon that cannot establish its
+identity refuse to start.
+
+Admission is an observation of the admitting process's own machine. Identity is the same class of
+defect one layer down: with no explicit member name a daemon took the first entry of the compiled
+catalog — a `Map` keyed by member id, so the silent default was the lexicographically smallest id —
+and no bootstrap path passes one, so two machines resolving the same identity was the default rather
+than an edge case. Each would then assert its own physical RAM as the budget for work the other may
+execute, and nothing detects it: the broker sees two ordinary `Shared` consumers with distinct
+process-qualified names, and the engine lock is a host-local path that cannot exclude a second
+machine.
+
+### Deliverables
+
+**A non-positive inference capacity is rejected at construction.** `mkHostMemoryPartition` tightened
+`reservedMib > physical` to `>=`. The retired boundary accepted an exactly-equal split, which is
+arithmetically valid and yields a zero-capacity partition — and a zero-capacity partition is not a
+smaller budget. Every model declares a *positive* footprint, so it admits nothing: the daemon starts,
+reports ready, and answers every request with a memory rejection. `hostPartitionForCapacity` stopped
+normalizing a non-positive argument to zero, and the Apple budget resolver stopped substituting a
+zero-capacity partition when discovery succeeded and the answer was "this host cannot fund
+inference" — it now names the measurement and the remedy. The unit suite pins the exact case that
+was accepted before the sprint, and one property fixture that asserted "the private validator
+preserves an explicitly enforced zero capacity" is deleted rather than adjusted, because the
+behaviour it preserved is the defect.
+
+**A machine that can answer nothing refuses to start.** `NoAdmissiblePlacement` lists every rejected
+model. It fires only when models were placed and none survived admission, so the deliberately empty
+`--empty-models` image bake is untouched. It is a `RefinementError` rather than a `ConfigError`,
+because after the admission split it is the executing machine's refusal: a catalog the coordinator's
+box could not fund says nothing about the engine's box.
+
+**Admission is performed by the machine that will execute, and by construction only by it.**
+`CompiledPlacement` carries no resources, `CompiledRuntimePlan` carries no admission verdict, and
+`RuntimePlan` gained `runtimeUnavailable`. `refineRuntimePlan` admits and then refines, and the way
+in is a `RuntimeObservation` whose constructor is package internal and which only
+`Infernix.Runtime.Enforcer` can fill from live probes — so a routing-only role cannot reach
+admission at all rather than being trusted not to. `memoryAdmissionRejection` reads the refined plan
+and moved to the engine request path, so the typed `ModelMemoryLimitExceeded` the browser renders
+now originates on the machine that refused the work; `coordinatorAdmissionRejection` keeps only its
+own two refusals (no model id, model not in the compiled graph) and forwards everything else.
+
+Two decisions inside are worth stating rather than leaving implicit. The enforcer must choose its
+samplers *before* it can admit anything, so the choice and the admission read one value:
+`placementEnforcementShape` decides host/pod/GPU from the runtime mode, the declared budget, and
+whether the model uses the device, and both the observation and the grant are derived from it — the
+probe and the ceiling cannot name different limits. And the missing-observation check now applies to
+*admitted* placements only, while the unexpected-observation check still spans every placement: the
+enforcer probes before it knows the admission result, so an observation for a rejected placement is
+legitimate while a bogus id is still caught.
+
+**Member identity is required with no default.** One compiled engine daemon is a *determination*
+rather than a default and is still adopted; two or more without `--engine-name` is a daemon that
+cannot say which member it is, and it refuses to start, naming every candidate. The `linux-gpu` lane
+already passes `--engine-name` on every per-engine Deployment, and `apple-silicon` / `linux-cpu`
+compile exactly one member each, so the refusal is reachable only in the case it exists for.
+
+**The Apple engine-lock waiver is removed, and the coexistence assertion that motivated it is retired
+with it.** The waiver existed so one integration case could run two host engine daemons on the same
+machine and assert that they share one `Shared` subscription. That case
+(`validateAppleHostEngineSharedSubscriptionCoexistence`) and its four exclusively-owned helpers are
+deleted. The Apple shared-subscription *backpressure* case survives, because it is about broker
+permits rather than about two engines on one box, and `engine_pool_routing.md`'s validation bullet
+now states the refusal instead of the coexistence.
+
+### Validation
+
+- `cabal build all --enable-tests` under `-Wall -Werror`, `cabal test infernix-unit`,
+  `infernix-haskell-style`, `infernix-compile-fail` (6 positive / 87 negative),
+  `infernix-execution-plan-internal`, and `infernix-capped-engine-observer` are GREEN.
+- A zero-capacity partition is a named refusal, and the exact accepted-today case is pinned: a split
+  whose `vmReserve + headroom` meets physical exactly. The refusal message is asserted to say
+  "leaves no inference capacity" rather than reporting oversubscription, because those are different
+  facts.
+- The `NoAdmissiblePlacement` case is pinned against a single-model over-capacity config — the same
+  fixture that previously compiled into a zero-placement plan. The unavailable-model accounting is
+  re-fixtured onto a two-model config so it still proves that a *fitting* model is admitted while an
+  over-capacity sibling is retained with its exact typed reason.
+- **The admission split is proven behaviourally, not only structurally.** Two compile-fail fixtures
+  pin the construction (`RuntimeObservation`'s constructor and the retired
+  `compiledPlacementEnforcedResources` projection are both absent from the public boundary).
+  `infernix-execution-plan-internal` pins the refusal (`NoAdmissiblePlacement`) and the mixed case
+  (one fundable model becomes an executable while its over-capacity sibling is retained with the
+  exact typed error). The launch-boundary properties drive a real engine topic capability over a
+  refined plan and assert the engine publishes the typed `ModelMemoryLimitExceeded`. The unit suite
+  inverts the retired coordinator fixture: a placed-but-unfundable model is now **forwarded**, byte
+  for byte, to its pool topic with no coordinator verdict published.
+- **Not proven here:** a second engine process on one host is refused by a host-local file lock, and
+  the lock is now armed on every substrate; but no machine-independent gate starts two daemons, so
+  the behavioural half belongs to the cohort wave.
+
+### Remaining Work
+
+**The broker-side member claim is not done.** The engine lock is host-local and provably cannot
+exclude a second machine claiming the same member identity; the claim needs the Sprint 6.45 shape —
+stamp the identity into the protected resource and reread it at every authorization — and the only
+resource two machines share is the broker. Its behavioural proof needs a real broker, so it belongs
+to the cohort wave, and the registration surface it stamps into is the per-topic schema property
+that the system/machine contract split introduces. The forward-only DAG forbids naming a later phase
+as a blocker, so this is stated as an ordering requirement rather than as a `Blocked by` edge.
+
+**One premise this sprint corrected rather than inherited.** The objective describes the coordinator
+vetoing with its own capacity. In the current single-contract world the budget the coordinator held
+was the *engine's* declared budget — `resolveInferenceMemoryBudget` generates the engine pod limit on
+`linux-cpu` and the host partition on `apple-silicon` — so it was applying the executing machine's
+budget on its behalf, and the defect was latent rather than live. The split landed anyway, ahead of
+the machine contract that makes it live, because building the reduced contract on top of a
+plan-global admission is what Sprints 8.10 and 8.11 were blocked on.
+
+---
+
+## Sprint 4.35: Native Runner Front-End Correction and Failure Diagnosability [Active]
+
+**Status**: Active — code-side closed on 2026-08-07 for the `linux-cpu` / `linux-gpu` lanes; the
+`apple-silicon` half of the same defect is named in `Remaining Work` rather than assumed equivalent.
+Opened by a `linux-cpu` cohort failure found while executing Phase 3 Sprint 3.16's gate.
+**Code-side closure**: GREEN on the machine-independent gate set (`cabal build all --enable-tests`
+under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`,
+`infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
+`infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
+`infernix lint files|chart|proto|docs`, `infernix docs check`).
+**Cohort gate**: `linux-cpu` for the corrected front-end; `apple-silicon` — Wave Y — for the Apple
+half named below.
+**Implementation**: `src/Infernix/Engines/Artifact/Target.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Runtime/Worker.hs`,
+`test/unit/Spec.hs`
+**Docs to update**: none. `realness_contract.md` already forbids publishing anything but real model
+output; this sprint makes the Linux llama runner match what the doctrine already declared.
+
+### Objective
+
+Stop the llama.cpp runner publishing chat-UI chrome as model output, and make a native-runner
+failure say what happened.
+
+### Deliverables
+
+**The Linux llama target is the completion front-end, not the chat front-end.** llama.cpp b9704 split
+the former single binary: `llama-cli` is now an interactive chat UI that rejects `--no-conversation`
+at runtime — printing `--no-conversation is not supported by llama-cli / please use llama-completion
+instead` to **stdout** — and then continues in chat mode anyway. Under the retired target a
+*successful* run exited 0 and published roughly 1.1 KiB of chrome as the model's answer: the refusal
+line, an ASCII banner, `build : b9704-…`, the `/exit /regen /clear /read /glob` command list, the
+echoed prompt, and a `[ Prompt: … t/s | Generation: … t/s ]` footer. That is not the model's output,
+and the realness contract forbids publishing it. `llama-completion` ships in the same pinned payload
+and needs no manifest change.
+
+**Two flags are retired on the Linux lanes, each for a measured reason.** `--log-disable` silenced the
+runner's only failure channel: against b9704 a failed model load produces **0 bytes on both streams**
+with it and **893 bytes naming the exact GGUF path** without it. `--no-conversation` is rejected by
+`llama-cli` outright and, under `llama-completion`, leaks the chat-template marker into published
+output.
+
+**A native-runner failure publishes its exit code and both captured streams.** The retired
+`nativeRunnerResult` catch-all discarded the exit code, discarded stdout entirely, and appended only
+stderr — so exit 1, a cgroup OOM kill at 137, and a segfault at 139 produced a byte-identical
+message. Combined with the `--log-disable` blindness above, a `linux-cpu` cohort failure carried
+exactly one bit: that the child exited non-zero. The catch-all now binds `ExitFailure failureCode`
+(total under `-Wall -Werror`, since `ExitSuccess` and the Python adapters' `ExitFailure 75`
+cache-miss protocol are matched above) and appends a labelled, 4096-character-bounded slice of each
+stream. Truncation is marked as truncation; absent output stays absent; nothing is synthesized.
+
+**Model-cache hydration is atomic, and an empty object is refused rather than cached.** The retired
+`downloadNativeModelCacheObject` wrote the fetched object straight to its final path and guarded the
+whole download behind `doesFileExist destination`. Neither half is safe alone and together they fail
+open *permanently*: `ByteString.writeFile` is not atomic, so a download interrupted by a container
+restart, an OOM kill, or a timeout leaves a short or empty file at the destination — and the
+existence check then treats that wreckage as a populated cache forever, because nothing re-downloads
+a path that exists. `.ready` is stamped immediately after, so the cache reports itself populated
+while the model file is unusable, and an `emptyDir` survives container restart within a pod, so the
+wreckage outlives the crash that produced it.
+
+The object is now staged to a `.incoming` sibling and renamed. Rename is atomic within one
+directory, so a destination is either absent or complete — which is what the existence check always
+assumed. An interrupted attempt leaves only the sibling, which the next attempt discards. A
+zero-byte object is refused at the fetch, naming bucket, key, and destination, and a short write is
+refused by comparing the staged size against the fetched length. A present-but-empty destination is
+now treated as absent rather than as a cache hit.
+
+**The correction is scoped to the lane it was measured on, deliberately.**
+`renderNativeArtifactArguments` is keyed on adapter id rather than on platform, so an unscoped edit
+would have silently changed Apple's argv too. Apple runs a *differently built* llama.cpp — installed
+by `materialize-metal-engines` under `native/bin`, not the image-pinned b9704 payload — and nobody
+has measured it. Changing an argv for a binary nobody has run is precisely how the retired grammar
+became wrong, so `llamaLaneSpecificArguments` keeps both flags on `AppleSilicon` and drops them on
+both Linux lanes.
+
+### Validation
+
+- The exact Linux argv is pinned, and the two retired flags are pinned **absent** by name, so
+  neither returns as a harmless tidy-up.
+- The Linux target path assertion pins `llama-completion`.
+- `llamaLaneSpecificArguments` is total over `RuntimeMode` under `-Wall -Werror`, so a new lane
+  cannot be added without deciding this question for it.
+- Measured directly against the pinned payload in the launcher image, not inferred: `llama-cli` with
+  the retired argv and a missing model gives `rc=1, stdout=128B, stderr=0B`; the same without
+  `--log-disable` gives `stderr=893B`; `llama-completion` with the corrected argv and a missing model
+  gives `rc=1, stderr=1243B` and no unsupported-flag complaint.
+- **Cohort gate (pending):** the `linux-cpu` per-model matrix completing `llm-tinyllama-gguf` with
+  real generated text rather than chat chrome.
+
+### Remaining Work
+
+**The Apple half is unfixed and very likely defective in the same way.** Apple's `llama-cpp-cli`
+target is `native/bin/llama-cli`; if `materialize-metal-engines` installed a post-split llama.cpp —
+which is likely — that lane publishes the same chat chrome as model output and is subject to the
+same realness defect. Confirming it needs Apple hardware to measure the installed binary, so it
+belongs to [Wave Y](cohort-validation-waves.md). It is stated as a probable defect rather than a
+known one, because nobody has run it.
+
+**The trigger for the cohort failure that opened this sprint is characterized but not confirmed.**
+What is established by measurement: the upstream MinIO object is a *valid* GGUF — magic `47 47 55 46`
+version 3 at offset 32 of the retained backing file, with the file's 14752-byte excess over the
+published object size accounted for exactly by 461 32-byte streaming-bitrot hashes, one per MiB. So
+staging and upload are correct and the defect is on the engine-side hydration. What the engine
+reported is `failed to read magic` rather than `failed to open`, which means the destination existed
+and held fewer than four readable bytes.
+
+The atomic-rename and empty-object refusal above close the fail-open that best fits that evidence,
+but they are landed as a correctness fix rather than as a confirmed root-cause fix, because the
+`emptyDir` holding the wreckage is gone with its pod and no run has yet reproduced it under the new
+diagnostics. A subsequent attempt to reproduce it against a fresh cluster did not reach the engine —
+the ad-hoc `internal pulsar-roundtrip` invocation never delivered a request — so the reproduction is
+owed. If the next cohort still fails here, it now fails with the bucket, key, destination, and byte
+counts in the message.
 
 ---
 

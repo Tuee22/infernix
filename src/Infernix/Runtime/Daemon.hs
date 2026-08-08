@@ -8,7 +8,7 @@ where
 import Control.Concurrent (forkIO, threadDelay)
 import Control.Monad (forM_, forever, when)
 import Data.List (intercalate)
-import Data.Maybe (fromMaybe, listToMaybe)
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as Text
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
@@ -321,12 +321,46 @@ requireCompiledDaemon daemonRole maybeEngineName compiledPlan =
   case daemonRole of
     Coordinator -> pure (compiledPlanCoordinatorDaemon compiledPlan)
     Webapp -> pure (compiledPlanWebappDaemon compiledPlan)
-    Engine -> maybe missingCompiledDaemon pure selectEngineDaemon
-  where
-    selectEngineDaemon =
+    Engine ->
       case maybeEngineName of
-        Nothing -> listToMaybe (compiledPlanEngineDaemons compiledPlan)
-        Just engineName -> lookupCompiledEngineDaemon engineName compiledPlan
+        Just engineName ->
+          maybe missingCompiledDaemon pure (lookupCompiledEngineDaemon engineName compiledPlan)
+        -- Phase 4 Sprint 4.34: identity fails closed. The retired form took the
+        -- first entry of the compiled catalog, which is a `Map` keyed by member
+        -- id, so the silent default was the lexicographically smallest id — and
+        -- no bootstrap path passes a name, so two machines resolving the same
+        -- identity was the default rather than an edge case. Each would then
+        -- assert its own physical RAM as the budget for work the other may
+        -- execute, and nothing detects it: the broker sees two ordinary `Shared`
+        -- consumers with distinct process-qualified names.
+        --
+        -- One compiled engine daemon is not a default — it is a determination,
+        -- and the daemon adopts it. Two or more without a name is a daemon that
+        -- cannot say which member it is, and it refuses to start.
+        Nothing ->
+          case compiledPlanEngineDaemons compiledPlan of
+            [singleDaemon] -> pure singleDaemon
+            [] -> missingCompiledDaemon
+            manyDaemons ->
+              ioError
+                ( userError
+                    ( "engine daemon identity is ambiguous: the compiled plan has "
+                        <> show (length manyDaemons)
+                        <> " engine members and no --engine-name was given. Pass"
+                        <> " --engine-name with one of: "
+                        <> intercalate
+                          ", "
+                          [ Text.unpack memberIdValue
+                          | daemon <- manyDaemons,
+                            Just memberIdValue <- [compiledDaemonMemberId daemon]
+                          ]
+                        <> ". A daemon that cannot establish which member it is"
+                        <> " refuses to start rather than adopting a default,"
+                        <> " because each member asserts its own machine's"
+                        <> " capacity for the work it admits."
+                    )
+                )
+  where
     missingCompiledDaemon =
       ioError
         ( userError

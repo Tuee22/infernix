@@ -31,7 +31,6 @@ module Infernix.ExecutionPlan
     compiledDaemonResultTopic,
     compiledDaemonRole,
     compiledPlacementDescriptor,
-    compiledPlacementEnforcedResources,
     compiledPlacementEngine,
     compiledPlacementId,
     compiledPlacementRoutes,
@@ -42,12 +41,13 @@ module Infernix.ExecutionPlan
     compiledPlanEngineDaemons,
     compiledPlanModelBootstrapTopic,
     compiledPlanModelsBucket,
+    compiledPlanPlacementEnforcedResources,
+    compiledPlanPlacementEnforcementShape,
     compiledPlanRequestTopics,
     compiledPlanResultTopic,
     compiledPlanRuntimeMode,
     compiledPlanWebappDaemon,
     compiledRuntimePlanPlacements,
-    compiledRuntimePlanUnavailableModels,
     engineRouteMaxInflightPerMember,
     engineRouteMemberId,
     engineRoutePoolId,
@@ -64,11 +64,13 @@ module Infernix.ExecutionPlan
     lookupCompiledPlacement,
     lookupCompiledEngineDaemon,
     lookupExecutableModel,
-    lookupUnavailableModel,
+    lookupRuntimeUnavailableModel,
     memoryCeilingMib,
+    predictedAdmissionRejection,
     refineRuntimePlan,
     runtimePlanCompiledPlan,
     runtimePlanModels,
+    runtimePlanUnavailableModels,
     unavailableModelDescriptor,
     unavailableModelReason,
   )
@@ -79,13 +81,11 @@ import Data.List (group, sort)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
-import Data.Maybe (fromMaybe)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
 import Infernix.Bootstrap.Models qualified as BootstrapModels
-import Infernix.EngineBindings (canonicalEngineBindingForSelectedEngine)
 import Infernix.EngineRouting (enginePoolTopicForMode)
 import Infernix.ExecutionPlan.Internal
   ( CompiledDaemon (..),
@@ -99,6 +99,7 @@ import Infernix.ExecutionPlan.Internal
     ExecutableModel (..),
     MemoryCeiling (..),
     MemoryGrant (..),
+    PlacementEnforcementShape (..),
     PlacementObservation (..),
     RawRuntimeConfig (..),
     Resource (..),
@@ -122,7 +123,6 @@ import Infernix.Types
     PodMemoryLimit (..),
     PulsarConnectionMode (..),
     RequestField (..),
-    RuntimeLane (..),
     RuntimeMode (..),
     defaultModelBootstrapTopic,
     defaultModelsBucket,
@@ -136,13 +136,8 @@ import Infernix.Types qualified as Types
 
 data ConfigError
   = EmptyModelCatalog
-  | EmptyEngineCatalog
   | EmptyPoolCatalog
   | EmptyMemberCatalog
-  | EmptyEngineDaemonCatalog
-  | EmptyRequestTopics
-  | BlankRequestTopic
-  | BlankResultTopic
   | BlankModelsBucket
   | BlankModelBootstrapTopic
   | ModelsBucketMismatch Text Text
@@ -151,31 +146,17 @@ data ConfigError
   | BlankGeneratedPath
   | BlankMountedPath
   | InvalidActiveDaemonRole
-  | InvalidDaemonConfig Text
   | DaemonRoleMismatch Text DaemonRole DaemonRole
   | DaemonMemberMismatch Text (Maybe Text) (Maybe Text)
-  | DaemonLocationMismatch Text Text Text
-  | DaemonRequestTopicsMismatch Text [Text] [Text]
-  | DaemonResultTopicMismatch Text Text Text
   | DaemonConnectionModeMismatch Text PulsarConnectionMode PulsarConnectionMode
-  | DaemonSubscriptionMismatch Text ConsumerSubscriptionType (Maybe ConsumerSubscriptionType)
-  | EngineDaemonMemberMissing Text
-  | MissingEngineDaemon Text
-  | DuplicateEngineDaemonMember Text
-  | InvalidEngineBinding Text
-  | UnsupportedEngineBinding RuntimeMode Text
-  | EngineBindingMismatch Text EngineBinding EngineBinding
   | InvalidModelDescriptor Text
   | InvalidModelId Text
   | InvalidMatrixRowId Text
-  | InvalidAdapterId Text Text
   | UnenforceableModelMemoryFootprint Text Integer
   | DuplicateModelId Text
   | DuplicateMatrixRowId Text
-  | DuplicateEngineId Text
   | DuplicatePoolId Text
   | DuplicateMemberId Text
-  | DuplicateRequestTopic Text
   | DuplicatePoolModelReference Text Text
   | DuplicatePoolMemberReference Text Text
   | DuplicateMemberPoolReference Text Text
@@ -186,22 +167,15 @@ data ConfigError
   | EmptyPoolMembers Text
   | EmptyMemberPools Text
   | UnknownSelectedEngine Text Text
-  | ModelRuntimeMismatch Text RuntimeMode RuntimeMode
-  | ModelRuntimeLaneMismatch Text RuntimeMode RuntimeLane
   | UnsupportedGpuRequirement Text RuntimeMode
   | DanglingPoolModel Text Text
   | DanglingPoolMember Text Text
   | DanglingMemberPool Text Text
   | PoolMemberLinkMissing Text Text
   | MemberPoolLinkMissing Text Text
-  | UnknownDaemonMember Text
   | UnplacedModel Text
   | MultiplyPlacedModel Text [Text]
-  | PoolRuntimeMismatch Text RuntimeMode RuntimeMode
-  | MemberRuntimeMismatch Text RuntimeMode RuntimeMode
-  | MemberLocationMismatch Text RuntimeMode Text
   | InvalidPoolSubscription Text
-  | InvalidPoolMaxInflight Text Int
   | ModelWithoutEligibleMember Text
   | DuplicateDerivedRouteTopic Text [(Text, Text)]
   | TopicFamilyCollision Text [Text]
@@ -214,7 +188,14 @@ data ConfigError
 type ConfigErrors = NonEmpty ConfigError
 
 data RefinementError
-  = DuplicatePlacementObservation Text
+  = -- | Phase 4 Sprint 4.34: this machine placed models and admitted none of
+    -- them. A daemon built from that plan would start, report ready, and answer
+    -- every request with a memory rejection, which is a worse failure than
+    -- refusing to start. It is a refinement error rather than a config error
+    -- because admission belongs to the machine that will execute: a catalog the
+    -- coordinator's box cannot fund says nothing about the engine's box.
+    NoAdmissiblePlacement [Text]
+  | DuplicatePlacementObservation Text
   | MissingPlacementObservation Text
   | UnexpectedPlacementObservation Text
   | PlacementObservationResourceMismatch Text
@@ -252,7 +233,7 @@ compileRuntimePlan (RawRuntimeConfig config) =
     [] -> do
       (coordinatorCapability, webappCapability, engineCapabilities) <-
         mapLeftSingleton (compileDaemonCapabilities config)
-      compiledModels <-
+      compiledPlacementList <-
         mapLeftSingleton (traverse (compileModel config) (models config))
       Right
         CompiledRuntimePlan
@@ -263,12 +244,7 @@ compileRuntimePlan (RawRuntimeConfig config) =
             compiledPlacements =
               Map.fromList
                 [ (modelId (placementDescriptor placement), placement)
-                | Left placement <- compiledModels
-                ],
-            compiledUnavailable =
-              Map.fromList
-                [ (modelId (unavailableDescriptor unavailable), unavailable)
-                | Right unavailable <- compiledModels
+                | placement <- compiledPlacementList
                 ]
           }
     firstError : remainingErrors -> Left (firstError :| remainingErrors)
@@ -277,32 +253,30 @@ mapLeftSingleton :: Either ConfigError value -> Either ConfigErrors value
 mapLeftSingleton =
   either (Left . (:| [])) Right
 
+-- | Phase 8 Sprint 8.10: the engine daemons are derived one per member, so the
+-- missing-daemon and duplicate-member refusals this used to raise have no
+-- inhabitant left and are retired with the field they guarded.
 compileDaemonCapabilities ::
   DemoConfig ->
   Either ConfigError (CompiledDaemon, CompiledDaemon, Map.Map Text CompiledDaemon)
-compileDaemonCapabilities config = do
-  engineEntries <- traverse compiledEngineDaemon (engineMembers config)
-  pure
+compileDaemonCapabilities config =
+  Right
     ( CompiledDaemon (coordinatorDaemon config),
       CompiledDaemon (webappDaemon config),
-      Map.fromList engineEntries
+      Map.fromList
+        [ (memberIdValue, CompiledDaemon daemon)
+        | daemon <- engineDaemons config,
+          Just memberIdValue <- [daemonConfigMemberId daemon]
+        ]
     )
-  where
-    compiledEngineDaemon member =
-      case filter
-        ((== Just (engineMemberId member)) . daemonConfigMemberId)
-        (engineDaemons config) of
-        [daemon] ->
-          Right (engineMemberId member, CompiledDaemon daemon)
-        [] ->
-          Left (MissingEngineDaemon (engineMemberId member))
-        _ ->
-          Left (DuplicateEngineDaemonMember (engineMemberId member))
 
+-- | Place one model on the validated engine-pool graph. This is pure graph
+-- validation: it decides where a model /may/ run, never whether the machine
+-- reading the config can fund it.
 compileModel ::
   DemoConfig ->
   ModelDescriptor ->
-  Either ConfigError (Either CompiledPlacement UnavailableModel)
+  Either ConfigError CompiledPlacement
 compileModel config model = do
   binding <-
     maybe
@@ -319,25 +293,12 @@ compileModel config model = do
     case NonEmpty.nonEmpty routeList of
       Nothing -> Left (ModelWithoutEligibleMember (modelId model))
       Just nonEmptyRoutes -> Right nonEmptyRoutes
-  case compileResources (configRuntimeMode config) (inferenceMemoryBudget config) model of
-    Left admissionError ->
-      Right
-        ( Right
-            UnavailableModel
-              { unavailableDescriptor = model,
-                unavailableReason = admissionError
-              }
-        )
-    Right resources ->
-      Right
-        ( Left
-            CompiledPlacement
-              { placementDescriptor = model,
-                placementEngine = binding,
-                placementRoutes = routes,
-                placementResources = resources
-              }
-        )
+  Right
+    CompiledPlacement
+      { placementDescriptor = model,
+        placementEngine = binding,
+        placementRoutes = routes
+      }
   where
     engineMap = Map.fromList [(engineBindingName binding, binding) | binding <- engines config]
     memberMap = Map.fromList [(engineMemberId member, member) | member <- engineMembers config]
@@ -363,30 +324,31 @@ compileModel config model = do
               }
         else Left (PoolMemberLinkMissing (enginePoolId pool) memberIdValue)
 
-compileResources ::
+-- | Which enforcement mechanism a placement runs under on this machine, and the
+-- declared limits its grants will be admitted against.
+--
+-- Phase 4 Sprint 4.34: the enforcer must choose its samplers before it can
+-- admit anything, so the shape is decided here, once, from the runtime mode,
+-- the budget, and whether the model uses the device. 'admitPlacementResources'
+-- reads the same value, which is why the probe and the grant cannot name
+-- different limits.
+--
+-- 'Nothing' means the runtime mode and the declared budget name no mechanism at
+-- all. 'compilerErrors' already rejects that pair as 'RuntimeBudgetMismatch' /
+-- 'GpuDualResourceBudgetRequired', so it is unreachable from a compiled plan;
+-- admission still fails closed on it rather than assuming a lane.
+placementEnforcementShape ::
   RuntimeMode ->
   InferenceMemoryBudget ->
   ModelDescriptor ->
-  Either InferenceError CompiledResources
-compileResources runtimeModeValue budget model =
+  Maybe PlacementEnforcementShape
+placementEnforcementShape runtimeModeValue budget model =
   case (runtimeModeValue, budget) of
     (AppleSilicon, HostEnforcedBudget partition) ->
-      CompiledHostResources
-        (HostFootprintWatchdogPlan partition)
-        <$> admitGrant
-          HostRamWitness
-          (inferenceMemoryBudgetSource budget)
-          model
-          (hostPartitionInferenceCapacityMib partition)
+      Just (HostEnforcementShape partition)
     (LinuxCpu, SubstrateEnforcedBudget podLimit)
       | podMemoryLimitResource podLimit == Types.PodRam ->
-          CompiledPodResources
-            (LinuxProcessGroupRssWatchdogPlan podLimit)
-            <$> admitGrant
-              PodRamWitness
-              (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
-              model
-              (podMemoryLimitMib podLimit)
+          Just (PodEnforcementShape podLimit)
     -- Phase 6 Sprint 6.44 — a @linux-gpu@ model that actually uses the device
     -- must clear both limits, and each admitted quantity becomes its own
     -- resource-indexed grant with its own live watchdog. A @linux-gpu@ model
@@ -395,30 +357,63 @@ compileResources runtimeModeValue budget model =
     (LinuxGpu, DualEnforcedBudget podLimit vramLimit)
       | podMemoryLimitResource podLimit == Types.PodRam,
         podMemoryLimitResource vramLimit == Types.GpuVram ->
-          if requiresGpu model
-            then
-              CompiledGpuResources
-                (LinuxProcessGroupRssWatchdogPlan podLimit)
-                <$> admitGrant
-                  PodRamWitness
-                  (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
-                  model
-                  (podMemoryLimitMib podLimit)
-                <*> pure (NvidiaVramAccountingPlan vramLimit)
-                <*> admitGrant
-                  NvidiaVramWitness
-                  (Types.podMemoryLimitSourceText (podMemoryLimitSource vramLimit))
-                  model
-                  (podMemoryLimitMib vramLimit)
-            else
-              CompiledPodResources
-                (LinuxProcessGroupRssWatchdogPlan podLimit)
-                <$> admitGrant
-                  PodRamWitness
-                  (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
-                  model
-                  (podMemoryLimitMib podLimit)
-    _ ->
+          Just
+            ( if requiresGpu model
+                then GpuEnforcementShape podLimit vramLimit
+                else PodEnforcementShape podLimit
+            )
+    _ -> Nothing
+
+-- | The physical resources an enforcement shape binds, in enforcement order.
+placementShapeEnforcedResources :: PlacementEnforcementShape -> [InferenceMemoryResource]
+placementShapeEnforcedResources shape =
+  case shape of
+    HostEnforcementShape {} -> [Types.UnifiedHostRam]
+    PodEnforcementShape {} -> [Types.PodRam]
+    GpuEnforcementShape {} -> [Types.PodRam, Types.GpuVram]
+
+-- | Admit one placement against the declared capacity of the machine that will
+-- execute it. Reachable only from 'refineRuntimePlan', which needs a
+-- 'RuntimeObservation' the enforcer alone can produce, so no routing-only role
+-- can perform admission.
+admitPlacementResources ::
+  RuntimeMode ->
+  InferenceMemoryBudget ->
+  ModelDescriptor ->
+  Either InferenceError CompiledResources
+admitPlacementResources runtimeModeValue budget model =
+  case placementEnforcementShape runtimeModeValue budget model of
+    Just (HostEnforcementShape partition) ->
+      CompiledHostResources
+        (HostFootprintWatchdogPlan partition)
+        <$> admitGrant
+          HostRamWitness
+          (inferenceMemoryBudgetSource budget)
+          model
+          (hostPartitionInferenceCapacityMib partition)
+    Just (PodEnforcementShape podLimit) ->
+      CompiledPodResources
+        (LinuxProcessGroupRssWatchdogPlan podLimit)
+        <$> admitGrant
+          PodRamWitness
+          (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
+          model
+          (podMemoryLimitMib podLimit)
+    Just (GpuEnforcementShape podLimit vramLimit) ->
+      CompiledGpuResources
+        (LinuxProcessGroupRssWatchdogPlan podLimit)
+        <$> admitGrant
+          PodRamWitness
+          (Types.podMemoryLimitSourceText (podMemoryLimitSource podLimit))
+          model
+          (podMemoryLimitMib podLimit)
+        <*> pure (NvidiaVramAccountingPlan vramLimit)
+        <*> admitGrant
+          NvidiaVramWitness
+          (Types.podMemoryLimitSourceText (podMemoryLimitSource vramLimit))
+          model
+          (podMemoryLimitMib vramLimit)
+    Nothing ->
       Left
         ModelMemoryLimitExceeded
           { inferenceErrorModelId = modelId model,
@@ -477,14 +472,6 @@ compilerErrors config =
     engineIdSet = Set.fromList engineIds
     poolIdSet = Set.fromList poolIds
     memberIdSet = Set.fromList memberIds
-    canonicalBindings =
-      [ ( binding,
-          canonicalEngineBindingForSelectedEngine
-            (configRuntimeMode config)
-            (engineBindingName binding)
-        )
-      | binding <- engines config
-      ]
     poolMap = Map.fromList [(enginePoolId pool, pool) | pool <- enginePools config]
     memberMap = Map.fromList [(engineMemberId member, member) | member <- engineMembers config]
     derivedRouteSources =
@@ -519,15 +506,16 @@ compilerErrors config =
         )
     modelPlacements modelIdValue =
       [enginePoolId pool | pool <- enginePools config, modelIdValue `elem` enginePoolModelIds pool]
+    -- Phase 8 Sprint 8.10: the checks that only ever caught a generated field
+    -- disagreeing with what the binary derives are retired together with those
+    -- fields. They were the symptom, not the guard: the engine list, the engine
+    -- daemons, the topics, the per-entity runtime mode and location, the pool
+    -- in-flight knob, and the substrate limit's resource/source are now derived
+    -- at decode, so there is nothing left for them to disagree with.
     basicErrors =
       [EmptyModelCatalog | null (models config)]
-        <> [EmptyEngineCatalog | null (engines config)]
         <> [EmptyPoolCatalog | null (enginePools config)]
         <> [EmptyMemberCatalog | null (engineMembers config)]
-        <> [EmptyEngineDaemonCatalog | null (engineDaemons config)]
-        <> [EmptyRequestTopics | null (requestTopics config)]
-        <> [BlankRequestTopic | any blankText (requestTopics config)]
-        <> [BlankResultTopic | blankText (resultTopic config)]
         <> [BlankModelsBucket | blankText (modelsBucket config)]
         <> [BlankModelBootstrapTopic | blankText (modelBootstrapTopic config)]
         <> [ ModelsBucketMismatch defaultModelsBucket (modelsBucket config)
@@ -542,38 +530,12 @@ compilerErrors config =
         <> [BlankGeneratedPath | all isSpace (generatedPath config)]
         <> [BlankMountedPath | all isSpace (mountedPath config)]
         <> [InvalidActiveDaemonRole | not activeRoleDeclared]
-        <> [InvalidDaemonConfig "coordinator" | invalidDaemon (coordinatorDaemon config)]
-        <> [InvalidDaemonConfig "webapp" | invalidDaemon (webappDaemon config)]
-        <> [ InvalidDaemonConfig (fromMaybe (daemonConfigLocation daemon) (daemonConfigMemberId daemon))
-           | daemon <- engineDaemons config,
-             invalidDaemon daemon
-           ]
-        <> [ InvalidEngineBinding (engineBindingName binding)
-           | binding <- engines config,
-             invalidEngine binding
-           ]
-        <> [ UnsupportedEngineBinding
-               (configRuntimeMode config)
-               (engineBindingName binding)
-           | (binding, Nothing) <- canonicalBindings
-           ]
-        <> [ EngineBindingMismatch
-               (engineBindingName binding)
-               canonicalBinding
-               binding
-           | (binding, Just canonicalBinding) <- canonicalBindings,
-             binding /= canonicalBinding
-           ]
         <> [ InvalidModelDescriptor (modelId model)
            | model <- models config,
              invalidModel model
            ]
         <> [InvalidModelId (modelId model) | model <- models config, not (canonicalIdentifier (modelId model))]
         <> [InvalidMatrixRowId (matrixRowId model) | model <- models config, not (canonicalIdentifier (matrixRowId model))]
-        <> [ InvalidAdapterId (engineBindingName binding) (engineBindingAdapterId binding)
-           | binding <- engines config,
-             not (canonicalIdentifier (engineBindingAdapterId binding))
-           ]
         <> [ UnenforceableModelMemoryFootprint
                (modelId model)
                (toInteger (modelMemoryFootprintMib (modelRamFootprint model)))
@@ -587,21 +549,6 @@ compilerErrors config =
                    : daemonConfigRole (webappDaemon config)
                    : map daemonConfigRole (engineDaemons config)
                )
-    invalidDaemon daemon =
-      blankText (daemonConfigLocation daemon)
-        || null (daemonConfigRequestTopics daemon)
-        || any blankText (daemonConfigRequestTopics daemon)
-        || blankText (daemonConfigResultTopic daemon)
-    invalidEngine binding =
-      any
-        blankText
-        [ engineBindingName binding,
-          engineBindingAdapterId binding,
-          engineBindingAdapterLocator binding,
-          engineBindingAdapterEntrypoint binding,
-          engineBindingSetupEntrypoint binding,
-          Text.pack (engineBindingProjectDirectory binding)
-        ]
     invalidModel model =
       any
         blankText
@@ -613,10 +560,8 @@ compilerErrors config =
     structuralErrors =
       map DuplicateModelId (duplicates modelIds)
         <> map DuplicateMatrixRowId (duplicates matrixIds)
-        <> map DuplicateEngineId (duplicates engineIds)
         <> map DuplicatePoolId (duplicates poolIds)
         <> map DuplicateMemberId (duplicates memberIds)
-        <> map DuplicateRequestTopic (duplicates (requestTopics config))
         <> [ DuplicatePoolModelReference (enginePoolId pool) duplicateModelId
            | pool <- enginePools config,
              duplicateModelId <- duplicates (enginePoolModelIds pool)
@@ -674,7 +619,6 @@ compilerErrors config =
              Just pool <- [Map.lookup referencedPool poolMap],
              engineMemberId member `notElem` enginePoolMemberIds pool
            ]
-        <> [UnknownDaemonMember memberIdValue | daemon <- engineDaemons config, Just memberIdValue <- [daemonConfigMemberId daemon], memberIdValue `Set.notMember` memberIdSet]
         <> [UnplacedModel modelIdValue | modelIdValue <- modelIds, null (modelPlacements modelIdValue)]
         <> [ MultiplyPlacedModel modelIdValue placements
            | modelIdValue <- modelIds,
@@ -682,7 +626,6 @@ compilerErrors config =
              length placements > 1
            ]
         <> [InvalidPoolSubscription (enginePoolId pool) | pool <- enginePools config, enginePoolSubscriptionType pool /= ConsumerShared]
-        <> [InvalidPoolMaxInflight (enginePoolId pool) (enginePoolMaxInflightPerMember pool) | pool <- enginePools config, enginePoolMaxInflightPerMember pool <= 0]
         <> [ ModelWithoutEligibleMember modelIdValue
            | modelIdValue <- modelIds,
              [pool] <- [filter ((modelIdValue `elem`) . enginePoolModelIds) (enginePools config)],
@@ -693,45 +636,13 @@ compilerErrors config =
                  enginePoolId pool `elem` engineMemberPoolIds member
                ]
            ]
+    -- The two in-cluster daemons still declare their role, member identity, and
+    -- Pulsar connection mode, so those three checks stay. Every other daemon
+    -- check compared a generated mirror against a derivation, and the engine
+    -- daemons are no longer declared at all.
     daemonErrors =
       daemonShapeErrors "coordinator" Coordinator Nothing ConfiguredTransport (coordinatorDaemon config)
         <> daemonShapeErrors "webapp" Webapp Nothing ConfiguredTransport (webappDaemon config)
-        <> [ DaemonLocationMismatch "coordinator" "cluster-pod" (daemonConfigLocation (coordinatorDaemon config))
-           | daemonConfigLocation (coordinatorDaemon config) /= "cluster-pod"
-           ]
-        <> [ DaemonLocationMismatch "webapp" "cluster-pod" (daemonConfigLocation (webappDaemon config))
-           | daemonConfigLocation (webappDaemon config) /= "cluster-pod"
-           ]
-        <> [ EngineDaemonMemberMissing (daemonConfigLocation daemon)
-           | daemon <- engineDaemons config,
-             Nothing <- [daemonConfigMemberId daemon]
-           ]
-        <> [ MissingEngineDaemon memberIdValue
-           | memberIdValue <- memberIds,
-             null (engineDaemonsFor memberIdValue)
-           ]
-        <> [ DuplicateEngineDaemonMember memberIdValue
-           | memberIdValue <- memberIds,
-             length (engineDaemonsFor memberIdValue) > 1
-           ]
-        <> concat
-          [ daemonShapeErrors
-              memberIdValue
-              Engine
-              (Just memberIdValue)
-              (expectedEngineConnectionMode (configRuntimeMode config))
-              daemon
-              <> [ DaemonLocationMismatch memberIdValue (engineMemberLocation member) (daemonConfigLocation daemon)
-                 | daemonConfigLocation daemon /= engineMemberLocation member
-                 ]
-              <> [ DaemonRequestTopicsMismatch memberIdValue expectedTopics (daemonConfigRequestTopics daemon)
-                 | daemonConfigRequestTopics daemon /= expectedTopics
-                 ]
-          | member <- engineMembers config,
-            let memberIdValue = engineMemberId member,
-            let expectedTopics = expectedEngineTopics member,
-            daemon <- engineDaemonsFor memberIdValue
-          ]
     daemonShapeErrors label expectedRole expectedMember expectedConnection daemon =
       [ DaemonRoleMismatch label expectedRole (daemonConfigRole daemon)
       | daemonConfigRole daemon /= expectedRole
@@ -739,65 +650,18 @@ compilerErrors config =
         <> [ DaemonMemberMismatch label expectedMember (daemonConfigMemberId daemon)
            | daemonConfigMemberId daemon /= expectedMember
            ]
-        <> [ DaemonResultTopicMismatch label (resultTopic config) (daemonConfigResultTopic daemon)
-           | daemonConfigResultTopic daemon /= resultTopic config
-           ]
         <> [ DaemonConnectionModeMismatch label expectedConnection (daemonConfigPulsarConnectionMode daemon)
            | daemonConfigPulsarConnectionMode daemon /= expectedConnection
            ]
-        <> [ DaemonSubscriptionMismatch label ConsumerShared (daemonConfigConsumerSubscriptionType daemon)
-           | daemonConfigConsumerSubscriptionType daemon /= Just ConsumerShared
-           ]
-        <> [ DaemonRequestTopicsMismatch label (requestTopics config) (daemonConfigRequestTopics daemon)
-           | expectedRole /= Engine,
-             daemonConfigRequestTopics daemon /= requestTopics config
-           ]
-    engineDaemonsFor memberIdValue =
-      filter ((== Just memberIdValue) . daemonConfigMemberId) (engineDaemons config)
-    expectedEngineTopics member =
-      [ enginePoolTopicForMode
-          (configRuntimeMode config)
-          (enginePoolId pool)
-          modelIdValue
-      | pool <- enginePools config,
-        enginePoolId pool `elem` engineMemberPoolIds member,
-        engineMemberId member `elem` enginePoolMemberIds pool,
-        modelIdValue <- enginePoolModelIds pool
-      ]
-    expectedEngineConnectionMode runtimeModeValue =
-      case runtimeModeValue of
-        AppleSilicon -> PublicationEdgeAutoDiscovery
-        LinuxCpu -> ConfiguredTransport
-        LinuxGpu -> ConfiguredTransport
     runtimeErrors =
       [ UnknownSelectedEngine (modelId model) (selectedEngine model)
       | model <- models config,
         selectedEngine model `Set.notMember` engineIdSet
       ]
-        <> [ ModelRuntimeMismatch (modelId model) (configRuntimeMode config) (runtimeMode model)
-           | model <- models config,
-             runtimeMode model /= configRuntimeMode config
-           ]
-        <> [ ModelRuntimeLaneMismatch (modelId model) (configRuntimeMode config) (runtimeLane model)
-           | model <- models config,
-             runtimeLane model /= expectedRuntimeLane (configRuntimeMode config) (requiresGpu model)
-           ]
         <> [ UnsupportedGpuRequirement (modelId model) (configRuntimeMode config)
            | configRuntimeMode config == LinuxCpu,
              model <- models config,
              requiresGpu model
-           ]
-        <> [ PoolRuntimeMismatch (enginePoolId pool) (configRuntimeMode config) (enginePoolRuntimeMode pool)
-           | pool <- enginePools config,
-             enginePoolRuntimeMode pool /= configRuntimeMode config
-           ]
-        <> [ MemberRuntimeMismatch (engineMemberId member) (configRuntimeMode config) (engineMemberRuntimeMode member)
-           | member <- engineMembers config,
-             engineMemberRuntimeMode member /= configRuntimeMode config
-           ]
-        <> [ MemberLocationMismatch (engineMemberId member) (configRuntimeMode config) (engineMemberLocation member)
-           | member <- engineMembers config,
-             engineMemberLocation member /= expectedMemberLocation (configRuntimeMode config)
            ]
     budgetErrors =
       memoryEnforcerErrors (inferenceMemoryBudget config)
@@ -811,44 +675,21 @@ compilerErrors config =
                  podMemoryLimitResource
                  (inferenceMemoryBudgetPodLimits (inferenceMemoryBudget config))
            ]
-    expectedRuntimeLane runtimeModeValue gpuRequired =
-      case runtimeModeValue of
-        AppleSilicon -> AppleSiliconHost
-        LinuxCpu -> KindLinuxCpu
-        LinuxGpu
-          | gpuRequired -> KindLinuxGpuGpu
-          | otherwise -> KindLinuxGpuShared
-    expectedMemberLocation runtimeModeValue =
-      case runtimeModeValue of
-        AppleSilicon -> "control-plane-host"
-        LinuxCpu -> "cluster-pod"
-        LinuxGpu -> "cluster-pod"
 
--- | Every named limit in a budget must be positive, carry a source, and not
--- claim the unified host RAM that only the Apple partition arm enforces. The
--- dual arm additionally pins which physical resource each half names, so a
--- config cannot present two RAM limits — or two VRAM limits — as dual
--- enforcement.
+-- | Every named limit in a budget must be positive.
 memoryEnforcerErrors :: InferenceMemoryBudget -> [ConfigError]
 memoryEnforcerErrors budget =
   concatMap podLimitErrors (inferenceMemoryBudgetPodLimits budget)
-    <> dualArmErrors
   where
     podLimitErrors podLimit =
       -- Phase 8 Sprint 8.9 removed the non-empty-source check: the source is a
-      -- closed sum now, so a blank one is not a constructible term.
+      -- closed sum now, so a blank one is not a constructible term. Phase 8
+      -- Sprint 8.10 removed the resource checks with the wire field: which
+      -- physical resource a limit bounds is decided by the runtime mode and by
+      -- which half of the budget it occupies, so a limit claiming the wrong one
+      -- is not a constructible term either. @Natural@ still admits zero, so the
+      -- positivity check stays.
       [InvalidMemoryEnforcer "substrate memory limit must be positive" | podMemoryLimitMib podLimit <= 0]
-        <> [InvalidMemoryEnforcer "substrate memory enforcer cannot claim unified host RAM" | podMemoryLimitResource podLimit == Types.UnifiedHostRam]
-    dualArmErrors =
-      case budget of
-        DualEnforcedBudget podLimit vramLimit ->
-          [ InvalidMemoryEnforcer "dual memory enforcer must name a pod RAM limit first"
-          | podMemoryLimitResource podLimit /= Types.PodRam
-          ]
-            <> [ InvalidMemoryEnforcer "dual memory enforcer must name a GPU VRAM limit second"
-               | podMemoryLimitResource vramLimit /= Types.GpuVram
-               ]
-        _ -> []
 
 runtimeBudgetErrors :: RuntimeMode -> InferenceMemoryBudget -> [ConfigError]
 runtimeBudgetErrors runtimeModeValue budget =
@@ -871,6 +712,13 @@ compiledModelBootstrapReadyTopic =
   BootstrapModels.bootstrapReadyTopicFor
     "persistent://infernix/system"
 
+-- | Admit the compiled placements against this machine's declared capacity and
+-- refine the admitted ones against live enforcement observations.
+--
+-- Phase 4 Sprint 4.34: admission lives here, not in 'compileRuntimePlan'. The
+-- 'RuntimeObservation' argument is what keeps it engine-only — its constructor
+-- is package internal and only 'Infernix.Runtime.Enforcer' can fill it from
+-- live probes, so a routing-only role has no way to reach admission at all.
 refineRuntimePlan ::
   RuntimeObservation ->
   CompiledRuntimePlan ->
@@ -881,30 +729,65 @@ refineRuntimePlan (RuntimeObservation observations) compiledPlan =
       Right
         RuntimePlan
           { runtimeCompiledPlan = compiledPlan,
-            runtimeExecutables = Map.fromList executableEntries
+            runtimeExecutables = Map.fromList executableEntries,
+            runtimeUnavailable = Map.fromList unavailableEntries
           }
     firstError : remainingErrors -> Left (firstError :| remainingErrors)
   where
+    runtimeModeValue = compiledPlanRuntimeMode compiledPlan
+    budget = inferenceMemoryBudget (compiledConfig compiledPlan)
+    admitted =
+      [ ( placementId,
+          case admitPlacementResources runtimeModeValue budget (placementDescriptor placement) of
+            Left admissionError ->
+              Left
+                UnavailableModel
+                  { unavailableDescriptor = placementDescriptor placement,
+                    unavailableReason = admissionError
+                  }
+            Right resources -> Right resources
+        )
+      | (placementId, placement) <- Map.toList (compiledPlacements compiledPlan)
+      ]
+    unavailableEntries =
+      [(placementId, unavailable) | (placementId, Left unavailable) <- admitted]
+    admittedResources =
+      Map.fromList [(placementId, resources) | (placementId, Right resources) <- admitted]
+    -- Fires only when models were placed and none survived admission, so the
+    -- deliberately empty `--empty-models` image bake is untouched.
+    noAdmissiblePlacementErrors =
+      [ NoAdmissiblePlacement (map fst unavailableEntries)
+      | not (Map.null (compiledPlacements compiledPlan)),
+        Map.null admittedResources
+      ]
     observationsById =
       Map.fromListWith (<>) [(observationId observation, [observation]) | observation <- observations]
     placementIds = Map.keysSet (compiledPlacements compiledPlan)
+    admittedIds = Map.keysSet admittedResources
     observationIds = Map.keysSet observationsById
     duplicateErrors =
       [ DuplicatePlacementObservation placementId
       | (placementId, placementObservations) <- Map.toList observationsById,
         length placementObservations > 1
       ]
+    -- Only an admitted placement needs an observation: a rejected one names no
+    -- enforcer to probe. An observation for a rejected placement is still
+    -- legitimate — the enforcer probes before it knows the admission result —
+    -- so `unexpected` is measured against every placement, not just the
+    -- admitted ones.
     missingErrors =
-      map MissingPlacementObservation (Set.toList (placementIds `Set.difference` observationIds))
+      map MissingPlacementObservation (Set.toList (admittedIds `Set.difference` observationIds))
     unexpectedErrors =
       map UnexpectedPlacementObservation (Set.toList (observationIds `Set.difference` placementIds))
     refined =
-      [ (placementId, refinePlacement placementId placement observation)
+      [ (placementId, refinePlacement placementId placement resources observation)
       | (placementId, placement) <- Map.toList (compiledPlacements compiledPlan),
+        Just resources <- [Map.lookup placementId admittedResources],
         [observation] <- [Map.findWithDefault [] placementId observationsById]
       ]
     refinementErrors =
-      duplicateErrors
+      noAdmissiblePlacementErrors
+        <> duplicateErrors
         <> missingErrors
         <> unexpectedErrors
         <> [err | (_, Left errors) <- refined, err <- NonEmpty.toList errors]
@@ -920,10 +803,11 @@ observationId = \case
 refinePlacement ::
   Text ->
   CompiledPlacement ->
+  CompiledResources ->
   PlacementObservation ->
   Either RefinementErrors ExecutableModel
-refinePlacement placementId placement observation =
-  case (placementResources placement, observation) of
+refinePlacement placementId placement admittedResources observation =
+  case (admittedResources, observation) of
     (CompiledHostResources plan grant, HostPlacementObservation _ samplerAvailable observedPartition) ->
       case hostRefinementErrors plan samplerAvailable observedPartition of
         [] ->
@@ -1026,11 +910,31 @@ lookupCompiledPlacement modelIdValue = Map.lookup modelIdValue . compiledPlaceme
 compiledRuntimePlanPlacements :: CompiledRuntimePlan -> [CompiledPlacement]
 compiledRuntimePlanPlacements = Map.elems . compiledPlacements
 
-lookupUnavailableModel :: Text -> CompiledRuntimePlan -> Maybe UnavailableModel
-lookupUnavailableModel modelIdValue = Map.lookup modelIdValue . compiledUnavailable
+-- | How the machine that will execute this model is expected to admit it, from
+-- the budget this plan declares.
+--
+-- Phase 4 Sprint 4.34: this is a *prediction*, never a decision. The authority
+-- is the executing engine's own refined plan, and this function exists only so
+-- a validation harness can state an expectation before that engine answers.
+-- Production code must not consult it — the whole point of the admission split
+-- is that a machine which will not run the work does not get a verdict — and
+-- 'predictedAdmissionViolations' in "Infernix.Lint.HaskellStyle" enforces that.
+-- Once the machine contract carries each box's own capacity, this prediction is
+-- only as good as the contract the caller happens to hold.
+predictedAdmissionRejection :: CompiledRuntimePlan -> Text -> Maybe InferenceError
+predictedAdmissionRejection compiledPlan modelIdValue = do
+  placement <- lookupCompiledPlacement modelIdValue compiledPlan
+  either Just (const Nothing) $
+    admitPlacementResources
+      (compiledPlanRuntimeMode compiledPlan)
+      (inferenceMemoryBudget (compiledConfig compiledPlan))
+      (placementDescriptor placement)
 
-compiledRuntimePlanUnavailableModels :: CompiledRuntimePlan -> [UnavailableModel]
-compiledRuntimePlanUnavailableModels = Map.elems . compiledUnavailable
+lookupRuntimeUnavailableModel :: Text -> RuntimePlan -> Maybe UnavailableModel
+lookupRuntimeUnavailableModel modelIdValue = Map.lookup modelIdValue . runtimeUnavailable
+
+runtimePlanUnavailableModels :: RuntimePlan -> [UnavailableModel]
+runtimePlanUnavailableModels = Map.elems . runtimeUnavailable
 
 compiledPlanRuntimeMode :: CompiledRuntimePlan -> RuntimeMode
 compiledPlanRuntimeMode = configRuntimeMode . compiledConfig
@@ -1144,19 +1048,36 @@ executableModelResidentCeilingMib executable =
     RuntimePodResources grant -> enforcedGrantCeilingMib grant
     RuntimeGpuResources grant _ -> enforcedGrantCeilingMib grant
 
--- | The physical resources a compiled placement will have enforced, in
--- enforcement order. A GPU placement names both its pod RAM and its NVIDIA
--- VRAM resource; every other placement names exactly one. This is the
--- compile-time counterpart of 'executableModelResidentResource' plus
--- 'executableModelGpuVramCeilingMib', and it exists so callers can observe
+-- | The enforcement shape a placement takes under this plan's runtime mode and
+-- declared budget. This is the enforcer's sampler-selection input and the
+-- admission input, in that order.
+compiledPlanPlacementEnforcementShape ::
+  CompiledRuntimePlan ->
+  CompiledPlacement ->
+  Maybe PlacementEnforcementShape
+compiledPlanPlacementEnforcementShape compiledPlan placement =
+  placementEnforcementShape
+    (compiledPlanRuntimeMode compiledPlan)
+    (inferenceMemoryBudget (compiledConfig compiledPlan))
+    (placementDescriptor placement)
+
+-- | The physical resources a placement will have enforced, in enforcement
+-- order. A GPU placement names both its pod RAM and its NVIDIA VRAM resource;
+-- every other placement names exactly one. The empty list is the mode/budget
+-- pair that names no mechanism, which 'compilerErrors' already rejects.
+--
+-- This is the placement-side counterpart of 'executableModelResidentResource'
+-- plus 'executableModelGpuVramCeilingMib', and it exists so callers can observe
 -- which resources a placement is bound to without reaching the grants
--- themselves.
-compiledPlacementEnforcedResources :: CompiledPlacement -> [InferenceMemoryResource]
-compiledPlacementEnforcedResources placement =
-  case placementResources placement of
-    CompiledHostResources {} -> [Types.UnifiedHostRam]
-    CompiledPodResources {} -> [Types.PodRam]
-    CompiledGpuResources {} -> [Types.PodRam, Types.GpuVram]
+-- themselves — which, after Sprint 4.34's admission split, a placement no
+-- longer holds.
+compiledPlanPlacementEnforcedResources ::
+  CompiledRuntimePlan ->
+  CompiledPlacement ->
+  [InferenceMemoryResource]
+compiledPlanPlacementEnforcedResources compiledPlan =
+  maybe [] placementShapeEnforcedResources
+    . compiledPlanPlacementEnforcementShape compiledPlan
 
 executableModelResidentResource :: ExecutableModel -> InferenceMemoryResource
 executableModelResidentResource executable =

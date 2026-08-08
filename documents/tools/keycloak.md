@@ -14,7 +14,7 @@
   operator, in line with [postgresql.md](postgresql.md); Keycloak's chart-embedded database
   path is disabled
 - the local demo runs one Keycloak application pod while the backing Patroni Postgres cluster
-  remains HA; raising the Keycloak application replica count requires routed proxy-affinity or
+  runs a single instance; raising the Keycloak application replica count requires routed proxy-affinity or
   clustered-cache validation
 - the Keycloak workload image is mirrored into Harbor before deployment and pulled from
   Harbor at runtime; no other registries are used after Harbor is ready

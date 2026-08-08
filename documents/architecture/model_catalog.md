@@ -5,20 +5,20 @@
 
 > **Purpose**: Define the authoritative model catalog contract that the service and UI both consume.
 
-## Current Status
+## Catalog Bindings
 
-The README matrix reflects the realness rebinds: the multi-instrument music-transcription rows use
+The README matrix carries the realness rebinds: the multi-instrument music-transcription rows use
 `mt3-infer` for MT3-PyTorch and MR-MT3, the piano transcription row uses
-`piano_transcription_inference`, and the redundant Basic Pitch TensorFlow row is dropped (covered by
-the basic-pitch ONNX and Core ML rows). Apple CTranslate2 is a viable CPU path, and Wan on Apple MPS
-is a residual rather than promoted support. The generated Haskell catalog keeps runtime catalogs
-executable-only and records named residual rows separately through `residualMatrixRowIdsForMode`.
-`infernix lint docs` now mechanically checks the README matrix cells against the generated runnable
-catalogs, named residual rows, and `Not recommended` states so documentation cannot silently
-re-promote a residual or hide a runnable binding. Realness for the runnable rows is enforced in the
-engine code by the realness lint. Earlier Waves K/L prove the catalogs that existed when those waves
-ran; post-replacement proof for the two 2026-06-30 MT3 rows closed under Wave P (2026-07-04) in the development
-plan.
+`piano_transcription_inference`, and there is no separate Basic Pitch TensorFlow row — the
+basic-pitch ONNX and Core ML rows cover it. Apple CTranslate2 is a viable CPU path, and Wan on Apple
+MPS is a named residual rather than promoted support.
+
+The generated Haskell catalog keeps runtime catalogs executable-only and records named residual rows
+separately through `residualMatrixRowIdsForMode`. `infernix lint docs` mechanically checks the README
+matrix cells against the generated runnable catalogs, named residual rows, and `Not recommended`
+states, so documentation cannot silently re-promote a residual or hide a runnable binding. Realness
+for the runnable rows is enforced in the engine code by the realness lint: a row whose engine is not
+yet real stays declared-runnable and fails closed rather than fabricating.
 
 ## Contract
 
@@ -37,34 +37,25 @@ The model catalog is Haskell-owned typed configuration derived from the README m
 
 Each generated entry includes:
 
-- matrix-row identity
-- stable model identifier
-- display label and workload family
-- artifact or format type
-- reference model metadata and download URL
-- selected engine for the active runtime mode
-- named residual status when a researched matrix cell is intentionally not runnable
-- request shape metadata used by the API, UI, and tests
-- runtime-lane metadata such as GPU requirement and lane identifier
-- `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one inference on the
-  selected engine path. `Models.hs` `conservativeRamFootprintMibForRow` assigns per-family/per-engine
-  footprints (biased high) until measured peak RSS / VRAM passes refine them. The field is threaded
-  through the hand-written JSON codec, the Dhall decoder/renderer/type in
-  `src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
-  `web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. The Haskell
-  execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. A model
-  whose footprint exceeds the declared capacity remains explicit as `UnavailableModel`; the normal
-  coordinator request path now returns a typed `ModelMemoryLimitExceeded` carrying `requiredMib`
-  and `availableMib` without launch, and the row does not invalidate smaller placements;
-  the complete source-matched Phase 1 gate passed on 2026-07-25. Linux GPU
-  plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6 adds
-  independently indexed RAM/VRAM enforcement. The field is now a required, positive
-  `ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
-  `modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
-  decoder fail closed when it is absent or non-positive — the old bare-`Int` that defaulted to `0` and
-  silently disabled admission is gone. Once admitted, this footprint is the `MemoryCeiling` the
-  capped-engine kernel OS-bounds the engine subprocess's resident memory to; canonical home
-  [bounded_inference_memory.md](bounded_inference_memory.md).
+- matrix-row identity - stable model identifier - display label and workload family - artifact or
+format type - reference model metadata and download URL - selected engine for the active runtime
+mode - named residual status when a researched matrix cell is intentionally not runnable - request
+shape metadata used by the API, UI, and tests - runtime-lane metadata such as GPU requirement and
+lane identifier - `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one
+inference on the selected engine path. `Models.hs` `conservativeRamFootprintMibForRow` assigns
+per-family/per-engine footprints (biased high) until measured peak RSS / VRAM passes refine them.
+The field is threaded through the hand-written JSON codec, the Dhall decoder/renderer/type in
+`src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
+`web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. The Haskell
+execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. Linux GPU
+plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6 adds
+independently indexed RAM/VRAM enforcement. The field is now a required, positive
+`ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
+`modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
+decoder fail closed when it is absent or non-positive — the old bare-`Int` that defaulted to `0` and
+silently disabled admission is gone. Once admitted, this footprint is the `MemoryCeiling` the
+capped-engine kernel OS-bounds the engine subprocess's resident memory to; canonical home
+[bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Rules
 
@@ -94,9 +85,10 @@ typed `HostConfig` absolute path for native-process-runner bindings — streams 
 eagerly pre-staged `infernix-models` MinIO bucket via `adapters.model_cache.get_model_path`, and publishes the
 typed per-family result surface. Realness is guaranteed by construction: the engine code cannot
 return a fabricated result (any missing-weights/load/engine failure raises → `failed`), enforced by
-the realness lint. Per-accelerator real-output delivery is owned by the reopened Phases 1/4/6; adding
+the realness lint. Adding
 a catalog row requires fresh cohort evidence before that row is claimed proven, and any row whose
-real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`.
+achievability is uncertain is an explicit residual in `residualMatrixRowIdsForMode`; a row that is
+merely unbuilt stays declared-runnable and fails closed.
 
 `ResultFamily` is resolved from `family` + `artifactType` + `matrixRowId`. The coarse `family`
 field collapses source-separation, audio-to-MIDI, and audio-generation under a single `audio`

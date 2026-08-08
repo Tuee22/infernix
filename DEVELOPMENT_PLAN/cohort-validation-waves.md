@@ -6,10 +6,10 @@
 [phase-0-documentation-and-governance.md](phase-0-documentation-and-governance.md),
 [phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md),
 [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md),
-[phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md),
+[phase-3-platform-services-and-edge-routing.md](phase-3-platform-services-and-edge-routing.md),
 [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md),
 [phase-5-web-ui-and-shared-types.md](phase-5-web-ui-and-shared-types.md),
-[phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md),
+[phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md),
 [phase-7-demo-app-durable-context.md](phase-7-demo-app-durable-context.md),
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
@@ -58,6 +58,18 @@
 > None has Wave Y cohort evidence.
 > Waves A-X retain their recorded narrower historical
 > evidence; this reset does not rewrite those completed scopes.
+
+> **Scope of every HA, chaos, anti-affinity, node-drain, failover and exactly-once record in this
+> ledger (2026-08-05).** Waves C, D, E, J, K, L, M, N, O, P, S, T, V and X record results for a
+> replicated topology that is now retired, and several describe the pipeline as exactly-once. Those
+> runs are real and are retained **for their narrower recorded scope**; they are not evidence for the
+> current topology, and the delivery guarantee they were read as proving is **at-least-once with an
+> effectively-once observable outcome** — acknowledgement follows the terminal result, so a lost
+> machine costs a redelivery and duplicate compute rather than an unanswered request. Waves P and R
+> additionally record a single-global-config attestation that the system/machine contract split
+> supersedes, and Wave Z's wire evidence narrows once the derivable fields are deleted. Per the
+> convention above, these records are annotated rather than rewritten. The correction is owned by
+> Phase 0 Sprint 0.20 (doctrine) and Phase 6 Sprint 6.47 (gates).
 
 > **Scope of every "zero host OOM" record in this ledger (2026-08-04).** Wherever a wave records
 > that a run completed with zero host out-of-memory kill, or that a never-out-of-memory guarantee is
@@ -136,6 +148,7 @@ retained-state teardown.
 | Y | Apple Silicon + Linux CPU | **Typed Execution Plan Apple/CPU sign-off.** The governed no-repo-owned-native-source correction supersedes `eae424…` / `a0d1…` and interrupted Apple attempt 5. The `filelock` lifecycle boundary, all-Haskell typed subprocess replacement, and bounded fixed `/usr/bin/top` plus `/usr/bin/footprint` Apple observer are implemented. Phase 1's bounded provisioning and smoke-bound sibling transaction are present, but five adversarial reviews have rejected successive drafts. Review #5 rejected the escaping writer/lock boundary and arbitrary activation callback, plus remaining pathname-recursive or unbounded closure, recovery, package-discovery, and nested-capture paths. The live correction audit additionally found that capped-engine cleanup reaped its group leader before later numeric PGID cleanup; an exact retained helper-owned group identity through termination, absence proof, and designated-owner reap is now required. It also found that Linux evidence omitted the system loader and recursive library closure and that the root-bound writer returned to pathname effects with an intermediate-parent swap window. The measured Core ML artifact is about 1.7 GiB, so the full-root per-command snapshot copy is rejected; exact candidate/final execution must use a descriptor-retained generation lease, and dead-owner activity recovery must precede new writer authority. Full-materializer cleanup/recovery proof remains open. The direct Darwin `proc_pid_rusage` FFI sampler and old embedded Apple bridge evidence are superseded. Phase 0's focused correction proof, final review, and Stage 1 closed on 2026-07-27. | Blocked by active Phase 1 artifact/materializer, descriptor-retained writer and generation lease, dead-owner activity recovery, complete target closure, and exact engine-group correction, fresh review/Stage 1, Apple rematerialization/cohort, and paired `linux-cpu`; then Phase 2 in numerical order; both later Wave Y lanes remain | Close Phase 1 on Apple plus `linux-cpu`; then Phase 2's ordered closure; then Phase 4 Apple/CPU sign-off |
 | Z | CUDA Linux + Linux CPU | **Typed Execution Plan NVIDIA sign-off.** Phase 6 Sprint 6.44: verified per-process-group VRAM enforcement, independent RAM/VRAM grants, bounded provisioning, zero non-kernel raw-spawn imports/exemptions, adversarial CUDA ceiling breach with typed terminal failure, worker survival, and subsequent smaller inference. Consumes the committed Phase 4 Apple/CPU attestation without rerunning Apple. | Planned | Pending |
 | AA | Apple Silicon | **Bounded-host-memory Apple mechanism proof (2026-08-04 reopen).** The Linux legs of the declared build ceiling are provable on the machine-independent gate set: an address-space rlimit is inherited through `cabal` to `ghc` and bounds the compiler, a cgroup scope bounds the aggregate of a build tree, and the compiler runtime clamps its 1024.65 GiB reservation to fit a limit. **None of that transfers to Darwin**, which aliases the address-space limit to an advisory resident-set limit, has no cgroups, has no equivalent global out-of-memory killer, and draws accelerator allocations from the same unified pool. The Apple lane's bound is therefore a runtime heap cap plus a bounded job count, and its aggregate is arithmetic performed by this repository rather than a bound enforced by the kernel. **What this wave must prove:** that the committed ceiling and job count complete a full `cabal install ... all:exes` on Apple hardware without exhausting the host; that a deliberate over-allocation under the ceiling fails cleanly and non-zero; and the measured peak resident memory the shipped ceiling is a multiple of. **What this wave explicitly does NOT prove:** that a host out-of-memory condition is impossible on Darwin. Page cache, kernel-owned memory, the container runtime, and every process infernix did not start remain outside the bound on every lane — see the `What this does not bound` section of [../documents/architecture/bounded_host_memory.md](../documents/architecture/bounded_host_memory.md). | Planned | Pending — Phase 1 Sprint 1.21 |
+| AB | Apple Silicon + Linux CPU | **Per-machine fleet reopen (2026-08-05).** Sprints 3.16 / 4.34 / 6.47 / 8.10 / 8.11: one process per role per machine, single-node platform services, memory admission on the executing machine, fail-closed member identity with a broker-side claim, the derivable wire fields deleted, and the system/machine contract split with a broker-registered contract digest. **What this wave must prove:** (1) a fleet of two engine machines sharing one pool topic splits work and neither admits against the other's capacity; (2) a second engine process on one machine is refused, naming the holder; (3) a machine contract paired with a foreign system contract fails the pin, and a daemon whose digest disagrees with the registered schema property refuses to start; (4) a full lifecycle on the collapsed single-node topology with no `Pending` replica. **What this wave explicitly does NOT prove:** any recovery property of the retired replicated topology, and any delivery guarantee stronger than at-least-once — a machine lost mid-inference costs a redelivery and duplicate compute by design. The MinIO single-node layout migration is a teardown-and-rebuild and is not an in-place upgrade proof. **Scope correction (2026-08-07).** Sprints 4.34 (admission move) and 8.10 (derivable wire fields) are code-side closed, so this wave's items (1) and the reduced-wire rebuild are ready to run. Item (3) — the contract pin and the broker-registered digest — is **not** ready and is not this wave's to schedule yet: Sprint 8.11 is `Blocked` on a design decision, because the machine contract it specifies has no home on the Linux lanes (no per-node mount, an image-baked manifest identical in every pod, and a replica-count engine `Deployment` in which nothing makes two machines different members). That decision is itself cluster-lane work; until it lands, this wave proves items (1), (2), and (4) only. | Planned | Pending — Sprint 8.11 design decision (items 1/2/4 ready) |
 
 ## Wave Z: Phase 6 Sprint 6.44 NVIDIA Enforcement Sign-Off (Open)
 
@@ -315,6 +328,19 @@ image rebuild, and the wave must start from that frozen state. Sprints 6.44, 6.4
 > validation-only: the selected Apple corrected-root/materializer/runtime evidence plus Sprint
 > 4.32 Apple observer and ceiling-breach survival proof remain. No Linux or CUDA result substitutes
 > for that hardware evidence.
+
+> **Wave Y addition (2026-08-06) — the Apple bounded-build-memory mechanism.** Phase 1 Sprint 1.21
+> is code-side closed and calibrated on the CUDA Linux host, and the Linux half of its mechanism is
+> proven there: the ceiling is installed as an inherited `RLIMIT_AS`, a spawned child reports the
+> identical limit, the real compiler compiles under it, and an over-allocation exits non-zero and
+> cleanly. **None of that covers Darwin, and no Linux result substitutes for it.** Darwin aliases
+> the address-space limit to an advisory resident-set limit, has no cgroups, and has no equivalent
+> global out-of-memory killer, so its bound is a runtime heap cap plus bounded concurrency and the
+> aggregate is arithmetic rather than enforcement. The Apple item is therefore: run `infernix init`
+> on the Apple host, confirm the manifest records a measured `hw.memsize`, confirm the generated
+> `cabal.project.local` derives from it, and record whether a build under that ceiling completes and
+> what it actually peaked at. Until that result exists, the doctrine's Apple row is a declared
+> target and this suite says so.
 
 Phase 0 Sprint 0.18 closed its correction gate on 2026-07-27. Wave Y is now blocked while active
 Phase 1 Sprint 1.20 closes, then while Phase 2 closes in numerical order. Phase 1 Sprint 1.19 closed

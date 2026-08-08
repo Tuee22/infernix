@@ -1,7 +1,7 @@
 # Edge Routing
 
 **Status**: Authoritative source
-**Referenced by**: [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md), [../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md)
+**Referenced by**: [../architecture/web_ui_architecture.md](../architecture/web_ui_architecture.md), [../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md)
 
 > **Purpose**: Define the one-port routing contract for browser and host-consumed services.
 
@@ -17,7 +17,7 @@
   a direct `Authorization: Bearer ...` header, then requires the `infernix-admin` realm role
   (`defaultAction: Deny`). A valid non-admin token is rejected with HTTP 403. See
   [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md).
-- The `/minio/s3` edge route is removed (Phase 3 Sprint 3.13): the `infernix-demo`
+- There is no `/minio/s3` edge route: the `infernix-demo`
   webapp is the sole externally routed surface for file storage, mediating every browser
   artifact upload and download server-side through its `/api/objects` endpoints, and the browser
   never reaches MinIO through the gateway. See
@@ -30,31 +30,11 @@
   [../tools/pulsar.md](../tools/pulsar.md). The loopback binding of every Kind data-plane + edge
   port mapping (MinIO S3 `30011`, Pulsar proxy `30080`/`30650`, Envoy edge `30090`) is now ENFORCED
   by `infernix lint chart` (a scanner over the `kind/cluster-*.yaml` files) plus a unit assertion
-  over the binary-generated Kind config (Sprint 9.4). `/pulsar/ws` is now **inside** the operator policy
+  over the binary-generated Kind config. `/pulsar/ws` is now **inside** the operator policy
   (Phase 9 added it to `targetRefs`), so the browser websocket surface is admin-gated at the edge while
   the host worker's loopback data plane is unaffected.
 - Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
   exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.
-
-## Current Status
-
-The current worktree uses the registry-backed route contract directly: the generated route table in
-this document comes from the Haskell route registry, `cluster status` and `/api/publication`
-publish the same routed surface, and the Harbor-first bootstrap path no longer carries a separate
-helper-registry route or namespace. Integration now requires the real Harbor, MinIO, and Pulsar
-upstream responses on the tool-route probes rather than any direct `infernix-demo`
-compatibility payload.
-The auth-UX surface adds an Envoy Gateway `SecurityPolicy` for the operator console route family
-when Keycloak is present. The routes remain in the always-published inventory, but browser access
-to `/harbor` and `/pulsar/admin` is JWT-gated whenever the demo surface is enabled.
-
-Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route, the `infernix-minio-s3` SecurityPolicy
-target, and the `presignPublicEndpoint` cluster-config field. MinIO is no longer browser-reachable;
-the `infernix-demo` webapp `/api/objects` proxy is the only external file-storage surface, per
-[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md). The
-generated route-inventory table below reflects the de-exposed surface (no `/minio/s3` row). The
-browser object-proxy evidence closed in Wave M; generated artifact object ownership remains active
-under Phase 7 Sprint 7.28.
 
 ## Route Inventory
 

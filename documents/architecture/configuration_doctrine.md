@@ -17,9 +17,10 @@
   binary-produced string (`nindent`). Schemas are **reflected from the Haskell decoder types**
   (`renderDecoderExpected (Dhall.auto @T)`), so the emitted schema cannot drift from what the
   decoder accepts.
-- **Config is created by `init`.** `infernix init` writes the operator's runtime
-  `./infernix.dhall` (the substrate: runtime mode, daemon roles, model set) and the host manifest
-  `./infernix-host.dhall`. `infernix test init` writes the thin `./infernix.test.dhall`. There is
+- **Config is created by `init`.** `infernix init` writes the **system contract**
+  `./infernix.dhall` (the substrate mode and the pool record that carries the model set) and the
+  **machine contract** `./infernix-host.dhall` (this box's tool paths, filesystem, and `node`
+  block). `infernix test init` writes the thin `./infernix.test.dhall`. There is
   **no hidden auto-generate-if-absent backstop** inside ordinary `infernix` commands. The Apple
   stage-0 bootstrap wrapper is the sole convenience exception: `./bootstrap/apple-silicon.sh up`
   explicitly invokes `./.build/infernix init --if-missing` before `cluster up`.
@@ -80,11 +81,8 @@ positive process-execution counterpart to these banned environment reads, whose 
 harness config swap crash-safe: `withTestHarnessConfig` restores the operator's config through a
 `./infernix.dhall.harness-backup` that it reconciles on **entry**, not only through a `finally`
 restore a SIGKILL would bypass — so an externally-killed run cannot leave the operator's runtime
-config replaced by the test config. Wave X covers the earlier backup-reconcile scope. The 2026-07-25
-pre-takeover reservation and owner-atomic correction now includes the all-Haskell lifecycle-lock and
-typed supervision implementation. Its focused adversarial validation, fresh source review, complete
-source-matched Stage 1, and Wave Y cohort gate remain in progress; evidence from before the
-all-Haskell correction is superseded.
+config replaced by the test config. The pre-takeover reservation is owner-atomic and rests on the
+all-Haskell lifecycle-lock and typed supervision boundary.
 
 One deliberately narrow migration exception remains: a `.harness-backup` created by a pre-v2
 harness may exist without any reservation record. Because that format recorded no owner identity,
@@ -108,10 +106,31 @@ existence and nothing to check in.
 
 | Config | Haskell owner | Created by | Consumed by |
 |---|---|---|---|
-| **runtime `infernix.dhall`** (substrate: runtime mode, daemon roles, model set, topics) | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
-| **host manifest `infernix-host.dhall`** (tool paths, host context, filesystem) | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution |
+| **system contract `infernix.dhall`** (substrate mode; the pool record whose values are model descriptors) — byte-identical on every machine in the fleet | `Infernix.Substrate` / `Infernix.Models` encoders; defaults in `Infernix.ProjectInit` | `infernix init` (operator) or the test harness (per run) | all service roles preflight through `decodeCompiledRuntimePlanFile`; hidden presentation/generation consumers may project `DemoConfig` |
+| **machine contract `infernix-host.dhall`** (tool paths, host context, filesystem, command policies, and the `node` block: role, member id, served pools, model-cache quota) — per machine | `Infernix.HostConfig` | `infernix init` | host CLI tool resolution and every role's own identity, capacity, and served-model set |
 | **cluster config `cluster.dhall`** (in-cluster wiring) | `Infernix.ClusterConfig` (`defaultClusterConfig`) | the binary at `cluster up`, injected into Helm as an `nindent`'d string | pods via `decodeClusterConfigFile` |
 | **secrets `InfernixSecrets.dhall`** (paths to secret files, never values) | `Infernix.SecretsConfig` | the binary (host) / `cluster up` (cluster), injected into Helm as a string | secret-path resolution |
+
+### The system contract is shared; the machine contract is not
+
+A fleet is many machines reading one Pulsar topic family, so every fact those machines must agree
+on lives in the system contract and **nowhere else**. Topic strings, pool identity, model ids,
+download URLs, and model footprints are system facts: a second copy on a second machine is a second
+opportunity to disagree, and a disagreement about a topic string is silent — the publisher writes
+somewhere nobody reads, and no component errors.
+
+The rule is the same one that shapes the memory-budget union: **carry exactly
+one representative of each fact and derive the rest.** A machine does not restate a topic; it does
+not spell a pool id as free text; it selects a pool out of the system contract by field access, so a
+typo is a Dhall type error rather than a dead subscription. What a machine authors is only what is
+true of that machine: which role it runs, which member it is, which pools it serves, and how much
+disk its cache may use.
+
+The machine contract pins the system contract it was generated against by content hash, so a machine
+cannot be paired with a contract it has never seen. The operational consequence is worth stating
+plainly: **when the system contract changes, every machine contract is regenerated**, because the
+hash moves. Both files remain binary-generated and untracked — the pin is over generated text, not
+over a checked-in schema, so the zero-version-controlled-`.dhall` rule is untouched.
 
 Defaults live in exactly one place — `Infernix.ProjectInit` (the single `init`-and-harness defaults
 owner) — so `infernix init` and the test harness share them (DRY). `infernix internal dhall-schema
@@ -149,12 +168,12 @@ The runtime and host configs feed the closed execution language defined by
 resource/enforcer alternatives, and the generated wire carries the memory budget as a proper Dhall
 union — `< HostEnforced | SubstrateEnforced | DualEnforced >`, each arm carrying only its own payload
 record — so the retired text discriminator plus zero-filled unused fields is not a representable
-shape. Sprint 8.9 additionally makes drift detectable rather than latent: the union's rendered type
+shape. Drift is detectable rather than latent: the union's rendered type
 annotation is written once and selected by every arm, a unit assertion pins the rendered payload
 against the alternatives the reflected decoder expects, and a payload written by a pre-union
 generator now fails with a diagnostic that names the retired shape and tells the operator to
 regenerate it with `infernix init` (or `infernix test init`) instead of surfacing a bare structural
-Dhall type error. **Sprint 8.9 finished the generated-wire migration on 2026-08-03.** Every
+Dhall type error. Every
 enum-like field is now a Dhall union rather than `Text` refined after decode — `runtimeMode`,
 `daemonRole`, `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape
 `fieldType`, engine-binding `adapterType`, and the `resource` and `source` fields inside the
@@ -171,10 +190,8 @@ validates model placements, routes, engine bindings, daemon wiring, and admissio
 `CompiledRuntimePlan`. Coordinators route only through compiled placements and `CompiledDaemon`
 capabilities. Package-owned live observations then verify the named OS enforcer and configured
 host/cgroup envelope before refining engine work into `RuntimePlan` / `ExecutableModel`; engine
-subscription and launch accept only those refined capabilities. Phase 1 Sprint 1.19 has implemented
-that core; its 2026-07-25 gate and review remain historical evidence for that source, not reusable
-evidence for the current worktree after the all-Haskell lifecycle/subprocess correction. The fresh
-complete Stage 1 must cover it again. Phase 8 Sprint 8.9's generated-schema migration is complete.
+subscription and launch accept only those refined capabilities. The fresh complete Stage 1 must
+cover it again.
 
 The same compiled plan owns messaging authority. There is no supported raw topic publisher;
 coordinator and engine consumers turn unavailable, empty-model, unknown-model, wrong-route, and
@@ -192,9 +209,7 @@ The command-policy side is also implemented in the generated host manifest:
 mutations, archive/curl work, GPU userspace synchronization, and image publication. The
 hidden-constructor `CommandPolicyPlan` refines that complete record, and each abstract
 `ClusterCommand` selects its policy exhaustively through `ClusterOperation`. The command substrate
-and all production caller migration are implemented but remain part of the blocked Phase 2
-correction scope. Every earlier Phase 2 preflight and Phase 1 Stage 1 predates the all-Haskell
-lifecycle/subprocess correction and is superseded as current-worktree evidence. Phase 2 must finish
+and every production caller route through that substrate. Phase 2 owns
 focused adversarial validation and fresh source review before freezing one source for the complete
 Stage 1 and cohort lanes. Raw runtime-config consumers are confined to hidden
 configuration/presentation modules and cannot authorize routing or engine launch.
@@ -208,8 +223,22 @@ command the project invokes (`docker`, `kubectl`, `helm`, `kind`, `cabal`, `ghc`
 `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), and the
 **host execution context / native architecture**. It also carries the generated 36-field
 `commandPolicies` record; test-only kernel probes are deliberately absent from operator
-configuration. Written by `infernix init`; the binary decodes it at startup into a `HostConfig`
-record. See
+configuration.
+
+It carries one record that is **measured rather than declared**: `memory`
+(`physicalMemoryMib` / `effectiveMemoryMib`), observed from `/proc/meminfo` intersected with the
+cgroup maximum on Linux and from `hw.memsize` on Darwin. It is the input the bounded host build
+ceiling is derived from ([bounded_host_memory.md](bounded_host_memory.md)), and the observation
+fails closed: a manifest that could not be measured is not written, because a ceiling derived from
+an unmeasured host only looks derived from physical RAM.
+
+It additionally carries the **`node` block** — this machine's role, its member id, the pools it
+serves, and its model-cache quota — plus a pinned projection of the system contract. That makes it
+the machine contract: the one file that differs between two boxes in the same fleet. The member id
+is required and has no default, because a daemon that cannot say which member it is must refuse to
+start rather than adopt one.
+
+Written by `infernix init`; the binary decodes it at startup into a `HostConfig` record. See
 [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md). The retained Apple
 materialization command is configured through typed engine-artifact records, never inherited host
 process state — see

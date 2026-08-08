@@ -5,6 +5,18 @@ packages:
 write-ghc-environment-files: never
 with-compiler: ghc-9.12.4
 
+-- Bounded host build memory (Phase 1 Sprint 1.21). Canonical doctrine:
+-- documents/architecture/bounded_host_memory.md
+--
+-- The per-fixture negative-compilation builds are one of the nested builds the
+-- doctrine names as outside the outer ceiling: they carry their own job count,
+-- so they carry their own bound. Same committed floor as the root
+-- `cabal.project`: 4 jobs x 4096 MiB = 16384 MiB of runtime heap worst case.
+jobs: 4
+
+package *
+    ghc-options: +RTS -M4096M -xr12288M -RTS
+
 allow-newer:
     *:base
   , *:template-haskell

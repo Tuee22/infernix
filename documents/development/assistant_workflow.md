@@ -66,9 +66,8 @@ this canonical list.
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode`) are unexported, so acting on an unmanaged state does not
   typecheck. Enforcement is GHC export lists plus `-Wall -Werror`. Raw unbounded process spawn is
-  being migrated out of production `src/Infernix/` into
-  `Infernix.Cluster.Subprocess.runBoundedCommand`; current production exemptions mean this invariant
-  is reopened, not closed. Canonical target:
+  routed through `Infernix.Cluster.Subprocess.runBoundedCommand`; the named exemptions are declared
+  carve-outs, not gaps. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
 - no repo-owned native implementation source: version-controlled native sources are forbidden,
   including `.c`, `.h`, `.cc`, `.cpp`, `.m`, `.mm`, `.hsc`, C/C++ header variants, CUDA, assembly,
@@ -114,7 +113,7 @@ this canonical list.
   cluster rather than a false `steady-state`, and the test-harness `./infernix.dhall` swap reconciles a
   leftover `.harness-backup` on entry. Canonical:
   [../architecture/managed_state_transitions.md](../architecture/managed_state_transitions.md)
-- memory-safety by construction is reopened around the generated typed execution plan: compilation
+- memory-safety by construction rests on the generated typed execution plan: compilation
   mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
   `Enforcer`, and an inference subprocess can launch only from the resulting opaque
   `ExecutableModel`. The capped-engine kernel OS-bounds actual resident memory to its
@@ -130,7 +129,7 @@ this canonical list.
   measured physical RAM, and a ceiling is inseparable from the concurrency it is multiplied by — a
   per-process cap under `jobs: $ncpus` bounds the host at `jobs × cap`, not at `cap`. Inference is
   one claimant on host RAM; the toolchain is another, and an uncapped `cabal build` exhausted a
-  124.94 GiB development host on 2026-08-03. The compiler runtime reserves 1024.65 GiB of address
+  124.94 GiB development host. The compiler runtime reserves 1024.65 GiB of address
   space by default, so the built executable declares a bounded reservation before any memory limit
   is installable. The mechanism is resolved per lane and fails closed when unavailable: a cgroup
   scope bounds the aggregate on Linux, while Darwin has neither cgroups nor an enforced
@@ -175,8 +174,8 @@ this canonical list.
   `documents/`: every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the
   Percona Kubernetes operator, even when a chart can self-deploy PostgreSQL, and its PVCs stay on
   the manual `infernix-manual` storage doctrine
-- keep the three-runtime build direction and the Kind HA testing or demo-ground direction aligned
-- treat the demo UI (served by `infernix-demo`) as a demo surface on that HA substrate while
+- keep the three-runtime build direction and the Kind testing or demo-ground direction aligned
+- treat the demo UI (served by `infernix-demo`) as a demo surface on that substrate while
   preserving the README-matrix coverage ledger; production deployments leave the demo UI off in
   the active `.dhall` and accept inference work via Pulsar subscription only
 - routing is owned by Gateway API resources and repo-owned HTTPRoute / SecurityPolicy manifests;
@@ -214,4 +213,4 @@ this canonical list.
 
 - [local_dev.md](local_dev.md)
 - [../documentation_standards.md](../documentation_standards.md)
-- [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+- [../../DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md)

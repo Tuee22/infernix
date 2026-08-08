@@ -7,12 +7,18 @@ ephemeral `model-cache` volume holds model weights pulled from
 the on-disk footprint under `engine.modelCache.sizeLimit` so kubelet does
 not restart the pod for ephemeral-storage exhaustion.
 
-The pod anti-affinity rule is `required` (not `preferred`) because two
-engine pods on the same node give zero performance gain — they would
-contend for the same GPU and double-cache the same weights. On a
-multi-GPU node each scheduled engine claims one device via
-`nvidia.com/gpu`; per-device model assignment is owned by the active
-substrate `.dhall` and operator-supplied replica values.
+Phase 3 Sprint 3.16: one engine process per machine, expressed as
+`engine.replicaCount: 1` rather than as a scheduling constraint. The
+retired required pod anti-affinity encoded the same rule as a *placement
+preference the scheduler could leave unsatisfied* — it kept a second
+replica `Pending` instead of preventing it. The rule itself is unchanged
+and is stated where it belongs, in
+`documents/architecture/daemon_topology.md`: two engine processes on one
+box hold two KV caches and two copies of every loaded weight, and each
+admits work independently against the machine's whole observed capacity.
+Scale the fleet by adding machines. On a multi-GPU node the single
+scheduled engine claims its device via `nvidia.com/gpu`; per-device model
+assignment is owned by the active substrate `.dhall`.
 */}}
 {{- if and .Values.daemonSplit.enabled .Values.engine.enabled }}
 apiVersion: apps/v1
@@ -39,13 +45,6 @@ spec:
       nodeSelector:
         infernix.runtime/gpu: "true"
 {{- end }}
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: infernix-engine
-              topologyKey: kubernetes.io/hostname
       containers:
         - name: infernix-engine
           image: "{{ .Values.engine.image.repository }}:{{ .Values.engine.image.tag }}"
@@ -170,13 +169,6 @@ spec:
       nodeSelector:
         infernix.runtime/gpu: "true"
 {{- end }}
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-            - labelSelector:
-                matchLabels:
-                  app.kubernetes.io/name: infernix-engine-{{ $engineName }}
-              topologyKey: kubernetes.io/hostname
       containers:
         - name: infernix-engine
           image: "{{ $image.repository }}:{{ $image.tag }}"

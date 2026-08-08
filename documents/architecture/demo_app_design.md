@@ -45,79 +45,29 @@
   deployed because it owns request fan-in, batching, model-to-pool routing,
   result writeback, and model bootstrap.
 
-## Current Status
+## WebSocket Contract
 
-The current `infernix-demo` workload ships the routed PureScript SPA,
-the catalog and cache HTTP API surface, and the clustered demo
-deployment. The durable-context contract is implemented over Phase 7
-([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md));
-the legacy single-form manual-inference handlers are tracked in
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-The integration suite validates the demo's Pulsar contexts and drafts
-metadata topics as broker-compacted streams keyed by `contextId`,
-validates duplicate frontend publish collapse through Pulsar producer
-deduplication on conversation and draft topics using mutation-scoped
-WebSocket producers, submits a real durable-context prompt and observes
-the completed result writeback on the conversation log after
-`ContextModelMap` resolves the context-pinned model id and the
-dispatcher, engine, and result bridge run, and exercises runtime
-KV-cache rebuild/reuse decisions through the engine path. The routed
-Playwright E2E suite registers a real Keycloak user, exchanges the
-authorization code for an access token, verifies malformed bearer
-rejection, proves the `/api/objects` webapp proxy stores and streams
-user-scoped artifact bytes from that real JWT, and validates same-user
-routed upload/download byte equality plus cross-user object-key
-rejection (HTTP 403). The same suite opens `/ws` with the real
-token, verifies a malformed token does not open a browser WebSocket,
-and asserts a tagged `ServerError` for a malformed frame on the valid
-connection. The browser artifact flow completes the app-owned PKCE
-redirect, creates a context, uploads supported browser artifact classes
-through the rendered Artifacts form, and validates bounded text/JSON
-previews, inline image/audio/video routed media URLs, browser-native
-PDF URL wiring, and MIDI / MusicXML / generic-binary download-only
-states. The Chat form sends `ClientSubmitPrompt` with the current
-context's uploaded `ObjectRef`s in `promptUserUploads`; the browser
-sends `ClientHello` to start per-user context/draft streams; the active
-context sends `ClientSubscribeContext`; and Playwright asserts
-context-list snapshots/patches, draft snapshots/upsert/remove patches,
-the outbound prompt frame, and the inbound `ServerConversationPatch`
-append for that prompt. The backend validates `ClientCreateContext`
-model ids against the active generated catalog and returns a typed
-`ServerError` code `unknown-model` for absent ids. The browser flow
-also sends `ClientRenameContext` and `ClientSoftDeleteContext`,
-observes the broker-backed `ServerContextListPatch` upserts, and
-verifies the context rail shows the updated title plus soft-deleted
-state. Upload events return through inbound
-`ConversationUserUploadEvent` append patches and render in the active
-Chat conversation with display name plus MIME type. The browser auth
-layer keeps the Keycloak refresh token in memory, clears local auth
-state on logout, redirects through Keycloak logout to clear the SSO
-session, and reconnects the WebSocket after a refresh-token
-grant; Playwright covers logout, same-browser re-login, user-to-admin
-account switching, and
-refresh-triggered `ClientHello` re-auth. The SPA session layer
-reconnects after an unexpected WebSocket close with a generation guard,
-resends `ClientHello`, re-subscribes the active context, and keeps the
-authenticated shell mounted. The Chat projection treats cancel events
-as prompt-resolution events; the browser cancel action sends
-`ClientCancelPrompt` for the latest unresolved server-backed prompt id.
-The SPA stores only the active context id/model id in session storage
-and resubscribes after a reload login; draft text is restored after
-forced WebSocket reconnect and page reload through the broker-backed
-draft stream. Anonymous visitors see only the auth-gated landing with
-`Sign in` and `Create account` actions; the summary grid and Chat /
-Artifacts shell render after the SPA has a Keycloak JWT. The per-model
-browser smoke matrix and browser-level frontend pod replacement
-reconnect coverage are part of the supported E2E surface.
+The browser speaks one typed envelope family over a single WebSocket:
+
+- `ClientHello` opens a session and carries the verified identity; the server answers with
+  `ServerConversationSnapshot` for the subscribed context.
+- `ClientSubmitPrompt` carries the prompt plus a `clientIdempotencyKey`, so a resubmit across a
+  reconnect is collapsed by the reducer rather than duplicated.
+- `ServerConversationPatch` streams incremental conversation state; the client applies patches
+  mechanically and holds no business rules.
+- An unknown model id is rejected as a typed `unknown-model` failure rather than dispatched.
+
+The webapp is stateless: any pod serves any session, and reconnect replays from the durable
+conversation log rather than from pod-local memory.
 
 ## Identity and Authentication
 
-The demo's IdP binding is a Keycloak release deployed in the HA cluster
+The demo's IdP binding is a Keycloak release deployed in the cluster
 with its own Patroni Postgres cluster managed by the Percona operator.
 The Keycloak realm is pre-seeded by an in-binary reconcile path on
-`cluster up`. The local demo runs one Keycloak application pod
-while the backing Patroni cluster stays HA. Multi-pod Keycloak serving
-is gated on routed proxy-affinity or clustered-cache validation.
+`cluster up`. The demo runs one Keycloak application pod against a single-instance PostgreSQL
+backend. Multi-pod Keycloak serving is gated on routed proxy-affinity or clustered-cache
+validation.
 
 - Realm configuration: registration enabled (self-signup), email
   verification disabled, username/password authentication only, public
@@ -164,13 +114,13 @@ realm import, and the post-rollout Keycloak admin reconcile preserves
 `loginTheme = infernix` alongside the realm flags and SPA client settings.
 
 The signed-in shell writes the current Keycloak access token to the
-`infernix_operator_token` same-origin cookie. The operator ribbon is **admin-only** (Phase 9): the SPA
+`infernix_operator_token` same-origin cookie. The operator ribbon is **admin-only**: the SPA
 shows it only when the token carries the `infernix-admin` realm role, and Envoy Gateway both validates
 that cookie (or a direct `Authorization: Bearer ...` header) **and** requires the `infernix-admin` role
 before forwarding browser traffic to `/harbor`, `/harbor/api`, `/pulsar/admin`, or `/pulsar/ws` — a
 non-admin token is rejected with HTTP 403. Non-admin users get chat / artifacts / files and a personal
 dashboard scoped to their own `sub`; the admin cluster-wide panel is the Phase 9 monitoring surface.
-There is no `/minio/s3` route (Phase 3 Sprint 3.13). See
+There is no `/minio/s3` route. See
 [access_control_doctrine.md](access_control_doctrine.md).
 
 The signed-in shell also exposes `Delete account`. That command confirms in the browser, calls
@@ -202,19 +152,13 @@ to these concrete routes:
   [object_access_doctrine.md](object_access_doctrine.md) and
   [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md).
 
-  **Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13
-  removed the `/minio/s3` route + `presignPublicEndpoint`). The webapp proxies
-  the bytes server-side and the browser never receives a presigned MinIO URL.
-  Per-user isolation holds at one server-side choke point (`pathBelongsToUser`
-  on the verified `sub`). The `linux-cpu` plus chosen-accelerator real per-user
-  attestation was closed by
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
-- **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The backend
-  validates the JWT, derives `userId = sub`, removes
+  The webapp proxies the bytes server-side and the browser never receives a presigned MinIO URL.
+  Per-user isolation holds at one server-side choke point (`pathBelongsToUser` on the verified
+  `sub`). - **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The
+  backend validates the JWT, derives `userId = sub`, removes
   `infernix-demo-objects/users/<userId>/`, deletes the user's demo Pulsar topics, and returns a
-  cleanup summary before the browser enters Keycloak account deletion.
-- **`/auth`.** The Keycloak login surface. The browser hits `/auth` to
-  start the OIDC code flow.
+  cleanup summary before the browser enters Keycloak account deletion. - **`/auth`.** The Keycloak
+  login surface. The browser hits `/auth` to start the OIDC code flow.
 
 The demo Service has `sessionAffinity: None`. WS pods use Pulsar
 `Reader` subscriptions per the primitives doc; the per-context
@@ -308,10 +252,8 @@ PureScript contract module and the same WS envelope.
   with `ServerError` code `unknown-model`. Switching models mid-context
   is not supported.
 
-**Current Status.** The SPA ships Chat, Artifacts (webapp-mediated transport, Phase 7 Sprint 7.25),
-the per-user Files view (Phase 7 Sprint 7.26), and the Model picker. Phase 3 Sprint 3.13 removed the
-`/minio/s3` browser-direct path. The `linux-cpu` plus chosen-accelerator real per-user attestation
-was closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
+The SPA ships Chat, Artifacts,
+the per-user Files view, and the Model picker. There is no `/minio/s3` browser-direct path.
 
 All views are renderers. They apply patches mechanically and render.
 They call no business-rule code. User actions produce typed
@@ -333,11 +275,9 @@ bytes, never a presigned MinIO URL):
 - arbitrary binary — generic download through the webapp download
   surface with the browser's native save dialog.
 
-**Current Status.** Every family is sourced through the webapp `/api/objects/download` proxy
-(Phase 7 Sprint 7.25). MIDI, MusicXML/MXL, and ZIP inline rendering is delivered by Phase 7
-Sprint 7.27 and closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Generated
-artifact object ownership is closed by Phase 7 Sprint 7.28: adapter/native outputs are
-forced under `users/<sub>/contexts/<ctx>/generated/`, and Wave N closes the full cohort validation.
+Every family is sourced through the webapp `/api/objects/download` proxy, including inline MIDI,
+MusicXML/MXL, and ZIP rendering. Adapter and native outputs are forced under
+`users/<sub>/contexts/<ctx>/generated/`.
 
 Upload flow:
 
@@ -367,12 +307,10 @@ Download flow:
    the target), opens the browser PDF path, renders bounded text/JSON, or
    initiates a download-only flow.
 
-**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
-route). `POST /api/objects/upload` carries the bytes and returns an `ArtifactUploadGrant` with the
-canonical `ObjectRef` (no URL); `POST /api/objects/download` returns an `ArtifactDownloadGrant` with
-the render disposition (no URL); `GET /api/objects/download` streams the bytes server-side. The
-browser never receives a presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
-attestation was closed by [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) on 2026-06-29.
+`POST /api/objects/upload` carries the bytes and returns an `ArtifactUploadGrant` with the canonical
+`ObjectRef` (no URL); `POST /api/objects/download` returns an `ArtifactDownloadGrant` with the
+render disposition (no URL); `GET /api/objects/download` streams the bytes server-side. The browser
+never receives a presigned MinIO URL.
 
 ## Gating
 
@@ -409,7 +347,7 @@ and covers three layers:
   dispatcher restart; Failover handoff; cross-user object-access
   negative (a caller's JWT receives HTTP 403 on another user's object
   key through the webapp object-proxy per
-  [object_access_doctrine.md](object_access_doctrine.md)); chaos tests;
+  [object_access_doctrine.md](object_access_doctrine.md));
   multi-user throughput / fan-in batching /
   fan-out test (N users × K contexts × P prompts on one model)
   asserting per-context ordering, no duplicates or losses, cross-context

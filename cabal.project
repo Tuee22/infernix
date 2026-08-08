@@ -2,6 +2,27 @@ packages: .
 write-ghc-environment-files: never
 with-compiler: ghc-9.12.4
 
+-- Bounded host build memory (Phase 1 Sprint 1.21). Canonical doctrine:
+-- documents/architecture/bounded_host_memory.md
+--
+-- A per-process cap is not a host bound on its own, so the job count and the
+-- cap are stated together and never separately: the worst case this file
+-- bounds is 4 jobs x 4096 MiB = 16384 MiB of runtime heap. `jobs: $ncpus` from
+-- an operator's ~/.cabal/config would make that 32 x 4096 MiB on this
+-- development host, which is the failure mode the doctrine exists for.
+--
+-- These committed numbers are the floor a fresh clone needs before any
+-- `infernix` binary exists. `infernix init` supersedes them per machine by
+-- generating the untracked `cabal.project.local` from the host manifest's
+-- measured memory facts. 4096 MiB is 3.1x the 1328 MiB peak resident set
+-- measured for the largest single compiler process across a complete clean
+-- `cabal build all --enable-tests`; -xr bounds the compiler's own address-space
+-- reservation, which is 1024.65 GiB by default.
+jobs: 4
+
+package *
+    ghc-options: +RTS -M4096M -xr12288M -RTS
+
 allow-newer:
     *:base
   , *:template-haskell

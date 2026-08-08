@@ -25,7 +25,8 @@ import Infernix.Config
     testConfigPath,
   )
 import Infernix.DemoConfig
-  ( materializeGeneratedDemoConfigFile,
+  ( materializeBuildMemoryCeilingFile,
+    materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     materializeHostSecrets,
     renderGeneratedDemoConfig,
@@ -64,9 +65,13 @@ runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
       writtenHost <- materializeHostManifestFile paths
       writtenSecrets <- materializeHostSecrets paths
       writtenRuntime <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabled
+      -- Phase 1 Sprint 1.21 — the per-machine build ceiling is derived from the
+      -- host manifest's measured memory facts, so it is written after it.
+      writtenBuildCeiling <- materializeBuildMemoryCeilingFile paths
       putStrLn ("init: wrote " <> writtenRuntime)
       putStrLn ("init: wrote " <> writtenHost)
       putStrLn ("init: wrote " <> writtenSecrets)
+      putStrLn ("init: wrote " <> writtenBuildCeiling)
 
 -- | @infernix test init@. Writes @./infernix.test.dhall@ — the thin config
 -- the test harness reads to generate the run's @./infernix.dhall@. Needs no

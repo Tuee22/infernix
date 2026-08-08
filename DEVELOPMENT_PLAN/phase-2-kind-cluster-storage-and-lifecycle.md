@@ -1549,5 +1549,5 @@ and paired exact-image `linux-cpu` full suite are GREEN.
 **Cross-references to add:**
 - keep [00-overview.md](00-overview.md) and [system-components.md](system-components.md) aligned
   when storage, image-flow, generated-input, or GPU-lifecycle assumptions change
-- keep [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
+- keep [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
   aligned when lifecycle progress surfaces or failure-classification doctrine changes

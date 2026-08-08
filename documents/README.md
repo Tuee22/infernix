@@ -29,7 +29,7 @@
   precisely which host out-of-memory conditions that does and does not make unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
   target "memory-safety by construction" invariant for the inference row of that ledger, and
-  identifies the current per-substrate enforcement gaps reopened by the execution-plan refactor
+  and names the per-substrate enforcement surfaces the execution plan requires
 - [architecture/typed_execution_plan.md](architecture/typed_execution_plan.md) defines the closed
   generated-Dhall execution language, raw-to-compiled plan boundary, live enforcer refinement, and
   capability-gated command, provisioning, routing, and inference surfaces
@@ -58,7 +58,7 @@
   host-worker loopback data plane bypasses the admin-gated edge
 - [architecture/daemon_topology.md](architecture/daemon_topology.md) defines the supported
   three-role daemon model — stateless frontend, stateless coordinator, and substrate-specific
-  engine pools — including HA replica policy, per-substrate placement, library footprint per role,
+  engine pools — including fleet topology and member identity, delivery semantics, per-substrate placement, library footprint per role,
   and failure semantics
 - [architecture/engine_pool_routing.md](architecture/engine_pool_routing.md) defines the
   substrate-neutral engine-pool routing contract: typed model placement, derived Pulsar topics,
@@ -87,8 +87,6 @@
 - [development/testing_strategy.md](development/testing_strategy.md) records operator-facing
   validation-lane detail, active-substrate selection, hardware-cohort cadence, and implemented
   coverage beneath the canonical testing doctrine
-- [development/chaos_testing.md](development/chaos_testing.md) records the current HA-failure
-  validation status and the Phase 6 ownership for that coverage
 - [development/demo_app_test_plan.md](development/demo_app_test_plan.md) defines the unit,
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
@@ -136,8 +134,8 @@
   pre-seed contract, JWT validation surface, and demo-gated lifecycle for the durable-context
   demo
 - [tools/pulsar.md](tools/pulsar.md) records the production inference subscription and dispatch
-  contract (`request_topics`, `result_topic`, `enginePools`, `engineMembers`, and `engines` in the
-  active `.dhall`) together with the repo-local topic-spool harness used by unit-level validation
+  contract — the pools a machine serves and the topics derived from them — together with the
+  repo-local topic-spool harness used by unit-level validation
 - [reference/cli_reference.md](reference/cli_reference.md) records the canonical CLI surface for
   `infernix`
 - [reference/web_portal_surface.md](reference/web_portal_surface.md) records the browser-visible
@@ -159,10 +157,12 @@
 
 ## Source Of Truth Rules
 
-- `DEVELOPMENT_PLAN/` owns implementation status, phase order, and closure criteria.
-- `documents/` owns architecture guidance, operator workflow guidance, and reference material.
-- When current-state or closure wording in `documents/` diverges from `DEVELOPMENT_PLAN/`, update
-  `documents/` to match the plan rather than treating the governed docs as the status authority.
+- `documents/` owns the target: architecture guidance, operator workflow guidance, and reference
+  material stated as what the system must do.
+- `DEVELOPMENT_PLAN/` owns the gap: implementation status, phase order, and closure criteria.
+- Code and tests carry reality. A governed doc that disagrees with today's behavior is not a defect
+  in the doc; it is the gap, and the gap is tracked in `DEVELOPMENT_PLAN/`. See
+  [documentation_standards.md](documentation_standards.md) for the prescriptive-voice rule.
 - `documents/development/assistant_workflow.md` owns the canonical assistant-facing repository
   workflow rules.
 - `documents/architecture/managed_state_transitions.md` owns the state-transition and evidence

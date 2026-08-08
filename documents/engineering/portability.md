@@ -1,7 +1,7 @@
 # Portability
 
 **Status**: Authoritative source
-**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md)
+**Referenced by**: [../development/local_dev.md](../development/local_dev.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../../DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md](../../DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md)
 
 > **Purpose**: Separate the portable platform contract from substrate-specific execution detail.
 
@@ -24,17 +24,17 @@
   upstream MLX/coremltools APIs without repository-owned native source, and the old Tart and native
   bridge helper paths are removed from the current host-tool schema and prerequisite contract.
 
-## Current Status
+## Supported Split
 
-The current worktree implements the intended split directly: Apple remains the only supported
+Apple is the only supported
 host-native inference lane, while `linux-cpu` and `linux-gpu` remain the containerized lanes, and
 the repo does not claim substrate parity where the underlying hardware or launcher model differs.
 The Linux bootstrap surfaces treat login-shell and reboot boundaries as explicit rerun
 checkpoints, and the Apple clean-host lane verifies same-process ghcup-managed tool activation
 before direct host build handoff while keeping Docker reachability and Apple-only adapter
 prerequisites substrate-specific. Apple Metal/Core ML materialization doctrine now avoids Tart,
-user keychain state, and Xcode UI flows; Phase 1 Sprint 1.14 has removed the old `hostTart` /
-`AppleTart` helper path, while real Apple native-engine output is owned by the reopened Phase 1 (Wave L). The supported doctrine forbids cross-architecture development
+user keychain state, and Xcode UI flows, and there is no `hostTart` / `AppleTart` helper path. The
+supported doctrine forbids cross-architecture development
 or validation, and Apple Docker-backed work validates the already selected native arm64 daemon
 instead of provisioning or reconciling a Docker VM. The Apple routed Playwright lane runs
 host-native `npm exec` against the published host edge on `127.0.0.1`, and retained Apple Kind
@@ -69,7 +69,7 @@ operator-facing kubeconfig remains repo-local in the active execution context.
 | Host prerequisites | keep prerequisites minimal and explicit | Homebrew plus ghcup before build; Docker-backed Apple work uses the already selected native arm64 Docker daemon and never creates or switches Docker contexts | Docker Engine plus Docker buildx and Compose plugins on native Linux amd64 or arm64 for `linux-cpu`; NVIDIA driver plus container toolkit in addition for `linux-gpu` |
 | Bootstrap activation boundary | stage-0 bootstrap surfaces continue in the current process only after they can verify the executable they need next, and they stop for explicit rerun when a new shell or reboot is required | the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does not depend on a second bootstrap invocation | Linux bootstraps stop for Docker group-membership re-entry and NVIDIA-driver reboot, then continue through the same bootstrap surface on rerun |
 | Tool bootstrap after the binary exists | supported commands may reconcile remaining operator tooling | Homebrew-managed Docker CLI, `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed `python@3.12` formula and `python3.12` command, and Poetry bootstrap may be installed on demand; Poetry may reuse an already available compatible Python 3.12+ executable | the substrate image already carries the supported toolchain; runtime install is not part of the contract |
-| Native engine artifact build | engine adapters resolve from prebuilt host wheels/binaries, content-addressed engine payloads, or substrate-built native artifacts; generated command wrappers and repository-owned native source are forbidden, and the portable contract does not depend on any Tart lane | Apple Metal/Core ML artifacts materialize under `./.data/engines/<adapterId>/` through typed engine-artifact manifests and public upstream MLX/coremltools APIs described in [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). A hidden direct-target catalog binds each executable and its complete runtime closure. MLX, CTranslate2, ONNX Runtime, PyTorch MPS paths, and Audiveris prefer upstream host wheels or binaries. The old `hostTart` and native bridge helper paths are removed. | Native roots come from the substrate image build under `/opt/infernix/engines/<adapterId>/`; they contain typed metadata rather than generated `bin/*` wrappers. A hidden catalog launches the exact image-owned CLI, Python interpreter and module, or JRE and classpath, and the manifest binds the target plus its immutable closure to descriptor-derived identities and digests. The reopened Phases 4/6 own fresh full routed real-output evidence for this direct-target topology. |
+| Native engine artifact build | engine adapters resolve from prebuilt host wheels/binaries, content-addressed engine payloads, or substrate-built native artifacts; generated command wrappers and repository-owned native source are forbidden, and the portable contract does not depend on any Tart lane | Apple Metal/Core ML artifacts materialize under `./.data/engines/<adapterId>/` through typed engine-artifact manifests and public upstream MLX/coremltools APIs described in [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). A hidden direct-target catalog binds each executable and its complete runtime closure. MLX, CTranslate2, ONNX Runtime, PyTorch MPS paths, and Audiveris prefer upstream host wheels or binaries. The old `hostTart` and native bridge helper paths are removed. | Native roots come from the substrate image build under `/opt/infernix/engines/<adapterId>/`; they contain typed metadata rather than generated `bin/*` wrappers. A hidden catalog launches the exact image-owned CLI, Python interpreter and module, or JRE and classpath, and the manifest binds the target plus its immutable closure to descriptor-derived identities and digests. |
 | Apple Docker profile | Docker-backed lifecycle and validation work uses the operator-selected native daemon | Apple lifecycle code must not create a VM, create or switch Docker contexts, or use amd64 emulation; it stops if the current Docker daemon is unavailable or non-native | not applicable |
 | Build roots and kubeconfig location | outputs stay repo-local and untracked, while Kind or `nvkind` create or delete uses transient execution-local scratch kubeconfig outside repo mounts | `./.build/`, published `./.build/infernix.kubeconfig`, and binary-owned substrate-file materialization or validation under the Apple build root | image-local outer-container build root and binary-owned substrate-file materialization there, plus published `./.data/runtime/infernix.kubeconfig` for durable outer-container reuse |
 | Python adapter environment | use the shared Poetry project only | `python/.venv/` may materialize on demand after Apple adapter paths reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry bootstrap, or reuse an already available compatible Python 3.12+ executable for that bootstrap | adapter dependencies are installed in the shared substrate image build |

@@ -14,16 +14,6 @@
 > and are not made unrepresentable live in [bounded_host_memory.md](bounded_host_memory.md). Nothing
 > here asserts that a host out-of-memory kill is impossible.
 
-> **Reopened target contract.** The invariant below is the required end state. The current worktree
-> has resource-indexed compilation/refinement plus Apple, Linux CPU, **and NVIDIA VRAM** watchdog
-> implementations. Phase 6 Sprint 6.44 closed the GPU half: a `linux-gpu` model that uses the device
-> now compiles two independently indexed grants, and the NVIDIA per-process-group VRAM watchdog runs
-> against its own admitted ceiling through the fixed public-tool observer kernel. The Apple
-> adversarial breach proof remains Phase 4 hardware work, and the CLI-passthrough plus host-tool
-> modules retain raw-spawn lint exemptions (each needs a design decision rather than a mechanical
-> migration; see the exemption comment in `Infernix.Lint.HaskellStyle`). The ordered correction is
-> governed by [Typed Execution Plan](typed_execution_plan.md).
-
 ## TL;DR
 
 - An **unenforced admission is an unmanaged resource transition**: an inference admitted on a *static
@@ -51,8 +41,12 @@ For every compiled placement there is a resource-indexed `MemoryGrant`; every ex
 pairs that grant with a live `Enforcer` for the same resource and therefore has an enforced
 `MemoryCeiling`.
 
-- **Compilation mints positive evidence.** `compileRuntimePlan` validates the model footprint against
-  its declared capacity and constructs `MemoryGrant resource` only inside a `CompiledPlacement`.
+- **Compilation mints positive evidence, on the machine that will execute.** `compileRuntimePlan`
+  validates the model footprint against **the executing machine's own observed capacity** and
+  constructs `MemoryGrant resource` only inside a `CompiledPlacement`. Admission is an observation of
+  the admitting process's own machine, which is the same argument that scopes *refinement* to the
+  engine role: a coordinator that admitted against its own pod limit would either veto a model a
+  larger machine could run, or mint a grant no inference will ever run under.
   `MemoryGrant` and `MemoryCeiling` have hidden constructors and nominal resource roles. An
   over-capacity configured model is retained as `UnavailableModel` with its typed
   `ModelMemoryLimitExceeded`; it is not silently filtered out.
@@ -67,12 +61,16 @@ pairs that grant with a live `Enforcer` for the same resource and therefore has 
   `EngineOutcome` distinguishes a measured `EngineExceededCeiling` from
   `EngineEnforcementUnavailable`; only the measured breach maps to typed
   `ModelMemoryLimitExceeded`.
-- **Serialization is a remaining capability obligation.** The supported daemon currently serializes
-  execution with a process-local `MVar`, but the lock is supplied outside the opaque launch
-  capability and `ExecutableModel` is reusable. Phase 4 must encapsulate one execution authority so
-  callers cannot create independent locks or concurrently reuse one admitted placement. Until then,
-  resource/enforcer coherence is construction-safe but aggregate one-model-at-a-time capacity is an
-  operational invariant, not a type-level one.
+- **Serialization is per machine, and it is what makes the aggregate sound.** Execution is serialized
+  behind one execution authority minted with the refined plan and carried inside the private engine
+  topic capability, so a caller cannot pair a plan with a foreign token or reach execution
+  unguarded. One engine process per machine plus one authority per plan means the resident set on a
+  machine is **one model at a time**, so the aggregate a machine must satisfy is
+  `max(footprint of the models it serves)`, not their sum. That is exactly what per-model admission
+  already checks — which is why the fleet's memory contract is sound locally and needs no
+  cross-machine arithmetic. It is also why a second engine process on one machine is a correctness
+  bug rather than a scaling choice: see
+  [daemon_topology.md](daemon_topology.md).
 - **The ceiling is measured and terminated behind one typed interface.** On `apple-silicon` (host-native, no
   cgroups) a package-internal observer discovers exact process-group membership with fixed
   `/usr/bin/top` output and measures each member's physical bytes with fixed
@@ -92,7 +90,10 @@ so the related unmanaged states are also unbuildable:
 
 - **The budget names its enforcer.** `InferenceMemoryBudget` is `HostEnforcedBudget HostMemoryPartition
   | SubstrateEnforcedBudget PodMemoryLimit | DualEnforcedBudget PodMemoryLimit PodMemoryLimit` —
-  there is no "enforced by nobody" arm. `apple-silicon` is host-enforced by the grant plus the
+  there is no "enforced by nobody" arm. The budget is **observed, never declared**: physical RAM from
+  the host, the VM pledge from the co-tenant runtime, the pod ceiling from the live cgroup, and the
+  device envelope from the accelerator. A capacity an operator can write down is a capacity that can
+  disagree with the machine, and the code would have to re-check it anyway. `apple-silicon` is host-enforced by the grant plus the
   watchdog; `linux-cpu` is enforced by its process-group RSS watchdog under a verified outer pod
   envelope; `linux-gpu` carries the dual arm, whose pod RAM limit comes first and whose NVIDIA VRAM
   limit comes second. Both halves of a dual budget are required and independently enforced: the
@@ -100,8 +101,9 @@ so the related unmanaged states are also unbuildable:
   per grant, so a GPU model can never be admitted against RAM alone or VRAM alone. A `linux-gpu`
   budget that names only one resource is a hard config error (`GpuDualResourceBudgetRequired`), and a
   dual budget whose halves name the wrong resources is rejected by `InvalidMemoryEnforcer`.
-- **Physical RAM is a checked partition.** `HostMemoryPartition` is minted by a smart constructor that
-  splits physical RAM into `vmReserve + hostHeadroom + inferenceCapacity`, **rejects oversubscription**,
+- **Physical RAM is a checked partition.** `HostMemoryPartition` is minted by a smart constructor over
+  observed quantities that splits physical RAM into `vmReserve + hostHeadroom + inferenceCapacity`,
+  **rejects oversubscription and a non-positive inference capacity**,
   and forces `hostHeadroom` to be large enough to cover the OS, the control-plane binary, the routed
   end-to-end browser, and the worst-case inter-poll watchdog overshoot. A partition whose pieces exceed
   physical, or whose headroom cannot cover its co-tenants, is not a constructible term.
@@ -112,8 +114,14 @@ so the related unmanaged states are also unbuildable:
 Because the ceiling is the model footprint (not the whole budget) and the partition reserves real
 headroom, a host whose pledged co-tenant reserve leaves less inference capacity than a model's footprint
 **fail-closes that model cleanly at admission** rather than admitting it and racing the watchdog — the
-type makes the capacity tradeoff explicit (running an oversized model requires enlarging
-`inferenceCapacity`, i.e. shrinking the co-tenant reserve, not silently over-committing physical RAM).
+type makes the capacity tradeoff explicit (running an oversized model requires a machine with more
+headroom, or a smaller co-tenant pledge, not silently over-committing physical RAM). A partition that
+leaves *no* inference capacity is rejected outright rather than compiled into a plan with no
+admissible placement: a daemon that starts and answers nothing is a worse failure than one that
+refuses to start.
+
+**The asymmetry is the whole doctrine in one line: the model's footprint is a system fact and stays on
+the wire; the machine's capacity is a local observation and does not.**
 
 ## Enforcement
 
@@ -124,7 +132,7 @@ type makes the capacity tradeoff explicit (running an oversized model requires e
 | Serialization (Phase 4 target) | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
 | OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group VRAM accounting (`linux-gpu`) | actual resident memory of an admitted engine exceeding its ceiling without a clean, typed, terminal per-request failure. This is sample-and-kill on a fixed cadence, not a kernel-imposed allocation ceiling: a breach is detected and terminated, not prevented |
 | Partition | `HostMemoryPartition` smart constructor | `vmReserve + hostHeadroom + inferenceCapacity` oversubscribing physical RAM; a headroom too small to cover the OS and the routed end-to-end browser |
-| Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `withCreateProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitives that have no type-level chokepoint. Sprint 6.44 added `withCreateProcess` after finding that whole-token matching had let a bracketed unbounded spawn through |
+| Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `withCreateProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitives that have no type-level chokepoint. `withCreateProcess` is included because whole-token matching alone lets a bracketed unbounded spawn through |
 
 The residual review obligations are deliberately explicit: **compiler honesty**
 (`compileRuntimePlan` is the only grant mint and compares the required footprint with the declared
@@ -133,32 +141,13 @@ capacity), **refinement honesty** (only live package-owned observations mint enf
 API), and **retry containment** (an `EngineExceededCeiling` maps directly to a typed terminal failure,
 never a string-classified retryable outcome).
 
-## Current Status
+**Declared exemption.** The operator CLI passthrough and the pre-manifest host-tool probes are named
+exemptions from the raw-spawn gate rather than unclosed migrations: their executable and argv come
+from the operator's own invocation, or they run before the manifest a closed command would need
+exists. The exemption list is enumerated in `Infernix.Lint.HaskellStyle` and is part of the
+contract, not a gap in it.
 
-The full invariant is **reopened and not yet satisfied**, but the Phase 1 capability correction is
-present in the current worktree. Grants, ceilings, enforcers, and enforced grants retain a nominal
-resource index; only live refinement mints `RuntimePlan` / `ExecutableModel`; raw configuration,
-plain-grant launch, arbitrary command overrides, exit-137 breach fabrication, and unavailable-sampler
-fallback-to-zero are removed from the engine execution path. Raw configuration and topic derivation
-helpers live in hidden package modules. The late Phase 1 messaging closure is also present:
-unavailable/empty/unknown/wrong-route/malformed inputs receive terminal failed results before
-source removal or acknowledgement; the raw publisher is removed; bootstrap publication requires a
-plan-derived capability whose consumer revalidates model/URL/timestamp; cross-family topic
-collisions fail compilation; and substrate Dhall emission uses explicit UTF-8.
-
-Phase 1 Sprint 1.19 is `Done` for this narrower capability scope: its source-matched
-machine-independent gate and final adversarial source review passed on 2026-07-25, including 4
-positive and 27 negative compile fixtures and the focused terminal-result coverage. Phase 1 as a
-whole remains Active for Sprint 1.20's bounded artifact provisioning/runtime correction; that
-later source and evidence do not reuse Sprint 1.19's gate. Phase 4 owns the Apple/Linux CPU
-adversarial breach-and-survival proof,
-verification of the outer pod envelope under live workloads, and moving the process-local
-serialization authority inside the opaque execution API. Phase 6 Sprint 6.44 landed NVIDIA
-per-process-group VRAM enforcement and shrank the raw-spawn exemption set; the remaining exempt
-modules are the CLI passthrough and the host-tool surfaces, which need a design decision rather than
-a mechanical migration. Phase 8 owns the final proper-union generated-Dhall wire.
-
-### The NVIDIA VRAM observer (Phase 6 Sprint 6.44)
+### The NVIDIA VRAM observer
 
 The device sampler is the same shape as the Apple footprint observer: a fixed, bounded public-tool
 kernel in `Infernix.Runtime.CappedEngine.FixedObserver` whose request vocabulary is a closed enum and
@@ -192,17 +181,23 @@ exhaustion despite the landed resource/enforcer type coherence. A host out-of-me
 remains representable for the further reasons enumerated in
 [bounded_host_memory.md](bounded_host_memory.md) — most of which no work in this phase can close.
 
-The superseded surfaces — `admitModelMemory :: … -> Maybe`, the unenforced budget arm, the bare-`Int`
-footprint, the raw unbounded engine spawns, and the fixed `appleHostReserveMib = 3072` host reserve —
-are recorded in
+The retired surfaces — `admitModelMemory :: … -> Maybe`, the unenforced budget arm, the bare-`Int`
+footprint, the raw unbounded engine spawns, and the fixed `appleHostReserveMib = 3072` host reserve
+— are recorded in
 [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
-Wave W is historical evidence for the narrower pre-audit implementation; it is not closure evidence
-for the indexed/refined capability boundary or the remaining Phase 4 serialization and adversarial
-proof. With the checked `minHostHeadroomMib` partition on a 64 GiB / 48 GiB-Colima-pledge host, the
+With the checked `minHostHeadroomMib` partition on a 64 GiB / 48 GiB-Colima-pledge host, the
 resolved inference capacity is 10240 MiB, so the heavy diffusion rows remain explicit unavailable
 models rather than invalidating the whole catalog.
 
 ## Validation
+
+A request for an unavailable row publishes a clean per-row `status=failed` carrying typed
+`InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` and is not
+launched. Configuration validation may surface capacity diagnostics, but it must not fail the whole
+daemon because one catalog model is too large — smaller models continue to run, and the suite
+classifies this constructor as a clean capacity failure, distinct from a missing result, a stall, or
+a fabricated pass.
+
 
 - `cabal build all` under `-Wall -Werror` plus the negative-compilation suite proves external callers
   cannot construct or relabel grants/enforcers, refine a plan from raw observations, import hidden
@@ -217,8 +212,7 @@ models rather than invalidating the whole catalog.
   over-capacity model produces a typed `status=failed` `ModelMemoryLimitExceeded` rather than a
   `SIGKILL`. Completing without exhaustion is a sample of this lane's behaviour, not evidence that a
   bound exists; the bound is proved by the typed gates above.
-- `infernix lint docs` keeps this document registered and its cross-references resolving; the reopened
-  phase and sprint status is tracked in `DEVELOPMENT_PLAN/`.
+- `infernix lint docs` keeps this document registered and its cross-references resolving.
 
 ## Cross-References
 

@@ -47,14 +47,3 @@ nodes:
         nodeRegistration:
           kubeletExtraArgs:
             node-labels: "infernix.runtime/mode=linux-cpu"
-  - role: worker
-    image: kindest/node:v1.34.0
-    extraMounts:
-      - hostPath: ./.build/kind/linux-cpu/registry
-        containerPath: /etc/containerd/certs.d
-    kubeadmConfigPatches:
-      - |
-        kind: JoinConfiguration
-        nodeRegistration:
-          kubeletExtraArgs:
-            node-labels: "infernix.runtime/mode=linux-cpu"

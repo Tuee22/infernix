@@ -1,6 +1,7 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — Sprint 0.19 reopened and re-closed this phase for the bounded-host-memory
+**Status**: Done — Sprint 0.20 reopened and re-closed this phase for the per-machine fleet
+doctrine on 2026-08-05. Sprint 0.19 reopened and re-closed it for the bounded-host-memory
 doctrine and its governance surface on 2026-08-04. Sprint 0.18 closed the
 no-repo-owned-native-source doctrine, governed workflow mirror, and correction evidence reset on
 2026-07-27; Sprint 0.17 and Sprints 0.1-0.16 retain their recorded narrower closure.
@@ -24,6 +25,22 @@ no-repo-owned-native-source doctrine, governed workflow mirror, and correction e
 Phase 0 closes the documentation bootstrap only. Later phases still own follow-on documentation
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
+
+> **Per-machine fleet reopen (2026-08-05).** The supported architecture is a fleet: multiple
+> machines, each running exactly one engine process, all consuming the same `Shared` pool topic, each
+> with its own model cache and its own machine contract naming the pools it serves. Three governance
+> gaps forced the reopen. The delivery contract was **at-least-once and never said so** — it was
+> implied by two sentences about acknowledgement ordering, while three plan documents and four
+> governed docs claimed exactly-once. One-engine-per-machine was enforced by Kubernetes anti-affinity
+> rather than stated as the correctness rule it is, and the rule was **waived outright on Apple** so a
+> single integration assertion could pass. And the standards mandated a topology the doctrine
+> retires: replicas >= 2, required anti-affinity, PodDisruptionBudgets, and "the mandatory local HA
+> topology is the only supported cluster target". Phase 0 reopens under
+> [Sprint 0.20](#sprint-020-per-machine-fleet-doctrine-done) to state the doctrine, correct the
+> standards, rename both HA-named phase documents, and harden two docs-lint checks that made that
+> rename silently green. This is machine-independent (Axis-1 only) and **re-closes in the same
+> change**, as Sprints 0.11, 0.13-0.15 and 0.19 did. The implementation is owned by Sprints 3.16,
+> 4.34, 6.47, 8.10 and 8.11.
 
 > **Bounded-host-memory reopen (2026-08-04).** A host-side `cabal build` from this checkout reached
 > 109.46 GiB resident on a 124.94 GiB development host and wedged it for five and a half hours. The
@@ -1100,6 +1117,90 @@ against node allocatable, and the uncapped nested builds — are named in the do
 
 ---
 
+## Sprint 0.20: Per-Machine Fleet Doctrine [Done]
+
+**Status**: Done — the fleet doctrine, the delivery-semantics contract, the config-split doctrine,
+the standards corrections, the phase renames, and the two docs-lint hardening fixes landed on
+2026-08-05. Machine-independent (Axis-1 only); no accelerator gate.
+**Implementation**: `documents/architecture/daemon_topology.md`,
+`documents/architecture/configuration_doctrine.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/engine_pool_routing.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`,
+`src/Infernix/Lint/Docs.hs`
+**Docs to update**: `documents/architecture/daemon_topology.md`,
+`documents/architecture/configuration_doctrine.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/engine_pool_routing.md`, `documents/README.md`,
+`documents/documentation_standards.md`, `documents/tools/pulsar.md`, `README.md`, `AGENTS.md`,
+`CLAUDE.md`
+
+### Objective
+
+Record the supported architecture as a fleet: multiple machines, each running exactly one engine
+process, all consuming the same `Shared` pool topic, each with its own model cache and its own
+machine contract naming the pools it serves.
+
+Three doctrine statements follow, and none of them existed in prose before.
+
+**Delivery semantics.** The system is at-least-once with an effectively-once observable outcome, and
+that was implied by two sentences about acknowledgement ordering rather than stated. Naming it
+matters because every recovery property in the failure table depends on it: redelivery is the only
+recovery path the pipeline has, since request publishes carry a deduplicating sequence id that makes
+re-dispatch a no-op by design. At-most-once was considered and rejected — prompt resolution requires
+a terminal event and there is neither a client deadline nor a server reaper, so a discarded request
+is an unresolved prompt with no visible error.
+
+**One engine per machine.** This is a correctness rule, not a scheduling preference. Two engines on
+one box hold two KV caches and two copies of every loaded weight, and each independently admits work
+against the machine's whole observed capacity — so both can pass admission for work that together
+exceeds the box. Member identity therefore fails closed: a daemon that cannot establish which member
+it is refuses to start rather than adopting a default.
+
+**The config splits by scope, not by size.** Facts two machines must agree on live in the system
+contract and nowhere else; facts true of one box live in its machine contract. The split is not a
+reorganization — it removes the shared facts from the per-machine files so there is nothing to
+reconcile, which is the same move Sprint 8.9 made when it gave each union arm only its own payload.
+
+### Deliverables
+
+- `daemon_topology.md` gains `## Fleet Topology and Member Identity` (replacing the retired HA and
+  node-policy contract) and `## Delivery Semantics`, and becomes the canonical home for both
+- `configuration_doctrine.md` gains the system/machine contract split and the content-pin
+  relationship, with the explicit statement that both files remain binary-generated and untracked so
+  the zero-version-controlled-`.dhall` rule is unaffected
+- `bounded_inference_memory.md` states that admission happens on the executing machine and that
+  capacity is observed rather than declared, and records the asymmetry in one line: the model's
+  footprint is a system fact and stays on the wire; the machine's capacity is a local observation
+  and does not
+- `engine_pool_routing.md` records that a pool is selected by field access rather than spelled as
+  text, and states plainly that "every routable model has an eligible member" is **not** checkable
+  from the system contract alone — it is the union of what every machine declares
+- `development_plan_standards.md` corrections: the replica/anti-affinity/PDB mandate (§L), the
+  HA-only-target rule (§O), the exactly-once claim on model staging (§K), the Patroni HA mandate
+  (§N), and the single-operator-config framing (§M)
+- both HA-named phase documents renamed, with §E's filename inventory, `phaseDocs`, and
+  `monitoringStancePaths` updated together
+- two docs-lint hardening fixes that make that rename mechanically safe rather than silently green
+
+### Validation
+
+- `infernix lint docs` and `infernix docs check` pass; `cabal build all` under `-Wall -Werror`
+  accepts the `Lint/Docs.hs` changes
+- the `monitoringStancePaths` read is existence-guarded, so a stale entry is a named refusal rather
+  than an uncaught `openFile: does not exist`. **Verified to fail** with the named diagnostic on a
+  reverted entry, and reverted after the negative-test confirmation
+- `validateRelativeLinks` now covers the six non-phase plan documents whose links were previously
+  unchecked, so a phase rename that misses one is a clean lint failure instead of a green ship
+- `diff CLAUDE.md AGENTS.md` differs only at the title, `Supersedes`, `Purpose`, and intro lines
+
+### Remaining Work
+
+None in this sprint. The implementation it governs is owned by Sprint 4.34 (admission on the
+executing machine, fail-closed identity), Sprint 3.16 (the topology collapse), Sprint 6.47 (the
+validation surface), and Sprints 8.10/8.11 (the wire).
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
@@ -1140,6 +1241,6 @@ against node allocatable, and the uncapped nested builds — are named in the do
   [system-components.md](system-components.md) aligned when documentation governance or
   architecture-baseline language changes
 - keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
-  and [phase-6-validation-e2e-and-ha-hardening.md](phase-6-validation-e2e-and-ha-hardening.md)
+  and [phase-6-validation-and-e2e-hardening.md](phase-6-validation-and-e2e-hardening.md)
   aligned when the supported docs suite changes how operators classify slow convergence versus
   real lifecycle failure

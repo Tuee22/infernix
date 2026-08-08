@@ -59,7 +59,9 @@ Status describes the current repository state, not the intended future state.
 Rules:
 
 - `Done` requires passing validation, aligned docs, and no remaining work within the scope owned
-  by that phase or sprint.
+  by that phase or sprint. "Aligned docs" means the governed suite already declared this target and
+  the sprint made the code match it — frequently **zero** doc change at `Done`. It never means
+  editing `documents/` to record that something now works.
 - `Active` requires a `Remaining Work` section.
 - `Blocked` requires a `Blocked by` line.
 - `Planned` must not hide unmet blockers.
@@ -78,7 +80,7 @@ Rules:
   the gate to begin the next phase's implementation; the phase's **one** accelerator cohort plus
   `linux-cpu` is the gate for `Done`. See the single-accelerator execution rule in Section Q.
 
-### D. Declarative Current-State Language
+### D. Declarative Target Language
 
 Plan documents describe the intended supported architecture in present-tense declarative language.
 
@@ -100,10 +102,10 @@ DEVELOPMENT_PLAN/
 ├── phase-0-documentation-and-governance.md
 ├── phase-1-repository-and-control-plane-foundation.md
 ├── phase-2-kind-cluster-storage-and-lifecycle.md
-├── phase-3-ha-platform-services-and-edge-routing.md
+├── phase-3-platform-services-and-edge-routing.md
 ├── phase-4-inference-service-and-durable-runtime.md
 ├── phase-5-web-ui-and-shared-types.md
-├── phase-6-validation-e2e-and-ha-hardening.md
+├── phase-6-validation-and-e2e-hardening.md
 ├── phase-7-demo-app-durable-context.md
 ├── phase-8-zero-tracked-dhall-config-and-eager-model-cache.md
 ├── phase-9-access-control-and-monitoring.md
@@ -201,15 +203,17 @@ ledger for obsolete paths, duplicate guidance, and stale compatibility surfaces.
 
 ### J. README and Documents Harmony
 
-The plan and governed `documents/` suite must agree on current-state implementation status. The root
-README is exempt from current-state status parity because it is intentionally written as the
-finished-product document.
+The plan and the governed `documents/` suite answer different questions and are not reconciled to
+one another. `documents/` declares the target; the plan tracks the gap between that target and the
+implementation.
 
+- `README.md` and the whole governed `documents/` suite are written as the finished-product
+  documents. They reflect the authoritative intended product shape, canonical CLI surface, storage
+  doctrine, operator workflows, substrate envelope, and validation direction, **even when those
+  capabilities are not fully implemented yet**. A governed doc is never edited to track what
+  currently works.
 - `00-overview.md`, all phase files, and `system-components.md` use the same phase names and
-  current-state claims.
-- `README.md` still reflects the authoritative intended product shape, canonical CLI surface,
-  storage doctrine, operator workflows, substrate envelope, and validation direction described by
-  the plan, even when those capabilities are not fully implemented yet.
+  current-state claims. Current-state claims live here, not in `documents/`.
 - `README.md`, `AGENTS.md`, and `CLAUDE.md` are governed root documents. When a sprint owns
   root-document governance, it explicitly states which file is canonical for a topic and which
   files are orientation or automation entry documents only.
@@ -303,8 +307,8 @@ Rules:
   stream (conversation log, contexts metadata, drafts, inference request/batch/result, the
   `infernix/system/model.bootstrap.request` topic family). MinIO holds binary blobs in three
   buckets: `infernix-models` (always-on; platform model weights eagerly staged at coordinator
-  startup from the mounted substrate model set, with producer-dedup + Failover for
-  exactly-once semantics), `infernix-engine-artifacts` (always-on; optional immutable engine
+  startup from the mounted substrate model set, with producer-dedup + Failover collapsing
+  at-least-once delivery to a single effective upload), `infernix-engine-artifacts` (always-on; optional immutable engine
   payloads), and `infernix-demo-objects` (demo-gated; user uploads + engine-generated
   artifacts). The previously chart-reserved `infernix-runtime` and `infernix-results`
   placeholder buckets and the `s3://infernix-runtime/` URI scheme are removed by Sprint 7.7.
@@ -396,20 +400,22 @@ Rules:
   consume assigned pool topics, run inference, and publish the result. Sprint 7.7 of Phase 7
   replaced the fused `infernix-service` pod with role-specific
   Deployments.
-- When phase docs describe multi-node or multi-replica topologies, they must distinguish the
-  currently generated values from the chart template's explicit replica and anti-affinity
-  knobs. The supported target model uses `coordinator.replicaCount` and `engine.replicaCount`
-  in `chart/values.yaml`: stateless roles default to replicas ≥ 2 with preferred anti-affinity
-  for spread; the engine role uses **required** pod anti-affinity keyed on its own label with
-  `topologyKey: kubernetes.io/hostname` so two replicas of the same engine Deployment cannot share
-  a node (redundant KV caches and model weights yield zero performance gain). On `linux-gpu`,
-  per-engine framework Deployments are dependency-isolation units selected by batch topic, not
-  throughput replicas; the single-GPU validation path activates one per-engine deployment at a
-  time. The request, batch, and result
-  contract must remain Pulsar-owned so exclusive topic subscriptions, acknowledgements, and
-  negative acknowledgements keep request handoff, inference, and result-publication ownership
-  unambiguous; PodDisruptionBudgets with `maxUnavailable: 1` on each daemon Deployment make
-  rolling updates and node drains survivable.
+- The supported topology is a **fleet of machines, one process per role per machine**. There is no
+  within-role replication: horizontal scale is adding a machine, not raising a replica count, and
+  phase docs must not describe replica or anti-affinity knobs as supported surface. One engine per
+  machine is a correctness rule rather than a scheduling preference — two engines on one box hold
+  two KV caches and two copies of every loaded weight, and each independently admits work against
+  the machine's whole observed capacity. On `linux-gpu`, per-engine framework Deployments are
+  dependency-isolation units selected by batch topic, not throughput replicas; the single-GPU
+  validation path activates one per-engine deployment at a time. The request, batch, and result
+  contract must remain Pulsar-owned so `Shared` pool subscriptions, acknowledgements, and negative
+  acknowledgements keep request handoff, inference, and result-publication ownership unambiguous.
+- **Delivery is at-least-once with an effectively-once observable outcome.** An engine acknowledges a
+  pool message only after the terminal result is published, so a machine lost mid-inference costs a
+  redelivery and duplicate compute rather than an unanswered request; producer-side dedup collapses
+  the duplicate at the effect. Phase docs must not claim exactly-once delivery, and must not describe
+  a change that acknowledges before the terminal event, because redelivery is the only recovery path
+  the pipeline has.
 - The plan standardizes the NVIDIA-backed Linux substrate as `linux-gpu`. Active phase documents
   must call out any still-unmigrated `linux-cuda` naming in the current worktree instead of
   pretending the rename is already complete.
@@ -435,9 +441,12 @@ Rules:
 
 ### M. Generated Substrate File and ConfigMap Contract
 
-The supported initialization flow creates one operator runtime config at repo-root
-`./infernix.dhall`, and cluster deployment republishes a cluster-role payload through a ConfigMap
-for cluster-resident consumers. `infernix init` creates operator config;
+The supported initialization flow creates a **system contract** at repo-root `./infernix.dhall`,
+byte-identical across the fleet, and a **machine contract** at repo-root `./infernix-host.dhall`
+describing the box it was generated on. Cluster deployment republishes a cluster-role payload
+through a ConfigMap for cluster-resident consumers. Every fact two machines must agree on lives in
+the system contract and nowhere else: a second copy is a second chance to disagree, and a
+disagreement about a derived name is silent. `infernix init` creates operator config;
 `infernix test init` creates the input for the reservation-gated harness config transaction.
 
 Rules:
@@ -462,11 +471,11 @@ Rules:
   or workload supported by that substrate together with the matrix row identity, artifact or format
   family, selected engine, request or result contract identifiers, and any substrate-specific
   runtime metadata needed by the service, web UI, or tests.
-- The generated file also records the daemon role for the process that reads it: coordinator or
-  engine. Host-role Apple engine configs include the Pulsar connection mode, result topic, stable
-  member id, and pool/member assignment the host daemon consumes. Cluster-role configs include the
-  substrate, request and result topics, and the validated engine-pool graph used to derive legal
-  handoff topics.
+- The **machine contract** records the daemon role for the process that reads it, its required
+  member id, and the pools it serves — selected out of the system contract by field access, so a
+  pool the contract does not define is a decode-time type error rather than a subscription to a
+  topic nobody publishes to. Topic names are derived from `(runtimeMode, pool id, model id, optional
+  member id)` and are not written into either file.
 - `infernix init` accepts `--demo-ui true|false`, and phase docs must keep the chosen default versus
   explicit override behavior honest.
 - `cluster up` creates or updates `ConfigMap/infernix-demo-config` from a cluster-role payload
@@ -504,8 +513,11 @@ The manual storage model is a hard architectural rule and cannot be weakened in 
   bind explicitly to their intended claims.
 - Hand-authored standalone PVC manifests for durable workloads are forbidden outside Helm or
   operator-owned durable workload inputs.
-- Any in-cluster PostgreSQL deployment uses a Patroni cluster managed by the Percona Kubernetes
-  operator, even when an upstream chart could self-deploy PostgreSQL.
+- Any in-cluster PostgreSQL deployment uses the Percona Kubernetes operator, even when an upstream
+  chart could self-deploy PostgreSQL. The operator is the deployment and lifecycle mechanism; it is
+  **not** retained as a high-availability mechanism, and the supported topology runs a single
+  instance. Recovery from instance loss is restore-from-backup, not automatic promotion, and no
+  repo-owned validation asserts a failover.
 - Dedicated PostgreSQL clusters per service are allowed, but direct chart-managed standalone
   PostgreSQL StatefulSets are not part of the supported contract.
 
@@ -547,7 +559,7 @@ Rules:
   family that is not idempotent by design.
 - Every repo-owned lifecycle, validation, and docs command other than `infernix service` is
   declarative and idempotent.
-- `infernix cluster up` reconciles cluster, storage, image, Helm, mandatory local HA service state,
+- `infernix cluster up` reconciles cluster, storage, image, Helm, single-node platform service state,
   the active substrate's generated `.dhall` publication, and the chosen edge port
   to the requested target rather than performing one-shot bootstrap steps.
 - `infernix cluster up` chooses the edge port by attempting `9090` first and incrementing by 1
@@ -577,8 +589,10 @@ Rules:
 - `infernix lint ...`, `infernix test ...`, and `infernix docs check` may reuse or reconcile
   prerequisites, but they do not depend on alternate imperative setup commands outside the
   supported CLI surface.
-- No CLI flag or alternate command family selects between non-HA and HA service topology; the
-  mandatory local HA topology is the only supported cluster target.
+- No CLI flag or alternate command family selects between service topologies; the single-node
+  platform topology is the only supported cluster target. Deploying the platform services
+  redundantly is an operator concern for a real deployment, not a repo-owned topology, and is not
+  validated here.
 
 ### P. Integration and E2E Coverage Contract
 
@@ -812,7 +826,7 @@ The configuration substrate is three typed decoder types, reflected to Dhall by 
 
 | Record (Haskell type) | Scope | Reader |
 |------|-------|--------|
-| `HostConfig` | every external tool the project ever invokes (absolute path), filesystem conventions (`repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), host execution context | every Haskell entry point at startup; written by `infernix init` to `./infernix-host.dhall` |
+| `HostConfig` | every external tool the project ever invokes (absolute path), filesystem conventions (`repoRoot`, `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), host execution context, and the measured `memory` facts (`physicalMemoryMib`, `effectiveMemoryMib`) the bounded host build ceiling is derived from | every Haskell entry point at startup; written by `infernix init` to `./infernix-host.dhall` |
 | `ClusterConfig` | every in-cluster wiring value (Pulsar HTTP/WS/service URLs + tenant + namespace, MinIO endpoint + region + presign expiry, Keycloak base URL + realm + client id + JWKS URL, demo bind host, bridge mode, publication state path, model cache root, engine command overrides) | every Haskell entry point at startup; the binary renders it at `cluster up` and Helm embeds the string verbatim (`nindent`) into a `ConfigMap` mounted read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / webapp pods — Helm never parses or templates the Dhall |
 | `SecretsConfig` | the file *paths* at which secret material lives, never the values themselves | every Haskell entry point at startup; the application then reads the named JSON files via `readFile`. On-cluster the binary-rendered files come from a Kubernetes `Secret` mounted at `/etc/infernix/secrets/`; on host they live under `./.data/runtime/secrets/` (gitignored) |
 

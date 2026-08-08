@@ -1,6 +1,7 @@
 module Infernix.DemoConfig
   ( materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
+    materializeBuildMemoryCeilingFile,
     materializeHostManifestFile,
     materializeHostSecrets,
     observeAppleHostMemoryPartition,
@@ -15,7 +16,8 @@ module Infernix.DemoConfig
 where
 
 import Infernix.DemoConfig.Internal
-  ( materializeEmptyModelsDemoConfigFile,
+  ( materializeBuildMemoryCeilingFile,
+    materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     materializeHostSecrets,

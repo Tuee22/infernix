@@ -36,30 +36,6 @@
   deduplication on the conversation, inference-request, and inference-result
   topics makes every retry idempotent.
 
-## Current Status
-
-The durable-context primitives live in the shared library and are
-exercised by Phase 7
-([../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)).
-The Pulsar, MinIO, Keycloak-capable, and routed edge foundations are in
-place; the shared library modules listed in
-[§ Module Layout](#module-layout) make these primitives reusable by any
-future application. The integration suite validates the compacted
-metadata broker contract with live Pulsar admin compaction, a Java
-compacted reader, latest-per-`contextId` assertions for context and
-draft topics, duplicate frontend publish collapse through broker
-producer deduplication, the normal dispatcher → request/batch → engine
-→ result-bridge → conversation-log writeback path for one
-durable-context prompt, and engine-side prefix-hash cache decisions
-through `Infernix.Runtime.KVCache`, `Infernix.Runtime`, and the native
-worker harness. The browser E2E layer covers active-context WebSocket
-re-subscribe, draft restoration after both reconnect and reload login,
-and frontend pod replacement by deleting all `infernix-demo` pods
-during the routed flow and submitting another prompt after reconnect.
-The Pulsar Failover transport keeps stable subscription names while
-process-qualifying consumer names for clearer coordinator promotion
-membership.
-
 ## Parametricity Surface
 
 A concrete application binds these parameters:
@@ -422,8 +398,9 @@ Failure modes:
   `prefixHash`; rebuilds by folding the conversation log; runs inference;
   producer dedup on the result topic prevents a duplicate result if the
   original pod had partially published.
-- **Pulsar broker / MinIO / IdP outages.** Covered by the existing HA
-  topology (3-broker Pulsar, 4-replica MinIO, HA-deployed IdP).
+- **Pulsar broker / MinIO / IdP outages.** The platform services run single-node, so an outage is
+  an outage: recovery is restart, and durability comes from their own storage rather than from
+  replication.
   Applications should cache JWKS with a short TTL so brief IdP outages
   don't break existing sessions.
 
@@ -447,7 +424,7 @@ covered by:
   `<objectsBucket>` variants
 - compacted-topic projection tests with synthetic in-memory broker plus live Pulsar compaction
   validation for the demo binding
-- non-chaos live Pulsar prompt roundtrip through the demo binding's dispatcher, engine, result
+- live Pulsar prompt roundtrip through the demo binding's dispatcher, engine, result
   bridge, and conversation-log writeback
 
 A second application reuses every test above by binding the same

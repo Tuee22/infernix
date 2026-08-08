@@ -6,7 +6,7 @@
 > **Purpose**: Describe the supported local operator workflows for Apple host-native and
 > containerized Linux execution.
 
-## Current Status
+## Supported Workflows
 
 - Apple clean-host support reduces pre-existing host requirements to Homebrew plus ghcup and
   exposes `./bootstrap/apple-silicon.sh` as the supported stage-0 entrypoint. Docker-backed Apple
@@ -79,11 +79,10 @@ owns `./infernix.dhall` for the duration of a run: `infernix test integration|e2
 generates the harness config from the test config, runs the suites, and restores the backup (or
 removes the generated file when there was none). That backup is held at
 `./infernix.dhall.harness-backup` and reconciled on entry, so a killed run cannot leave your
-`./infernix.dhall` clobbered by the test config (the 2026-07-23 Phase 6 Sprint 6.43 scope is
-historically closed under Wave X (2026-07-24), while the 2026-07-25 owner-atomic
-reservation/teardown correction now includes the all-Haskell lifecycle-lock/supervision
-implementation; focused validation, fresh source review, complete source-matched Stage 1, and Wave Y
-remain in progress, and Phase 6 validation runs after Phases 2 and 4; canonical home
+`./infernix.dhall` clobbered by the test config (canonical home
+[Configuration Doctrine](../architecture/configuration_doctrine.md)), while the owner-atomic
+reservation and teardown are owner-atomic over the all-Haskell lifecycle-lock and supervision
+boundary; canonical home
 [Configuration Doctrine](../architecture/configuration_doctrine.md)). The Linux
 launcher image bakes both files at build time so the containerized `infernix test all` runs without a
 manual init step.
@@ -116,35 +115,26 @@ operator to reboot before rerunning the same command.
 
 The supported workflow keeps day-to-day phase work local to one hardware cohort whenever possible.
 
-> **Implement in natural phase order on whichever single machine is present. The cohort gate is a
-> batched wave — the only supported machine switch — not a per-sprint or per-phase trigger.** Every
-> open phase and sprint has two independent axes. *Code-side closure* (Axis 1) is the implementation
-> plus the machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
-> `cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs
-> check`, the web unit suite, and `poetry run check-code`; completed in natural order on one
-> machine, it is the gate to begin the *next* phase's implementation. **That set has two declared
-> prerequisites. First, `infernix init` must have written the repo-root `./infernix-host.dhall` host
-> manifest. Second, the toolchain must run under a declared memory ceiling
-> ([bounded_host_memory.md](../architecture/bounded_host_memory.md)): `cabal build all` is the
-> largest memory consumer in the gate set, and an uncapped run of it exhausted a 124.94 GiB
-> development host. The gate asserts that a ceiling exists and is observed — completing without
-> exhausting the host is a sample, not a bound.** `cabal test infernix-haskell-style` resolves `cabal` through
-> `HostConfig.toolPaths.cabal`, and its only non-manifest fallbacks are the fixed container-layout
-> paths in `Infernix.HostTools`; a host whose toolchain lives under an ordinary user home has no
-> fallback and the gate cannot run. Widening those candidates is not available, because deriving a
-> home-relative path at command time would be the ambient environment read
-> [no_env_vars.md](no_env_vars.md) forbids — the manifest is exactly where host-specific absolute
-> paths belong. *Cohort sign-off* (Axis 2) is
-> the hardware-specific full-suite — Apple Metal including headless Metal/Core ML materialization,
-> and CUDA GPU runs — batched once per closure cycle against frozen code and tracked in
-> `cohort-validation-waves.md`; it is the gate for `Done` and never the gate for moving on. **The
-> next action for any open phase is always its remaining code-side closure on the machine you
-> already have; do not switch machines to "validate the open phase." The machine switch happens only
-> at a scheduled wave boundary, once per cohort.** A deliverable that is intrinsically
-> hardware-bound — for example the upstream MLX GPU-operation and coremltools/materialized-root
-> smoke of Phase 1 Sprint 1.20 after its fresh exact-source complete Stage 1 — is named as
-> such in its `Code-side closure` field and is exercised inside its cohort's wave, never pre-claimed
-> as machine-independent.
+The machine-independent gate set — `cabal build all`, `cabal test infernix-unit`,
+`cabal test infernix-haskell-style`, `infernix lint files/docs/chart/proto`, `infernix docs check`,
+the web unit suite, and `poetry run check-code` — runs on whichever machine is present, and has two
+declared prerequisites. First, `infernix init` must have written the repo-root
+`./infernix-host.dhall` host manifest. Second, the toolchain runs under a declared memory ceiling
+([bounded_host_memory.md](../architecture/bounded_host_memory.md)): `cabal build all` is the largest
+memory consumer in the set, and the gate asserts that a ceiling exists and is observed rather than
+that no exhaustion occurred.
+
+The two prerequisites are the same command. `infernix init` measures this host's memory into the
+manifest and then derives the per-machine ceiling into the untracked repo-root
+`cabal.project.local`, which states its job count and its per-process cap together because neither
+bounds anything alone. A fresh clone has a bound before any binary exists: the committed
+`cabal.project` carries a conservative floor, and the generated file supersedes it. Regenerate
+rather than edit the generated file — a hand-edited job count divided from nothing is the failure
+the doctrine exists for. Deleting it reverts to the committed floor, never to an unbounded build.
+
+Hardware-specific full-suite runs are batched per accelerator cohort. That cadence, and the status of
+any given phase against it, is owned by
+[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
 
 - Apple-owned changes use the Apple host-native bootstrap and direct `./.build/infernix` commands
   for local validation, then queue the CUDA Linux cohort for the phase closure batch.

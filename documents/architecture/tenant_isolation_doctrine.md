@@ -43,7 +43,7 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
 ## Enforcement — single trust boundary
 
 - **Objects**: the webapp derives the key from `sub` server-side and rejects any out-of-scope key with
-  HTTP 403 before any MinIO operation (upload, download, and the Sprint 7.26 `DELETE`). The Sprint
+  HTTP 403 before any MinIO operation (upload, download, and `DELETE`). The Sprint
   7.26 `GET /api/objects/list` enumerates only the caller's `users/<sub>/` prefix, derived
   server-side — the caller never names a prefix. The browser reaches MinIO only through the webapp
   (see [object_access_doctrine.md](object_access_doctrine.md)). Engine-generated artifacts must use a
@@ -55,7 +55,7 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
 - **Lifecycle**: account deletion reaps strictly per-`sub` — MinIO under `userPrefix`, Pulsar via
   `topicBelongsToUser`.
 
-Phase 9 Sprint 9.7 adds an orthogonal **IAM-layer** boundary behind this server-side check: when
+An orthogonal **IAM-layer** boundary sits behind this server-side check: when
 `cluster.minio.stsPerUser` is enabled, the object-proxy exchanges the shared root MinIO credential
 for a short-lived MinIO STS credential scoped by an inline session policy to the caller's
 `users/<sub>/` prefix before each object operation, so the shared root credential is no longer the
@@ -63,29 +63,24 @@ sole isolation. `pathBelongsToUser` on the verified `sub` stays the first-line g
 credential is a second, defense-in-depth boundary. See
 [access_control_doctrine.md](access_control_doctrine.md).
 
-## Current Status
+## Isolation Surfaces
 
-Chat isolation is already sound (the webapp mediates Pulsar; topics embed the verified `sub`). Browser
-object isolation now has the same single-door shape: **Phase 7 Sprint 7.25** made the webapp
-object-proxy the only browser path to MinIO (the browser-direct presigned-URL path and the `/minio/s3`
-gateway route are removed), and `Infernix.Objects.Layout.sanitizeFilename` neutralizes the
-client-supplied display name before it becomes part of a server-derived key. Every browser object
-operation re-authorizes through `pathBelongsToUser` on the verified `sub`, so browser-originated
-cross-user access is rejected by construction.
+Chat isolation rests on the webapp mediating Pulsar and topics embedding the verified `sub`. Browser
+object isolation has the same single-door shape: the webapp object-proxy is the only browser path to
+MinIO — there is no browser-direct presigned-URL path and no `/minio/s3` gateway route — and
+`Infernix.Objects.Layout.sanitizeFilename` neutralizes the client-supplied display name before it
+becomes part of a server-derived key. Every browser object operation re-authorizes through
+`pathBelongsToUser` on the verified `sub`, so browser-originated cross-user access is rejected by
+construction.
 
-The June 2026 audit reopened generated artifact isolation as **Phase 7 Sprint 7.28**. Closure now
-threads a generated-object target derived from the verified `sub` and `contextId` before
-dispatch, makes Python adapters and native process runners consume only that target, and makes the
-result bridge reject raw or cross-user generated object refs. Wave N closed the full selected
-`linux-gpu` plus `linux-cpu` cohort validation on 2026-06-30.
+Generated artifacts follow the same rule. A generated-object target is derived from the verified
+`sub` and `contextId` before dispatch; Python adapters and native process runners consume only that
+target; and the result bridge rejects a raw or cross-user generated object ref.
 
 ## Validation
 
-- Phase 7 Sprint 7.25 integration and e2e prove a user's JWT receives HTTP 403 on another user's object
-  prefix (list / get / put / delete) and cannot read another user's chat context.
-- Phase 7 Sprint 7.28 unit and integration-build validation proves generated artifact output-prefix
-  derivation and cross-user result-bridge rejection; Wave N closes the full selected `linux-gpu` plus
-  `linux-cpu` routed real-output gate.
+- integration and e2e prove a user's JWT receives HTTP 403 on another user's
+object prefix (list / get / put / delete) and cannot read another user's chat context.
 
 ## Cross-References
 

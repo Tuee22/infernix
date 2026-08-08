@@ -1,6 +1,9 @@
-# Phase 6: Validation, E2E, and HA Hardening
+# Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — Validation Only. Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
+**Status**: Active — Validation Only. Sprint 6.46 (toolchain spawn boundary and capability-gating
+lint) is `Done` as of 2026-08-06, and Sprint 6.47 (retiring the chaos and HA validation surface) is
+code-side closed and holds only the `linux-cpu` lifecycle run it shares with Phase 3 Sprint 3.16.
+Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
 exemption reduction) is **code-side closed on 2026-08-02** and is no longer blocked: Phase 4 Sprint
 4.32's code-side closure landed the shared resource-indexed execution boundary it consumes. The
 `linux-gpu` lane compiles an execution plan for the first time — a device-using model now carries two
@@ -1091,7 +1094,7 @@ None.
 ## Sprint 6.19: Single-Substrate Validation Closure and Simulation Removal [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Config.hs`, `src/Infernix/CLI.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `bootstrap/linux-cpu.sh`, `bootstrap/linux-gpu.sh`, `web/test/run_playwright_matrix.mjs`, `docker/Dockerfile`, `test/integration/Spec.hs`, `test/unit/Spec.hs`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/development/local_dev.md`, `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`, `documents/engineering/testing.md`, `documents/engineering/portability.md`, `documents/engineering/edge_routing.md`, `documents/reference/cli_reference.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/tools/minio.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -1201,7 +1204,7 @@ None.
 ## Sprint 6.21: Linux Bootstrap Determinism Closure [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Cluster.hs`, `compose.yaml`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md`
+**Implementation**: `src/Infernix/Cluster.hs`, `compose.yaml`, `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md`
 **Docs to update**: `documents/development/local_dev.md`, `documents/engineering/docker_policy.md`, `documents/engineering/storage_and_state.md`, `documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
 
 ### Objective
@@ -1419,7 +1422,7 @@ cohort validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 6.25: Cluster-Daemon and Apple Host-Inference Split [Done]
 
 **Status**: Done
-**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-ha-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Service.hs`, `src/Infernix/Models.hs`, `src/Infernix/DemoConfig.hs`, `src/Infernix/Runtime/Pulsar.hs`, `chart/templates/deployment-coordinator.yaml`, `chart/templates/deployment-engine.yaml`, `chart/values.yaml`, `infernix.cabal`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `web/playwright/inference.spec.js`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md`, `DEVELOPMENT_PLAN/phase-4-inference-service-and-durable-runtime.md`, `DEVELOPMENT_PLAN/phase-5-web-ui-and-shared-types.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: `README.md`, `documents/architecture/runtime_modes.md`, `documents/architecture/web_ui_architecture.md`, `documents/development/testing_strategy.md`, `documents/engineering/model_lifecycle.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`, `documents/reference/api_surface.md`, `documents/reference/web_portal_surface.md`, `documents/tools/pulsar.md`
 
 ### Objective
@@ -1657,7 +1660,7 @@ validation closed in [Wave C](cohort-validation-waves.md).
 ## Sprint 6.29: Declarative-State Phase Prose Rewrite [Done]
 
 **Status**: Done
-**Implementation**: `DEVELOPMENT_PLAN/phase-6-validation-e2e-and-ha-hardening.md` (prose only)
+**Implementation**: `DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md` (prose only)
 **Docs to update**: this file
 
 ### Objective
@@ -3493,12 +3496,13 @@ closed.
 - **Cohort**: selected accelerator plus `linux-cpu`, consumed jointly with Sprint 6.44's wave
   against one frozen source.
 
-## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Planned]
+## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Done]
 
-**Status**: Planned — consumes the kernel from Phase 1 Sprint 1.21.
-**Blocked by**: Sprint 1.21
-**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Lint/HaskellStyle.hs`,
-`test/compile-fail/`, `src/Infernix/BuildMemory.hs`
+**Status**: Done — the boundary, the lint, the fixtures, the mechanism resolver, and the victim rank
+are implemented and GREEN on the machine-independent gate set. There is no accelerator-specific
+behaviour here, so there is no cohort gate.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`,
+`src/Infernix/CLI.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
 `documents/development/haskell_style.md`, `documents/development/testing_strategy.md`
 
@@ -3515,39 +3519,144 @@ property of the operator's own machine, derived from its measured physical RAM, 
 what destroyed that machine. This sprint adds the memory dimension without touching the deadline
 decision.
 
-The victim rank is the third leg and is deliberately the weakest. `oom_badness` is per-process while
-the hazard is per-tree, so a rank that leaves a build below the cluster pods is inert against the
-ordinary shape of a parallel build. It is applied to the spawned child, never to the lock-holding
-CLI image or a daemon it starts, and it changes who dies rather than how much is allocated.
-
 ### Deliverables
 
-- a closed `ToolchainInvocation` vocabulary as the only way to name the toolchain, consumed by
-  `runToolchainCommand` under a rank-2 spawn authority so a ceiling cannot escape its region or be
-  reused; the raw spawn unexported from the passthrough path
-- `unboundedToolchainSpawnViolations`, structurally a copy of `unboundedDescriptorSpawnViolations`:
-  a toolchain spawn surface with no observation of the declared ceiling is a violation
-- negative-compilation fixtures proving a spawn without a plan, a plan substituted across region
-  tags, and a reused escaped authority all fail to compile
-- the per-lane mechanism resolver: a cgroup scope bounding the aggregate on Linux host-native, the
-  container's own limit in the outer container, a runtime heap cap plus bounded concurrency on
-  Darwin, and a named refusal when none resolves
-- the child victim rank, platform-indexed so Darwin is an explicit rather than a silent no-op
+All landed.
+
+- **A closed `ToolchainInvocation` vocabulary** is the only way to name the toolchain:
+  `ToolchainBuildAll` and `ToolchainTest` over the three declared Cabal suites. A build assembled
+  from a caller-supplied argument list is not a term. `runToolchainCommand` consumes it under a
+  rank-2 `ToolchainSpawnAuthority s`, minted only by `withToolchainSpawnAuthority`, so an authority
+  cannot escape the region that established its ceiling and one region's cannot be substituted for
+  another's. `runCabalCommand` is gone; every `cabal` invocation in `CLI.hs` now goes through the
+  authority.
+- **`unboundedToolchainSpawnViolations`** is structurally a copy of
+  `unboundedDescriptorSpawnViolations`: file-scoped, fires on the naming of `HostCabal` in a file
+  that also spawns, and clears when the file observes `withBoundedToolchainChild`. Four declared
+  exemptions, each a decision: the module that owns the boundary, the lint module itself, the
+  pre-manifest host-tool probes (fixed-argv version probes that run before the manifest a ceiling is
+  measured against exists, and never start a build), and the `PATH`-composition site where the
+  `HostCabal` mention is a directory rather than an invocation.
+- **Three negative-compilation fixtures** — a forged authority, an escaped authority, and an
+  authority substituted across region tags. The suite is now 6 positive / 85 negative.
+- **The per-lane mechanism resolver.** `resolveBuildMemoryMechanism` returns
+  `CgroupAggregateMechanism` when a finite cgroup v2 maximum is in force (the outer-container lane's
+  own limit, and a Linux host-native lane inside a limited slice), `LinuxProcessCeilingMechanism`
+  when it is not, and `DarwinHeapCapMechanism` on Darwin; any other platform is a named refusal
+  before any process starts. `buildMemoryMechanismBoundsAggregate` is the honesty half: only the
+  cgroup arm bounds the *sum* of a build tree, and the other two are `jobs × cap` arithmetic this
+  repository performs.
+- **The child victim rank**, platform-indexed so Darwin is an explicit rather than a silent no-op.
+  800 puts a build above every ordinary process and below the cluster pods at 996-1000 — the
+  ranking the 2026-08-03 incident inverted, when the compiler ran at 0 and the kernel destroyed 111
+  pod processes without ever selecting it.
+
+Two decisions inside are worth stating rather than leaving implicit.
+
+**The ceiling is held across the fork by lowering the soft limit only, and the hard limit is
+deliberately left alone.** The authority is held by the long-lived operator CLI image — the same
+process that later starts `kubectl`, `helm`, and a routed end-to-end browser. Lowering the hard
+limit is one-way, so it would bound all of those too, and a Chromium under a build ceiling is a
+defect. What that costs is stated in the code rather than hidden: a child could raise its own soft
+limit back within the inherited hard limit. No toolchain does, and
+`establishBoundedBuildMemory` remains the stronger both-limits form for a process image dedicated to
+a build.
+
+**The plan is derived from a live measurement rather than from the manifest's recorded facts.** The
+two can disagree: the manifest records what the machine looked like when `infernix init` last ran,
+and the Linux launcher image bakes an unmeasured manifest while the container it runs in carries its
+own cgroup maximum. `resolveLiveBuildMemoryPlan` measures the machine that will run the build.
 
 ### Validation
 
-- `cabal test infernix-haskell-style` runs the new lint, **verified to fail** with the doctrine
-  diagnostic on a reintroduced uncapped toolchain spawn injected into `src/Infernix/CLI.hs` and
-  reverted after the negative-test confirmation
-- `cabal test infernix-compile-fail` accepts the positive fixtures and rejects all three negatives
-- `cabal build all` under `-Wall -Werror`, `infernix lint files/docs/chart/proto`
+- `cabal test infernix-haskell-style` runs the new lint and is GREEN. Its behaviour is pinned by
+  five unit assertions covering the positive case, the cleared case, the comment case, the
+  spawn-free case, and the owning module's exemption — asserted against the real
+  `src/Infernix/CLI.hs` path so the rule is exercised exactly as the gate applies it.
+- `cabal test infernix-compile-fail` accepts the 6 positive fixtures and rejects all 85 negatives,
+  including the three new ones.
+- `cabal build all --enable-tests` under `-Wall -Werror` and `infernix lint files|docs|chart|proto`
+  are GREEN.
+- The boundary is proven live rather than only compiled: `infernix test lint` ran
+  `cabal test infernix-haskell-style` through `runToolchainCommand` — resolving the plan from a live
+  measurement, holding the ceiling across the fork, and raising the child's victim rank — and the
+  suite passed.
 
 ### Remaining Work
 
 The nested builds that produce the setup helper, the formatter tools, and the compile-fail fixtures
 each carry their own job count and are not covered by this boundary; the committed ceiling in
-`cabal.project` partially covers them, but the setup helper's own compilation is not. Named in the
-doctrine's `Current Status` as deferred.
+`cabal.project` and `test/compile-fail/cabal.project` covers the fixture builds, but the setup
+helper's own compilation is not. Named in the doctrine's `What this does not bound` as deferred.
+
+---
+
+## Sprint 6.47: Retire The Chaos And HA Validation Surface [Active]
+
+**Status**: Active — code-side closed; the `linux-cpu` integration run on the collapsed topology is
+the only item left, shared with Phase 3 Sprint 3.16's cohort gate.
+**Blocked by**: Sprint 3.16
+**Implementation**: `test/integration/Spec.hs`, `test/unit/Spec.hs`,
+`web/playwright/inference.spec.js`, `src/Infernix/Cluster.hs`, `src/Infernix/CommandRegistry.hs`,
+`src/Infernix/CLI.hs`, `src/Infernix/Dispatch/SingleFlight.hs`, `src/Infernix/Runtime/Pulsar.hs`
+**Docs to update**: `documents/development/testing_strategy.md`,
+`documents/development/demo_app_test_plan.md`, `documents/architecture/daemon_topology.md`
+
+### Objective
+
+Delete the validation surface that asserts recovery properties of a topology that no longer exists,
+and say plainly that this reduces what a green run proves.
+
+### Deliverables
+
+- **The failure-injection tail is deleted** with its exclusively-owned helpers: frontend pod
+  replacement, coordinator failover, engine pod replacement, engine node drain, model-bootstrap
+  failover/deduplication, Harbor recovery, MinIO durability, routed Pulsar recovery, and Postgres
+  failover, plus 42 helpers that existed only to support them. The Playwright frontend
+  pod-replacement section is deleted with its `replaceDemoPods` helper, and the now-callerless
+  `internal playwright replace-demo-pods` command is retired from the registry, the CLI dispatch,
+  `Infernix.Cluster`, and the CLI reference — leaving the closed Playwright harness vocabulary at one
+  action.
+- **`validatePostgresLifecycleRebinding` and the throughput case are retained**, each with its
+  non-HA subject stated in its own haddock so a later sweep does not delete it: storage determinism
+  (PV inventory and PVC rebinding identity across a lifecycle cycle, Phase 2 doctrine) and a case
+  that injects no failure at all.
+- **The crash-safe cluster-mutation bracket is re-exemplared** onto the `linux-gpu` per-engine
+  deployment rotation, which is a real non-HA caller. Its comment now says it is the suite's only
+  integration exemplar and that the unit suite retains the bracket's own crash/reconcile assertions
+  independently of any cluster, so Sprint 6.43's doctrine survives the removal of its examples.
+- **`documents/development/chaos_testing.md` is retired** and deregistered, with every inbound link
+  removed; `infernix lint docs` is GREEN, which is the check that would fail on either half alone.
+- **The exactly-once claims are narrowed to the effect layer rather than deleted.**
+  `Dispatch/SingleFlight`'s "guarantees exactly-once dispatch across crashed dispatcher replicas"
+  becomes producer dedup collapsing a redelivered dispatch at the effect, and the namespace
+  deduplication comment names at-least-once delivery with an effectively-once observable outcome.
+
+**One deviation from the sprint's own enumeration, recorded rather than silently taken.** The
+objective listed "both backpressure tests" inside the contiguous block to delete. They are retained.
+Both go through `isolatedSharedBackpressureFixture` with a test-owned subscription and synthetic
+consumers; neither kills, drains, or scales anything, so neither is a failure-injection case, and
+the collapsed topology does not invalidate what they assert — broker-native permit distribution
+across pool members. The sprint's own principle is that what is not HA stays; the enumeration
+described where the block sat rather than what each case tested.
+
+### Validation
+
+- `infernix lint docs` and `infernix docs check` are GREEN with the retired document deregistered
+  and all inbound links removed.
+- `cabal build all --enable-tests` under `-Wall -Werror`, `cabal test infernix-unit`,
+  `cabal test infernix-haskell-style`, and `infernix lint files|chart|proto` are GREEN. The
+  registry assertion now pins that `internal playwright replace-demo-pods` **fails** to parse.
+- The suite contains no assertion that a second replica exists.
+- **Cohort gate (pending):** a full `linux-cpu` integration run on the collapsed topology, shared
+  with Sprint 3.16.
+
+### Remaining Work
+
+None beyond the shared cohort run. What this sprint removes is coverage, and the reduction is
+recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and restated in
+`testing_strategy.md` and `demo_app_test_plan.md` rather than presented as a coverage-neutral
+cleanup.
 
 ---
 
@@ -3604,7 +3713,7 @@ doctrine's `Current Status` as deferred.
   derivation rules change
 - keep [phase-4-inference-service-and-durable-runtime.md](phase-4-inference-service-and-durable-runtime.md)
   aligned when runtime-honesty wording or README-matrix interpretation changes
-- keep [phase-3-ha-platform-services-and-edge-routing.md](phase-3-ha-platform-services-and-edge-routing.md)
+- keep [phase-3-platform-services-and-edge-routing.md](phase-3-platform-services-and-edge-routing.md)
   aligned when HA claims, route assumptions, or active-substrate validation rules change
 - keep [phase-2-kind-cluster-storage-and-lifecycle.md](phase-2-kind-cluster-storage-and-lifecycle.md)
   aligned when lifecycle progress surfaces or long-running convergence doctrine changes

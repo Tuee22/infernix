@@ -402,7 +402,16 @@ nativeArtifactTarget identity substrate architecture =
           linuxTarget
             identity
             laneArchitecture
-            (ImageTarget "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-cli")
+            -- llama.cpp b9704 split the former single front-end: `llama-cli`
+            -- is now the interactive chat UI and refuses `--no-conversation`
+            -- at runtime ("please use llama-completion instead", printed to
+            -- stdout) while continuing in chat mode anyway. Under the retired
+            -- target a *successful* run published the chat banner, build
+            -- string, slash-command list, echoed prompt, and timing footer as
+            -- the model's answer — output that is not the model's, which the
+            -- realness contract forbids. `llama-completion` is the one-shot
+            -- completion front-end and ships in the same pinned payload.
+            (ImageTarget "/opt/infernix/native-payloads/llama.cpp/llama-b9704/llama-completion")
             NoTargetArgumentPrefix
             [ImageClosureRoot "/opt/infernix/native-payloads/llama.cpp/llama-b9704"]
     ("linux-native", laneArchitecture, "whisper-cpp-cli")

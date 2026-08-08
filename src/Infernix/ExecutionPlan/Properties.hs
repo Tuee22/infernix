@@ -14,7 +14,7 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict (Map)
 import Data.Map.Strict qualified as Map
-import Data.Maybe (isNothing)
+import Data.Maybe (isJust, isNothing)
 import Data.ProtoLens.Field (field)
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -30,17 +30,16 @@ import Infernix.ExecutionPlan
     executableModelResidentCeilingMib,
     linuxOuterEnvelopeHeadroomMib,
     lookupExecutableModel,
+    lookupRuntimeUnavailableModel,
     refineRuntimePlan,
+    unavailableModelDescriptor,
+    unavailableModelReason,
   )
 import Infernix.ExecutionPlan.Internal
   ( CompiledDaemon (..),
     CompiledPlacement (..),
-    CompiledResources (..),
     CompiledRuntimePlan (..),
-    EnforcerPlan (..),
     EngineRoute (..),
-    MemoryCeiling (..),
-    MemoryGrant (..),
     PlacementObservation (..),
     RuntimeObservation (..),
   )
@@ -65,12 +64,16 @@ import Infernix.Types
     EngineMember (..),
     EnginePool (..),
     HostMemoryPartition,
-    InferenceMemoryBudget (HostEnforcedBudget),
+    InferenceMemoryBudget
+      ( DualEnforcedBudget,
+        HostEnforcedBudget,
+        SubstrateEnforcedBudget
+      ),
     InferenceRequest (..),
-    ModelDescriptor (modelId, runtimeMode, selectedEngine),
+    ModelDescriptor (modelId, modelRamFootprint, requiresGpu, runtimeMode, selectedEngine),
     PodMemoryLimit (..),
     PulsarConnectionMode (ConfiguredTransport),
-    RuntimeMode (AppleSilicon),
+    RuntimeMode (AppleSilicon, LinuxCpu, LinuxGpu),
     defaultModelBootstrapTopic,
     defaultModelsBucket,
     engineBindingAdapterId,
@@ -145,7 +148,7 @@ runExecutionPlanRefinementProperties = do
   assertRefinementFailure
     "NVIDIA sampler unavailable"
     (NvidiaSamplerUnavailable sampleModelId)
-    [GpuPlacementObservation sampleModelId True (Just requiredOuterEnvelopeMib) False (Just gpuCeilingMib)]
+    [GpuPlacementObservation sampleModelId True (Just requiredOuterEnvelopeMib) False (Just gpuVramLimitMib)]
     gpuPlan
   assertRefinementFailure
     "NVIDIA envelope unavailable"
@@ -154,10 +157,56 @@ runExecutionPlanRefinementProperties = do
     gpuPlan
   assertRefinementFailure
     "NVIDIA envelope too small"
-    (NvidiaEnvelopeTooSmall sampleModelId (toInteger gpuCeilingMib) (toInteger (gpuCeilingMib - 1)))
-    [GpuPlacementObservation sampleModelId True (Just requiredOuterEnvelopeMib) True (Just (gpuCeilingMib - 1))]
+    (NvidiaEnvelopeTooSmall sampleModelId (toInteger modelFootprintMib) (toInteger (modelFootprintMib - 1)))
+    [GpuPlacementObservation sampleModelId True (Just requiredOuterEnvelopeMib) True (Just (modelFootprintMib - 1))]
     gpuPlan
+  -- Phase 4 Sprint 4.34: a machine that placed models and can fund none of them
+  -- refuses to start rather than reporting ready and rejecting every request.
+  -- The refusal lives here, not in the compiler, because admission is a fact
+  -- about the machine that will execute.
+  assertRefinementFailure
+    "no admissible placement"
+    (NoAdmissiblePlacement [sampleModelId])
+    [validHostObservation]
+    noAdmissiblePlan
+  assertPartialAdmission
   putStrLn "execution-plan internal refinement coverage passed"
+
+-- | A plan with one fundable and one over-capacity model refines into both
+-- accountings at once: the fundable model becomes an executable, and the
+-- over-capacity one is retained with the exact typed admission failure.
+--
+-- The over-capacity placement still receives an observation, because the
+-- enforcer probes before it knows the admission result. Tolerating that is the
+-- reason the unexpected-observation check is measured against every placement
+-- rather than against the admitted ones.
+assertPartialAdmission :: IO ()
+assertPartialAdmission =
+  case refineRuntimePlan
+    (RuntimeObservation [validHostObservation, secondHostObservation])
+    admissionCapabilityPlan of
+    Left errors ->
+      fail
+        ( "partial-admission plan unexpectedly failed to refine: "
+            <> show (NonEmpty.toList errors)
+        )
+    Right runtimePlan -> do
+      assert
+        (isJust (lookupExecutableModel sampleModelId runtimePlan))
+        "a fundable model survives admission alongside an over-capacity sibling"
+      assert
+        (isNothing (lookupExecutableModel secondModelId runtimePlan))
+        "an over-capacity model is absent from the refined executables"
+      case lookupRuntimeUnavailableModel secondModelId runtimePlan of
+        Nothing ->
+          fail "an over-capacity model was dropped instead of retained as unavailable"
+        Just unavailable -> do
+          assert
+            (unavailableModelDescriptor unavailable == overCapacitySecondModel)
+            "the retained unavailable entry keeps the exact placed model"
+          assert
+            (unavailableModelReason unavailable == overCapacityAdmissionError)
+            "the retained unavailable entry carries the exact typed admission failure"
 
 assertDaemonTopicCapabilityProperties :: IO ()
 assertDaemonTopicCapabilityProperties = do
@@ -338,7 +387,88 @@ runExecutableLaunchBoundaryProperties paths = do
   assert
     (not launchArtifactsPresent)
     "engine poison-message rejection runs before cache, setup, result-store, or process artifacts are created"
+  assertEngineMemoryAdmissionRejection paths
   putStrLn "executable launch-boundary properties passed"
+
+-- | Phase 4 Sprint 4.34: the typed memory rejection is published by the engine,
+-- on the machine that refused the work, and it stays typed rather than
+-- degrading to the untyped @model_not_executable@ route diagnostic. The
+-- coordinator forwards a placed-but-unfundable model precisely so this path is
+-- the one that answers.
+assertEngineMemoryAdmissionRejection :: Paths -> IO ()
+assertEngineMemoryAdmissionRejection paths = do
+  runtimePlan <-
+    case refineRuntimePlan
+      (RuntimeObservation [validHostObservation, secondHostObservation])
+      admissionCapabilityPlan of
+      Left errors ->
+        fail
+          ( "could not refine the engine-admission property plan: "
+              <> show (NonEmpty.toList errors)
+          )
+      Right refined -> pure refined
+  admissionAuthority <- CappedEngine.newEngineExecutionAuthority
+  capabilities <-
+    either
+      fail
+      pure
+      (Pulsar.engineTopicCapabilities secondMemberId runtimePlan admissionAuthority)
+  capability <- requireCapability secondTopic capabilities
+  let admissionRoot = buildRoot paths </> "engine-admission-properties"
+      admissionPaths = isolatedPropertyPaths paths admissionRoot
+  admissionRootPresent <- doesPathExist admissionRoot
+  when admissionRootPresent (removePathForcibly admissionRoot)
+  requestIdValue <-
+    Pulsar.publishInferenceRequest
+      admissionPaths
+      admissionCapabilityPlan
+      InferenceRequest
+        { requestModelId = secondModelId,
+          inputText = "reject on the machine that will execute",
+          inputObjectRef = Nothing,
+          requestUserId = Nothing,
+          requestContextId = Nothing
+        }
+  let publicationSourcePath =
+        Pulsar.topicDirectoryPath admissionPaths sampleCoordinatorTopic
+          </> Text.unpack requestIdValue
+            <.> "pb"
+      sourceDirectory = Pulsar.topicDirectoryPath admissionPaths secondTopic
+      sourcePath = sourceDirectory </> Text.unpack requestIdValue <.> "pb"
+  encodedRequest <- ByteString.readFile publicationSourcePath
+  createDirectoryIfMissing True sourceDirectory
+  ByteString.writeFile sourcePath encodedRequest
+  removeFile publicationSourcePath
+  Pulsar.drainTopic admissionPaths capability
+  sourceExists <- doesFileExist sourcePath
+  maybeResult <-
+    Pulsar.readPublishedInferenceResultMaybe
+      admissionPaths
+      admissionCapabilityPlan
+      requestIdValue
+  resultValue <-
+    maybe
+      (fail "engine memory-admission rejection did not publish a terminal result")
+      pure
+      maybeResult
+  assert
+    (Types.status resultValue == "failed")
+    "engine memory-admission rejection publishes a failed terminal result"
+  assert
+    (Types.resultModelId resultValue == secondModelId)
+    "engine memory-admission rejection preserves the rejected model id"
+  assert
+    (Types.inferenceError (Types.payload resultValue) == Just overCapacityAdmissionError)
+    "engine memory-admission rejection publishes the executing machine's typed admission error"
+  assert
+    ( isNothing (Types.inlineOutput (Types.payload resultValue))
+        && isNothing (Types.objectRef (Types.payload resultValue))
+    )
+    "engine memory-admission rejection does not masquerade as real output"
+  assert
+    (not sourceExists)
+    "engine memory-admission rejection removes the source request"
+  removePathForcibly admissionRoot
 
 assertEnginePoisonRejection ::
   Paths ->
@@ -528,20 +658,20 @@ assertSuccessfulRefinements = do
     "host"
     validHostObservation
     hostPlan
-    residentCeilingMib
+    modelFootprintMib
     Nothing
   assertSuccessfulRefinement
     "pod"
     validPodObservation
     podPlan
-    residentCeilingMib
+    modelFootprintMib
     Nothing
   assertSuccessfulRefinement
     "GPU"
     validGpuObservation
     gpuPlan
-    residentCeilingMib
-    (Just gpuCeilingMib)
+    modelFootprintMib
+    (Just modelFootprintMib)
 
 assertSuccessfulRefinement ::
   String ->
@@ -593,35 +723,70 @@ assert condition message =
     then pure ()
     else fail message
 
+-- Phase 4 Sprint 4.34: a placement no longer carries its resources, so the
+-- three refinement lanes are now distinguished by the plan's own runtime mode
+-- and declared budget rather than by a hand-built 'CompiledResources'. Every
+-- admitted ceiling below is the model's declared footprint, because that is
+-- what admission grants; the declared limits only gate whether it is granted at
+-- all.
 hostPlan :: CompiledRuntimePlan
 hostPlan =
-  compiledPlan
+  compiledPlanFor
+    sampleConfig
     ( Map.singleton
         sampleModelId
-        (compiledPlacement hostResources)
+        (compiledPlacement sampleModel)
     )
 
 podPlan :: CompiledRuntimePlan
 podPlan =
-  compiledPlan
+  compiledPlanFor
+    podConfig
     ( Map.singleton
         sampleModelId
-        (compiledPlacement podResources)
+        (compiledPlacement sampleModel)
     )
 
 gpuPlan :: CompiledRuntimePlan
 gpuPlan =
-  compiledPlan
+  compiledPlanFor
+    gpuConfig
     ( Map.singleton
         sampleModelId
-        (compiledPlacement gpuResources)
+        (compiledPlacement gpuSampleModel)
+    )
+
+-- | The capability graph with its second model made unfundable by this
+-- machine's declared partition. Only the descriptor changes: the routes, the
+-- daemons, and the pool membership are the compiler's, and they stay put,
+-- because placement is graph validation and admission is not.
+admissionCapabilityPlan :: CompiledRuntimePlan
+admissionCapabilityPlan =
+  capabilityPlan
+    { compiledPlacements =
+        Map.fromList
+          [ (sampleModelId, compiledPlacement sampleModel),
+            ( secondModelId,
+              secondCompiledPlacement {placementDescriptor = overCapacitySecondModel}
+            )
+          ]
+    }
+
+-- | A plan whose only model this machine cannot fund.
+noAdmissiblePlan :: CompiledRuntimePlan
+noAdmissiblePlan =
+  compiledPlanFor
+    sampleConfig
+    ( Map.singleton
+        sampleModelId
+        (compiledPlacement (sampleModel {modelRamFootprint = overCapacityFootprint}))
     )
 
 capabilityPlan :: CompiledRuntimePlan
 capabilityPlan =
   ( compiledPlan
       ( Map.fromList
-          [ (sampleModelId, compiledPlacement hostResources),
+          [ (sampleModelId, compiledPlacement sampleModel),
             (secondModelId, secondCompiledPlacement)
           ]
       )
@@ -634,45 +799,26 @@ capabilityPlan =
     }
 
 compiledPlan :: Map Text CompiledPlacement -> CompiledRuntimePlan
-compiledPlan placements =
+compiledPlan = compiledPlanFor sampleConfig
+
+compiledPlanFor :: DemoConfig -> Map Text CompiledPlacement -> CompiledRuntimePlan
+compiledPlanFor config placements =
   CompiledRuntimePlan
-    { compiledConfig = sampleConfig,
+    { compiledConfig = config,
       compiledCoordinator = CompiledDaemon coordinatorConfig,
       compiledWebapp = CompiledDaemon webappConfig,
       compiledEngineDaemonMap =
         Map.singleton sampleMemberId (CompiledDaemon engineDaemonConfig),
-      compiledPlacements = placements,
-      compiledUnavailable = Map.empty
+      compiledPlacements = placements
     }
 
-compiledPlacement :: CompiledResources -> CompiledPlacement
-compiledPlacement resources =
+compiledPlacement :: ModelDescriptor -> CompiledPlacement
+compiledPlacement descriptor =
   CompiledPlacement
-    { placementDescriptor = sampleModel,
+    { placementDescriptor = descriptor,
       placementEngine = sampleEngineBinding,
-      placementRoutes = sampleRoute :| [],
-      placementResources = resources
+      placementRoutes = sampleRoute :| []
     }
-
-hostResources :: CompiledResources
-hostResources =
-  CompiledHostResources
-    (HostFootprintWatchdogPlan expectedHostPartition)
-    (MemoryGrant (MemoryCeiling residentCeilingMib))
-
-podResources :: CompiledResources
-podResources =
-  CompiledPodResources
-    (LinuxProcessGroupRssWatchdogPlan residentPodLimit)
-    (MemoryGrant (MemoryCeiling residentCeilingMib))
-
-gpuResources :: CompiledResources
-gpuResources =
-  CompiledGpuResources
-    (LinuxProcessGroupRssWatchdogPlan residentPodLimit)
-    (MemoryGrant (MemoryCeiling residentCeilingMib))
-    (NvidiaVramAccountingPlan gpuPodLimit)
-    (MemoryGrant (MemoryCeiling gpuCeilingMib))
 
 validHostObservation :: PlacementObservation
 validHostObservation =
@@ -689,7 +835,7 @@ validGpuObservation =
     True
     (Just requiredOuterEnvelopeMib)
     True
-    (Just gpuCeilingMib)
+    (Just gpuVramLimitMib)
 
 secondHostObservation :: PlacementObservation
 secondHostObservation =
@@ -713,22 +859,30 @@ requireHostPartition label partitionResult =
       error (label <> " test host partition is invalid: " <> partitionError)
     Right partition -> partition
 
-residentCeilingMib :: Int
-residentCeilingMib = 1024
+-- | The declared footprint every fixture model carries, and therefore the
+-- ceiling every admitted grant holds — resident and VRAM alike.
+modelFootprintMib :: Int
+modelFootprintMib = 1024
 
-gpuCeilingMib :: Int
-gpuCeilingMib = 2048
+-- | The declared limits admission gates against. Both are deliberately larger
+-- than 'modelFootprintMib' so the fixtures exercise a successful admission and
+-- so a grant ceiling can never be confused with the limit that admitted it.
+residentPodLimitMib :: Int
+residentPodLimitMib = 2048
+
+gpuVramLimitMib :: Int
+gpuVramLimitMib = 4096
 
 requiredOuterEnvelopeMib :: Int
 requiredOuterEnvelopeMib =
-  residentCeilingMib + linuxOuterEnvelopeHeadroomMib
+  residentPodLimitMib + linuxOuterEnvelopeHeadroomMib
 
 residentPodLimit :: PodMemoryLimit
 residentPodLimit =
   PodMemoryLimit
     { podMemoryLimitResource = Types.PodRam,
       podMemoryLimitSource = Types.ClusterEnginePodMemoryLimit,
-      podMemoryLimitMib = residentCeilingMib
+      podMemoryLimitMib = residentPodLimitMib
     }
 
 gpuPodLimit :: PodMemoryLimit
@@ -736,14 +890,58 @@ gpuPodLimit =
   PodMemoryLimit
     { podMemoryLimitResource = Types.GpuVram,
       podMemoryLimitSource = Types.ClusterEnginePodMemoryLimit,
-      podMemoryLimitMib = gpuCeilingMib
+      podMemoryLimitMib = gpuVramLimitMib
+    }
+
+fixtureFootprint :: Types.ModelMemoryFootprint
+fixtureFootprint =
+  case Types.mkModelMemoryFootprint modelFootprintMib of
+    Left footprintError ->
+      error ("fixture model footprint is invalid: " <> footprintError)
+    Right footprint -> footprint
+
+hostInferenceCapacityMib :: Int
+hostInferenceCapacityMib =
+  Types.hostPartitionInferenceCapacityMib expectedHostPartition
+
+overCapacityFootprintMib :: Int
+overCapacityFootprintMib = hostInferenceCapacityMib + 1
+
+-- | One MiB past what this machine's declared partition can fund, so admission
+-- rejects it by exactly one MiB and the rejection payload is unambiguous.
+overCapacityFootprint :: Types.ModelMemoryFootprint
+overCapacityFootprint =
+  case Types.mkModelMemoryFootprint overCapacityFootprintMib of
+    Left footprintError ->
+      error ("over-capacity fixture footprint is invalid: " <> footprintError)
+    Right footprint -> footprint
+
+overCapacitySecondModel :: ModelDescriptor
+overCapacitySecondModel =
+  secondSampleModel {modelRamFootprint = overCapacityFootprint}
+
+overCapacityAdmissionError :: Types.InferenceError
+overCapacityAdmissionError =
+  Types.ModelMemoryLimitExceeded
+    { Types.inferenceErrorModelId = secondModelId,
+      Types.inferenceErrorRequiredMib = overCapacityFootprintMib,
+      Types.inferenceErrorAvailableMib = hostInferenceCapacityMib,
+      Types.inferenceErrorResource = Types.UnifiedHostRam,
+      Types.inferenceErrorSource =
+        Types.inferenceMemoryBudgetSource (HostEnforcedBudget expectedHostPartition)
     }
 
 sampleModel :: ModelDescriptor
 sampleModel =
   case catalogForMode AppleSilicon of
-    model : _ -> model
+    model : _ -> model {modelRamFootprint = fixtureFootprint}
     [] -> error "apple-silicon catalog unexpectedly has no model"
+
+-- | The same model on the device lane. Sharing 'sampleModelId' is deliberate:
+-- the observation fixtures are keyed by model id, and only the enforcement
+-- shape differs between the lanes.
+gpuSampleModel :: ModelDescriptor
+gpuSampleModel = sampleModel {requiresGpu = True}
 
 sampleModelId :: Text
 sampleModelId = modelId sampleModel
@@ -759,7 +957,7 @@ sampleEngineBinding =
 secondSampleModel :: ModelDescriptor
 secondSampleModel =
   case catalogForMode AppleSilicon of
-    _ : model : _ -> model
+    _ : model : _ -> model {modelRamFootprint = fixtureFootprint}
     _ -> error "apple-silicon catalog unexpectedly has fewer than two models"
 
 secondModelId :: Text
@@ -823,8 +1021,7 @@ secondCompiledPlacement =
             routeSubscriptionType = ConsumerShared,
             routeMaxInflightPerMember = 1
           }
-          :| [],
-      placementResources = hostResources
+          :| []
     }
 
 sampleConfig :: DemoConfig
@@ -864,6 +1061,25 @@ sampleConfig =
       engines = [sampleEngineBinding],
       models = [sampleModel],
       inferenceMemoryBudget = HostEnforcedBudget expectedHostPartition
+    }
+
+-- | The same graph on the portable Linux lane, so the pod-resident enforcement
+-- shape is selected by the config rather than by a hand-built resource.
+podConfig :: DemoConfig
+podConfig =
+  sampleConfig
+    { configRuntimeMode = LinuxCpu,
+      inferenceMemoryBudget = SubstrateEnforcedBudget residentPodLimit
+    }
+
+-- | The same graph on the device lane, with a model that actually uses the
+-- device, so both independent grants are minted.
+gpuConfig :: DemoConfig
+gpuConfig =
+  sampleConfig
+    { configRuntimeMode = LinuxGpu,
+      inferenceMemoryBudget = DualEnforcedBudget residentPodLimit gpuPodLimit,
+      models = [gpuSampleModel]
     }
 
 coordinatorConfig :: DaemonConfig

@@ -44,7 +44,10 @@ demoConfig:
 
 demo:
   enabled: true
-  replicaCount: 2
+  # Phase 3 Sprint 3.16: one process per role per machine. A second replica of a
+  # stateless role on a single-node cluster buys no availability and doubles the
+  # resident footprint.
+  replicaCount: 1
   port: 8080
   image:
     repository: infernix-linux-cpu
@@ -147,7 +150,8 @@ clusterConfig:
 
 coordinator:
   enabled: true
-  replicaCount: 2
+  # Phase 3 Sprint 3.16: one coordinator per machine (see demo above).
+  replicaCount: 1
   image:
     repository: infernix-linux-cpu
     tag: local
@@ -165,15 +169,14 @@ coordinator:
   # The retired `INFERNIX_DAEMON_ROLE` env path must not reappear.
   args:
     - service
-  podDisruptionBudget:
-    maxUnavailable: 1
 
 engine:
   enabled: true
-  # Operator-set up to the number of engine-capable nodes. Default 1 keeps
-  # the chart shape sensible on single-node Kind clusters; the supported
-  # production target raises this to match available GPU capacity on
-  # `linux-gpu`.
+  # Phase 3 Sprint 3.16: exactly one engine process per machine, and that is a
+  # correctness rule rather than a scheduling preference. Two engine processes on
+  # one box hold two KV caches and two copies of every loaded weight, and each
+  # admits work independently against the machine's whole observed capacity.
+  # Scale the fleet by adding machines, never by raising this number.
   replicaCount: 1
   image:
     repository: infernix-linux-cpu
@@ -205,14 +208,11 @@ engine:
     # diffusers-format repos (e.g. Wan2.1-T2V-1.3B with the umt5-xxl text
     # encoder) alongside SDXL; 32Gi caused mid-bootstrap eviction on linux-gpu.
     sizeLimit: 64Gi
-  podDisruptionBudget:
-    maxUnavailable: 1
 
 demoSplit:
   enabled: true
-  replicaCount: 2
-  podDisruptionBudget:
-    maxUnavailable: 1
+  # Phase 3 Sprint 3.16: one process per role per machine.
+  replicaCount: 1
 
 # Phase 3 Sprint 3.11 (2026-05-29): the hand-authored MinIO
 # StatefulSet under `chart/templates/minio/` replaces the retired
@@ -226,7 +226,11 @@ demoSplit:
 # Job — no Bitnami licensing exposure ever again.
 infernixMinio:
   enabled: true
-  replicaCount: 4
+  # Phase 3 Sprint 3.16: one instance per platform service. This changes the
+  # on-disk layout — a single-node MinIO uses the plain `/data` backend rather
+  # than the erasure-coded distributed one — so it is a teardown-and-rebuild,
+  # not an in-place reconcile. See documents/tools/minio.md.
+  replicaCount: 1
   image:
     repository: docker.io/minio/minio
     tag: "RELEASE.2025-09-07T16-13-09Z"
@@ -336,7 +340,7 @@ harbor:
       limits:
         memory: 128Mi
   portal:
-    replicas: 3
+    replicas: 1
     resources:
       requests:
         cpu: 50m
@@ -344,7 +348,7 @@ harbor:
       limits:
         memory: 128Mi
   core:
-    replicas: 3
+    replicas: 1
     resources:
       requests:
         cpu: 200m
@@ -402,7 +406,7 @@ harbor:
       -----END CERTIFICATE-----
     xsrfKey: "0123456789abcdef0123456789abcdef"
   jobservice:
-    replicas: 3
+    replicas: 1
     secret: "0011223344556677"
     resources:
       requests:
@@ -411,7 +415,7 @@ harbor:
       limits:
         memory: 384Mi
   registry:
-    replicas: 3
+    replicas: 1
     secret: "8899aabbccddeeff"
     registry:
       resources:
@@ -432,7 +436,7 @@ harbor:
       password: "harbor_registry_password"
       htpasswdString: "harbor_registry_user:$2a$10$4sf.czgjL/xrrR0TipkLzOcrg82zXOFIPmku9jvCosb3t6vH4.Ml2"
   trivy:
-    replicas: 3
+    replicas: 1
     resources:
       requests:
         cpu: 50m
@@ -471,7 +475,10 @@ harborpg:
     name: harbor-postgresql-init-sql
   instances:
     - name: instance1
-      replicas: 3
+      # Phase 3 Sprint 3.16: one instance per platform service. The Percona
+      # operator remains the deployment mechanism and is no longer retained as a
+      # high-availability mechanism; instance loss is restore-from-backup.
+      replicas: 1
       resources:
         requests:
           cpu: 75m
@@ -488,7 +495,7 @@ harborpg:
             storage: 5Gi
   proxy:
     pgBouncer:
-      replicas: 3
+      replicas: 1
       image: docker.io/percona/percona-pgbouncer:1.25.1-1
       resources:
         requests:
@@ -567,7 +574,10 @@ keycloakpg:
     name: keycloak-postgresql-init-sql
   instances:
     - name: instance1
-      replicas: 3
+      # Phase 3 Sprint 3.16: one instance per platform service. The Percona
+      # operator remains the deployment mechanism and is no longer retained as a
+      # high-availability mechanism; instance loss is restore-from-backup.
+      replicas: 1
       resources:
         requests:
           cpu: 75m
@@ -584,7 +594,7 @@ keycloakpg:
             storage: 2Gi
   proxy:
     pgBouncer:
-      replicas: 3
+      replicas: 1
       image: docker.io/percona/percona-pgbouncer:1.25.1-1
       resources:
         requests:
@@ -662,7 +672,9 @@ keycloak:
   # The local demo runs one Keycloak application pod until Sprint 7.14
   # validates cookie-aware `/auth` proxy affinity or clustered embedded
   # cache behavior through Envoy Gateway. The backing Patroni Postgres
-  # cluster remains HA.
+  # cluster is a single instance (Phase 3 Sprint 3.16): the Percona operator
+  # remains the deployment mechanism and is no longer retained as a
+  # high-availability mechanism; instance loss is restore-from-backup.
   replicaCount: 1
   # Phase 7 Sprint 7.14: operator-facing base URL the demo backend
   # expects the issuer claim to match. Cluster materialization overrides
@@ -718,7 +730,7 @@ pulsar:
     anti_affinity: false
     type: preferredDuringSchedulingIgnoredDuringExecution
   zookeeper:
-    replicaCount: 3
+    replicaCount: 1
     podMonitor:
       enabled: false
     affinity:
@@ -741,7 +753,7 @@ pulsar:
           cpu: 0.05
         limits:
           memory: 256Mi
-    replicaCount: 3
+    replicaCount: 1
     podMonitor:
       enabled: false
     affinity:
@@ -775,7 +787,7 @@ pulsar:
       limits:
         memory: 256Mi
   broker:
-    replicaCount: 3
+    replicaCount: 1
     podMonitor:
       enabled: false
     affinity:
@@ -789,8 +801,14 @@ pulsar:
     configData:
       # Required before namespace/topic-level producer dedup policies take effect.
       brokerDeduplicationEnabled: "true"
+      # Phase 3 Sprint 3.16: one bookie means an ensemble of one. These three
+      # were previously set only by the Apple local-topology override; the
+      # single-node shape is now the default rather than the exception.
+      managedLedgerDefaultEnsembleSize: "1"
+      managedLedgerDefaultWriteQuorum: "1"
+      managedLedgerDefaultAckQuorum: "1"
   proxy:
-    replicaCount: 3
+    replicaCount: 1
     configData:
       webSocketServiceEnabled: "true"
       # Engine consumers retain their delivery until real inference and result
@@ -814,7 +832,7 @@ pulsar:
         http: "30080"
         pulsar: "30650"
   autorecovery:
-    replicaCount: 3
+    replicaCount: 1
     podMonitor:
       enabled: false
     configData:

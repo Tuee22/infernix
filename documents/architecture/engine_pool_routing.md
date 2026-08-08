@@ -21,43 +21,29 @@
 - Normal scalable pools use Pulsar `Shared` subscriptions. Explicitly pinned routes use derived
   per-member topics and `Exclusive` subscriptions.
 
-## Current Status
+## Routing Authority
 
-The startup-time pool-routing code-side implementation has landed. The runtime-config Dhall record
-now carries `enginePools` and `engineMembers`; generated configs derive normal pool topics and
-pinned member topics from `(runtimeMode, poolId/memberId, modelId)`; coordinator handoff resolves a
-model to a validated pool topic; and engine daemons select a stable member id before subscribing.
-The validator rejects impossible routing states such as unknown models, duplicate pool/member ids,
-empty assignments, one-sided pool/member links, raw topic-like ids, `Failover` service consumers,
-and routable models with no eligible member.
+The runtime config carries the pool graph; generated configs derive normal pool topics and pinned
+member topics from `(runtimeMode, poolId/memberId, modelId)`; coordinator handoff resolves a model to
+a validated pool topic; and an engine daemon establishes its member identity before subscribing. The
+validator rejects impossible routing states: unknown models, duplicate pool/member ids, empty
+assignments, one-sided pool/member links, raw topic-like ids, `Failover` service consumers, and
+routable models with no eligible member.
 
-The reflected substrate schema (from the substrate decoder type) carries the supported `enginePools` / `engineMembers` graph plus
-explicit `engineDaemons` metadata derived from that graph for daemon startup and targeted
-validation configs. Operators no longer author or receive legacy `engine`, `host_batch_topic`, or
-raw batch-topic fields in the supported Dhall surface. Current Apple integration proves pinned
-`Exclusive` duplicate-consumer rejection, same-machine
-Apple host-member coexistence on one real `Shared` pool subscription, and production
-`demo_ui = false` route/publication assertions. Current Apple integration also executes the
-single-host logical `Shared` backlog harness by holding one Pulsar WebSocket consumer unacked and
-asserting a second request reaches a free consumer on the same service-shaped subscription.
-Current Linux CPU integration proves Kubernetes-observed pool placement and shared-subscription
-backpressure on unique derived pool/model topics; Wave J closed its Linux GPU/CUDA routing scope on
-2026-06-20. The new NVIDIA memory-enforcement scope belongs to Phase 6 Sprint 6.44. Physical Apple multi-host membership
-is hardware-deferred proof while no second Apple host is available.
+Operators do not author raw topic strings. There is no legacy `engine`, `host_batch_topic`, or raw
+batch-topic field in the supported Dhall surface.
 
-**Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog
-(each consumer's `receiverQueueSize` is fixed at 1 today) — plus the model cache (LRU in
-`python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*; `maxInflightPerMember`
-is a validated per-member invariant (see the Typed Configuration note below). Model memory is
-bounded separately by the typed execution-plan compiler/refiner. Apple uses a checked unified-host
-partition and Linux CPU uses configured pod capacity plus live RSS/cgroup refinement; Linux GPU
-fails closed until independently indexed pod-RAM and VRAM enforcement exists. Capacity failures
-remain explicit unavailable models carrying typed `ModelMemoryLimitExceeded`, so one oversized
-entry does not invalidate smaller placements. A fitting model launches only through
+**Resource-safety scope.** The routing controls here — Pulsar consumer permits and receiver backlog,
+with each consumer holding a single permit — plus the model cache (LRU in
+`python/adapters/model_cache.py`) bound in-flight request *concurrency* and *disk*. Model memory is
+bounded separately by the typed execution-plan refiner, on the machine that will execute. Apple uses
+a checked unified-host partition; Linux CPU uses pod capacity plus live RSS and cgroup refinement;
+Linux GPU requires independently indexed pod-RAM and VRAM enforcement and fails closed without it.
+Capacity failures remain explicit unavailable models carrying typed `ModelMemoryLimitExceeded`, so
+one oversized entry does not invalidate smaller placements. A machine that places models and admits
+none of them refuses to start rather than reporting ready and rejecting every request. A fitting model launches only through
 `ExecutableModel`, whose matching indexed grant/enforcer pair drives the capped-engine watchdog.
-Phase 4 owns Apple/Linux CPU behavioral and serialization proof, and Phase 6 owns NVIDIA
-enforcement; canonical home
-[bounded_inference_memory.md](bounded_inference_memory.md).
+Canonical home: [bounded_inference_memory.md](bounded_inference_memory.md).
 
 **Closed messaging authority.** Compilation rejects a `TopicFamilyCollision` when any topic is
 reused across coordinator requests, results, model-bootstrap requests, model-bootstrap ready
@@ -79,8 +65,10 @@ The coordinator chooses a pool topic, not a concrete node, for normal scalable w
 which eligible consumer receives the next message based on consumer permits and receiver backlog.
 Busy members stop accepting new permits or keep receiver queues small; idle members continue
 granting permits and naturally receive more work. These controls bound in-flight request concurrency
-and the disk model cache, not model memory capacity. Memory capacity is handled by the shared
-admission policy described in **Resource-safety scope**.
+and the disk model cache, not model memory capacity. Memory capacity is handled on the executing
+machine by the admission policy described in **Resource-safety scope**; the coordinator forwards a
+placed model to its pool rather than vetoing it, because a machine that will not run the work has no
+verdict to give.
 
 Pinned routing is explicit and separate:
 
@@ -92,14 +80,14 @@ Pinned routes are for exact-host or exact-placement requirements, not for ordina
 
 ## Typed Configuration
 
-The runtime-config file describes engine pools and durable engine members with substrate-neutral
-fields. **The example below is illustrative of the field *shape* across substrates, not a valid
-single-substrate `infernix.dhall`:** a real initialized file carries exactly one substrate's pools, gives
-each pool a distinct model id, and declares every member it references in `engineMembers`
-(`validateDemoConfig` rejects a mixed-substrate list, a reused model id, or an undeclared member such
-as `mac-mini-2` below).
+The **system contract** describes engine pools and their models; the **machine contract** names which
+of those pools a given box serves. **The example below is illustrative of the field *shape* across
+substrates, not a valid single-substrate pair:** a real initialized system contract carries exactly
+one substrate's pools and gives each pool a distinct model id, and a real machine contract selects
+its pools out of that record by field access — so a pool a machine names but the contract does not
+define is a Dhall type error at decode, not a subscription to a topic nobody publishes to.
 
-Phase 8 Sprint 8.9 made `runtimeMode` and `subscription` Dhall unions rather than `Text`, so an
+`runtimeMode` and `subscription` are Dhall unions rather than `Text`, so an
 alternative is written as a label selected from the union type, not as a quoted string.
 
 ```dhall
@@ -113,14 +101,12 @@ in  { enginePools =
           , models = [ "llm-smollm2-safetensors" ]
           , members = [ "mac-studio-1", "mac-mini-2" ]
           , subscription = Subscription.Shared
-          , maxInflightPerMember = 1
           }
         , { id = "linux-gpu-vllm"
           , runtimeMode = RuntimeMode.LinuxGpu
           , models = [ "llm-smollm2-safetensors" ]
           , members = [ "vllm" ]
           , subscription = Subscription.Shared
-          , maxInflightPerMember = 1
           }
         ]
     , engineMembers =
@@ -141,23 +127,29 @@ in  { enginePools =
 The binary writes the union type inline at every field rather than binding a `let`; the bindings
 above are only to keep the illustration readable.
 
-The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema substrate`). `maxInflightPerMember` is a
-**validated per-member invariant**: it is `Natural` on the wire since Sprint 8.9, so a negative value
-is not representable at all, and it is still asserted `> 0` after decode; it does not yet change
-runtime concurrency — each engine consumer hardcodes `receiverQueueSize = 1`, so the effective
-per-consumer in-flight is 1 regardless of the configured value (wiring the field into the consumer
-permits is tracked future work). It never bounds model memory; that is handled separately by the
-typed resource-admission policy (see **Resource-safety scope**). Kubernetes placement details stay in
-chart values and Kubernetes scheduling primitives; the routing graph only names durable pool/member
-identity. The invariants are fixed:
+The substrate decoder type is the exact schema (print it with `infernix internal dhall-schema
+substrate`). Per-consumer in-flight is **one**: each engine consumer requests a single permit, and
+execution is additionally serialized behind the machine's execution authority, so a machine holds one
+model at a time. Concurrency is therefore a property of the fleet's size, not of a configured number
+— which is why no in-flight knob appears on the wire. It never bounds model memory; that is handled
+separately by the typed resource-admission policy (see **Resource-safety scope**). Kubernetes
+placement details stay in chart values and Kubernetes scheduling primitives; the routing graph only
+names durable pool/member identity. The invariants are fixed:
 
-- pool ids are unique
-- member ids are unique within the substrate
+- pool ids are unique, and a pool is named by selecting it from the system contract, never by
+  spelling it as free text
+- member ids are unique within the substrate, and a member id is required — a daemon that cannot
+  establish its identity refuses to start rather than adopting a default
 - every model id exists in the generated catalog for that substrate
-- every model that can be routed has at least one pool member
 - every generated topic is derived from `(runtimeMode, pool id, model id, optional member id)`
 - no operator-provided raw topic string can bypass validation
 - Kubernetes pod names are never durable routing identifiers
+
+One invariant deliberately **does not** hold fleet-wide: "every routable model has at least one
+eligible member" is not checkable from the system contract alone, because eligibility is the union of
+what every machine independently declares it serves. A model that no machine serves is a published
+message with no consumer — persisted, unanswered, and silent. The fleet's own membership is the
+authority for that property, and the system contract cannot substitute for it.
 
 ## Topic Derivation
 
@@ -219,7 +211,9 @@ The pool contract is valid only when:
 - unit validation and substrate decoding reject a model route with no eligible members
 - coordinator routing can publish only to derived topics from the validated graph
 - engine members subscribe only to derived topics assigned to their pool or member id
-- same-machine Apple host-member daemons can coexist on one `Shared` subscription
+- a second engine process on a machine that already runs one is refused, because one engine process
+  per machine is a correctness rule rather than a scheduling preference (see
+  [daemon_topology.md](daemon_topology.md)); the host-local engine lock names the holding process
 - single-host logical Apple pool consumers distribute work through Pulsar permits/backpressure
 - Linux CPU engine pods prove pool placement and broker backpressure on derived pool/model topics
 - pinned routes use `Exclusive` and reject duplicate member consumers

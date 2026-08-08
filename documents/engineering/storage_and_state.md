@@ -14,48 +14,19 @@
 - If deleting a path would lose operator intent or authoritative data, it is durable. If the path
   can be recreated from source, manifests, or cluster reconcile, it is derived.
 
-## Current Status
+## Durable Versus Derived
 
-The repository follows this split. Model weights live in MinIO
-`infernix-models` (always-on, eagerly staged at startup by the coordinator
-from the mounted `infernix.dhall` model set), user artifacts live in MinIO
-`infernix-demo-objects` (demo-gated) under each user's `sub`-derived
-prefix, and the runtime model cache is
-ephemeral state under `./.data/runtime/model-cache/` (on the Apple
-host) or the engine pod's `emptyDir` (on Linux substrates). Durable
-state: Kind PV data, reserved MinIO cluster objects, Pulsar ledgers,
-protobuf-backed inference-result files, and Patroni-backed PostgreSQL
-state. Derived state: `./.build/`, `/opt/build/`, generated
-publication mirrors, the runtime model cache, Playwright output,
-transient Kind or `nvkind` scratch kubeconfig files, and stale
-repo-local kubeconfig lock files.
+Durable state lives only in MinIO and Pulsar. Everything else is derived and must be rebuildable
+from them without operator intervention:
 
-This inventory bounds only **disk** state; model memory is governed separately by runtime admission.
-The disk model cache (`python/adapters/model_cache.py` LRU) never substitutes for the typed
-execution plan. Apple and Linux CPU compilation compare each required footprint with the declared
-host or pod capacity; oversized rows remain explicit `UnavailableModel` values, while fitting
-placements receive indexed grants that live refinement must pair with matching enforcers. The
-normal coordinator path now returns typed `ModelMemoryLimitExceeded` with explicit MiB quantities
-for an unavailable request before engine launch, while smaller configured models continue to run;
-the complete source-matched Phase 1 gate passed on 2026-07-25.
-Linux GPU plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6
-provides dual RAM/VRAM enforcement. The executable-gated capped-engine contract is owned canonically by
-[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
-
-The durability split is unchanged by the object-access target, but how
-the browser reaches the user-visible `infernix-demo-objects` bytes is
-moving: at the declarative target the `infernix-demo` webapp is the
-single server-side mediator for every browser upload and download
-through `/api/objects`, with per-user isolation derived server-side from
-the Keycloak `sub` claim. See
-[../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)
-and
-[../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
-**Current Status**: implemented (Phase 7 Sprint 7.25 webapp object-proxy; Phase 3 Sprint 3.13
-removed the `/minio/s3` route + `presignPublicEndpoint`). The webapp reads and writes MinIO
-server-side; the browser never holds a presigned MinIO URL. Wave M closed the browser object-proxy
-evidence; Phase 7 Sprint 7.28 extends the same user/context prefix ownership to generated artifacts,
-and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validation.
+- Pulsar carries every typed event stream: the conversation log, contexts metadata, drafts, the
+  inference request / batch / result family, and the model-bootstrap topics.
+- MinIO holds binary blobs in three buckets — model weights, immutable engine payloads, and
+  user uploads plus engine-generated artifacts.
+- The engine model cache is derived: a per-machine cache rebuilt from the models bucket, purgeable
+  at any time.
+- Kubernetes workloads hold no PersistentVolumeClaim. Pulsar subscription cursors are broker-side
+  durable, so a restarted daemon resumes from them rather than from local state.
 
 ## Owner And Durability Table
 
@@ -111,10 +82,9 @@ and Wave N closed the full selected `linux-gpu` plus `linux-cpu` cohort validati
   (`OperatorOwned | HarnessOwned`) and carries a first-class `ClusterMutating` position, so a
   SIGKILLed `HarnessOwned` `infernix test all` leaves `ClusterMutating` on disk as the fail-closed
   evidence the next `cluster up` reads to reconcile the interrupted mutation (uncordon drained nodes,
-  scale deployments back). The owner field, mutating position, fail-closed persistence, and reconcile
-  closed for their earlier scope under Wave X (Phase 2 Sprint 2.15, 2026-07-24). The 2026-07-25
-  owner-atomic reservation and teardown correction remains under Phase 2 implementation and source
-  review; its new source-matched Stage 1 and ordered Wave Y validation have not started.
+  scale deployments back). The cluster records its owner, carries a first-class mutating position,
+  persists fail-closed, and reconciles on the next start; reservation and teardown are
+  owner-atomic.
 
 ## Cleanup Rules
 

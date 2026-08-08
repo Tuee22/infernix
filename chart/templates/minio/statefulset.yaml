@@ -2,7 +2,15 @@
 Phase 3 Sprint 3.11 (2026-05-29): hand-authored distributed MinIO
 StatefulSet replaces the retired bitnami sub-chart.
 
-- 4 replicas (preserves the prior bitnami chart's `statefulset.replicaCount: 4`).
+- Phase 3 Sprint 3.16: one instance (`infernixMinio.replicaCount: 1`), down
+  from the 4 the prior bitnami chart's `statefulset.replicaCount` preserved.
+  The CMD shape is what changes with it, and it is why this is a
+  teardown-and-rebuild rather than an in-place reconcile: a single instance is
+  started as `minio server /data` (a plain backend directory), while two or more
+  are started with one `http://…/data` endpoint each (an erasure-coded
+  distributed set). The on-disk layouts are not interchangeable, so an existing
+  cluster's MinIO PV contents are not readable by the collapsed shape. See
+  documents/tools/minio.md.
 - Image: upstream `minio/minio` (multi-arch arm64 + amd64). Pulled
   through Harbor by the publication path; `harborOverridesValue`
   overrides `image.repository` + `image.tag` to the Harbor-mirrored
@@ -71,8 +79,12 @@ spec:
             - minio
           args:
             - server
+            {{- if gt (int .Values.infernixMinio.replicaCount) 1 }}
             {{- range $i, $_ := until (int .Values.infernixMinio.replicaCount) }}
             - http://infernix-minio-{{ $i }}.infernix-minio-headless.platform.svc.cluster.local:9000/data
+            {{- end }}
+            {{- else }}
+            - /data
             {{- end }}
           envFrom:
             - secretRef:

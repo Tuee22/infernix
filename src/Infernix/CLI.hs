@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 module Infernix.CLI
@@ -16,10 +17,17 @@ import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.Foldable (for_)
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.List qualified as List
 import Data.Text qualified as Text
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
+import Infernix.BuildMemory
+  ( ToolchainInvocation (ToolchainBuildAll, ToolchainTest),
+    ToolchainSpawnAuthority,
+    ToolchainTestSuite (HaskellStyleSuite, IntegrationSuite, UnitSuite),
+  )
+import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Cluster
 import Infernix.Cluster.Discover
 import Infernix.Cluster.PublishImages qualified as PublishImages
@@ -27,7 +35,8 @@ import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.CommandRegistry
 import Infernix.Config
 import Infernix.DemoConfig
-  ( materializeEmptyModelsDemoConfigFile,
+  ( materializeBuildMemoryCeilingFile,
+    materializeEmptyModelsDemoConfigFile,
     materializeGeneratedDemoConfigFile,
     materializeHostManifestFile,
     renderModelListing,
@@ -46,6 +55,7 @@ import Infernix.Error
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.HostConfig qualified as HostConfig
+import Infernix.HostMemory qualified as HostMemory
 import Infernix.HostPrereqs (ensureAppleHostPrerequisites)
 import Infernix.HostTools (HostTool (..))
 import Infernix.HostTools qualified as HostTools
@@ -99,7 +109,7 @@ import System.Directory
 import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
 import System.FilePath (takeDirectory, takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), createProcess, proc, readCreateProcessWithExitCode, terminateProcess, waitForProcess)
+import System.Process (CreateProcess (cwd, env), createProcess, getPid, proc, readCreateProcessWithExitCode, terminateProcess, waitForProcess)
 import System.Timeout (timeout)
 
 main :: IO ()
@@ -152,12 +162,17 @@ dispatch command =
     TestUnitCommand -> do
       ensureWebDependencies
       ensurePythonAdapterDependencies Nothing
-      runCabalCommand Nothing ["test", "infernix-unit"]
+      withToolchainAuthority $ \authority ->
+        runToolchainCommand authority Nothing (ToolchainTest UnitSuite)
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
     TestIntegrationCommand ->
       runClusterOwnedValidation
         Nothing
-        (withTestHarnessConfig (runCabalCommand Nothing ["test", "infernix-integration"]))
+        ( withTestHarnessConfig
+            ( withToolchainAuthority $ \authority ->
+                runToolchainCommand authority Nothing (ToolchainTest IntegrationSuite)
+            )
+        )
     TestE2ECommand ->
       runClusterOwnedValidation
         Nothing
@@ -166,11 +181,13 @@ dispatch command =
       ensureWebDependencies
       runLint Nothing
       ensurePythonAdapterDependencies Nothing
-      runCabalCommand Nothing ["test", "infernix-unit"]
+      withToolchainAuthority $ \authority ->
+        runToolchainCommand authority Nothing (ToolchainTest UnitSuite)
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
       runClusterOwnedValidation Nothing $
         withTestHarnessConfig $ do
-          runCabalCommand Nothing ["test", "infernix-integration"]
+          withToolchainAuthority $ \authority ->
+            runToolchainCommand authority Nothing (ToolchainTest IntegrationSuite)
           runEndToEnd Nothing
     InternalDiscoverImagesCommand renderedChartPath ->
       mapM_ putStrLn =<< discoverChartImagesFile renderedChartPath
@@ -189,11 +206,17 @@ dispatch command =
             then materializeEmptyModelsDemoConfigFile paths runtimeMode demoUiEnabledValue
             else materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabledValue
         hostManifestPath <- materializeHostManifestFile paths
+        -- Phase 1 Sprint 1.21 — the launcher image builds this repository
+        -- image-locally, so the image needs the same derived build ceiling an
+        -- operator's `infernix init` writes. It is derived from the manifest
+        -- just written, so it is written after it.
+        buildCeilingPath <- materializeBuildMemoryCeilingFile paths
         putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
         putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
         putStrLn ("emptyModels: " <> show emptyModels)
         putStrLn ("generatedDemoConfigPath: " <> materializedPath)
         putStrLn ("hostManifestPath: " <> hostManifestPath)
+        putStrLn ("buildMemoryCeilingPath: " <> buildCeilingPath)
     InternalMaterializeMetalEnginesCommand -> do
       paths <- discoverPaths
       ensureRepoLayout paths
@@ -220,8 +243,6 @@ dispatch command =
       runInternalPulsarRoundTrip demoConfigPath modelIdValue inputTextValue
     InternalPlaywrightPrepareEngineCommand modelIdValue ->
       runPlaywrightPrepareEngine (Text.pack modelIdValue)
-    InternalPlaywrightReplaceDemoPodsCommand ->
-      runPlaywrightReplaceDemoPods
 
 validateCommandExecutionContext :: Command -> IO (Maybe RuntimeMode)
 validateCommandExecutionContext command = do
@@ -280,14 +301,15 @@ configuredRuntimeMode :: Paths -> IO RuntimeMode
 configuredRuntimeMode = targetRuntimeModeForExecutionContext
 
 runLint :: Maybe RuntimeMode -> IO ()
-runLint maybeRuntimeMode = do
-  runCabalCommand maybeRuntimeMode ["test", "infernix-haskell-style"]
-  runFilesLint
-  runChartLint
-  runProtoLint
-  runDocsLint
-  runPythonQualityIfPresent maybeRuntimeMode
-  runCabalCommand maybeRuntimeMode ["build", "all"]
+runLint maybeRuntimeMode =
+  withToolchainAuthority $ \authority -> do
+    runToolchainCommand authority maybeRuntimeMode (ToolchainTest HaskellStyleSuite)
+    runFilesLint
+    runChartLint
+    runProtoLint
+    runDocsLint
+    runPythonQualityIfPresent maybeRuntimeMode
+    runToolchainCommand authority maybeRuntimeMode ToolchainBuildAll
 
 -- | Sprint 6.43 — run a cluster-owned validation step under an evidence-gated
 -- seizure of the single cluster slot. 'seizeHarnessClusterSlot' reads the
@@ -684,8 +706,75 @@ renderPersistentClaimLine persistentClaim =
       Text.unpack (requestedStorage persistentClaim)
     ]
 
-runCabalCommand :: Maybe RuntimeMode -> [String] -> IO ()
-runCabalCommand maybeRuntimeMode = runCommand maybeRuntimeMode "cabal"
+-- | Phase 6 Sprint 6.46 — enter the region in which a toolchain process may be
+-- started.
+--
+-- The plan is derived from a live measurement of the machine that will run the
+-- build rather than from the manifest's recorded facts, because the two can
+-- disagree: the manifest records what the machine looked like when @infernix
+-- init@ last ran, and on the Linux launcher lane the image bakes an unmeasured
+-- manifest while the container it runs in carries its own cgroup maximum.
+withToolchainAuthority ::
+  (forall s. ToolchainSpawnAuthority s -> IO result) ->
+  IO result
+withToolchainAuthority action = do
+  paths <- discoverCliCommandPaths
+  hostConfig <-
+    case pathsHostConfig paths of
+      Just hostConfig -> pure hostConfig
+      Nothing ->
+        ioError
+          ( userError
+              ( "a toolchain process needs the host manifest to measure this "
+                  <> "machine's memory; run `infernix init` to stage "
+                  <> "./infernix-host.dhall"
+              )
+          )
+  resolvedPlan <- HostMemory.resolveLiveBuildMemoryPlan hostConfig
+  plan <-
+    case resolvedPlan of
+      Right plan -> pure plan
+      Left reason ->
+        ioError
+          ( userError
+              ( "refusing to start a toolchain process without a derived memory "
+                  <> "ceiling: "
+                  <> reason
+              )
+          )
+  BuildMemory.withToolchainSpawnAuthority plan action
+
+-- | Start one toolchain invocation under the region's derived ceiling.
+--
+-- The invocation comes from the closed 'ToolchainInvocation' vocabulary, so a
+-- build assembled from a caller-supplied argument list is not a term. The
+-- ceiling is held in force across the spawn and the child's out-of-memory victim
+-- rank is raised as soon as its pid exists.
+runToolchainCommand ::
+  ToolchainSpawnAuthority s ->
+  Maybe RuntimeMode ->
+  ToolchainInvocation ->
+  IO ()
+runToolchainCommand authority _maybeRuntimeMode invocation = do
+  paths <- discoverCliCommandPaths
+  resolvedCommand <- resolveCliHostTool paths HostCabal
+  processHandle <-
+    BuildMemory.withBoundedToolchainChild authority $ do
+      (_, _, _, spawned) <-
+        createProcess
+          (proc resolvedCommand (toolchainArguments invocation))
+            { env = Just (cliSubprocessBaseEnvFor paths),
+              cwd = Just (repoRoot paths)
+            }
+      pure spawned
+  maybeChildPid <- getPid processHandle
+  for_ maybeChildPid (BuildMemory.applyToolchainChildVictimRank authority)
+  exitCode <- waitForProcess processHandle
+  case exitCode of
+    ExitSuccess -> pure ()
+    _ -> exitWith exitCode
+  where
+    toolchainArguments = BuildMemory.toolchainInvocationArguments
 
 runWebNpmCommand :: Maybe RuntimeMode -> [String] -> IO ()
 runWebNpmCommand maybeRuntimeMode npmArgs = do

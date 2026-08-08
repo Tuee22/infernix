@@ -144,6 +144,11 @@ let CommandPolicies =
       , imagePublicationCopy : CommandPolicy
       }
 
+let HostMemoryFacts =
+      { physicalMemoryMib : Natural
+      , effectiveMemoryMib : Natural
+      }
+
 let HostExecutionContext =
       < AppleHostNative
       | LinuxOuterContainer
@@ -153,6 +158,7 @@ in    { hostExecutionContext : HostExecutionContext
       , hostArchitecture : Text
       , toolPaths : ToolPaths
       , filesystem : FilesystemConventions
+      , memory : HostMemoryFacts
       , commandPolicies : CommandPolicies
       , playwrightHost : Text
       , controlPlaneContext : Text
@@ -169,6 +175,22 @@ embeds that complete default record in its generated host payload. Unit coverage
 literal Dockerfile payload, substitutes only the build-time native architecture value, strictly
 decodes it through `HostConfig`, and compares the full result with the typed Linux
 outer-container default so a missing field or default-policy drift fails before image build.
+
+`memory` is the only record in this manifest that is **measured rather than declared**. `infernix
+init` reads `MemTotal` from `/proc/meminfo` on Linux and intersects it with the cgroup v2 maximum in
+force — inside the outer launcher container the first figure is the whole machine's and the second
+is what a build actually gets — and reads `sysctl -n hw.memsize` on Darwin, where there are no
+cgroups and the two figures are therefore equal. The measurement is fail-closed: `infernix init`
+refuses to write a manifest it could not measure, because a build ceiling derived from an unmeasured
+host is a declared number wearing a measurement's clothes. Both fields feed
+[../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md): the toolchain
+account is a share of `effectiveMemoryMib`, and `infernix init` divides it by a job count into the
+untracked repo-root `cabal.project.local`.
+
+A manifest written before a current record exists is refused by name rather than by a raw structural
+Dhall type error. Startup fails closed on a manifest it cannot decode — falling through to
+convention defaults could misclassify the execution context — so the remedy the diagnostic names is
+to delete the file and re-run `infernix init`.
 
 ## Per-tool field mapping
 
@@ -211,7 +233,7 @@ the fixed bootstrap-adjacent `/opt/homebrew/bin/colima` candidate, but Infernix 
 normal command execution cannot select it from runtime configuration.
 
 The former `tart` field (Haskell record selector `hostTart`) is no longer part of the current
-schema. Phase 1 Sprint 1.14 removed `HostTool.HostTart`, the `AppleTart` prerequisite, and the
+schema. There is no `HostTool.HostTart`, no `AppleTart` prerequisite, and no
 Tart-backed command helpers; `infernix internal materialize-metal-engines` now materializes typed
 engine-artifact manifests through the headless host lane described in
 [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). The cleanup
@@ -300,21 +322,6 @@ Dockerfile, or archive paths require it. Kind create/delete and nvkind create ta
 `KindScratchKubeconfig` and render command-specific `KUBECONFIG`; nvkind also renders fixed
 `KUBERC=off` so its nested kubectl calls cannot consume ambient kuberc state. Neither the
 production, operator-kubectl, nor test compiler accepts arbitrary cwd or environment overrides.
-
-## Current Status
-
-Phase 6 Sprint 6.34 reconciled the earlier manifest drift. Linux `cabal`/`ghc` defaults and
-manifestless fallback candidates include `/root/.ghcup/bin/{cabal,ghc}`, matching the launcher image,
-and the bootstrap pre-binary command inventory below reflects the current entrypoints.
-
-The 36-field generated policy schema, proper unions, exact-tool renderer/compiler, all-Haskell
-lifecycle replacement, and production migrations in `Cluster.hs` and `Cluster.PublishImages` are
-present. The accepted all-Haskell bounded-subprocess replacement is also present, and the obsolete
-subprocess C file and Cabal declaration are removed. Phase 0's focused adversarial validation,
-final source review, and complete source-matched correction gate closed on 2026-07-27. Every
-earlier digest, review, Stage 1 result, and cohort result is superseded; Phase 2's own complete
-source-matched gate and post-correction apple-silicon plus `linux-cpu` cohort remain open. Sprint
-2.16 is blocked by active Phase 1 in numerical order.
 
 ## Bootstrap shell convention
 

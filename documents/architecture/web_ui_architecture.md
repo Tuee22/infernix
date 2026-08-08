@@ -92,7 +92,7 @@ the themed login and registration titles so theme fallback is visible in the aut
 ## Operator Console Ribbon
 
 The authenticated app shell includes an operator ribbon with links to the cluster-wide operator
-route family — but it is **admin-only** (Phase 9):
+route family — but it is **admin-only**:
 
 - `Harbor` -> `/harbor`
 - `Pulsar Admin` -> `/pulsar/admin/admin/v2/clusters`
@@ -113,17 +113,14 @@ against the webapp `/api/objects/download` proxy. Non-admin users get chat / art
 personal dashboard scoped to their own `sub`; the admin cluster-wide panel and `/api/admin/overview`
 are the Phase 9 monitoring surface. See [access_control_doctrine.md](access_control_doctrine.md).
 
-There is no `MinIO S3` ribbon link: Phase 3 Sprint 3.13 removed the `/minio/s3` gateway route.
+There is no `MinIO S3` ribbon link and no `/minio/s3` gateway route.
 End-user artifact upload, download, and preview flow through the webapp's `/api/objects` endpoints,
 which derive each object key server-side from the verified `sub` so the browser never holds a MinIO
 credential or presigned MinIO URL (see
 [object_access_doctrine.md](object_access_doctrine.md) and
 [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)).
 
-**Current Status.** Implemented (Phase 7 Sprint 7.25; Phase 3 Sprint 3.13 removed the `/minio/s3`
-route + `presignPublicEndpoint`). The user artifact path is the webapp-mediated `/api/objects`
-proxy; there is no presigned MinIO URL. The `linux-cpu` plus chosen-accelerator real per-user
-attestation closed under [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) (2026-06-29).
+The user artifact path is the webapp-mediated `/api/objects` proxy; there is no presigned MinIO URL.
 
 ## Account Deletion
 
@@ -177,75 +174,63 @@ durable-context application. The product-agnostic primitives this binding is bui
 [demo_app_design.md](demo_app_design.md). Topology:
 
 - new authenticated WebSocket endpoint at `/ws` carries chat, drafts, context list/create/delete,
-  progress, and artifact-ready notifications; demo-gated
-- Keycloak provides identity at `/auth`; demo-gated; see [../tools/keycloak.md](../tools/keycloak.md)
-- HTTP endpoint `/api/objects` is the webapp-mediated artifact surface for upload, download, and
-  listing: the demo backend derives each object key server-side from the verified `sub`, reads and
-  writes MinIO itself over the cluster-internal endpoint, and the browser holds only the webapp
-  origin — never a MinIO credential or presigned MinIO URL; demo-gated. See
-  [object_access_doctrine.md](object_access_doctrine.md) and
-  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md). **Current Status:** implemented by
-  Phase 3 Sprint 3.13 and Phase 7 Sprint 7.25, then cohort-closed under
-  [Wave M](../../DEVELOPMENT_PLAN/cohort-validation-waves.md). Generated artifact key ownership is
-  closed by Phase 7 Sprint 7.28 and [Wave N](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
-- HTTP endpoint `/api/account` reaps the caller's demo-owned MinIO prefix and Pulsar topics before
-  the browser starts Keycloak account deletion; demo-gated
-- the demo `Service` sets `sessionAffinity: None` so any replica can host any WS connection;
-  WS pods use Pulsar `Reader` subscriptions for per-WS fan-out and named `Failover`
-  subscriptions for the per-context inference dispatcher
-- new handwritten PureScript modules under `web/src/Infernix/Web/`: `Chat.purs`,
-  `Artifacts.purs`, `ArtifactTransport.purs`, `Auth.purs`, `Browser.purs`,
-  `DomEvents.purs`, `WebSocket.purs`, `Router.purs`; all consume generated contracts from
-  `web/src/Generated/` and apply server-sent state patches mechanically without reimplementing
-  business rules
-- `Chat.purs` and `Artifacts.purs` include DOM renderer functions for the durable-context shell;
-  `Main.purs` mounts those renderers from the routed SPA root. Playwright now covers the routed
-  Keycloak self-registration path through the OIDC authorization-code redirect, routed WebSocket
-  valid/malformed-token handshake behavior, expired-token rejection, typed malformed-frame
-  `ServerError` handling, and `/api/objects` grant plus same-user MinIO byte roundtrip on the
-  clean rebuilt Linux GPU launcher. The browser shell also owns the PKCE redirect completion,
-  local context creation,
-  browser upload through the webapp `/api/objects` proxy, bounded text/JSON previews, inline
-  image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML / generic
-  download-only states — all mediated by the webapp object-proxy over typed `ObjectRef`s, never a
-  presigned MinIO URL the browser holds. Successful browser uploads now send `ClientRecordUpload` so the backend
-  appends a typed `ConversationUserUploadEvent` to the conversation log. The Chat form now sends
-  `ClientSubmitPrompt` over the active WebSocket and includes the current context's uploaded
-  `ObjectRef`s in `promptUserUploads`; `ClientHello` starts per-user context/draft streams;
-  the active context sends `ClientSubscribeContext`; and submitted prompts return through inbound
-  `ServerConversationPatch` append frames. Playwright asserts the rendered new-context dialog can
-  open and close without sending `ClientCreateContext` or adding a local context, then select a
-  supported catalog row before context creation; the outbound `ClientCreateContext` carries that
-  model id, and the broker-backed context-list patch plus active left-rail item preserve it.
-  The routed WebSocket test also sends a `ClientCreateContext` with an absent catalog model id
-  and asserts the backend returns typed `ServerError` code `unknown-model`.
-  The full browser flow now also sends `ClientRenameContext` and `ClientSoftDeleteContext`,
-  asserts the broker-backed `ServerContextListPatch` upserts, and verifies the left rail renders
-  the updated title plus soft-deleted state.
-  Playwright also asserts browser-uploaded artifacts
-  return through inbound `ConversationUserUploadEvent` append patches and render in the active
-  Chat conversation with display name plus MIME type. Playwright now also asserts context-list
-  snapshots/patches, draft upsert/remove patches, Keycloak-backed logout, same-browser re-login,
-  user-to-admin account switching, and
-  refresh-token WebSocket re-auth through a new `ClientHello`. The SPA session layer reconnects
-  after unexpected WebSocket close, resends `ClientHello` and the active
-  `ClientSubscribeContext`, receives a fresh conversation snapshot, and Playwright submits a
-  prompt through the reconnected socket. Cancel events now resolve their target prompt in the
-  queued-count projection; the browser cancel action sends `ClientCancelPrompt` for the latest
-  unresolved server-backed prompt id, and Playwright verifies the inbound cancel append patch plus
-  rendered cancel entry. The SPA stores only the active context id/model id in session storage,
-  resubscribes that context after a reload login, and Playwright proves draft text is restored
-  after both forced WebSocket reconnect and full page reload through the broker-backed draft
-  stream. The routed flow also submits a second prompt before the first unresolved prompt
-  resolves, asserts the rendered `2 queued prompts` warning, and targets the second canonical
-  prompt id in the cancel lifecycle.
-- the supported manual-inference dispatch closes through the durable-context Chat surface and
-  WebSocket transport; the legacy direct `POST /api/inference` request/poll surface is tracked
-  in
-  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-- the routed browser surface terminates at the frontend pod (`infernix-demo`); the coordinator
-  and engine pods are not directly addressable from the browser. The supported per-pod
-  placement is codified in [daemon_topology.md](daemon_topology.md)
+progress, and artifact-ready notifications; demo-gated - Keycloak provides identity at `/auth`;
+demo-gated; see [../tools/keycloak.md](../tools/keycloak.md) - HTTP endpoint `/api/objects` is the
+webapp-mediated artifact surface for upload, download, and listing: the demo backend derives each
+object key server-side from the verified `sub`, reads and writes MinIO itself over the
+cluster-internal endpoint, and the browser holds only the webapp origin — never a MinIO credential
+or presigned MinIO URL; demo-gated. See [object_access_doctrine.md](object_access_doctrine.md) and
+[tenant_isolation_doctrine.md](tenant_isolation_doctrine.md). - HTTP endpoint `/api/account` reaps
+the caller's demo-owned MinIO prefix and Pulsar topics before the browser starts Keycloak account
+deletion; demo-gated - the demo `Service` sets `sessionAffinity: None` so any replica can host any
+WS connection; WS pods use Pulsar `Reader` subscriptions for per-WS fan-out and named `Failover`
+subscriptions for the per-context inference dispatcher - new handwritten PureScript modules under
+`web/src/Infernix/Web/`: `Chat.purs`, `Artifacts.purs`, `ArtifactTransport.purs`, `Auth.purs`,
+`Browser.purs`, `DomEvents.purs`, `WebSocket.purs`, `Router.purs`; all consume generated contracts
+from `web/src/Generated/` and apply server-sent state patches mechanically without reimplementing
+business rules - `Chat.purs` and `Artifacts.purs` include DOM renderer functions for the
+durable-context shell; `Main.purs` mounts those renderers from the routed SPA root. Playwright now
+covers the routed Keycloak self-registration path through the OIDC authorization-code redirect,
+routed WebSocket valid/malformed-token handshake behavior, expired-token rejection, typed
+malformed-frame `ServerError` handling, and `/api/objects` grant plus same-user MinIO byte roundtrip
+on the clean rebuilt Linux GPU launcher. The browser shell also owns the PKCE redirect completion,
+local context creation, browser upload through the webapp `/api/objects` proxy, bounded text/JSON
+previews, inline image/audio/video rendering, browser-native PDF URL wiring, and MIDI / MusicXML /
+generic download-only states — all mediated by the webapp object-proxy over typed `ObjectRef`s,
+never a presigned MinIO URL the browser holds. Successful browser uploads now send
+`ClientRecordUpload` so the backend appends a typed `ConversationUserUploadEvent` to the
+conversation log. The Chat form now sends `ClientSubmitPrompt` over the active WebSocket and
+includes the current context's uploaded `ObjectRef`s in `promptUserUploads`; `ClientHello` starts
+per-user context/draft streams; the active context sends `ClientSubscribeContext`; and submitted
+prompts return through inbound `ServerConversationPatch` append frames. Playwright asserts the
+rendered new-context dialog can open and close without sending `ClientCreateContext` or adding a
+local context, then select a supported catalog row before context creation; the outbound
+`ClientCreateContext` carries that model id, and the broker-backed context-list patch plus active
+left-rail item preserve it. The routed WebSocket test also sends a `ClientCreateContext` with an
+absent catalog model id and asserts the backend returns typed `ServerError` code `unknown-model`.
+The full browser flow now also sends `ClientRenameContext` and `ClientSoftDeleteContext`, asserts
+the broker-backed `ServerContextListPatch` upserts, and verifies the left rail renders the updated
+title plus soft-deleted state. Playwright also asserts browser-uploaded artifacts return through
+inbound `ConversationUserUploadEvent` append patches and render in the active Chat conversation with
+display name plus MIME type. Playwright now also asserts context-list snapshots/patches, draft
+upsert/remove patches, Keycloak-backed logout, same-browser re-login, user-to-admin account
+switching, and refresh-token WebSocket re-auth through a new `ClientHello`. The SPA session layer
+reconnects after unexpected WebSocket close, resends `ClientHello` and the active
+`ClientSubscribeContext`, receives a fresh conversation snapshot, and Playwright submits a prompt
+through the reconnected socket. Cancel events now resolve their target prompt in the queued-count
+projection; the browser cancel action sends `ClientCancelPrompt` for the latest unresolved
+server-backed prompt id, and Playwright verifies the inbound cancel append patch plus rendered
+cancel entry. The SPA stores only the active context id/model id in session storage, resubscribes
+that context after a reload login, and Playwright proves draft text is restored after both forced
+WebSocket reconnect and full page reload through the broker-backed draft stream. The routed flow
+also submits a second prompt before the first unresolved prompt resolves, asserts the rendered `2
+queued prompts` warning, and targets the second canonical prompt id in the cancel lifecycle. - the
+supported manual-inference dispatch closes through the durable-context Chat surface and WebSocket
+transport; the legacy direct `POST /api/inference` request/poll surface is tracked in
+[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
+- the routed browser surface terminates at the frontend pod (`infernix-demo`); the coordinator and
+engine pods are not directly addressable from the browser. The supported per-pod placement is
+codified in [daemon_topology.md](daemon_topology.md)
 
 ## Cross-References
 

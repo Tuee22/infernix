@@ -16,8 +16,7 @@
   and it extends to model-memory capacity through the typed execution plan: an over-capacity model
   remains `UnavailableModel` and its request must become a clean `status=failed`
   `InferenceError.ModelMemoryLimitExceeded` before any subprocess or worker launch. That normal
-  coordinator result path passed the complete Phase 1 source-matched gate on 2026-07-25. The
-  enforcement half and its remaining proof obligations are owned by
+  The enforcement half is owned by
   [bounded_inference_memory.md](bounded_inference_memory.md).
 - Tests therefore **trust the result** and assert only the per-family contract, failing closed on
   `failed`. Realness is a property of the engine code, not of the test.
@@ -35,7 +34,7 @@ The single `status=completed` site (`src/Infernix/Runtime.hs`) is reached only o
 `Right output`. `python/adapters/common.py` maps any adapter exception to `failed`; the Haskell worker
 maps non-zero exit / empty stdout / missing artifact to `failed`. That mapping fires only when the
 subprocess actually exits or returns; model-memory capacity is therefore checked before launch by
-the shared admission policy (see Current Status), which rejects an over-budget model as typed
+the typed resource-admission policy below, which rejects an over-budget model as typed
 `ModelMemoryLimitExceeded` rather than launching it. Within that scope, realness holds iff every adapter and
 native runner has **no fabrication branch**:
 
@@ -62,42 +61,31 @@ native runner has **no fabrication branch**:
 | Python | AST passes in `python/adapters/common.py` `run_check_code` (`poetry run check-code`) | **`python/adapters/*_python.py`**: `return` inside `except`, `bytes([...])` / `b64decode("...")` constant-artifact bytes, and `_validation_*` / `*_smoke*` / `*_fallback*` helper definitions. **`python/native-runners/*.py`**: the module-agnostic constant-artifact signals only (`bytes([...])` / decoded literal) — the name/except heuristics do not transfer because a native runner is a CLI with a legitimate `smoke` subcommand and fail-closed error-code `return`s; its realness otherwise rests on the exit-non-zero fail-closed structure plus review |
 | Docs | `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` | the retired fabrication-blessing wording in governed docs |
 
-## Current Status
+## Resource Admission Is Part Of Realness
 
-Real-output failure semantics remain implemented. Resource-exhaustion safety is a reopened sibling
-contract: a real engine can still be launched under a descriptive Linux capacity that does not
-enforce its individual grant. [Typed Execution Plan](typed_execution_plan.md) makes the resource
-precondition part of executability, so an unenforced model is not routable.
+Realness-by-construction extends to typed resource admission: a real engine must not be launched
+under a descriptive capacity that does not enforce its individual grant.
+[Typed Execution Plan](typed_execution_plan.md) makes the resource precondition part of
+executability, so an unenforced model is not routable.
 
-The invariant is the governing contract now; its delivery is in flight under the reopened Phases:
-**Phase 0** (the realness doctrine plus the machine-independent realness lint mechanism, Sprint 0.12),
-**Phase 4** (the Linux adapter/runner de-stub — landed — plus the real Linux engines and Phase 4's own
-real fixtures + fail-closed per-row tests), **Phase 6** (the fail-closed HA / service-loop assertions on
-top), and **Phase 1** (real Apple native engines replacing the validation wrappers). Real output is attested per accelerator in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md) —
-Wave K (`linux-gpu` + `linux-cpu`) and Wave L (`apple-silicon` + `linux-cpu`) for their then-active
-catalogs, with Wave O owning post-replacement proof for the MT3 rows added on 2026-06-30. A row whose
-real engine is not yet landed is an explicit residual in `residualMatrixRowIdsForMode`, never a
-fabricated pass.
-
-**Reopened: realness-by-construction extends to typed resource admission.** Phase 4 Sprint 4.27,
-Phase 5 Sprint 5.11, and Phase 6 Sprint 6.38 generalized the earlier Apple host-RAM guard into a DRY
-admission doctrine across substrates. The Phase 1 capability correction now makes
-`compileRuntimePlan` the only grant mint: a fitting placement carries `MemoryGrant resource`, while
-an oversized configured model remains an explicit `UnavailableModel` with
+`compileRuntimePlan` is the only grant mint. A fitting placement carries `MemoryGrant resource`,
+while an oversized configured model remains an explicit `UnavailableModel` with
 `InferenceError.ModelMemoryLimitExceeded { modelId, requiredMib, availableMib, resource, source }`.
-Package-owned live observations pair the grant with its matching enforcer inside
-`ExecutableModel`; public engine launch accepts only that capability. The typed rejection is a
-closed ADT branch in `ResultPayload`, not successful inline output or a parsed string, and must be
-published without launching the engine while smaller compiled placements continue to run.
+Package-owned live observations pair the grant with its matching enforcer inside `ExecutableModel`,
+and public engine launch accepts only that capability. The typed rejection is a closed ADT branch in
+`ResultPayload` — not successful inline output and not a parsed string — and is published without
+launching the engine, while smaller compiled placements continue to run.
 
-The **enforcement half** targets removing an admitted request's actual resident memory and aggregate
+The **enforcement half** removes an admitted request's actual resident memory and aggregate
 execution authority as a cause of host exhaustion. It is owned by
 [bounded_inference_memory.md](bounded_inference_memory.md): compilation and live refinement create an
 `ExecutableModel` carrying a matching resource-indexed grant/enforcer pair, and the package-internal
-capped-engine kernel measures and terminates against its `MemoryCeiling`, over a checked `HostMemoryPartition` with a
-required `ModelMemoryFootprint` and an enforcer-typed budget. Phase 4 retains adversarial
-Apple/Linux CPU proof and encapsulated serialization; Phase 6 retains GPU enforcement.
+capped-engine kernel measures and terminates against its `MemoryCeiling`, over a checked
+`HostMemoryPartition` with a required `ModelMemoryFootprint` and an enforcer-typed budget.
+
+A row is an explicit residual in `residualMatrixRowIdsForMode` only when its *achievability* is
+uncertain. A row that is merely unbuilt stays declared-runnable and fails closed — never a
+fabricated pass.
 
 ## Validation
 
@@ -106,7 +94,7 @@ Apple/Linux CPU proof and encapsulated serialization; Phase 6 retains GPU enforc
   the active catalog; withholding weights or the engine yields a visible `status=failed`. This
   fail-closed mapping covers engine-logic failures; model-memory capacity is additionally covered by
   typed resource admission, which rejects an over-budget request as `ModelMemoryLimitExceeded`
-  before launch (Current Status; Phase 4 Sprint 4.27 + Phase 5 Sprint 5.11 + Phase 6 Sprint 6.38).
+  before launch.
 - `infernix lint docs` rejects the retired fabrication-blessing doc phrases.
 
 ## Cross-References
