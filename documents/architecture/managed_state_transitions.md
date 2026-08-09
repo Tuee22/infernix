@@ -408,6 +408,25 @@ The extracted contract, stated as requirements rather than as progress:
   Primary-preserving brackets remove every protected path on normal return, failure, and
   asynchronous cancellation; a later publication reconciles a `SIGKILL`-stranded directory only once
   the recorded owner birth identity is proven absent.
+- Grandchild command resolution is pinned, and the pin is **reclaimable state, not sealed state**.
+  Infernix invokes every tool by absolute path from the host manifest, but the tools it spawns
+  resolve *their* children by bare name against `PATH` — `cabal` → `ghc`, `helm` → `kubectl`,
+  `poetry` → `python3`, `kind` → `docker`. A command-shim root holding one symlink per
+  manifest-declared tool is prepended to that `PATH` so those lookups land on the manifest's binary.
+  The root's leaf names its owning process (pid plus birth-identity digest) alongside the generation
+  digest, so the next materialization can prove an owner gone before reclaiming it. A shared,
+  content-addressed name carried no owner, so nothing could prove that no live process was still
+  resolving through a root, and published roots therefore accumulated forever. Integrity is the four
+  content conjuncts — entry set, symlink targets, link-not-regular-file, and the marker digest —
+  rechecked on every use and repaired by republication, **not** a directory mode: a mode-`0500` root
+  detected only the *possibility* of mutation, stopped no adversary at a single uid (this module
+  chmods a shim root itself when reclaiming one), and made the root unremovable by ordinary tooling
+  such as `git clean` and `rm -rf`. Republication vacates a corrupt root through an atomic
+  rename-aside, because POSIX `rename(2)` fails with `ENOTEMPTY` against a non-empty destination and
+  a root that verification rejects would otherwise be terminal — every republication failing, and
+  every external command failing with it. What this does **not** bound: the shim root is *prepended
+  to*, never substituted for, the tool-directory search path, so any name the manifest does not
+  declare still resolves out of the host's ordinary binary directories.
 - Registry verification is a closed `PublishVerifyRegistry` command whose generated policy bounds an
   authenticated, platform-selected `docker://` → `dir:` copy.
 - Readiness is measured, never assumed. The Harbor `/v2/` startup observation folds through

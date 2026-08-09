@@ -1,6 +1,13 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done — Sprint 5.11 is closed for typed inference errors in browser contracts and the
+**Status**: Done — with a named open dependency, per Section C of
+[development_plan_standards.md](development_plan_standards.md). The
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) of 2026-08-08 invalidated the Wave T
+(2026-07-12) and Wave V (2026-07-20) attestations this phase cites, and `test all` cannot currently
+run on either lane. This phase owns no surveyed Darwin blocker and no code-side work is open in it,
+so it stays `Done` while naming the dependency: its cohort evidence is reproduced under
+[Wave Y](cohort-validation-waves.md), gated behind Phase 1 Sprint 1.20's bounded-command environment
+defect. Sprint 5.11 is closed for typed inference errors in browser contracts and the
 demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
 no-env scopes. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu`
 accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by

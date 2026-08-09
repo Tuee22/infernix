@@ -1,3 +1,6 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+
 -- |
 -- Bounded host build memory for the toolchain account.
 --
@@ -76,7 +79,9 @@ module Infernix.BuildMemory
 
     -- * Installed bound
     BuildMemoryBound,
-    buildMemoryBoundLimitMib,
+    buildMemoryBoundCeilingMib,
+    enforcedAddressCeilingMib,
+    renderBuildMemoryBound,
     establishBoundedBuildMemory,
     requireBoundedBuildMemory,
 
@@ -92,9 +97,12 @@ module Infernix.BuildMemory
     applyToolchainChildVictimRank,
 
     -- * Resolved enforcement mechanism
+    AddressSpaceEnforcement (..),
     BuildMemoryMechanism (..),
+    ResolvedBuildMemoryMechanism (..),
     buildMemoryMechanismBoundsAggregate,
     renderBuildMemoryMechanism,
+    renderResolvedBuildMemoryMechanism,
     resolveBuildMemoryMechanism,
 
     -- * Generated project ceiling
@@ -114,8 +122,13 @@ module Infernix.BuildMemory
   )
 where
 
-import Control.Exception (SomeException, bracket, try)
+import Control.Exception (IOException, SomeException, bracket, try)
+import Data.Char (isDigit)
+import Data.List qualified as List
+import Data.Maybe (listToMaybe)
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
+import System.FilePath ((</>))
+import System.IO (readFile')
 import System.Info (os)
 import System.Posix.Resource
   ( Resource (ResourceTotalMemory),
@@ -125,6 +138,7 @@ import System.Posix.Resource
     setResourceLimit,
   )
 import System.Posix.Types (ProcessID)
+import Text.Read (readMaybe)
 
 -- | The toolchain account's total claim on host memory, in MiB.
 --
@@ -184,12 +198,52 @@ planRtsHeapMib = planRtsHeap
 --
 -- The constructor is unexported: the only ways to obtain the evidence are to
 -- establish the bound or to observe that it already holds.
-newtype BuildMemoryBound = BuildMemoryBound Int
-  deriving (Eq, Show)
+-- The index records which mechanism actually holds, so a bound established on a
+-- lane with no address-space enforcement cannot be passed to an operation that
+-- requires one. Each constructor fixes its own index and carries the mechanism
+-- that produced it, so the claim and the evidence are a single fact.
+data BuildMemoryBound (enforcement :: AddressSpaceEnforcement) where
+  EnforcedAddressSpaceBound ::
+    Int ->
+    BuildMemoryMechanism 'AddressSpaceEnforced ->
+    BuildMemoryBound 'AddressSpaceEnforced
+  HeapCapOnlyBound ::
+    Int ->
+    BuildMemoryMechanism 'AddressSpaceUnavailable ->
+    BuildMemoryBound 'AddressSpaceUnavailable
 
 -- | The address-space ceiling the bound guarantees, in MiB.
-buildMemoryBoundLimitMib :: BuildMemoryBound -> Int
-buildMemoryBoundLimitMib (BuildMemoryBound limitMib) = limitMib
+--
+-- Defined only for an enforced bound. This is the whole point of the index: on
+-- a lane where @setrlimit@ cannot install a ceiling there is no such number to
+-- return, and asking for one is a type error rather than a plausible integer.
+enforcedAddressCeilingMib :: BuildMemoryBound 'AddressSpaceEnforced -> Int
+enforcedAddressCeilingMib (EnforcedAddressSpaceBound limitMib _) = limitMib
+
+-- | The per-process ceiling the bound was derived against, in MiB, on either
+-- lane.
+--
+-- A derived number, not a guarantee — on an unenforced lane nothing in the
+-- kernel holds it. Use 'enforcedAddressCeilingMib' when the guarantee is what
+-- matters.
+buildMemoryBoundCeilingMib :: BuildMemoryBound enforcement -> Int
+buildMemoryBoundCeilingMib bound =
+  case bound of
+    EnforcedAddressSpaceBound limitMib _ -> limitMib
+    HeapCapOnlyBound limitMib _ -> limitMib
+
+-- | Describe the bound and, crucially, the mechanism actually behind it.
+renderBuildMemoryBound :: BuildMemoryBound enforcement -> String
+renderBuildMemoryBound bound =
+  case bound of
+    EnforcedAddressSpaceBound limitMib mechanism ->
+      show limitMib
+        <> " MiB enforced address-space ceiling via "
+        <> renderBuildMemoryMechanism mechanism
+    HeapCapOnlyBound limitMib mechanism ->
+      show limitMib
+        <> " MiB derived ceiling with no address-space enforcement; bounded by "
+        <> renderBuildMemoryMechanism mechanism
 
 -- | The toolchain account's share of measured host memory, as a percentage.
 --
@@ -379,11 +433,44 @@ deriveBuildMemoryPlan budget concurrency
 -- Fails closed: if the limit cannot be observed as bounded after the write, the
 -- process image refuses to continue rather than proceeding to an unbounded
 -- compile.
-establishBoundedBuildMemory :: BuildMemoryPlan -> IO BuildMemoryBound
-establishBoundedBuildMemory plan = do
+-- On a lane with no address-space enforcement there is nothing to install, so
+-- this observes the mechanism that lane /does/ have — the committed runtime heap
+-- cap — rather than minting evidence from the caller's own argument. A bound
+-- that witnessed nothing would be worse than no bound at all: it would carry the
+-- module's authority with none of its content.
+establishBoundedBuildMemory ::
+  FilePath ->
+  BuildMemoryPlan ->
+  IO
+    ( Either
+        (BuildMemoryBound 'AddressSpaceUnavailable)
+        (BuildMemoryBound 'AddressSpaceEnforced)
+    )
+establishBoundedBuildMemory repoRootPath plan = do
+  resolved <- resolveBuildMemoryMechanism
+  case resolved of
+    Left reason ->
+      ioError
+        ( userError
+            ( "no host memory mechanism resolves on this lane, so a build "
+                <> "memory bound cannot be established: "
+                <> reason
+            )
+        )
+    Right (UnenforcedLane mechanism) ->
+      Left <$> observeHeapCapOnlyBound repoRootPath plan mechanism
+    Right (EnforcedLane mechanism) ->
+      Right <$> establishEnforcedAddressSpaceBound plan mechanism
+
+establishEnforcedAddressSpaceBound ::
+  BuildMemoryPlan ->
+  BuildMemoryMechanism 'AddressSpaceEnforced ->
+  IO (BuildMemoryBound 'AddressSpaceEnforced)
+establishEnforcedAddressSpaceBound plan mechanism = do
   limits <- getResourceLimit ResourceTotalMemory
   case boundedAddressLimit ceilingMib (softLimit limits) of
-    Just alreadyBounded -> pure (BuildMemoryBound alreadyBounded)
+    Just alreadyBounded ->
+      pure (EnforcedAddressSpaceBound alreadyBounded mechanism)
     Nothing -> do
       target <- targetAddressLimit ceilingMib limits
       setResourceLimit
@@ -391,7 +478,7 @@ establishBoundedBuildMemory plan = do
         ResourceLimits {softLimit = target, hardLimit = target}
       confirmed <- getResourceLimit ResourceTotalMemory
       case boundedAddressLimit ceilingMib (softLimit confirmed) of
-        Just bounded -> pure (BuildMemoryBound bounded)
+        Just bounded -> pure (EnforcedAddressSpaceBound bounded mechanism)
         Nothing ->
           ioError
             ( userError
@@ -413,12 +500,44 @@ establishBoundedBuildMemory plan = do
 -- | Observe the bound immediately before a toolchain spawn.
 --
 -- The label names the spawning surface so an unbounded process image is
--- attributable from one line of output. This is a @getrlimit(2)@ call.
-requireBoundedBuildMemory :: String -> BuildMemoryPlan -> IO BuildMemoryBound
-requireBoundedBuildMemory label plan = do
+-- attributable from one line of output. On an address-space-enforcing lane this
+-- is a @getrlimit(2)@ call; on an unenforced one it re-reads the committed
+-- runtime heap cap, because that is the mechanism actually in force there.
+requireBoundedBuildMemory ::
+  FilePath ->
+  String ->
+  BuildMemoryPlan ->
+  IO
+    ( Either
+        (BuildMemoryBound 'AddressSpaceUnavailable)
+        (BuildMemoryBound 'AddressSpaceEnforced)
+    )
+requireBoundedBuildMemory repoRootPath label plan = do
+  resolved <- resolveBuildMemoryMechanism
+  case resolved of
+    Left reason ->
+      ioError
+        ( userError
+            ( label
+                <> " refused to start a toolchain process on a lane that "
+                <> "provides no memory bound: "
+                <> reason
+            )
+        )
+    Right (UnenforcedLane mechanism) ->
+      Left <$> observeHeapCapOnlyBound repoRootPath plan mechanism
+    Right (EnforcedLane mechanism) ->
+      Right <$> requireEnforcedAddressSpaceBound label plan mechanism
+
+requireEnforcedAddressSpaceBound ::
+  String ->
+  BuildMemoryPlan ->
+  BuildMemoryMechanism 'AddressSpaceEnforced ->
+  IO (BuildMemoryBound 'AddressSpaceEnforced)
+requireEnforcedAddressSpaceBound label plan mechanism = do
   limits <- getResourceLimit ResourceTotalMemory
   case boundedAddressLimit ceilingMib (softLimit limits) of
-    Just bounded -> pure (BuildMemoryBound bounded)
+    Just bounded -> pure (EnforcedAddressSpaceBound bounded mechanism)
     Nothing ->
       ioError
         ( userError
@@ -436,6 +555,85 @@ requireBoundedBuildMemory label plan = do
         )
   where
     ceilingMib = planProcessAddressMib plan
+
+-- | Observe the bound on a lane that installs no address-space ceiling.
+--
+-- There is no @getrlimit@ answer to read here, so this reads the mechanism the
+-- lane does have: the runtime heap cap committed to @cabal.project.local@, which
+-- every toolchain child inherits through its own @+RTS -M@. Refusing when the
+-- committed cap disagrees with the plan is the same act as the enforced lane's
+-- post-write re-observation — it is what stops the returned value from being an
+-- assertion about the caller's own argument.
+observeHeapCapOnlyBound ::
+  FilePath ->
+  BuildMemoryPlan ->
+  BuildMemoryMechanism 'AddressSpaceUnavailable ->
+  IO (BuildMemoryBound 'AddressSpaceUnavailable)
+observeHeapCapOnlyBound repoRootPath plan mechanism = do
+  let projectPath = repoRootPath </> "cabal.project.local"
+  -- Strict: a lazy read keeps the handle open until the string is forced, and
+  -- the refusal paths below never force it. The next writer then fails with
+  -- "resource busy" instead of the diagnostic this function exists to give.
+  contents <-
+    try (readFile' projectPath) :: IO (Either IOException String)
+  case contents of
+    Left readError ->
+      ioError
+        ( userError
+            ( "this lane installs no address-space ceiling, so the runtime heap "
+                <> "cap in "
+                <> projectPath
+                <> " is the whole bound -- and it could not be read: "
+                <> show readError
+                <> ". Run `infernix init` to generate it."
+            )
+        )
+    Right projectText ->
+      case committedRuntimeHeapCapMib projectText of
+        Nothing ->
+          ioError
+            ( userError
+                ( projectPath
+                    <> " declares no `+RTS -M<n>M` runtime heap cap, so this "
+                    <> "lane -- which installs no address-space ceiling -- has "
+                    <> "no bound at all"
+                )
+            )
+        Just committedMib
+          | committedMib /= planRtsHeapMib plan ->
+              ioError
+                ( userError
+                    ( projectPath
+                        <> " commits a "
+                        <> show committedMib
+                        <> " MiB runtime heap cap but the derived plan is "
+                        <> show (planRtsHeapMib plan)
+                        <> " MiB ("
+                        <> show (planBudgetMib plan)
+                        <> " MiB budget / "
+                        <> show (planJobs plan)
+                        <> " jobs); regenerate it with `infernix init` rather "
+                        <> "than compiling under a stale bound"
+                    )
+                )
+          | otherwise ->
+              pure (HeapCapOnlyBound (planProcessAddressMib plan) mechanism)
+
+-- | The @-M\<n\>M@ runtime heap cap committed to a @cabal.project.local@ body.
+--
+-- Reads back what 'renderCabalProjectLocal' writes.
+committedRuntimeHeapCapMib :: String -> Maybe Int
+committedRuntimeHeapCapMib projectText =
+  listToMaybe
+    [ capMib
+    | line <- lines projectText,
+      token <- words line,
+      Just rest <- [List.stripPrefix "-M" token],
+      Just (digits, 'M') <- [List.unsnoc rest],
+      not (null digits),
+      all isDigit digits,
+      Just capMib <- [readMaybe digits]
+    ]
 
 -- | The closed vocabulary of toolchain invocations.
 --
@@ -485,17 +683,26 @@ toolchainTestSuiteName suite =
 -- quantified by 'withToolchainSpawnAuthority', so an authority cannot escape the
 -- region that established its ceiling and a plan minted for one region cannot be
 -- substituted for another's.
-newtype ToolchainSpawnAuthority s = ToolchainSpawnAuthority BuildMemoryPlan
+--
+-- The authority carries the mechanism its region resolved as well as the plan.
+-- Resolving the lane and then discarding the answer is what made every gate
+-- command fail on Darwin: the spawn wrapper below assumed an address-space
+-- rlimit that this platform does not implement.
+data ToolchainSpawnAuthority s
+  = ToolchainSpawnAuthority BuildMemoryPlan ResolvedBuildMemoryMechanism
 
 -- | The plan whose ceiling this authority carries.
 toolchainSpawnAuthorityPlan :: ToolchainSpawnAuthority s -> BuildMemoryPlan
-toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority plan) = plan
+toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority plan _) = plan
 
 -- | Enter a region in which toolchain processes may be started under a derived
 -- ceiling.
 --
 -- The mechanism is resolved rather than assumed: a lane on which none resolves
--- is a named refusal before any process starts.
+-- is a named refusal before any process starts. The resolved mechanism is then
+-- /retained/ on the authority, because what bounds a toolchain child differs by
+-- lane and the spawn wrapper has to act on that difference rather than on an
+-- assumption.
 withToolchainSpawnAuthority ::
   BuildMemoryPlan ->
   (forall s. ToolchainSpawnAuthority s -> IO result) ->
@@ -511,7 +718,7 @@ withToolchainSpawnAuthority plan action = do
                 <> reason
             )
         )
-    Right _ -> action (ToolchainSpawnAuthority plan)
+    Right resolved -> action (ToolchainSpawnAuthority plan resolved)
 
 -- | Hold the derived per-process ceiling in force across a toolchain spawn.
 --
@@ -527,9 +734,21 @@ withToolchainSpawnAuthority plan action = do
 -- authority are what make an unbounded toolchain spawn unrepresentable.
 -- 'establishBoundedBuildMemory' remains the stronger form for a process image
 -- dedicated to a build, where lowering the hard limit costs nothing.
+--
+-- The ceiling is held only on a lane that implements one. Darwin aliases
+-- @RLIMIT_AS@ to the advisory @RLIMIT_RSS@ and rejects a finite soft limit
+-- against the infinite hard limit it reports, so @setrlimit@ returns @EINVAL@
+-- and this wrapper threw before the child was ever started — taking
+-- @infernix test lint@, @test unit@, @test integration@ and @test all@ with it.
+-- On that lane the bound is the runtime heap cap and the job count, both already
+-- committed to @cabal.project.local@ and both inherited by the child without a
+-- bracket. Acting on the resolved mechanism is what keeps this honest: the
+-- alternative is asserting a ceiling the platform never installed.
 withBoundedToolchainChild :: ToolchainSpawnAuthority s -> IO result -> IO result
-withBoundedToolchainChild (ToolchainSpawnAuthority plan) action =
-  bracket acquire restore (const action)
+withBoundedToolchainChild (ToolchainSpawnAuthority plan resolved) action =
+  case resolved of
+    EnforcedLane _ -> bracket acquire restore (const action)
+    UnenforcedLane _ -> action
   where
     ceilingMib = planProcessAddressMib plan
     acquire = do
@@ -588,22 +807,50 @@ applyToolchainChildVictimRank _authority childPid =
 toolchainChildVictimRank :: Int
 toolchainChildVictimRank = 800
 
--- | The strongest memory bound this lane actually provides.
-data BuildMemoryMechanism
-  = -- | A finite cgroup v2 maximum is in force, so the /aggregate/ of the build
-    -- tree is bounded by the kernel. Carries the observed limit in MiB. This is
-    -- the outer-container lane's own limit and a Linux host-native lane running
-    -- inside a limited slice or scope.
-    CgroupAggregateMechanism Int
-  | -- | Linux host-native with no finite cgroup maximum. The per-process
-    -- address-space rlimit and runtime heap cap hold; the aggregate is
-    -- @jobs x cap@ arithmetic performed by this repository, not a kernel bound.
-    LinuxProcessCeilingMechanism
-  | -- | Darwin. No cgroups, and the address-space limit is aliased to an
-    -- advisory resident-set limit, so the bound is a runtime heap cap plus a
-    -- bounded job count and the aggregate is arithmetic.
-    DarwinHeapCapMechanism
-  deriving (Eq, Show)
+-- | Whether the lane installs an address-space ceiling the kernel enforces.
+--
+-- The doctrine has always said the mechanism is resolved per lane and that
+-- Darwin has no enforced address-space limit. This promotes that sentence into
+-- the types, so a bound established on a lane without one cannot be handed to
+-- an operation that requires one.
+data AddressSpaceEnforcement
+  = AddressSpaceEnforced
+  | AddressSpaceUnavailable
+
+-- | The strongest memory bound this lane actually provides, indexed by whether
+-- it enforces an address-space ceiling.
+--
+-- The index and the constructor are one fact, not two: each constructor fixes
+-- its own index, so no value can claim an enforcement its mechanism does not
+-- have. Carrying a separate unindexed copy alongside the index would reintroduce
+-- exactly the over-claim this type exists to forbid.
+data BuildMemoryMechanism (enforcement :: AddressSpaceEnforcement) where
+  -- | A finite cgroup v2 maximum is in force, so the /aggregate/ of the build
+  -- tree is bounded by the kernel. Carries the observed limit in MiB. This is
+  -- the outer-container lane's own limit and a Linux host-native lane running
+  -- inside a limited slice or scope.
+  CgroupAggregateMechanism :: Int -> BuildMemoryMechanism 'AddressSpaceEnforced
+  -- | Linux host-native with no finite cgroup maximum. The per-process
+  -- address-space rlimit and runtime heap cap hold; the aggregate is
+  -- @jobs x cap@ arithmetic performed by this repository, not a kernel bound.
+  LinuxProcessCeilingMechanism :: BuildMemoryMechanism 'AddressSpaceEnforced
+  -- | Darwin. No cgroups, and @RLIMIT_AS@ is aliased to the advisory
+  -- @RLIMIT_RSS@: the kernel reports it infinite and rejects every finite
+  -- ceiling written against it, so there is no address-space bound to install
+  -- at all. What bounds this lane is the runtime heap cap plus a bounded job
+  -- count, and the aggregate is arithmetic.
+  DarwinHeapCapMechanism :: BuildMemoryMechanism 'AddressSpaceUnavailable
+
+-- | A resolved lane, with its enforcement decided.
+--
+-- 'resolveBuildMemoryMechanism' reads the platform at runtime, so the index
+-- cannot be known statically; this sum is where that runtime fact is refined
+-- into one of the two indexed types. Every consumer must handle both arms,
+-- which is the point — the lane distinction stops being something a caller can
+-- forget.
+data ResolvedBuildMemoryMechanism
+  = EnforcedLane (BuildMemoryMechanism 'AddressSpaceEnforced)
+  | UnenforcedLane (BuildMemoryMechanism 'AddressSpaceUnavailable)
 
 -- | Whether the mechanism bounds the /sum/ of a build tree, as opposed to each
 -- process in it.
@@ -611,14 +858,14 @@ data BuildMemoryMechanism
 -- Only the cgroup one does. Every caller that reports a bound must distinguish
 -- these, because @jobs x cap@ is arithmetic this repository performs and a
 -- cgroup maximum is a bound the kernel enforces.
-buildMemoryMechanismBoundsAggregate :: BuildMemoryMechanism -> Bool
+buildMemoryMechanismBoundsAggregate :: BuildMemoryMechanism enforcement -> Bool
 buildMemoryMechanismBoundsAggregate mechanism =
   case mechanism of
     CgroupAggregateMechanism _ -> True
     LinuxProcessCeilingMechanism -> False
     DarwinHeapCapMechanism -> False
 
-renderBuildMemoryMechanism :: BuildMemoryMechanism -> String
+renderBuildMemoryMechanism :: BuildMemoryMechanism enforcement -> String
 renderBuildMemoryMechanism mechanism =
   case mechanism of
     CgroupAggregateMechanism limitMib ->
@@ -628,14 +875,23 @@ renderBuildMemoryMechanism mechanism =
     DarwinHeapCapMechanism ->
       "runtime heap cap and bounded concurrency; the aggregate is jobs x cap arithmetic"
 
+-- | Render a resolved lane whichever arm it took.
+renderResolvedBuildMemoryMechanism :: ResolvedBuildMemoryMechanism -> String
+renderResolvedBuildMemoryMechanism resolved =
+  case resolved of
+    EnforcedLane mechanism -> renderBuildMemoryMechanism mechanism
+    UnenforcedLane mechanism -> renderBuildMemoryMechanism mechanism
+
 -- | Resolve the mechanism for this lane, never assume one.
-resolveBuildMemoryMechanism :: IO (Either String BuildMemoryMechanism)
+resolveBuildMemoryMechanism :: IO (Either String ResolvedBuildMemoryMechanism)
 resolveBuildMemoryMechanism =
   case os of
     "linux" ->
-      Right . maybe LinuxProcessCeilingMechanism CgroupAggregateMechanism
+      Right
+        . EnforcedLane
+        . maybe LinuxProcessCeilingMechanism CgroupAggregateMechanism
         <$> readCgroupMemoryLimitMib
-    "darwin" -> pure (Right DarwinHeapCapMechanism)
+    "darwin" -> pure (Right (UnenforcedLane DarwinHeapCapMechanism))
     other ->
       pure
         ( Left

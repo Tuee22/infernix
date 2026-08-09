@@ -16,6 +16,13 @@
 > descriptor-inheritance window; the nested supervisor/pin custody-handshake redesign is present.
 > The obsolete subprocess C/Cabal boundary is removed. Phase 1 is Active and Phase 2 is blocked by
 > it; Phase 2's own ordered closure and cohort evidence remains open.
+>
+> **As of the 2026-08-08 [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md)**, neither
+> supported lane completes its lifecycle: `cluster up` and `test all` fail on both on Phase 1
+> Sprint 1.20's bounded-command environment defect, and 82 files / 67,232 insertions landed since
+> 2026-07-25 without Darwin validation. Phase 1 Sprint 1.20 is no longer validation-only. Phase 0 and
+> Phase 7 are reopened; Phases 5 and 9 remain `Done` with the dependency named; Phases 1, 4 and 6
+> carry the code-side residuals. The machine-independent gate set is green on Darwin.
 
 ## Current Repo Assessment
 

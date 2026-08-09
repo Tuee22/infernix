@@ -51,8 +51,8 @@ import Control.Monad (foldM, unless, void, when)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Char8 qualified as ByteString8
-import Data.Either (isRight)
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
+import Data.List (elemIndices)
 import Data.List qualified as List
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -116,7 +116,7 @@ import System.Process
   )
 #if !defined(darwin_HOST_OS)
 import Data.Char (isDigit)
-import Data.List (elemIndices)
+import Data.Either (isRight)
 import System.IO.Error (isDoesNotExistError)
 import System.Posix.Process (getProcessGroupID)
 #endif
@@ -1821,6 +1821,16 @@ readProcFile path = do
                   <> Text.pack (show ioException)
               )
 
+#endif
+
+-- The @\/proc@ sampling kernel above is Linux-only, but the parsers below are
+-- pure text functions over its formats with no platform dependency. They stay
+-- unconditional so the unit suite can exercise them on either host. Guarding
+-- their test cases instead would require @CPP@ in @test\/unit\/Spec.hs@, where
+-- the C preprocessor rejects the comment-open sequence that appears inside
+-- ordinary Haskell comments there (for example in a glob like @dhall\/@ then
+-- star then @.dhall@).
+
 parseProcessStateAndGroup :: ByteString -> Either Text (Char, Integer)
 parseProcessStateAndGroup contents =
   case elemIndices ')' (ByteString8.unpack contents) of
@@ -1841,11 +1851,10 @@ data ResidentSample
 
 parseResidentSample :: ByteString -> Either Text ResidentSample
 parseResidentSample contents =
-  case
-      [ kibibytes
-      | line <- ByteString8.lines contents,
-        ["VmRSS:", kibibytes, "kB"] <- [words (ByteString8.unpack line)]
-      ] of
+  case [ kibibytes
+       | line <- ByteString8.lines contents,
+         ["VmRSS:", kibibytes, "kB"] <- [words (ByteString8.unpack line)]
+       ] of
     [kibibytesText] ->
       case readWord64 kibibytesText of
         Just kibibytes
@@ -1872,11 +1881,10 @@ parseResidentBytes contents =
 -- or malformed status without @VmRSS@ remains an enforcement failure.
 processHasTerminalStatus :: ByteString -> Bool
 processHasTerminalStatus contents =
-  case
-      [ processState
-      | line <- ByteString8.lines contents,
-        "State:" : [processState] : _ <- [words (ByteString8.unpack line)]
-      ] of
+  case [ processState
+       | line <- ByteString8.lines contents,
+         "State:" : [processState] : _ <- [words (ByteString8.unpack line)]
+       ] of
     [processState] -> processState == 'Z' || processState == 'X'
     _ -> False
 
@@ -1908,6 +1916,9 @@ readWord64 value =
     [(parsed, "")] -> Just parsed
     _ -> Nothing
 
+#if !defined(darwin_HOST_OS)
+-- Consumed only by the Linux-only sampling kernel, so these stay guarded:
+-- unconditional they would be unused on Darwin, which @-Wall -Werror@ rejects.
 checkedAdd :: Word64 -> Word64 -> Maybe Word64
 checkedAdd left right
   | maxBound - left < right = Nothing
@@ -1921,8 +1932,7 @@ procParseError pidText fileName reason =
     <> fileName
     <> " for RSS enforcement: "
     <> reason
+#endif
 
 bytesPerKib :: Word64
 bytesPerKib = 1024
-
-#endif

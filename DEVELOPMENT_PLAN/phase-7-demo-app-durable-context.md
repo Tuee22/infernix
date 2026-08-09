@@ -1,9 +1,15 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Done — Sprint 7.28 closed by full linux-gpu + linux-cpu cohort validation, and the
-Sprint 7.29 Managed-State-Transition plus Bounded-Command/Bounded-HTTP reopen closed by
-[Wave V](cohort-validation-waves.md) (2026-07-20) on the apple-silicon plus linux-cpu full-suite
-`test all` green
+**Status**: Active — reopened 2026-08-08 by the
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Sprint 7.29's closure rests
+explicitly on the Wave V (2026-07-20) apple-silicon plus linux-cpu full-suite `test all` green, and
+that attestation predates 82 files / 67,232 insertions landed 2026-07-25..2026-08-07 with no Darwin
+validation. `test all` currently cannot run on either lane, so the evidence this phase's `Done`
+depended on cannot be reproduced today. No defect is known in this phase's own surface — the reopen
+is an evidence reopen, and it re-closes when Wave Y records a result. Sprint 7.28 closed by full
+linux-gpu + linux-cpu cohort validation, and the Sprint 7.29 Managed-State-Transition plus
+Bounded-Command/Bounded-HTTP reopen closed by [Wave V](cohort-validation-waves.md) (2026-07-20) on
+the apple-silicon plus linux-cpu full-suite `test all` green
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/durable_context_design.md](../documents/architecture/durable_context_design.md), [../documents/architecture/demo_app_design.md](../documents/architecture/demo_app_design.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the multi-user, durable-context shape of the `infernix-demo` workload —
@@ -3318,7 +3324,16 @@ not hope. It generalizes the results-side realness contract to state transitions
 
 ## Remaining Work
 
-None. The Sprint 7.29 reopen work closed by [Wave V](cohort-validation-waves.md) (2026-07-20).
+Reproduce the Sprint 7.29 cohort evidence. The Wave V (2026-07-20) attestation this phase closed on
+was reset on 2026-08-08 and is no longer a current proof point; nothing in this phase's own surface is
+known broken, and no code-side work is claimed here. The residual is validation-only.
+
+**Cohort gate**: [Wave Y](cohort-validation-waves.md). Blocked upstream by Phase 1 Sprint 1.20's
+bounded-command environment defect, which currently prevents `cluster up` and `test all` on both
+lanes.
+
+The Sprint 7.29 reopen work closed by [Wave V](cohort-validation-waves.md) (2026-07-20) for that
+wave's recorded scope.
 
 ## Closure Notes
 

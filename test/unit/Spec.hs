@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TypeApplications #-}
@@ -31,7 +32,7 @@ import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sor
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
-import Data.Maybe (isJust, isNothing, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
 import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -44,12 +45,16 @@ import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
 import Infernix.BuildMemory
-  ( BuildMemoryPlan,
-    buildMemoryBoundLimitMib,
+  ( AddressSpaceEnforcement (..),
+    BuildMemoryBound,
+    BuildMemoryPlan,
+    ResolvedBuildMemoryMechanism (EnforcedLane, UnenforcedLane),
+    buildMemoryBoundCeilingMib,
     committedBuildJobs,
     committedProcessAddressMib,
     committedRtsHeapMib,
     deriveBuildMemoryPlan,
+    enforcedAddressCeilingMib,
     establishBoundedBuildMemory,
     heapToAddressSpaceMultiplier,
     maximumBuildJobs,
@@ -63,6 +68,7 @@ import Infernix.BuildMemory
     planRtsHeapMib,
     renderCabalProjectLocal,
     requireBoundedBuildMemory,
+    resolveBuildMemoryMechanism,
     toolchainAddressSpaceReservationMib,
     toolchainReservationFitsEveryPlan,
   )
@@ -550,37 +556,122 @@ dispatchBuildMemoryFixture = do
     _ -> pure ()
 
 -- | The whole ceiling story, inside one child that installed it.
+--
+-- Which story that is depends on the lane, so the fixture resolves the mechanism
+-- rather than assuming an address-space rlimit exists. Darwin has no such limit
+-- at all, and asserting one there is what took every gate command down.
 runBuildMemoryBoundFixture :: FilePath -> IO ()
 runBuildMemoryBoundFixture scratchDirectory = do
   plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 2) 2
   widerPlan <- buildMemoryFixturePlan (minimumProcessHeapMib * 16) 4
+  createDirectoryIfMissing True scratchDirectory
+  resolved <- resolveBuildMemoryMechanism
+  case resolved of
+    Left reason ->
+      fail ("the fixture lane resolves no build-memory mechanism: " <> reason)
+    Right (UnenforcedLane _) ->
+      runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan
+    Right (EnforcedLane _) ->
+      runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan
 
+-- | Whether an enforced-lane mint returned the plan's derived ceiling. An
+-- unenforced result is a failure here: on this lane the ceiling is installed,
+-- so anything else means the mint took the wrong arm.
+enforcedCeilingMatchesPlan ::
+  BuildMemoryPlan ->
+  Either (BuildMemoryBound 'AddressSpaceUnavailable) (BuildMemoryBound 'AddressSpaceEnforced) ->
+  Bool
+enforcedCeilingMatchesPlan plan outcome =
+  case outcome of
+    Right bound -> enforcedAddressCeilingMib bound == planProcessAddressMib plan
+    Left _ -> False
+
+-- | Whether an unenforced-lane mint returned the plan's derived ceiling. The
+-- number is derived rather than guaranteed here, which is why it is read with
+-- 'buildMemoryBoundCeilingMib' and not 'enforcedAddressCeilingMib' — the latter
+-- does not typecheck against this arm, which is the whole point of the index.
+heapCapCeilingMatchesPlan ::
+  BuildMemoryPlan ->
+  Either (BuildMemoryBound 'AddressSpaceUnavailable) (BuildMemoryBound 'AddressSpaceEnforced) ->
+  Bool
+heapCapCeilingMatchesPlan plan outcome =
+  case outcome of
+    Left bound -> buildMemoryBoundCeilingMib bound == planProcessAddressMib plan
+    Right _ -> False
+
+-- | The lane that installs no address-space ceiling. The bound here is the
+-- committed runtime heap cap, so the cases that carry content are the two
+-- refusals — an absent cap and a stale one — and the real compile beneath it.
+runHeapCapOnlyBoundFixture ::
+  FilePath -> BuildMemoryPlan -> BuildMemoryPlan -> IO ()
+runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan = do
+  let projectPath = scratchDirectory </> "cabal.project.local"
+  removeTestPathIfPresent projectPath
+
+  absent <-
+    try @IOException
+      (requireBoundedBuildMemory scratchDirectory "unit heap-cap absent case" plan)
+  assert
+    (isLeft absent)
+    "a lane with no address-space enforcement refuses when no runtime heap cap is committed at all"
+
+  writeFile projectPath (renderCabalProjectLocal widerPlan)
+  stale <-
+    try @IOException
+      (requireBoundedBuildMemory scratchDirectory "unit heap-cap stale case" plan)
+  assert
+    (planRtsHeapMib widerPlan /= planRtsHeapMib plan)
+    "the wider fixture plan really commits a different heap cap, so the stale case is not vacuous"
+  assert
+    (isLeft stale)
+    "a committed runtime heap cap that disagrees with the derived plan is refused, not accepted"
+
+  writeFile projectPath (renderCabalProjectLocal plan)
+  observed <-
+    requireBoundedBuildMemory scratchDirectory "unit heap-cap agreeing case" plan
+  assert
+    (heapCapCeilingMatchesPlan plan observed)
+    "an unenforced lane mints a bound only from a committed heap cap that matches the plan"
+
+  runBoundedCompilerChainAssertions scratchDirectory
+  exitSuccess
+
+runEnforcedAddressSpaceBoundFixture ::
+  FilePath -> BuildMemoryPlan -> BuildMemoryPlan -> IO ()
+runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan = do
   refused <-
     try @IOException
-      (requireBoundedBuildMemory "unit build-memory negative case" plan)
+      ( requireBoundedBuildMemory
+          scratchDirectory
+          "unit build-memory negative case"
+          plan
+      )
   assert
     (buildMemoryRefusalNamesSurface refused)
     "requireBoundedBuildMemory refuses an unbounded address space and names the spawning surface"
 
-  established <- establishBoundedBuildMemory plan
+  established <- establishBoundedBuildMemory scratchDirectory plan
   assert
-    (buildMemoryBoundLimitMib established == planProcessAddressMib plan)
+    (enforcedCeilingMatchesPlan plan established)
     "establishBoundedBuildMemory installs the derived per-process address-space ceiling"
 
   observed <-
-    requireBoundedBuildMemory "unit build-memory positive case" plan
+    requireBoundedBuildMemory
+      scratchDirectory
+      "unit build-memory positive case"
+      plan
   assert
-    (buildMemoryBoundLimitMib observed == planProcessAddressMib plan)
+    (enforcedCeilingMatchesPlan plan observed)
     "requireBoundedBuildMemory observes the installed ceiling"
 
   -- A wider derived plan must not widen an installed ceiling: the bound is
   -- lower-only, exactly as the descriptor-space kernel is.
-  preserved <- establishBoundedBuildMemory widerPlan
+  preserved <- establishBoundedBuildMemory scratchDirectory widerPlan
   assert
     (planProcessAddressMib widerPlan > planProcessAddressMib plan)
     "the wider fixture plan really is wider, so the preservation case is not vacuous"
   assert
-    (buildMemoryBoundLimitMib preserved == planProcessAddressMib plan)
+    (enforcedCeilingMatchesPlan plan preserved)
     "establishBoundedBuildMemory never raises a tighter address-space limit"
 
   executable <- getExecutablePath
@@ -600,28 +691,7 @@ runBuildMemoryBoundFixture scratchDirectory = do
     (filter (not . isSpace) reportedLimit == show (planProcessAddressMib plan))
     "the per-process ceiling is inherited across fork and exec unchanged"
 
-  -- The real compiler, under the same inherited ceiling. This is the chain the
-  -- doctrine claims and it is checked rather than asserted: a compile that
-  -- needs more address space than the ceiling allows would fail here.
-  compilerPath <- firstExistingHostToolCandidate HostTools.HostGhc
-  case compilerPath of
-    Nothing ->
-      putStrLn
-        "build-memory: no ghc on this image; the compiler-chain case is skipped loudly"
-    Just ghcPath -> do
-      let sourcePath = scratchDirectory </> "BoundedBuildMemoryProbe.hs"
-          outputPath = scratchDirectory </> "BoundedBuildMemoryProbe"
-      createDirectoryIfMissing True scratchDirectory
-      writeFile sourcePath "module Main (main) where\nmain :: IO ()\nmain = pure ()\n"
-      (compileExit, _, compileErrors) <-
-        readCreateProcessWithExitCode
-          (proc ghcPath ["-v0", "-o", outputPath, sourcePath])
-          ""
-      assert
-        (compileExit == ExitSuccess)
-        ( "the compiler runs under the inherited per-process ceiling: "
-            <> compileErrors
-        )
+  runBoundedCompilerChainAssertions scratchDirectory
 
   -- Adversarial over-allocation under the ceiling: a clean non-zero exit, no
   -- global out-of-memory condition. The explicit reservation request is larger
@@ -643,6 +713,32 @@ runBuildMemoryBoundFixture scratchDirectory = do
     "an over-allocation under the installed ceiling exits non-zero and cleanly"
 
   exitSuccess
+
+-- | The real compiler, under whatever bound this lane installed. This is the
+-- chain the doctrine claims and it is checked rather than asserted: a compile
+-- needing more than the bound allows fails here. It carries content on both
+-- lanes, which is why it is shared rather than living in the enforced arm.
+runBoundedCompilerChainAssertions :: FilePath -> IO ()
+runBoundedCompilerChainAssertions scratchDirectory = do
+  compilerPath <- firstExistingHostToolCandidate HostTools.HostGhc
+  case compilerPath of
+    Nothing ->
+      putStrLn
+        "build-memory: no ghc on this image; the compiler-chain case is skipped loudly"
+    Just ghcPath -> do
+      let sourcePath = scratchDirectory </> "BoundedBuildMemoryProbe.hs"
+          outputPath = scratchDirectory </> "BoundedBuildMemoryProbe"
+      createDirectoryIfMissing True scratchDirectory
+      writeFile sourcePath "module Main (main) where\nmain :: IO ()\nmain = pure ()\n"
+      (compileExit, _, compileErrors) <-
+        readCreateProcessWithExitCode
+          (proc ghcPath ["-v0", "-o", outputPath, sourcePath])
+          ""
+      assert
+        (compileExit == ExitSuccess)
+        ( "the compiler runs under the bound this lane installed: "
+            <> compileErrors
+        )
 
 firstExistingHostToolCandidate :: HostTools.HostTool -> IO (Maybe FilePath)
 firstExistingHostToolCandidate tool = go (HostTools.hostToolFallbackCandidates tool)
@@ -4421,7 +4517,7 @@ main = do
     ( lookup "PATH" (Subprocess.renderSubprocessEnv reusedExactNvkindEnv)
         == lookup "PATH" (Subprocess.renderSubprocessEnv exactNvkindEnv)
     )
-    "an unchanged available-tool snapshot reuses its immutable shim generation"
+    "an unchanged available-tool snapshot reuses its owner-scoped shim generation"
   _retargetingNvkindEnv <-
     Subprocess.clusterSubprocessEnv
       subprocessPaths
@@ -4440,6 +4536,76 @@ main = do
     ( "a compiled Nvkind command keeps an immutable exact kubectl binding after another environment targets a shadow kubectl; observed "
         <> show exactNvkindOutcome
     )
+  -- The command shim root is repo-tree state, so it has to be removable by
+  -- ordinary tooling. Publishing it read-only made `git clean -fxd` and
+  -- `rm -rf` fail on every entry and strand the whole ancestor chain, because
+  -- unlinking an entry needs write on the containing directory.
+  shimRemovalRoot <- testRootPath "command-shim-removal"
+  removeTestPathIfPresent shimRemovalRoot
+  createDirectoryIfMissing True shimRemovalRoot
+  shimRemovalEnv <-
+    Subprocess.clusterSubprocessEnv subprocessPaths {runtimeRoot = shimRemovalRoot}
+  let shimRemovalPath = leadingSearchPathComponent shimRemovalEnv
+  shimRemovalOutcome <- try @IOException (removeDirectoryRecursive shimRemovalPath)
+  shimRemovalGone <- not <$> doesDirectoryExist shimRemovalPath
+  assert
+    (isRight shimRemovalOutcome && shimRemovalGone)
+    ( "a published command shim root is removable without a prior chmod; observed "
+        <> show shimRemovalOutcome
+    )
+  -- POSIX rename(2) fails with ENOTEMPTY against a non-empty destination, so a
+  -- generation root that exists and fails verification cannot be replaced by
+  -- renaming over it. Without an explicit supersede that state is terminal:
+  -- every republication fails, and every external command fails with it.
+  shimRepairRoot <- testRootPath "command-shim-repair"
+  removeTestPathIfPresent shimRepairRoot
+  createDirectoryIfMissing True shimRepairRoot
+  let shimRepairPaths = subprocessPaths {runtimeRoot = shimRepairRoot}
+  shimRepairEnv <- Subprocess.clusterSubprocessEnv shimRepairPaths
+  let shimRepairPath = leadingSearchPathComponent shimRepairEnv
+      shimIntruderPath = shimRepairPath </> "intruder"
+  writeFile shimIntruderPath ""
+  shimRepairOutcome <-
+    try @IOException
+      (leadingSearchPathComponent <$> Subprocess.clusterSubprocessEnv shimRepairPaths)
+  shimIntruderGone <- not <$> doesFileExist shimIntruderPath
+  assert
+    (shimRepairOutcome == Right shimRepairPath)
+    ( "a corrupted command shim generation is republished under its own name rather than failing closed forever; observed "
+        <> show shimRepairOutcome
+    )
+  assert
+    shimIntruderGone
+    "republishing a corrupted command shim generation removes the foreign entry"
+  -- Reclamation is what bounds the shim parent: a root outlives its owner only
+  -- until the next materialization proves that owner gone. The current
+  -- process's own root must survive that same sweep.
+  shimReapRoot <- testRootPath "command-shim-reap"
+  removeTestPathIfPresent shimReapRoot
+  createDirectoryIfMissing True shimReapRoot
+  let shimReapPaths = subprocessPaths {runtimeRoot = shimReapRoot}
+  shimReapEnv <- Subprocess.clusterSubprocessEnv shimReapPaths
+  let liveShimPath = leadingSearchPathComponent shimReapEnv
+      shimReapParent = takeDirectory liveShimPath
+  deadOwnerPid <- forkProcess (exitImmediately ExitSuccess)
+  _ <- getProcessStatus True False deadOwnerPid
+  let deadOwnerRoot =
+        shimReapParent
+          </> ( "own-"
+                  <> show deadOwnerPid
+                  <> "-"
+                  <> replicate 64 'a'
+                  <> "-"
+                  <> replicate 64 'b'
+              )
+  createDirectoryIfMissing True deadOwnerRoot
+  writeFile (deadOwnerRoot </> "stale") ""
+  _ <- Subprocess.clusterSubprocessEnv shimReapPaths
+  deadOwnerReaped <- not <$> doesDirectoryExist deadOwnerRoot
+  liveShimRetained <- doesDirectoryExist liveShimPath
+  assert
+    (deadOwnerReaped && liveShimRetained)
+    "the command shim sweep reclaims a root whose owner is gone and retains this process's own live root"
   colonPathResult <-
     try @IOException
       ( Subprocess.clusterSubprocessEnv
@@ -10445,6 +10611,16 @@ unitTestClusterConfigFixture demoConfigPathValue =
             coordinatorDaemonLocation = "cluster-pod"
           }
     }
+
+-- | The command shim root: the leading component of a rendered subprocess
+-- @PATH@. 'Subprocess.clusterSubprocessEnv' prepends it, and subprocess
+-- environment construction rejects any component containing @':'@, so
+-- splitting on the first colon recovers it exactly.
+leadingSearchPathComponent :: Subprocess.SubprocessEnv -> FilePath
+leadingSearchPathComponent environment =
+  takeWhile
+    (/= ':')
+    (fromMaybe "" (lookup "PATH" (Subprocess.renderSubprocessEnv environment)))
 
 testRootPath :: FilePath -> IO FilePath
 testRootPath suiteName = do

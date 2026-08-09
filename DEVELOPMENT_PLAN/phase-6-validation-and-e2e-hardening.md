@@ -1,8 +1,14 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — Validation Only. Sprint 6.46 (toolchain spawn boundary and capability-gating
+**Status**: Active — **no longer Validation Only as of 2026-08-08.** Sprint 6.49 opened code-side
+work: `test-suite infernix-capped-engine-observer` is selected by no gate, so 449 lines of Apple
+observer cleanup and group-identity machinery are unverified on both lanes. The validation-only text
+that follows describes the position before that finding and is retained for its recorded scope.
+Sprint 6.46 (toolchain spawn boundary and capability-gating
 lint) is `Done` as of 2026-08-06, and Sprint 6.47 (retiring the chaos and HA validation surface) is
 code-side closed and holds only the `linux-cpu` lifecycle run it shares with Phase 3 Sprint 3.16.
+Sprint 6.48 (making the command-shim root reclaimable rather than sealed) is code-side closed and
+holds only its gate rerun, which a separate pre-existing Darwin build defect currently blocks.
 Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
 exemption reduction) is **code-side closed on 2026-08-02** and is no longer blocked: Phase 4 Sprint
 4.32's code-side closure landed the shared resource-indexed execution boundary it consumes. The
@@ -3657,6 +3663,132 @@ None beyond the shared cohort run. What this sprint removes is coverage, and the
 recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and restated in
 `testing_strategy.md` and `demo_app_test_plan.md` rather than presented as a coverage-neutral
 cleanup.
+
+---
+
+## Sprint 6.48: Make The Command-Shim Root Reclaimable [Active]
+
+**Status**: Active — code and unit coverage landed and GREEN on Apple Silicon; the full host gate
+rerun is blocked by a separate pre-existing Darwin defect (see Remaining Work).
+**Implementation**: `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs` (adjacent build fix, below)
+**Docs to update**: `documents/architecture/managed_state_transitions.md`
+
+### Objective
+
+Stop publishing the command-shim root as sealed, unremovable repo-tree state, and give it an owner
+so it can be reclaimed instead of accumulating forever.
+
+`git clean -fxd` failed against this checkout with `failed to remove …: Permission denied` on every
+shim entry, exiting `1` and leaving the whole ancestor chain in place. Unlinking an entry requires
+write on the containing directory, and each published generation was mode `0500`. Twenty such
+directories existed on the development host — two under `.data/`, eighteen under `.build/` test
+scratch roots — none removable by `git clean` or `rm -rf`.
+
+### Deliverables
+
+- **The directory mode is gone and the verification conjunct with it.** `immutableRoot` asserted
+  that a root *could not* have been mutated; the four content conjuncts beside it detect that a root
+  *was* mutated, which is strictly stronger, and they already ran on every use. The conjunct is
+  replaced by a plain `isDirectory` on an `lstat`, which still rejects a symlink standing in for the
+  root. The `.generation` marker keeps mode `0400`: a read-only file inside a writable directory
+  unlinks without complaint, so its tamper-evidence costs nothing.
+- **Publication can now replace a corrupt root.** POSIX `rename(2)` fails `ENOTEMPTY` against a
+  non-empty destination, so before this sprint a generation root that existed and failed
+  verification was terminal — every republication failed and every external command failed with it.
+  Removing the mode without this fix would have converted "cannot be corrupted" into "once
+  corrupted, permanently broken". `vacateCommandShimGenerationRoot` reserves a sibling leaf and
+  renames the corrupt tree into it in one atomic step, bounded to a single supersede-and-retry.
+  The existing `concurrentlyPublished` branch is retained, so the intra-process race between the
+  daemon's forked loops still reconciles by re-verify-and-reuse rather than by deletion.
+- **Roots are owner-scoped.** `generation-<digest>` becomes
+  `own-<pid>-<birthIdentityDigest>-<generationDigest>`, and
+  `cleanupDeadCommandShimStagingDirectories` — which already proves liveness through the
+  process-birth-identity registry and already handles pid recycling — reclaims published roots as
+  well as staging and superseded ones. This is what bounds the shim parent. Ownership is
+  established *before* the sweep so this process's own root is positively identified rather than
+  retained by an unreadable identity failing closed.
+- **Unit coverage for the three behaviours that had none**: a published root is removable with no
+  prior `chmod`; a corrupted root is republished under its own name rather than failing closed
+  forever; and the sweep reclaims a dead owner's root while retaining this process's live one.
+
+### Adjacent build fix, recorded rather than folded in silently
+
+The library did not compile on Darwin at all, which blocked every gate on an Apple host.
+`CappedEngine/Internal.hs` exported `missingResidentRecheckForTest` and `parseResidentBytesForTest`
+unconditionally while defining both inside its `#if !defined(darwin_HOST_OS)` block; introduced
+2026-08-02 in `7fff1c0`. Rather than guard the exports and their test cases — which would need `CPP`
+in `test/unit/Spec.hs`, where the C preprocessor rejects the comment-open sequence that occurs
+inside ordinary Haskell comments there — the pure `/proc` text parsers were hoisted out of the
+Linux-only block. They have no platform dependency, so this **restores** the coverage on Darwin
+instead of skipping it. `checkedAdd` and `procParseError` stay guarded: they are consumed only by
+the Linux sampling kernel and would be unused on Darwin, which `-Wall -Werror` rejects.
+
+### Validation
+
+- `cabal build infernix-unit` compiles and links clean under `-Wall -Werror`, `Infernix.Cluster.Subprocess`
+  included.
+- `cabal test infernix-unit` is **PASS** on Apple Silicon, with the caveat in Remaining Work.
+- Every new shim root is created `drwx------`, verified across the twenty roots the suite produced.
+- `git clean -fxd` over a scratch tree containing an `own-…` root removes it with **exit 0 and no
+  warning**; the same command before this sprint exited `1` with a per-entry `Permission denied` and
+  left the tree dirty.
+- `find . -type d ! -perm -u+w -not -path './.git/*'` is empty. Eighteen of the twenty pre-existing
+  roots were reclaimed incidentally when the suite recreated its `.build/` scratch trees; the two
+  under `.data/` needed the one-time `chmod -R u+w`, which is stated rather than claimed away.
+
+### Remaining Work
+
+- `cabal test infernix-unit` reaches PASS on Darwin only with `runBuildMemoryAssertions` skipped. A
+  second, unrelated pre-existing defect stops the suite before any later assertion: that function
+  drives `requireBoundedBuildMemory`, which installs an address-space ceiling through
+  `setResourceLimit ResourceTotalMemory`, and macOS rejects `setrlimit(RLIMIT_AS)` outright —
+  verified independently, `current limit exceeds maximum limit`. This is Phase 1 Sprint 1.21
+  territory, where [bounded_host_memory.md](../documents/architecture/bounded_host_memory.md)
+  already records that Darwin has no enforced address-space limit, and it is owned there. The skip
+  was a local verification scaffold and was reverted; it is not in the tree.
+- What this sprint does **not** fix, recorded rather than left implied: the shim root is prepended
+  to `searchPathForHost`, not substituted for it, so ~2400 binaries in the host's ordinary tool
+  directories stay resolvable behind the ~35 the manifest pins; the `0500` directory modes on the
+  anchor-snapshot root and package-closure destination are untouched (none exist on disk, and unlike
+  the shim mode that seal has a live function); and the verify-to-`execve` window is unchanged.
+
+## Sprint 6.49: A Suite No Gate Can Select Is Not Coverage [Active]
+
+**Status**: Active — opened 2026-08-08 by the
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/BuildMemory.hs`, `infernix.cabal`
+**Docs to update**: none
+
+### Objective
+
+`test-suite infernix-capped-engine-observer` (`infernix.cabal:489`) is compiled and run by **no
+gate**. `ToolchainTestSuite` (`src/Infernix/BuildMemory.hs:673-678`) admits only `HaskellStyleSuite`,
+`UnitSuite` and `IntegrationSuite`; `ToolchainBuildAll` renders exactly `["build","all"]`
+(`:664`) with no `--enable-tests`; and `cabal.project` sets no `tests: True`. Its 449 lines — the
+cleanup, timeout, stopped-group, descendant-group and output-bounds machinery for the Apple observer,
+plus the Darwin-only probe at `test/capped-engine-observer/Spec.hs:246-260` — are unverified on
+**both** lanes.
+
+This is the closed-vocabulary principle turned against itself: `ToolchainInvocation` exists so a build
+cannot be started from a caller-assembled argument list, and the same closure silently made a suite
+unselectable. A guarantee nobody can run is not a guarantee.
+
+### Deliverables
+
+- The suite either joins the closed `ToolchainTestSuite` vocabulary and is run by a gate, or it is
+  retired and its coverage folded into a suite that is. Ledgered pending that decision in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- Whichever way it goes, the Apple observer's cleanup and group-identity machinery ends up covered by
+  something a gate selects.
+
+### Validation
+
+`infernix test lint` and `infernix test unit` reach the coverage on both lanes.
+
+### Remaining Work
+
+All of it. **Cohort gate**: [Wave Y](cohort-validation-waves.md).
 
 ---
 

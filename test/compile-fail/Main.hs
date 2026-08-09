@@ -175,6 +175,10 @@ failingFixtures =
       "fail-cannot-substitute-toolchain-spawn-region"
       "CannotSubstituteToolchainSpawnRegion.hs"
       "ToolchainSpawnAuthority",
+    typeMismatchFixture
+      "fail-cannot-claim-unenforced-address-space"
+      "CannotClaimUnenforcedAddressSpace.hs"
+      "BuildMemoryBound",
     typeMismatchFixture "fail-cannot-escape-cluster-teardown-authority" "CannotEscapeClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture "fail-cannot-reuse-cluster-teardown-authority" "CannotReuseClusterTeardownAuthority.hs" "ClusterTeardownAuthority",
     typeMismatchFixture

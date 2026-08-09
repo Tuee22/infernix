@@ -157,7 +157,7 @@ import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isDigit, isHexDigit, isSpace, toLower)
 import Data.IORef (IORef, atomicModifyIORef', newIORef)
 import Data.List qualified as List
-import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing)
+import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Word (Word64)
@@ -450,43 +450,101 @@ materializeCommandShims ::
 materializeCommandShims paths config availableTools = do
   let generationDigest = commandShimGeneration config availableTools
       shimParent = runtimeRoot paths </> "command-shims"
-      generationRoot =
-        shimParent
-          </> ("generation-" <> generationDigest)
   validateSearchPathComponent shimParent
   createDirectoryIfMissing True shimParent
   setFileMode shimParent ownerModes
+  -- Establish this process's birth identity before reclaiming, so the sweep
+  -- can positively identify this process's own root and leave it alone
+  -- instead of relying on an unreadable identity failing closed.
+  processId <- getProcessID
+  processIdentity <- registerCurrentProcessIdentity
   cleanupDeadCommandShimStagingDirectories shimParent
+  let ownerId = show processId
+      identityDigest = commandShimProcessIdentityDigest processIdentity
+      generationRoot =
+        shimParent
+          </> ( commandShimOwnedLeafPrefix
+                  <> ownerId
+                  <> "-"
+                  <> identityDigest
+                  <> "-"
+                  <> generationDigest
+              )
   generationValid <-
     verifyCommandShimGeneration generationRoot config availableTools
   if generationValid
     then pure generationRoot
     else do
-      processId <- getProcessID
-      processIdentity <- registerCurrentProcessIdentity
       stagingRoot <-
         createCommandShimStagingRoot
           shimParent
-          (show processId)
-          (commandShimProcessIdentityDigest processIdentity)
+          commandShimStagingLeafPrefix
+          ownerId
+          identityDigest
           0
       setFileMode stagingRoot ownerModes
       mapM_ (materializeShim stagingRoot) availableTools
       materializeGenerationMarker stagingRoot generationDigest
-      setFileMode stagingRoot immutableCommandShimDirectoryMode
-      publishResult <-
-        try (renameDirectory stagingRoot generationRoot) ::
-          IO (Either IOException ())
-      case publishResult of
-        Right () -> verifyPublishedGeneration generationRoot
-        Left publishError -> do
-          concurrentlyPublished <-
-            verifyCommandShimGeneration generationRoot config availableTools
-          cleanupCommandShimStagingDirectory stagingRoot
-          if concurrentlyPublished
-            then pure generationRoot
-            else ioError publishError
+      publishCommandShimGeneration
+        shimParent
+        ownerId
+        identityDigest
+        generationRoot
+        stagingRoot
+        1
   where
+    -- Move staging into the owned generation root. POSIX @rename(2)@ cannot
+    -- replace a non-empty directory, so a root that already exists and fails
+    -- verification cannot be recovered by renaming over it: every attempt
+    -- fails with @ENOTEMPTY@, and with it every external command this process
+    -- would run. One bounded supersede-and-retry vacates such a root in a
+    -- single atomic step, so the root is never observed half-built.
+    publishCommandShimGeneration ::
+      FilePath ->
+      String ->
+      String ->
+      FilePath ->
+      FilePath ->
+      Int ->
+      IO FilePath
+    publishCommandShimGeneration
+      shimParent
+      ownerId
+      identityDigest
+      generationRoot
+      stagingRoot
+      supersedesRemaining = do
+        publishResult <-
+          try (renameDirectory stagingRoot generationRoot) ::
+            IO (Either IOException ())
+        case publishResult of
+          Right () -> verifyPublishedGeneration generationRoot
+          Left publishError -> do
+            concurrentlyPublished <-
+              verifyCommandShimGeneration generationRoot config availableTools
+            if concurrentlyPublished
+              then do
+                cleanupCommandShimStagingDirectory stagingRoot
+                pure generationRoot
+              else
+                if supersedesRemaining <= 0
+                  then do
+                    cleanupCommandShimStagingDirectory stagingRoot
+                    ioError publishError
+                  else do
+                    vacateCommandShimGenerationRoot
+                      shimParent
+                      ownerId
+                      identityDigest
+                      generationRoot
+                    publishCommandShimGeneration
+                      shimParent
+                      ownerId
+                      identityDigest
+                      generationRoot
+                      stagingRoot
+                      (supersedesRemaining - 1)
+
     materializeShim shimRoot tool = do
       let shimPath =
             shimRoot
@@ -514,8 +572,64 @@ materializeCommandShims paths config availableTools = do
                 )
             )
 
-immutableCommandShimDirectoryMode :: FileMode
-immutableCommandShimDirectoryMode = ownerReadMode .|. ownerExecuteMode
+-- | Leaf prefix of a published, owner-scoped shim root. The leaf names the
+-- process that minted it (pid plus process-birth-identity digest) as well as
+-- the generation digest, so a root is reclaimable evidence rather than shared
+-- state: 'cleanupDeadCommandShimStagingDirectories' can prove the owner is
+-- gone before removing it. A shared, content-addressed name carried no owner,
+-- so nothing could prove that no live process was still resolving through it,
+-- and published generations therefore accumulated forever.
+commandShimOwnedLeafPrefix :: FilePath
+commandShimOwnedLeafPrefix = "own-"
+
+-- | Leaf prefix of an in-progress shim root, before its atomic publication.
+commandShimStagingLeafPrefix :: FilePath
+commandShimStagingLeafPrefix = ".incoming-"
+
+-- | Leaf prefix of a generation root that failed verification and was moved
+-- aside so a correct one could take its name. See
+-- 'vacateCommandShimGenerationRoot'.
+commandShimSupersededLeafPrefix :: FilePath
+commandShimSupersededLeafPrefix = ".superseded-"
+
+-- | Atomically vacate a generation root that exists but fails verification.
+--
+-- POSIX @rename(2)@ fails with @ENOTEMPTY@ against a non-empty destination
+-- directory, so a corrupt root cannot be replaced by renaming over it. Left
+-- alone it is terminal: verification keeps failing, republication keeps
+-- failing, and every external command fails with it. Reserving a sibling leaf
+-- and renaming the corrupt tree into it frees the name in one atomic step,
+-- with no window in which the root exists half-built.
+--
+-- Failures are deliberately swallowed. This runs only on a path that has
+-- already failed, and the caller's retry surfaces the original publication
+-- error if the name is still not free.
+vacateCommandShimGenerationRoot ::
+  FilePath ->
+  String ->
+  String ->
+  FilePath ->
+  IO ()
+vacateCommandShimGenerationRoot shimParent ownerId identityDigest generationRoot = do
+  reservation <-
+    try
+      ( createCommandShimStagingRoot
+          shimParent
+          commandShimSupersededLeafPrefix
+          ownerId
+          identityDigest
+          0
+      ) ::
+      IO (Either IOException FilePath)
+  case reservation of
+    Left _ -> pure ()
+    Right asideRoot -> do
+      -- The reservation is an empty directory, and @rename(2)@ does replace an
+      -- empty destination, so this move needs no separate collision handling.
+      _ <-
+        try (renameDirectory generationRoot asideRoot) ::
+          IO (Either IOException ())
+      cleanupCommandShimStagingDirectory asideRoot
 
 commandShimGeneration ::
   HostConfig.HostConfig ->
@@ -539,14 +653,15 @@ commandShimGeneration config availableTools =
 
 createCommandShimStagingRoot ::
   FilePath ->
+  FilePath ->
   String ->
   String ->
   Int ->
   IO FilePath
-createCommandShimStagingRoot shimParent processId processIdentity candidateIndex = do
+createCommandShimStagingRoot shimParent leafPrefix processId processIdentity candidateIndex = do
   let candidate =
         shimParent
-          </> ( ".incoming-"
+          </> ( leafPrefix
                   <> processId
                   <> "-"
                   <> processIdentity
@@ -562,6 +677,7 @@ createCommandShimStagingRoot shimParent processId processIdentity candidateIndex
       | isAlreadyExistsError err ->
           createCommandShimStagingRoot
             shimParent
+            leafPrefix
             processId
             processIdentity
             (candidateIndex + 1)
@@ -588,11 +704,16 @@ verifyCommandShimGeneration generationRoot config availableTools = do
                           | tool <- availableTools
                           ]
                     )
-                writeModes =
-                  ownerWriteMode .|. groupWriteMode .|. otherWriteMode
-                immutableRoot =
-                  isDirectory rootStatus
-                    && fileMode rootStatus .&. writeModes == 0
+                -- 'rootStatus' comes from 'getSymbolicLinkStatus' (an lstat),
+                -- so this rejects a symlink standing in for the root. The
+                -- root's write bits are deliberately not asserted: the entry
+                -- set, link targets, and marker digest below detect actual
+                -- mutation, whereas a mode check only detected the
+                -- possibility of it -- and at a single uid it stopped no
+                -- adversary (this module chmods a shim root itself in
+                -- 'cleanupCommandShimStagingDirectory'), while making a
+                -- published root unremovable by ordinary tooling.
+                structuralRoot = isDirectory rootStatus
             linksMatch <-
               and
                 <$> mapM
@@ -603,7 +724,7 @@ verifyCommandShimGeneration generationRoot config availableTools = do
                 generationRoot
                 (commandShimGeneration config availableTools)
             pure
-              ( immutableRoot
+              ( structuralRoot
                   && actualEntries == expectedEntries
                   && linksMatch
                   && markerMatches
@@ -650,6 +771,20 @@ configuredShimMatches generationRoot config tool = do
         && shimTarget == configuredToolPath config tool
     )
 
+-- | Reclaim every shim root whose owning process is provably gone -- staging
+-- left by a crash mid-publication, a superseded root, and published
+-- owner-scoped roots alike. This is what bounds @command-shims@: each live
+-- process holds at most one root per generation digest, and a root outlives
+-- its owner only until the next materialization sweeps it.
+--
+-- Reclamation is fail-closed. A live pid whose birth identity cannot be read
+-- is left alone, because it cannot be distinguished from a live owner. On
+-- Darwin that identity comes from the process registry, which knows only
+-- infernix processes, so a root whose owner was @SIGKILL@ed and whose pid was
+-- later recycled by an unrelated process is not reclaimed here. That residue
+-- is bounded and benign: an owner-scoped root is @0700@, so ordinary tooling
+-- (@git clean@, @rm -rf@) removes it, which is exactly what a mode-@0500@
+-- root denied.
 cleanupDeadCommandShimStagingDirectories :: FilePath -> IO ()
 cleanupDeadCommandShimStagingDirectories shimParent = do
   entries <- listDirectory shimParent
@@ -683,26 +818,51 @@ cleanupDeadCommandShimStagingDirectories shimParent = do
               cleanupCommandShimStagingDirectory stagingRoot
         _ -> pure ()
 
+-- | The leaf prefixes whose directories name an owning process and are
+-- therefore reclaimable once that owner is proven gone: in-progress staging,
+-- a superseded root awaiting removal, and a published owner-scoped root.
+commandShimReclaimableLeafPrefixes :: [FilePath]
+commandShimReclaimableLeafPrefixes =
+  [ commandShimStagingLeafPrefix,
+    commandShimSupersededLeafPrefix,
+    commandShimOwnedLeafPrefix
+  ]
+
+-- | Parse the owning pid and process-birth-identity digest out of a
+-- reclaimable shim leaf. The trailing component is a candidate index for
+-- staging and superseded leaves and a generation digest for published ones,
+-- so both shapes are accepted.
 commandShimStagingOwner :: FilePath -> Maybe (Integer, String)
 commandShimStagingOwner entry = do
-  suffix <- List.stripPrefix ".incoming-" entry
+  suffix <-
+    listToMaybe
+      (mapMaybe (`List.stripPrefix` entry) commandShimReclaimableLeafPrefixes)
   let (processIdText, identitySuffix) = span isDigit suffix
   processId <- readMaybe processIdText
-  identityAndNonce <-
+  identityAndTrailer <-
     case identitySuffix of
       '-' : value -> Just value
       _ -> Nothing
-  let (identityDigest, nonceSuffix) = splitAt 64 identityAndNonce
+  let (identityDigest, trailerSuffix) = splitAt 64 identityAndTrailer
   guard
     ( processId > 0
         && processId <= 2147483647
         && length identityDigest == 64
         && all isHexDigit identityDigest
-        && case nonceSuffix of
-          '-' : nonce -> not (null nonce) && all isDigit nonce
+        && case trailerSuffix of
+          '-' : trailer -> commandShimLeafTrailerValid trailer
           _ -> False
     )
   pure (processId, identityDigest)
+
+-- | A reclaimable leaf's trailing component: a decimal candidate index, or a
+-- 64-character hex generation digest.
+commandShimLeafTrailerValid :: String -> Bool
+commandShimLeafTrailerValid trailer =
+  not (null trailer)
+    && ( all isDigit trailer
+           || (length trailer == 64 && all isHexDigit trailer)
+       )
 
 commandShimProcessIdentityDigest :: ProcessBirthIdentity -> String
 commandShimProcessIdentityDigest =

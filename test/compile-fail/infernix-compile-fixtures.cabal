@@ -445,6 +445,11 @@ executable fail-cannot-substitute-cluster-teardown-owner
     main-is: CannotSubstituteClusterTeardownOwner.hs
     hs-source-dirs: fail
 
+executable fail-cannot-claim-unenforced-address-space
+    import: fixture
+    main-is: CannotClaimUnenforcedAddressSpace.hs
+    hs-source-dirs: fail
+
 executable fail-skip-subprocess-lease-phase
     import: protocol-fixture
     main-is: SkipSubprocessLeasePhase.hs

@@ -1,7 +1,11 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done — Sprint 0.20 reopened and re-closed this phase for the per-machine fleet
-doctrine on 2026-08-05. Sprint 0.19 reopened and re-closed it for the bounded-host-memory
+**Status**: Active — reopened 2026-08-08 by Sprint 0.21. Sprint 0.19 re-closed this phase for the
+bounded-host-memory doctrine on 2026-08-04, and that doctrine is now known incomplete: it reasons
+about the toolchain account without naming the co-resident VM pledge that both supported lanes run
+inside. That is a defect in the declared doctrine, not merely in its implementation, so it reopens
+the phase that owns the doctrine. Sprint 0.20 reopened and re-closed this phase for the per-machine
+fleet doctrine on 2026-08-05. Sprint 0.19 reopened and re-closed it for the bounded-host-memory
 doctrine and its governance surface on 2026-08-04. Sprint 0.18 closed the
 no-repo-owned-native-source doctrine, governed workflow mirror, and correction evidence reset on
 2026-07-27; Sprint 0.17 and Sprints 0.1-0.16 retain their recorded narrower closure.
@@ -1198,6 +1202,48 @@ reconcile, which is the same move Sprint 8.9 made when it gave each union arm on
 None in this sprint. The implementation it governs is owned by Sprint 4.34 (admission on the
 executing machine, fail-closed identity), Sprint 3.16 (the topology collapse), Sprint 6.47 (the
 validation surface), and Sprints 8.10/8.11 (the wire).
+
+---
+
+## Sprint 0.21: Name The Co-Resident VM In The Host Memory Doctrine [Active]
+
+**Status**: Active — opened 2026-08-08.
+**Docs to update**: `documents/architecture/bounded_host_memory.md`
+
+### Objective
+
+[bounded_host_memory.md](../documents/architecture/bounded_host_memory.md) partitions physical RAM
+into declared accounts and is careful to enumerate what it does **not** bound — page cache, kernel
+slab, the OOM-protected container runtime, and every process infernix did not start. That list omits
+a claimant that measurably exists on the supported Apple host and that both supported lanes run
+inside: **a co-resident VM pledge**.
+
+This is a doctrine defect, not an implementation gap, which is why it reopens Phase 0 rather than
+sitting only in Phase 1. The document's own governing sentence — a ceiling is inseparable from the
+concurrency it is multiplied by — is being applied against physical memory when the memory actually
+available to the toolchain is physical minus whatever the VM has pledged.
+
+Measured on the development host, 2026-08-08: physical **65536 MiB**; generated
+`cabal.project.local` grants `jobs: 8` x `-M4096M` = **32768 MiB**; `colima list` reports the default
+profile Running with a **48 GiB** pledge. The `linux-cpu` lane executes *inside* that VM, so the two
+lanes are not independent claimants on one host — they are nested.
+
+### Deliverables
+
+- The doctrine names a co-resident VM pledge as a claimant, states that the Darwin account does not
+  currently intersect it, and says plainly what that costs.
+- The doctrine notes that the *inference* budget already intersects on Darwin
+  (`src/Infernix/DemoConfig/Internal.hs:428-448`) while the *toolchain* account does not, so two
+  subsystems presently disagree about the same RAM — the doctrine has to say which is right.
+
+### Validation
+
+`infernix lint docs` GREEN with the metadata block intact. The measurement correction is Phase 1
+Sprint 1.21's residual; this sprint owns only the declared doctrine.
+
+### Remaining Work
+
+The doc edit, then re-close. No cohort gate — this sprint is doc-only.
 
 ---
 

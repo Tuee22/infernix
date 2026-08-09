@@ -1,6 +1,13 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Validation Only. Sprint 1.20's `linux-cpu` cohort closed on exact image
+**Status**: Active — **no longer Validation Only as of 2026-08-08.** The
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) surfaced two code-side defects inside
+Sprint 1.20's own surface (the bounded-command target-environment allowlist, which blocks `test lint`
+and `cluster up` on both lanes, and the Audiveris installed-smoke path drift), and a measurement
+residual in Sprint 1.21 (the Darwin toolchain account does not intersect the co-resident VM pledge).
+Sprint 1.22 landed the lane-resolved build-memory correction and is code-side closed. The
+validation-only text that follows describes the position as of 2026-08-02 and is retained for that
+recorded scope. Sprint 1.20's `linux-cpu` cohort closed on exact image
 `sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67` and its remaining half is
 Apple accelerator evidence. Sprint 1.21 (bounded host build-memory kernel) is code-side closed on
 2026-08-06 and `Active` only for the Apple lane's unmeasured mechanism, which its cohort wave owns.
@@ -1562,9 +1569,14 @@ closes; NVIDIA per-process accounting remains fail-closed until its later GPU ph
 
 ---
 
-## Sprint 1.20: Remove Embedded Apple Native Source [Active — Validation Only]
+## Sprint 1.20: Remove Embedded Apple Native Source [Active]
 
-**Status**: Active — code-side closed on 2026-08-02; Apple accelerator sign-off remains a
+**Status**: Active — **no longer validation-only as of 2026-08-08.** Two code-side defects in this
+sprint's own surface were found on Darwin after the
+[2026-08-08 evidence reset](cohort-validation-waves.md), so the "code-side closed" claim below is
+narrowed to the scope it was true for on 2026-08-02 and does not describe the current tree. See
+`Remaining Work — reopened 2026-08-08` at the end of this sprint. The prior status text follows,
+retained for its recorded scope: code-side closed on 2026-08-02; Apple accelerator sign-off remains a
 validation-only blocker under Wave Y. The settled source passes the complete machine-independent
 gate set and the paired source-matched `linux-cpu` full-suite cohort on exact image
 `sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`.
@@ -3784,6 +3796,38 @@ affected artifact, run installed authoritative smokes, prove routed runtime load
 Apple and paired `linux-cpu` cohorts, and record Wave Y evidence. Phase 0's accepted all-Haskell
 identity remains unchanged and closes Sprint 0.18 only.
 
+### Remaining Work — reopened 2026-08-08
+
+Two defects in this sprint's own surface, both found on Darwin after the
+[2026-08-08 evidence reset](cohort-validation-waves.md). Both are code-side, so this sprint is no
+longer validation-only.
+
+- **The bounded-command target-environment allowlist admits no row for the Poetry snapshot
+  environment any renderer produces.** `validateRenderedEnvironment`'s exact-match set at
+  `src/Infernix/Cluster/Subprocess.hs:8337-8352` requires `PYTHONNOUSERSITE` on both
+  `poetrySnapshotNames` (`:8278`) and `poetrySnapshotDyldNames` (`:8288`), while
+  `packageClosureSnapshotEnvironment` (`:15032-15048`) emits only `PYTHONHOME`, `PYTHONPATH`, and on
+  non-Linux `DYLD_FRAMEWORK_PATH`/`DYLD_LIBRARY_PATH`. Linux passes only because `:15039`
+  short-circuits to a row that omits the name. **Three entry points fail on Darwin**, not one:
+  `infernix test lint`, `infernix test all`, and `cluster up`
+  (`Cluster.hs:689` → `Engines/AppleSilicon/Internal.hs:190 ensureBoundedPoetryProjectReady` →
+  `installPoetryProject`), so `bootstrap/apple-silicon.sh up` is down. The correction is to derive
+  the admissible name set from the renderer vocabulary rather than restating it — a second copy of
+  what the renderers construct is what drifted. Note `validateRenderedEnvironment` (`:3623-3626`)
+  treats `[PYTHONNOUSERSITE, PYTHONDONTWRITEBYTECODE]` as an **order-sensitive** list while
+  `fixedProvisioningProcessWithEnvironment` (`:4250`) always prepends the guard, so re-adding the
+  name through a renderer fails at a second site. The four dead rows are ledgered in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- **Audiveris installed-smoke path drift.** `Engines/Provisioning/Internal.hs:282-283` now returns
+  `Audiveris.app/Contents/runtime/Contents/Home/bin/java`, while the consumer at
+  `Cluster/Subprocess.hs:15109-15119` still matches only
+  `["Audiveris.app","Contents","MacOS","Audiveris"]` and falls through to `[]`, dropping
+  `DYLD_PRINT_LIBRARIES`. The environment gate does not catch it — the set collapses to the
+  allowlisted `pythonNoBytecodeNames` — so it fails later at the loader audit with "sealed runner
+  emitted no DYLD loader provenance". Producer and consumer are again two copies of one path.
+
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+
 ---
 
 ## Sprint 1.21: Bounded Host Build Memory Kernel [Active]
@@ -3900,7 +3944,92 @@ victim rank — is Phase 6 Sprint 6.46 and is deliberately not claimed here. Unt
 ceiling is installed by the committed and generated project files rather than by an evidence-gated
 spawn.
 
+**Reopened 2026-08-08 — the Darwin account does not intersect the co-resident VM pledge.**
+`observeHostMemoryFacts` (`src/Infernix/HostMemory.hs:160-170`) sets effective memory equal to
+physical on Darwin, while the Linux arm intersects the cgroup maximum at `:125`. On the supported
+Apple host both lanes run inside the same Colima VM, and that VM's pledge is not physical memory the
+toolchain may also spend. Measured on the development host on 2026-08-08: physical **65536 MiB**;
+generated `cabal.project.local` grants `jobs: 8` x `-M4096M` = **32768 MiB**; `colima list` reports
+the default profile Running with a **48 GiB** pledge. 32768 + 49152 exceeds 65536, so the account is
+over-subscribed by 16 GiB and the doctrine's own "a ceiling is inseparable from the concurrency it is
+multiplied by" arithmetic is being performed against the wrong denominator. The intersection
+machinery already exists and the *inference* budget already applies it on Darwin
+(`src/Infernix/DemoConfig/Internal.hs:428-448`), so two subsystems currently disagree about the same
+RAM. The doctrine gap is owned by Phase 0; this sprint owns the measurement.
+
 ---
+
+## Sprint 1.22: Resolve The Build-Memory Lane Instead Of Assuming It [Active]
+
+**Status**: Active — code-side closed and GREEN on Apple Silicon; the `linux-cpu` confirmation run
+is the only item left.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `test/unit/Spec.hs`,
+`test/compile-fail/fail/CannotClaimUnenforcedAddressSpace.hs`, `test/compile-fail/Main.hs`,
+`test/compile-fail/infernix-compile-fixtures.cabal`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`
+
+### Objective
+
+Sprint 1.21 wrote one platform-independent bound type while its own doctrine said the mechanism is
+resolved per lane. That gap was not academic: it took every gate command down on Apple Silicon.
+
+`withToolchainSpawnAuthority` resolved the lane and then discarded the answer, so
+`withBoundedToolchainChild` assumed an address-space rlimit on every lane. Darwin reports `RLIMIT_AS`
+infinite and rejects every finite ceiling written against it with `EINVAL` — measured: soft and hard
+are both `INT64_MAX`, and `setrlimit` refuses `{finite, INFINITY}`. `setResourceLimit` therefore
+threw before the child was started, so `infernix test lint`, `test unit`, `test integration` and
+`test all` all died at the first toolchain spawn. `BuildMemory.hs` has a single commit dated
+2026-08-07 and had never run on Darwin.
+
+### Deliverables
+
+- **The resolved mechanism is retained rather than discarded.** `ToolchainSpawnAuthority` carries it
+  alongside the plan, and `withBoundedToolchainChild` holds a ceiling only on a lane that implements
+  one. This is a **runtime lane resolution, not a type-level guarantee**, and is labelled as such —
+  the gates came back on this change alone.
+- **The lane distinction is in the types.** `BuildMemoryMechanism` is a GADT indexed by
+  `AddressSpaceEnforcement`; `BuildMemoryBound` carries that index; `enforcedAddressCeilingMib` is
+  defined only for `'AddressSpaceEnforced`. Each constructor fixes its own index, so the claim and
+  the evidence are one fact — a separate unindexed copy beside the index would have reintroduced the
+  over-claim one line below the type forbidding it. `resolveBuildMemoryMechanism` returns the new
+  `ResolvedBuildMemoryMechanism` sum, which is where the runtime fact is refined and where every
+  consumer is forced to handle both arms.
+- **The mints return `Either` rather than a rank-2 region.** Identical refinement, `-Werror` already
+  forces both arms, and no CPS rewrite of the fixture's call sites. A `with`-shaped region in this
+  repository means the capability dies at region exit, but `establishBoundedBuildMemory` installs a
+  permanent, one-way, image-wide limit — the region shape would mis-signal.
+- **An unenforced bound observes something.** `observeHeapCapOnlyBound` re-reads the runtime heap cap
+  committed to `cabal.project.local` and refuses when it is absent, unparseable, or disagrees with
+  the derived plan. Without it the Darwin arm would mint evidence from the caller's own argument,
+  contradicting this module's stated principle that `requireBoundedBuildMemory` is the observation at
+  the point of use. The read is strict: a lazy `readFile` holds the handle open through the refusal
+  paths, and the next writer fails with `resource busy` instead of the intended diagnostic.
+- **Unit coverage branches by lane.** The unenforced arm asserts the two refusals (absent cap, stale
+  cap) and the agreeing case; the real compiler-chain assertion is shared, because it carries content
+  on both lanes.
+- **A compile-fail fixture pins the index**: `CannotClaimUnenforcedAddressSpace.hs` applies
+  `enforcedAddressCeilingMib` to a `'AddressSpaceUnavailable` bound and must fail as a type mismatch.
+  It carries `{-# LANGUAGE DataKinds #-}` explicitly — the fixture package is `GHC2021`, which does
+  not include it, and without the pragma the fixture fails with the wrong diagnostic class.
+
+### Validation
+
+- `./.build/infernix test lint` reaches and passes `infernix-haskell-style` on this Mac; before the
+  change it died immediately with `setResourceLimit: invalid argument`.
+- `cabal test infernix-unit` is **PASS on Darwin with no local scaffold** — the criterion this sprint
+  was written against.
+- `cabal test infernix-compile-fail`: 6 positive, 88 negative, including the new fixture.
+- `cabal test infernix-haskell-style` GREEN.
+
+### Remaining Work
+
+- The `linux-cpu` lane run. The enforced arm is unchanged in behaviour but its code moved, and this
+  host cannot exercise it natively; drive it through the existing colima native arm64 daemon.
+- `infernix test lint` still does not complete on Darwin — it now reaches a **separate, unrelated**
+  pre-existing failure in `Infernix.Python` provisioning: `bounded-command target environment does
+  not match a closed rendered environment`, naming `DYLD_FRAMEWORK_PATH`, `DYLD_LIBRARY_PATH`,
+  `PYTHONHOME`, `PYTHONPATH`, `PYTHONDONTWRITEBYTECODE`. That is an environment-closure defect, not a
+  build-memory one, and is owned separately.
 
 ## Documentation Requirements
 

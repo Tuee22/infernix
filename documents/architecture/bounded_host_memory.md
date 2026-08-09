@@ -139,9 +139,42 @@ Concretely outside the bound, and deliberately not claimed:
   checkout's cluster. Another tenant's cluster was resident during the incident.
 - **Kernel admission control**, which on the supported hosts is disabled: allocations succeed until
   physical exhaustion, so no reasoning here may assume commit accounting.
+- **A co-resident virtual-machine pledge.** On the supported Apple host the container lanes run
+  inside a Linux VM, and the memory that VM has pledged is not memory the toolchain account may also
+  spend. The two supported lanes are therefore **nested, not independent**: `linux-cpu` executes
+  *inside* the VM whose pledge the Apple account must already have subtracted. The Darwin account
+  does not currently intersect that pledge — it sets effective memory equal to physical, where the
+  Linux account intersects the cgroup maximum — so on a host whose VM is running, the declared
+  toolchain budget and the VM's reservation can together exceed physical memory. The doctrine's own
+  rule is what this violates: a ceiling multiplied by a job count is only a bound if the budget it
+  divides is memory that is actually available. Note that the *inference* budget already performs
+  this intersection on Darwin while the toolchain account does not, so two subsystems in this
+  repository presently disagree about the same RAM; the intersecting one is right.
 - **The Apple lane**, until its cohort wave measures it. Darwin aliases the address-space limit to
   an advisory resident-set limit, has no cgroups, and has no equivalent global out-of-memory
   killer; unified memory means accelerator allocations draw on the same pool.
+
+### The lane distinction is in the types, not only in this prose
+
+Saying "the mechanism is resolved per lane" and then writing one platform-independent bound type is
+how the sentence above got contradicted in code. `RLIMIT_AS` on Darwin is not merely advisory — the
+kernel reports it infinite and **rejects every finite ceiling written against it** with `EINVAL`, so
+there is no ceiling to install and nothing for a bound to witness. A spawn wrapper that assumed one
+threw before its child ever started, taking `infernix test lint`, `test unit`, `test integration`
+and `test all` down on that lane.
+
+So `BuildMemoryMechanism` is indexed by `AddressSpaceEnforcement`, and `BuildMemoryBound` carries
+that index. `enforcedAddressCeilingMib` is defined only for `'AddressSpaceEnforced`: asking an
+unenforced lane for its address-space ceiling is a type error rather than a plausible integer, and a
+compile-fail fixture pins it. Each mechanism constructor fixes its own index, so the claim and the
+evidence are one fact and cannot drift apart.
+
+Be precise about what that buys. GHC cannot decide which lane a binary runs on; the index is refined
+from a runtime observation by `resolveBuildMemoryMechanism`. What becomes unrepresentable is *using*
+an unenforced bound as though it were enforced. And an unenforced bound still observes something
+rather than asserting its own argument: it re-reads the runtime heap cap committed to
+`cabal.project.local` and refuses when that disagrees with the derived plan, which is the same act
+as the enforced lane's post-write re-observation.
 
 ### A note on the word "bounded"
 

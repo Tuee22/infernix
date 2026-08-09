@@ -61,6 +61,20 @@ substrate-neutral engine pools run inference on Kubernetes workloads or Apple ho
 
 ## Current Repo Assessment
 
+> **Neither supported lane completes its lifecycle today (2026-08-08).** Eight commits landed between
+> 2026-07-25 and 2026-08-07 — **82 files and 67,232 insertions under `src/`** — none validated on
+> Darwin, and the
+> [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) retires every Apple and `linux-cpu`
+> attestation dated 2026-07-20 (Wave V) and 2026-07-24 (Waves W, X) as a current proof point.
+> `infernix test all` and `cluster up` fail on both lanes: the bounded-command target-environment
+> allowlist admits no row for the Poetry snapshot environment any renderer produces (Phase 1
+> Sprint 1.20). What is re-established is the machine-independent set — the library and every suite
+> compile on Darwin under `-Wall -Werror`, and `infernix-unit`, `infernix-haskell-style`,
+> `infernix-compile-fail` and `infernix lint docs|files` are green. A survey of 10 of the 82 changed
+> files found 3 will-break and 7 might-break Darwin blockers; **72 files remain unaudited**, so that
+> inventory is a floor. Phase 0 and Phase 7 are reopened, Phases 5 and 9 stay `Done` with the
+> dependency named, and Phases 1, 4 and 6 carry the code-side residuals.
+
 The repository implements the runtime-config architecture, bootstrap responsibility boundary, and
 Harbor-first image-boundary doctrine described in this overview. The governed validation surface
 now splits cleanly between focused config-independent lint or
@@ -126,8 +140,9 @@ coordinators route through compiled placements and daemon capabilities; and engi
 only the opaque executable and derives its command from the compiled binding. Phase 1 Sprint 1.19
 passed its complete source-matched machine-independent gate and final adversarial source review on
 2026-07-25, including normal coordinator delivery of typed rejection for an unavailable row. Phase
-0 Sprint 0.18 closed on 2026-07-27, Phase 1 Sprint 1.20 is Active, and Phase 2 remains blocked by
-Phase 1. Phase 4 retains Apple/Linux
+0 Sprint 0.18 closed on 2026-07-27, Phase 1 Sprint 1.20 is Active — and as of 2026-08-08 no longer
+validation-only, since two code-side defects in its own surface were found on Darwin — and Phase 2
+remains blocked by Phase 1. Phase 4 retains Apple/Linux
 CPU adversarial enforcement and encapsulated serialization, Phase 6 retains independently indexed
 Linux GPU RAM/VRAM enforcement and lint closure, and Phase 8 retains the final proper Dhall-union
 and `Natural` wire schema. On 2026-07-22 the

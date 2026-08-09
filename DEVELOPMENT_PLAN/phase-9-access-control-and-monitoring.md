@@ -1,6 +1,13 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done — RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
+**Status**: Done — with a named open dependency, per Section C of
+[development_plan_standards.md](development_plan_standards.md). The
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) of 2026-08-08 means the routed
+Playwright and `cluster up` evidence cited below cannot be reproduced today: `cluster up` fails on
+both lanes on Phase 1 Sprint 1.20's bounded-command environment defect. This phase owns no surveyed
+Darwin blocker and has no open code-side work, so it stays `Done` while naming the dependency; its
+cohort evidence is reproduced under [Wave Y](cohort-validation-waves.md).
+RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
 `apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
 on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
 loopback data-plane split, per-user isolation, the default-on per-user STS scoped-credential object

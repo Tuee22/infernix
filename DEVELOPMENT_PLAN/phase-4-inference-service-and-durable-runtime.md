@@ -2856,6 +2856,72 @@ counts in the message.
 
 ---
 
+## Sprint 4.36: Restore The Darwin Per-Engine Python Producer [Active]
+
+**Status**: Active — opened 2026-08-08 by the
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Code-side open; no cohort evidence.
+**Implementation**: `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`,
+`src/Infernix/Python.hs`, `docker/Dockerfile`
+**Docs to update**: none — the target shape is already declared; this sprint makes the code match it
+
+### Objective
+
+Give the per-engine Python environment a producer on Darwin, and make the code that demands it the
+code that produces it.
+
+### Deliverables
+
+- **The missing producer.** `ensurePerEngineFrameworkVenvReady` (`Runtime/Worker.hs:274-301`) demands
+  `python/engines/<name>/.venv/bin/python` plus a `.infernix-framework-groups-*` marker whose body it
+  specifies at `:339-349`. On Darwin `perEngineFrameworkGroups` (`:303-321`) returns
+  `["apple-silicon"]` for transformers-python, pytorch-python and diffusers-python, making both
+  mandatory. The only producer in the repository is `docker/Dockerfile:370-387`, wrapped in
+  `if [ "${RUNTIME_MODE}" = "linux-cpu" ]`. The window that closed Sprint 4.32 deleted the in-process
+  repair branch and left `ensurePoetryProjectInstalledWithGroups` (`Python.hs:108`) exported with
+  **zero callers**. Verified on the development host: all four of
+  `python/engines/{diffusers,pytorch,transformers,vllm}` exist and none has a `.venv`.
+- **Blast radius, stated rather than implied**: 8 of the 16 models in the live `./infernix.dhall`
+  dispatch to `PythonStdio` on Apple and fail identically — `llm-smollm2-safetensors`,
+  `audio-demucs-htdemucs`, `audio-open-unmix`, `music-omnizart`, `audio-bark-small`,
+  `music-mt3-infer`, `music-mr-mt3`, and `image-sdxl-turbo`. None of the cheap gates reaches this:
+  the only unit coverage (`test/unit/Spec.hs:3058-3060`) asserts the `RuntimeMode -> Bool` table and
+  never exercises the filesystem precondition, so it surfaces first at live inference.
+- **One derivation, not three.** The interpreter path is re-derived independently at
+  `Runtime/CappedEngine/Internal.hs:499-506`, which hard-fails at `:480-491` with its own message, and
+  the marker body is hand-reimplemented a third time in shell in the Dockerfile. Relaxing only
+  `Worker.hs:290` moves the failure ~700 lines away rather than fixing it. The derivation collapses to
+  one place in this sprint, or `linux-cpu` inherits the drift being removed from Apple. Ledgered in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- **Ordering note for whoever runs this**: `ensurePythonEngineSetupReady` (`:245-260`) checks
+  `bootstrap.json` *before* the venv check at `:260`, and that artifact **does** have a Darwin
+  producer (`infernix internal materialize-metal-engines`). So a clean host shows the bootstrap error
+  first; satisfying it then exposes this one, which `materialize-metal-engines` does not fix.
+
+### Validation
+
+Per-model live inference for the 8 affected models on Apple, plus the paired `linux-cpu` run proving
+the collapsed derivation did not regress the container producer.
+
+### Remaining Work
+
+All of it. **Cohort gate**: [Wave Y](cohort-validation-waves.md).
+
+Two further Darwin residuals in this phase's surface, found in the same audit and not yet owned by a
+sprint of their own:
+
+- **Apple footprint sampler has no vanished-member tolerance.**
+  `Runtime/CappedEngine/FixedObserver.hs:221-224` returns `Left` for the whole group when any single
+  member's `footprint` call fails, and `CappedEngine/Internal.hs:1339` turns that into a terminal
+  `EngineEnforcementUnavailable`. The Linux twin explicitly hardens the same race
+  (`Internal.hs:1750-1800`: skip, terminal-state check, bounded retry).
+- **Native model-cache hydration refuses zero-byte objects permanently.**
+  `Runtime/Worker.hs:646-658` raises on an empty object, and the presence guard at `:634-636` treats a
+  zero-byte file as absent, so every retry re-refuses. Reached only by
+  `image-apple-stable-diffusion-coreml` and `llm-qwen15-mlx` on a cold cache — both Apple-only, both
+  in the live catalog.
+
+---
+
 ## Documentation Requirements
 
 **Engineering docs to create/update:**
