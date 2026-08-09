@@ -42,8 +42,8 @@
 ### `test`
 
 - `infernix test init [--runtime-mode apple-silicon|linux-cpu|linux-gpu] [--demo-ui true|false]` - writes the thin `./infernix.test.dhall` the test harness reads to generate the run's `./infernix.dhall`
-- `infernix test lint` - runs the focused lint entrypoints together with the strict Haskell style and Python quality gates
-- `infernix test unit` - runs the Haskell unit suites and the PureScript frontend unit suites
+- `infernix test lint` - runs the focused lint entrypoints together with the strict Haskell/Cabal style and Python quality gates
+- `infernix test unit` - runs all machine-independent Haskell suites (compile-fail, artifact transaction, Apple materializer, capped observer, execution-plan, and unit) plus the PureScript frontend unit suite
 - `infernix test integration` - runs the cluster-backed integration suite against the active substrate
 - `infernix test e2e` - runs routed Playwright coverage for every demo-visible generated catalog entry
 - `infernix test all` - runs lint, unit, integration, and routed E2E validation in sequence
@@ -55,12 +55,15 @@
 ### `internal`
 
 - `infernix internal generate-purs-contracts PATH` - emits generated PureScript browser contracts into the requested output directory
+- `infernix internal validate-darwin-build-memory` - runs the closed Darwin-only fresh toolchain build and reports sampled peak aggregate physical footprint evidence
+- `infernix internal validate-darwin-audiveris-cancellation` - runs the fixed Darwin production Audiveris cancellation-recovery cohort gate
+- `infernix internal validate-darwin-installed-python-source-isolation` - runs the fixed Darwin installed-Python source-isolation cohort gate
 - `infernix internal discover images RENDERED_CHART` - prints the unique image references discovered in a rendered chart manifest
 - `infernix internal discover claims RENDERED_CHART` - prints the persistent-claim inventory discovered in a rendered chart manifest
 - `infernix internal discover harbor-overlay OVERLAY` - prints the Harbor-backed image references discovered in a rendered override payload
 - `infernix internal publish-chart-images RENDERED_CHART OUTPUT` - publishes the chart image inventory into a Harbor override file
-- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]` - writes the generated runtime config for one explicit substrate id to repo-root `./infernix.dhall`
-- `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
+- `infernix internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]` - writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id
+- `infernix internal materialize-metal-engines` - materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` and prepares the canonical Apple per-engine Python framework plan through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)
 - `infernix internal materialize-linux-native-engines` - materializes the allowlisted Linux native runner roots under `/opt/infernix/engines/<adapterId>/` for substrate images
 - `infernix internal demo-config load PATH` - loads one generated demo config and prints the rendered model listing
 - `infernix internal demo-config validate PATH` - validates one generated demo config file
@@ -77,7 +80,7 @@
 - `infernix internal materialize-metal-engines` remains in the generated inventory as the explicit
   Apple materialization helper. Its implementation is Tart-free and writes typed engine-artifact
   manifests under `./.data/engines/<adapterId>/`; it emits no repository-owned native source.
-  The Apple hardware cohort owns the upstream MLX GPU-operation, coremltools device-observation,
+  The Apple hardware gate requires the upstream MLX GPU operation, coremltools device observation,
   materialized-artifact load, and routed real-output evidence named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
 - `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
@@ -115,20 +118,23 @@
   shared edge on port `30090` instead of looping back through `127.0.0.1`
 - `infernix lint files|docs|proto|chart` run the canonical Haskell-implemented static checks
   (`src/Infernix/Lint/*`); `infernix test lint` runs them together with the strict Haskell
-  warning gate, the `ormolu` and `hlint` style stack via the Cabal test target, and the active
-  substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
+  warning gate, the `ormolu` and `hlint` Haskell-style target, the Cabal 3.16 manifest-format target,
+  and the active substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;
   `infernix lint files` uses tracked files from `.git` when available and otherwise falls back to
   the baked `/opt/infernix/source-snapshot-files.txt` manifest on git-less Linux image runs; the
-  style gate installs `ormolu` and `hlint` through `cabal install` against the project
-  `ghc-9.12.4` toolchain into `./.build/haskell-style-tools/bin/`
-- `infernix test unit` runs the Haskell unit suites and the PureScript frontend unit suites via
-  `npm --prefix web run test:unit`
+  the root Haskell-style component and solver-isolated Cabal-format package link their compatible
+  pinned libraries and invoke their APIs in-process through sequential closed top-level toolchain
+  children, without a runtime install or nested style-tool process
+- `infernix test unit` runs every closed machine-independent Haskell suite — compile-fail,
+  artifact transaction, Apple materializer, capped observer, execution-plan, and unit — through
+  the live build-memory authority, then runs the PureScript frontend suite via
+  `npm --prefix web run test:unit`; no focused Haskell gate requires a bare host Cabal command
 - `infernix test integration`, `infernix test e2e`, and `infernix test all` run their complete
   supported suites against the active substrate encoded in the generated `.dhall`
 - `infernix test e2e` uses the Playwright runtime baked into the Linux launcher image on Linux
   substrates and invokes `npm --prefix web exec -- playwright test` from inside the outer
-  container against Docker's private `kind` network; the Apple host-native npm lane is covered by
-  the Apple cohort validation batch. Apple host-native flows reconcile `kind`, `kubectl`,
+  container against Docker's private `kind` network; the Apple host-native npm lane must pass its
+  routed E2E gate. Apple host-native flows reconcile `kind`, `kubectl`,
   `helm`, Node.js, and Poetry on demand after `./.build/infernix` exists, and Linux flows rely on
   the documented outer-container
   host baseline
@@ -139,24 +145,23 @@
 
 ## Lifecycle Progress Surface
 
-- `infernix cluster status` reports `lifecycleStatus: idle` together with `lifecyclePhase:
-not-yet-reconciled`, `steady-state`, `mutation-incomplete` (dirty), or `cluster-absent`, plus a
-`clusterOwner` (`OperatorOwned` or `HarnessOwned`) field, when no lifecycle action is running; a
-`mutation-incomplete` (dirty) phase means a SIGKILLed `infernix test all` left its `HarnessOwned`
-cluster mid-mutation and is not `steady-state`, and the next `cluster up` reconciles it - while
-`cluster up` or `cluster down` is active, `cluster status` reports `lifecycleStatus: in-progress`
-plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`, `lifecycleHeartbeatAt`, and
-`lifecycleHeartbeatAgeSeconds` - the monitored long-running subprocess phases refresh
-`lifecycleHeartbeatAt` roughly every 30 seconds while they are still progressing; the current
-implementation applies that heartbeat contract to the long Docker build, Harbor image publication,
-Kind-worker Harbor preload, and Apple retained-state replay steps - elapsed wall time alone is not
-treated as failure on the supported path; treat a lifecycle action as still progressing while the
-current `lifecycleHeartbeatAt` continues to refresh, and treat it as stalled only when the command
-exits non-zero or the heartbeat stops moving across multiple monitor intervals - the `cluster
-status` lifecycle fields move under a typed `ClusterLifecycle` machine — which gains a first-class
-`ClusterMutating LifecyclePhase` position (the source of the `mutation-incomplete` dirty reading)
-alongside the persisted `ClusterOwner` — whose canonical home is [Managed State
-Transitions](../architecture/managed_state_transitions.md).
+- When no lifecycle action is running, `infernix cluster status` reports
+  `lifecycleStatus: idle`, a `clusterOwner` (`OperatorOwned` or `HarnessOwned`), and one
+  `lifecyclePhase`: `not-yet-reconciled`, `steady-state`, `mutation-incomplete`, or
+  `cluster-absent`.
+- `mutation-incomplete` means a killed harness left its `HarnessOwned` cluster mid-mutation rather
+  than at `steady-state`; the next `cluster up` reconciles it.
+- While `cluster up` or `cluster down` is active, `cluster status` reports
+  `lifecycleStatus: in-progress` plus `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
+  `lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`.
+- Long Docker builds, Harbor image publication, Kind-worker Harbor preload, and Apple retained-state
+  replay refresh `lifecycleHeartbeatAt` roughly every 30 seconds while progressing. Elapsed wall
+  time alone is not failure; a non-zero owning command or a heartbeat that stops across multiple
+  monitor intervals is a stall/failure signal.
+- The status fields are projections of the typed `ClusterLifecycle` machine, whose
+  `ClusterMutating LifecyclePhase` position produces the `mutation-incomplete` reading alongside
+  persisted `ClusterOwner`. Canonical contract: [Managed State
+  Transitions](../architecture/managed_state_transitions.md).
 
 ## Cross-References
 

@@ -11,18 +11,16 @@
 - a service may use a dedicated PostgreSQL cluster, but it still uses that same operator-managed Patroni model rather than a chart-managed standalone PostgreSQL deployment
 - services or add-ons that can self-deploy PostgreSQL, such as Grafana or similar charted workloads, disable that embedded chart path and point at an operator-managed cluster instead
 - Harbor's supported database path is the operator-managed `harbor-postgresql` cluster together
-  with its PgBouncer deployment; the old `infernix-harbor-database` StatefulSet is not part of
-  the supported topology
+  with its PgBouncer deployment; there is no `infernix-harbor-database` StatefulSet
 - PostgreSQL claims explicitly use `storageClassName: infernix-manual`, which is backed by
   `kubernetes.io/no-provisioner`, and those claims bind to manually created PVs under
   `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>`
 - `infernix test integration` validates PostgreSQL readiness and repeat lifecycle reuse of the same
   deterministic manually managed PV inventory and host paths
 - each operator-managed cluster runs **one instance** with one PgBouncer proxy. The Percona
-  operator remains the deployment mechanism and is **no longer retained as a high-availability
-  mechanism**: there is no replica to promote, so instance loss is restore-from-backup rather than
-  automatic failover. The replica-reinitialization repair path and the replication-role bootstrap
-  it depended on are deleted with the topology that required them
+  operator is the lifecycle mechanism, not a high-availability mechanism: there is no replica to
+  promote, so instance loss recovers by restart when storage remains healthy or by restore from
+  backup. The supported lifecycle command language contains no replica-reinitialization operation
 - Harbor and Keycloak Percona clusters reference repo-owned `databaseInitSQL` ConfigMaps that
   idempotently create `_crunchyrepl` as `LOGIN REPLICATION`, matching the Patroni bootstrap role
   the Percona image expects.

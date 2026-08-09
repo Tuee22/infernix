@@ -1,10 +1,16 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active — reopened 2026-08-08 by Sprint 0.21. Sprint 0.19 re-closed this phase for the
-bounded-host-memory doctrine on 2026-08-04, and that doctrine is now known incomplete: it reasons
-about the toolchain account without naming the co-resident VM pledge that both supported lanes run
-inside. That is a defect in the declared doctrine, not merely in its implementation, so it reopens
-the phase that owns the doctrine. Sprint 0.20 reopened and re-closed this phase for the per-machine
+**Status**: Active — Sprint 0.22 formatter-stable source has governed Apple rebuild GREEN for
+compile/install only, and the docs-only monitoring-stance correction has whole aggregate lint GREEN
+for style/policy/compile. Full unit is genuinely RED before test suites at bounded Python project
+provisioning. Diagnose the owned-kernel failure and residue next. Independent final review remains
+CLEAN with no High or Medium finding.
+Strict numerical execution pauses every code-writing phase until its remaining validation closes.
+**Suspended prior state**: Done — Sprint 0.21 re-closed this phase on 2026-08-08 after the bounded-host-memory
+doctrine named the co-resident VM pledge and the then-missing Darwin toolchain intersection. The
+current implementation now routes both toolchain and inference accounting through one fixed-path,
+conservative Colima observation and subtracts the active pledge from Darwin effective memory.
+Sprint 0.20 reopened and re-closed this phase for the per-machine
 fleet doctrine on 2026-08-05. Sprint 0.19 reopened and re-closed it for the bounded-host-memory
 doctrine and its governance surface on 2026-08-04. Sprint 0.18 closed the
 no-repo-owned-native-source doctrine, governed workflow mirror, and correction evidence reset on
@@ -29,6 +35,18 @@ no-repo-owned-native-source doctrine, governed workflow mirror, and correction e
 Phase 0 closes the documentation bootstrap only. Later phases still own follow-on documentation
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
+
+> **Fleet-doctrine completion reopen (2026-08-09).** A read-only audit found that Sprint 0.20 did
+> not complete its governed-document reconciliation and that the docs lint misses semantic
+> implementation-status prose. [Sprint 0.22](#sprint-022-complete-fleet-doctrine-reconciliation-and-enforce-status-free-governed-docs-active)
+> is therefore the only executable sprint. It removes stale mandatory/local-HA, replication,
+> leader-election, exactly-once, surviving-coordinator, deleted Patroni-repair, and retired
+> pod/node-failure-injection prose; makes the timeless contract one process per role per machine,
+> at-least-once with an effectively-once observable outcome, and single-instance platform recovery;
+> removes implementation status from governed docs; and adds semantic negative docs-lint tests.
+> This is machine-independent governance work with no accelerator cohort. Under the strict
+> numerical-order rule, Phases 1-9 are blocked until Sprint 0.22 closes; their exact prior states and
+> evidence remain recorded as suspended context rather than being erased.
 
 > **Per-machine fleet reopen (2026-08-05).** The supported architecture is a fleet: multiple
 > machines, each running exactly one engine process, all consuming the same `Shared` pool topic, each
@@ -99,7 +117,84 @@ lint rules established here.
 
 ## Current Repo Assessment
 
-Phase 0 is closed around the governed `documents/` suite. Sprint 0.18's no-native-source rule, lint
+Phase 0 is Active for formatter-stable, SOURCE-STABLE, build-GREEN Sprint 0.22. The governed prose
+reconciliation, semantic docs lint, and focused fixtures are landed; static zero scans, the body
+mirror, scoped diff check, and independent review are clean, with no High or Medium finding. No Sprint 0.22 governed
+unit, docs, or runtime gate has run. After 5m54s claimant-free readiness following the end of
+the external Cabal owner, the overlap monitor pinned owned PID 53817 and observed zero external
+claimants through settlement and its final scan. Exact `./bootstrap/apple-silicon.sh build` exited
+0: 65536 MiB physical minus the 49152 MiB active Colima pledge yielded 16384 MiB effective;
+`J1*H4096 + 2*C1024 = 6144 MiB`, with the `GHCRTS` driver at 1024 MiB; the sdist, all 114 GHC
+9.12.4 library modules including new `Infernix.Lint.Docs` as module 63, `Main` link,
+install/copy to `.build/infernix`, and corrected operator/harness postamble completed. This is
+compile/install evidence only. After a clean monitored readiness window from 17:15:56 to 17:21:18
+(5m22s), the monitor pinned owned PID 63879 and observed zero external claimant through settlement
+and final scan. Exact `./.build/infernix test lint` exited 1: the library rebuilt
+`Infernix.Lint.Docs` as module 63 and the CLI as module 114; `test/haskell-style/Spec.hs` compiled
+and linked; and the test started. Its sole diagnostic was
+`haskell-style-check: Ormolu formatting differs:` followed by exactly
+`src/Infernix/Lint/Docs.hs`; Cabal reported 0/1 with `Error: [Cabal-7125]`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python/Black, build-all, unit, and docs unrun. This
+is a genuine aggregate-lint RED with no semantic or runtime claim; the governed build GREEN remains
+compile/install evidence. After a clean monitored readiness window of 17:27:50–17:33:15 = 5m25s,
+the monitor pinned owned PID 68221 and found zero external claimant through its final scan. One
+exact `./.build/infernix test lint` invocation exited 1 intentionally after
+`user error (governed Ormolu apply completed idempotently for src/Infernix/Lint/Docs.hs)`. Only the
+Haskell-style component compiled, linked, and ran; the intentional stop occurred before
+HLint/readability, the isolated Cabal formatter, Python, build-all, or any later gate. The target
+changed from prehash `fb929508...e4bd7` to formatted `396cac91...ce68`: linked Ormolu
+canonicalized the equivalent `zipWith3 (,,)` to `zip3` and adjusted only multiline
+pattern/comprehension layout; a second apply was exact. The temporary checker was restored
+byte-for-byte at SHA-256 `880a2763...f37`, and scoped diff check is clean. This is diagnostic and
+formatter-correction evidence only. Independent formatter-delta review is CLEAN with no High or
+Medium finding: `zip3` is semantically identical here, tuple bindings and `where` scope are
+preserved, and fixture wiring and controls remain coherent. The formatted source is SOURCE-STABLE
+and its exact governed Apple rebuild is GREEN. The prerequisite window 17:39:56–17:45:11 was
+claimant-free for 5m15s. The monitor pinned owned bootstrap PID 73643 from its start around 17:45:29
+through settlement at 17:48:18–17:48:24 and found zero external claimant through post-settlement
+and the independent final scan at 17:49:10. Exact `./bootstrap/apple-silicon.sh build` exited 0:
+65536 - 49152 = 16384 MiB effective; `J1*H4096 + 2*C1024 = 6144 MiB`; `GHCRTS` driver 1024 MiB;
+sdist; all 114 GHC 9.12.4 library modules including formatted `Infernix.Lint.Docs` module 63;
+`Main` link, install/copy to `.build/infernix`, and corrected postamble. This is compile/install
+evidence only. The next prerequisite window, 17:53:05–17:58:18, was claimant-free for 5m13s. The
+monitor owned PID 84529 from about 17:58:30 through 18:00:34, observed settlement by 18:00:39, and
+found zero external claimant through the final scan at 18:01:30. Exact
+`./.build/infernix test lint` exited 1. Haskell style rebuilt `Infernix.Lint.Docs` module 63 and
+`test/haskell-style`, then emitted `haskell-style-check: ok` and passed. The isolated Cabal 3.16
+formatter emitted `cabal-format-check: ok` and passed; its fixture warning was expected. The exact
+docs-policy failure was `user error (documents/README.md must declare the monitoring stance with
+the sentence: Monitoring is not a supported first-class surface.)`, with the call stack at
+`Docs.hs:1206:9`. Fail-fast left Python/Black, build-all, and every later stage unrun. This is a
+genuine aggregate-lint RED and supplies no semantic or runtime GREEN. The exact cause was
+`documents/README.md` expressing the doctrine with comma form `surface, and`,
+so the validator's required standalone sentence was absent. The only landed change is in
+`documents/README.md`: `Monitoring is not a supported first-class surface. The governed docs suite
+has no canonical` followed by the existing path line. The validator and all Haskell are unchanged.
+The exact sentence is now present in all five `monitoringStancePaths`; there is no `monitoring.md`
+or dormant monitoring stack, and scoped document diff check is clean. Independent final review is
+CLEAN with no High or Medium finding and explicitly finds no rebuild warranted. At that checkpoint,
+the docs-only correction was SOURCE-STABLE and unvalidated; the formatter-stable build GREEN
+remained valid.
+After the 18:08:43–18:13:59 prerequisite was claimant-free for 5m16s, the monitor owned PID 92170
+from about 18:14:09 through 18:21:27, observed settlement by 18:21:32, and found zero external
+claimant through the final scan at 18:22:35. Exact `./.build/infernix test lint` exited 0. Haskell
+style emitted `haskell-style-check: ok` and passed; isolated Cabal 3.16 emitted
+`cabal-format-check: ok` and passed with its expected fixture warning. Python checking succeeded for
+8 source files, Black left all 8 unchanged, and the gate emitted `All checks passed!`. Final bounded
+build-all completed every declared component, linking integration 116/116 and unit 117/117. This is
+style/policy/compile evidence only, not unit runtime, docs, or runtime evidence. The prior
+monitoring-stance RED is closed.
+The 18:25:06–18:30:40 prerequisite was claimant-free for 5m34s. The monitor owned PID 1752 from
+about 18:30:50 through 18:31:25, observed settlement by 18:31:33, and found zero external claimant
+through the final scan at 18:32:42. Exact `./.build/infernix test unit` exited 1 before any test
+suite with `bounded Python project provisioning failed` for project
+`/Users/matthewnowak/infernix/python`. The kernel failure was `anchor terminal disagreed with anchor
+exit ExitFailure (-9); input InputCompleted; stdout CaptureCompleted "Installing dependencies from
+lock file\n\nNo dependencies to install or update\n\nInstalling the current project: infernix-adapters
+(0.1.0)\n"; stderr CaptureCompleted ""`, with call stack `Python.hs:215:13`. Aggregate lint GREEN
+remains valid. This is a genuine unit RED and supplies no unit or runtime GREEN.
+Before that sprint opened, Phase 0 was closed around the governed
+`documents/` suite. Sprint 0.18's no-native-source rule, lint
 implementation, native-boundary deletion record, evidence reset, canonical root-document posture,
 focused adversarial proof, final review, and source-matched machine-independent gate are complete.
 The governed docs, root docs, and development plan
@@ -115,8 +210,10 @@ through Pulsar into same-binary host daemons.
 `infernix lint docs` and `infernix docs check` remain the governed validation entrypoints for
 that closure.
 
-Phase 0 remains closed because the governance baseline, canonical topic ownership, and docs-lint
-contract are all in place. The governed runbooks, testing docs, CLI references, and plan describe
+That prior closure evidence remains valid for its recorded scope because the governance baseline,
+canonical topic ownership, and docs-lint contract are in place. Sprint 0.22's stale fleet/status
+reconciliation is SOURCE-STABLE and landed; only its ordered validation remains before Phase 0 can
+close again. The governed runbooks, testing docs, CLI references, and plan describe
 the supported first-run convergence windows in `cluster up` and `cluster down`, name the
 long-running Docker build, Harbor publication, Harbor-backed final-image preload, and Apple
 teardown data-sync phases explicitly, and use inactivity-aware language instead of treating
@@ -891,6 +988,9 @@ open.
 
 ## Remaining Work
 
+Current Phase 0 remaining work is Sprint 0.22. The earlier closure record below remains historical
+evidence for its narrower sprint scopes and does not override the active Sprint 0.22 gate.
+
 Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Done — code-side closed
 2026-07-16 (doctrine doc + `requiredDocs`/`documents/README.md` registration authored 2026-07-15;
 the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16), and
@@ -1205,9 +1305,10 @@ validation surface), and Sprints 8.10/8.11 (the wire).
 
 ---
 
-## Sprint 0.21: Name The Co-Resident VM In The Host Memory Doctrine [Active]
+## Sprint 0.21: Name The Co-Resident VM In The Host Memory Doctrine [Done]
 
-**Status**: Active — opened 2026-08-08.
+**Status**: Done — re-closed 2026-08-08 after the doctrine correction and exact-source docs gate.
+**Implementation**: `documents/architecture/bounded_host_memory.md`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`
 
 ### Objective
@@ -1230,20 +1331,174 @@ lanes are not independent claimants on one host — they are nested.
 
 ### Deliverables
 
-- The doctrine names a co-resident VM pledge as a claimant, states that the Darwin account does not
-  currently intersect it, and says plainly what that costs.
-- The doctrine notes that the *inference* budget already intersects on Darwin
-  (`src/Infernix/DemoConfig/Internal.hs:428-448`) while the *toolchain* account does not, so two
-  subsystems presently disagree about the same RAM — the doctrine has to say which is right.
+- The doctrine names a co-resident VM pledge as a claimant and records the historical defect: the
+  Darwin toolchain account did not subtract it, oversubscribing the measured host.
+- The current implementation uses one fixed-path, deadline-bounded Colima producer/parser for both
+  accounts. Toolchain effective memory subtracts the conservatively observed active pledge; an
+  unavailable, failed, malformed, or exhausting observation fails closed rather than becoming zero.
 
 ### Validation
 
-`infernix lint docs` GREEN with the metadata block intact. The measurement correction is Phase 1
-Sprint 1.21's residual; this sprint owns only the declared doctrine.
+The Sprint 0.21 `infernix lint docs` gate was GREEN with the metadata block intact. The subsequent
+measurement correction is implemented under Phase 1 Sprint 1.21; this sprint owns the doctrine.
 
 ### Remaining Work
 
-The doc edit, then re-close. No cohort gate — this sprint is doc-only.
+None. `documents/architecture/bounded_host_memory.md` names the nested VM pledge and the historical
+missing intersection; Phase 1 Sprint 1.21 now implements the shared fixed-path observation and
+subtraction for current source. No cohort gate applies to this doc-only sprint; Phase 1 retains the
+Apple mechanism/cohort proof.
+
+---
+
+## Sprint 0.22: Complete Fleet Doctrine Reconciliation and Enforce Status-Free Governed Docs [Active]
+
+**Status**: Active — formatter-stable source governed Apple rebuild GREEN for compile/install only;
+aggregate lint GREEN; full unit RED before suites at Python provisioning; diagnose next.
+**Implementation**: Landed across the governed prose inventory, `src/Infernix/Lint/Docs.hs`, and
+focused semantic fixtures in `test/haskell-style/Spec.hs`.
+**Docs to update**: SOURCE-STABLE landed inventory — `README.md`,
+`documents/architecture/daemon_topology.md`,
+`documents/architecture/demo_app_design.md`, `documents/architecture/durable_context_design.md`,
+`documents/architecture/web_ui_architecture.md`,
+`documents/architecture/object_access_doctrine.md`,
+`documents/architecture/pulsar_ml_workflow.md`,
+`documents/architecture/bounded_inference_memory.md`,
+`documents/architecture/bounded_host_memory.md`,
+`documents/architecture/runtime_modes.md`, `documents/architecture/model_catalog.md`,
+`documents/architecture/typed_execution_plan.md`, `documents/engineering/k8s_storage.md`,
+`documents/engineering/object_storage.md`, `documents/engineering/testing.md`,
+`documents/tools/pulsar.md`, `documents/tools/postgresql.md`,
+`documents/development/testing_strategy.md`, `documents/development/demo_app_test_plan.md`,
+`documents/operations/cluster_bootstrap_runbook.md`, and
+`documents/operations/apple_silicon_runbook.md`
+
+### Objective
+
+Complete the per-machine fleet doctrine reconciliation that Sprint 0.20 left partial, and make the
+governed-doc rule against implementation-status prose semantic and mechanically enforced. The
+timeless supported contract is one process per role per machine, at-least-once delivery with an
+effectively-once observable outcome, and single-instance platform recovery. Governed docs describe
+that contract without recording whether implementation or validation has landed.
+
+### Deliverables
+
+- **Landed; formatter-stable build GREEN, later gates pending:** root `README.md` HA cleanup
+- **Landed; formatter-stable build GREEN, later gates pending:** timeless topology and recovery rewrites across
+  daemon, demo, durable
+  context, web, object storage/access, Pulsar, PostgreSQL, testing, and runbook surfaces
+- **Landed; formatter-stable build GREEN, later gates pending:** removal of unsupported Patroni replica
+  reinitialization while preserving
+  the supported live startup-pod recycle path
+- **Landed; formatter-stable build GREEN, later gates pending:** removal of implementation status, phasing, and
+  checklist prose from the
+  Pulsar workflow contract
+- **Landed; formatter-stable build GREEN, later gates pending:** timeless bounded-inference-memory and
+  bounded-host-memory rewrites
+- **Landed; formatter-stable build GREEN, later gates pending:** direct-contract rewrites in `runtime_modes.md`,
+  `model_catalog.md`, and
+  `k8s_storage.md`
+- **Landed; formatter-stable build GREEN, later gates pending:** the timeless `typed_execution_plan.md` rewrite,
+  complete governed-doc
+  semantic status inventory, `src/Infernix/Lint/Docs.hs` enforcement beyond the prior exact
+  phrase/Sprint/Wave/date recognition, and focused semantic negative fixtures in
+  `test/haskell-style/Spec.hs`
+- **SOURCE-STABLE static evidence:** exact retired/status zero scans, the governed body mirror, and
+  scoped `git diff --check` are clean. Independent settled-tree review is CLEAN with no High or
+  Medium finding; it confirms the focused Haskell-style fixture is executable with correct path
+  guards and that the safe controls preserve Failover, Shared, drain, single-instance, code,
+  runtime, and pending semantics
+- **Landed; formatter-stable build GREEN, later gates pending:** the plan, overview, README current-status index,
+  and cohort current
+  notices remain aligned while Phase 0 is Active and every code-writing phase is blocked by this
+  sprint
+
+### Validation
+
+Recorded chronology and remaining exact order:
+
+1. **GREEN — governed `./bootstrap/apple-silicon.sh build`:** after 5m54s claimant-free readiness
+   following the end of the external Cabal owner, the overlap monitor pinned owned PID 53817 and
+   observed zero external claimants through settlement and final scan. The command exited 0 with
+   65536 MiB physical - 49152 MiB active Colima = 16384 MiB effective,
+   `J1*H4096 + 2*C1024 = 6144 MiB`, and `GHCRTS` driver 1024 MiB; it produced the sdist,
+   compiled all 114 GHC 9.12.4 library modules including new `Infernix.Lint.Docs` module 63, linked
+   `Main`, installed/copied `.build/infernix`, and emitted the corrected operator/harness postamble
+2. **RED — aggregate `./.build/infernix test lint`:** after the clean monitored readiness window
+   17:15:56–17:21:18 = 5m22s, the monitor pinned owned PID 63879 and observed zero external claimant
+   through settlement and final scan. The command exited 1 after rebuilding
+   `Infernix.Lint.Docs` module 63 and CLI module 114, compiling/linking
+   `test/haskell-style/Spec.hs`, and starting the test. The sole diagnostic was
+   `haskell-style-check: Ormolu formatting differs:` followed by exactly
+   `src/Infernix/Lint/Docs.hs`; Cabal reported 0/1 and `Error: [Cabal-7125]`. Fail-fast left
+   HLint/readability, the isolated Cabal formatter, Python/Black, build-all, unit, and docs unrun
+3. **CORRECTED SOURCE — governed linked-Ormolu diagnostic:** after the clean monitored readiness
+   window 17:27:50–17:33:15 = 5m25s, the monitor pinned owned PID 68221 and found zero external
+   claimant through final scan. One exact `./.build/infernix test lint` invocation exited 1
+   intentionally after `user error (governed Ormolu apply completed idempotently for
+   src/Infernix/Lint/Docs.hs)`. Only Haskell style compiled/linked/ran; the intentional stop preceded
+   HLint/readability, the isolated formatter, Python, build-all, and later gates. Target prehash
+   `fb929508...e4bd7` became formatted `396cac91...ce68`; linked output canonicalized equivalent
+   `zipWith3 (,,)` to `zip3` and adjusted multiline pattern/comprehension layout; second apply was
+   exact. The temporary checker was restored byte-for-byte at SHA-256 `880a2763...f37`; scoped diff
+   check is clean. Independent formatter-delta review is CLEAN with no High or Medium finding:
+   `zip3` is semantically identical here, tuple bindings and `where` scope are preserved, and
+   fixture wiring and controls remain coherent
+4. **GREEN — formatter-stable governed `./bootstrap/apple-silicon.sh build`:** the prerequisite
+   window 17:39:56–17:45:11 was claimant-free for 5m15s. The monitor pinned owned bootstrap PID
+   73643 from its start around 17:45:29 through settlement at 17:48:18–17:48:24, with zero external
+   claimant through post-settlement and the independent final scan at 17:49:10. The command exited
+   0 with 65536 - 49152 = 16384 MiB effective, `J1*H4096 + 2*C1024 = 6144 MiB`, and `GHCRTS`
+   driver 1024 MiB; it produced the sdist, compiled all 114 GHC 9.12.4 library modules including
+   formatted `Infernix.Lint.Docs` module 63, linked `Main`, installed/copied `.build/infernix`, and
+   emitted the corrected postamble. This is compile/install evidence only
+5. **RED — whole aggregate `./.build/infernix test lint`:** the prerequisite window
+   17:53:05–17:58:18 was claimant-free for 5m13s. The monitor owned PID 84529 from about 17:58:30
+   through 18:00:34, observed settlement by 18:00:39, and found zero external claimant through the
+   final scan at 18:01:30. The command exited 1. Haskell style rebuilt `Infernix.Lint.Docs` module
+   63 and `test/haskell-style`, emitted `haskell-style-check: ok`, and passed. The isolated Cabal
+   3.16 formatter emitted `cabal-format-check: ok` and passed; its fixture warning was expected.
+   The exact docs-policy failure was `user error (documents/README.md must declare the monitoring
+   stance with the sentence: Monitoring is not a supported first-class surface.)`, with call stack
+   `Docs.hs:1206:9`. Fail-fast left Python/Black, build-all, and later stages unrun
+6. **SOURCE-STABLE — docs-only monitoring-stance correction:** `documents/README.md` used comma
+   form `surface, and`, so the exact standalone validator sentence was absent. The sole change is
+   `Monitoring is not a supported first-class surface. The governed docs suite has no canonical`
+   plus the existing path line. Validator/Haskell bytes are unchanged. The exact sentence is now
+   present in all five `monitoringStancePaths`; no `monitoring.md` or dormant stack exists; scoped
+   document diff is clean. Independent final review is CLEAN with no High or Medium finding
+7. **N/A — no rebuild warranted:** the correction is docs-only and Haskell is unchanged, so the
+   formatter-stable governed build GREEN remains valid
+8. **GREEN — whole aggregate `./.build/infernix test lint`:** after the 18:08:43–18:13:59
+   prerequisite was claimant-free for 5m16s, the monitor owned PID 92170 from about 18:14:09 through
+   18:21:27, observed settlement by 18:21:32, and found zero external claimant through final
+   18:22:35. The command exited 0. Haskell style emitted `haskell-style-check: ok` and passed;
+   isolated Cabal 3.16 emitted `cabal-format-check: ok` and passed with its expected fixture warning;
+   Python checking succeeded for 8 source files; Black left all 8 unchanged; and `All checks passed!`
+   was emitted. Final bounded build-all completed every declared component, linking integration
+   116/116 and unit 117/117. This is style/policy/compile evidence only
+9. **RED — full `./.build/infernix test unit`:** the 18:25:06–18:30:40 prerequisite was
+   claimant-free for 5m34s. The monitor owned PID 1752 from about 18:30:50 through 18:31:25,
+   observed settlement by 18:31:33, and found zero external claimant through final 18:32:42. The
+   command exited 1 before any test suite with `bounded Python project provisioning failed` for
+   `/Users/matthewnowak/infernix/python`. Kernel failure: `anchor terminal disagreed with anchor exit
+   ExitFailure (-9); input InputCompleted; stdout CaptureCompleted "Installing dependencies from lock
+   file\n\nNo dependencies to install or update\n\nInstalling the current project: infernix-adapters
+   (0.1.0)\n"; stderr CaptureCompleted ""`; call stack `Python.hs:215:13`
+10. `./.build/infernix lint docs`
+11. `./.build/infernix docs check`
+12. repo-wide `git diff --check`
+
+No accelerator cohort belongs to this machine-independent governance sprint.
+
+### Remaining Work
+
+Diagnose the owned-kernel failure and residue, land a correction or evidence-based disposition, run
+the governed rebuild and aggregate lint as any source change requires, then rerun full unit. Docs
+lint, docs check, and repo-wide diff remain strictly later. Aggregate lint GREEN remains valid for
+the current identity, but the unit gate is genuinely RED before suites and supplies no unit/runtime
+GREEN. No accelerator cohort applies.
+Do not resume Phase 1 or any later code-writing phase until Sprint 0.22 and Phase 0 are `Done`.
 
 ---
 

@@ -3,6 +3,7 @@ module Infernix.Lint.Files
     cabalCppMacroDefinitionViolations,
     cabalCSourcesDeclarationViolations,
     embeddedNativeSourceViolations,
+    isGeneratedHaskellProtoTextSnapshot,
     nativeSourcePathViolations,
   )
 where
@@ -14,6 +15,7 @@ import Data.List qualified as List
 import Infernix.Cluster.Command qualified as Command
 import Infernix.Cluster.Invoke qualified as Invoke
 import Infernix.Config (Paths (..), discoverPaths)
+import Infernix.Lint.Proto qualified as Proto
 import System.Directory (doesDirectoryExist, doesFileExist, listDirectory)
 import System.FilePath (takeExtension, (</>))
 
@@ -107,15 +109,25 @@ checkFile root relativePath = do
           [] -> []
           '\n' : _ -> []
           _ -> [relativePath <> ": missing trailing newline"]
+      textHygieneFailures
+        | isGeneratedHaskellProtoTextSnapshot relativePath = []
+        | otherwise = lineFailures <> newlineFailure
   pure
     ( nativeSourcePathViolations relativePath
         <> cabalCSourcesDeclarationViolations relativePath numberedLines
         <> cabalCppMacroDefinitionViolations relativePath numberedLines
         <> embeddedNativeSourceViolations relativePath numberedLines
-        <> lineFailures
-        <> newlineFailure
+        <> textHygieneFailures
         <> envReadFailures relativePath contents
     )
+
+-- | The byte-exact upstream generator snapshot is checked by
+-- 'Infernix.Lint.Proto', including exact inventory, SHA-256, and Linux
+-- regeneration. Its four outputs retain generator-owned whitespace bytes;
+-- similarly named handwritten files remain subject to ordinary text hygiene.
+isGeneratedHaskellProtoTextSnapshot :: FilePath -> Bool
+isGeneratedHaskellProtoTextSnapshot relativePath =
+  relativePath `elem` Proto.generatedHaskellProtoFiles
 
 nativeSourcePathViolations :: FilePath -> [String]
 nativeSourcePathViolations relativePath =

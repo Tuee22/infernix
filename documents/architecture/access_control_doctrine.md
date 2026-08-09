@@ -77,9 +77,9 @@ The admin/user split is enforced at every layer that can observe identity:
 ## Validation
 
 - `infernix lint chart` proves the rendered `SecurityPolicy` carries the admin `authorization` rule
-and targets all four operator routes, and that every Kind data-plane + edge port mapping binds to
-`127.0.0.1`; `infernix lint docs` keeps this doctrine's metadata consistent. - Unit coverage proves
-`realm_access.roles` decode and the admin predicate, the STS session policy scopes to
-`users/<sub>/*`, the signed `AssumeRole` request and its response parse, session-token presigning
-threads `X-Amz-Security-Token`, and the generated Kind config is loopback-bound
-(`test/unit/Spec.hs`).
+  and targets all four operator routes, and that every Kind data-plane + edge port mapping binds to
+  `127.0.0.1`; `infernix lint docs` keeps this doctrine's metadata consistent.
+- Unit coverage proves `realm_access.roles` decode and the admin predicate, the STS session policy
+  scopes to `users/<sub>/*`, the signed `AssumeRole` request and its response parse, session-token
+  presigning threads `X-Amz-Security-Token`, and the generated Kind config is loopback-bound
+  (`test/unit/Spec.hs`).

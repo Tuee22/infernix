@@ -302,9 +302,19 @@ executable fail-cannot-import-engine-provisioning-internal
     main-is: CannotImportEngineProvisioningInternal.hs
     hs-source-dirs: fail
 
+executable fail-cannot-import-python
+    import: fixture
+    main-is: CannotImportPython.hs
+    hs-source-dirs: fail
+
 executable fail-cannot-import-capped-engine-internal
     import: fixture
     main-is: CannotImportCappedEngineInternal.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-import-raw-python-worker-launch
+    import: fixture
+    main-is: CannotImportRawPythonWorkerLaunch.hs
     hs-source-dirs: fail
 
 executable fail-cannot-import-raw-apple-installer
@@ -675,6 +685,16 @@ executable fail-cannot-substitute-toolchain-spawn-region
         fail
         support
     other-modules: DesiredApi
+
+executable fail-cannot-coerce-toolchain-spawn-authority
+    import: fixture
+    main-is: CannotCoerceToolchainSpawnAuthority.hs
+    hs-source-dirs: fail
+
+executable fail-cannot-coerce-darwin-build-memory-validation-authority
+    import: fixture
+    main-is: CannotCoerceDarwinBuildMemoryValidationAuthority.hs
+    hs-source-dirs: fail
 
 executable fail-cannot-admit-without-observation
     import: fixture

@@ -83,12 +83,14 @@ Available Linux GPU commands:
   ${SCRIPT_LABEL} down
   ${SCRIPT_LABEL} purge
 
-Direct reference commands:
+Operator/demo reference commands:
   docker build -f docker/Dockerfile --provenance=false -t ${COMPOSE_IMAGE} --build-arg RUNTIME_MODE=${COMPOSE_SUBSTRATE} --build-arg BASE_IMAGE=${COMPOSE_BASE_IMAGE} --build-arg DEMO_UI=true .
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster up
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster status
-  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
   LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster down
+
+Harness validation (requires no live OperatorOwned cluster; it owns its cluster lifecycle):
+  LAUNCHER_IMAGE=${COMPOSE_IMAGE} docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
 
 Teardown and cleanup:
   ${SCRIPT_LABEL} down

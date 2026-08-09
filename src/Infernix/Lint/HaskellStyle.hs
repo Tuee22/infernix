@@ -1,5 +1,5 @@
 module Infernix.Lint.HaskellStyle
-  ( runHaskellStyleLint,
+  ( runHaskellStyleLintWith,
     appleArtifactProvisioningViolations,
     appleClosureFixtureOwnershipViolations,
     appleMaterializationTransactionOwnershipViolations,
@@ -7,6 +7,7 @@ module Infernix.Lint.HaskellStyle
     artifactWriterBoundaryViolations,
     boundedEngineOutputViolations,
     cappedEngineBoundaryViolations,
+    isGeneratedHaskellProtoSource,
     linuxNativeMaterializationBoundaryViolations,
     nativeArtifactInvocationKernelOwnershipViolations,
     provisioningKernelOwnershipViolations,
@@ -17,112 +18,57 @@ module Infernix.Lint.HaskellStyle
   )
 where
 
-import Control.Exception (IOException, try)
-import Control.Monad (when)
 import Data.Char (isAlphaNum, isSpace)
-import Data.List (find, intercalate, isInfixOf, isSuffixOf, mapAccumL, sort)
+import Data.List (intercalate, isInfixOf, isSuffixOf, mapAccumL, sort)
 import Data.Maybe (fromMaybe)
-import Data.Text qualified as Text
-import Infernix.Config (Paths (..), discoverPaths)
-import Infernix.HostConfig qualified as HostConfig
+import Infernix.Config (Paths (..), discoverPathsWithHostManifest)
 import Infernix.HostTools qualified as HostTools
+import Infernix.Lint.Proto qualified as Proto
 import System.Directory
-  ( createDirectoryIfMissing,
-    doesDirectoryExist,
+  ( doesDirectoryExist,
     doesFileExist,
-    getTemporaryDirectory,
     listDirectory,
-    removeFile,
+    withCurrentDirectory,
   )
-import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
-import System.IO (hClose, openTempFile)
-import System.Process (CreateProcess (cwd), proc, readCreateProcessWithExitCode)
 
-runHaskellStyleLint :: IO ()
-runHaskellStyleLint = do
-  paths <- discoverPaths
-  createDirectoryIfMissing True (buildRoot paths)
-  installFormatterTools paths
-  let toolsRoot = formatterToolsBinRoot paths
-      ormoluPath = toolsRoot </> "ormolu"
-      hlintPath = toolsRoot </> "hlint"
-  ormoluPresent <- doesFileExist ormoluPath
-  hlintPresent <- doesFileExist hlintPath
-  when
-    (not ormoluPresent || not hlintPresent)
-    (ioError (userError "haskell-style-check: formatter bootstrap did not produce ormolu and hlint"))
-  sources <- haskellSources (repoRoot paths)
-  runCommand (repoRoot paths) ormoluPath (["--mode", "check"] <> sources)
-  runCommand (repoRoot paths) hlintPath ["Setup.hs", "app", "src", "test"]
-  checkReadabilityRules (repoRoot paths) sources
-  checkCabalManifest paths
+-- | Run the repo-owned inventory and readability checks around test-owned,
+-- in-process formatter and linter callbacks. Keeping the heavyweight tool APIs
+-- in the dedicated style component prevents every production executable from
+-- linking them while this module remains the sole owner of the exact source
+-- inventory and generated-source exclusion.
+runHaskellStyleLintWith ::
+  ([FilePath] -> IO ()) ->
+  ([FilePath] -> IO ()) ->
+  IO ()
+runHaskellStyleLintWith checkFormatting checkHints = do
+  paths <- discoverPathsWithHostManifest Nothing
+  let root = repoRoot paths
+  sources <- haskellSources root
+  withCurrentDirectory root $ do
+    checkFormatting sources
+    checkHints sources
+  checkReadabilityRules root sources
   putStrLn "haskell-style-check: ok"
-
-installFormatterTools :: Paths -> IO ()
-installFormatterTools paths = do
-  let toolsRoot = formatterToolsBinRoot paths
-      ormoluPath = toolsRoot </> "ormolu"
-      hlintPath = toolsRoot </> "hlint"
-  ormoluPresent <- doesFileExist ormoluPath
-  hlintPresent <- doesFileExist hlintPath
-  when (not ormoluPresent || not hlintPresent) $ do
-    cabalPath <- requireStyleCabal paths
-    installResult <- try (installFormatterToolsWithCommand paths cabalPath (formatterInstallArgs paths)) :: IO (Either IOException ())
-    case installResult of
-      Right () -> pure ()
-      Left installErr ->
-        ioError
-          ( userError
-              ( "haskell-style-check: formatter bootstrap failed\nerror:\n"
-                  <> show installErr
-              )
-          )
-
-installFormatterToolsWithCommand :: Paths -> FilePath -> [String] -> IO ()
-installFormatterToolsWithCommand paths =
-  runCommand (repoRoot paths)
-
-formatterInstallArgs :: Paths -> [String]
-formatterInstallArgs paths =
-  [ "--builddir=" <> formatterToolsBuildRoot paths,
-    "install",
-    "--installdir=" <> formatterToolsBinRoot paths,
-    "--install-method=copy",
-    "--overwrite-policy=always",
-    "ormolu",
-    "hlint"
-  ]
-
-formatterToolsRoot :: Paths -> FilePath
-formatterToolsRoot paths = buildRoot paths </> "haskell-style-tools"
-
-formatterToolsBuildRoot :: Paths -> FilePath
-formatterToolsBuildRoot paths = formatterToolsRoot paths </> "cabal"
-
-formatterToolsBinRoot :: Paths -> FilePath
-formatterToolsBinRoot paths = formatterToolsRoot paths </> "bin"
-
-checkCabalManifest :: Paths -> IO ()
-checkCabalManifest paths = do
-  let sourcePath = repoRoot paths </> "infernix.cabal"
-  tempRoot <- getTemporaryDirectory
-  (tempPath, tempHandle) <- openTempFile tempRoot "infernix.cabal"
-  hClose tempHandle
-  sourceContents <- readFile sourcePath
-  writeFile tempPath sourceContents
-  cabalPath <- requireStyleCabal paths
-  runCommand (repoRoot paths) cabalPath ["format", tempPath]
-  formattedContents <- readFile tempPath
-  removeFile tempPath
-  if formattedContents == sourceContents
-    then pure ()
-    else ioError (userError "haskell-style-check: infernix.cabal is not cabal-format clean")
 
 haskellSources :: FilePath -> IO [FilePath]
 haskellSources repoRoot = do
   sourceFiles <- concat <$> mapM (collectHsFiles . (repoRoot </>)) ["app", "src", "test"]
-  pure (sort ("Setup.hs" : map (makeRelative repoRoot) sourceFiles))
+  pure
+    ( sort
+        ( filter
+            (not . isGeneratedHaskellProtoSource)
+            (map (makeRelative repoRoot) sourceFiles)
+        )
+    )
+
+-- | The complete and deliberately exact style exclusion for checked-in
+-- upstream @proto-lens-protoc@ output. The byte-exact source is owned by
+-- 'Infernix.Lint.Proto'; similarly named handwritten modules remain in the
+-- Ormolu, HLint, and readability-rule source inventory.
+isGeneratedHaskellProtoSource :: FilePath -> Bool
+isGeneratedHaskellProtoSource sourceFile =
+  sourceFile `elem` Proto.generatedHaskellProtoFiles
 
 collectHsFiles :: FilePath -> IO [FilePath]
 collectHsFiles directoryPath = do
@@ -408,6 +354,7 @@ downloadCacheLockInternalImportOwners =
 artifactTransactionTokens :: [String]
 artifactTransactionTokens =
   [ "activateAppleEngineArtifactWithInstalledSmoke",
+    "activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke",
     "activateEngineArtifactAfterCheck",
     "activateLinuxEngineArtifactWithInstalledSmoke",
     "withEngineArtifactActivation",
@@ -651,10 +598,9 @@ isRepoOwnedHaskellSource =
 
 isProductionHaskellSource :: FilePath -> Bool
 isProductionHaskellSource sourceFile =
-  sourceFile == "Setup.hs"
-    || any
-      (`isPrefixOfString` sourceFile)
-      ["app/", "src/"]
+  any
+    (`isPrefixOfString` sourceFile)
+    ["app/", "src/"]
 
 isCppDefine :: String -> Bool
 isCppDefine codeLine =
@@ -974,7 +920,7 @@ emptySubprocessEnvExemptedFiles =
 unboundedExecViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedExecViolations sourceFile numberedLines
   -- The bounded-command doctrine governs the production cluster surface, not the
-  -- test harness (which orchestrates real clusters) or the cabal @Setup.hs@.
+  -- test harness, which orchestrates real clusters.
   | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
   | sourceFile `elem` unboundedExecExemptedFiles = []
   | otherwise =
@@ -1346,7 +1292,8 @@ unboundedDescriptorSpawnExemptedFiles =
   ]
 
 -- | Phase 6 Sprint 6.46 (bounded host memory) — a surface that starts the
--- compiler toolchain must observe the declared per-process ceiling.
+-- compiler toolchain must observe the declared per-process ceiling and retain
+-- its owned group through normal completion or exceptional cleanup.
 --
 -- The hazard this rule guards is not hypothetical: on 2026-08-03 a host-side
 -- @cabal build@ from this checkout reached 109.46 GiB resident on a 124.94 GiB
@@ -1357,20 +1304,19 @@ unboundedDescriptorSpawnExemptedFiles =
 -- Structurally this is a copy of 'unboundedDescriptorSpawnViolations': it is
 -- file-scoped, it fires on the /naming/ of the toolchain rather than on a
 -- specific spawn expression, and it clears as soon as the file observes the
--- boundary. It is the backstop for the type-level gate, not a replacement for
--- it — 'Infernix.BuildMemory.ToolchainSpawnAuthority' and the closed
--- 'Infernix.BuildMemory.ToolchainInvocation' vocabulary are what make an
--- unbounded toolchain spawn unrepresentable; this rule keeps a /new/ surface
--- from appearing beside them. Canonical doctrine:
+-- boundary. The opaque 'Infernix.BuildMemory.ToolchainSpawnAuthority', closed
+-- 'Infernix.BuildMemory.ToolchainInvocation' vocabulary, and its private
+-- single-flight token govern the existing CLI path; this rule keeps a /new/
+-- raw surface from appearing beside them. Canonical doctrine:
 -- documents/architecture/bounded_host_memory.md.
 unboundedToolchainSpawnViolations :: FilePath -> [(Int, String)] -> [String]
 unboundedToolchainSpawnViolations sourceFile numberedLines
   | not ("src/Infernix/" `isPrefixOfString` sourceFile) = []
   | sourceFile `elem` unboundedToolchainSpawnExemptedFiles = []
   | not spawnsAProcess = []
-  | observesToolchainCeiling = []
+  | observesToolchainLifecycle = []
   | otherwise =
-      [ sourceFile <> ":" <> show lineNumber <> ": toolchain spawn surface names `HostCabal` without observing the declared build-memory ceiling; route it through Infernix.BuildMemory.withToolchainSpawnAuthority plus withBoundedToolchainChild so the per-process address-space ceiling is in force at fork and the child carries a raised out-of-memory victim rank (see documents/architecture/bounded_host_memory.md)"
+      [ sourceFile <> ":" <> show lineNumber <> ": toolchain spawn surface names `HostCabal` without the complete bounded child lifecycle; route it through Infernix.BuildMemory.withToolchainSpawnAuthority plus withBoundedToolchainChild, refuse unreviewed invocation project state, require the descriptor bound, close inherited descriptors, own a fresh process group through a masked nonblocking leader reap, and kill/reap it on failure (see documents/architecture/bounded_host_memory.md)"
       | (lineNumber, _) <- toolchainSites
       ]
   where
@@ -1391,10 +1337,17 @@ unboundedToolchainSpawnViolations sourceFile numberedLines
               || containsToken "readCreateProcessWithExitCode" lineValue
         )
         codeLines
-    observesToolchainCeiling =
-      any
-        (containsToken "withBoundedToolchainChild" . snd)
-        codeLines
+    observesToolchainLifecycle =
+      all
+        (\requiredToken -> any (containsToken requiredToken . snd) codeLines)
+        [ "withBoundedToolchainChild",
+          "requireToolchainInvocationProjectState",
+          "requireBoundedDescriptorSpace",
+          "close_fds",
+          "create_group",
+          "cleanupToolchainProcessGroupParts",
+          "awaitProcessExitReadiness"
+        ]
 
 -- | The toolchain rule's declared exemptions.
 --
@@ -1632,7 +1585,6 @@ forbiddenEscapeTokens =
 -- this list and the gate tightens automatically.
 envFunctionViolations :: FilePath -> [(Int, String)] -> [String]
 envFunctionViolations sourceFile numberedLines
-  | sourceFile == "Setup.hs" = setupHsEnvFunctionViolations sourceFile numberedLines
   | sourceFile `elem` envFunctionExemptedFiles = []
   | otherwise =
       [ sourceFile <> ":" <> show lineNumber <> ": forbidden env-IO call `" <> needle <> "`; route through HostConfig or a typed Dhall manifest"
@@ -1701,21 +1653,6 @@ envFunctionExemptedFiles =
     "src/Infernix/Lint/HaskellStyle.hs"
   ]
 
-setupHsEnvFunctionViolations :: FilePath -> [(Int, String)] -> [String]
-setupHsEnvFunctionViolations sourceFile numberedLines =
-  [ sourceFile <> ":" <> show lineNumber <> ": Setup.hs may only mutate PATH for the proto-lens custom-setup shim"
-  | (lineNumber, lineValue) <- numberedLines,
-    not (isCommentLine lineValue),
-    needle <- forbiddenEnvFunctions,
-    containsToken needle lineValue,
-    not (allowedSetupEnvLine lineValue)
-  ]
-
-allowedSetupEnvLine :: String -> Bool
-allowedSetupEnvLine lineValue =
-  "qualified System.Environment as Env" `isInfixOf` lineValue
-    || "Env.setEnv \"PATH\"" `isInfixOf` lineValue
-
 -- | Phase 6 Sprint 6.28 (initial landing — May 25, 2026): reject
 -- bare-name @proc "<command>"@ invocations whose name matches a
 -- known external tool. The supported flow routes every invocation
@@ -1734,11 +1671,16 @@ bareNameProcViolations sourceFile numberedLines
         needle `isInfixOf` lineValue
       ]
 
--- | Derived from the 'HostTools.HostTool' enum (via 'HostTools.hostToolCommandNames')
--- so the forbidden bare-name set cannot drift from the registered host-tool set:
--- adding a 'HostTool' constructor automatically extends this gate.
+-- | Derived from the 'HostTools.HostTool' enum (via
+-- 'HostTools.hostToolCommandNames') so the forbidden bare-name set cannot
+-- drift from the registered host-tool set. Retired standalone tools remain
+-- explicit forbidden names: the protobuf pair is confined to the Dockerfile's
+-- fixed Linux generation gate after Sprint 1.24, while Sprint 1.25 links
+-- Ormolu and HLint only through the dedicated style component's APIs.
 forbiddenBareProcCommands :: [String]
-forbiddenBareProcCommands = HostTools.hostToolCommandNames
+forbiddenBareProcCommands =
+  ["protoc", "proto-lens-protoc", "ormolu", "hlint"]
+    <> HostTools.hostToolCommandNames
 
 bareNameProcExemptedFiles :: [FilePath]
 bareNameProcExemptedFiles =
@@ -1988,61 +1930,6 @@ trimWhitespace =
 makeRelative :: FilePath -> FilePath -> FilePath
 makeRelative root fullPath =
   fromMaybe fullPath (stripPrefix (root <> "/") fullPath)
-
-runCommand :: FilePath -> FilePath -> [String] -> IO ()
-runCommand workingDirectory command args = do
-  (exitCode, stdoutOutput, stderrOutput) <- readCreateProcessWithExitCode (proc command args) {cwd = Just workingDirectory} ""
-  case exitCode of
-    ExitSuccess -> pure ()
-    _ -> ioError (userError ("command failed: " <> command <> " " <> unwords args <> "\n" <> stdoutOutput <> stderrOutput))
-
--- | The fixed fallback candidates are container layouts. A host whose
--- toolchain lives under a non-root home (an ordinary ghcup install) has no
--- candidate at all and depends entirely on the generated host manifest, so the
--- diagnostic names that prerequisite instead of reporting an unexplained
--- absence. Widening the candidate list is not an option: enumerating an
--- operator's home directory would mean reading the ambient environment, which
--- @documents/development/no_env_vars.md@ forbids. The manifest is exactly where
--- host-specific absolute paths belong, and @infernix init@ is what writes it.
-requireStyleCabal :: Paths -> IO FilePath
-requireStyleCabal paths =
-  case configuredCabalPath paths of
-    Just cabalPath -> pure cabalPath
-    Nothing -> do
-      fallback <- findFirstExisting (HostTools.hostToolFallbackCandidates HostTools.HostCabal)
-      case fallback of
-        Just cabalPath -> pure cabalPath
-        Nothing ->
-          ioError
-            ( userError
-                ( "haskell-style-check: cabal is unavailable through HostConfig.toolPaths.cabal"
-                    <> " and the fixed container-layout fallback candidates ("
-                    <> intercalate
-                      ", "
-                      (HostTools.hostToolFallbackCandidates HostTools.HostCabal)
-                    <> "). This gate reads the generated host manifest; run"
-                    <> " `infernix init` to create ./infernix-host.dhall before running it."
-                )
-            )
-
-configuredCabalPath :: Paths -> Maybe FilePath
-configuredCabalPath paths = do
-  hostConfig <- pathsHostConfig paths
-  let configured = HostConfig.hostCabal (HostConfig.hostToolPaths hostConfig)
-  if Text.null configured
-    then Nothing
-    else Just (Text.unpack configured)
-
-findFirstExisting :: [FilePath] -> IO (Maybe FilePath)
-findFirstExisting candidates = do
-  existing <-
-    mapM
-      ( \candidate -> do
-          exists <- doesFileExist candidate
-          pure (candidate, exists)
-      )
-      candidates
-  pure (fst <$> find snd existing)
 
 stripPrefix :: String -> String -> Maybe String
 stripPrefix [] value = Just value

@@ -14,7 +14,7 @@
   dispatcher rule, JWT, presigned URLs, WS envelope codec) plus PureScript view-model patch
   application and rendering.
 - Integration covers real Pulsar / MinIO / Keycloak round-trips, producer-dedup verification,
-  Failover handoff, and a multi-user throughput test. It injects no failures: see the LinuxCpu
+  stable Failover resubscription after a coordinator restart, and a multi-user throughput test. It injects no failures: see the LinuxCpu
   block below for why that reduction is deliberate.
 - E2E covers Playwright flows through the routed demo surface for every primary lifecycle, the
   pre-auth landing entry points, and a per-model smoke matrix driven by the active substrate's
@@ -45,9 +45,9 @@ preview, download-only MIDI / MusicXML / generic-binary) is asserted from the we
 `/api/objects/download` response and the corresponding rendered browser surface — the dedicated
 artifact-rendering coverage drives each supported artifact class
 through the rendered `Files` and Artifacts surfaces and asserts the family-appropriate rendered
-shape (never a golden string). This webapp-mediated object I/O is the supported path (
-removed the external `/minio/s3` gateway route and the MinIO console route; browser-facing
-presigned MinIO URLs do not exist).
+shape (never a golden string). This webapp-mediated object I/O is the supported path.
+There is no external `/minio/s3` gateway route, MinIO console route, or browser-facing presigned
+MinIO URL.
 
 ## Coverage Contract
 
@@ -96,7 +96,7 @@ The unit layer runs through the `infernix-unit` Cabal stanza and the PureScript
   frontend, coordinator, auth, object-presign, or WebSocket modules from the concrete engine
   runtime modules (`Infernix.Runtime`, `.Cache`, `.Worker`).
 - **Shared-library import-boundary lint.** The same style gate rejects upward demo, runtime,
-  auth, object-presign, or WebSocket imports from the Phase 7 conversation, dispatcher, result
+  auth, object-presign, or WebSocket imports from the conversation, dispatcher, result
   bridge, and bootstrap helper modules.
 
 ## Integration Layer
@@ -105,50 +105,52 @@ The integration layer runs through the `infernix-integration` Cabal stanza.
 
 Coverage:
 
-- **Coordinator-to-engine-pool handoff.** The integration suite should assert routed publication and
-`cluster status` report the validated engine-pool routing graph, and the generated substrate config
-routes the coordinator from request topics to derived pool/model topics while engine members consume
-only assigned topics without forwarding again. The old Linux per-engine and Apple host-topic
-metadata is absent from supported publication/status outputs. - **Linux GPU service-loop
-round-trip.** The same run exercises cluster up, routed API probes, per-model inference, cache
-lifecycle, service runtime loop, and clean cluster down from the rebuilt CUDA launcher image. Linux
-GPU runs inference on in-cluster engine pods; the `apple-silicon` on-host `infernix service` daemon
-serializes every model and applies the shared typed memory-admission policy before launch. Capacity
-failures are terminal per-row `ModelMemoryLimitExceeded` results, not daemon-death signals (see
-[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)). -
-**Durable Pulsar topic-family round-trip.** The integration suite publishes `ClientCreateContext`,
-`ClientUpdateDraft`, `ClientCancelPrompt`, and a raw `ModelBootstrapReadyEvent`, reads them back
-with Pulsar Readers, asserts the compacted contexts/drafts keys are `contextId`, asserts the
-bootstrap-ready key is `modelId`, asserts conversation records are unkeyed, and decodes each typed
-payload. - **Broker compaction behavior.** The same suite asserts the live `infernix/demo` namespace
-has the supported 100 MiB compaction threshold, publishes prior and latest context/draft records
-under isolated users, triggers topic compaction, and reads with a Java Pulsar `readCompacted(true)`
-reader to assert exactly one latest payload per `contextId`. - **Frontend producer-dedup behavior.**
-The same suite simulates a frontend reconnect by publishing duplicate `ClientCancelPrompt` and
-`ClientUpdateDraft` messages with the same mutation-scoped producer names and WebSocket
-`initialSequenceId`-backed sequence ids, then reads the isolated topics with Pulsar Readers and
-asserts the broker stored exactly one conversation event and one draft event. - **Durable-context
-prompt round-trip.** The same suite publishes context metadata, creates the conversation topic,
-waits for dispatcher discovery, submits a prompt, and asserts a completed
-`ConversationInferenceResultEvent` appears on the real conversation log after the coordinator
-contexts consumer hydrates `ContextModelMap` and the dispatcher -> request/batch -> engine ->
-result-bridge path runs. - **LinuxCpu durable-context block.** The `linux-cpu` validation topology
-renders with one worker and one replica per role, and the suite validates engine-pool placement,
-broker-native shared-subscription backpressure, and that every deployed workload is scheduled with
-no `Pending` replica. There is no failure-injection block: pod replacement, node drain, and
-deduplication-across-coordinator-replacement asserted recovery properties of a replicated topology
-the platform no longer deploys. Effectively-once observable outcomes are asserted at the effect
-layer — producer dedup and per-context ordering — rather than by killing a process. -
-**Compact multi-user throughput.** The
-suite submits the default `ThroughputMatrix` (3 users x 2 contexts x 2 prompts) through the durable
-prompt path, asserts exact per-context prompt/result counts with no extras, and reports p95
-completion latency for the full-suite smoke gate. The suite also exposes
-`validateMultiUserDurablePromptThroughputWith` so larger matrices can run without changing the test
-body. - **Runtime KV-cache path.** `Infernix.Runtime.KVCache` flows through
-`executeInferenceWithKVCache`. Unit coverage asserts native-runtime rebuild, reuse, and divergent
-prefix rebuild behavior; integration covers durable dispatcher, engine pod replacement, engine node
-drain, exact broker counts, throughput, platform recovery, production-shape deployment, and clean
-teardown.
+- **Coordinator-to-engine-pool handoff.** Routed publication and `cluster status` must report the
+  validated engine-pool routing graph. The generated substrate config routes coordinator request
+  topics to derived pool/model topics while engine members consume only assigned topics without
+  forwarding again. Supported publication/status outputs contain no Linux per-engine or Apple
+  host-topic compatibility metadata.
+- **Linux GPU service-loop round-trip.** The gate exercises cluster up, routed API probes,
+  per-model inference, cache lifecycle, the service runtime loop, and clean cluster down from the
+  CUDA launcher image. Linux GPU inference runs in cluster engine processes; the `apple-silicon`
+  host-side `infernix service` daemon serializes every model and applies the shared typed
+  memory-admission policy before launch. Capacity failures are terminal per-row
+  `ModelMemoryLimitExceeded` results, not daemon-death signals (see
+  [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)).
+- **Durable Pulsar topic-family round-trip.** The suite publishes `ClientCreateContext`,
+  `ClientUpdateDraft`, `ClientCancelPrompt`, and a raw `ModelBootstrapReadyEvent`, reads them back
+  with Pulsar Readers, asserts compacted contexts/drafts keys are `contextId`, asserts the
+  bootstrap-ready key is `modelId`, asserts conversation records are unkeyed, and decodes each
+  typed payload.
+- **Broker compaction behavior.** The suite asserts the live `infernix/demo` namespace has the
+  supported 100 MiB compaction threshold, publishes prior and latest context/draft records under
+  isolated users, triggers topic compaction, and uses a Java Pulsar `readCompacted(true)` reader to
+  assert exactly one latest payload per `contextId`.
+- **Frontend producer-dedup behavior.** The suite simulates a frontend reconnect by publishing
+  duplicate `ClientCancelPrompt` and `ClientUpdateDraft` messages with identical mutation-scoped
+  producer names and WebSocket `initialSequenceId`-backed sequence ids, then asserts the broker
+  stored exactly one conversation event and one draft event.
+- **Durable-context prompt round-trip.** The suite publishes context metadata, creates the
+  conversation topic, waits for dispatcher discovery, submits a prompt, and asserts a completed
+  `ConversationInferenceResultEvent` appears on the real conversation log after the coordinator
+  contexts consumer hydrates `ContextModelMap` and the dispatcher → request/batch → engine →
+  result-bridge path runs.
+- **Linux CPU durable-context block.** The validation topology runs one process per role. The suite
+  validates engine-pool placement, broker-native `Shared`-subscription backpressure, and that every
+  deployed workload is scheduled with no `Pending` workload. There is no failure-injection block:
+  the supported topology has no standby role or service instance to promote, and process/service
+  loss recovers by restart or restore. The effect-layer gate asserts at-least-once delivery with an
+  effectively-once observable outcome through acknowledgement ordering, producer dedup, and
+  per-context ordering.
+- **Compact multi-user throughput.** The suite submits the default `ThroughputMatrix` (3 users × 2
+  contexts × 2 prompts) through the durable prompt path, asserts exact per-context prompt/result
+  counts with no extras, and reports p95 completion latency for the full-suite smoke gate. The
+  `validateMultiUserDurablePromptThroughputWith` surface permits larger matrices without changing
+  the test body.
+- **Runtime KV-cache path.** `Infernix.Runtime.KVCache` flows through
+  `executeInferenceWithKVCache`. Unit coverage asserts native-runtime rebuild, reuse, and divergent
+  prefix rebuild behavior; integration covers the durable dispatcher, exact broker counts,
+  throughput, the production-shape deployment, and clean teardown.
 
 ## E2E Layer
 
@@ -211,7 +213,7 @@ the textarea value.
 - **Auth lifecycle.** Login; logout; re-login with same credentials; JWT refresh. Signup,
   authorization-code redirect, token exchange, backend `/api/objects` JWT acceptance, and routed
   WebSocket valid/malformed-token handshake plus expired-token rejection and typed malformed-frame
-  error behavior are covered by the current routed smoke. The browser app now also covers local
+  error behavior are covered by the routed smoke. The browser gate also covers local
   logout, same-browser re-login, user-to-admin account switching, and refresh-token WebSocket
   re-auth through a new `ClientHello`
   after the refresh grant. The pre-auth landing smoke asserts the anonymous shell exposes exactly
@@ -221,21 +223,21 @@ the textarea value.
   Account deletion coverage verifies the backend state reap happens before the
   Keycloak `delete_account` action begins.
 - **Context lifecycle.** New-context dialog open/close without backend state; create; rename;
-  soft-delete; select context. The browser now opens and closes the new-context dialog without
+  soft-delete; select context. The browser opens and closes the new-context dialog without
   sending `ClientCreateContext` or adding a local context, then selects a supported model, asserts
   the outbound `ClientCreateContext`, observes the context-create patch from the broker-backed
   stream, and verifies the active context rail preserves that model id. It also sends
   `ClientRenameContext` and `ClientSoftDeleteContext`, observes the broker-backed
   `ServerContextListPatch` upserts, and verifies the active context rail shows the updated title
   plus soft-deleted state. The backend `ContextModelMap` path is covered by integration, and the
-  routed WebSocket test now sends an absent catalog model id and asserts typed `ServerError` code
+  routed WebSocket test sends an absent catalog model id and asserts typed `ServerError` code
   `unknown-model`.
 - **Conversation lifecycle.** Submit; see response; two-prompts-in-a-row "queued" state;
-  cancel-mid-inference; order preservation across reload. The browser now covers submitted prompt
+  cancel-mid-inference; order preservation across reload. The browser gate covers submitted prompt
   visibility, the two-prompt queued indicator, and cancel request visibility through routed
   WebSocket frames, patches, and the rendered Chat DOM. Completed response rendering is covered by
   the per-model smoke matrix; reload coverage is scoped to active-context resubscribe and durable
-  draft restoration in the Phase 7 closure gate.
+  draft restoration in the validation gate.
 - **Draft lifecycle.** Type draft; refresh page; draft restored per context; submit clears
   draft. Browser draft upsert, submit-clear, forced-reconnect restore, and page-reload restore
   are covered through routed WebSocket frames and broker-backed draft patches.
@@ -244,19 +246,19 @@ the textarea value.
   receives a fresh `ServerConversationSnapshot`, and submits another prompt through the
   reconnected socket. It also preserves the active context id/model id across reload login so the
   active context can be resubscribed and its draft restored. Full storage-clear reconstitution is a
-  future browser-matrix expansion, not a Phase 7 closure gate.
+  a separate browser-matrix validation surface.
 - **Artifact upload lifecycle** per supported artifact class (image, playable audio, video,
   text/JSON, PDF, MIDI, MusicXML/MXL notation, generic binary): open upload, select file,
   observe progress, see artifact appear in Artifacts view AND in the per-context conversation
   thread as a `UserUpload` event. Browser upload through the webapp `/api/objects/upload` proxy is
   covered for text, JSON, PNG, WAV,
   MP4, PDF, MIDI, MusicXML, and generic binary fixtures with Artifacts view render/download
-  states asserted. Browser uploads now send `ClientRecordUpload` and the backend maps it to a
-  `ConversationUserUploadEvent`. Prompt submit now sends the current context's uploaded
+  states asserted. Browser uploads send `ClientRecordUpload` and the backend maps it to a
+  `ConversationUserUploadEvent`. Prompt submit sends the current context's uploaded
   `ObjectRef`s in `ClientSubmitPrompt.promptUserUploads`, asserted from the outbound browser
   WebSocket frame; the active context also sends `ClientSubscribeContext`, and the prompt event is
   asserted through an inbound `ServerConversationPatch` append frame. Browser-visible upload-event
-  assertions now cover the outbound `ClientRecordUpload`, inbound `ConversationUserUploadEvent`
+  assertions cover the outbound `ClientRecordUpload`, inbound `ConversationUserUploadEvent`
   append patch, and rendered Chat upload message for each supported browser fixture.
 - **Artifact download lifecycle.** Click an artifact; the webapp `/api/objects/download` proxy
   streams the bytes; inline render via `<img>` / `<audio>` / `<video>` where applicable; bounded text/JSON preview and
@@ -269,13 +271,14 @@ the textarea value.
   (e.g., SDXL Turbo for an image, bark-small for audio, Basic Pitch for MIDI, Audiveris for
   MusicXML/PDF notation); confirm the artifact appears in the conversation AND in the
   Artifacts view; render or download succeeds according to artifact class.
-- **Multi-tab convergence.** Future browser-matrix expansion: two tabs on the same account; send
+- **Multi-tab convergence.** Open two tabs on the same account; send
   from one, see in the other.
 - **Client reconstitution.** Clear all browser storage via the Playwright Browser Context
   API; reload; sign in again; assert full pre-wipe state. A separate browser context simulates a
-  different device. This remains outside the Phase 7 closure gate.
-- **Pod failover from the browser's perspective.** Kill the WS-hosting pod while the test is
-  running; assert the SPA re-establishes the WS transparently and resumes state.
+  different device.
+- **WebSocket reconnect from the browser's perspective.** Force-close the live WebSocket; assert
+  the SPA reconnects, resends hello and the active-context subscription, receives a fresh snapshot,
+  and resumes prompt submission.
 - **Per-Model Smoke Matrix** (see dedicated section below).
 
 ## Per-Model Smoke Matrix
@@ -412,12 +415,13 @@ row even though no single substrate carries all 19 rows.
 
 ## Validation
 
-- `infernix test unit` includes every unit-layer suite named here. - `infernix test integration`
-includes every integration-layer suite named here, including the throughput
-test. - `infernix test e2e` runs the Playwright suite including the per-model smoke matrix. -
-`infernix test all` aggregates lint, unit, integration, and E2E. Phase 7 closure requires `infernix
-test all` green on at least one substrate with `demo_ui = true`. - `infernix lint docs` must remain
-clean as new suites and fixtures are added.
+- `infernix test unit` includes every unit-layer suite named here.
+- `infernix test integration` includes every integration-layer suite named here, including the
+  throughput test.
+- `infernix test e2e` runs the Playwright suite including the per-model smoke matrix.
+- `infernix test all` aggregates lint, unit, integration, and E2E. Validation requires `infernix test
+all` on the selected accelerator plus `linux-cpu` with `demo_ui = true`.
+- `infernix lint docs` must remain clean as suites and fixtures are added.
 
 ## Cross-References
 

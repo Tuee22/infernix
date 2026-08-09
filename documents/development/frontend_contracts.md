@@ -56,7 +56,7 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
 - generated `Simple.JSON` instances stay in lockstep with Haskell `ToJSON`/`FromJSON` instances
   so both sides agree on wire format mechanically
-- the generator pipeline extends this lockstep to every Phase 7 sum and newtype:
+- the generator pipeline extends this lockstep to every shared-library sum and newtype:
   string-wrapped newtypes (`UserId`, `ContextId`, `MessageId`, `ClientIdempotencyKey`,
   `ArtifactMimeType`) encode as bare strings on the wire, matching the Haskell side's
   `deriving newtype (ToJSON)`; record-wrapped newtypes unwrap to their inner record;
@@ -64,7 +64,7 @@ and the discipline that PureScript is a thin renderer is a governed contract:
   `{"tag": "...", "contents": ...}`; record-syntax sums spread their constructor's fields
   beside the `tag` key (matching Aeson's `TaggedObject "tag" "contents"` behavior). The
   PureScript roundtrip suite at `web/test/Infernix/Web/ContractsSpec.purs` exercises
-  encode/decode roundtrips and wire-shape assertions across every Phase 7 type to keep the
+  encode/decode roundtrips and wire-shape assertions across every shared-library type to keep the
   lockstep mechanically enforced.
 
 The browser receives only object refs and the webapp performs every MinIO read/write server-side;

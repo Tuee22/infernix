@@ -57,7 +57,7 @@ native runner has **no fabrication branch**:
 
 | Surface | Mechanism | Forbids |
 |---|---|---|
-| Haskell | `realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs`, run under the `infernix-haskell-style` cabal test (`infernix test lint`), scoped via `realnessScopedFiles` (`Engines/LinuxNative.hs` landed under Phase 4; `Engines/AppleSilicon.hs` added under Phase 1) | the fabrication tokens `emit_fallback_result`, `infernix_emit_validation_result`, `native-validation`, `b64decode` (constant artifact), `native fallback` (`np.zeros` is *not* token-forbidden — real engines use it for scratch buffers; the fake-input pattern is a doctrine prohibition, not a token check) |
+| Haskell | `realnessFabricationViolations` in `src/Infernix/Lint/HaskellStyle.hs`, run under the `infernix-haskell-style` cabal test (`infernix test lint`), scoped via `realnessScopedFiles` to `Engines/LinuxNative.hs` and `Engines/AppleSilicon.hs` | the fabrication tokens `emit_fallback_result`, `infernix_emit_validation_result`, `native-validation`, `b64decode` (constant artifact), `native fallback` (`np.zeros` is *not* token-forbidden — real engines use it for scratch buffers; the fake-input pattern is a doctrine prohibition, not a token check) |
 | Python | AST passes in `python/adapters/common.py` `run_check_code` (`poetry run check-code`) | **`python/adapters/*_python.py`**: `return` inside `except`, `bytes([...])` / `b64decode("...")` constant-artifact bytes, and `_validation_*` / `*_smoke*` / `*_fallback*` helper definitions. **`python/native-runners/*.py`**: the module-agnostic constant-artifact signals only (`bytes([...])` / decoded literal) — the name/except heuristics do not transfer because a native runner is a CLI with a legitimate `smoke` subcommand and fail-closed error-code `return`s; its realness otherwise rests on the exit-non-zero fail-closed structure plus review |
 | Docs | `src/Infernix/Lint/Docs.hs` `forbiddenPhrases` | the retired fabrication-blessing wording in governed docs |
 
@@ -106,8 +106,8 @@ fabricated pass.
 - [Managed State Transitions](managed_state_transitions.md) — the sibling doctrine that generalizes
   this contract from inference results to system state transitions.
 - [bounded_inference_memory.md](bounded_inference_memory.md) — the enforcement half of the memory
-  contract: an executable capability carries the matching indexed grant/enforcer pair; Phases 4 and
-  6 own the remaining behavioral proof that an *admitted inference* cannot exceed its ceiling
+  contract: an executable capability carries the matching indexed grant/enforcer pair; adversarial
+  gates prove that an *admitted inference* cannot exceed its ceiling
   without a typed failure.
 - [bounded_host_memory.md](bounded_host_memory.md) — the capacity ledger that inference is one row
   of, and the canonical statement of which host out-of-memory conditions are not bounded by any

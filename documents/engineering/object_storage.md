@@ -32,7 +32,7 @@ The supported shape uses three MinIO buckets and nothing else:
 |---|---|---|---|
 | `infernix-models` | Always-on (not demo-gated) | `<modelId>/<filename>` plus a per-model `<modelId>/.ready` sentinel object | Platform-owned model weights, tokenizers, and configs. Eagerly staged by the coordinator on startup from the mounted `infernix.dhall` model set (a `warm-model-cache` cluster-up barrier blocks until every model is `.ready`). Read by Linux engine pods and by Apple host engine members. |
 | `infernix-engine-artifacts` | Always-on (not demo-gated) | `sha256/<digest>` plus optional adapter pointers such as `<substrate>/<adapterId>/<version>/manifest.pb` | Immutable engine software payloads: wheelhouses, native binaries, Core ML compiled models, JVM tools, and reusable Apple or Linux materialization payloads. Model weights never live here. |
-| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → webapp object proxy) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written server-side to the `generated/` prefix. Read by the browser only through `/api/objects`; the browser never receives a presigned MinIO URL. This is the only demo/user artifact bucket; the retired `infernix-runtime` and `infernix-results` buckets are not part of the supported contract. |
+| `infernix-demo-objects` | Demo-gated (absent when `demo_ui = false`) | `users/<userId>/contexts/<contextId>/uploads/<objectKey>` and `users/<userId>/contexts/<contextId>/generated/<objectKey>` | User uploads and non-text INPUTS — audio and image references (browser → webapp object proxy) on the `uploads/` prefix — plus real per-family engine-generated ARTIFACT results (source-separation stems, audio-to-MIDI / music-transcription MIDI and MusicXML, generated images, video, and audio) written server-side to the `generated/` prefix. Read by the browser only through `/api/objects`; the browser never receives a presigned MinIO URL. This is the only demo/user artifact bucket; `infernix-runtime` and `infernix-results` are not part of the contract. |
 
 ## Bucket Scope Policies
 
@@ -137,26 +137,26 @@ pair with its matching enforcer before launch can receive an
 }` without launch, while the disk quota governs LRU EVICTION of staged
 weights. The two are orthogonal: a model can be cache-resident on disk
 yet unavailable for execution, or executable while its weights were
-just evicted from disk and must be re-pulled. Linux GPU plan compilation
-currently fails closed with `GpuDualResourceBudgetRequired` until Phase
-6 supplies dual RAM/VRAM enforcement. The executable-gated
+just evicted from disk and must be re-pulled. A Linux GPU plan without
+independently indexed RAM and VRAM enforcement fails closed with
+`GpuDualResourceBudgetRequired`. The executable-gated
 capped-engine contract is owned canonically by
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md).
 
 For real per-family artifact inference outputs (source-separation
 stems, audio-to-MIDI and music-transcription MIDI / MusicXML,
-generated images, video, and audio), the supported target is a
+generated images, video, and audio) are stored as a
 server-derived object under
 `infernix-demo-objects/users/<sub>/contexts/<ctx>/generated/`. The result
 payload carries an `ObjectRef` (bucket + key) resolved on browser read
 through the webapp `/api/objects` proxy. These artifacts are always
-written to `infernix-demo-objects` — never to the retired
-`infernix-runtime` or `infernix-results` buckets, which are not part of
+written to `infernix-demo-objects` — never to
+`infernix-runtime` or `infernix-results`, which are not part of
 the supported contract. Text outputs from the LLM and speech families
 ride inline in the protobuf result message and never touch object
 storage.
 
-The target is Haskell-owned: `WorkerRequest` carries the generated-output prefix
+The generated-object identity is Haskell-owned: `WorkerRequest` carries the output prefix
 derived from `userId` + `contextId`, Python adapters reject missing or invalid generated-output
 targets, native-process-runner artifact uploads use the same prefix, and the result bridge rejects
 raw or cross-user generated object refs.
@@ -167,7 +167,7 @@ prefix and referenced on the request as a typed object reference,
 rather than inlined. Successful `ResultPayload`s carry `inline_output` or
 `object_ref`, while failed payloads carry typed `InferenceError` values.
 `buildPayload` routes text-family successes to inline output and
-artifact-family successes to object references. The newer proto fields
+artifact-family successes to object references. The proto fields
 are a non-text INPUT object reference on `InferenceRequest` /
 `WorkerRequest` and an object-reference OUTPUT on `WorkerResponse` for
 the artifact adapters.
@@ -186,7 +186,7 @@ single-flight dispatcher and the result-bridge) when an engine hits an unstaged 
 
 1. Take the `modelId` (from the mounted config's model set, or a fallback bootstrap request).
 2. Re-check `infernix-models/<modelId>/.ready` in MinIO (idempotent
-   guard against duplicate work after restart or Failover handoff).
+   guard against duplicate work after restart or Failover redelivery).
    - If present, publish `model.bootstrap.ready.<modelId>` and continue.
 3. Otherwise, look up the upstream `downloadUrl` for `modelId` in the
    mounted `infernix.dhall` catalog.
@@ -205,10 +205,11 @@ single-flight dispatcher and the result-bridge) when an engine hits an unstaged 
    ready-event topic family.
 8. Ack the bootstrap request.
 
-**Exactly-once semantics** come from:
+**At-least-once delivery with an effectively-once observable publication** comes from:
 
 - Pulsar named `Failover` subscription on the request topic — exactly
-  one coordinator replica processes a given `modelId` at a time.
+  one active coordinator consumer processes a given `modelId` at a time.
+  This is broker coordination, not standby-replica availability.
 - Producer dedup on the request topic uses an attempt-scoped
   `modelId@requestedAt` sequence id while the Pulsar message key stays
   `modelId` — exact request replays collapse, but later retry attempts
@@ -219,13 +220,13 @@ single-flight dispatcher and the result-bridge) when an engine hits an unstaged 
   truncated upload cannot write the sentinel and is not visible to
   engines because the sentinel is the gate.
 
-**Failure mode**: if the active coordinator dies mid-upload, Pulsar
-redelivers the unacked request to a surviving coordinator replica.
-The replica re-checks MinIO (idempotent guard) and either notices the
-upload is already complete (`.ready` present) and publishes the ready
-event, or restarts the download from scratch. The Failover subscription,
-attempt-scoped request dedup, and the `.ready` sentinel guarantee at most
-one effective publication.
+**Failure mode**: if the coordinator dies mid-upload, its restarted
+process resubscribes under the stable Failover name and Pulsar redelivers
+the unacknowledged request. The process re-checks MinIO (idempotent guard)
+and either notices the upload is already complete (`.ready` present) and
+publishes the ready event, or restarts the download from scratch. The
+Failover subscription, attempt-scoped request dedup, and the `.ready`
+sentinel yield an effectively-once observable publication.
 
 ## Daemon Disk Posture
 
@@ -271,18 +272,21 @@ The routed Linux GPU E2E flow validates the server-side
 
 ## Validation
 
-- `infernix lint docs` enforces this doc's metadata block and cross-reference resolution. -
-`infernix test integration` covers the model-cache staging workflow: the coordinator eagerly stages
+- `infernix lint docs` enforces this doc's metadata block and cross-reference resolution.
+- `infernix test integration` covers the model-cache staging workflow: the coordinator eagerly stages
 the mounted config's models at startup so `infernix-models` is populated before serving, and the
 `.ready` sentinel has a single effective writer even under concurrent staging (and under the
-fallback path's concurrent requests from N engine pods). - `infernix test integration` covers the
+fallback path's concurrent requests from N engine processes).
+- `infernix test integration` covers the
 `emptyDir` DISK LRU eviction policy in the adapter helper on the Linux engine pod: sustained load
 does not exhaust ephemeral storage and does not restart the engine pod. This validated bound is
 DISK-only. Model memory is covered by separate resource-admission tests that assert typed
 `ModelMemoryLimitExceeded` rather than parsing output text or treating a missing result as capacity
-failure. - `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a
+failure.
+- `infernix test e2e` covers `/api/objects` upload/download through the webapp proxy from a
 real Keycloak JWT, same-user routed byte equality, and cross-user object-prefix isolation for two
-Keycloak users with the same context id and display name. - Production-shape test (`demo_ui =
+Keycloak users with the same context id and display name.
+- Production-shape validation (`demo_ui =
 false`) confirms `infernix-models` and `infernix-engine-artifacts` are present,
 `infernix-demo-objects` is absent, and no daemon has a PVC.
 

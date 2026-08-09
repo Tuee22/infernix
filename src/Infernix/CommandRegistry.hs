@@ -52,6 +52,9 @@ data Command
   | InternalDemoConfigValidateCommand FilePath
   | InternalDhallSchemaCommand DhallSchema
   | InternalGeneratePursContractsCommand FilePath
+  | InternalValidateDarwinBuildMemoryCommand
+  | InternalValidateDarwinAudiverisCancellationCommand
+  | InternalValidateDarwinInstalledPythonSourceIsolationCommand
   | InternalPulsarRoundTripCommand FilePath String String
   | InternalPlaywrightPrepareEngineCommand String
   deriving (Eq, Show)
@@ -315,8 +318,11 @@ testCommandFamily =
       familyOverview = "runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite",
       familyCommands =
         [ testInitCommandSpec,
-          simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell style and Python quality gates" TestLintCommand,
-          simpleCommand "test unit" "runs the Haskell unit suites and the PureScript frontend unit suites" TestUnitCommand,
+          simpleCommand "test lint" "runs the focused lint entrypoints together with the strict Haskell/Cabal style and Python quality gates" TestLintCommand,
+          simpleCommand
+            "test unit"
+            "runs all machine-independent Haskell suites (compile-fail, artifact transaction, Apple materializer, capped observer, execution-plan, and unit) plus the PureScript frontend unit suite"
+            TestUnitCommand,
           simpleCommand "test integration" "runs the cluster-backed integration suite against the active substrate" TestIntegrationCommand,
           simpleCommand "test e2e" "runs routed Playwright coverage for every demo-visible generated catalog entry" TestE2ECommand,
           simpleCommand "test all" "runs lint, unit, integration, and routed E2E validation in sequence" TestAllCommand
@@ -344,6 +350,18 @@ internalCommandFamily =
             "emits generated PureScript browser contracts into the requested output directory"
             InternalGeneratePursContractsCommand
             ["internal", "generate-purs-contracts"],
+          simpleCommand
+            "internal validate-darwin-build-memory"
+            "runs the closed Darwin-only fresh toolchain build and reports sampled peak aggregate physical footprint evidence"
+            InternalValidateDarwinBuildMemoryCommand,
+          simpleCommand
+            "internal validate-darwin-audiveris-cancellation"
+            "runs the fixed Darwin production Audiveris cancellation-recovery cohort gate"
+            InternalValidateDarwinAudiverisCancellationCommand,
+          simpleCommand
+            "internal validate-darwin-installed-python-source-isolation"
+            "runs the fixed Darwin installed-Python source-isolation cohort gate"
+            InternalValidateDarwinInstalledPythonSourceIsolationCommand,
           singlePathCommand
             "internal discover images RENDERED_CHART"
             "prints the unique image references discovered in a rendered chart manifest"
@@ -367,7 +385,7 @@ internalCommandFamily =
           materializeSubstrateCommand,
           simpleCommand
             "internal materialize-metal-engines"
-            "materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)"
+            "materializes the allowlisted Apple Metal/Core ML engine manifests under `./.data/engines/<adapterId>/` and prepares the canonical Apple per-engine Python framework plan through the Tart-free headless host lane (Apple-only; mirrors `internal materialize-substrate`)"
             InternalMaterializeMetalEnginesCommand,
           simpleCommand
             "internal materialize-linux-native-engines"
@@ -400,7 +418,7 @@ materializeSubstrateCommand :: CommandSpec
 materializeSubstrateCommand =
   CommandSpec
     { commandUsageSuffix = "internal materialize-substrate RUNTIME_MODE [--demo-ui true|false] [--empty-models]",
-      commandDescription = "writes the generated runtime config for one explicit substrate id to repo-root `./infernix.dhall`",
+      commandDescription = "writes the generated runtime config and prepares the closed per-engine Python framework plan for one explicit substrate id",
       commandParse = \case
         ["internal", "materialize-substrate", rawRuntimeMode] ->
           (\runtimeMode -> InternalMaterializeSubstrateCommand runtimeMode True False)

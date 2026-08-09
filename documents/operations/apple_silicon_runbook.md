@@ -12,11 +12,15 @@ are defense-in-depth without direct FFI. Startup verifies the footprint probe an
 generated execution plan into an opaque Apple enforcer before an engine member becomes ready — see
 [Typed Execution Plan](../architecture/typed_execution_plan.md).
 
-- the supported Apple clean-host contract reduces pre-existing host requirements to Homebrew plus
-  ghcup before the binary is built
-- the Apple stage-0 bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables
-  plus Homebrew `protoc` before direct `cabal install`, so the supported clean-host first run does
-  not depend on rerunning the same bootstrap command after Cabal is first installed
+- the Apple clean-host stage-0 entrypoint reconciles Homebrew, ghcup, and fixed
+  `/opt/homebrew/bin/jq`; its build path requires existing fixed `/opt/homebrew/bin/colima` and a
+  nonempty, parseable Colima profile inventory. It never installs Colima or creates a Colima
+  profile or VM
+- the bootstrap verifies the selected ghcup-managed `ghc` and `cabal` executables and requires at
+  least 12288 MiB effective memory after subtracting the active Colima pledge before direct
+  `cabal install`. Haskell protobuf modules are checked-in generator output governed by an exact
+  hash manifest, so the ordinary Darwin build and lint path neither installs nor starts `protoc`
+  or `proto-lens-protoc`
 - Docker-backed Apple work uses the operator's already selected native arm64 Docker daemon. The
   supported workflow must not create or switch Docker contexts, create a Colima VM, or use
   cross-architecture emulation
@@ -24,32 +28,25 @@ generated execution plan into an opaque Apple enforcer before an engine member b
   `kubectl`, `helm`, and Node.js on demand, and let adapter setup or validation paths reconcile
   the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local Poetry
   bootstrap when needed; the Poetry bootstrap may reuse an already available compatible Python
-  3.12+ executable when one passes the implemented version check
+  3.12+ executable when one passes the version check
 - the Apple bootstrap shell owns only host prerequisite reconciliation through the host binary
   build and then invokes `./.build/infernix <command>`; the host binary owns Kind, Kubernetes,
   container builds, Harbor publication, and any cluster workload image pulls needed after it exists,
   but it must not provision Docker virtualization or switch Docker contexts
-- the Apple lifecycle now keeps Kind lock-taking off repo-visible paths by using a host-local
+- the Apple lifecycle keeps Kind lock-taking off repo-visible paths by using a host-local
   scratch kubeconfig under the system temp directory during cluster create or delete and then
   publishing the durable repo-local kubeconfig under `./.build/`
-- current Apple validation evidence is recorded in
-  [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md);
-  the legacy-tracking ledger at
-  [../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-  records obsolete-surface receipts
 - long waits can be healthy while the supported path is replaying retained Kind data, building
   the shared runtime image, publishing it through Harbor, or preloading Harbor-backed images
   onto the Kind worker; Harbor Docker pushes use readiness-gated bounded retries across
   transient registry resets
-- retained-state Apple reruns may also log a targeted Harbor PostgreSQL replica reinitialization
-  from the current Patroni leader when stopped replicas need a fresh base backup after timeline
-  advancement, or a non-waiting recycle of unready Harbor PostgreSQL startup pods when Patroni
-  readiness does not converge; treat those as supported retained-state repair rather than
-  unexpected failure modes
+- retained-state Apple reruns may log a non-waiting recycle of unready Harbor PostgreSQL startup
+  pods when Patroni readiness does not converge; treat that as supported retained-state repair
+  while the surrounding readiness wait continues
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane. The retained
   `materialize-metal-engines` helper name writes typed engine-artifact manifests without emitting
-  or compiling repository-owned native source; the Apple cohort owns upstream MLX GPU-operation,
-  coremltools device-observation, native artifact load, and routed real-output evidence named in
+  or compiling repository-owned native source; validation requires upstream MLX GPU operation,
+  coremltools device observation, native artifact load, and routed real-output gates named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 ## Supported Flow
@@ -58,10 +55,14 @@ generated execution plan into an opaque Apple enforcer before an engine member b
 - run `./bootstrap/apple-silicon.sh up`; it runs `./.build/infernix init --if-missing` before
   `cluster up`
 - run `./bootstrap/apple-silicon.sh status`
-- run `./bootstrap/apple-silicon.sh test`
 - use `./.build/infernix kubectl ...` instead of mutating global
   kubeconfig
 - run `./bootstrap/apple-silicon.sh down` when tearing the cluster down
+- only after the operator-owned cluster is down, run `./bootstrap/apple-silicon.sh test`; it runs
+  `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --if-missing`, then
+  `./.build/infernix test init --runtime-mode apple-silicon --demo-ui true`, before `test all`. A
+  clean workspace needs no separate config step, an existing operator config is preserved, and the
+  wrapper does not run operator `cluster up`
 
 The first supported host-native command that needs Kubernetes tooling, Node.js, Python, or Poetry
 may reconcile those prerequisites automatically. Docker is different: the current Docker context
@@ -69,110 +70,126 @@ must already point at a native arm64 daemon before Docker-backed cluster work be
 
 Direct reference path:
 
-- build both Haskell binaries with
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
-  which runs under the declared build ceiling
-  ([bounded host memory](../architecture/bounded_host_memory.md)) — the toolchain is a named account
-  on host RAM, and an uncapped build is what exhausted a 124.94 GiB development host
+- build the Haskell host binary with `./bootstrap/apple-silicon.sh build`; that governed entrypoint
+  performs the fixed-path stage-0 memory observation and supplies the complete bounded Cabal/GHC
+  claimant vector described by [bounded host memory](../architecture/bounded_host_memory.md)
 - run `./.build/infernix init` if `./infernix.dhall` and `./infernix-host.dhall` are not present
 - run `./.build/infernix cluster up`
+- run `./.build/infernix cluster status` as needed, then run `./.build/infernix cluster down`
+- with no live operator-owned cluster, run
+  `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --if-missing`
+- run `./.build/infernix test init --runtime-mode apple-silicon --demo-ui true`
 - run `./.build/infernix test all`
 
 ## Cold Start Expectations
 
 - use `./bootstrap/apple-silicon.sh status` or `./.build/infernix cluster status` before treating a
-long `up`, `test`, or `down` run as failed - cold or retained-state Apple runs can spend many
+long `up`, `test`, or `down` run as failed.
+- Cold or retained-state Apple runs can spend many
 minutes in `prepare-kind-cluster`, `build-cluster-images`, `publish-harbor-images`,
 `preload-harbor-images`, and `replay-retained-state`; a cold `build-cluster-images` phase can remain
-healthy well past twenty minutes before Harbor publication begins - Apple teardown freezes every
+healthy well past twenty minutes before Harbor publication begins.
+- Apple teardown freezes every
 workload-capable Kind worker, rechecks claim placement, stages a complete detached snapshot in
 `.incoming`, and atomically commits it with `.previous` recovery before Kind deletion. Retained
 MinIO model/demo-object and Pulsar data stay durable; the post-delete `WriterQuiesced` scrub may
 remove only the rebuildable Harbor/Keycloak Patroni, Harbor Redis, and MinIO `harbor-registry`
-subset. - Apple bring-up reconciles interrupted `.incoming` / `.previous` roots before claim
+subset.
+- Apple bring-up reconciles interrupted `.incoming` / `.previous` roots before claim
 preparation, then keeps the exact `replay-retained-state-into-kind` lifecycle intent from before
 Kind creation through worker copy and claim preparation. A live pre-workload cluster resumes only
 with matching owner/runtime intent; ambiguous state fails closed. An unreadable kubeconfig
 authorizes delete/recreate only for that exact pending pre-workload intent, never for an ordinary
-live cluster. Do not manually alter these transaction roots while a lifecycle command is active. -
-on host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
+live cluster. Do not manually alter these transaction roots while a lifecycle command is active.
+- On host-native Apple, `build-cluster-images` reuses `infernix-linux-cpu:local` only when the local
 image carries the current source fingerprint, runtime-mode label, architecture, and pushable
 manifest shape; the first run after source changes may rebuild, while unchanged-source reruns should
-reuse the stamped image before Harbor publication - `infernix test integration` may perform several
+reuse the stamped image before Harbor publication.
+- `infernix test integration` may perform several
 internal cluster cycles. A source edit changes the fingerprint and forces one rebuild; subsequent
 cycles in the same run should print `reusing cluster image for linux-cpu: infernix-linux-cpu:local`
-when source is unchanged. - `publish-harbor-images` includes readiness-gated bounded retries for
+when source is unchanged.
+- `publish-harbor-images` includes readiness-gated bounded retries for
 Docker push failures, so a transient registry reset during large-image publication is not a hard
 failure unless the retry budget is exhausted and the image is still neither tagged nor pullable;
 repo-owned local images are published before third-party chart dependencies and are re-tagged from
-their source image before each retry so recovery does not depend on a retained target tag -
-`./bootstrap/apple-silicon.sh test` is not a single cluster round-trip: the governed test lane may
+their source image before each retry so recovery does not depend on a retained target tag.
+- `./bootstrap/apple-silicon.sh test` is not a single cluster round-trip: the governed test lane may
 perform multiple internal cluster bring-up or teardown cycles through integration and E2E before the
-outer bootstrap command returns - when `cluster status` reports `lifecycleStatus: in-progress`, the
+outer bootstrap command returns.
+- When `cluster status` reports `lifecycleStatus: in-progress`, the
 supported surface also reports `lifecycleAction`, `lifecyclePhase`, `lifecycleDetail`,
-`lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds` - these operator lifecycle fields are
+`lifecycleHeartbeatAt`, and `lifecycleHeartbeatAgeSeconds`. These operator lifecycle fields are
 moving under a typed `ClusterLifecycle` machine per the canonical [Managed State
-Transitions](../architecture/managed_state_transitions.md) doctrine - if a
-`./bootstrap/apple-silicon.sh test` run is externally killed (SIGKILL) mid-mutation, the next
+Transitions](../architecture/managed_state_transitions.md) doctrine.
+- If a `./bootstrap/apple-silicon.sh test` run is externally killed (SIGKILL) mid-mutation, the next
 `cluster status` reports a `mutation-incomplete` (dirty) `lifecyclePhase` — not `steady-state` —
 because the harness left its `HarnessOwned` cluster mid-mutation (a drained node, an over-scaled
 deployment); the next `cluster up` reconciles it (uncordons the drained node, scales deployments
 back) through the same reconcile-on-next-start repair, so treat a dirty read as a repairable
-leftover rather than a corrupt cluster - the supported Apple doctrine is inactivity-aware:
-wall-clock duration alone is not failure - during the monitored long-running subprocess phases, the
+leftover rather than a corrupt cluster.
+- The supported Apple doctrine is inactivity-aware: wall-clock duration alone is not failure.
+- During the monitored long-running subprocess phases, the
 lifecycle heartbeat refreshes roughly every 30 seconds; treat that as active progress, and treat the
 action as stalled only when the command exits non-zero or the heartbeat stops refreshing across
-multiple intervals - if a retained-state rerun logs Harbor PostgreSQL replica repair from the
-current leader, treat that as an expected recovery step on the supported path and wait for the same
-heartbeat-driven progress rules instead of treating the repair itself as hard failure - if warmup
-logs a Harbor PostgreSQL startup-pod recycle, the delete is intentionally non-waiting; StatefulSet
+multiple intervals.
+- If warmup logs a Harbor PostgreSQL startup-pod recycle, the delete is intentionally non-waiting; StatefulSet
 recreation and final readiness are owned by the surrounding lifecycle wait loop
 
 ## Rules
 
 - the Apple host operator workflow has no generic Python prerequisite; Poetry and a repo-local
 adapter virtual environment materialize only when an engine-adapter validation or setup path is
-exercised explicitly - supported Apple host shell is limited to `./bootstrap/apple-silicon.sh`; the
+exercised explicitly
+- supported Apple host shell is limited to `./bootstrap/apple-silicon.sh`; the
 direct `cabal` command lets cabal use its natural `dist-newstyle` builddir at the project root and
 only overrides `--installdir=./.build` so the materialized `./.build/infernix` binary lands where
-the supported CLI surface expects it - after the host binary exists, the bootstrap shell does not
+the supported CLI surface expects it
+- after the host binary exists, the bootstrap shell does not
 call `kind`, `kubectl`, `helm`, apply manifests, pull images, build the cluster runtime image, or
 publish to Harbor directly; it calls `./.build/infernix <command>` and lets the binary own those
-lifecycle responsibilities - supported Apple bootstrap commands are restartable stage-0 entrypoints:
+lifecycle responsibilities
+- supported Apple bootstrap commands are restartable stage-0 entrypoints:
 when host prerequisite reconciliation crosses a real new-shell or reboot boundary, rerun the same
 `./bootstrap/apple-silicon.sh <command>` surface rather than jumping straight to a later direct
 command; same-process tool installation continues only after the bootstrap verifies the required
-executable explicitly - `./.build/infernix init` creates the operator runtime config at repo-root
+executable explicitly
+- `./.build/infernix init` creates the operator runtime config at repo-root
 `./infernix.dhall` and the host manifest at `./infernix-host.dhall`; ordinary lifecycle and
-validation commands validate that config and fail fast naming `infernix init` when it is absent -
-`./.build/infernix test init` creates `./infernix.test.dhall`; the test harness uses it to generate
-and own a temporary `./infernix.dhall` for the run - Kind create or delete uses a host-local scratch
+validation commands validate that config and fail fast naming `infernix init` when it is absent
+- `./.build/infernix test init` creates `./infernix.test.dhall`; the test harness uses it to generate
+and own a temporary `./infernix.dhall` for the run
+- Kind create or delete uses a host-local scratch
 kubeconfig under the system temp directory, and `cluster up` publishes
-`./.build/infernix.kubeconfig` afterward - supported flows do not mutate `$HOME/.kube/config` - the
-Apple host-native path describes where the Haskell build, control-plane commands, cluster-side
+`./.build/infernix.kubeconfig` afterward
+- supported flows do not mutate `$HOME/.kube/config`
+- the Apple host-native path describes where the Haskell build, control-plane commands, cluster-side
 coordinator orchestration, and on-host engine executor run. The three-role daemon model in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md) maps to Apple as:
 cluster-side `infernix-coordinator` Deployment plus on-host `Engine`-role daemon (the `infernix
 service` process). `cluster up` adds `infernix-demo` when `demo_ui` is enabled and always deploys
-the cluster `infernix-coordinator` Deployment - on `apple-silicon`, the clustered demo and
+the cluster `infernix-coordinator` Deployment
+- on `apple-silicon`, the clustered demo and
 coordinator workloads run from the `infernix-linux-cpu:local` image family while reading the
 cluster-role deployment mirror derived from the initialized `apple-silicon` runtime config; the
 coordinator role owns request fan-in and batch handoff, not Apple-native inference execution, and
 the host-native `infernix` binary builds or freshness-reuses that image family and publishes it to
-Harbor after Harbor is responsive - `/api/publication` keeps the routed demo API on
+Harbor after Harbor is responsive
+- `/api/publication` keeps the routed demo API on
 `apiUpstream.mode: cluster-demo`, reports `daemonLocation: cluster-pod`, reports
 `inferenceExecutorLocation: control-plane-host`, and publishes `inferenceDispatchMode:
 pulsar-bridge-to-host-daemon` so the routed demo surface can advertise the
-coordinator-plus-host-engine split explicitly - the direct `infernix service` host run carries the
+coordinator-plus-host-engine split explicitly
+- the direct `infernix service` host run carries the
 engine daemon role: it consumes the generated engine-pool membership for its Apple host id,
 auto-discovers Pulsar's direct un-gated proxy NodePort transport (the `/admin/v2` and `/ws/v2`
 surfaces, not the JWT-gated `/pulsar/admin` edge) from published cluster state when needed, and
 forks Python adapters from `python/adapters/` only when the bound engine is Python-native. Normal
 Apple pools use Pulsar `Shared` subscriptions across distinct host ids so broker-native backpressure
 assigns work to available hosts; exact-host routes use derived per-host topics with `Exclusive`.
-Current Apple integration evidence includes two same-machine host-member daemons on one `Shared`
-subscription; physical multi-host distribution is hardware-deferred. - model weights for the host
-engine come from the `infernix-models` MinIO bucket, which the coordinator eagerly stages at startup
+One engine process runs per machine; a physical multi-host distribution claim requires evidence
+from distinct Apple hosts.
+- model weights for the host engine come from the `infernix-models` MinIO bucket, which the coordinator eagerly stages at startup
 from the mounted `infernix.dhall` (the same `warm-model-cache` staging the in-cluster Linux engine
 pods rely on). The host daemon caches weights under `./.data/runtime/model-cache/<modelId>/`; this
 cache is host-local ephemeral state on the operator's machine (not a Kubernetes PVC, not durable
@@ -189,33 +206,45 @@ memory](../architecture/bounded_host_memory.md). This disk cache (LRU in
 `python/adapters/model_cache.py`) remains a separate bounded host-daemon resource and is purgeable;
 disk-cache purging is independent of the RAM budget, which is resolved from a checked
 `HostMemoryPartition` splitting host physical RAM into the colima VM pledge, the
-`minHostHeadroomMib` headroom, and the remaining `inferenceCapacity` - the Apple host bootstrap uses
+`minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`.
+- the Apple host bootstrap uses
 Homebrew-managed `kind`, `kubectl`, `helm`, Node.js, and related operator tools rather than a
-broader manual prerequisite list - Docker-backed lifecycle or validation work on Apple requires an
+broader manual prerequisite list.
+- Docker-backed lifecycle or validation work on Apple requires an
 already selected native arm64 Docker daemon; the repo must not create a Docker context, switch the
-active context, create a Colima VM, or use emulation - routed Apple E2E uses host `npm exec` with
+active context, create a Colima VM, or use emulation.
+- routed Apple E2E uses host `npm exec` with
 the same typed fixture against the Apple validation pass; the Linux lane already targets the Kind
-control-plane DNS instead of `host.docker.internal` - retained Apple Kind state under
+control-plane DNS instead of `host.docker.internal`.
+- retained Apple Kind state under
 `./.data/kind/apple-silicon/` is replayed into and out of the worker instead of being bind-mounted,
-so large retained state can make `up`, `test`, and `down` noticeably slower than Linux -
-`./bootstrap/apple-silicon.sh down` delegates to `./.build/infernix cluster down` and preserves
+so large retained state can make `up`, `test`, and `down` noticeably slower than Linux.
+- `./bootstrap/apple-silicon.sh down` delegates to `./.build/infernix cluster down` and preserves
 `./.build/`, `./.data/`, the host-built `./.build/infernix` binaries, any host-level runtime
-container image, Docker state, and Homebrew-managed prerequisites - `infernix service` runs
+container image, Docker state, and Homebrew-managed prerequisites.
+- `infernix service` runs
 `ensureAppleSiliconRuntimeReady` before the daemon loop. That flow installs the shared `python/`
 project through the exact configured Poetry launcher, resolves the installed project interpreter for
 direct protobuf generation, and creates repo-local binding roots under `./.data/engines/`. The
 `setup-*` values remain closed binding identities, but no setup subprocess is launched; readiness is
 a canonical, fsynced manifest publication under the engine writer. Project installation and protobuf
-generation remain closed operations through the opaque bounded provisioning region - the Apple
+generation remain closed operations through the opaque bounded provisioning region.
+- the Apple
 bootstrap also reconciles the Homebrew-managed `python@3.12` formula and `python3.12` command plus a
 user-local Poetry bootstrap when the `poetry` executable is absent; the Poetry bootstrap uses the
-exact configured Python 3.12 executable, after which the shared `python/.venv/` still materializes
-only on demand - the generated Apple host manifest records
+exact configured Python 3.12 executable. After the shared session releases its project lock, the
+same startup boundary prepares `transformers`, `pytorch`, and `diffusers` with their
+`apple-silicon` groups under `python/engines/<engine>/.venv/`, publishes a marker bound to the
+post-install project digest, and reads it back exactly. Missing or stale evidence fails closed;
+inference never invokes Poetry or repairs an environment on request.
+- the generated Apple host
+manifest records
 `${HOME}/.local/share/pypoetry/venv/bin/poetry`; a missing default is created under its dedicated
 kernel lock by closed, deadline-bounded Python probe, venv, and pinned-install operations.
 Manifestless discovery retains `/opt/homebrew/bin/poetry` as a fixed absolute fallback. A configured
 non-default missing Poetry path is a hard prerequisite failure rather than permission to search
-ambient `PATH` - the current `setup-*` identifiers select idempotent canonical binding manifests
+ambient `PATH`.
+- the `setup-*` identifiers select idempotent canonical binding manifests
 layered on top of that prerequisite bootstrap and shared-project install flow; they are not
 executable names
 
@@ -239,8 +268,8 @@ Architecture" subsection); the MinIO image inventory is at
 ## Apple Metal/Core ML Materialization
 
 On Apple Silicon the `infernix` and `infernix-demo` Haskell binaries build host-native through the
-ghcup/cabal toolchain and run on the host against Metal. The supported engine materialization
-target avoids Tart, user keychain state, Xcode UI flows, and request-time toolchain work:
+ghcup/cabal toolchain and run on the host against Metal. Engine materialization avoids Tart, user
+keychain state, Xcode UI flows, and request-time toolchain work:
 
 - MLX smoke selects `mx.gpu`, executes and evaluates a real operation, synchronizes it, and verifies
   the result through the public upstream package API.
@@ -280,18 +309,19 @@ target avoids Tart, user keychain state, Xcode UI flows, and request-time toolch
 - Materialization must not own, embed, generate, or compile C/C++/Objective-C/Metal source and must
   not replace that boundary with direct FFI.
 
-The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed from the current
-host-tool schema and prerequisite path. The retained
+No `tart` / `hostTart` / `AppleTart` implementation exists in the host-tool schema or prerequisite
+path. The retained
 `infernix internal materialize-metal-engines` helper is the Tart-free manifest materialization
-surface. There is no repository-owned bridge and no Clang/Core ML source-smoke topology; the
-candidate-root replacement is all-Haskell and bounded. Cohort validation evidence lives in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+surface. After its native-artifact session releases the shared/native locks, it also prepares the
+same three canonical Python-stdio environments, so the explicit materializer cannot leave
+half of the Apple catalog absent. There is no repository-owned bridge and no Clang/Core ML
+source-smoke topology; the candidate-root replacement is all-Haskell and bounded.
 The authoritative replacement design is
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
 For host-native Apple validation, generated Helm values use a local fit-for-host topology on the
-operator's already selected native arm64 Docker daemon: one Harbor application replica, one Pulsar
-replica per role, one coordinator replica, and one demo replica. The static chart and Linux
+operator's already selected native arm64 Docker daemon: one instance of each platform service, one
+coordinator process, and one demo process. The static chart and Linux
 generated values are single-node on every lane, matching the supported fleet topology. On a constrained Colima VM,
 capacity failures before routed inference are real environment failures, not acceptable skips:
 `XMinioStorageFull` from Harbor's MinIO backend means the Docker VM disk needs reclaimable cache
@@ -299,14 +329,14 @@ space freed. Check for stale local Harbor-tagged runtime image ids such as
 `localhost:30002/library/infernix-linux-cpu:sha256-*` in the already selected Docker daemon before
 assuming retained MinIO state is still the cause. Cluster-side `Insufficient memory` scheduling
 events or Keycloak `OOMKilled` events mean the Apple local topology or Docker VM memory envelope
-must be reconciled before an Apple cohort validation pass can be claimed.
+must be reconciled before an Apple validation pass can be claimed.
 
 Host-daemon inference RAM is a separate concern and must not be conflated with the Docker VM
 envelope. The on-host `infernix service` daemon serializes inference under a single execution lock
 and admits each model against the Apple `InferenceMemoryBudget` — a `HostEnforcedBudget` over a
 checked `HostMemoryPartition` (host physical RAM split into the Colima VM pledge, the
 `minHostHeadroomMib` headroom, and the remaining `inferenceCapacity`; see the "Inference Memory Budget
-and Host-Memory Admission" section). A full per-model `infernix test integration` run over the current
+and Host-Memory Admission" section). A full per-model `infernix test integration` run over the generated
 catalog either completes or fails cleanly per model: an over-budget model publishes typed
 `ModelMemoryLimitExceeded` with `requiredMib` and `availableMib`. That clean failure is a
 product-contract outcome, not a VM-envelope reconcile — growing the Docker VM memory envelope does not
@@ -326,9 +356,8 @@ split into `vmReserve` (the Colima VM's pledged memory, `colima list --json`), a
 at `minHostHeadroomMib` = 6144 MiB (covering the OS, the control-plane binary, the routed end-to-end
 Playwright browser, and worst-case watchdog overshoot), and the remaining `inferenceCapacity` =
 physical − vmReserve − headroom. The smart constructor **rejects** oversubscription (capacity < 0) and
-a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom (the
-exact gap a routed-E2E run OOMed on) is not constructible. This replaced the fixed
-`appleHostReserveMib = 3072` reserve, which did not cover the routed browser and allowed a host OOM.
+a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom is not
+constructible. A fixed reserve that omits the routed browser does not satisfy this contract.
 `headroom` covers the four co-tenants named above and **not** the Haskell toolchain, which is a
 separate declared account under
 [bounded host memory](../architecture/bounded_host_memory.md). On
@@ -337,7 +366,7 @@ the heavy diffusion rows (`image-*` footprint 12288, `video-*` footprint 28672) 
 admission rather than racing the watchdog.
 
 - `validateDemoConfig` may report capacity diagnostics, but it must not fail the daemon solely
-because one catalog model's declared `ModelMemoryFootprint` (wire field `modelRamFootprintMib`, now
+because one catalog model's declared `ModelMemoryFootprint` (wire field `modelRamFootprintMib`,
 required and positive) exceeds the resolved Apple `inferenceCapacity`. Smaller configured models
 must still serve. - At startup, `compileRuntimePlan` classifies each configured model against the
 resolved partition. A model that exceeds the available capacity remains in the compiled plan as an
@@ -348,9 +377,8 @@ compiled binding. The Apple capped-engine kernel discovers exact process-group m
 `/usr/bin/top`, samples exact physical bytes with fixed `/usr/bin/footprint`, and kills the child
 process group on a ceiling breach. Both commands run under one total deadline, bounded captures, an
 explicit environment, and exhaustive group cleanup; callers cannot provide a raw observer
-specification. The supported daemon currently supplies a caller-owned process-local execution lock;
-Phase 4 must encapsulate that single-flight authority and prove adversarial breach survival before
-the construction is closed. Canonical home:
+specification. The single-flight authority remains inside the opaque engine capability, and an
+adversarial ceiling breach must leave the daemon alive with a typed failure. Canonical home:
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md). - To run
 a larger model whose footprint exceeds the current budget, free host headroom so the resolved
 `inferenceCapacity` rises. The most direct lever is lowering the Colima VM memory pledge, which
@@ -360,9 +388,9 @@ a host cannot both pledge most of its RAM to the VM and admit a model larger tha
 capacity — it fails that model closed rather than over-committing physical RAM.
 
 Linux CPU uses the same compile/refine boundary with the engine pod memory limit as its declared
-outer envelope; Phase 4 owns the verified per-invocation process-group RSS construction and
-adversarial proof. Linux GPU currently fails compilation closed with
-`GpuDualResourceBudgetRequired`; Phase 6 owns the dual host-RAM/GPU-VRAM grant and enforcement path.
+outer envelope and a verified per-invocation process-group RSS observer. Linux GPU requires
+independently indexed host-RAM and GPU-VRAM grants and observers; a single-resource plan fails
+compilation closed with `GpuDualResourceBudgetRequired`.
 
 ## Harbor Host-Port Conflicts
 
@@ -384,13 +412,11 @@ See [../tools/harbor.md](../tools/harbor.md) for the supported Harbor surface an
 [../engineering/docker_policy.md](../engineering/docker_policy.md) for the containerd
 registry-hosts patch.
 
-## Cohort Validation Cadence
+## Validation Selection
 
-Apple cohort validation work is batched into the active wave named in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
-Operators running an Apple Silicon validation pass should check the active wave's scope before
-bringing up a cluster; the waves doc names which work runs locally on this host and which work
-batches into the counterpart CUDA Linux pass.
+Apple validation follows the selected-accelerator contract in
+[../engineering/testing.md](../engineering/testing.md). A cross-accelerator or multi-host claim
+requires the corresponding evidence from each accelerator or distinct host.
 
 ## Cross-References
 
@@ -403,6 +429,5 @@ batches into the counterpart CUDA Linux pass.
 - [../engineering/docker_policy.md](../engineering/docker_policy.md)
 - [../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md)
 - [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
-- [../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md)
 - [../reference/cli_reference.md](../reference/cli_reference.md)
 - [Managed State Transitions](../architecture/managed_state_transitions.md)

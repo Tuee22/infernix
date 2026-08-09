@@ -3,8 +3,7 @@
 **Status**: Authoritative source
 **Referenced by**: [../engineering/edge_routing.md](../engineering/edge_routing.md), [../architecture/daemon_topology.md](../architecture/daemon_topology.md), [../architecture/engine_pool_routing.md](../architecture/engine_pool_routing.md), [../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md](../../DEVELOPMENT_PLAN/phase-3-platform-services-and-edge-routing.md)
 
-> **Purpose**: Record the supported production topic contract and the current daemon
-> implementation.
+> **Purpose**: Record the supported production topic and daemon contract.
 
 ## Rules
 
@@ -87,36 +86,29 @@ publishes to a derived pool/model topic. Engine members consume their assigned d
 execute the engine adapter, and publish results to `result_topic`. Normal scalable pools use
 `Shared` subscriptions so Pulsar's permits and receiver backlog provide broker-native
 backpressure. Pinned routes use derived per-member topics with `Exclusive` subscriptions. `Failover`
-remains a coordinator leadership primitive for dispatcher, result-bridge, and model-bootstrap work;
-it is not the Apple work-fanout model.
+provides stable single-active broker coordination for dispatcher, result-bridge, and model-bootstrap
+work; it is not standby-replica availability or the Apple work-fanout model.
 
-The target topic family is derived from the validated pool graph:
+The topic family is derived from the validated pool graph:
 
 ```text
 persistent://infernix/demo/inference.batch.<mode>.pool.<poolId>.model.<modelId>
 persistent://infernix/demo/inference.batch.<mode>.member.<memberId>.model.<modelId>
 ```
 
-The first form is the scalable pool path; the second form is the pinned-member path. The current
-implementation derives coordinator pool handoff and engine subscriptions from this graph. The
-earlier `inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
-`inference.batch.apple-silicon.host` helper topics are removed from supported routing.
+The first form is the scalable pool path; the second form is the pinned-member path. Coordinator
+pool handoff and engine subscriptions derive from this graph. The
+`inference.batch.<mode>`, `inference.batch.<mode>.<engine>`, and
+`inference.batch.apple-silicon.host` helper topics are outside supported routing.
 
-The unit suite already validates invalid graph rejection and derived topic selection. Current Apple
-integration validates the pinned-member path on a real broker by starting one `infernix service
---role engine --engine-name ... --config <isolated-dhall>` consumer, publishing to the derived
-member topic, and asserting a duplicate consumer receives the broker's `Exclusive` 409 rejection. It
-also launches two same-machine Apple host-member daemons on one isolated derived pool/model topic,
-observes two real consumers on the `Shared` subscription through Pulsar admin stats, and completes
-an inference request; production `demo_ui = false` route/publication assertions also pass on Apple.
-Current Apple integration executes the single-host logical `Shared` backlog harness by holding one
-service-shaped WebSocket consumer unacked and asserting a second request reaches a free consumer on
-the same subscription. Current Linux CPU integration proves Kubernetes-observed pool placement and
-shared-subscription backlog/backpressure on unique derived pool/model topics. Physical Apple
-multi-host routing is hardware-deferred proof while no second Apple host is available.
+Validation rejects invalid graphs and checks derived topic selection. Apple broker validation
+exercises pinned-member `Exclusive` ownership, `Shared` backlog distribution, inference completion,
+and the production `demo_ui = false` shape. Linux CPU validation checks Kubernetes-observed pool
+placement and `Shared` backlog/backpressure on isolated derived pool/model topics. A claim of
+physical multi-host Apple routing additionally requires evidence from distinct Apple hosts.
 
-All inference and model-bootstrap publication topology is plan-derived. The supported raw topic
-publisher has been removed; bootstrap publication consumes an opaque capability prepared from the
+All inference and model-bootstrap publication topology is plan-derived. There is no supported raw
+topic publisher; bootstrap publication consumes an opaque capability prepared from the
 compiled plan, and the consumer revalidates model identity, compiled download URL, and canonical
 timestamp before download/upload/ready-event side effects. Compilation rejects cross-family topic
 reuse among coordinator requests, results, bootstrap requests, bootstrap ready events, and engine
@@ -126,7 +118,7 @@ message.
 
 ## Demo Conversation and Metadata Topics
 
-Phase 7's durable-context demo uses three additional Pulsar topic families. They are
+The durable-context demo uses three additional Pulsar topic families. They are
 demo-gated and absent when `demo_ui = false`.
 
 | Topic family | Pattern | Partition | Retention | Compaction |
@@ -160,9 +152,9 @@ Rules:
 - `DELETE /api/account` lists `persistent://infernix/demo` and deletes only topics owned by the
   caller's `sub`: `demo.user.<userId>.contexts`, `demo.user.<userId>.drafts`, and
   `demo.conversation.<userId>.*`. Shared inference request/batch/result topics remain intact.
-- the frontend pod's per-WS Pulsar **Reader** subscriptions on conversation and metadata
-  topics give pod-failover-safe fan-out without sticky sessions; the per-context inference
-  dispatcher in the coordinator pod uses a named **Failover** subscription so exactly one
+- the frontend process's per-WS Pulsar **Reader** subscriptions on conversation and metadata
+  topics give restart-safe fan-out without sticky sessions; the per-context inference
+  dispatcher in the coordinator process uses a named **Failover** subscription so exactly one
   coordinator process is the active dispatcher per context at a time; the result-bridge in
   the coordinator pod uses a named **Failover** subscription on `inference.result.<mode>`
   with the same semantics. `Failover` is retained as a *subscription type* because it is how
@@ -174,8 +166,8 @@ Rules:
   acknowledged for redelivery
 - Failover ownership uses stable subscription names; individual
   consumers use process-qualified names via `Infernix.Runtime.Pulsar.Failover`
-  so coordinators on different machines do not present identical member names
-  during broker promotion
+  so coordinators on different machines do not present identical member names or
+  collide with a restarted process
 - the integration suite publishes `ClientCreateContext`, `ClientUpdateDraft`, and
   `ClientCancelPrompt` through the real broker, reads them back with Pulsar Readers, asserts
   the expected broker keys, decodes the typed JSON payloads, and verifies that duplicate
@@ -187,14 +179,14 @@ Rules:
   latest payload per `contextId`
 - the same integration layer submits a real durable-context prompt and observes a completed
   `ConversationInferenceResultEvent` on the conversation log after the dispatcher,
-  request/batch handoff, engine, and result bridge run; the browser E2E layer also proves
-  frontend pod replacement reconnects, resubscribes, and continues prompt submission
+  request/batch handoff, engine, and result bridge run; the browser E2E layer also proves a
+  forced WebSocket disconnect reconnects, resubscribes, and continues prompt submission
 
 ## Model-Bootstrap Topic
 
 A third Failover subscription type in the coordinator pod backs eager model-weight staging: the
-coordinator stages every model in the mounted `infernix.dhall` to MinIO on startup with effectively-once
-semantics, and the same subscription services fallback bootstrap requests for any unstaged model. The supported `infernix` tenant plus the
+coordinator stages every model in the mounted `infernix.dhall` to MinIO on startup with at-least-once
+delivery and an effectively-once observable publication, and the same subscription services fallback bootstrap requests for any unstaged model. The supported `infernix` tenant plus the
 `infernix/system` and `infernix/demo` namespaces (with deduplication enabled) are reconciled on
 daemon startup by `reconcileSupportedNamespaces` (`src/Infernix/Runtime/Pulsar.hs`); the
 `persistent://infernix/system/model.bootstrap.request` topic is created during the same
@@ -223,12 +215,12 @@ Rules:
   `modelId`, and decodes the typed payload
 - the `infernix-models/<modelId>/.ready` sentinel object in MinIO is written **last** so the
   upload is atomically visible; engines observe `.ready` and only then load weights
-- failure mode: if the worker dies mid-upload, whichever coordinator next receives the
-  redelivered request re-checks MinIO; if the `.ready` sentinel is already present (idempotent
-  guard), the worker simply publishes the ready event; otherwise the download restarts from
+- failure mode: if the coordinator dies mid-upload, its restarted process resubscribes under the
+  stable Failover name and re-checks MinIO after redelivery; if the `.ready` sentinel is already
+  present (idempotent guard), it publishes the ready event; otherwise the download restarts from
   scratch
 - conversation topics retain full ledger history on BookKeeper-backed local PVs; tiered MinIO
-  offload is not configured today
+  offload is not configured
 - inference dispatch reuses the existing shared `inference.request.<mode>` and
   `inference.result.<mode>` topics described above; the demo envelope carries
   `(userId, contextId, causalRef, conversationLogOffset, prefixHash)` so engines can verify

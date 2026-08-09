@@ -648,7 +648,6 @@ def _apple_native_runner_ownership_violations(
         "asyncio",
         "ctypes",
         "multiprocessing",
-        "os",
         "posix",
         "pty",
         "subprocess",
@@ -704,6 +703,7 @@ def _apple_native_runner_ownership_violations(
             if call_name is not None and (
                 call_name in forbidden_calls
                 or call_name.startswith("exec")
+                or call_name.startswith("fork")
                 or call_name.startswith("spawn")
                 or call_name.startswith("wait")
             ):
@@ -778,6 +778,38 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
             raise RuntimeError(
                 "apple native runner contract check: exact --smoke was not accepted"
             )
+        receipt = "sha256:" + "a" * 64
+        sys.argv = [
+            str(runner_path),
+            "--adapter-id",
+            "onnx-runtime-native",
+            "--engine-name",
+            "contract-engine",
+            "--expected-python-prefix",
+            str(Path(sys.prefix)),
+            "--expected-unavailable-source-directory",
+            "/contract/source-directory",
+            "--expected-unavailable-source-file",
+            "/contract/source-file",
+            "--expected-unavailable-source-write-probe",
+            "/contract/source-file",
+            "--source-isolation-receipt",
+            receipt,
+            "--smoke",
+        ]
+        isolation_args = runner._parse_args()
+        if (
+            isolation_args.expected_unavailable_source_directories
+            != (Path("/contract/source-directory"),)
+            or isolation_args.expected_unavailable_source_files
+            != (Path("/contract/source-file"),)
+            or isolation_args.expected_unavailable_source_write_probe
+            != Path("/contract/source-file")
+            or isolation_args.source_isolation_receipt != receipt
+        ):
+            raise RuntimeError(
+                "apple native runner contract check: source-isolation operands changed"
+            )
         sys.argv = [
             str(runner_path),
             "--adapter-id",
@@ -821,6 +853,10 @@ def _run_apple_native_runner_contract_check(runner_path: Path) -> None:
                 model_cache_root=None,
                 output_dir=None,
                 expected_python_prefix=Path(sys.prefix),
+                expected_unavailable_source_directories=(),
+                expected_unavailable_source_files=(),
+                expected_unavailable_source_write_probe=None,
+                source_isolation_receipt="",
                 smoke_only=False,
             )
             for operation_name, operation in (

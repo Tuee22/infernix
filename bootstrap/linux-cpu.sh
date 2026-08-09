@@ -84,11 +84,13 @@ Available Linux CPU commands:
   ${SCRIPT_LABEL} down
   ${SCRIPT_LABEL} purge
 
-Direct reference commands:
+Operator/demo reference commands:
   docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster up
   docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster status
-  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
   docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix cluster down
+
+Harness validation (requires no live OperatorOwned cluster; it owns its cluster lifecycle):
+  docker compose --project-name ${COMPOSE_PROJECT} --file compose.yaml run --rm infernix infernix test all
 
 Teardown and cleanup:
   ${SCRIPT_LABEL} down

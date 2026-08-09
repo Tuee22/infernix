@@ -30,7 +30,7 @@
   directly.
 - Cross-architecture emulation is not part of the Docker policy. `linux-cpu` supports native
   Linux amd64 and native Linux arm64; Apple Silicon does not run an emulated amd64 Linux lane.
-- Apple Metal/Core ML materialization is not a Docker or Colima lane. The target path avoids Tart
+- Apple Metal/Core ML materialization is not a Docker or Colima lane. The path avoids Tart
   and uses typed engine-artifact manifests plus public upstream MLX/coremltools APIs, without
   repository-owned native source.
 
@@ -55,11 +55,11 @@ operations have a buildx-capable CLI when needed.
   native arm64 Docker daemon
 - on the Apple host-native control-plane path, `./.build/infernix` must not create or switch
   Docker contexts, create a Colima VM, or use emulation before it attempts real cluster work
-- Apple Metal/Core ML materialization is outside the Docker policy. The supported target uses the
+- Apple Metal/Core ML materialization is outside the Docker policy. The supported path uses the
   typed engine-artifact manifests and public upstream MLX/coremltools APIs described in
-  [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). The old
-  `hostTart` / `AppleTart` and repository-owned native bridge helper paths have been removed and
-  must not return as Docker, Colima, VM, direct-FFI, or embedded-source prerequisite surfaces.
+  [apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). There is no
+  `hostTart` / `AppleTart` or repository-owned native bridge helper path, and none is permitted as
+  a Docker, Colima, VM, direct-FFI, or embedded-source prerequisite surface.
 - on `linux-cpu`, host prerequisites stop at Docker Engine plus the Docker buildx and Compose
   plugins on native Linux amd64 or arm64
 - on `linux-gpu`, host prerequisites stop at the `linux-cpu` Docker baseline plus the supported
@@ -126,8 +126,11 @@ operations have a buildx-capable CLI when needed.
 - the Linux substrate images carry the runtime and validation dependencies needed to launch the
   control plane, build the web bundle, run `poetry install`, regenerate protobuf stubs, and execute
   `poetry run check-code`
-- the Linux substrate images preinstall the project `ghc-9.12.4` toolchain; `ormolu` and `hlint`
-  install through `cabal install` against that compiler into `./.build/haskell-style-tools/bin/`
+- the Linux substrate images preinstall the project `ghc-9.12.4` toolchain; the pinned Ormolu and
+  HLint libraries resolve with the root package's `infernix-haskell-style` component, while the
+  incompatible Cabal 3.16 library world resolves in the separate package under
+  `test/cabal-format/`. The closed aggregate lint command invokes both APIs in-process and performs
+  no runtime style-tool installation
 - the Linux substrate image leaves GHCup shell-profile adjustment disabled and owns the toolchain
   `PATH` through Docker `ENV`; `Couldn't figure out login shell!` is therefore a regression if it
   appears in a freshly built image
@@ -143,15 +146,17 @@ operations have a buildx-capable CLI when needed.
 - `RUNTIME_MODE=linux-gpu` with
   `BASE_IMAGE=nvidia/cuda:12.8.1-cudnn-runtime-ubuntu24.04` produces
   `infernix-linux-gpu:local`
-- the substrate image installs Node.js 22.5+, the shared Poetry project, generated protobuf stubs,
-  the built `web/dist/` bundle, Playwright browsers, and the `nvkind` binary during image build,
-  and regenerates `web/package-lock.json` through `npm install` rather than tracking it under
-  version control
+- the substrate image installs Node.js 22.5+, the framework-free shared Poetry quality project,
+  generated protobuf stubs, the built `web/dist/` bundle, Playwright browsers, and the `nvkind`
+  binary during image build. Its binary-owned `internal materialize-substrate linux-cpu` step also
+  prepares the canonical `transformers`/`pytorch` CPU venvs through the shared Haskell producer;
+  no Docker shell block re-renders that install/marker contract. The build regenerates
+  `web/package-lock.json` through `npm install` rather than tracking it under version control
 - Apple Silicon has no substrate Dockerfile; the host-native workflow builds the
   `./.build/infernix` binary locally, uses `./.build/infernix` for
   ordinary operator commands and the host inference daemon, keeps the routed demo workload
   cluster-resident when `demo_ui` is enabled, and runs host-native routed E2E through host
-  `npm exec` with the same typed fixture during Apple cohort validation batches
+  `npm exec` with the same typed fixture under the Apple host-native gate
 
 ## Kind Containerd Registry Resolution
 

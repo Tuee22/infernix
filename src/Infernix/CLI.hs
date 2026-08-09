@@ -7,25 +7,56 @@ module Infernix.CLI
     writeGeneratedPursContracts,
     RuntimeConfigRestorePlan,
     runtimeConfigRestorePlan,
+    DarwinBuildMemoryProcessGroupFixture (..),
+    DarwinBuildMemorySamplingState (..),
+    DarwinBuildMemoryTerminalSettlementState (..),
+    classifyDarwinBuildMemorySamplingObservation,
+    classifyDarwinBuildMemoryTerminalSettlement,
+    commandRequiresConfiguredStartup,
+    runDarwinBuildMemoryProcessGroupFixtureForTest,
+    runDarwinBuildMemoryTerminalSettlementFixtureForTest,
   )
 where
 
 import Control.Applicative ((<|>))
-import Control.Exception (IOException, catch, evaluate, mask, throwIO, try)
+import Control.Concurrent (ThreadId, forkFinally, killThread)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, putMVar, readMVar, tryReadMVar)
+import Control.Exception (IOException, SomeException, catch, displayException, evaluate, mask, throwIO, try)
 import Control.Monad (unless, void, when)
 import Data.Aeson (Value (..), eitherDecode, encode, object, (.=))
 import Data.Aeson.Key qualified as Key
 import Data.Aeson.KeyMap qualified as KeyMap
+import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
-import Data.Foldable (for_)
+import Data.IORef (atomicModifyIORef', newIORef, readIORef, writeIORef)
 import Data.List (intercalate, isInfixOf, isPrefixOf)
 import Data.List qualified as List
 import Data.Text qualified as Text
+import Data.Word (Word64)
+import GHC.Clock (getMonotonicTimeNSec)
 import GHC.IO.Encoding (setLocaleEncoding, utf8)
 import Infernix.BuildMemory
-  ( ToolchainInvocation (ToolchainBuildAll, ToolchainTest),
+  ( DarwinAppleMaterializerTest
+      ( DarwinInstalledPythonSourceIsolation,
+        DarwinProductionAudiverisCancellation
+      ),
+    ToolchainInvocation
+      ( ToolchainBuildAll,
+        ToolchainCabalFormat,
+        ToolchainDarwinAppleMaterializerTest,
+        ToolchainTest
+      ),
     ToolchainSpawnAuthority,
-    ToolchainTestSuite (HaskellStyleSuite, IntegrationSuite, UnitSuite),
+    ToolchainTestSuite
+      ( AppleMaterializerSuite,
+        ArtifactTransactionSuite,
+        CappedEngineObserverSuite,
+        CompileFailSuite,
+        ExecutionPlanInternalSuite,
+        HaskellStyleSuite,
+        IntegrationSuite,
+        UnitSuite
+      ),
   )
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Cluster
@@ -42,7 +73,7 @@ import Infernix.DemoConfig
     renderModelListing,
   )
 import Infernix.DemoConfig.Internal (decodeDemoConfigFile)
-import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
+import Infernix.DescriptorSpace (establishBoundedDescriptorSpace, requireBoundedDescriptorSpace)
 import Infernix.DhallSchema (renderDhallSchema)
 import Infernix.Engines.AppleSilicon (materializeMetalEngines, metalEngineArtifactAdapterIds)
 import Infernix.Engines.LinuxNative (linuxNativeEngineArtifactAdapterIds, materializeLinuxNativeEngines)
@@ -50,6 +81,7 @@ import Infernix.Error
   ( InfernixError (EdgePortNotPublished),
     bracketPreservingPrimary,
     finallyPreservingPrimary,
+    onExceptionPreservingPrimary,
     runCleanupsPreservingFailures,
   )
 import Infernix.Evidence.Readiness qualified as Readiness
@@ -68,10 +100,12 @@ import Infernix.ProjectInit (runProjectInit, runTestInit)
 import Infernix.Python
   ( ensurePoetryExecutable,
     ensurePoetryProjectReady,
+    ensurePreparedPythonEngineEnvironments,
     pythonAdaptersPresent,
     pythonProjectDirectory,
   )
 import Infernix.Runtime (evictCache, listCacheManifests, rebuildCache)
+import Infernix.Runtime.CappedEngine.FixedObserver qualified as FixedObserver
 import Infernix.Runtime.Pulsar (publishInferenceRequest, readPublishedInferenceResultMaybe)
 import Infernix.Service
 import Infernix.Storage (readEdgePortMaybe)
@@ -101,15 +135,33 @@ import System.Directory
     createDirectoryIfMissing,
     doesFileExist,
     getPermissions,
+    getTemporaryDirectory,
     removeFile,
     removePathForcibly,
     renameFile,
     setPermissions,
   )
 import System.Environment (getArgs, getExecutablePath)
-import System.Exit (ExitCode (ExitSuccess), exitFailure, exitWith)
+import System.Exit (ExitCode (..), exitFailure, exitWith)
 import System.FilePath (takeDirectory, takeFileName, (</>))
-import System.Process (CreateProcess (cwd, env), createProcess, getPid, proc, readCreateProcessWithExitCode, terminateProcess, waitForProcess)
+import System.IO (Handle, hClose, hFlush, hIsClosed, stderr, stdout)
+import System.IO.Error (isDoesNotExistError, isPermissionError)
+import System.Info (os)
+import System.Posix.Process (getProcessGroupIDOf)
+import System.Posix.Signals (sigCONT, sigKILL, signalProcessGroup)
+import System.Posix.Temp (mkdtemp)
+import System.Posix.Types (CPid)
+import System.Process
+  ( CreateProcess (close_fds, create_group, cwd, env, std_err, std_in, std_out),
+    ProcessHandle,
+    StdStream (CreatePipe, Inherit),
+    createProcess,
+    getPid,
+    proc,
+    readCreateProcessWithExitCode,
+    terminateProcess,
+    waitForProcess,
+  )
 import System.Timeout (timeout)
 
 main :: IO ()
@@ -120,17 +172,33 @@ main = do
   _ <- establishBoundedDescriptorSpace
   dispatchInternalSubprocessMode
   setLocaleEncoding utf8
-  syncBuildRootExecutable
   args <- getArgs
-  case parseCommand args of
-    Left _ -> do
+  case (args == [darwinInstalledCliIsolationProofArgument], parseCommand args) of
+    (True, _) -> pure ()
+    (False, Left _) -> do
       putStrLn helpText
       exitFailure
-    Right command -> do
-      reconcileInterruptedHarnessState
-      resolvedRuntimeMode <- validateCommandExecutionContext command
-      ensureAppleHostPrerequisites resolvedRuntimeMode command
-      dispatch command
+    (False, Right command)
+      | commandRequiresConfiguredStartup command -> do
+          syncBuildRootExecutable
+          reconcileInterruptedHarnessState
+          resolvedRuntimeMode <- validateCommandExecutionContext command
+          ensureAppleHostPrerequisites resolvedRuntimeMode command
+          dispatch command
+      | otherwise -> dispatch command
+
+-- | Commands that must remain reachable before, or while replacing, a host
+-- manifest do not enter any path that decodes that manifest. In particular,
+-- @init --force@ is the schema-migration boundary: requiring the old schema to
+-- decode before the new schema can be written would make upgrades impossible.
+commandRequiresConfiguredStartup :: Command -> Bool
+commandRequiresConfiguredStartup command =
+  case command of
+    ShowRootHelp -> False
+    ShowTopicHelp _ -> False
+    InitCommand {} -> False
+    TestInitCommand {} -> False
+    _ -> True
 
 dispatchInternalSubprocessMode :: IO ()
 dispatchInternalSubprocessMode =
@@ -141,8 +209,10 @@ dispatch command =
   case command of
     ShowRootHelp -> putStrLn helpText
     ShowTopicHelp topic -> putStrLn (topicHelpText topic)
-    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing ->
-      withRuntimeConfigWriteAccess
+    InitCommand maybeRuntimeMode maybeDemoUi force ifMissing -> do
+      paths <- discoverPathsWithHostManifest Nothing
+      withRuntimeConfigWriteAccessAt
+        paths
         (runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing)
     TestInitCommand maybeRuntimeMode maybeDemoUi -> runTestInit maybeRuntimeMode maybeDemoUi
     ServiceCommand maybeRole maybeEngineName maybeConfigPath -> runService Nothing maybeRole (Text.pack <$> maybeEngineName) maybeConfigPath
@@ -162,8 +232,7 @@ dispatch command =
     TestUnitCommand -> do
       ensureWebDependencies
       ensurePythonAdapterDependencies Nothing
-      withToolchainAuthority $ \authority ->
-        runToolchainCommand authority Nothing (ToolchainTest UnitSuite)
+      runMachineIndependentHaskellTests Nothing
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
     TestIntegrationCommand ->
       runClusterOwnedValidation
@@ -181,8 +250,7 @@ dispatch command =
       ensureWebDependencies
       runLint Nothing
       ensurePythonAdapterDependencies Nothing
-      withToolchainAuthority $ \authority ->
-        runToolchainCommand authority Nothing (ToolchainTest UnitSuite)
+      runMachineIndependentHaskellTests Nothing
       runWebNpmCommand Nothing ["--prefix", "web", "run", "test:unit"]
       runClusterOwnedValidation Nothing $
         withTestHarnessConfig $ do
@@ -211,6 +279,12 @@ dispatch command =
         -- operator's `infernix init` writes. It is derived from the manifest
         -- just written, so it is written after it.
         buildCeilingPath <- materializeBuildMemoryCeilingFile paths
+        -- Phase 1 Sprint 1.23: reload the manifest-backed paths that the
+        -- command has just published, then prepare the closed per-engine
+        -- framework plan. Linux GPU has no base-image plan; its engine images
+        -- remain engine-specific. No inference request can enter this producer.
+        preparedPaths <- discoverPaths
+        ensurePreparedPythonEngineEnvironments preparedPaths runtimeMode
         putStrLn ("runtimeMode: " <> Text.unpack (runtimeModeId runtimeMode))
         putStrLn ("demoUiEnabled: " <> show demoUiEnabledValue)
         putStrLn ("emptyModels: " <> show emptyModels)
@@ -239,6 +313,12 @@ dispatch command =
     InternalGeneratePursContractsCommand outputDir -> do
       runtimeMode <- resolveRuntimeMode Nothing
       writeGeneratedPursContracts runtimeMode outputDir
+    InternalValidateDarwinBuildMemoryCommand ->
+      runDarwinBuildMemoryValidation
+    InternalValidateDarwinAudiverisCancellationCommand ->
+      runDarwinAppleMaterializerTest DarwinProductionAudiverisCancellation
+    InternalValidateDarwinInstalledPythonSourceIsolationCommand ->
+      runDarwinAppleMaterializerTest DarwinInstalledPythonSourceIsolation
     InternalPulsarRoundTripCommand demoConfigPath modelIdValue inputTextValue ->
       runInternalPulsarRoundTrip demoConfigPath modelIdValue inputTextValue
     InternalPlaywrightPrepareEngineCommand modelIdValue ->
@@ -304,12 +384,44 @@ runLint :: Maybe RuntimeMode -> IO ()
 runLint maybeRuntimeMode =
   withToolchainAuthority $ \authority -> do
     runToolchainCommand authority maybeRuntimeMode (ToolchainTest HaskellStyleSuite)
+    runToolchainCommand authority maybeRuntimeMode ToolchainCabalFormat
     runFilesLint
     runChartLint
     runProtoLint
     runDocsLint
     runPythonQualityIfPresent maybeRuntimeMode
     runToolchainCommand authority maybeRuntimeMode ToolchainBuildAll
+
+-- | The complete machine-independent Haskell gate set. Keeping every suite in
+-- the closed 'ToolchainTestSuite' vocabulary means no validation instruction
+-- needs a bare host Cabal command, and the compile-fail suite's serialized
+-- nested account remains beneath the same outer authority.
+runMachineIndependentHaskellTests :: Maybe RuntimeMode -> IO ()
+runMachineIndependentHaskellTests maybeRuntimeMode =
+  withToolchainAuthority $ \authority ->
+    mapM_
+      (runToolchainCommand authority maybeRuntimeMode . ToolchainTest)
+      [ CompileFailSuite,
+        ArtifactTransactionSuite,
+        AppleMaterializerSuite,
+        CappedEngineObserverSuite,
+        ExecutionPlanInternalSuite,
+        UnitSuite
+      ]
+
+runDarwinAppleMaterializerTest :: DarwinAppleMaterializerTest -> IO ()
+runDarwinAppleMaterializerTest darwinTest
+  | os /= "darwin" =
+      ioError
+        ( userError
+            "the closed Darwin Apple materializer cohort gates are available only on Darwin"
+        )
+  | otherwise =
+      withToolchainAuthority $ \authority ->
+        runToolchainCommand
+          authority
+          Nothing
+          (ToolchainDarwinAppleMaterializerTest darwinTest)
 
 -- | Sprint 6.43 — run a cluster-owned validation step under an evidence-gated
 -- seizure of the single cluster slot. 'seizeHarnessClusterSlot' reads the
@@ -706,6 +818,931 @@ renderPersistentClaimLine persistentClaim =
       Text.unpack (requestedStorage persistentClaim)
     ]
 
+-- | A normal Cabal child whose fresh process group is owned until the command
+-- has completed or exceptional cleanup has killed and reaped the group.
+data OwnedToolchainProcess = OwnedToolchainProcess
+  { ownedToolchainProcessHandle :: !ProcessHandle,
+    ownedToolchainProcessGroup :: !CPid
+  }
+
+-- | The Darwin evidence command owns the complete process group until its
+-- relayed output streams have closed, the fixed observer proves no descendant
+-- remains, the leader is reaped, and the numeric group is absent. Retaining the
+-- unreaped leader across the descendant proof prevents PID/PGID reuse from
+-- turning a cleanup observation into evidence about a different process.
+data DarwinBuildMemoryProcess = DarwinBuildMemoryProcess
+  { darwinBuildMemoryProcessHandle :: !ProcessHandle,
+    darwinBuildMemoryProcessGroup :: !CPid,
+    darwinBuildMemoryStdoutHandle :: !Handle,
+    darwinBuildMemoryStderrHandle :: !Handle,
+    darwinBuildMemoryStdoutThread :: !ThreadId,
+    darwinBuildMemoryStderrThread :: !ThreadId,
+    darwinBuildMemoryStdoutResult :: !(MVar (Either SomeException ())),
+    darwinBuildMemoryStderrResult :: !(MVar (Either SomeException ()))
+  }
+
+data DarwinBuildMemoryProcessSpec = DarwinBuildMemoryProcessSpec
+  { darwinBuildMemorySpecExecutable :: !FilePath,
+    darwinBuildMemorySpecArguments :: ![String],
+    darwinBuildMemorySpecWorkingDirectory :: !FilePath,
+    darwinBuildMemorySpecEnvironment :: ![(String, String)],
+    darwinBuildMemorySpecLabel :: !String
+  }
+
+-- | Closed test-only process behaviors for the command's normal and
+-- exceptional ownership boundaries. Neither constructor carries an executable,
+-- argument, environment, or working-directory escape hatch.
+data DarwinBuildMemoryProcessGroupFixture
+  = DarwinBuildMemoryNormalCleanupFixture
+  | DarwinBuildMemoryExceptionalCleanupFixture
+  deriving (Eq, Show)
+
+-- | Pure sampling decision. Relay closure is recorded only to make the
+-- terminal-candidate diagnostic complete; it cannot terminate sampling while
+-- the fixed footprint observer still sees a live process-group aggregate.
+data DarwinBuildMemorySamplingState
+  = DarwinBuildMemorySamplingObserved !Word64
+  | DarwinBuildMemorySamplingNeedsTerminalSettlement !Bool !Text.Text
+  deriving (Eq, Show)
+
+classifyDarwinBuildMemorySamplingObservation ::
+  Bool ->
+  Either Text.Text Word64 ->
+  DarwinBuildMemorySamplingState
+classifyDarwinBuildMemorySamplingObservation streamsClosed observedFootprint =
+  case observedFootprint of
+    Right physicalFootprintBytes ->
+      DarwinBuildMemorySamplingObserved physicalFootprintBytes
+    Left reason ->
+      DarwinBuildMemorySamplingNeedsTerminalSettlement streamsClosed reason
+
+-- | Pure state of the bounded terminal settlement entered only after a live
+-- footprint observation fails. A vanished group with relay scheduling lag is
+-- pending, not a fabricated observer failure; settlement requires both facts.
+data DarwinBuildMemoryTerminalSettlementState
+  = DarwinBuildMemoryTerminalSettled
+  | DarwinBuildMemoryTerminalPending !Int !Text.Text
+  | DarwinBuildMemoryTerminalLiveGroup
+  deriving (Eq, Show)
+
+classifyDarwinBuildMemoryTerminalSettlement ::
+  Bool ->
+  Either Text.Text Bool ->
+  Either Text.Text DarwinBuildMemoryTerminalSettlementState
+classifyDarwinBuildMemoryTerminalSettlement streamsClosed observedGroupAbsent = do
+  groupAbsent <- observedGroupAbsent
+  if not groupAbsent
+    then Right DarwinBuildMemoryTerminalLiveGroup
+    else
+      if streamsClosed
+        then Right DarwinBuildMemoryTerminalSettled
+        else
+          Right
+            ( DarwinBuildMemoryTerminalPending
+                1
+                "output relays open; live process group absent"
+            )
+
+-- | Closed, opt-in Phase 1 Darwin calibration surface. Nothing in an ordinary
+-- lint, test, init, or cluster command enters this path.
+runDarwinBuildMemoryValidation :: IO ()
+runDarwinBuildMemoryValidation = do
+  unless (os == "darwin") $
+    ioError
+      ( userError
+          "`infernix internal validate-darwin-build-memory` is available only on Darwin"
+      )
+  paths <- discoverCliCommandPaths
+  hostConfig <-
+    case pathsHostConfig paths of
+      Just configured -> pure configured
+      Nothing ->
+        ioError
+          ( userError
+              "Darwin build-memory validation requires the generated host manifest; run `infernix init`"
+          )
+  observedFacts <-
+    HostMemory.observeHostMemoryFacts hostConfig
+      >>= either (ioError . userError) pure
+  plan <-
+    either
+      (ioError . userError)
+      pure
+      ( HostMemory.buildMemoryPlanForHost
+          hostConfig {HostConfig.hostMemory = observedFacts}
+      )
+  let physicalMib =
+        toInteger (HostConfig.hostPhysicalMemoryMib observedFacts)
+      effectiveMib =
+        toInteger (HostConfig.hostEffectiveMemoryMib observedFacts)
+      activeColimaPledgeMib = physicalMib - effectiveMib
+  unless
+    ( physicalMib > 0
+        && effectiveMib > 0
+        && effectiveMib <= physicalMib
+    )
+    ( ioError
+        ( userError
+            "Darwin build-memory validation observed inconsistent physical/effective host memory before spawn"
+        )
+    )
+  BuildMemory.withToolchainSpawnAuthority (repoRoot paths) plan $ \authority -> do
+    darwinAuthority <-
+      either
+        (ioError . userError)
+        pure
+        (BuildMemory.requireDarwinBuildMemoryValidationAuthority authority)
+    withDarwinBuildMemoryScratchRoot $ \scratchRoot -> do
+      createDirectoryIfMissing True (scratchRoot </> "bin")
+      (buildEvidence, buildExitCode) <-
+        runDarwinBuildMemoryInvocation
+          paths
+          darwinAuthority
+          scratchRoot
+          BuildMemory.DarwinBuildAllWithTests
+      (invocationEvidence, installedCliIsolation, finalExitCode) <-
+        case buildExitCode of
+          ExitSuccess -> do
+            (installEvidence, installExitCode) <-
+              runDarwinBuildMemoryInvocation
+                paths
+                darwinAuthority
+                scratchRoot
+                BuildMemory.DarwinInstallAllExecutables
+            case installExitCode of
+              ExitSuccess -> do
+                isolationExitCode <-
+                  runDarwinInstalledCliIsolationProof
+                    paths
+                    darwinAuthority
+                    scratchRoot
+                isolationEvidence <-
+                  either
+                    (ioError . userError)
+                    pure
+                    ( BuildMemory.mkDarwinInstalledCliIsolationEvidence
+                        (exitCodeStatus isolationExitCode)
+                    )
+                pure
+                  ( [buildEvidence, installEvidence],
+                    Just isolationEvidence,
+                    isolationExitCode
+                  )
+              _ -> pure ([buildEvidence, installEvidence], Nothing, installExitCode)
+          _ -> pure ([buildEvidence], Nothing, buildExitCode)
+      evidence <-
+        either
+          (ioError . userError)
+          pure
+          ( BuildMemory.mkDarwinBuildMemoryEvidence
+              physicalMib
+              effectiveMib
+              activeColimaPledgeMib
+              darwinAuthority
+              BuildMemory.darwinBuildMemorySampleIntervalMicros
+              invocationEvidence
+              installedCliIsolation
+          )
+      putStr (BuildMemory.renderDarwinBuildMemoryEvidence evidence)
+      case finalExitCode of
+        ExitSuccess -> pure ()
+        failure -> exitWith failure
+
+withDarwinBuildMemoryScratchRoot :: (FilePath -> IO result) -> IO result
+withDarwinBuildMemoryScratchRoot action = do
+  temporaryRoot <- getTemporaryDirectory
+  bracketPreservingPrimary
+    (mkdtemp (temporaryRoot </> "infernix-darwin-build-memory.XXXXXX"))
+    removePathForcibly
+    action
+
+runDarwinBuildMemoryProcessGroupFixtureForTest ::
+  DarwinBuildMemoryProcessGroupFixture ->
+  IO ()
+runDarwinBuildMemoryProcessGroupFixtureForTest fixture
+  | os /= "darwin" =
+      ioError
+        ( userError
+            "Darwin build-memory process-group fixtures are available only on Darwin"
+        )
+  | otherwise = do
+      executable <- getExecutablePath
+      mask $ \restore -> do
+        spawned <-
+          spawnDarwinBuildMemoryProcessSpec
+            DarwinBuildMemoryProcessSpec
+              { darwinBuildMemorySpecExecutable = executable,
+                darwinBuildMemorySpecArguments =
+                  [darwinBuildMemoryCleanupFixtureArgument fixture],
+                darwinBuildMemorySpecWorkingDirectory = "/tmp",
+                darwinBuildMemorySpecEnvironment =
+                  [ ("LANG", "C"),
+                    ("LC_ALL", "C"),
+                    ("PATH", "/usr/bin:/bin"),
+                    ("TMPDIR", "/tmp")
+                  ],
+                darwinBuildMemorySpecLabel =
+                  "closed Darwin build-memory cleanup fixture"
+              }
+        case fixture of
+          DarwinBuildMemoryNormalCleanupFixture -> do
+            observed <-
+              onExceptionPreservingPrimary
+                ( restore $ do
+                    awaitDarwinBuildMemoryStreamClosure spawned
+                    sampleDarwinBuildMemoryProcess spawned
+                )
+                (cleanupDarwinBuildMemoryProcess spawned)
+            when (observed == BuildMemory.emptyDarwinBuildMemorySamples) $
+              ioError
+                ( userError
+                    "Darwin build-memory live-after-relay-closure fixture recorded no process-group sample"
+                )
+            exitCode <- completeDarwinBuildMemoryProcess spawned
+            unless (exitCode == ExitSuccess) $
+              ioError
+                ( userError
+                    "normal Darwin build-memory cleanup fixture exited nonzero"
+                )
+          DarwinBuildMemoryExceptionalCleanupFixture -> do
+            injected <-
+              try @SomeException
+                ( onExceptionPreservingPrimary
+                    ( restore
+                        ( ioError
+                            ( userError
+                                darwinBuildMemoryInjectedCleanupFailure
+                            )
+                        )
+                    )
+                    (cleanupDarwinBuildMemoryProcess spawned)
+                )
+            case injected of
+              Left failure
+                | darwinBuildMemoryInjectedCleanupFailure
+                    `isInfixOf` displayException failure ->
+                    pure ()
+              Left failure -> throwIO failure
+              Right () ->
+                ioError
+                  ( userError
+                      "exceptional Darwin build-memory cleanup fixture did not inject its failure"
+                  )
+
+-- | Deterministic regression for the terminal race: the process group has
+-- already vanished, while relay completion becomes observable only after two
+-- readiness polls. No executable, arguments, or observer command are exposed.
+runDarwinBuildMemoryTerminalSettlementFixtureForTest :: IO ()
+runDarwinBuildMemoryTerminalSettlementFixtureForTest = do
+  relayPolls <- newIORef (0 :: Int)
+  awaitDarwinBuildMemoryTerminalSettlementWith
+    "injected terminal footprint race"
+    ( atomicModifyIORef' relayPolls $ \polls ->
+        let next = polls + 1
+         in (next, next >= 3)
+    )
+    (pure (Right True))
+
+awaitDarwinBuildMemoryStreamClosure :: DarwinBuildMemoryProcess -> IO ()
+awaitDarwinBuildMemoryStreamClosure spawned = do
+  outcome <-
+    Readiness.awaitReadiness darwinBuildMemoryCleanupDeadline $ do
+      finished <- darwinBuildMemoryStreamsFinished spawned
+      pure $
+        if finished
+          then Right ()
+          else
+            Left
+              ( Readiness.Progress
+                  0
+                  1
+                  "Darwin build-memory output streams remain open"
+              )
+  Readiness.foldReadiness
+    (const (pure ()))
+    onDeadline
+    onDeadline
+    outcome
+  where
+    onDeadline _ =
+      ioError
+        ( userError
+            "Darwin build-memory cleanup fixture streams did not close before their deadline"
+        )
+
+darwinBuildMemoryCleanupFixtureArgument ::
+  DarwinBuildMemoryProcessGroupFixture ->
+  String
+darwinBuildMemoryCleanupFixtureArgument fixture =
+  case fixture of
+    DarwinBuildMemoryNormalCleanupFixture ->
+      "__infernix_unit_darwin_build_memory_normal_cleanup_fixture"
+    DarwinBuildMemoryExceptionalCleanupFixture ->
+      "__infernix_unit_darwin_build_memory_exceptional_cleanup_fixture"
+
+darwinBuildMemoryInjectedCleanupFailure :: String
+darwinBuildMemoryInjectedCleanupFailure =
+  "injected Darwin build-memory command failure"
+
+runDarwinBuildMemoryInvocation ::
+  Paths ->
+  BuildMemory.DarwinBuildMemoryValidationAuthority s ->
+  FilePath ->
+  BuildMemory.DarwinBuildMemoryInvocation ->
+  IO (BuildMemory.DarwinBuildMemoryInvocationEvidence, ExitCode)
+runDarwinBuildMemoryInvocation
+  paths
+  authority
+  scratchRoot
+  invocation = do
+    startedAt <- getMonotonicTimeNSec
+    (samples, exitCode) <-
+      BuildMemory.withDarwinBuildMemoryValidationChild authority $
+        mask $ \restore -> do
+          spawned <-
+            spawnDarwinBuildMemoryProcess
+              paths
+              authority
+              scratchRoot
+              invocation
+          observed <-
+            onExceptionPreservingPrimary
+              (restore (sampleDarwinBuildMemoryProcess spawned))
+              (cleanupDarwinBuildMemoryProcess spawned)
+          completed <- completeDarwinBuildMemoryProcess spawned
+          pure (observed, completed)
+    finishedAt <- getMonotonicTimeNSec
+    invocationEvidence <-
+      either
+        (ioError . userError)
+        pure
+        ( BuildMemory.mkDarwinBuildMemoryInvocationEvidence
+            invocation
+            (exitCodeStatus exitCode)
+            ((finishedAt - startedAt) `div` 1000)
+            samples
+        )
+    pure (invocationEvidence, exitCode)
+
+-- | Prove that the freshly installed runtime CLI cannot accidentally consume
+-- the build-only @GHCRTS@ cap. The fixed invalid value makes any RTS image that
+-- still admits inherited options fail before @main@; the shipped executable is
+-- linked with @-rtsopts=ignoreAll@ and must reach its fixed package-internal
+-- isolation sentinel without performing ordinary CLI artifact synchronization.
+-- This process gets the same owned-group, explicit cwd/environment, descriptor
+-- precheck, safe leader-reap transition, and exceptional cleanup as the
+-- sampled Cabal children, but is deliberately not included in their
+-- physical-footprint metric.
+runDarwinInstalledCliIsolationProof ::
+  Paths ->
+  BuildMemory.DarwinBuildMemoryValidationAuthority s ->
+  FilePath ->
+  IO ExitCode
+runDarwinInstalledCliIsolationProof paths authority scratchRoot =
+  BuildMemory.withDarwinBuildMemoryValidationChild authority $
+    mask $ \restore -> do
+      spawned <-
+        spawnDarwinBuildMemoryProcessSpec
+          DarwinBuildMemoryProcessSpec
+            { darwinBuildMemorySpecExecutable = scratchRoot </> "bin" </> "infernix",
+              darwinBuildMemorySpecArguments = [darwinInstalledCliIsolationProofArgument],
+              darwinBuildMemorySpecWorkingDirectory = repoRoot paths,
+              darwinBuildMemorySpecEnvironment =
+                mergeEnvironment
+                  [("GHCRTS", darwinInstalledCliAdversarialGhcrts)]
+                  (cliSubprocessBaseEnvFor paths),
+              darwinBuildMemorySpecLabel =
+                "freshly installed runtime CLI GHCRTS-isolation proof"
+            }
+      onExceptionPreservingPrimary
+        (restore (awaitDarwinBuildMemoryStreamClosure spawned))
+        (cleanupDarwinBuildMemoryProcess spawned)
+      completeDarwinBuildMemoryProcess spawned
+
+darwinInstalledCliAdversarialGhcrts :: String
+darwinInstalledCliAdversarialGhcrts =
+  "--infernix-build-only-ghcrts-must-be-ignored"
+
+-- A fixed package-internal self-exec sentinel, not a caller-supplied command
+-- surface. It returns only after the shipped runtime image has entered Haskell
+-- @main@ under the adversarial inherited GHCRTS value. Handling it before
+-- 'syncBuildRootExecutable' keeps the private scratch install proof read-only
+-- with respect to the repository build root.
+darwinInstalledCliIsolationProofArgument :: String
+darwinInstalledCliIsolationProofArgument =
+  "__infernix_internal_darwin_runtime_ghcrts_isolation_v1"
+
+spawnDarwinBuildMemoryProcess ::
+  Paths ->
+  BuildMemory.DarwinBuildMemoryValidationAuthority s ->
+  FilePath ->
+  BuildMemory.DarwinBuildMemoryInvocation ->
+  IO DarwinBuildMemoryProcess
+spawnDarwinBuildMemoryProcess paths authority scratchRoot invocation = do
+  cabalExecutable <- resolveCliHostTool paths HostCabal
+  arguments <-
+    either
+      (ioError . userError)
+      pure
+      ( BuildMemory.darwinBuildMemoryInvocationArguments
+          authority
+          invocation
+          scratchRoot
+      )
+  spawnDarwinBuildMemoryProcessSpec
+    DarwinBuildMemoryProcessSpec
+      { darwinBuildMemorySpecExecutable = cabalExecutable,
+        darwinBuildMemorySpecArguments = arguments,
+        darwinBuildMemorySpecWorkingDirectory = repoRoot paths,
+        darwinBuildMemorySpecEnvironment =
+          BuildMemory.darwinBuildMemoryAuthorityEnvironmentEntries authority
+            <> cliSubprocessBaseEnvFor paths,
+        darwinBuildMemorySpecLabel =
+          BuildMemory.darwinBuildMemoryInvocationLabel invocation
+      }
+
+spawnDarwinBuildMemoryProcessSpec ::
+  DarwinBuildMemoryProcessSpec ->
+  IO DarwinBuildMemoryProcess
+spawnDarwinBuildMemoryProcessSpec spec = do
+  _ <-
+    requireBoundedDescriptorSpace
+      (darwinBuildMemorySpecLabel spec <> " process-group spawn")
+  created <-
+    createProcess
+      (proc (darwinBuildMemorySpecExecutable spec) (darwinBuildMemorySpecArguments spec))
+        { cwd = Just (darwinBuildMemorySpecWorkingDirectory spec),
+          env = Just (darwinBuildMemorySpecEnvironment spec),
+          std_in = Inherit,
+          std_out = CreatePipe,
+          std_err = CreatePipe,
+          close_fds = True,
+          create_group = True
+        }
+  let (_, maybeOutput, maybeError, processHandle) = created
+      inheritedHandles = [maybeOutput, maybeError]
+      cleanupBeforeGroup =
+        runCleanupsPreservingFailures
+          [ ignoreMissingProcess (terminateProcess processHandle),
+            void
+              ( waitForDarwinBuildMemoryProcess
+                  "unidentified Darwin build-memory child"
+                  processHandle
+              ),
+            mapM_ closeHandleIfOpen (foldMap maybeToList inheritedHandles)
+          ]
+  maybeProcessId <-
+    onExceptionPreservingPrimary
+      (getPid processHandle)
+      cleanupBeforeGroup
+  processGroup <-
+    case maybeProcessId of
+      Just processId -> pure processId
+      Nothing ->
+        onExceptionPreservingPrimary
+          ( ioError
+              ( userError
+                  "Darwin build-memory child exited before its process-group identity was observed"
+              )
+          )
+          cleanupBeforeGroup
+  let cleanupGrouped =
+        cleanupDarwinBuildMemoryProcessParts processHandle processGroup
+  onExceptionPreservingPrimary
+    (validateDarwinBuildMemoryProcessGroup processGroup)
+    (cleanupGrouped (foldMap maybeToList inheritedHandles) [])
+  (outputHandle, errorHandle) <-
+    case (maybeOutput, maybeError) of
+      (Just output, Just err) -> pure (output, err)
+      _ ->
+        onExceptionPreservingPrimary
+          ( ioError
+              ( userError
+                  "Darwin build-memory child did not expose both output pipes"
+              )
+          )
+          (cleanupGrouped (foldMap maybeToList inheritedHandles) [])
+  stdoutResult <- newEmptyMVar
+  stderrResult <- newEmptyMVar
+  stdoutThread <-
+    onExceptionPreservingPrimary
+      (forkFinally (relayDarwinBuildMemoryOutput outputHandle stdout) (putMVar stdoutResult))
+      (cleanupGrouped [outputHandle, errorHandle] [])
+  stderrThread <-
+    onExceptionPreservingPrimary
+      (forkFinally (relayDarwinBuildMemoryOutput errorHandle stderr) (putMVar stderrResult))
+      (cleanupGrouped [outputHandle, errorHandle] [stdoutThread])
+  pure
+    DarwinBuildMemoryProcess
+      { darwinBuildMemoryProcessHandle = processHandle,
+        darwinBuildMemoryProcessGroup = processGroup,
+        darwinBuildMemoryStdoutHandle = outputHandle,
+        darwinBuildMemoryStderrHandle = errorHandle,
+        darwinBuildMemoryStdoutThread = stdoutThread,
+        darwinBuildMemoryStderrThread = stderrThread,
+        darwinBuildMemoryStdoutResult = stdoutResult,
+        darwinBuildMemoryStderrResult = stderrResult
+      }
+
+validateDarwinBuildMemoryProcessGroup :: CPid -> IO ()
+validateDarwinBuildMemoryProcessGroup processGroup = do
+  observedGroup <- getProcessGroupIDOf processGroup
+  unless (observedGroup == processGroup) $
+    ioError
+      ( userError
+          "Darwin build-memory child was not isolated in its requested fresh process group"
+      )
+
+relayDarwinBuildMemoryOutput :: Handle -> Handle -> IO ()
+relayDarwinBuildMemoryOutput source destination =
+  finallyPreservingPrimary loop (closeHandleIfOpen source)
+  where
+    loop = do
+      chunk <- ByteString.hGetSome source darwinBuildMemoryRelayChunkBytes
+      unless (ByteString.null chunk) $ do
+        ByteString.hPut destination chunk
+        hFlush destination
+        loop
+
+sampleDarwinBuildMemoryProcess ::
+  DarwinBuildMemoryProcess ->
+  IO BuildMemory.DarwinBuildMemorySamples
+sampleDarwinBuildMemoryProcess spawned = do
+  samplesRef <- newIORef (BuildMemory.emptyDarwinBuildMemorySamples, 0)
+  outcome <-
+    Readiness.awaitReadiness darwinBuildMemorySamplingDeadline (probe samplesRef)
+  Readiness.foldReadiness
+    pure
+    onDeadline
+    onDeadline
+    outcome
+  where
+    probe samplesRef = do
+      streamsFinished <- darwinBuildMemoryStreamsFinished spawned
+      observed <-
+        FixedObserver.processGroupPhysicalFootprintBytes
+          (darwinBuildMemoryProcessGroup spawned)
+      case classifyDarwinBuildMemorySamplingObservation streamsFinished observed of
+        DarwinBuildMemorySamplingNeedsTerminalSettlement _ reason -> do
+          awaitDarwinBuildMemoryTerminalSettlementWith
+            (Text.unpack reason)
+            (darwinBuildMemoryStreamsFinished spawned)
+            ( FixedObserver.processGroupHasNoLiveMembers
+                (darwinBuildMemoryProcessGroup spawned)
+            )
+          -- The process crossed its ordinary terminal boundary during the
+          -- footprint probe. Relay closure and a fixed complete group snapshot
+          -- now prove the terminal state while the unreaped leader still
+          -- protects the identity.
+          Right . fst <$> readIORef samplesRef
+        DarwinBuildMemorySamplingObserved physicalFootprintBytes -> do
+          (samples, sampleCount) <- readIORef samplesRef
+          nextSamples <-
+            either
+              (ioError . userError)
+              pure
+              (BuildMemory.recordDarwinBuildMemorySample physicalFootprintBytes samples)
+          let nextCount = sampleCount + 1
+          writeIORef samplesRef (nextSamples, nextCount)
+          pure
+            ( Left
+                ( Readiness.Progress
+                    nextCount
+                    darwinBuildMemoryMaximumSamples
+                    "sampled Darwin Cabal process-group aggregate physical footprint"
+                )
+            )
+    onDeadline _ =
+      ioError
+        ( userError
+            "Darwin build-memory sampling exceeded its fixed four-hour/14400-sample ceiling"
+        )
+
+awaitDarwinBuildMemoryTerminalSettlementWith ::
+  String ->
+  IO Bool ->
+  IO (Either Text.Text Bool) ->
+  IO ()
+awaitDarwinBuildMemoryTerminalSettlementWith observerFailure streamsClosedProbe groupAbsentProbe = do
+  outcome <-
+    Readiness.awaitReadiness darwinBuildMemoryCleanupDeadline probe
+  Readiness.foldReadiness
+    (const (pure ()))
+    onDeadline
+    onDeadline
+    outcome
+  where
+    probe = do
+      streamsClosed <- streamsClosedProbe
+      groupAbsent <- groupAbsentProbe
+      case classifyDarwinBuildMemoryTerminalSettlement streamsClosed groupAbsent of
+        Left absenceReason ->
+          ioError
+            ( userError
+                ( "Darwin build-memory footprint observer failed and its terminal group observer also failed closed: "
+                    <> observerFailure
+                    <> "; "
+                    <> Text.unpack absenceReason
+                )
+            )
+        Right DarwinBuildMemoryTerminalSettled -> pure (Right ())
+        Right DarwinBuildMemoryTerminalLiveGroup ->
+          ioError
+            ( userError
+                ( "Darwin build-memory footprint observer failed while the process group still had a live member; refusing incomplete sampling evidence: "
+                    <> observerFailure
+                )
+            )
+        Right (DarwinBuildMemoryTerminalPending observed detail) ->
+          pure
+            ( Left
+                ( Readiness.Progress
+                    observed
+                    2
+                    detail
+                )
+            )
+    onDeadline progress =
+      ioError
+        ( userError
+            ( "live Darwin build-memory observer failed closed while the process did not reach bounded relay/group settlement: "
+                <> observerFailure
+                <> "; "
+                <> Text.unpack (Readiness.progressDetail progress)
+            )
+        )
+
+darwinBuildMemoryStreamsFinished :: DarwinBuildMemoryProcess -> IO Bool
+darwinBuildMemoryStreamsFinished spawned = do
+  stdoutResult <- tryReadMVar (darwinBuildMemoryStdoutResult spawned)
+  stderrResult <- tryReadMVar (darwinBuildMemoryStderrResult spawned)
+  mapM_ requireDarwinBuildMemoryRelay [stdoutResult, stderrResult]
+  pure $
+    case (stdoutResult, stderrResult) of
+      (Just (Right ()), Just (Right ())) -> True
+      _ -> False
+
+requireDarwinBuildMemoryRelay :: Maybe (Either SomeException ()) -> IO ()
+requireDarwinBuildMemoryRelay maybeResult =
+  case maybeResult of
+    Just (Left failure) ->
+      ioError
+        ( userError
+            ( "Darwin build-memory output relay failed: "
+                <> displayException failure
+            )
+        )
+    _ -> pure ()
+
+completeDarwinBuildMemoryProcess :: DarwinBuildMemoryProcess -> IO ExitCode
+completeDarwinBuildMemoryProcess spawned =
+  mask $ \restore -> do
+    -- Retain the unreaped leader's identity while any live group member could
+    -- still require group signaling. Failure in this phase owns that identity
+    -- and may safely kill the group before reaping the leader.
+    onExceptionPreservingPrimary
+      ( restore
+          ( awaitDarwinBuildMemoryLiveGroupAbsence
+              (darwinBuildMemoryProcessGroup spawned)
+          )
+      )
+      (cleanupDarwinBuildMemoryProcess spawned)
+    -- Once the complete observer has proved no live member remains, cross the
+    -- reap boundary under the mask. From here on no cleanup may signal the
+    -- numeric PGID: after the masked nonblocking reap it can be reused by an
+    -- unrelated group. ProcessHandle transition and relay-resource cleanup
+    -- remain safe.
+    onExceptionPreservingPrimary
+      ( do
+          exitCode <-
+            waitForToolchainProcessLeader
+              "normally completed Darwin build-memory Cabal leader"
+              (darwinBuildMemoryProcessHandle spawned)
+          stdoutResult <- readMVar (darwinBuildMemoryStdoutResult spawned)
+          stderrResult <- readMVar (darwinBuildMemoryStderrResult spawned)
+          mapM_ (requireDarwinBuildMemoryRelay . Just) [stdoutResult, stderrResult]
+          cleanupDarwinBuildMemoryLocalResources spawned
+          pure exitCode
+      )
+      (cleanupDarwinBuildMemoryAfterLiveGroupAbsence spawned)
+
+awaitDarwinBuildMemoryLiveGroupAbsence :: CPid -> IO ()
+awaitDarwinBuildMemoryLiveGroupAbsence processGroup = do
+  outcome <-
+    Readiness.awaitReadiness darwinBuildMemoryCleanupDeadline probe
+  Readiness.foldReadiness
+    (const (pure ()))
+    onDeadline
+    onDeadline
+    outcome
+  where
+    probe = do
+      observed <- FixedObserver.processGroupHasNoLiveMembers processGroup
+      case observed of
+        Left reason ->
+          ioError
+            ( userError
+                ( "Darwin build-memory live-group observer failed closed: "
+                    <> Text.unpack reason
+                )
+            )
+        Right True -> pure (Right ())
+        Right False ->
+          pure
+            ( Left
+                ( Readiness.Progress
+                    0
+                    1
+                    "Darwin build-memory process group still has a live member"
+                )
+            )
+    onDeadline _ =
+      ioError
+        ( userError
+            "Darwin build-memory process group retained a live member after its relayed streams closed"
+        )
+
+cleanupDarwinBuildMemoryProcess :: DarwinBuildMemoryProcess -> IO ()
+cleanupDarwinBuildMemoryProcess spawned =
+  cleanupDarwinBuildMemoryProcessParts
+    (darwinBuildMemoryProcessHandle spawned)
+    (darwinBuildMemoryProcessGroup spawned)
+    [ darwinBuildMemoryStdoutHandle spawned,
+      darwinBuildMemoryStderrHandle spawned
+    ]
+    [ darwinBuildMemoryStdoutThread spawned,
+      darwinBuildMemoryStderrThread spawned
+    ]
+
+-- | Cleanup after the fixed observer has proved no live group member remains.
+-- The numeric group is no longer an authority once the leader is reaped, so
+-- this phase uses only the retained ProcessHandle and local relay resources.
+cleanupDarwinBuildMemoryAfterLiveGroupAbsence ::
+  DarwinBuildMemoryProcess ->
+  IO ()
+cleanupDarwinBuildMemoryAfterLiveGroupAbsence spawned =
+  runCleanupsPreservingFailures
+    [ void
+        ( waitForToolchainProcess
+            "post-observation Darwin build-memory cleanup"
+            (darwinBuildMemoryProcessHandle spawned)
+        ),
+      cleanupDarwinBuildMemoryLocalResources spawned
+    ]
+
+cleanupDarwinBuildMemoryLocalResources :: DarwinBuildMemoryProcess -> IO ()
+cleanupDarwinBuildMemoryLocalResources spawned =
+  runCleanupsPreservingFailures
+    [ closeHandleIfOpen (darwinBuildMemoryStdoutHandle spawned),
+      closeHandleIfOpen (darwinBuildMemoryStderrHandle spawned),
+      killThread (darwinBuildMemoryStdoutThread spawned),
+      killThread (darwinBuildMemoryStderrThread spawned)
+    ]
+
+cleanupDarwinBuildMemoryProcessParts ::
+  ProcessHandle ->
+  CPid ->
+  [Handle] ->
+  [ThreadId] ->
+  IO ()
+cleanupDarwinBuildMemoryProcessParts processHandle processGroup handles threads =
+  runCleanupsPreservingFailures
+    [ ignoreMissingOrZombieGroup (signalProcessGroup sigCONT processGroup),
+      ignoreMissingOrZombieGroup (signalProcessGroup sigKILL processGroup),
+      ignoreMissingProcess (terminateProcess processHandle),
+      mapM_ killThread threads,
+      mapM_ closeHandleIfOpen handles,
+      -- The fixed live-member observer runs before the leader is reaped, while
+      -- that retained zombie/live identity still pins the numeric PGID.
+      awaitDarwinBuildMemoryLiveGroupAbsence processGroup,
+      void
+        ( waitForToolchainProcess
+            "Darwin build-memory cleanup"
+            processHandle
+        )
+    ]
+
+cleanupToolchainProcessGroupParts ::
+  String ->
+  ProcessHandle ->
+  CPid ->
+  [Handle] ->
+  [ThreadId] ->
+  IO ()
+cleanupToolchainProcessGroupParts label processHandle processGroup handles threads =
+  runCleanupsPreservingFailures
+    [ ignoreMissingOrZombieGroup (signalProcessGroup sigCONT processGroup),
+      ignoreMissingOrZombieGroup (signalProcessGroup sigKILL processGroup),
+      ignoreMissingProcess (terminateProcess processHandle),
+      mapM_ killThread threads,
+      mapM_ closeHandleIfOpen handles,
+      void
+        ( waitForToolchainProcess
+            (label <> " cleanup")
+            processHandle
+        )
+    ]
+
+waitForDarwinBuildMemoryProcess :: String -> ProcessHandle -> IO ExitCode
+waitForDarwinBuildMemoryProcess = waitForToolchainProcess
+
+waitForToolchainProcessLeader :: String -> ProcessHandle -> IO ExitCode
+waitForToolchainProcessLeader =
+  waitForToolchainProcessWithDeadline
+    toolchainProcessWaitDeadline
+    "fixed four-hour scheduler"
+
+waitForToolchainProcess :: String -> ProcessHandle -> IO ExitCode
+waitForToolchainProcess =
+  waitForToolchainProcessWithDeadline
+    darwinBuildMemoryCleanupDeadline
+    "bounded reap"
+
+-- | Poll the public nonblocking process API while masked. The only
+-- interruptible point is the Readiness-owned delay between @Nothing@ results,
+-- when an exited leader is still an unreaped zombie and therefore pins its
+-- PID/PGID. A @Just@ result performs waitpid and closes the ProcessHandle under
+-- the mask before the caller can disarm group-signaling cleanup.
+waitForToolchainProcessWithDeadline ::
+  Readiness.Deadline ->
+  String ->
+  String ->
+  ProcessHandle ->
+  IO ExitCode
+waitForToolchainProcessWithDeadline deadline deadlineLabel label processHandle = do
+  outcome <-
+    Readiness.awaitProcessExitReadiness deadline processHandle
+  Readiness.foldReadiness
+    pure
+    onDeadline
+    onDeadline
+    outcome
+  where
+    onDeadline _ =
+      ioError
+        ( userError
+            (label <> " exceeded its " <> deadlineLabel <> " deadline")
+        )
+
+ignoreMissingOrZombieGroup :: IO () -> IO ()
+ignoreMissingOrZombieGroup action =
+  action `catch` \(failure :: IOException) ->
+    unless
+      (isDoesNotExistError failure || isPermissionError failure)
+      (throwIO failure)
+
+ignoreMissingProcess :: IO () -> IO ()
+ignoreMissingProcess action =
+  action `catch` \(failure :: IOException) ->
+    unless (isDoesNotExistError failure) (throwIO failure)
+
+closeHandleIfOpen :: Handle -> IO ()
+closeHandleIfOpen handleValue = do
+  closed <- hIsClosed handleValue
+  unless closed (hClose handleValue)
+
+exitCodeStatus :: ExitCode -> Int
+exitCodeStatus exitCode =
+  case exitCode of
+    ExitSuccess -> 0
+    ExitFailure status -> status
+
+maybeToList :: Maybe value -> [value]
+maybeToList maybeValue =
+  case maybeValue of
+    Just value -> [value]
+    Nothing -> []
+
+darwinBuildMemoryRelayChunkBytes :: Int
+darwinBuildMemoryRelayChunkBytes = 32768
+
+darwinBuildMemoryCleanupPollMicros :: Int
+darwinBuildMemoryCleanupPollMicros = 50000
+
+darwinBuildMemoryCleanupTimeoutMicros :: Int
+darwinBuildMemoryCleanupTimeoutMicros = 15000000
+
+darwinBuildMemoryCleanupDeadline :: Readiness.Deadline
+darwinBuildMemoryCleanupDeadline =
+  Readiness.budgetDeadline
+    (darwinBuildMemoryCleanupTimeoutMicros `div` darwinBuildMemoryCleanupPollMicros)
+    darwinBuildMemoryCleanupPollMicros
+
+darwinBuildMemoryMaximumSamples :: Int
+darwinBuildMemoryMaximumSamples = 14400
+
+darwinBuildMemorySamplingDeadline :: Readiness.Deadline
+darwinBuildMemorySamplingDeadline =
+  Readiness.budgetDeadline
+    darwinBuildMemoryMaximumSamples
+    BuildMemory.darwinBuildMemorySampleIntervalMicros
+
+toolchainProcessWaitDeadline :: Readiness.Deadline
+toolchainProcessWaitDeadline =
+  Readiness.budgetDeadline
+    darwinBuildMemoryMaximumSamples
+    BuildMemory.darwinBuildMemorySampleIntervalMicros
+
 -- | Phase 6 Sprint 6.46 — enter the region in which a toolchain process may be
 -- started.
 --
@@ -742,14 +1779,17 @@ withToolchainAuthority action = do
                   <> reason
               )
           )
-  BuildMemory.withToolchainSpawnAuthority plan action
+  BuildMemory.withToolchainSpawnAuthority (repoRoot paths) plan action
 
 -- | Start one toolchain invocation under the region's derived ceiling.
 --
 -- The invocation comes from the closed 'ToolchainInvocation' vocabulary, so a
 -- build assembled from a caller-supplied argument list is not a term. The
--- ceiling is held in force across the spawn and the child's out-of-memory victim
--- rank is raised as soon as its pid exists.
+-- authority's single-flight token and ceiling remain held from the descriptor
+-- precheck through fresh-group spawn, victim-rank adjustment, wait, normal
+-- Cabal-leader reap, or exceptional group kill and bounded leader reap. Cabal
+-- is the trusted scheduler and waits for its ordinary workers before exiting;
+-- this path does not claim a safe post-reap descendant proof.
 runToolchainCommand ::
   ToolchainSpawnAuthority s ->
   Maybe RuntimeMode ->
@@ -758,23 +1798,112 @@ runToolchainCommand ::
 runToolchainCommand authority _maybeRuntimeMode invocation = do
   paths <- discoverCliCommandPaths
   resolvedCommand <- resolveCliHostTool paths HostCabal
-  processHandle <-
-    BuildMemory.withBoundedToolchainChild authority $ do
-      (_, _, _, spawned) <-
-        createProcess
-          (proc resolvedCommand (toolchainArguments invocation))
-            { env = Just (cliSubprocessBaseEnvFor paths),
-              cwd = Just (repoRoot paths)
-            }
-      pure spawned
-  maybeChildPid <- getPid processHandle
-  for_ maybeChildPid (BuildMemory.applyToolchainChildVictimRank authority)
-  exitCode <- waitForProcess processHandle
+  exitCode <-
+    BuildMemory.withBoundedToolchainChild authority $
+      mask $ \_ -> do
+        spawned <-
+          spawnOwnedToolchainProcess
+            paths
+            authority
+            invocation
+            resolvedCommand
+        onExceptionPreservingPrimary
+          ( do
+              BuildMemory.applyToolchainChildVictimRank
+                authority
+                (ownedToolchainProcessGroup spawned)
+              waitForToolchainProcessLeader
+                (BuildMemory.toolchainInvocationLabel authority invocation)
+                (ownedToolchainProcessHandle spawned)
+          )
+          (cleanupOwnedToolchainProcess authority invocation spawned)
   case exitCode of
     ExitSuccess -> pure ()
     _ -> exitWith exitCode
-  where
-    toolchainArguments = BuildMemory.toolchainInvocationArguments
+
+spawnOwnedToolchainProcess ::
+  Paths ->
+  ToolchainSpawnAuthority s ->
+  ToolchainInvocation ->
+  FilePath ->
+  IO OwnedToolchainProcess
+spawnOwnedToolchainProcess paths authority invocation resolvedCommand = do
+  let label = BuildMemory.toolchainInvocationLabel authority invocation
+  _ <- requireBoundedDescriptorSpace (label <> " process-group spawn")
+  BuildMemory.requireToolchainInvocationProjectState authority invocation
+  (_, _, _, processHandle) <-
+    createProcess
+      ( proc
+          resolvedCommand
+          (BuildMemory.toolchainInvocationArguments authority invocation)
+      )
+        { env =
+            Just
+              ( BuildMemory.toolchainAuthorityEnvironmentEntries authority
+                  <> cliSubprocessBaseEnvFor paths
+              ),
+          cwd = Just (repoRoot paths),
+          std_in = Inherit,
+          std_out = Inherit,
+          std_err = Inherit,
+          close_fds = True,
+          create_group = True
+        }
+  let cleanupBeforeGroup =
+        cleanupUnidentifiedToolchainProcess label processHandle
+  maybeProcessGroup <-
+    onExceptionPreservingPrimary
+      (getPid processHandle)
+      cleanupBeforeGroup
+  processGroup <-
+    case maybeProcessGroup of
+      Just observed -> pure observed
+      Nothing ->
+        onExceptionPreservingPrimary
+          ( ioError
+              ( userError
+                  (label <> " exited before its process-group identity was observed")
+              )
+          )
+          cleanupBeforeGroup
+  let spawned = OwnedToolchainProcess processHandle processGroup
+  onExceptionPreservingPrimary
+    (validateFreshToolchainProcessGroup label processGroup)
+    (cleanupOwnedToolchainProcess authority invocation spawned)
+  pure spawned
+
+validateFreshToolchainProcessGroup :: String -> CPid -> IO ()
+validateFreshToolchainProcessGroup label processGroup = do
+  observedGroup <- getProcessGroupIDOf processGroup
+  unless (observedGroup == processGroup) $
+    ioError
+      ( userError
+          (label <> " was not isolated in its requested fresh process group")
+      )
+
+cleanupUnidentifiedToolchainProcess :: String -> ProcessHandle -> IO ()
+cleanupUnidentifiedToolchainProcess label processHandle =
+  runCleanupsPreservingFailures
+    [ ignoreMissingProcess (terminateProcess processHandle),
+      void
+        ( waitForToolchainProcess
+            (label <> " unidentified-child cleanup")
+            processHandle
+        )
+    ]
+
+cleanupOwnedToolchainProcess ::
+  ToolchainSpawnAuthority s ->
+  ToolchainInvocation ->
+  OwnedToolchainProcess ->
+  IO ()
+cleanupOwnedToolchainProcess authority invocation spawned =
+  cleanupToolchainProcessGroupParts
+    (BuildMemory.toolchainInvocationLabel authority invocation)
+    (ownedToolchainProcessHandle spawned)
+    (ownedToolchainProcessGroup spawned)
+    []
+    []
 
 runWebNpmCommand :: Maybe RuntimeMode -> [String] -> IO ()
 runWebNpmCommand maybeRuntimeMode npmArgs = do
@@ -889,7 +2018,6 @@ hostToolForCliCommand command =
     "llama-cli" -> Just HostLlamaCli
     "whisper-cli" -> Just HostWhisperCli
     "git" -> Just HostGit
-    "protoc" -> Just HostProtoc
     _ -> Nothing
 
 resolveCliHostTool :: Paths -> HostTool -> IO FilePath
@@ -999,10 +2127,7 @@ cliHostToolParentDirs hostConfig =
           HostLlamaCli,
           HostWhisperCli,
           HostPoetry,
-          HostGit,
-          HostProtoc,
-          HostOrmolu,
-          HostHlint
+          HostGit
         ],
       let path = Text.unpack (HostTools.hostToolPath hostConfig tool),
       not (null path)

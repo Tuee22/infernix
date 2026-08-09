@@ -25,6 +25,7 @@ import Data.ByteString.Base64.URL qualified
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as Lazy
 import Data.ByteString.Lazy.Char8 qualified as LazyChar8
+import Data.ByteString.Short qualified as ShortByteString
 import Data.Char (isHexDigit, isSpace, isUpper)
 import Data.Either (fromRight, isLeft, isRight)
 import Data.IORef qualified as IORef
@@ -40,7 +41,8 @@ import Data.Time (addUTCTime, getCurrentTime)
 import Data.Time.Clock.POSIX qualified
 import Data.Word (Word64, Word8)
 import GHC.Clock (getMonotonicTimeNSec)
-import GHC.Conc (BlockReason (BlockedOnException), ThreadStatus (ThreadBlocked), threadStatus)
+import GHC.Conc (BlockReason (BlockedOnException, BlockedOnMVar), ThreadStatus (ThreadBlocked), threadStatus)
+import GHC.RTS.Flags qualified as RTSFlags
 import Infernix.Auth.Jwt qualified as Jwt
 import Infernix.Bootstrap.Models qualified as BootstrapModels
 import Infernix.Bridge.Result qualified as ResultBridge
@@ -48,12 +50,27 @@ import Infernix.BuildMemory
   ( AddressSpaceEnforcement (..),
     BuildMemoryBound,
     BuildMemoryPlan,
+    DarwinAppleMaterializerTest (..),
+    DarwinBuildMemoryInvocation (..),
     ResolvedBuildMemoryMechanism (EnforcedLane, UnenforcedLane),
+    ToolchainInvocation
+      ( ToolchainBuildAll,
+        ToolchainCabalFormat,
+        ToolchainDarwinAppleMaterializerTest,
+        ToolchainTest
+      ),
+    ToolchainTestSuite,
+    allToolchainTestSuites,
     buildMemoryBoundCeilingMib,
+    checkedToolchainAccountMib,
     committedBuildJobs,
     committedProcessAddressMib,
     committedRtsHeapMib,
+    darwinBuildMemoryAuthorityEnvironmentEntries,
+    darwinBuildMemoryInvocationArguments,
+    darwinBuildMemorySampleIntervalMicros,
     deriveBuildMemoryPlan,
+    emptyDarwinBuildMemorySamples,
     enforcedAddressCeilingMib,
     establishBoundedBuildMemory,
     heapToAddressSpaceMultiplier,
@@ -62,17 +79,47 @@ import Infernix.BuildMemory
     minimumProcessHeapMib,
     mkBuildConcurrency,
     mkBuildMemoryBudget,
+    mkDarwinBuildMemoryEvidence,
+    mkDarwinBuildMemoryInvocationEvidence,
+    mkDarwinInstalledCliIsolationEvidence,
     planBudgetMib,
+    planCompilerHeapAccountMib,
+    planControlAccountMib,
+    planControlHeapMib,
     planJobs,
     planProcessAddressMib,
     planRtsHeapMib,
+    planToolchainAccountMib,
+    recordDarwinBuildMemorySample,
     renderCabalProjectLocal,
+    renderDarwinBuildMemoryEvidence,
     requireBoundedBuildMemory,
+    requireDarwinBuildMemoryValidationAuthority,
+    requireToolchainInvocationProjectState,
     resolveBuildMemoryMechanism,
     toolchainAddressSpaceReservationMib,
+    toolchainAuthorityEnvironmentEntries,
+    toolchainControlHeapMib,
+    toolchainInvocationArguments,
+    toolchainInvocationLabel,
     toolchainReservationFitsEveryPlan,
+    toolchainTestSuiteName,
+    withBoundedToolchainChild,
+    withDarwinBuildMemoryValidationChild,
+    withToolchainSpawnAuthority,
   )
-import Infernix.CLI (runtimeConfigRestorePlan, writeGeneratedPursContracts)
+import Infernix.CLI
+  ( DarwinBuildMemoryProcessGroupFixture (..),
+    DarwinBuildMemorySamplingState (..),
+    DarwinBuildMemoryTerminalSettlementState (..),
+    classifyDarwinBuildMemorySamplingObservation,
+    classifyDarwinBuildMemoryTerminalSettlement,
+    commandRequiresConfiguredStartup,
+    runDarwinBuildMemoryProcessGroupFixtureForTest,
+    runDarwinBuildMemoryTerminalSettlementFixtureForTest,
+    runtimeConfigRestorePlan,
+    writeGeneratedPursContracts,
+  )
 import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
@@ -188,6 +235,7 @@ import Infernix.Lint.Files
   ( cabalCSourcesDeclarationViolations,
     cabalCppMacroDefinitionViolations,
     embeddedNativeSourceViolations,
+    isGeneratedHaskellProtoTextSnapshot,
     nativeSourcePathViolations,
   )
 import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
@@ -206,6 +254,7 @@ import Infernix.ProcessIdentity
 import Infernix.ProcessIdentity.Internal
   ( withCurrentProcessIdentityRegistryLockForTest,
   )
+import Infernix.Python qualified as Python
 import Infernix.Routes
   ( renderChartRouteRegistryCommentSection,
     renderEdgeRoutingInventorySection,
@@ -276,7 +325,7 @@ import Numeric (showHex)
 import ProcessIdentitySpec qualified
 import System.Directory
 import System.Environment (getArgs, getExecutablePath)
-import System.Exit (ExitCode (..), exitSuccess)
+import System.Exit (ExitCode (..), exitFailure, exitSuccess)
 import System.FilePath (takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError, isPermissionError)
@@ -295,7 +344,7 @@ import System.Posix.Resource
 import System.Posix.Signals (nullSignal, sigKILL, sigSTOP, signalProcess, signalProcessGroup)
 import System.Posix.Types (CPid)
 import System.Process
-  ( CreateProcess (create_group, std_out),
+  ( CreateProcess (create_group, env, std_out),
     ProcessHandle,
     StdStream (CreatePipe),
     createProcess,
@@ -338,6 +387,12 @@ isKernelCommandOutcome outcome =
   case outcome of
     Subprocess.CommandFailedKernel _ -> True
     _ -> False
+
+exceptionMessageContains :: String -> Either SomeException () -> Bool
+exceptionMessageContains expected outcome =
+  case outcome of
+    Left failure -> expected `isInfixOf` displayException failure
+    Right () -> False
 
 downloadOutcomeBackoff :: DownloadOutcome -> Maybe Int
 downloadOutcomeBackoff (DownloadRateLimited backoff) = Just (retryAfterSeconds backoff)
@@ -553,7 +608,100 @@ dispatchBuildMemoryFixture = do
       -- exit, not host memory pressure.
       let payload = BS.replicate (24 * 1024 * 1024 * 1024) 65
       BS.length payload `seq` exitSuccess
+    ["__infernix_unit_darwin_heap_cap_overallocation_fixture"] -> do
+      activeFlags <- RTSFlags.getRTSFlags
+      let activeMaxHeapBlocks =
+            RTSFlags.maxHeapSize (RTSFlags.gcFlags activeFlags)
+      print activeMaxHeapBlocks
+      System.IO.hFlush System.IO.stdout
+      unless
+        (fromIntegral activeMaxHeapBlocks == darwinHeapCapFixtureExpectedBlocks)
+        exitFailure
+      -- One 128 MiB GHC-heap ByteArray under an observed 64 MiB RTS heap cap.
+      -- A strict ByteString would allocate outside the GHC heap and would not
+      -- exercise -M. This request is only twice the cap and cannot create the
+      -- historical multi-GiB host-pressure incident even if the RTS regressed.
+      let payload =
+            ShortByteString.replicate
+              (2 * darwinHeapCapFixtureMib * 1024 * 1024)
+              65
+      ShortByteString.length payload `seq` exitSuccess
+    ["__infernix_unit_darwin_build_memory_normal_cleanup_fixture"] -> do
+      -- Close the relayed streams while this process-group leader remains
+      -- alive. The parent must continue footprint sampling until group absence
+      -- instead of treating EOF as the process terminal boundary.
+      System.IO.hClose System.IO.stdout
+      System.IO.hClose System.IO.stderr
+      threadDelay (3 * 1000000)
+      exitSuccess
+    ["__infernix_unit_darwin_build_memory_exceptional_cleanup_fixture"] -> do
+      threadDelay (60 * 1000000)
+      exitSuccess
+    ["__infernix_unit_toolchain_heap_driver_fixture"] ->
+      runToolchainHeapDriverFixture
+    ["__infernix_unit_toolchain_heap_helper_fixture"] -> do
+      activeRtsMaxHeapBlocks >>= print
+      exitSuccess
     _ -> pure ()
+
+-- | Exercise the fixed inherited environment across two Haskell process
+-- images. The helper gets no direct RTS arguments, so its observed cap can come
+-- only from the driver's authority-derived environment. This is an inheritance
+-- regression; the real Cabal driver is proved separately by the bounded gate.
+runToolchainHeapDriverFixture :: IO ()
+runToolchainHeapDriverFixture = do
+  driverMaxHeapBlocks <- activeRtsMaxHeapBlocks
+  executable <- getExecutablePath
+  (helperExit, helperOutput, helperError) <-
+    readCreateProcessWithExitCode
+      (proc executable ["__infernix_unit_toolchain_heap_helper_fixture"])
+      ""
+  case (helperExit, readMaybe (takeWhile (not . isSpace) helperOutput) :: Maybe Integer) of
+    (ExitSuccess, Just helperMaxHeapBlocks) -> do
+      print driverMaxHeapBlocks
+      print helperMaxHeapBlocks
+      exitSuccess
+    _ -> do
+      System.IO.hPutStrLn
+        System.IO.stderr
+        ( "inherited helper heap-cap fixture failed: "
+            <> show helperExit
+            <> ": "
+            <> helperError
+        )
+      exitFailure
+
+activeRtsMaxHeapBlocks :: IO Integer
+activeRtsMaxHeapBlocks =
+  fromIntegral . RTSFlags.maxHeapSize . RTSFlags.gcFlags
+    <$> RTSFlags.getRTSFlags
+
+darwinHeapCapFixtureMib :: Int
+darwinHeapCapFixtureMib = 64
+
+-- 'GHC.RTS.Flags.maxHeapSize' is reported in the RTS's 4096-byte blocks.
+darwinHeapCapFixtureExpectedBlocks :: Integer
+darwinHeapCapFixtureExpectedBlocks =
+  toInteger darwinHeapCapFixtureMib * 1024 * 1024 `div` 4096
+
+closedToolchainTestSuites :: [ToolchainTestSuite]
+closedToolchainTestSuites = allToolchainTestSuites
+
+closedToolchainTestSuiteNames :: [String]
+closedToolchainTestSuiteNames =
+  map toolchainTestSuiteName closedToolchainTestSuites
+
+closedDarwinAppleMaterializerTests :: [DarwinAppleMaterializerTest]
+closedDarwinAppleMaterializerTests =
+  [ DarwinProductionAudiverisCancellation,
+    DarwinInstalledPythonSourceIsolation
+  ]
+
+closedDarwinAppleMaterializerTestOptions :: [String]
+closedDarwinAppleMaterializerTestOptions =
+  [ "--darwin-production-audiveris-cancellation",
+    "--darwin-installed-python-source-isolation"
+  ]
 
 -- | The whole ceiling story, inside one child that installed it.
 --
@@ -562,9 +710,558 @@ dispatchBuildMemoryFixture = do
 -- at all, and asserting one there is what took every gate command down.
 runBuildMemoryBoundFixture :: FilePath -> IO ()
 runBuildMemoryBoundFixture scratchDirectory = do
-  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 2) 2
-  widerPlan <- buildMemoryFixturePlan (minimumProcessHeapMib * 16) 4
+  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 2) 1
+  widerPlan <- buildMemoryFixturePlan (minimumProcessHeapMib * 4) 1
+  let sameHeapBudgetMib =
+        2 * planRtsHeapMib plan + 3 * toolchainControlHeapMib
+  sameHeapDifferentJobsPlan <-
+    buildMemoryFixturePlan sameHeapBudgetMib 2
   createDirectoryIfMissing True scratchDirectory
+
+  -- These plans have the same compiler heap and address reservation but one
+  -- versus two compiler workers. Observing only either per-compiler number
+  -- therefore accepts stale concurrency and recreates the oversubscription
+  -- this authority exists to prevent.
+  let projectPath = scratchDirectory </> "cabal.project.local"
+  writeFile projectPath (renderCabalProjectLocal sameHeapDifferentJobsPlan)
+  staleConcurrencyMint <-
+    try @IOException
+      ( withToolchainSpawnAuthority scratchDirectory plan $ \_authority ->
+          pure ()
+      )
+  assert
+    ( planRtsHeapMib sameHeapDifferentJobsPlan == planRtsHeapMib plan
+        && planProcessAddressMib sameHeapDifferentJobsPlan
+          == planProcessAddressMib plan
+        && planJobs sameHeapDifferentJobsPlan /= planJobs plan
+    )
+    "the stale-concurrency fixture differs only in the job count"
+  assert
+    (isLeft staleConcurrencyMint)
+    "spawn authority cannot be minted from a matching heap cap with stale concurrency"
+
+  let correctProject = renderCabalProjectLocal plan
+      expectedReservation =
+        "-xr" <> show (planProcessAddressMib plan) <> "M"
+      staleReservation =
+        "-xr" <> show (planProcessAddressMib plan + 1) <> "M"
+  writeFile
+    projectPath
+    (replaceFirstSubstring expectedReservation staleReservation correctProject)
+  staleReservationMint <-
+    try @IOException
+      ( withToolchainSpawnAuthority scratchDirectory plan $ \_authority ->
+          pure ()
+      )
+  assert
+    (isLeft staleReservationMint)
+    "spawn authority requires the generated runtime reservation as well as jobs and heap"
+
+  -- Minting consumes one observation, and the spawn boundary re-observes it:
+  -- changing the generated settings inside the rank-2 region cannot turn the
+  -- already-minted authority into permission to launch under a different plan.
+  writeFile projectPath correctProject
+  changedAfterMint <-
+    try @IOException
+      ( withToolchainSpawnAuthority scratchDirectory plan $ \authority -> do
+          writeFile
+            projectPath
+            (renderCabalProjectLocal sameHeapDifferentJobsPlan)
+          withBoundedToolchainChild authority (pure ())
+      )
+  assert
+    (isLeft changedAfterMint)
+    "the production spawn boundary refuses generated settings changed after authority minting"
+
+  writeFile projectPath correctProject
+  productionBoundReached <-
+    withToolchainSpawnAuthority scratchDirectory plan $ \authority ->
+      withBoundedToolchainChild authority (pure True)
+  assert
+    productionBoundReached
+    "the production authority-to-child path admits the exact generated jobs/heap/address triple"
+
+  let cabalFormatProjectRoot = scratchDirectory </> "test" </> "cabal-format"
+      cabalFormatLocalPath = cabalFormatProjectRoot </> "cabal.project.local"
+      cabalFormatFreezePath = cabalFormatProjectRoot </> "cabal.project.freeze"
+  createDirectoryIfMissing True cabalFormatProjectRoot
+  cabalFormatOverlayGate <-
+    withToolchainSpawnAuthority scratchDirectory plan $ \authority -> do
+      cleanState <-
+        try @IOException
+          (requireToolchainInvocationProjectState authority ToolchainCabalFormat)
+      writeFile cabalFormatLocalPath "packages: unreviewed-local.cabal\n"
+      localState <-
+        try @IOException
+          (requireToolchainInvocationProjectState authority ToolchainCabalFormat)
+      removeFile cabalFormatLocalPath
+      writeFile cabalFormatFreezePath "constraints: Cabal ==0\n"
+      freezeState <-
+        try @IOException
+          (requireToolchainInvocationProjectState authority ToolchainCabalFormat)
+      removeFile cabalFormatFreezePath
+      pure (cleanState, localState, freezeState)
+  let cabalFormatOverlayGatePassed =
+        case cabalFormatOverlayGate of
+          (Right (), Left _, Left _) -> True
+          _ -> False
+  assert
+    cabalFormatOverlayGatePassed
+    "the Cabal-format invocation fails closed on either sibling project overlay and admits their proven absence"
+
+  -- One authority is one in-process scheduler slot. Coordinate both threads
+  -- until the contender is observably blocked on the private MVar; a timing
+  -- delay alone could pass without ever scheduling the contender.
+  writeFile projectPath correctProject
+  withToolchainSpawnAuthority scratchDirectory plan $ \authority -> do
+    firstEntered <- MVar.newEmptyMVar
+    releaseFirst <- MVar.newEmptyMVar
+    firstResult <- MVar.newEmptyMVar
+    secondAttempting <- MVar.newEmptyMVar
+    secondEntered <- MVar.newEmptyMVar
+    secondResult <- MVar.newEmptyMVar
+    _ <-
+      forkIO
+        ( try @SomeException
+            ( withBoundedToolchainChild authority $ do
+                MVar.putMVar firstEntered ()
+                MVar.takeMVar releaseFirst
+            )
+            >>= MVar.putMVar firstResult
+        )
+    MVar.takeMVar firstEntered
+    secondThread <-
+      forkIO
+        ( do
+            MVar.putMVar secondAttempting ()
+            try @SomeException
+              (withBoundedToolchainChild authority (MVar.putMVar secondEntered ()))
+              >>= MVar.putMVar secondResult
+        )
+    MVar.takeMVar secondAttempting
+    let awaitSingleFlightBlock remainingAttempts
+          | remainingAttempts <= 0 = pure False
+          | otherwise = do
+              contenderStatus <- threadStatus secondThread
+              if contenderStatus == ThreadBlocked BlockedOnMVar
+                then pure True
+                else do
+                  yield
+                  awaitSingleFlightBlock (remainingAttempts - 1)
+    secondBlocked <- awaitSingleFlightBlock (2000 :: Int)
+    prematureSecondEntry <- MVar.tryReadMVar secondEntered
+    MVar.putMVar releaseFirst ()
+    completedFirst <- timeout 2000000 (MVar.takeMVar firstResult)
+    completedSecond <- timeout 2000000 (MVar.takeMVar secondResult)
+    let completedSuccessfully outcome =
+          case outcome of
+            Just (Right ()) -> True
+            _ -> False
+    assert
+      ( secondBlocked
+          && isNothing prematureSecondEntry
+          && completedSuccessfully completedFirst
+          && completedSuccessfully completedSecond
+      )
+      "one toolchain authority serializes concurrent child lifecycle regions until the first exits"
+    injectedFailure <-
+      try @IOException
+        ( withBoundedToolchainChild
+            authority
+            (ioError (userError "injected toolchain single-flight action failure"))
+        )
+    entryAfterFailure <-
+      withBoundedToolchainChild authority (pure True)
+    assert
+      (isLeft injectedFailure && entryAfterFailure)
+      "an exceptional toolchain child lifecycle releases the authority's single-flight token"
+
+  -- The observation and child creation cannot be one atomic operation: Cabal
+  -- reads cabal.project.local after createProcess returns in the parent. The
+  -- production argument vector is therefore derived from the opaque authority,
+  -- not from that later child read. Replacing the file after the wrapper's
+  -- recheck cannot change any member of the bound passed on Cabal's command
+  -- line.
+  writeFile projectPath correctProject
+  postObservationAuthoritySurface <-
+    withToolchainSpawnAuthority scratchDirectory plan $ \authority ->
+      withBoundedToolchainChild authority $ do
+        writeFile
+          projectPath
+          (renderCabalProjectLocal sameHeapDifferentJobsPlan)
+        pure
+          ( toolchainInvocationArguments authority ToolchainBuildAll,
+            map
+              (toolchainInvocationArguments authority . ToolchainTest)
+              closedToolchainTestSuites,
+            toolchainInvocationArguments authority ToolchainCabalFormat,
+            toolchainInvocationLabel authority ToolchainCabalFormat,
+            map
+              ( toolchainInvocationArguments authority
+                  . ToolchainDarwinAppleMaterializerTest
+              )
+              closedDarwinAppleMaterializerTests,
+            toolchainAuthorityEnvironmentEntries authority
+          )
+  let ( postObservationArguments,
+        postObservationTestArguments,
+        postObservationCabalFormatArguments,
+        postObservationCabalFormatLabel,
+        postObservationDarwinArguments,
+        postObservationEnvironment
+        ) =
+          postObservationAuthoritySurface
+  assert
+    ( postObservationArguments
+        == [ "+RTS",
+             "-M" <> show (planControlHeapMib plan) <> "M",
+             "-RTS",
+             "build",
+             "all",
+             "--enable-tests",
+             "--jobs=" <> show (planJobs plan),
+             "--ghc-options=+RTS -M"
+               <> show (planRtsHeapMib plan)
+               <> "M -xr"
+               <> show (planProcessAddressMib plan)
+               <> "M -RTS"
+           ]
+    )
+    "the production Cabal argument vector stays bound after the final file observation"
+  assert
+    ( postObservationTestArguments
+        == map
+          ( \suiteName ->
+              [ "+RTS",
+                "-M" <> show (planControlHeapMib plan) <> "M",
+                "-RTS",
+                "test",
+                suiteName,
+                "--enable-tests",
+                "--jobs=" <> show (planJobs plan),
+                "--ghc-options=+RTS -M"
+                  <> show (planRtsHeapMib plan)
+                  <> "M -xr"
+                  <> show (planProcessAddressMib plan)
+                  <> "M -RTS"
+              ]
+          )
+          closedToolchainTestSuiteNames
+    )
+    "every focused Haskell suite has an exact closed authority-derived Cabal vector"
+  assert
+    ( postObservationCabalFormatArguments
+        == [ "+RTS",
+             "-M" <> show (planControlHeapMib plan) <> "M",
+             "-RTS",
+             "test",
+             "--project-file=test/cabal-format/cabal.project",
+             "--builddir=" <> (scratchDirectory </> ".build" </> "cabal-format"),
+             "infernix-cabal-format:test:infernix-cabal-format",
+             "--enable-tests",
+             "--jobs=" <> show (planJobs plan),
+             "--ghc-options=+RTS -M"
+               <> show (planRtsHeapMib plan)
+               <> "M -xr"
+               <> show (planProcessAddressMib plan)
+               <> "M -RTS"
+           ]
+    )
+    "the solver-isolated Cabal-format package has one exact closed authority-derived vector"
+  assert
+    ( postObservationCabalFormatLabel
+        == "cabal test --project-file=test/cabal-format/cabal.project --builddir="
+          <> (scratchDirectory </> ".build" </> "cabal-format")
+          <> " infernix-cabal-format:test:infernix-cabal-format --enable-tests"
+    )
+    "the Cabal-format diagnostic label carries the exact authority-root build directory"
+  assert
+    ( postObservationDarwinArguments
+        == map
+          ( \testOption ->
+              [ "+RTS",
+                "-M" <> show (planControlHeapMib plan) <> "M",
+                "-RTS",
+                "test",
+                "infernix-apple-materializer",
+                "--enable-tests",
+                "--test-show-details=direct",
+                "--test-options=" <> testOption,
+                "--jobs=" <> show (planJobs plan),
+                "--ghc-options=+RTS -M"
+                  <> show (planRtsHeapMib plan)
+                  <> "M -xr"
+                  <> show (planProcessAddressMib plan)
+                  <> "M -RTS"
+              ]
+          )
+          closedDarwinAppleMaterializerTestOptions
+    )
+    "both Darwin-only Apple materializer gates have exact non-caller-supplied test-option vectors"
+  assert
+    ( postObservationEnvironment
+        == [("GHCRTS", "-M" <> show (planControlHeapMib plan) <> "M")]
+    )
+    "the production child environment carries only the authority-derived inherited heap cap"
+  assert
+    ( ("--jobs=" <> show (planJobs sameHeapDifferentJobsPlan))
+        `notElem` postObservationArguments
+    )
+    "a same-heap stale job count cannot enter the production Cabal argument vector"
+  writeFile projectPath correctProject
+
+  -- The top-level image receives the cap both directly and through the closed
+  -- environment; its Haskell helper receives no RTS arguments and therefore
+  -- proves that the environment is inherited across a child boundary.
+  executable <- getExecutablePath
+  inheritedHeapCap <-
+    timeout
+      (30 * 1000000)
+      ( readCreateProcessWithExitCode
+          ( proc
+              executable
+              [ "+RTS",
+                "-M" <> show (planControlHeapMib plan) <> "M",
+                "-RTS",
+                "__infernix_unit_toolchain_heap_driver_fixture"
+              ]
+          )
+            { env = Just postObservationEnvironment
+            }
+          ""
+      )
+  case inheritedHeapCap of
+    Nothing ->
+      fail "the closed driver/helper heap-cap fixture exceeded its 30-second deadline"
+    Just (heapExit, heapOutput, heapError) -> do
+      let expectedMaxHeapBlocks =
+            toInteger (planControlHeapMib plan) * 1024 * 1024 `div` 4096
+          observedMaxHeapBlocks =
+            traverse readMaybe (lines heapOutput) :: Maybe [Integer]
+      assert
+        (heapExit == ExitSuccess)
+        ( "the closed driver/helper heap-cap fixture exits successfully: "
+            <> heapError
+        )
+      assert
+        (observedMaxHeapBlocks == Just [expectedMaxHeapBlocks, expectedMaxHeapBlocks])
+        "the driver and inherited Haskell helper observe the exact authority heap cap"
+
+  darwinEvidenceSurface <-
+    withToolchainSpawnAuthority scratchDirectory plan $ \authority ->
+      case requireDarwinBuildMemoryValidationAuthority authority of
+        Left reason -> pure (Left reason)
+        Right darwinAuthority -> do
+          buildArguments <-
+            either fail pure $
+              darwinBuildMemoryInvocationArguments
+                darwinAuthority
+                DarwinBuildAllWithTests
+                scratchDirectory
+          installArguments <-
+            either fail pure $
+              darwinBuildMemoryInvocationArguments
+                darwinAuthority
+                DarwinInstallAllExecutables
+                scratchDirectory
+          -- Recheck the exact generated file first, then replace it in the
+          -- remaining recheck-to-child-read window. Both validation vectors
+          -- must still come only from the retained authority.
+          postObservationBuildArguments <-
+            withDarwinBuildMemoryValidationChild darwinAuthority $ do
+              writeFile
+                projectPath
+                (renderCabalProjectLocal sameHeapDifferentJobsPlan)
+              either fail pure $
+                darwinBuildMemoryInvocationArguments
+                  darwinAuthority
+                  DarwinBuildAllWithTests
+                  scratchDirectory
+          writeFile projectPath correctProject
+          let oneGibibyte = 1024 * 1024 * 1024 :: Word64
+          firstSample <-
+            either fail pure $
+              recordDarwinBuildMemorySample oneGibibyte emptyDarwinBuildMemorySamples
+          secondSample <-
+            either fail pure $
+              recordDarwinBuildMemorySample (2 * oneGibibyte) firstSample
+          samples <-
+            either fail pure $
+              recordDarwinBuildMemorySample (oneGibibyte + oneGibibyte `div` 2) secondSample
+          buildEvidence <-
+            either fail pure $
+              mkDarwinBuildMemoryInvocationEvidence
+                DarwinBuildAllWithTests
+                0
+                123
+                samples
+          installEvidence <-
+            either fail pure $
+              mkDarwinBuildMemoryInvocationEvidence
+                DarwinInstallAllExecutables
+                0
+                45
+                emptyDarwinBuildMemorySamples
+          installedCliIsolation <-
+            either fail pure $
+              mkDarwinInstalledCliIsolationEvidence 0
+          let missingInstalledCliIsolation =
+                mkDarwinBuildMemoryEvidence
+                  65536
+                  16384
+                  49152
+                  darwinAuthority
+                  darwinBuildMemorySampleIntervalMicros
+                  [buildEvidence, installEvidence]
+                  Nothing
+          assert
+            (isLeft missingInstalledCliIsolation)
+            "a successful install cannot produce Darwin evidence without the installed-CLI GHCRTS isolation proof"
+          evidence <-
+            either fail pure $
+              mkDarwinBuildMemoryEvidence
+                65536
+                16384
+                49152
+                darwinAuthority
+                darwinBuildMemorySampleIntervalMicros
+                [buildEvidence, installEvidence]
+                (Just installedCliIsolation)
+          pure
+            ( Right
+                ( buildArguments,
+                  installArguments,
+                  postObservationBuildArguments,
+                  darwinBuildMemoryAuthorityEnvironmentEntries darwinAuthority,
+                  renderDarwinBuildMemoryEvidence evidence
+                )
+            )
+  case (System.Info.os, darwinEvidenceSurface) of
+    ("darwin", Right (buildArguments, installArguments, postObservationBuildArguments, environmentEntries, report)) -> do
+      let driverRtsArguments =
+            [ "+RTS",
+              "-M" <> show (planControlHeapMib plan) <> "M",
+              "-RTS"
+            ]
+          authorityArguments =
+            [ "--jobs=" <> show (planJobs plan),
+              "--ghc-options=+RTS -M"
+                <> show (planRtsHeapMib plan)
+                <> "M -xr"
+                <> show (planProcessAddressMib plan)
+                <> "M -RTS"
+            ]
+          buildRoot = scratchDirectory </> "dist-newstyle"
+          installRoot = scratchDirectory </> "bin"
+      assert
+        ( buildArguments
+            == driverRtsArguments
+              <> [ "build",
+                   "all",
+                   "--enable-tests",
+                   "--builddir=" <> buildRoot
+                 ]
+              <> authorityArguments
+        )
+        "Darwin validation build arguments end in the exact authority-derived jobs and RTS limits"
+      assert
+        ( installArguments
+            == driverRtsArguments
+              <> [ "install",
+                   "all:exes",
+                   "--installdir=" <> installRoot,
+                   "--install-method=copy",
+                   "--overwrite-policy=always",
+                   "--builddir=" <> buildRoot
+                 ]
+              <> authorityArguments
+        )
+        "Darwin validation install arguments reuse the scratch root and exact authority-derived limits"
+      assert
+        (postObservationBuildArguments == buildArguments)
+        "Darwin validation arguments cannot change after the final committed-file observation"
+      assert
+        (environmentEntries == postObservationEnvironment)
+        "Darwin validation reuses the exact authority-derived inherited heap-cap environment"
+      assert
+        ( "sampleMetric: sampled peak aggregate physical footprint" `isInfixOf` report
+            && "sampleCount: 3" `isInfixOf` report
+            && "sampledPeakAggregatePhysicalFootprintBytes: 2147483648" `isInfixOf` report
+            && "planAccountToSampledPeakMultiple: 4.00x" `isInfixOf` report
+            && "activeColimaPledgeMib: 49152" `isInfixOf` report
+            && "planCompilerJobsTimesHeapMib: 6144" `isInfixOf` report
+            && "planControlHeapMib: 1024" `isInfixOf` report
+            && "planControlClaimCount: 2" `isInfixOf` report
+            && "planControlAccountMib: 2048" `isInfixOf` report
+            && "planAccountMib: 8192" `isInfixOf` report
+            && "installedRuntimeCliInheritedGhcrts: ignored (proved with adversarial invalid GHCRTS)" `isInfixOf` report
+            && "excludedHostReserveClaimants: operator CLI parent and fixed observer tools" `isInfixOf` report
+            && "invocation.1.exitStatus: 0" `isInfixOf` report
+            && "invocation.2.durationMicros: 45" `isInfixOf` report
+            && "invocation.2.samplingOutcome: terminal-before-first-fixed-cadence-probe" `isInfixOf` report
+            && "invocation.2.sampleCount: 0" `isInfixOf` report
+            && "RSS" `notElem` words report
+        )
+        "Darwin validation renders the typed host, plan, sample, exit, duration, and caveat evidence"
+      assert
+        (isLeft (mkDarwinInstalledCliIsolationEvidence 1))
+        "a nonzero installed-CLI isolation probe cannot enter Darwin evidence"
+    ("darwin", Left reason) ->
+      fail ("Darwin validation authority unexpectedly refused the Darwin lane: " <> reason)
+    (_, Left reason) ->
+      assert
+        ("available only on Darwin" `isInfixOf` reason)
+        "Darwin validation authority explicitly refuses every non-Darwin lane"
+    (_, Right _) ->
+      fail "Darwin validation authority was minted on a non-Darwin lane"
+  writeFile projectPath correctProject
+
+  runDarwinHeapCapOverallocationAssertions
+  assert
+    ( classifyDarwinBuildMemorySamplingObservation True (Right 4096)
+        == DarwinBuildMemorySamplingObserved 4096
+    )
+    "Darwin sampling continues after relay closure while the footprint observer still sees the live group"
+  assert
+    ( classifyDarwinBuildMemorySamplingObservation
+        False
+        (Left "injected footprint observation failure")
+        == DarwinBuildMemorySamplingNeedsTerminalSettlement
+          False
+          "injected footprint observation failure"
+    )
+    "Darwin sampling enters bounded terminal settlement only after the footprint observer loses the group"
+  assert
+    ( classifyDarwinBuildMemoryTerminalSettlement True (Right True)
+        == Right DarwinBuildMemoryTerminalSettled
+    )
+    "Darwin terminal settlement requires closed relays and no live group member"
+  let terminalSettlementPreservedRelayLag =
+        case classifyDarwinBuildMemoryTerminalSettlement False (Right True) of
+          Right (DarwinBuildMemoryTerminalPending 1 _) -> True
+          _ -> False
+  assert
+    terminalSettlementPreservedRelayLag
+    "Darwin terminal settlement tolerates relay scheduling lag after group disappearance"
+  assert
+    ( classifyDarwinBuildMemoryTerminalSettlement True (Right False)
+        == Right DarwinBuildMemoryTerminalLiveGroup
+    )
+    "Darwin terminal settlement refuses a footprint failure while the group is still live instead of waiting out an unsampled tail"
+  assert
+    ( classifyDarwinBuildMemoryTerminalSettlement
+        True
+        (Left "injected group observation failure")
+        == Left "injected group observation failure"
+    )
+    "Darwin terminal settlement preserves fixed-observer loss as a refusal"
+  runDarwinBuildMemoryTerminalSettlementFixtureForTest
+  when (System.Info.os == "darwin") $ do
+    runDarwinBuildMemoryProcessGroupFixtureForTest
+      DarwinBuildMemoryNormalCleanupFixture
+    runDarwinBuildMemoryProcessGroupFixtureForTest
+      DarwinBuildMemoryExceptionalCleanupFixture
+
   resolved <- resolveBuildMemoryMechanism
   case resolved of
     Left reason ->
@@ -573,6 +1270,38 @@ runBuildMemoryBoundFixture scratchDirectory = do
       runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan
     Right (EnforcedLane _) ->
       runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan
+
+runDarwinHeapCapOverallocationAssertions :: IO ()
+runDarwinHeapCapOverallocationAssertions =
+  when (System.Info.os == "darwin") $ do
+    executable <- getExecutablePath
+    completed <-
+      timeout
+        (30 * 1000000)
+        ( readCreateProcessWithExitCode
+            ( proc
+                executable
+                [ "+RTS",
+                  "-M" <> show darwinHeapCapFixtureMib <> "M",
+                  "-xr256M",
+                  "-RTS",
+                  "__infernix_unit_darwin_heap_cap_overallocation_fixture"
+                ]
+            )
+            ""
+        )
+    case completed of
+      Nothing ->
+        fail "the bounded Darwin RTS heap-cap adversary exceeded its 30-second deadline"
+      Just (overExit, activeHeapOutput, _) -> do
+        let activeMaxHeapBlocks =
+              readMaybe (takeWhile (not . isSpace) activeHeapOutput) :: Maybe Integer
+        assert
+          (activeMaxHeapBlocks == Just darwinHeapCapFixtureExpectedBlocks)
+          "the Darwin adversary observes the exact active RTS maxHeapSize before allocation"
+        assert
+          (isCleanFailureExit overExit)
+          "allocating twice a 64 MiB Darwin RTS heap cap exits ordinary nonzero without host pressure"
 
 -- | Whether an enforced-lane mint returned the plan's derived ceiling. An
 -- unenforced result is a failure here: on this lane the ceiling is installed,
@@ -761,8 +1490,31 @@ runBuildMemoryAssertions unitTestRoot = do
   assert
     (minimumProcessAddressMib == minimumProcessHeapMib * heapToAddressSpaceMultiplier)
     "the address-space floor is derived from the heap floor rather than declared separately"
+  assert
+    ( isLeft
+        ( mkDarwinBuildMemoryInvocationEvidence
+            DarwinBuildAllWithTests
+            0
+            1
+            emptyDarwinBuildMemorySamples
+        )
+    )
+    "the measurement-bearing Darwin build refuses terminal evidence without a physical-footprint sample"
+  assert
+    ( isRight
+        ( mkDarwinBuildMemoryInvocationEvidence
+            DarwinInstallAllExecutables
+            0
+            1
+            emptyDarwinBuildMemorySamples
+        )
+    )
+    "a reused Darwin install may record explicit terminal-before-first-probe evidence without fabricating a sample"
 
-  plan <- buildMemoryFixturePlan (minimumProcessHeapMib * 4) 4
+  let committedAccountMib =
+        committedBuildJobs * minimumProcessHeapMib
+          + (committedBuildJobs + 1) * toolchainControlHeapMib
+  plan <- buildMemoryFixturePlan committedAccountMib committedBuildJobs
   assert
     (planRtsHeapMib plan == minimumProcessHeapMib)
     "the per-process heap cap is the budget divided by the job count"
@@ -772,8 +1524,30 @@ runBuildMemoryAssertions unitTestRoot = do
     )
     "the per-process address-space ceiling is derived from the heap cap"
   assert
-    (planJobs plan * planRtsHeapMib plan <= planBudgetMib plan)
-    "the plan's worst case never exceeds the budget it divided"
+    (planToolchainAccountMib plan <= planBudgetMib plan)
+    "the plan's complete compiler and control/helper account never exceeds its budget"
+  assert
+    ( checkedToolchainAccountMib
+        (planJobs plan)
+        (planRtsHeapMib plan)
+        (planControlHeapMib plan)
+        (planBudgetMib plan)
+        == Right (planToolchainAccountMib plan)
+    )
+    "Darwin validation checks the complete compiler and control/helper account before spawn"
+  assert
+    (isLeft (checkedToolchainAccountMib maxBound 2 1 maxBound))
+    "Darwin validation refuses complete-claimant integer overflow before spawn"
+  assert
+    ( isLeft
+        ( checkedToolchainAccountMib
+            1
+            minimumProcessHeapMib
+            toolchainControlHeapMib
+            (minimumProcessHeapMib + 2 * toolchainControlHeapMib - 1)
+        )
+    )
+    "Darwin validation refuses a complete claimant sum above the account budget"
 
   -- The failure this module exists for: a per-process ceiling that was never
   -- divided by its concurrency. A budget that cannot fund its job count at the
@@ -805,8 +1579,12 @@ runBuildMemoryAssertions unitTestRoot = do
     (isLeft (mkBuildConcurrency 0))
     "a zero job count is refused"
   assert
-    (isLeft (mkBuildMemoryBudget (minimumProcessHeapMib - 1)))
-    "a budget that cannot fund one job is refused"
+    ( isLeft
+        ( mkBuildMemoryBudget
+            (minimumProcessHeapMib + 2 * toolchainControlHeapMib - 1)
+        )
+    )
+    "a budget that cannot fund one compiler and both required control slots is refused"
 
   -- The committed floor in `cabal.project` and the compile-fixture project is
   -- the same pair this module mints, so the two cannot drift apart.
@@ -821,6 +1599,9 @@ runBuildMemoryAssertions unitTestRoot = do
   assert
     (committedBuildJobs <= maximumBuildJobs)
     "the committed job count is inside the account's cap"
+  assert
+    (planCompilerHeapAccountMib plan + planControlAccountMib plan == committedAccountMib)
+    "the committed account includes both compiler and control/helper claimants"
 
   let rendered = renderCabalProjectLocal plan
   assert
@@ -833,8 +1614,11 @@ runBuildMemoryAssertions unitTestRoot = do
     (("-xr" <> show (planProcessAddressMib plan) <> "M") `isInfixOf` rendered)
     "the generated cabal.project.local bounds the compiler's own address-space reservation"
   assert
-    ("jobs x " `isInfixOf` rendered)
-    "the generated cabal.project.local states the product, because a per-process cap is not a host bound"
+    ( "compiler subtotal" `isInfixOf` rendered
+        && "control/helper subtotal" `isInfixOf` rendered
+        && (show (planToolchainAccountMib plan) <> " MiB total") `isInfixOf` rendered
+    )
+    "the generated cabal.project.local states every subtotal, because a per-process cap is not a host bound"
 
   -- The measured Linux fact the ceiling is derived from.
   assert
@@ -1339,6 +2123,25 @@ main = do
     (parseCommand ["internal", "discover", "images", "rendered-chart.yaml"] == Right (InternalDiscoverImagesCommand "rendered-chart.yaml"))
     "the structured command registry parses internal discovery commands from the same definition used by the docs"
   assert
+    ( parseCommand ["internal", "validate-darwin-build-memory"]
+        == Right InternalValidateDarwinBuildMemoryCommand
+    )
+    "the registry exposes the Darwin build-memory evidence run only through its closed opt-in command"
+  assert
+    ( not (commandRequiresConfiguredStartup (InitCommand (Just AppleSilicon) (Just True) True False))
+        && not (commandRequiresConfiguredStartup (TestInitCommand (Just AppleSilicon) (Just True)))
+        && not (commandRequiresConfiguredStartup ShowRootHelp)
+        && commandRequiresConfiguredStartup TestUnitCommand
+    )
+    "init, test init, and help remain reachable across a stale host-manifest schema while operational commands require configured startup"
+  assert
+    ( parseCommand ["internal", "validate-darwin-audiveris-cancellation"]
+        == Right InternalValidateDarwinAudiverisCancellationCommand
+        && parseCommand ["internal", "validate-darwin-installed-python-source-isolation"]
+          == Right InternalValidateDarwinInstalledPythonSourceIsolationCommand
+    )
+    "the registry exposes both Darwin-only Apple materializer cohort modes through fixed internal commands"
+  assert
     ( parseCommand ["internal", "materialize-substrate", "linux-cpu", "--demo-ui", "false"]
         == Right (InternalMaterializeSubstrateCommand LinuxCpu False False)
     )
@@ -1408,7 +2211,225 @@ main = do
   assert
     (not ("build:" `isInfixOf` composeLauncherContents))
     "Sprint 1.11: compose launcher file does not carry build blocks"
+  cabalManifestContents <- readFile "infernix.cabal"
   linuxDockerfileContents <- readFile "docker/Dockerfile"
+  appleBootstrapContents <- readFile "bootstrap/apple-silicon.sh"
+  buildMemorySource <- readFile "src/Infernix/BuildMemory.hs"
+  provisioningSource <- readFile "src/Infernix/Engines/Provisioning.hs"
+  artifactInternalSource <- readFile "src/Infernix/Engines/Artifact/Internal.hs"
+  artifactLoaderSource <- readFile "src/Infernix/Engines/Artifact/Loader.hs"
+  subprocessSource <- readFile "src/Infernix/Cluster/Subprocess.hs"
+  cliSource <- readFile "src/Infernix/CLI.hs"
+  readinessSource <- readFile "src/Infernix/Evidence/Readiness.hs"
+  let normalizedBuildMemorySource = unwords (words buildMemorySource)
+      compactProvisioningSource = filter (not . isSpace) provisioningSource
+      compactArtifactInternalSource = filter (not . isSpace) artifactInternalSource
+      compactArtifactLoaderSource = filter (not . isSpace) artifactLoaderSource
+      compactSubprocessSource = filter (not . isSpace) subprocessSource
+  assert
+    ( "colima_profiles=\"$(\"${BOOTSTRAP_ENV}\" \"PATH=$(apple_launcher_path)\" \"${APPLE_COLIMA_BIN}\" list --json)\""
+        `isInfixOf` appleBootstrapContents
+        && "script's \\`build\\` command" `isInfixOf` appleBootstrapContents
+        && "APPLE_STAGE0_MAXIMUM_SHELL_INTEGER=9223372036854775807" `isInfixOf` appleBootstrapContents
+        && "stage0_decimal_fits_shell_integer \"${pledged_bytes}\"" `isInfixOf` appleBootstrapContents
+        && "pledged_bytes % 1048576" `isInfixOf` appleBootstrapContents
+        && not ("pledged_bytes + 1048575" `isInfixOf` appleBootstrapContents)
+    )
+    "Phase 1 Sprint 1.21: the stage-0 probe bounds shell arithmetic, rounds the Colima pledge without overflow, carries its fixed dependency path, and prints build guidance literally"
+  assert
+    ( ":: IO (Either IOException ())" `isInfixOf` normalizedBuildMemorySource
+        && "asynchronous cancellation must" `isInfixOf` normalizedBuildMemorySource
+        && not (":: IO (Either SomeException ())" `isInfixOf` normalizedBuildMemorySource)
+        && not ("could not raise the toolchain child's out-of-memory victim" `isInfixOf` normalizedBuildMemorySource)
+    )
+    "the optional Linux victim-rank write ignores only ordinary I/O refusal and preserves asynchronous cleanup"
+  assert
+    ( "type role ToolchainSpawnAuthority nominal" `isInfixOf` buildMemorySource
+        && "type role DarwinBuildMemoryValidationAuthority nominal" `isInfixOf` buildMemorySource
+        && "ToolchainSingleFlight (MVar ())" `isInfixOf` buildMemorySource
+        && "withMVar singleFlight" `isInfixOf` buildMemorySource
+    )
+    "the opaque toolchain authorities retain nominal region roles and a private per-authority single-flight token"
+  assert
+    ( "copyRegularFileStableIntoRetainedParent(StableCopySourceRetainedDescriptorsourceFileDescriptorsourceFileStatus(recheckRetainedPackageClosureFile"
+        `isInfixOf` compactProvisioningSource
+        && not
+          ( "copyRegularFileStableIntoRetainedParent(StableCopySourceInRootauthorizedRoot)authorizedRootdestinationParentDescriptor"
+              `isInfixOf` compactProvisioningSource
+          )
+    )
+    "the external package-closure copy reads through its retained source descriptor instead of claiming the destination writer owns the source"
+  assert
+    ( "inspectMachOMetadataDescriptordescriptorexpectedSize"
+        `isInfixOf` compactProvisioningSource
+        && "letchunkBytes=minremaining(64*1024)"
+          `isInfixOf` compactProvisioningSource
+        && not ("readExactExecutableBytes" `isInfixOf` provisioningSource)
+    )
+    "the production Mach-O inspector retains its exact descriptor while every payload read is capped at 64 KiB instead of allocating the whole image"
+  assert
+    ( all
+        (`isInfixOf` compactProvisioningSource)
+        [ "nextContext`seq`gonextBytesnextContext",
+          "nextContext`seq`hashExecutableDescriptornextContextdescriptor",
+          "nextContext`seq`copyProvisioningDescriptorsourcedestinationnextBytesnextContextmaximumBytes",
+          "directoryContext`seq`foldM",
+          "context`seq`pure(nextBytes,nextFiles,context)",
+          "nextContext`seq`pure(nextBytes,nextFiles,nextContext)",
+          "List.foldl'hashInstalledRuntimeSource"
+        ]
+        && countNonOverlappingOccurrences
+          "nextContext=SHA256.updatecontextchunk"
+          compactProvisioningSource
+          == 2
+        && countNonOverlappingOccurrences
+          "nextContext=SHA256.updatedigestContextchunk"
+          compactProvisioningSource
+          == 1
+        && "nextContext=SHA256.updatecurrentContextchunk"
+          `isInfixOf` compactArtifactInternalSource
+        && "nextContext`seq`readChunksnextContext(remainingBytes-chunkBytes)nextObservedBytes"
+          `isInfixOf` compactArtifactInternalSource
+        && "nextContext=SHA256.updatecontextchunk"
+          `isInfixOf` compactArtifactLoaderSource
+        && "nextContext`seq`digestLoaderDescriptordescriptornextContext"
+          `isInfixOf` compactArtifactLoaderSource
+        && "nextContext=SHA256.updatecontextchunkunless(nextBytes<=expectedBytes)(ioError(userError\"snapshotdescriptorgrewbeyonditsexactbytebound\"))nextContext`seq`gonextBytesnextContext"
+          `isInfixOf` compactSubprocessSource
+        && "writeFdFullyBlockingtargetDescriptorchunkletnextContext=SHA256.updatedigestContextchunknextContext`seq`gonextBytesnextContext"
+          `isInfixOf` compactSubprocessSource
+    )
+    "Sprint 1.20: every large descriptor SHA fold forces each updated context before reading its next chunk, and closure metadata folds stay strict"
+  let audiverisExtractionCommand =
+        ProvisioningInternal.ExtractAudiverisJavaCppNatives
+          "/tmp/infernix-audiveris-candidate"
+      ordinaryPythonQueryCommand =
+        ProvisioningInternal.QueryPythonVersion
+          ProvisioningInternal.CoreMlPythonAdapter
+          "/tmp/infernix-coreml-candidate"
+      poetryInstallCommand =
+        ProvisioningInternal.InstallPoetryProject
+          "/tmp/infernix-poetry-project"
+          [ProvisioningInternal.PoetryAppleSiliconGroup]
+      protoGenerationCommand =
+        ProvisioningInternal.GeneratePythonProto
+          "/tmp/infernix-proto-project"
+          "/tmp/infernix-repository"
+      artifactClosureRole =
+        ProvisioningInternal.ProvisioningArtifactRootClosure
+      pythonHomeClosureRole =
+        ProvisioningInternal.ProvisioningPythonHomeClosure
+      pythonPathClosureRole =
+        ProvisioningInternal.ProvisioningPythonPathClosure
+      projectSourceClosureRole =
+        ProvisioningInternal.ProvisioningProjectSourceClosure
+  assert
+    ( Subprocess.provisioningRuntimeClosureShapeForTest
+        audiverisExtractionCommand
+        [artifactClosureRole]
+        False
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              audiverisExtractionCommand
+              []
+              False
+          )
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              audiverisExtractionCommand
+              [pythonHomeClosureRole]
+              False
+          )
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              audiverisExtractionCommand
+              [artifactClosureRole, artifactClosureRole]
+              False
+          )
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              audiverisExtractionCommand
+              [artifactClosureRole]
+              True
+          )
+        && Subprocess.provisioningRuntimeClosureShapeForTest
+          ordinaryPythonQueryCommand
+          []
+          False
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              ordinaryPythonQueryCommand
+              [artifactClosureRole]
+              False
+          )
+        && Subprocess.provisioningRuntimeClosureShapeForTest
+          poetryInstallCommand
+          [pythonHomeClosureRole, pythonPathClosureRole]
+          True
+        && Subprocess.provisioningRuntimeClosureShapeForTest
+          protoGenerationCommand
+          [pythonHomeClosureRole, pythonPathClosureRole, projectSourceClosureRole]
+          True
+    )
+    "Sprint 1.20: Audiveris extraction admits exactly one artifact-root app closure while sibling provisioning shapes stay closed"
+  assert
+    ( all
+        (`isInfixOf` compactSubprocessSource)
+        [ "validProvisioningRuntimeClosureShapecommand(mapProvisioning.provisioningPackageClosureRolepackageClosures)(not(nullruntimeLibraries))",
+          "Provisioning.ExtractAudiverisJavaCppNatives{}->True",
+          "bounded<-compileProvisioningCommandWithExecutablecommandexecutableIdentityenvironmentcommandTimeout",
+          "retainExecutable=pathWithinOwnedRootexpectedWorkingDirectoryconfiguredExecutable&&safeProvisioningMutationRelativeExecutablerelativeExecutable",
+          "boundedRetainedExecutableExpectation=ifretainExecutablethenJust(executableSnapshotExpectationexecutableIdentity)elseNothing"
+        ]
+        && countNonOverlappingOccurrences
+          "bounded<-compileProvisioningCommandWithExecutablecommandexecutableIdentityenvironmentcommandTimeout"
+          compactSubprocessSource
+          == 1
+        && all
+          (`isInfixOf` compactProvisioningSource)
+          [ "runProvisioningCommandWithExecutableInWriterengineRootcomponentsgrantdeadlinejavaIdentity[appIdentity][](Internal.ExtractAudiverisJavaCppNativesauthorizedCandidate)",
+            "runProvisioningCommandWithIdentityInWriterauthorizedRootworkingDirectoryComponentsgrantdeadline(toKernelExecutableIdentityidentitypackageClosuresruntimeLibraries)command",
+            "caseSubprocess.compileProvisioningCommandWithExecutableInMutationRootcommandidentity(authorizedWriterMutationRootauthorizedRoot)workingDirectoryComponentsenvironment"
+          ]
+    )
+    "Sprint 1.20: the real Audiveris writer carries its exact app closure through the mutation-root bounded-command compiler"
+  assert
+    ( all
+        (`isInfixOf` cliSource)
+        [ "requireBoundedDescriptorSpace (label <> \" process-group spawn\")",
+          "close_fds = True",
+          "create_group = True",
+          "cleanupOwnedToolchainProcess authority invocation spawned",
+          "waitForToolchainProcessLeader",
+          "Readiness.awaitProcessExitReadiness deadline processHandle"
+        ]
+        && countNonOverlappingOccurrences
+          "Readiness.awaitProcessExitReadiness"
+          cliSource
+          == 1
+        && not ("proveToolchainProcessGroupAbsent" `isInfixOf` cliSource)
+        && not ("proveDarwinBuildMemoryProcessGroupAbsent" `isInfixOf` cliSource)
+    )
+    "the production normal Cabal path owns descriptor precheck, fresh-group spawn, masked leader reap, and exceptional cleanup without a post-reap numeric group probe"
+  assert
+    ( all
+        (`isInfixOf` readinessSource)
+        [ "awaitProcessExitReadiness",
+          "mask_ $",
+          "getProcessExitCode processHandle",
+          "PreserveMaskedNonblockingReady"
+        ]
+    )
+    "the fixed readiness helper keeps a nonblocking positive transition masked and leaves only its retry delay interruptible"
+  assert
+    ( "awaitDarwinBuildMemoryLiveGroupAbsence processGroup"
+        `isInfixOf` cliSource
+        && "cleanupDarwinBuildMemoryAfterLiveGroupAbsence"
+          `isInfixOf` cliSource
+        && "From here on no cleanup may signal the"
+          `isInfixOf` cliSource
+    )
+    "Darwin cleanup proves live-group absence before reap and disarms numeric process-group signaling before the masked reap transition"
   assert
     ("/opt/infernix/chart/charts" `isInfixOf` linuxDockerfileContents)
     "Sprint 1.11: Linux launcher image bakes the Helm archive cache under /opt/infernix/chart/charts"
@@ -1438,6 +2459,55 @@ main = do
   assert
     (not ("colima" `isInfixOf` linuxDockerfileContents))
     "Linux launcher image host manifest does not carry the retired Colima tool field"
+  assert
+    ( not ("poetry install --directory python/engines" `isInfixOf` linuxDockerfileContents)
+        && not (".infernix-framework-groups" `isInfixOf` linuxDockerfileContents)
+        && not ("sha256sum" `isInfixOf` linuxDockerfileContents)
+    )
+    "Phase 1 Sprint 1.23: Docker delegates per-engine installs and marker publication to the shared Haskell materializer"
+  assert
+    ( not ("Setup.hs" `isInfixOf` linuxDockerfileContents)
+        && not ("protobuf-compiler" `isInfixOf` linuxDockerfileContents)
+        && "ARG PROTOC_VERSION=34.1" `isInfixOf` linuxDockerfileContents
+        && "af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904" `isInfixOf` linuxDockerfileContents
+        && "31c5e9e3c7bf013cf41fb97765ee255c140024a6b175b6cc9b64beddd7c23ba7" `isInfixOf` linuxDockerfileContents
+        && "protoc-${PROTOC_VERSION}-linux-${protoc_asset_arch}.zip" `isInfixOf` linuxDockerfileContents
+        && not ("proto-lens-protoc" `isInfixOf` cabalManifestContents)
+        && "GHCRTS=-M1024M cabal +RTS -M1024M -RTS \\\n         install proto-lens-protoc-0.9.0.1" `isInfixOf` linuxDockerfileContents
+        && "-rtsopts=ignore -with-rtsopts=-M1024M" `isInfixOf` linuxDockerfileContents
+        && "GHCRTS=-M1024M /opt/infernix/proto-tools/protoc" `isInfixOf` linuxDockerfileContents
+        && "--plugin=protoc-gen-haskell=/opt/infernix/proto-tools/proto-lens-protoc" `isInfixOf` linuxDockerfileContents
+        && "--haskell_out=\"${generated_root}\"" `isInfixOf` linuxDockerfileContents
+        && "find . ! -type d -print" `isInfixOf` linuxDockerfileContents
+        && "[ -L \"${generated_root}/${generated_file}\" ]" `isInfixOf` linuxDockerfileContents
+        && countNonOverlappingOccurrences "cmp -s" linuxDockerfileContents == 1
+    )
+    "Phase 1 Sprint 1.24: only the pinned Linux image gate regenerates and byte-compares the four tracked Haskell protobuf modules"
+  assert
+    ( all
+        isGeneratedHaskellProtoTextSnapshot
+        [ "src/Proto/Infernix/Manifest/RuntimeManifest.hs",
+          "src/Proto/Infernix/Manifest/RuntimeManifest_Fields.hs",
+          "src/Proto/Infernix/Runtime/Inference.hs",
+          "src/Proto/Infernix/Runtime/Inference_Fields.hs"
+        ]
+        && not (isGeneratedHaskellProtoTextSnapshot "src/Proto/Infernix/Runtime/Handwritten.hs")
+    )
+    "Phase 1 Sprint 1.24: files lint exempts generator-owned text bytes only for the exact manifest-verified snapshot"
+  appleMaterializerSource <- readFile "src/Infernix/Engines/AppleSilicon/Internal.hs"
+  assert
+    ( countNonOverlappingOccurrences
+        "ensurePreparedPythonEngineEnvironments paths AppleSilicon"
+        appleMaterializerSource
+        == 2
+    )
+    "Phase 1 Sprint 1.23: Apple runtime startup and explicit metal materialization both prepare the per-engine plan"
+  pythonProducerSource <- readFile "src/Infernix/Python.hs"
+  assert
+    ( "preparedPythonEnvironmentMutationMarker\n                        case mutationHook of"
+        `isInfixOf` pythonProducerSource
+    )
+    "Phase 1 Sprint 1.23: the producer durably invalidates readiness before Poetry can mutate an environment"
   chartValuesContents <- readFile "chart/values.yaml"
   let expectedBasePulsarAutorecoveryBlock =
         unlines
@@ -1691,7 +2761,7 @@ main = do
       assertConversationPropertyTests
       assertContextModelMap
       assertDemoWebSocketPublicationPlanning
-      assertHostConfig unitTestRoot
+      assertHostConfig (repoRoot paths) unitTestRoot
 
       let legacyRegistryNamespace = repoRoot paths </> ".build" </> "kind" </> "registry" </> "localhost:30001"
       createDirectoryIfMissing True legacyRegistryNamespace
@@ -2204,15 +3274,34 @@ main = do
         )
         "unboundedToolchainSpawnViolations fires on a toolchain spawn that never observes the build-memory ceiling"
       assert
+        ( not
+            ( null
+                ( unboundedToolchainSpawnViolations
+                    "src/Infernix/CLI.hs"
+                    [ (1, "  resolved <- resolveCliHostTool paths HostCabal"),
+                      (2, "  _ <- requireBoundedDescriptorSpace label"),
+                      (3, "  created <- withBoundedToolchainChild authority (createProcess (proc resolved arguments) {close_fds = True, create_group = True})"),
+                      (4, "  cleanupToolchainProcessGroupParts label handle group [] []"),
+                      (5, "  outcome <- awaitProcessExitReadiness deadline handle")
+                    ]
+                )
+            )
+        )
+        "unboundedToolchainSpawnViolations rejects an otherwise bounded Cabal spawn that skips the invocation project-state check"
+      assert
         ( null
             ( unboundedToolchainSpawnViolations
                 "src/Infernix/CLI.hs"
                 [ (1, "  resolved <- resolveCliHostTool paths HostCabal"),
-                  (2, "  created <- withBoundedToolchainChild authority (createProcess (proc resolved arguments))")
+                  (2, "  requireToolchainInvocationProjectState authority invocation"),
+                  (3, "  _ <- requireBoundedDescriptorSpace label"),
+                  (4, "  created <- withBoundedToolchainChild authority (createProcess (proc resolved arguments) {close_fds = True, create_group = True})"),
+                  (5, "  cleanupToolchainProcessGroupParts label handle group [] []"),
+                  (6, "  outcome <- awaitProcessExitReadiness deadline handle")
                 ]
             )
         )
-        "unboundedToolchainSpawnViolations clears a toolchain spawn that holds the ceiling across the fork"
+        "unboundedToolchainSpawnViolations clears a toolchain spawn only for the complete owned lifecycle"
       assert
         ( null
             ( unboundedToolchainSpawnViolations
@@ -2288,9 +3377,6 @@ main = do
                 [ unsafeNativeBoundaryViolations
                     "app/RelocatedShim.hs"
                     [(1, "foreign import ccall unsafe \"spawn\" c_spawn :: IO Int")],
-                  unsafeNativeBoundaryViolations
-                    "Setup.hs"
-                    [(1, "import System.Process.Internal")],
                   unsafeNativeBoundaryViolations
                     "src/RelocatedShim.hs"
                     [(1, "import Language.C.Inline qualified as C")]
@@ -2415,9 +3501,6 @@ main = do
                   unsafeNativeBoundaryViolations
                     "app/Main.hs"
                     [(1, "foreign import ccall unsafe \"posix_spawn\" c_spawn :: IO Int")],
-                  unsafeNativeBoundaryViolations
-                    "Setup.hs"
-                    [(1, "foreign import ccall unsafe \"flock\" c_lock :: IO Int")],
                   unsafeNativeBoundaryViolations
                     "test/NativeBoundaryFixture.hs"
                     [(1, "foreign import ccall unsafe \"getpid\" c_getpid :: IO Int")]
@@ -2989,9 +4072,9 @@ main = do
         "compiled native placement retains the closed MLX engine binding"
 
       ExecutionPlanProperties.runExecutableLaunchBoundaryProperties paths
-      runAppleCohortRegressionAssertions
+      runAppleCohortRegressionAssertions (repoRoot paths)
       runElfLoaderClosureAssertions
-      runElfSealedRunAuditAssertions
+      runElfSealedRunAuditAssertions (repoRoot paths)
       runArtifactGenerationIdentityAssertions
       runNativeArtifactArgumentAssertions
       runClosureBoundAssertions
@@ -3060,6 +4143,7 @@ main = do
             && not (pythonEngineBootstrapManifestRequiredForTest LinuxGpu)
         )
         "only Apple Python engines require the retained setup manifest; Linux uses the immutable framework marker"
+      runPreparedPythonEnvironmentAssertions (repoRoot paths) unitTestRoot
       let hostWorkerState =
             ClusterState
               ClusterReady
@@ -3525,6 +4609,22 @@ main = do
   assert
     (Readiness.foldReadiness (const True) (const False) (const False) readyOutcome)
     "awaitReadiness yields Ready once the step reports evidence"
+  (_, _, _, closedProcessHandle) <-
+    createProcess (proc "/usr/bin/true" [])
+  closedProcessExit <- waitForProcess closedProcessHandle
+  maskedCutoffTransition <-
+    Readiness.awaitProcessExitReadiness
+      (Readiness.pollLimitedDeadline 0 0 0 1)
+      closedProcessHandle
+  assert
+    ( closedProcessExit == ExitSuccess
+        && Readiness.foldReadiness
+          (== ExitSuccess)
+          (const False)
+          (const False)
+          maskedCutoffTransition
+    )
+    "a masked nonblocking positive transition survives the post-probe cutoff instead of rearming destructive cleanup after reap"
   stalledOutcome <-
     Readiness.awaitReadiness
       (Readiness.Deadline 0 1 100)
@@ -10473,6 +11573,351 @@ main = do
     "readEdgePortMaybe fails closed on a present but undecodable port file"
   putStrLn "unit tests passed"
 
+-- | Phase 1 Sprint 1.23: pin the closed host/runtime derivation and the
+-- fail-closed consumer contract without invoking Poetry or mutating a real
+-- engine environment. The fixture also proves that a lock file created by an
+-- install changes the marker digest, so publishing a pre-install digest could
+-- never satisfy readiness.
+runPreparedPythonEnvironmentAssertions :: FilePath -> FilePath -> IO ()
+runPreparedPythonEnvironmentAssertions repoRootPath unitTestRoot = do
+  applePlan <-
+    expectRight
+      "derive Darwin prepared-Python plan"
+      (Python.preparedPythonEnvironmentPlanForTest "darwin" AppleSilicon)
+  linuxCpuPlan <-
+    expectRight
+      "derive Linux CPU prepared-Python plan"
+      (Python.preparedPythonEnvironmentPlanForTest "linux" LinuxCpu)
+  linuxGpuPlan <-
+    expectRight
+      "derive Linux GPU base prepared-Python plan"
+      (Python.preparedPythonEnvironmentPlanForTest "linux" LinuxGpu)
+  mismatchedHostPlan <-
+    expectRight
+      "derive mismatched-host prepared-Python plan"
+      (Python.preparedPythonEnvironmentPlanForTest "darwin" LinuxCpu)
+  assert
+    ( sort applePlan
+        == sort
+          [ ("transformers-python", ["apple-silicon"]),
+            ("pytorch-python", ["apple-silicon"]),
+            ("diffusers-python", ["apple-silicon"])
+          ]
+    )
+    "prepared Darwin framework plan is derived from the three active Python-native Apple bindings"
+  assert
+    ( sort linuxCpuPlan
+        == sort
+          [ ("transformers-python", ["linux-cpu"]),
+            ("pytorch-python", ["linux-cpu"])
+          ]
+    )
+    "prepared Linux CPU framework plan is derived from the two active Python-native CPU bindings"
+  assert
+    (null linuxGpuPlan && null mismatchedHostPlan)
+    "Linux GPU base materialization and mismatched host/runtime pairs have no shared framework plan"
+
+  transformersBinding <-
+    maybe
+      (fail "Apple catalog omitted transformers-python")
+      pure
+      ( find
+          ((== "transformers-python") . engineBindingAdapterId)
+          (engineBindingsForMode AppleSilicon)
+      )
+  let invalidBinding =
+        transformersBinding
+          { engineBindingAdapterId = "transformers"
+          }
+      fixtureRoot = unitTestRoot </> "prepared-python-repo"
+      fixtureHostConfig = hostNativeUnitTestFixture fixtureRoot unitTestRoot
+      pyprojectBytes = ByteString8.pack "[tool.poetry]\nname = \"fixture\"\n"
+      lockBytes = ByteString8.pack "package = []\n"
+  fixturePaths <- discoverPathsWithHostManifest (Just fixtureHostConfig)
+  interpreterPath <-
+    expectRight
+      "derive exact prepared interpreter path"
+      (Python.preparedPythonEngineInterpreterPathForTest fixturePaths transformersBinding)
+  assert
+    ( isLeft
+        (Python.preparedPythonEngineInterpreterPathForTest fixturePaths invalidBinding)
+    )
+    "prepared interpreter derivation rejects an adapter id without the exact -python suffix"
+  markerWithoutLock <-
+    expectRight
+      "render pre-lock prepared marker"
+      ( Python.preparedPythonFrameworkMarkerForTest
+          "darwin"
+          AppleSilicon
+          transformersBinding
+          pyprojectBytes
+          Nothing
+      )
+      >>= maybe (fail "Darwin marker plan omitted transformers-python") pure
+  markerWithLock <-
+    expectRight
+      "render post-lock prepared marker"
+      ( Python.preparedPythonFrameworkMarkerForTest
+          "darwin"
+          AppleSilicon
+          transformersBinding
+          pyprojectBytes
+          (Just lockBytes)
+      )
+      >>= maybe (fail "Darwin marker plan omitted transformers-python") pure
+  assert
+    (markerWithoutLock /= markerWithLock)
+    "a poetry.lock created by install changes the prepared marker digest"
+
+  let projectDirectory =
+        takeDirectory (takeDirectory (takeDirectory interpreterPath))
+      pyprojectPath = projectDirectory </> "pyproject.toml"
+      lockPath = projectDirectory </> "poetry.lock"
+      markerPath =
+        projectDirectory
+          </> ".venv"
+          </> fst markerWithLock
+  createDirectoryIfMissing True (takeDirectory interpreterPath)
+  writeFile pyprojectPath (ByteString8.unpack pyprojectBytes)
+  writeFile lockPath (ByteString8.unpack lockBytes)
+  writeFile interpreterPath "#!/bin/sh\nexit 0\n"
+  interpreterPermissions <- getPermissions interpreterPath
+  setPermissions
+    interpreterPath
+    interpreterPermissions {executable = True}
+  writeFile markerPath (snd markerWithLock)
+  matchingReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (matchingReadiness == Right interpreterPath)
+    "matching executable, project digest, and marker satisfy prepared environment readiness"
+
+  -- The runtime holds a shared lease on the exact writer lock from readiness
+  -- through capped-process completion. A second reader must enter concurrently,
+  -- while the existing non-blocking writer must fail before it can tombstone or
+  -- mutate the environment.
+  secondReaderEntered <- MVar.newEmptyMVar
+  releaseSecondReader <- MVar.newEmptyMVar
+  secondReaderResult <- MVar.newEmptyMVar
+  (readerOverlap, writerWhileReadLocked, completedSecondReader) <-
+    Python.withPreparedPythonEngineEnvironmentReadAuthorityForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+      ( \_ -> do
+          _ <-
+            forkIO
+              ( try @SomeException
+                  ( Python.withPreparedPythonEngineEnvironmentReadAuthorityForTest
+                      "darwin"
+                      fixturePaths
+                      AppleSilicon
+                      transformersBinding
+                      ( \_ -> do
+                          MVar.putMVar secondReaderEntered ()
+                          MVar.takeMVar releaseSecondReader
+                      )
+                  )
+                  >>= MVar.putMVar secondReaderResult
+              )
+          flip finally (void (MVar.tryPutMVar releaseSecondReader ())) $ do
+            overlap <- timeout 2000000 (MVar.takeMVar secondReaderEntered)
+            writerAttempt <-
+              try @SomeException
+                ( Python.interruptPreparedPythonEnvironmentAfterInvalidationForTest
+                    "darwin"
+                    fixturePaths
+                    AppleSilicon
+                    transformersBinding
+                )
+            _ <- MVar.tryPutMVar releaseSecondReader ()
+            readerResult <- timeout 2000000 (MVar.takeMVar secondReaderResult)
+            pure (overlap, writerAttempt, readerResult)
+      )
+  assert
+    (readerOverlap == Just ())
+    "two prepared-environment readers can hold the shared project lease concurrently"
+  assert
+    ( exceptionMessageContains
+        "Poetry project mutation lock is already held"
+        writerWhileReadLocked
+    )
+    "a prepared-environment read lease excludes the Poetry project writer"
+  assert
+    (maybe False isRight completedSecondReader)
+    "the concurrent prepared-environment reader releases its shared lease cleanly"
+  markerWhileReadLocked <- readFile markerPath
+  assert
+    (markerWhileReadLocked == snd markerWithLock)
+    "an excluded writer cannot invalidate readiness while a reader owns launch custody"
+  writerAfterReaders <-
+    try @SomeException
+      ( Python.interruptPreparedPythonEnvironmentAfterInvalidationForTest
+          "darwin"
+          fixturePaths
+          AppleSilicon
+          transformersBinding
+      )
+  assert
+    (isRight writerAfterReaders)
+    "the Poetry project writer enters after every shared read lease is released and takes the idempotent ready fast path"
+  markerAfterReaders <- readFile markerPath
+  assert
+    (markerAfterReaders == snd markerWithLock)
+    "the post-reader no-op writer preserves current readiness"
+
+  pythonReadAuthoritySource <-
+    readFile (repoRootPath </> "src/Infernix/Python.hs")
+  cappedEngineFacadeSource <-
+    readFile (repoRootPath </> "src/Infernix/Runtime/CappedEngine.hs")
+  cappedEngineKernelSource <-
+    readFile (repoRootPath </> "src/Infernix/Runtime/CappedEngine/Internal.hs")
+  assert
+    ( "type role PreparedPythonEnvironmentReadAuthority nominal"
+        `isInfixOf` pythonReadAuthoritySource
+        && "(forall s. PreparedPythonEnvironmentReadAuthority s -> IO result)"
+          `isInfixOf` pythonReadAuthoritySource
+        && not
+          ( "PreparedPythonEnvironmentReadAuthority (..)"
+              `isInfixOf` pythonReadAuthoritySource
+          )
+    )
+    "prepared-environment read authority is opaque, nominal, and confined to a rank-2 region"
+  assert
+    ( "runExecutablePythonWorker"
+        `isInfixOf` cappedEngineFacadeSource
+        && "PreparedPythonEnvironmentReadAuthority s"
+          `isInfixOf` cappedEngineKernelSource
+        && not
+          ( "preparedPythonEngineInterpreterPath paths engineBinding"
+              `isInfixOf` cappedEngineKernelSource
+          )
+    )
+    "only the hidden capped-engine kernel consumes locked prepared-environment authority and it does not re-derive the interpreter"
+
+  writeFile markerPath "malformed\n"
+  malformedReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (isLeft malformedReadiness)
+    "a malformed prepared environment marker fails closed"
+  interruptedProducer <-
+    try @SomeException
+      ( Python.interruptPreparedPythonEnvironmentAfterInvalidationForTest
+          "darwin"
+          fixturePaths
+          AppleSilicon
+          transformersBinding
+      )
+  assert
+    ( exceptionMessageContains
+        "injected interruption after prepared-environment marker invalidation"
+        interruptedProducer
+    )
+    "the deterministic producer interruption fires only after durable invalidation"
+  interruptedMarker <- readFile markerPath
+  assert
+    (interruptedMarker == "infernix-framework-environment-incomplete\n")
+    "an interrupted producer leaves the exact durable in-progress marker"
+  interruptedInstallReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (isLeft interruptedInstallReadiness)
+    "the durable in-progress marker left by an interrupted install fails closed"
+  repeatedInterruptedProducer <-
+    try @SomeException
+      ( Python.interruptPreparedPythonEnvironmentAfterInvalidationForTest
+          "darwin"
+          fixturePaths
+          AppleSilicon
+          transformersBinding
+      )
+  assert
+    ( exceptionMessageContains
+        "injected interruption after prepared-environment marker invalidation"
+        repeatedInterruptedProducer
+    )
+    "a retry treats the tombstone as unready and re-enters the repair branch"
+  repeatedInterruptedMarker <- readFile markerPath
+  assert
+    (repeatedInterruptedMarker == "infernix-framework-environment-incomplete\n")
+    "a repeated interrupted repair preserves fail-closed tombstone evidence"
+  removeFile markerPath
+  missingMarkerReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (isLeft missingMarkerReadiness)
+    "a missing prepared environment marker fails closed"
+
+  writeFile markerPath (snd markerWithLock)
+  writeFile lockPath "package = [\"drift\"]\n"
+  staleProjectReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (isLeft staleProjectReadiness)
+    "poetry.lock drift makes an otherwise well-formed marker stale"
+  removeFile interpreterPath
+  missingInterpreterReadiness <-
+    Python.preparedPythonEngineEnvironmentReadyForTest
+      "darwin"
+      fixturePaths
+      AppleSilicon
+      transformersBinding
+  assert
+    (isLeft missingInterpreterReadiness)
+    "a missing prepared interpreter fails closed without request-time repair"
+
+  removePathForcibly (takeDirectory markerPath)
+  freshInterruptedProducer <-
+    try @SomeException
+      ( Python.interruptPreparedPythonEnvironmentAfterInvalidationForTest
+          "darwin"
+          fixturePaths
+          AppleSilicon
+          transformersBinding
+      )
+  assert
+    ( exceptionMessageContains
+        "injected interruption after prepared-environment marker invalidation"
+        freshInterruptedProducer
+    )
+    "a first install with no .venv reaches the mutation checkpoint without requiring a tombstone parent"
+  freshMarkerPresent <- doesFileExist markerPath
+  assert
+    (not freshMarkerPresent)
+    "a first-install interruption leaves stable marker absence as fail-closed readiness evidence"
+
+countNonOverlappingOccurrences :: String -> String -> Int
+countNonOverlappingOccurrences needle = go
+  where
+    go remaining
+      | null needle = 0
+      | null remaining = 0
+      | needle `isPrefixOf` remaining =
+          1 + go (drop (length needle) remaining)
+      | otherwise = go (drop 1 remaining)
+
 -- | Phase 1 Sprint 1.11 — set up a unit-test sandbox at @root@. The
 -- supported pattern is: tests inside @withTestRoot@ obtain 'Paths' via
 -- 'discoverPathsWithHostManifest' with an explicit typed fixture
@@ -10652,8 +12097,6 @@ hermeticHostToolPaths stubRoot configured = do
   cabalTool <- stub "cabal" HostConfig.hostCabal
   ghc <- stub "ghc" HostConfig.hostGhc
   ghcup <- stub "ghcup" HostConfig.hostGhcup
-  ormolu <- stub "ormolu" HostConfig.hostOrmolu
-  hlint <- stub "hlint" HostConfig.hostHlint
   npm <- stub "npm" HostConfig.hostNpm
   node <- stub "node" HostConfig.hostNode
   python3 <- stub "python3.12" HostConfig.hostPython3
@@ -10661,7 +12104,6 @@ hermeticHostToolPaths stubRoot configured = do
   llamaCli <- stub "llama-cli" HostConfig.hostLlamaCli
   whisperCli <- stub "whisper-cli" HostConfig.hostWhisperCli
   poetry <- stub "poetry" HostConfig.hostPoetry
-  protoc <- stub "protoc" HostConfig.hostProtoc
   git <- stub "git" HostConfig.hostGit
   tar <- stub "tar" HostConfig.hostTar
   curl <- stub "curl" HostConfig.hostCurl
@@ -10694,8 +12136,6 @@ hermeticHostToolPaths stubRoot configured = do
         HostConfig.hostCabal = cabalTool,
         HostConfig.hostGhc = ghc,
         HostConfig.hostGhcup = ghcup,
-        HostConfig.hostOrmolu = ormolu,
-        HostConfig.hostHlint = hlint,
         HostConfig.hostNpm = npm,
         HostConfig.hostNode = node,
         HostConfig.hostPython3 = python3,
@@ -10703,7 +12143,6 @@ hermeticHostToolPaths stubRoot configured = do
         HostConfig.hostLlamaCli = llamaCli,
         HostConfig.hostWhisperCli = whisperCli,
         HostConfig.hostPoetry = poetry,
-        HostConfig.hostProtoc = protoc,
         HostConfig.hostGit = git,
         HostConfig.hostTar = tar,
         HostConfig.hostCurl = curl,
@@ -11493,10 +12932,10 @@ assert False message = fail message
 -- found on live hardware and that no machine-independent gate could reach. They
 -- exist so a regression fails here rather than only during an Apple
 -- materialization run.
-runAppleCohortRegressionAssertions :: IO ()
-runAppleCohortRegressionAssertions = do
+runAppleCohortRegressionAssertions :: FilePath -> IO ()
+runAppleCohortRegressionAssertions repoRootPath = do
   runDyldAuditRegressionAssertions
-  runSealedArtifactEnvironmentRegressionAssertions
+  runSealedArtifactEnvironmentRegressionAssertions repoRootPath
   putStrLn "Sprint 1.20 Apple-cohort regressions passed"
 
 -- | macOS 26 emits more than load records under the @dyld[<pid>]:@ prefix.
@@ -11546,8 +12985,8 @@ runDyldAuditRegressionAssertions = do
 
 -- | The sealed artifact runtime environment must survive every validator, and
 -- loader frames must never be mistaken for the runner's own output.
-runSealedArtifactEnvironmentRegressionAssertions :: IO ()
-runSealedArtifactEnvironmentRegressionAssertions = do
+runSealedArtifactEnvironmentRegressionAssertions :: FilePath -> IO ()
+runSealedArtifactEnvironmentRegressionAssertions repoRootPath = do
   let artifactRoot = "/data/engines/llama-cpp-cli.tmp"
       nativeEnvironment =
         Subprocess.sealedArtifactRuntimeEnvironmentForTest
@@ -11556,7 +12995,17 @@ runSealedArtifactEnvironmentRegressionAssertions = do
       audiverisEnvironment =
         Subprocess.sealedArtifactRuntimeEnvironmentForTest
           artifactRoot
+          ( ProvisioningInternal.installedSmokeExecutableRelativePath
+              ProvisioningInternal.JvmAdapter
+          )
+      retiredAudiverisLauncherEnvironment =
+        Subprocess.sealedArtifactRuntimeEnvironmentForTest
+          artifactRoot
           "Audiveris.app/Contents/MacOS/Audiveris"
+      installedPythonSmokeArguments =
+        ProvisioningInternal.installedSmokeArguments
+          ProvisioningInternal.OnnxRuntimeAdapter
+          artifactRoot
   -- Without DYLD_PRINT_LIBRARIES the smoke cannot emit the provenance its own
   -- validator demands.
   assert
@@ -11566,6 +13015,22 @@ runSealedArtifactEnvironmentRegressionAssertions = do
         && lookup "DYLD_PRINT_LIBRARIES" audiverisEnvironment == Just "1"
     )
     "a sealed artifact target carries its loader-provenance runtime environment"
+  assert
+    (isNothing (lookup "DYLD_PRINT_LIBRARIES" retiredAudiverisLauncherEnvironment))
+    "the retired Audiveris launcher cannot authorize loader provenance"
+  assert
+    ( installedPythonSmokeArguments
+        == [ "lib" </> "apple_native_runner.py",
+             "--adapter-id",
+             "onnx-runtime-native",
+             "--engine-name",
+             "onnx-runtime-native",
+             "--expected-python-prefix",
+             artifactRoot </> "venv",
+             "--smoke"
+           ]
+    )
+    "the installed Python smoke carries the artifact-local interpreter prefix required by its runner"
   -- These entries name artifact-root-relative paths, so the rendered-command
   -- contract must admit them structurally, not by literal enumeration.
   assert
@@ -11575,6 +13040,13 @@ runSealedArtifactEnvironmentRegressionAssertions = do
         )
     )
     "the rendered-environment contract admits a sealed artifact runtime environment"
+  assert
+    ( isRight
+        ( Subprocess.renderedEnvironmentContractForTest
+            (("PYTHONDONTWRITEBYTECODE", "1") : audiverisEnvironment)
+        )
+    )
+    "the rendered-environment contract admits the current Audiveris installed smoke"
   assert
     ( isLeft
         ( Subprocess.renderedEnvironmentContractForTest
@@ -11615,9 +13087,97 @@ runSealedArtifactEnvironmentRegressionAssertions = do
           ("HELM_CACHE_HOME", "/tmp/helm/cache"),
           ("HELM_DATA_HOME", "/tmp/helm/data")
         ]
+      darwinPythonSnapshotParent =
+        "/data/runtime/command-executable-snapshots"
+      darwinPythonSnapshotRoot =
+        darwinPythonSnapshotParent </> "anchor-generation"
+      darwinPythonHome = darwinPythonSnapshotRoot </> "python-home"
+      darwinPythonPaths = [darwinPythonSnapshotRoot </> "python-path"]
+      darwinProjectSources = [darwinPythonSnapshotRoot </> "project-source"]
+      darwinPythonSnapshotTargetEnvironment =
+        Subprocess.darwinPythonSnapshotTargetEnvironmentForTest
+          darwinPythonSnapshotRoot
+          baseEnvironment
       targetEnvironment =
         baseEnvironment
           <> (("PYTHONDONTWRITEBYTECODE", "1") : nativeEnvironment)
+  assert
+    ( lookup "PYTHONHOME" darwinPythonSnapshotTargetEnvironment
+        == Just (darwinPythonSnapshotRoot </> "python-home")
+        && lookup "DYLD_FRAMEWORK_PATH" darwinPythonSnapshotTargetEnvironment
+          == Just (darwinPythonSnapshotRoot </> "python-framework")
+        && lookup "DYLD_LIBRARY_PATH" darwinPythonSnapshotTargetEnvironment
+          == Just (darwinPythonSnapshotRoot </> "dyld-libraries")
+        && isNothing
+          (lookup "PYTHONNOUSERSITE" darwinPythonSnapshotTargetEnvironment)
+        && lookup "PYTHONDONTWRITEBYTECODE" darwinPythonSnapshotTargetEnvironment
+          == Just "1"
+    )
+    "the Darwin Python snapshot target uses the renderer-owned environment vocabulary"
+  assert
+    ( isRight
+        ( Subprocess.supervisorTargetEnvironmentContractForTest
+            darwinPythonSnapshotRoot
+            []
+            baseEnvironment
+            darwinPythonSnapshotTargetEnvironment
+        )
+    )
+    "a supervised Darwin Python snapshot admits the environment its renderer produces"
+  assert
+    ( isRight
+        ( Subprocess.darwinPythonSnapshotClosureEnvironmentContractForTest
+            darwinPythonSnapshotRoot
+            darwinPythonHome
+            darwinPythonPaths
+            darwinProjectSources
+            darwinPythonSnapshotTargetEnvironment
+        )
+    )
+    "the Darwin closure audit agrees with the exact per-anchor snapshot root"
+  assert
+    ( either
+        ("DYLD_FRAMEWORK_PATH" `isInfixOf`)
+        (const False)
+        ( Subprocess.darwinPythonSnapshotClosureEnvironmentContractForTest
+            darwinPythonSnapshotParent
+            darwinPythonHome
+            darwinPythonPaths
+            darwinProjectSources
+            darwinPythonSnapshotTargetEnvironment
+        )
+    )
+    "the Darwin closure audit rejects a shared parent in place of its per-anchor snapshot root"
+  subprocessSource <-
+    readFile (repoRootPath </> "src/Infernix/Cluster/Subprocess.hs")
+  assert
+    ( "supervisorPlanExecutableSnapshotRoot = snapshotRoot,"
+        `isInfixOf` unwords (words subprocessSource)
+    )
+    "the exact-snapshot plan rewrite carries the per-anchor root used by its Darwin loader renderer"
+  assert
+    ( all
+        (isLeft . Subprocess.renderedEnvironmentContractForTest)
+        [ [ ("PYTHONNOUSERSITE", "1"),
+            ("PYTHONDONTWRITEBYTECODE", "1")
+          ],
+          [ ("PYTHONDONTWRITEBYTECODE", "1"),
+            ("PYTHONNOUSERSITE", "1")
+          ]
+        ]
+        && isLeft
+          ( Subprocess.supervisorTargetEnvironmentContractForTest
+              darwinPythonSnapshotRoot
+              []
+              baseEnvironment
+              ( baseEnvironment
+                  <> [ ("PYTHONDONTWRITEBYTECODE", "1"),
+                       ("PYTHONNOUSERSITE", "1")
+                     ]
+              )
+          )
+    )
+    "standalone no-user-site rows remain unrenderable in either ordering"
   -- The installed smoke runs from the sealed artifact root, and pre-activation
   -- that root is the candidate sibling the lease does not name.
   assert
@@ -15796,8 +17356,8 @@ decodeLazy :: (Aeson.FromJSON a) => Lazy.ByteString -> Either String a
 decodeLazy = Aeson.eitherDecode
 
 -- Phase 1 Sprint 1.11 — HostConfig roundtrip + HostTools resolution.
-assertHostConfig :: FilePath -> IO ()
-assertHostConfig testRoot = do
+assertHostConfig :: FilePath -> FilePath -> IO ()
+assertHostConfig repoRootPath testRoot = do
   let appleConfig = HostConfig.defaultAppleHostNativeHostConfig "/Users/operator/infernix" "/Users/operator"
       linuxConfig = HostConfig.defaultLinuxOuterContainerHostConfig "/root"
       linuxArmConfig = HostConfig.defaultLinuxOuterContainerHostConfigForArchitecture "/root" "aarch64"
@@ -16225,9 +17785,8 @@ assertHostConfig testRoot = do
         ]
     )
     "reflected HostConfig schema exposes the proper retry and failure-class unions"
-  let realRepoRoot = takeDirectory (takeDirectory testRoot)
-      appleRunnerLibraryPath =
-        realRepoRoot
+  let appleRunnerLibraryPath =
+        repoRootPath
           </> "python"
           </> "native-runners"
           </> "apple_native_runner.py"
@@ -17044,8 +18603,8 @@ isLeftResult = either (const True) (const False)
 -- from a native @linux\/arm64@ container rather than written from the
 -- documentation. Two rounds of the Apple smoke were broken by assuming a loader
 -- frame shape, so these are measured.
-runElfSealedRunAuditAssertions :: IO ()
-runElfSealedRunAuditAssertions = do
+runElfSealedRunAuditAssertions :: FilePath -> IO ()
+runElfSealedRunAuditAssertions repoRootPath = do
   assert
     ( Subprocess.parseElfAuditLineForTest
         "         7:\tcalling init: /lib/aarch64-linux-gnu/libc.so.6"
@@ -17119,6 +18678,408 @@ runElfSealedRunAuditAssertions = do
           "         7:\tinitialize program: llama-cli",
           "version: 9870 (2d973636e)"
         ]
+      sourceDirectory =
+        ProvisioningInternal.ProvisioningPackageClosureIdentity
+          { ProvisioningInternal.provisioningPackageClosureRole =
+              ProvisioningInternal.ProvisioningPythonHomeClosure,
+            ProvisioningInternal.provisioningPackageClosureRoot =
+              "/opt/homebrew/python-home",
+            ProvisioningInternal.provisioningPackageClosureDeviceId = 11,
+            ProvisioningInternal.provisioningPackageClosureFileId = 12,
+            ProvisioningInternal.provisioningPackageClosureMode = 16877,
+            ProvisioningInternal.provisioningPackageClosureBytes = 4096,
+            ProvisioningInternal.provisioningPackageClosureFiles = 3,
+            ProvisioningInternal.provisioningPackageClosureDigest =
+              "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+      sourceFileA =
+        ProvisioningInternal.ProvisioningRuntimeLibraryIdentity
+          { ProvisioningInternal.provisioningRuntimeLibraryLeafName = "Python",
+            ProvisioningInternal.provisioningRuntimeLibraryConfiguredPath =
+              "/opt/homebrew/python-home/Python",
+            ProvisioningInternal.provisioningRuntimeLibraryCanonicalPath =
+              "/opt/homebrew/python-home/Python",
+            ProvisioningInternal.provisioningRuntimeLibraryDeviceId = 11,
+            ProvisioningInternal.provisioningRuntimeLibraryFileId = 13,
+            ProvisioningInternal.provisioningRuntimeLibraryMode = 33188,
+            ProvisioningInternal.provisioningRuntimeLibrarySize = 1024,
+            ProvisioningInternal.provisioningRuntimeLibraryDigest =
+              "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+      sourceFileB =
+        sourceFileA
+          { ProvisioningInternal.provisioningRuntimeLibraryLeafName = "libb.dylib",
+            ProvisioningInternal.provisioningRuntimeLibraryConfiguredPath =
+              "/opt/homebrew/lib/libb.dylib",
+            ProvisioningInternal.provisioningRuntimeLibraryCanonicalPath =
+              "/opt/homebrew/lib/libb.dylib",
+            ProvisioningInternal.provisioningRuntimeLibraryFileId = 14,
+            ProvisioningInternal.provisioningRuntimeLibraryDigest =
+              "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+      sourceFiles = [sourceFileA, sourceFileB]
+      sourceReceipt =
+        ProvisioningInternal.installedPythonSourceIsolationReceiptDigestFor
+          [sourceDirectory]
+          sourceFiles
+      sourceProfile =
+        ProvisioningInternal.installedPythonSourceIsolationProfileForCounts 1 2
+      sourceArguments =
+        ProvisioningInternal.installedPythonSourceIsolationArgumentsForPaths
+          ProvisioningInternal.OnnxRuntimeAdapter
+          artifactRoot
+          [ProvisioningInternal.provisioningPackageClosureRoot sourceDirectory]
+          (map ProvisioningInternal.provisioningRuntimeLibraryCanonicalPath sourceFiles)
+          (ProvisioningInternal.provisioningRuntimeLibraryCanonicalPath sourceFileA)
+          sourceReceipt
+      sourceDyldEnvironment =
+        ProvisioningInternal.installedPythonDyldRuntimeEnvironment artifactRoot
+      sourceDyldFrameworkPath =
+        artifactRoot </> "python-frameworks"
+      sourceDyldLibraryPath =
+        intercalate
+          ":"
+          [ artifactRoot </> "native" </> "lib",
+            artifactRoot </> "native" </> "libexec"
+          ]
+      excludedPythonHomeFiles :: [(FilePath, Integer, String)]
+      excludedPythonHomeFiles =
+        [ ( "bin/2to3-3.12",
+            174,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+          ),
+          ( "bin/idle3.12",
+            172,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+          ),
+          ( "bin/pip3",
+            208,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/bin/python3.12"
+          ),
+          ( "bin/pip3.12",
+            208,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/bin/python3.12"
+          ),
+          ( "bin/pydoc3.12",
+            157,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+          ),
+          ( "bin/python3.12-config",
+            2116,
+            "#!/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12/bin/python3.12"
+          )
+        ]
+      excludedPythonHomeLinkPath =
+        "lib/python3.12/site-packages"
+      excludedPythonHomeLinkTarget =
+        "../../../../../../lib/python3.12/site-packages"
+      pythonHomeSourceRoot =
+        "/opt/homebrew/Cellar/python@3.11/3.11.15_3/Frameworks/Python.framework/Versions/3.11"
+      aliasedPythonHomeRoot =
+        "/opt/homebrew/opt/python@3.11/Frameworks/Python.framework/Versions/3.11"
+      outsideBinPythonConfigPath =
+        "lib/python3.11/config-3.11-darwin/python-config.py"
+      outsideBinPythonConfigContents =
+        let shebang =
+              ByteString8.pack
+                "#!/opt/homebrew/Cellar/python@3.11/3.11.15_3/Frameworks/Python.framework/Versions/3.11/bin/python3.11\n"
+         in shebang <> BS.replicate (2118 - BS.length shebang) 120
+      outsideBinPortableShebang =
+        ByteString8.pack "#!/usr/bin/env python3\n"
+      outsideBinCgiPath =
+        "lib/python3.11/cgi.py"
+      outsideBinCgiContents =
+        ByteString8.pack "#!/usr/local/bin/python\n"
+      outsideBinShellPath =
+        "lib/python3.11/ctypes/macholib/fetch_macholib"
+      outsideBinShellContents =
+        ByteString8.pack "#!/bin/sh\n"
+      outsideBinNonNormalPythonContents =
+        ByteString8.pack
+          "#!/opt/homebrew/Cellar/python@3.11/3.11.15_3/Frameworks/Python.framework/Versions/3.11/bin/../bin/python3.11\n"
+      outsideBinNulPythonContents =
+        ByteString8.pack
+          "#!/opt/homebrew/Cellar/python@3.11/3.11.15_3/Frameworks/Python.framework/Versions/3.11/bin/python3.11\NUL\&suffix\n"
+      retainedFileExcluded (relativePath, _, leading) =
+        Subprocess.retainedPackageClosureExcludesFileForTest
+          ProvisioningInternal.ProvisioningPythonHomeClosure
+          pythonHomeSourceRoot
+          relativePath
+          (ByteString8.pack leading)
+      sealedFileExcluded (relativePath, _, leading) =
+        Subprocess.sealedPackageClosureExcludesFileForTest
+          ProvisioningInternal.ProvisioningPythonHomeClosure
+          pythonHomeSourceRoot
+          relativePath
+          (ByteString8.pack leading)
+      expectedSourceProfile =
+        unlines
+          [ "(version 1)",
+            "(allow default)",
+            "(deny file-read* (subpath (param \"INFERNIX_SOURCE_DIRECTORY_0\")))",
+            "(deny file-write* (subpath (param \"INFERNIX_SOURCE_DIRECTORY_0\")))",
+            "(deny file-read* (literal (param \"INFERNIX_SOURCE_FILE_0\")))",
+            "(deny file-write* (literal (param \"INFERNIX_SOURCE_FILE_0\")))",
+            "(deny file-read* (literal (param \"INFERNIX_SOURCE_FILE_1\")))",
+            "(deny file-write* (literal (param \"INFERNIX_SOURCE_FILE_1\")))"
+          ]
+  assert
+    ( sourceReceipt
+        == ProvisioningInternal.installedPythonSourceIsolationReceiptDigestFor
+          [sourceDirectory]
+          (reverse sourceFiles)
+    )
+    "Sprint 1.20: the source-isolation receipt binds every exact identity in canonical path order"
+  assert
+    ( Subprocess.sealedPackageClosureContentDisagreementForTest
+        sourceDirectory
+        True
+        True
+        4097
+        4
+        "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        == "sealed package closure content disagreed; role=SnapshotPythonHome; root=\"/opt/homebrew/python-home\"; rootIdentityMatches=True; rootStableAfterClose=True; expectedBytes=4096; observedBytes=4097; expectedFiles=3; observedFiles=4; expectedDigest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; observedDigest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+    )
+    "Sprint 1.20: a sealed package-closure refusal identifies the exact role, root, stability, and expected/observed dimensions without widening the closed renderer"
+  assert
+    ( length (filter retainedFileExcluded excludedPythonHomeFiles) == 6
+        && sum
+          [ fileBytes
+          | fixture@(_, fileBytes, _) <- excludedPythonHomeFiles,
+            retainedFileExcluded fixture
+          ]
+          == 3035
+        && not (any sealedFileExcluded excludedPythonHomeFiles)
+        && Subprocess.retainedPackageClosureExcludesLinkForTest
+          ProvisioningInternal.ProvisioningPythonHomeClosure
+          excludedPythonHomeLinkPath
+        && not
+          ( Subprocess.sealedPackageClosureExcludesLinkForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              excludedPythonHomeLinkPath
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesLinkForTest
+              ProvisioningInternal.ProvisioningPythonPathClosure
+              excludedPythonHomeLinkPath
+          )
+        && 3035 + ByteString8.length (ByteString8.pack excludedPythonHomeLinkTarget)
+          == 3081
+    )
+    "Sprint 1.20: retained Python-home verification excludes the exact six 3035-byte host-bound launchers and one 46-byte base site-packages link from Attempt 15, while sealed verification hashes every copied entry"
+  assert
+    ( Provisioning.pythonHomeClosureFileExcludedForTest
+        True
+        pythonHomeSourceRoot
+        outsideBinPythonConfigPath
+        outsideBinPythonConfigContents
+        && BS.length outsideBinPythonConfigContents == 2118
+        && Subprocess.retainedPackageClosureExcludesFileForTest
+          ProvisioningInternal.ProvisioningPythonHomeClosure
+          pythonHomeSourceRoot
+          outsideBinPythonConfigPath
+          outsideBinPythonConfigContents
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              False
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinPythonConfigContents
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinPortableShebang
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinPortableShebang
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              pythonHomeSourceRoot
+              outsideBinCgiPath
+              outsideBinCgiContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinCgiPath
+              outsideBinCgiContents
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              pythonHomeSourceRoot
+              outsideBinShellPath
+              outsideBinShellContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinShellPath
+              outsideBinShellContents
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              aliasedPythonHomeRoot
+              outsideBinPythonConfigPath
+              outsideBinPythonConfigContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              aliasedPythonHomeRoot
+              outsideBinPythonConfigPath
+              outsideBinPythonConfigContents
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinNonNormalPythonContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinNonNormalPythonContents
+          )
+        && not
+          ( Provisioning.pythonHomeClosureFileExcludedForTest
+              True
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinNulPythonContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinNulPythonContents
+          )
+        && not
+          ( Subprocess.retainedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningArtifactRootClosure
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinPythonConfigContents
+          )
+        && not
+          ( Subprocess.sealedPackageClosureExcludesFileForTest
+              ProvisioningInternal.ProvisioningPythonHomeClosure
+              pythonHomeSourceRoot
+              outsideBinPythonConfigPath
+              outsideBinPythonConfigContents
+          )
+    )
+    "Sprint 1.20: an outside-bin helper is excluded only when its shebang binds the exact Python-home interpreter; portable, /usr/local, /bin/sh, root-alias, non-normal, NUL, other-role, and sealed entries remain retained"
+  provisioningClosureSource <-
+    readFile (repoRootPath </> "src/Infernix/Engines/Provisioning.hs")
+  subprocessClosureSource <-
+    readFile (repoRootPath </> "src/Infernix/Cluster/Subprocess.hs")
+  let normalizedProvisioningClosureSource =
+        unwords (words provisioningClosureSource)
+      normalizedSubprocessClosureSource =
+        unwords (words subprocessClosureSource)
+  assert
+    ( all
+        (`isInfixOf` normalizedProvisioningClosureSource)
+        [ "resolvePackageClosureIdentity = resolvePackageClosureIdentityFor RetainedPackageClosureIdentity",
+          "verificationTarget == RetainedPackageClosureIdentity && role == Internal.ProvisioningPythonHomeClosure",
+          "installed <- resolvePackageClosureIdentityFor SealedPackageClosureIdentity role destination",
+          "excludedPythonHomeShebangFile excludePythonHomeHostBindings closureRoot relativePath descriptor | not excludePythonHomeHostBindings = pure False | otherwise = do _ <- fdSeek descriptor AbsoluteSeek 0 leading <- readProvisioningDescriptorPrefix descriptor maximumShebangProbeBytes _ <- fdSeek descriptor AbsoluteSeek 0 pure ( pythonHomeClosureFileExcluded excludePythonHomeHostBindings closureRoot relativePath leading )",
+          "maximumShebangProbeBytes = 512",
+          "readProvisioningDescriptorPrefix descriptor maximumBytes = go maximumBytes [] where go remaining chunks | remaining == 0 = pure (ByteString.concat (reverse chunks)) | otherwise = do chunk <- readProvisioningDescriptorChunk descriptor remaining",
+          "pythonHomeClosureFileExcluded excludePythonHomeHostBindings closureRoot relativePath leading = excludePythonHomeHostBindings && shebangBindsHostInstallation leading && ( pythonHomeBinEntry relativePath || shebangBindsExactPythonHome closureRoot leading )",
+          "normalise (takeDirectory interpreterPath) == normalise (closureRoot </> \"bin\") && \"python\" `List.isPrefixOf` takeFileName interpreterPath",
+          "excludedPythonHomeShebangFile excludeBaseSitePackages closureRoot relativePath descriptor if excluded then do recheckRetainedPackageClosureFile parentDescriptor entry path descriptor status pure state else digestPackageClosureFile",
+          "closureCopySourceRoot = source",
+          "excludedPythonHomeShebangFile excludeBaseSitePackages (closureCopySourceRoot context) relativePath sourceFileDescriptor unless excluded $ do",
+          "recheckRetainedPackageClosureFile sourceParentDescriptor entry source sourceFileDescriptor sourceFileStatus pure (if excluded then entriesSeen else nextEntries)"
+        ]
+        && all
+          (`isInfixOf` normalizedSubprocessClosureSource)
+          [ "excludedPythonHomeShebangSnapshotFile excludePythonHomeHostBindings closureRoot relativePath descriptor | not excludePythonHomeHostBindings = pure False | otherwise = do _ <- fdSeek descriptor AbsoluteSeek 0 leading <- readRegularFdPrefix 512 descriptor _ <- fdSeek descriptor AbsoluteSeek 0 pure ( packageClosureFileExcluded excludePythonHomeHostBindings closureRoot relativePath leading )",
+            "packageClosureFileExcluded excludePythonHomeHostBindings closureRoot relativePath leading = excludePythonHomeHostBindings && snapshotShebangBindsHostInstallation leading && ( snapshotPythonHomeBinEntry relativePath || snapshotShebangBindsExactPythonHome closureRoot leading )",
+            "normalise (takeDirectory interpreterPath) == normalise (closureRoot </> \"bin\") && \"python\" `List.isPrefixOf` takeFileName interpreterPath",
+            "excludedPythonHomeShebangSnapshotFile excludeBaseSitePackages sourceRoot relativePath sourceDescriptor if excluded then do recheckSnapshotPackageClosureFile sourceParentDescriptor entry sourcePath sourceDescriptor status pure state else copyPackageClosureFile",
+            "excludedPythonHomeShebangSnapshotFile excludePythonHomeHostBindings closureRoot relativePath descriptor if excluded then do recheckSnapshotPackageClosureFile parentDescriptor entry path descriptor status pure state else digestSealedPackageClosureFile"
+          ]
+    )
+    "Sprint 1.20: retained digest/copy and snapshot/verification walks carry the exact source root through stable bounded probes, while Provisioning verifies its filtered destination in sealed mode"
+  assert
+    ( "verifyPackageClosure SealedPackageClosureSnapshot expectation"
+        `isInfixOf` normalizedSubprocessClosureSource
+        && "verifyRetainedPackageClosure = verifyPackageClosure RetainedPackageClosureSource"
+          `isInfixOf` normalizedSubprocessClosureSource
+    )
+    "Sprint 1.20: production sealed verification hashes every copied entry while retained-source verification alone applies role-aware Python-home exclusions"
+  assert
+    ( sourceDyldEnvironment
+        == [ ( "DYLD_FRAMEWORK_PATH",
+               sourceDyldFrameworkPath
+             ),
+             ( "DYLD_LIBRARY_PATH",
+               sourceDyldLibraryPath
+             ),
+             ("DYLD_PRINT_LIBRARIES", "1")
+           ]
+        && sourceProfile == expectedSourceProfile
+        && not
+          ( any
+              (`isInfixOf` sourceProfile)
+              ( ProvisioningInternal.provisioningPackageClosureRoot sourceDirectory
+                  : map ProvisioningInternal.provisioningRuntimeLibraryCanonicalPath sourceFiles
+              )
+          )
+        && sourceArguments
+          == [ "-p",
+               expectedSourceProfile,
+               "-D",
+               "INFERNIX_SOURCE_DIRECTORY_0=/opt/homebrew/python-home",
+               "-D",
+               "INFERNIX_SOURCE_FILE_0=/opt/homebrew/python-home/Python",
+               "-D",
+               "INFERNIX_SOURCE_FILE_1=/opt/homebrew/lib/libb.dylib",
+               ProvisioningInternal.installedPythonSourceIsolationAuditInjectorExecutable,
+               "DYLD_FRAMEWORK_PATH=" <> sourceDyldFrameworkPath,
+               "DYLD_LIBRARY_PATH=" <> sourceDyldLibraryPath,
+               "DYLD_PRINT_LIBRARIES=1",
+               artifactRoot </> ProvisioningInternal.fixedVenvPythonRelativePath,
+               "lib" </> "apple_native_runner.py",
+               "--adapter-id",
+               "onnx-runtime-native",
+               "--engine-name",
+               "onnx-runtime-native",
+               "--expected-python-prefix",
+               artifactRoot </> "venv",
+               "--smoke",
+               "--expected-unavailable-source-directory",
+               "/opt/homebrew/python-home",
+               "--expected-unavailable-source-file",
+               "/opt/homebrew/python-home/Python",
+               "--expected-unavailable-source-file",
+               "/opt/homebrew/lib/libb.dylib",
+               "--expected-unavailable-source-write-probe",
+               "/opt/homebrew/python-home/Python",
+               "--source-isolation-receipt",
+               Text.unpack sourceReceipt
+             ]
+    )
+    "Sprint 1.20: the fixed SBPL program contains only bounded parameter names, source paths enter solely through exact -D bindings, and the inner env bridge exactly restores the renderer-owned DYLD roots and audit flag"
   assert
     ( Subprocess.sealedLinuxRunnerApplicationOutputForTest
         ownedRoots
@@ -17191,6 +19152,11 @@ runElfSealedRunAuditAssertions = do
         && Subprocess.sealedRunLoaderAuditForTest
           ( ProvisioningInternal.InstalledRunnerSmokeOperation
               ProvisioningInternal.LlamaCppCliAdapter
+          )
+          == Just Subprocess.DyldSealedRunAudit
+        && Subprocess.sealedRunLoaderAuditForTest
+          ( ProvisioningInternal.InstalledPythonSourceIsolationSmokeOperation
+              ProvisioningInternal.OnnxRuntimeAdapter
           )
           == Just Subprocess.DyldSealedRunAudit
         && isNothing
@@ -17375,6 +19341,25 @@ runClosureBoundAssertions = do
       machORuntimeBytes =
         Provisioning.provisioningClosureBoundForTest
           Provisioning.MachORuntimeBytesBound
+      measuredThinMachOHeader =
+        machOThinHeaderForTest 28 3936
+      fat32ArchitectureTable =
+        BS.pack
+          ( [0xca, 0xfe, 0xba, 0xbe]
+              <> machOWord32BEForTest 2
+              <> fat32ArchitectureForTest
+                0x01000007
+                4096
+                8192
+              <> fat32ArchitectureForTest
+                0x0100000c
+                16_777_216
+                337_911_904
+          )
+      measuredFatMachOBytes =
+        16_777_216 + 337_911_904
+      oversizedLoadCommands =
+        machOThinHeaderForTest 1 (4 * 1024 * 1024 + 1)
   assert
     ( poetryClosureBytes == 12 * 1024 * 1024 * 1024
         && poetryClosureFiles == 100000
@@ -17435,6 +19420,44 @@ runClosureBoundAssertions = do
   assert
     (isLeft (Provisioning.admitPackageClosureTotalsForTest (0, 0) (-1)))
     "Sprint 1.20: a negative closure entry byte count is refused"
+  assert
+    ( Provisioning.planMachOMetadataReadsForTest
+        337_911_904
+        measuredThinMachOHeader
+        Nothing
+        == Right [(0, 3968)]
+    )
+    "Sprint 1.20: the measured 322.3 MiB libtorch_cpu image retains only its 3,968-byte thin Mach-O metadata table"
+  assert
+    ( Provisioning.planMachOMetadataReadsForTest
+        measuredFatMachOBytes
+        fat32ArchitectureTable
+        (Just measuredThinMachOHeader)
+        == Right
+          [ (0, 48),
+            (16_777_216, 3968)
+          ]
+    )
+    "Sprint 1.20: a fat image reads only its bounded architecture table and the selected arm64 slice metadata"
+  assert
+    ( either
+        (isInfixOf "load-command table exceeds its fixed bound")
+        (const False)
+        ( Provisioning.planMachOMetadataReadsForTest
+            (4 * 1024 * 1024 + 64)
+            oversizedLoadCommands
+            Nothing
+        )
+        && either
+          (isInfixOf "slice is out of bounds")
+          (const False)
+          ( Provisioning.planMachOMetadataReadsForTest
+              (measuredFatMachOBytes - 1)
+              fat32ArchitectureTable
+              (Just measuredThinMachOHeader)
+          )
+    )
+    "Sprint 1.20: oversized load-command metadata and an arm64 fat slice outside the exact image both fail closed"
   let measuredCoreMlClosure =
         Provisioning.MachOClosureDimensions
           { Provisioning.machOClosureLibraryCount = 480,
@@ -17473,6 +19496,39 @@ refusedDimension dimension dimensions =
   case Provisioning.admitMachOClosureDimensionsForTest dimensions of
     Left failure -> dimension `isInfixOf` failure
     Right () -> False
+
+machOThinHeaderForTest :: Integer -> Integer -> BS.ByteString
+machOThinHeaderForTest commandCount commandBytes =
+  BS.pack
+    ( [0xcf, 0xfa, 0xed, 0xfe]
+        <> machOWord32LEForTest 0x0100000c
+        <> machOWord32LEForTest 0
+        <> machOWord32LEForTest 6
+        <> machOWord32LEForTest commandCount
+        <> machOWord32LEForTest commandBytes
+        <> machOWord32LEForTest 0
+        <> machOWord32LEForTest 0
+    )
+
+fat32ArchitectureForTest :: Integer -> Integer -> Integer -> [Word8]
+fat32ArchitectureForTest cpuType sliceOffset sliceBytes =
+  machOWord32BEForTest cpuType
+    <> machOWord32BEForTest 0
+    <> machOWord32BEForTest sliceOffset
+    <> machOWord32BEForTest sliceBytes
+    <> machOWord32BEForTest 0
+
+machOWord32LEForTest :: Integer -> [Word8]
+machOWord32LEForTest value =
+  [ fromIntegral ((value `shiftR` shift) .&. 0xff)
+  | shift <- [0, 8, 16, 24]
+  ]
+
+machOWord32BEForTest :: Integer -> [Word8]
+machOWord32BEForTest value =
+  [ fromIntegral ((value `shiftR` shift) .&. 0xff)
+  | shift <- [24, 16, 8, 0]
+  ]
 
 -- | Require a refusal and pin /why/ it was refused. An assertion that accepts
 -- any failure passes for the wrong reason as readily as the right one.

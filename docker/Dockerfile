@@ -16,6 +16,9 @@ ARG CABAL_VERSION=3.16.1.0
 ARG KIND_VERSION=v0.29.0
 ARG KUBECTL_VERSION=v1.34.0
 ARG HELM_VERSION=v3.18.6
+ARG PROTOC_VERSION=34.1
+ARG PROTOC_LINUX_AMD64_SHA256=af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904
+ARG PROTOC_LINUX_ARM64_SHA256=31c5e9e3c7bf013cf41fb97765ee255c140024a6b175b6cc9b64beddd7c23ba7
 # Phase 8 follow-on (2026-07-04): default to the canonical Ubuntu archive.
 # The mirrors.edge.kernel.org mirror served an inconsistent index (libssl-dev
 # 3.0.13-0ubuntu3.9 vs libssl3t64 3.0.13-0ubuntu3.11), breaking the apt solve on
@@ -66,7 +69,6 @@ RUN apt-get update \
         libssl-dev \
         libtinfo-dev \
         pkg-config \
-        protobuf-compiler \
         python3 \
         python3-dev \
         python3-pip \
@@ -91,6 +93,29 @@ RUN python3 -m venv --copies ${POETRY_HOME} \
     && ${POETRY_HOME}/bin/pip install poetry \
     && ln -sfn ${POETRY_HOME}/bin/poetry /usr/local/bin/poetry \
     && poetry config keyring.enabled false
+
+# Phase 1 Sprint 1.24 (2026-08-09): Haskell protobuf bindings are checked in,
+# and ordinary builds never run a generator. The Linux image build retains one
+# explicit drift-proof lane: fetch the pinned upstream compiler for the native
+# image architecture, build the pinned Haskell plugin below, regenerate into a
+# temporary tree, and compare every output byte after the full source copy.
+RUN set -eu; \
+    protoc_tmp="$(mktemp -d)"; \
+    protoc_arch="${TARGETARCH:-$(dpkg --print-architecture)}"; \
+    case "${protoc_arch}" in \
+      amd64) protoc_asset_arch="x86_64"; protoc_sha256="${PROTOC_LINUX_AMD64_SHA256}" ;; \
+      arm64) protoc_asset_arch="aarch_64"; protoc_sha256="${PROTOC_LINUX_ARM64_SHA256}" ;; \
+      *) echo "unsupported protobuf generator architecture: ${protoc_arch}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o "${protoc_tmp}/protoc.zip" \
+      "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOC_VERSION}/protoc-${PROTOC_VERSION}-linux-${protoc_asset_arch}.zip"; \
+    python3 -c 'import hashlib, pathlib, sys; expected, archive = sys.argv[1:]; actual = hashlib.sha256(pathlib.Path(archive).read_bytes()).hexdigest(); raise SystemExit(0 if actual == expected else f"protoc archive SHA-256 mismatch: expected {expected}, got {actual}")' \
+      "${protoc_sha256}" "${protoc_tmp}/protoc.zip"; \
+    python3 -m zipfile -e "${protoc_tmp}/protoc.zip" "${protoc_tmp}/unpacked"; \
+    mkdir -p /opt/infernix/proto-tools; \
+    install "${protoc_tmp}/unpacked/bin/protoc" /opt/infernix/proto-tools/protoc; \
+    test "$(/opt/infernix/proto-tools/protoc --version)" = "libprotoc ${PROTOC_VERSION}"; \
+    rm -rf "${protoc_tmp}"
 
 RUN curl https://get-ghcup.haskell.org -sSf | sh \
     && ghcup install ghc ${GHC_VERSION} \
@@ -132,21 +157,74 @@ RUN set -eu; \
 
 WORKDIR /workspace
 
-COPY cabal.project infernix.cabal LICENSE README.md Setup.hs /workspace/
+COPY cabal.project infernix.cabal LICENSE README.md /workspace/
 COPY proto /workspace/proto
 COPY web/package.json /workspace/web/package.json
 COPY web/scripts /workspace/web/scripts
 COPY python/pyproject.toml /workspace/python/pyproject.toml
 
+# Clean-image seed envelope: each Cabal invocation is one 4096 MiB compiler
+# plus the live driver and one worker auxiliary at 1024 MiB each (6144 MiB
+# total). GHCRTS is scoped to each command so it cannot leak into image runtime;
+# the compiler heap/address flags and final jobs value override project/config
+# files at the child boundary.
 RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
-    && cabal update \
-    && cabal build all --only-dependencies \
+    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS update \
+    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+         build all --only-dependencies \
+         --jobs=1 \
+         '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
+    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+         install proto-lens-protoc-0.9.0.1 \
+         --installdir=/opt/infernix/proto-tools \
+         --install-method=copy \
+         --overwrite-policy=always \
+         --jobs=1 \
+         '--ghc-options=+RTS -M4096M -xr12288M -RTS -rtsopts=ignore -with-rtsopts=-M1024M' \
+    && test -x /opt/infernix/proto-tools/proto-lens-protoc \
     && npm --prefix web install --no-audit --no-fund \
     && python3 -m venv --copies /workspace/python/.venv \
     && cp -aL /usr/lib/python3.12/. /workspace/python/.venv/lib/python3.12/ \
     && poetry install --directory python --no-root
 
 COPY . /workspace
+
+RUN set -eu; \
+    generated_root="$(mktemp -d)"; \
+    GHCRTS=-M1024M /opt/infernix/proto-tools/protoc \
+      --plugin=protoc-gen-haskell=/opt/infernix/proto-tools/proto-lens-protoc \
+      --haskell_out="${generated_root}" \
+      --proto_path=/workspace/proto \
+      /workspace/proto/infernix/manifest/runtime_manifest.proto \
+      /workspace/proto/infernix/runtime/inference.proto; \
+    actual_generated="$(cd "${generated_root}" && find . ! -type d -print | LC_ALL=C sort)"; \
+    expected_generated="$(printf '%s\n' \
+      './Proto/Infernix/Manifest/RuntimeManifest.hs' \
+      './Proto/Infernix/Manifest/RuntimeManifest_Fields.hs' \
+      './Proto/Infernix/Runtime/Inference.hs' \
+      './Proto/Infernix/Runtime/Inference_Fields.hs')"; \
+    if [ "${actual_generated}" != "${expected_generated}" ]; then \
+      printf '%s\n%s\n%s\n' \
+        'generated Haskell protobuf inventory drift' \
+        "expected:${expected_generated}" \
+        "actual:${actual_generated}" >&2; \
+      exit 1; \
+    fi; \
+    for generated_file in \
+      Proto/Infernix/Manifest/RuntimeManifest.hs \
+      Proto/Infernix/Manifest/RuntimeManifest_Fields.hs \
+      Proto/Infernix/Runtime/Inference.hs \
+      Proto/Infernix/Runtime/Inference_Fields.hs; do \
+      if [ -L "${generated_root}/${generated_file}" ] || [ ! -f "${generated_root}/${generated_file}" ]; then \
+        echo "generated Haskell protobuf output is not a regular non-symlink file: ${generated_file}" >&2; \
+        exit 1; \
+      fi; \
+      if ! cmp -s "${generated_root}/${generated_file}" "/workspace/src/${generated_file}"; then \
+        echo "generated Haskell protobuf byte drift: src/${generated_file}" >&2; \
+        exit 1; \
+      fi; \
+    done; \
+    rm -rf "${generated_root}"
 
 RUN set -eu; \
     native_tmp="$(mktemp -d)"; \
@@ -239,8 +317,6 @@ RUN printf '%s\n' \
     '    , cabal = "/root/.ghcup/bin/cabal"' \
     '    , ghc = "/root/.ghcup/bin/ghc"' \
     '    , ghcup = ""' \
-    '    , ormolu = "/workspace/.build/haskell-style-tools/bin/ormolu"' \
-    '    , hlint = "/workspace/.build/haskell-style-tools/bin/hlint"' \
     '    , npm = "/usr/bin/npm"' \
     '    , node = "/usr/bin/node"' \
     '    , python3 = "/usr/bin/python3"' \
@@ -248,7 +324,6 @@ RUN printf '%s\n' \
     '    , llamaCli = ""' \
     '    , whisperCli = ""' \
     '    , poetry = "/opt/poetry/bin/poetry"' \
-    '    , protoc = "/usr/bin/protoc"' \
     '    , git = "/usr/bin/git"' \
     '    , tar = "/usr/bin/tar"' \
     '    , curl = "/usr/bin/curl"' \
@@ -337,6 +412,8 @@ RUN printf '%s\n' \
 # lazy model bootstrap (`adapters/model_bootstrap.py` `snapshot_download`) runs in
 # this base venv, so removing `hf_xet` forces the un-throttled HTTP fallback. This
 # is a dependency-level removal, not an env var, per the configuration doctrine.
+# The two retained Cabal steps repeat the same closed 6144 MiB seed envelope;
+# they are sequential and the build-only GHCRTS value is not an ENV layer.
 RUN mkdir -p /workspace/tools/generated_proto \
     && poetry install --directory python \
     && cp -aL /usr/lib/python3.12/. /workspace/python/.venv/lib/python3.12/ \
@@ -346,12 +423,19 @@ RUN mkdir -p /workspace/tools/generated_proto \
          --python_out /workspace/tools/generated_proto \
          /workspace/proto/infernix/manifest/runtime_manifest.proto \
          /workspace/proto/infernix/runtime/inference.proto \
-    && cabal build all \
-    && cabal install \
-         --installdir=/usr/local/bin \
+    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+         build all \
+         --jobs=1 \
+         '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
+    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+         install \
+         --installdir=/workspace/.build \
          --install-method=copy \
          --overwrite-policy=always \
-         exe:infernix
+         all:exes \
+         --jobs=1 \
+         '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
+    && install /workspace/.build/infernix /usr/local/bin/infernix
 
 # Phase 3 Sprint 3.10 — install Playwright's system dependencies before native
 # artifact observation. The installer legitimately regenerates
@@ -367,24 +451,6 @@ RUN apt-get update \
 # without rebuilding the binary.
 RUN infernix internal materialize-substrate ${RUNTIME_MODE} --demo-ui ${DEMO_UI} --empty-models \
     && infernix test init --runtime-mode ${RUNTIME_MODE} --demo-ui ${DEMO_UI} \
-    && if [ "${RUNTIME_MODE}" = "linux-cpu" ]; then \
-         poetry install --directory python/engines/transformers --with linux-cpu --no-interaction \
-         && transformers_project_digest="$( { cat python/engines/transformers/pyproject.toml; printf '\n'; cat python/engines/transformers/poetry.lock; } | sha256sum | cut -d ' ' -f 1 )" \
-         && printf '%s\n' \
-           'runtimeMode=linux-cpu' \
-           'adapterId=transformers-python' \
-           'groups=linux-cpu' \
-           "projectDigest=${transformers_project_digest}" \
-           > python/engines/transformers/.venv/.infernix-framework-groups-linux-cpu-linux-cpu \
-         && poetry install --directory python/engines/pytorch --with linux-cpu --no-interaction \
-         && pytorch_project_digest="$( { cat python/engines/pytorch/pyproject.toml; printf '\n'; cat python/engines/pytorch/poetry.lock; } | sha256sum | cut -d ' ' -f 1 )" \
-         && printf '%s\n' \
-           'runtimeMode=linux-cpu' \
-           'adapterId=pytorch-python' \
-           'groups=linux-cpu' \
-           "projectDigest=${pytorch_project_digest}" \
-           > python/engines/pytorch/.venv/.infernix-framework-groups-linux-cpu-linux-cpu; \
-       fi \
     && npm --prefix web run build \
     && poetry --directory python run check-code \
     && infernix internal materialize-linux-native-engines

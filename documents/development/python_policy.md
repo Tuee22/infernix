@@ -16,35 +16,39 @@ has no non-Python binding on that path.
 - each adapter is a thin module that reads one worker-owned request payload from stdin, runs the
   adapter logic, and emits one worker-owned result payload to stdout
 - the Haskell worker (`src/Infernix/Runtime/Worker.hs`) is the single dispatch point for
-  Python-native bindings; it resolves an engine-specific Poetry entrypoint and exchanges typed
-  protobuf worker messages over stdio
+  Python-native bindings; it verifies the canonical prepared interpreter/marker, invokes that
+  interpreter with `-m adapters.<module>`, and exchanges typed protobuf worker messages over stdio
 - the only other Python on the supported path is the Apple native-process runner under
   `python/native-runners/`; build helpers, lint, chart discovery, image publishing, demo-config
   parsing, docs validation, and the demo HTTP host are all Haskell
 
 ## Toolchain
 
-- the shared Poetry project lives at `python/pyproject.toml`
+- the framework-free shared quality/protobuf project lives at `python/pyproject.toml`; declared
+  framework projects live at `python/engines/<engine>/pyproject.toml`
 - on the intended Apple clean-host path, `infernix` reconciles the Homebrew-managed
   `python@3.12` and `poetry` tools when adapter setup or validation first needs them; Core ML
   artifact materialization separately requires the typed Homebrew `python@3.11` tool
 - outside the cluster, `poetry install --directory python` materializes the repo-local
   `python/.venv/` environment for adapter validation on the Apple host path
-- concurrent host-daemon setup for the shared `python/` project serializes `poetry install` with
-  the repo-local `python/.infernix-poetry-install.lock` kernel filelock so multiple `infernix service`
-  processes do not mutate `python/.venv/` at the same time
-- Linux substrate image builds run `poetry install --directory python` during the image build and
-  then execute adapters from the shared `python/` project root through `poetry run ...`
+- concurrent project setup serializes each `poetry install` with the project-local
+  `.infernix-poetry-install.lock` kernel filelock so multiple materializers cannot mutate the same
+  venv or publish its marker concurrently
+- Linux substrate image builds install the shared quality project. The Linux CPU base invokes
+  `internal materialize-substrate`, which prepares the canonical `transformers` and `pytorch`
+  `linux-cpu` environments through the same Haskell producer used on Apple; Linux GPU's selected
+  engine image owns its `cuda` venv
 - Poetry is not a generic platform prerequisite; it materializes only when an adapter validation or
   setup path is exercised explicitly
 
-Current status:
+Materialization contract:
 
 - on the Apple host-native path, `infernix` reconciles the typed Homebrew
   `python3.12`, `python3.11`, and `poetry` tools required by the selected command
-- once `poetry` exists, the shared project still materializes `python/.venv/` only on demand
-- concurrent materialization attempts for the same shared project are serialized by
-  kernel-managed `python/.infernix-poetry-install.lock`
+- shared quality/protobuf work materializes `python/.venv/` on demand after Poetry is available, and
+  supported materialization/startup boundaries prepare the canonical per-engine execution plan
+- concurrent materialization attempts for every project are serialized by its kernel-managed
+  `.infernix-poetry-install.lock`; inference only reads validated evidence
 
 ## Quality Gate
 
@@ -84,7 +88,7 @@ single host installs every wheel. The gate stays machine-independent through one
   framework modules are listed in a `[[tool.mypy.overrides]]` block in `python/pyproject.toml` with
   `ignore_missing_imports = true`, so `mypy --strict` type-checks the adapter on any host without
   the wheels present (and without per-line `# type: ignore` churn that breaks when a wheel is
-  present-but-untyped on cohort hardware).
+  present-but-untyped on supported hardware).
 - This mirrors the established `adapters/model_cache.py` boto3 precedent: the import only fires at
   real-inference time, so `mypy --strict`/`black`/`ruff` over the adapter tree pass on any host
   without the wheels installed.
@@ -110,31 +114,45 @@ own isolated in-project venv:
 - Each engine has its own Poetry project at `python/engines/<engine>/` (`package-mode = false`,
   in-project venv `python/engines/<engine>/.venv/`) that depends on the shared `infernix-adapters`
   package via an editable path dependency and declares its framework wheels in an **optional**
-  substrate group. The default `poetry install` there pulls no framework; the substrate build opts
-  in with `poetry install --directory python/engines/<engine> --with cuda` (linux-gpu, cu128 torch
-  for Blackwell), `--with apple-silicon` for the Apple host-native framework engines that publish
-  Darwin arm64 wheels (`transformers`, `pytorch`, and `diffusers`), or `--with linux-cpu` for the
-  Linux CPU `transformers` and `pytorch` validation engines. The Linux CPU image bakes those two
-  CPU framework venvs only on an actual Linux runtime; Darwin host validation keeps them absent and
-  exercises the fail-fast shared path.
-- The Haskell worker (`src/Infernix/Runtime/Worker.hs`) resolves the per-engine venv at dispatch:
-  when `python/engines/<engine>/.venv/bin/python` exists it runs `python -m adapters.<module>` in
-  that venv (the in-project venv installs console scripts with a relative shebang, so the worker
-  invokes the absolute venv interpreter with `-m` rather than the script). When the per-engine venv
-  is absent (the machine-independent unit environment), the worker falls back to the shared
-  framework-free project so an absent framework fails fast.
-- The linux-gpu image build (`docker/Dockerfile`) bakes each engine's `--with cuda` venv as a
-  separate layer; a failed engine install removes its partial venv so the runtime falls back to the
-  fail-fast path (a named cohort residual) rather than a broken venv. The linux-cpu image bakes
-  `transformers` and `pytorch` with their `linux-cpu` groups and writes marker files for the baked
-  venvs. Under realness-by-construction every adapter runs the real model or
+  substrate group. The default `poetry install` there pulls no framework. The Haskell
+  `Infernix.Python` facade derives the closed host/runtime plan from the canonical engine bindings:
+  Darwin prepares `transformers`, `pytorch`, and `diffusers` with `apple-silicon`, while the Linux
+  CPU base image prepares `transformers` and `pytorch` with `linux-cpu`. Linux GPU remains
+  engine-image-owned and selects `cuda` in `docker/engine.Dockerfile`; the shared base materializer
+  is intentionally a no-op for that lane.
+- `internal materialize-substrate`, Apple runtime startup, and the explicit Apple native-artifact
+  materializer invoke that same producer before inference. Each install runs through the closed,
+  deadline-bounded provisioning language under the engine project's mutation lock. Only after a
+  successful install and executable re-observation does the producer recompute the digest of
+  `pyproject.toml` plus the optional, possibly newly created `poetry.lock`, publish the fixed
+  `.infernix-framework-groups-*` marker through the descriptor-retained project writer, and read it
+  back exactly.
+- Readiness is crash-consistent across repair. Stable marker absence on a first install is already
+  fail-closed evidence and does not require a future `.venv` directory merely to publish a marker.
+  If prior readiness exists, the writer durably replaces it with the fixed incomplete tombstone
+  before Poetry starts. An interruption therefore leaves the project unready, and a repeated attempt
+  treats that tombstone as unready and re-enters repair rather than reviving stale evidence.
+- The Haskell worker (`src/Infernix/Runtime/Worker.hs`) consumes that prepared environment at
+  dispatch by running the exact `python/engines/<engine>/.venv/bin/python -m adapters.<module>`.
+  Missing/non-executable interpreters, missing/malformed/stale markers, and project-digest drift all
+  fail closed. Exact marker/interpreter validation and the capped subprocess run occur beneath one
+  shared lease on the per-project mutation lock. Concurrent inference readers may coexist, but the
+  exclusive Poetry writer cannot invalidate or replace the environment until every child completes.
+  `Infernix.Python` and its mutation-lock kernel are package-hidden, with compile-fail guards against
+  importing the facade or bypassing it through a raw Python worker launch. There is no shared-venv
+  fallback and no Poetry or framework installation on the request path.
+- The Linux CPU image delegates the install/marker contract to its
+  `internal materialize-substrate linux-cpu` step, which calls the same producer. The Linux GPU engine
+  image continues to bake only its selected engine's `cuda` venv as a separate layer. Under
+  realness-by-construction every adapter runs the real model or
   raises → `failed`: deterministic fabricated-success paths are not permitted
   (the `check-code` realness pass forbids them), so a substrate that cannot run a row leaves it an
   explicit residual rather than a fabricated success. The music-transcription rows rebind to
   maintained PyTorch/ONNX models (basic-pitch ONNX/Core ML, MT3-PyTorch and MR-MT3 through
   `mt3-infer`, Omnizart through a modern PyTorch transcription model), eliminating the finicky
-  TensorFlow `<2.15.1` / TF1-era / unmaintained-JAX pins; any row not yet rebound or not yet real
-  on a substrate is a named residual. The MT3 replacement rows are bound for all three substrates.
+  TensorFlow `<2.15.1` / TF1-era / unmaintained-JAX pins; any row that lacks a maintained binding or
+  cannot produce real output on a substrate is a named residual. The MT3 replacement rows are bound
+  for all three substrates.
 
 `find python -name '*.py' -type f` returns only files under `python/adapters/` and
 `python/native-runners/` (the Apple native-process runner `apple_native_runner.py`, itself
@@ -146,11 +164,11 @@ trees are gitignored build artifacts.
 
 Python packaging warnings are handled by execution context:
 
-- on the Apple host-native path, adapter setup uses a repo-local `python/.venv/` and must not run
-  host package installation as root
+- on the Apple host-native path, shared quality setup uses `python/.venv/` and framework execution
+  setup uses `python/engines/<engine>/.venv/`; neither may run host package installation as root
 - inside Linux substrate Docker image builds, Poetry is installed into `/opt/poetry`, a dedicated
-  virtual environment owned by the image layer, and the project dependencies still install into the
-  repo-local `python/.venv/`
+  virtual environment owned by the image layer. Shared dependencies install into `python/.venv/`,
+  and the binary-owned Linux CPU materializer installs the canonical per-engine environments
 - a pip warning about running as root is not expected on the supported image-build path
 
 The repository should eliminate Python packaging warnings that come from maintained tool upgrades.
@@ -166,7 +184,7 @@ Each engine-specific adapter module under `python/adapters/` honors a small proc
 - write one result payload to stdout
 - log errors to stderr; the Haskell worker captures stderr for diagnostics
 
-Current state:
+Worker protocol:
 
 - the worker request and response payloads are typed protobuf messages from
   `proto/infernix/runtime/inference.proto`, consumed on the Python side through
@@ -177,9 +195,10 @@ Current state:
 - the shared project exposes one Poetry console script per adapter together with matching
   `setup-*` entrypoints
 - each Apple `setup-*` materialization writes an idempotent repo-local bootstrap manifest at
-  `./.data/engines/<adapter-id>/bootstrap.json`; Linux framework environments are immutable image
-  payloads and use their baked per-engine framework marker instead of trying to publish retained
-  setup state into each pod's private `emptyDir`
+  `./.data/engines/<adapter-id>/bootstrap.json`; separately, the shared prepared-environment producer
+  publishes the matching per-engine framework marker beside each Apple Python-stdio interpreter.
+  Linux framework environments are immutable image payloads and use that same marker contract
+  instead of trying to publish retained setup state into each pod's private `emptyDir`
 - adapter modules load durable runtime context from the protobuf request, configure
   `adapters.model_cache` from that same request before calling `get_model_path`, load model weights,
   and perform real inference over a prebuilt host wheel. The runtime worker invokes the real engine

@@ -1,0 +1,14 @@
+-- Cabal resolves package locations against the invocation working directory,
+-- and the closed toolchain child always starts at the repository root.
+packages: test/cabal-format/infernix-cabal-format.cabal
+write-ghc-environment-files: never
+with-compiler: ghc-9.12.4
+
+-- This project is entered only through the closed ToolchainCabalFormat
+-- invocation, whose authority-derived final arguments supersede this fallback.
+-- Keep the standalone project bounded too: one 4096 MiB compiler plus the
+-- Cabal and helper 1024 MiB claims is a 6144 MiB account.
+jobs: 1
+
+package *
+    ghc-options: +RTS -M4096M -xr12288M -RTS

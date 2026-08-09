@@ -17,11 +17,10 @@
   which classifies an over-budget request as typed `InferenceError.ModelMemoryLimitExceeded` and does
   not fail the whole daemon — see the resource-exhaustion classification under Lifecycle Failure
   Classification.
-- Integration and routed E2E coverage derive their target set from the active generated catalog,
+- Integration and routed E2E coverage derive their exercised set from the active generated catalog,
   so changing the initialized runtime config changes the exercised entries automatically.
-- Cross-hardware validation is cohort-based: day-to-day phase work validates on the current
-  Apple Silicon or CUDA Linux machine, and the counterpart machine's full-suite run is batched at
-  phase closure.
+- A validation gate selects one accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`.
+  A cross-accelerator claim additionally requires the corresponding evidence from each accelerator.
 - Monitoring is not a supported first-class surface, so no validation entrypoint claims to gate
   dashboards, scrape config, or alerting behavior.
 
@@ -43,9 +42,9 @@
   container-toolkit setup
 - real-cluster `linux-gpu` validation also expects enough disk headroom for Kind image preload,
   Harbor-backed rollout, and Pulsar BookKeeper durability
-- phase-local validation should run on the machine that owns the changed path; full
-  cross-hardware closure requires both the Apple Silicon and CUDA Linux cohorts to rerun the
-  relevant full-suite gates against the same phase state
+- hardware-specific validation runs on the machine that owns the changed path; a cross-hardware
+  claim requires both Apple Silicon and CUDA Linux to run the relevant full-suite gates against the
+  same source state
 - `linux-cpu` validation may be used as a portable CPU-only check, but it does not substitute for
   `linux-gpu` when GPU behavior is in scope
 - emulated validation is unsupported; `linux-cpu` evidence must come from native Linux rather than
@@ -53,51 +52,34 @@
 
 ## Lifecycle Failure Classification
 
-- this classification is the evidence-vs-hope discipline of the managed-state-transition doctrine
-applied to lifecycle: each supported state carries typed evidence rather than an assumed pass, and
-the canonical home for that doctrine is [Managed State
-Transitions](../architecture/managed_state_transitions.md) - the legacy-tracking ledger at
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-records obsolete-surface receipts; current validation evidence lives in the active phase files and
-cohort waves - long waits in Docker build finalization, Harbor publication, Kind-worker image
-preload, and retained-state replay are treated as real convergence when heartbeat data is moving,
-not as hard product failure - the supported doctrine is inactivity-aware: elapsed wall time alone is
-not enough to classify `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all`
-as failed when the active path still owns cluster lifecycle - use `infernix cluster status` as the
-supported progress surface before abandoning a long-running lifecycle action - while `cluster
-status` reports `lifecycleStatus: in-progress`, treat the current action as still progressing when
-the reported `lifecycleHeartbeatAt` continues to refresh - the current implementation refreshes that
-heartbeat roughly every 30 seconds during the long-running Docker build, Harbor image publication,
-Kind-worker Harbor preload, and Apple retained-state replay subprocess phases - the same
-inactivity-aware classification applies when supported integration or E2E lanes own internal cluster
-bring-up or teardown rounds inside `infernix test all` - treat the supported path as stalled only
-when the command exits non-zero or the heartbeat stops refreshing across multiple monitor intervals
-during one of those monitored phases - a SIGKILLed `infernix test all` is a distinct dirty /
-mutation-incomplete state class, not a stall and not a clean failure: the target `ClusterLifecycle`
-carries a first-class `ClusterMutating` position, so a run killed while it was actively mutating the
-cluster (a drained node, an over-scaled deployment) leaves `ClusterMutating` persisted. `cluster
-status` then reports a mutation-incomplete (dirty) phase rather than a false `steady-state`, and the
-next `cluster up` reconciles it (uncordon drained nodes, scale deployments back). Canonical home:
-[Managed State Transitions](../architecture/managed_state_transitions.md) - resource exhaustion is a
-distinct third class from stall and clean failure: every active model carries
-`ModelDescriptor.modelRamFootprintMib`, and each substrate resolves an explicit
-`InferenceMemoryBudget` before launch - the active budget is typed, not a magic integer: Apple uses
-unified host RAM after the Colima pledge and checked host headroom, while Linux CPU uses the engine
-pod memory limit. Compilation mints a resource-indexed grant only for a model that fits and retains
-an oversized row as an explicit `UnavailableModel`; live refinement must pair that grant with the
-matching enforcer before engine launch can receive an `ExecutableModel`. Linux GPU currently fails
-compilation closed with `GpuDualResourceBudgetRequired`; Phase 6 owns dual host-RAM/GPU-VRAM
-accounting - an over-budget model publishes a clean `status=failed` real `InferenceResult` with
-`InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` instead of
-launching the engine subprocess. The generated config must remain usable when only some models are
-over budget, so smaller rows still complete and honor their per-family real-output contract - the
-integration classifier must identify memory-capacity failure by the typed error constructor and MiB
-fields, distinct from a stall (a genuinely missing result, including the historical OS-OOM-kill
-symptom) and from a fabricated pass. Phase 1 owns exhaustive compiler accounting and typed
-coordinator rejection delivery, Phase 4 owns Apple/Linux CPU adversarial survival and encapsulated
-serialization, and Phase 6 owns the GPU path. Canonical doctrine for the executable-gated
-capped-engine invariant:
-[../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)
+- Each supported lifecycle state carries typed evidence rather than an assumed pass. The canonical
+  contract is [Managed State Transitions](../architecture/managed_state_transitions.md).
+- Long Docker build finalization, Harbor publication, Kind-worker image preload, and retained-state
+  replay are healthy convergence while `lifecycleHeartbeatAt` keeps moving. Elapsed wall time alone
+  does not classify `cluster up`, `cluster down`, `test integration`, `test e2e`, or `test all` as
+  failed.
+- `infernix cluster status` is the supported progress surface. While it reports
+  `lifecycleStatus: in-progress`, a heartbeat refreshed roughly every 30 seconds during a monitored
+  subprocess phase is progress. A non-zero owning command or a heartbeat that stops across multiple
+  monitor intervals is a stall/failure signal. The same rule applies to internal bring-up and
+  teardown rounds owned by `infernix test all`.
+- A SIGKILLed harness during active mutation is a distinct dirty state, not a stall or clean
+  failure. `ClusterLifecycle` persists `ClusterMutating`; `cluster status` reports
+  mutation-incomplete rather than `steady-state`; and the next `cluster up` reconciles drained nodes
+  and deployment scale.
+- Resource exhaustion is distinct from both stall and clean lifecycle failure. Every active model
+  carries `ModelDescriptor.modelRamFootprintMib`, and each substrate resolves a typed
+  `InferenceMemoryBudget` before launch. Compilation mints a resource-indexed grant only for a
+  fitting model and retains an oversized row as `UnavailableModel`; live refinement must pair the
+  grant with its matching enforcer before producing `ExecutableModel`.
+- A Linux GPU plan without independent host-RAM and GPU-VRAM enforcement fails compilation with
+  `GpuDualResourceBudgetRequired`. An over-budget model publishes a real terminal `status=failed`
+  `InferenceResult` carrying
+  `InferenceError.ModelMemoryLimitExceeded { requiredMib, availableMib, resource, source }` without
+  launching the engine. Smaller rows remain usable and must honor their per-family real-output
+  contract. The integration classifier distinguishes this typed capacity result from a missing
+  result (including an OS-OOM kill) and from a fabricated pass. Canonical doctrine:
+  [Bounded Inference Memory](../architecture/bounded_inference_memory.md).
 
 ## Canonical Entry Points
 
@@ -105,7 +87,7 @@ capped-engine invariant:
 |-------------|----------------|
 | `infernix lint files` | validate tracked-file hygiene and generated-artifact placement |
 | `infernix lint docs` | run the governed documentation validator directly |
-| `infernix lint proto` | validate the protobuf contract set |
+| `infernix lint proto` | validate schema/package/symbol shape plus the exact two-schema/four-module Haskell binding snapshot inventory and hashes, without invoking a generator |
 | `infernix lint chart` | validate Helm chart ownership and route-registry alignment |
 | `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
 | `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
@@ -147,7 +129,7 @@ capped-engine invariant:
   on the result message body — rejecting the `No inline output.` placeholder so a fallback cannot
   pass — and a catalog-completeness guard asserts the model-picker option set equals the published
   demo-config catalog (README matrix rows minus active-mode residuals).
-- `infernix test e2e` also proves the Phase 9 admin-vs-user access-control contract at the browser
+- `infernix test e2e` also proves the admin-vs-user access-control contract at the browser
   edge: an admin session sees the operator ribbon, cluster-wide monitoring panel, and cluster summary
   cells; a non-admin is denied the four operator routes (403) and sees only its own personal
   dashboard; and the account lifecycle (sign-in, wrong-password rejection, self-service deletion,
@@ -155,10 +137,10 @@ capped-engine invariant:
   [../development/demo_app_test_plan.md](../development/demo_app_test_plan.md).
 - `infernix test all` proves that the repository passes the supported aggregate validation flow for
   the active initialized substrate without dropping any layer.
-- phase closure follows the single-accelerator rule in
+- validation closure follows the single-accelerator rule in
   [development-plan standards](../../DEVELOPMENT_PLAN/development_plan_standards.md): one selected
   accelerator (`apple-silicon` or `linux-gpu`) plus `linux-cpu`, never both in one must-pass gate.
-  Cross-accelerator contracts use sibling attestations or a later `linux-cpu`-only aggregation.
+  Cross-accelerator contracts use sibling attestations or a `linux-cpu`-only aggregation.
 
 ## Unsupported Paths
 
@@ -170,10 +152,9 @@ capped-engine invariant:
 - quietly swapping to another runtime mode when required substrate preflights are absent
 - running cross-architecture emulation as validation evidence
 - creating or switching Docker contexts, or creating a Colima VM, from Apple Silicon validation
-- claiming cross-hardware closure from one host cohort, or requiring developers to alternate
-  machines for every sprint instead of batching counterpart validation at a phase boundary
+- claiming cross-hardware closure from evidence produced on only one accelerator
 - treating monitoring dashboards, metrics stacks, or scrape configuration as a supported gated
-  contract in the current repository state
+  contract
 
 ## Cross-References
 
@@ -188,8 +169,10 @@ capped-engine invariant:
 
 - validation fails on hard-gate violations; supported workflows do not silently rewrite tracked
   source
-- the Haskell style gate installs `ormolu` and `hlint` through `cabal install` against the
-  project `ghc-9.12.4` toolchain into `./.build/haskell-style-tools/bin/`
+- the root Haskell-style component links pinned `ormolu` and `hlint` libraries, while a genuinely
+  separate Cabal-format package links pinned `Cabal 3.16`; the closed aggregate lint command runs
+  each check in-process under sequential top-level toolchain children, and neither installs nor
+  starts style-tool child processes at test runtime
 - runtime-mode-specific tests fail when required platform preflights are absent rather than
   quietly switching to another mode
 - the supported Node-based web validation paths stay warning-free by avoiding legacy
@@ -206,7 +189,7 @@ capped-engine invariant:
   bridge rather than treating an in-cluster pod as the Apple-native inference executor
 - `infernix test e2e` requires Docker on Linux substrates and has no host-native npm fallback
   path there; Apple host-native routed E2E uses host `npm exec` with the same typed fixture
-  and is covered by the Apple cohort validation batch
+  and is covered by the Apple selected-accelerator gate
 - full cross-hardware validation is complete only when the Apple Silicon host-native lane and the
   CUDA Linux `linux-gpu` lane have both run their relevant closure gates; `linux-cpu` is an
   additional portable lane when CPU-specific behavior changes

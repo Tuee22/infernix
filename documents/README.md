@@ -39,7 +39,7 @@
   product-agnostic durable-context primitives — event-sourced state, deterministic reducer
   plus prefix-hash chain, single-flight dispatcher, compacted metadata projections, webapp-mediated
   object storage, JWKS-backed JWT, and stateless WebSocket coordination — reusable across
-  future SPA-style apps built on the inference platform
+  SPA-style apps built on the inference platform
 - [architecture/demo_app_design.md](architecture/demo_app_design.md) defines the demo-specific
   bindings on top of `durable_context_design.md`: Keycloak as the IdP, the concrete
   `infernix/demo` topic namespace and `infernix-demo-objects` bucket, the `/auth` / `/ws` /
@@ -85,8 +85,8 @@
 - [development/frontend_contracts.md](development/frontend_contracts.md) records the Haskell-owned
   PureScript contract-generation path and browser-visible catalog contract
 - [development/testing_strategy.md](development/testing_strategy.md) records operator-facing
-  validation-lane detail, active-substrate selection, hardware-cohort cadence, and implemented
-  coverage beneath the canonical testing doctrine
+  validation-lane detail, active-substrate selection, and required coverage beneath the canonical
+  testing doctrine
 - [development/demo_app_test_plan.md](development/demo_app_test_plan.md) defines the unit,
   integration, and E2E validation surface for the multi-user durable-context demo, including the
   per-model smoke matrix and the multi-user throughput / fan-in batching / fan-out test
@@ -181,8 +181,8 @@
   ceiling — the memory analog of the bounded-command kernel in
   `documents/architecture/managed_state_transitions.md`; `realness_contract.md` and
   `runtime_modes.md` reference it as the home for the runtime-memory chokepoint.
-- Monitoring is not a supported first-class surface. The governed docs suite intentionally has no
-  canonical `documents/engineering/monitoring.md` until the supported platform contract changes.
+- Monitoring is not a supported first-class surface. The governed docs suite has no canonical
+  `documents/engineering/monitoring.md`.
 - `README.md` stays an orientation document and links into this suite instead of becoming the deep
   architecture source of truth.
 - `AGENTS.md` and `CLAUDE.md` stay as governed entry documents with explicit `Canonical homes`

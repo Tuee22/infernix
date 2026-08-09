@@ -23,8 +23,8 @@ This repository serves two aligned purposes:
 - provide consistent binary or container build outputs for three supported runtime modes: Apple
   Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux, and Ubuntu 24.04 NVIDIA CUDA
   containers
-- provide a local Kind cluster, running the mandatory HA service topology, as the testing and demo
-  ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
+- provide a local Kind cluster, running the single-instance platform-service topology, as the
+  testing and demo ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
   per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
   is served by the `infernix` Webapp role in the `infernix-demo` workload when the active `.dhall`
   config enables it
@@ -38,9 +38,11 @@ This repository serves two aligned purposes:
 - production deployments accept inference work by Pulsar subscription only; the production
   `infernix service` binds no HTTP listener, the coordinator remains the production request router,
   and the cluster has no `infernix-demo` workload when the demo UI is off
-- Python is restricted to the shared Poetry project at `python/pyproject.toml` and the shared
-  adapter tree under `python/adapters/`; the canonical quality entrypoint is
-  `poetry run check-code`, which runs mypy strict, black check, and ruff strict in sequence
+- Python source is restricted to the framework-free shared Poetry project at
+  `python/pyproject.toml`, the shared adapter tree under `python/adapters/`, and the declared
+  per-engine Poetry projects under `python/engines/`; the canonical quality entrypoint remains
+  `poetry run check-code`, while Python-stdio inference uses only a pre-materialized per-engine
+  interpreter and marker
 - one Kind and Helm workflow for the testing and demo ground
 - one single-node local platform topology: Harbor, MinIO, Pulsar, and per-service
   operator-managed PostgreSQL on Kind
@@ -64,12 +66,16 @@ This repository serves two aligned purposes:
   `infernix-linux-cpu` and `infernix-linux-gpu`, each with ghcup-pinned GHC 9.12.4 + Cabal
   3.16.1.0, Python 3 + Poetry, node, the demo UI build toolchain, `nvkind`, and the
   Kind/kubectl/Helm/Docker toolbelt baked in. Apple Silicon has no Dockerfile; the operator
-  pre-installs ghcup and the host binary reconciles adapter setup through the shared Poetry project
+  pre-installs ghcup and the host binary reconciles the shared quality project plus the canonical
+  per-engine Apple framework environments before inference
 - repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap entrypoints: those
   scripts build or enter the substrate-specific `infernix` launcher and then hand lifecycle work
   to the binary instead of managing Kind, Kubernetes manifests, or cluster workload image pulls
-  directly; no committed built artifacts (`poetry.lock`, generated proto, `.mypy_cache`,
-  `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`, `web/src/Generated/`)
+  directly. The four byte-exact Haskell proto-lens modules under `src/Proto/` are the deliberate
+  tracked generated-source exception, governed with their canonical schemas by
+  `proto/haskell-bindings.sha256`; no other committed built artifacts (`poetry.lock`, Python
+  generated proto, `.mypy_cache`, `.ruff_cache`, `*.pyc`, `web/dist/`, `web/spago.lock`,
+  `web/src/Generated/`)
 - lifecycle locking and bounded subprocess supervision are all-Haskell internal boundaries. A
   public nonblocking exclusive `filelock` API supplies the kernel-managed lock held inside the
   rank-2 `Lease s ClusterMutationLocked` region. The bounded-command replacement uses one
@@ -111,7 +117,9 @@ init`; commands fail fast with a "run init" reminder when it is absent.
 - materializes runtime-local cache state from durable sources
 - launches and supervises engine workers in Haskell; for Python-native engines (PyTorch, JAX,
   vLLM, transformers, etc.), the worker forks a Python adapter from `python/adapters/*.py`
-  through `poetry run <adapter-entrypoint>` and speaks protobuf-over-stdio to it
+  through the exact pre-materialized `python/engines/<engine>/.venv/bin/python -m
+  adapters.<module>` and speaks protobuf-over-stdio to it; missing/stale readiness fails closed and
+  never triggers Poetry on the request path
 - dispatches to the real engine entrypoint selected by the active binding and publishes the typed
   per-family result surface — inline text for the LLM and speech families, and a typed
   `infernix-demo-objects` object reference for the source-separation, audio-to-MIDI,
@@ -126,8 +134,8 @@ init`; commands fail fast with a "run init" reminder when it is absent.
 
 ## Supported Modes
 
-The repository supports three first-class runtime modes. The local Kind cluster described later is
-the HA testing and demo ground used to validate and demonstrate them.
+The repository supports three first-class runtime modes. The local single-instance Kind cluster
+described later is the testing and demo ground used to validate and demonstrate them.
 
 | Mode | Build or deployment shape | Role in the repository | Intended engines |
 |------|---------------------------|------------------------|------------------|
@@ -160,8 +168,9 @@ substrate → architecture mapping and
 On Apple Silicon, the operator workflow has no generic Python prerequisite before the host build.
 When Apple adapter setup or validation paths are exercised, `infernix` reconciles the
 Homebrew-managed `python@3.12` formula and `python3.12` command when needed, bootstraps a
-user-local `poetry` executable if needed, and materializes the repo-local `python/.venv/` on
-demand. The Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
+user-local `poetry` executable if needed, and materializes the repo-local shared
+`python/.venv/` plus `python/engines/{transformers,pytorch,diffusers}/.venv/` before inference.
+The Poetry bootstrap may reuse an already available compatible Python 3.12+ executable
 when one passes the implemented version check; the supported path does not depend on an
 unversioned `python` executable.
 
@@ -170,20 +179,19 @@ classes.
 
 ## Local Architecture
 
-> **Convergence target — common Pulsar ML-workflow shape.** `infernix` and the
-> `jitML` sister project are converging on one shared contract,
+> **Common Pulsar ML-workflow shape.** `infernix` and the
+> `jitML` sister project share the contract in
 > [documents/architecture/pulsar_ml_workflow.md](documents/architecture/pulsar_ml_workflow.md):
 > a three-role split (**Engine** = compute-only; **Coordinator** = topic
 > lifecycle + coordination + readiness gating; **Webapp** = thin websocket,
 > Pulsar+MinIO only), a derived **topic algebra**, the `Work*` envelope family,
 > the artifact + `.ready` readiness contract, websocket snapshot/patch, and a
 > reflected-Dhall-schema, one-binary role model. The three roles below are selected through the
-> shared `infernix service` surface; implementation status for the convergence work lives in
-> [DEVELOPMENT_PLAN/](DEVELOPMENT_PLAN/README.md).
+> shared `infernix service` surface.
 
 The supported local platform is built around:
 
-- one Kind cluster used as the HA testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
+- one Kind cluster used as the single-instance testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
   Gateway controller, Prometheus, Grafana, per-service operator-managed PostgreSQL clusters, the
   production `infernix-coordinator` workload, substrate-specific engine pool workloads, and (when
   the demo UI is enabled) the optional `infernix-demo` workload per the supported three-role daemon
@@ -206,7 +214,7 @@ The supported local platform is built around:
 - one OCI image per Linux substrate carrying `infernix` plus the engine toolchain and the demo UI
   build toolchain; chart workload args select the role through `infernix service --role
   coordinator|engine|webapp`. Apple Silicon has no Dockerfile: the host daemon uses the same
-  Haskell worker and shared Poetry adapter setup path as the rest of the runtime
+  Haskell worker and canonical per-engine Python readiness contract as the rest of the runtime
 - substrate bootstrap entrypoints under `bootstrap/` that reconcile only the host prerequisites
   needed to build or enter the active `infernix` launcher, then invoke the matching binary command
   for cluster lifecycle, validation, and teardown
@@ -236,7 +244,7 @@ and `Create account` actions; the summary grid, Chat tab, Artifacts tab, and man
 workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak login and
 registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
 Keycloak image remains unchanged. When the demo surface is enabled, the app shell exposes an
-operator console ribbon for Harbor and Pulsar Admin **only to admins** (Phase 9): the cluster-wide
+operator console ribbon for Harbor and Pulsar Admin **only to admins**: the cluster-wide
 operator consoles and monitoring are gated to the `infernix-admin` Keycloak realm role, while ordinary
 and self-registered users see only their own data (chat, artifacts, files, and a personal dashboard).
 Envoy Gateway both validates the Keycloak JWT and admin-authorizes the `infernix-admin` realm role on
@@ -275,14 +283,14 @@ Harbor, MinIO, Pulsar, PostgreSQL, Envoy Gateway, `infernix-demo`, and the state
 `infernix-coordinator` Deployment in Kind. Routed manual inference enters the coordinator before
 Apple-native batches move through Pulsar to eligible host-side `./.build/infernix` engine daemons.
 On Linux, the same routed demo surface bridges through Pulsar into the coordinator Deployment, which
-hands batches off to Kubernetes engine pools. `/api/publication` now keeps
+hands batches off to Kubernetes engine pools. `/api/publication` keeps
 `apiUpstream.mode: cluster-demo` for the stable browser base URL, reports
 `daemonLocation: cluster-pod` for every substrate, adds `inferenceExecutorLocation`, and keeps
 `inferenceDispatchMode` so Apple can advertise `pulsar-bridge-to-host-daemon` while Linux
 advertises `pulsar-bridge-to-cluster-daemon`. Production deployments leave the demo flag off,
 accept inference work via Pulsar subscription only, keep the coordinator as the production router,
 and omit only the demo/frontend identity surface. The
-local Kind and HA substrate is the validation and operator baseline for Apple, CPU, and CUDA
+local single-instance Kind substrate is the validation and operator baseline for Apple, CPU, and CUDA
 runtime targets.
 
 ## Getting Started
@@ -312,7 +320,8 @@ After a successful run, each script prints the next commands for that substrate,
 
 - `doctor` to re-check prerequisites
 - `status` to print the edge port and route inventory
-- `test` to run `infernix test all`
+- `test` to run `infernix test all`; the Apple entrypoint first preserves any existing operator
+  config while creating missing Apple operator/host config and writing its governed test config
 - `down` to delete the cluster while preserving repo-local durable state, build artifacts,
   substrate images, host binaries, and host prerequisites
 
@@ -330,19 +339,23 @@ The supported stage-0 entrypoints are the substrate bootstraps under `bootstrap/
 The manual package-manager commands below remain the reference path that those bootstrap scripts
 drive or mirror.
 
-Current status:
+Supported contract:
 
+- the Apple stage-0 build requires fixed `/opt/homebrew/bin/colima` with a nonempty, parseable
+  profile inventory and fixed `/opt/homebrew/bin/jq`, which the bootstrap reconciles through
+  Homebrew. It refuses unless at least 12288 MiB effective memory remains after the active Colima
+  pledge, and it never installs Colima, creates a Colima profile or VM, or switches Docker contexts
 - after `./.build/infernix` exists on Apple Silicon, supported host-native commands may reconcile
   Homebrew-managed CLI tools such as `kind`, `kubectl`, `helm`, Node.js, the Homebrew-managed
   `python@3.12` formula and `python3.12` command, and Poetry through the supported
   package-manager or user-local bootstrap path when the active flow needs them. They must not
   create a Docker context, switch the active Docker context, create a Colima VM, or use emulation;
   Docker-backed Apple work requires an already selected native arm64 Docker daemon
-- Apple host-native adapter setup and validation paths materialize `python/.venv/` on demand after
-  reconciling the Homebrew-managed `python@3.12` formula and `python3.12` command, or reusing a
-  compatible Python 3.12+ executable that is already available, plus a user-local Poetry bootstrap
-  when needed
-- Apple routed Playwright validation now runs host-native `npm exec` against the published edge on
+- Apple host-native adapter setup and validation paths materialize the shared `python/.venv/` plus
+  the `transformers`, `pytorch`, and `diffusers` per-engine `apple-silicon` environments before
+  inference, after reconciling the Homebrew-managed `python@3.12` formula and `python3.12` command
+  or reusing a compatible Python 3.12+ executable, plus a user-local Poetry bootstrap when needed
+- Apple routed Playwright validation runs host-native `npm exec` against the published edge on
   `127.0.0.1`; because Apple retained Kind state is replayed into and out of the worker rather
   than bind-mounted, large `./.data/kind/apple-silicon/` trees can make `up`, `test`, and `down`
   slower than Linux
@@ -395,8 +408,9 @@ Notes:
   prerequisite error instead of provisioning another VM or context
 - Apple adapter setup and validation commands reconcile the Homebrew-managed `python@3.12` formula
   and `python3.12` command plus a user-local Poetry bootstrap when `poetry` is absent; the Poetry
-  bootstrap uses the exact configured Python 3.12 executable, after which all
-  host-side Python configuration continues through the repo-local `python/.venv/`. The generated
+  bootstrap uses the exact configured Python 3.12 executable. Shared quality/protobuf work then uses
+  `python/.venv/`, while Python-stdio inference uses the locked, marker-verified environment under
+  `python/engines/<engine>/.venv/`. The generated
   Apple manifest defaults Poetry to `${HOME}/.local/share/pypoetry/venv/bin/poetry`; the bootstrap
   creates that fixed root under a kernel lock and installs the pinned Poetry requirement through the
   bounded provisioning kernel. Manifestless discovery retains `/opt/homebrew/bin/poetry` only as a
@@ -405,10 +419,11 @@ Notes:
   user keychain state, host Xcode UI flows, or repository-owned native source: MLX GPU execution
   and Core ML device observation use public upstream package APIs, Core ML and native runners
   materialize through typed engine-artifact manifests under `./.data/engines/<adapterId>/`, and
-  request-time inference never starts virtualization or installs toolchains. The legacy `tart` /
-  `hostTart` / `AppleTart` and fixed native bridge implementations have been removed; the retained
-  `materialize-metal-engines` helper is the Tart-free, bounded candidate-root materialization
-  surface. See
+  request-time inference never starts virtualization or installs toolchains. There is no `tart` /
+  `hostTart` / `AppleTart` or fixed native bridge implementation; `materialize-metal-engines` is
+  the Tart-free, bounded candidate-root materialization
+  surface and also prepares the canonical Apple Python-stdio environments after releasing the
+  native/shared project lock. See
   [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md)
 
 ### Linux CPU host prerequisites
@@ -530,16 +545,15 @@ warning classification. In short:
 - inference compilation accounts against the resource that holds model weights: Apple unified host
   RAM or Linux CPU engine-pod RAM. A model whose declared requirement exceeds that capacity remains
   an explicit `UnavailableModel` carrying `ModelMemoryLimitExceeded` quantities while smaller
-  placements continue. The normal coordinator path now publishes that typed terminal result
-  without engine launch; the complete source-matched Phase 1 gate passed on 2026-07-25. Linux GPU
-  plan compilation fails closed with
-  `GpuDualResourceBudgetRequired` until Phase 6 provides independent RAM/VRAM enforcement. The
-  Apple/Linux CPU capped-engine watchdog implementations exist, but Phase 4 still owns adversarial
-  breach-survival proof and the encapsulated serialization authority. Treat a host `SystemOOM` as a
+  placements continue. The normal coordinator path publishes that typed terminal result without
+  engine launch. Linux GPU execution requires independently indexed RAM and VRAM grants and
+  observers; a single-resource plan fails closed with `GpuDualResourceBudgetRequired`.
+  Apple/Linux CPU capped-engine watchdog gates must demonstrate that an adversarial breach leaves
+  the daemon alive under the encapsulated serialization authority. Treat a host `SystemOOM` as a
   defect or environment contention, not as an accepted capacity result; see
   [bounded inference memory](documents/architecture/bounded_inference_memory.md)
 - buildx, npm update notices, npm deprecation warnings, Python root-pip warnings, and GHCup
-  shell-profile warnings are eliminated on the current supported image and web toolchain; if they
+  shell-profile warnings are eliminated on the supported image and web toolchain; if they
   return, treat them as regressions unless the canonical policy doc names a new upstream constraint
 - Playwright failures for a missing `web/scripts/install-purescript.mjs` are image contract
   regressions; the substrate image must copy `web/scripts/` before npm `postinstall`
@@ -552,7 +566,7 @@ warning classification. In short:
 
 ## Demo and Validation Quick Start
 
-The local HA Kind cluster is the supported demo ground and full-suite validation ground for all
+The local single-instance Kind cluster is the supported demo ground and full-suite validation ground for all
 three runtime modes. `cluster up` owns the bring-up path, `cluster status` prints the chosen
 edge port plus the published route inventory, and the demo UI is available at
 `http://127.0.0.1:<edge-port>/` whenever the active generated `.dhall` enables `demo_ui`.
@@ -561,23 +575,29 @@ edge port plus the published route inventory, and the demo UI is available at
 validation layer for the initialized substrate; full repository substrate closure is obtained
 by reinitializing and rerunning the same complete suite for each supported substrate.
 
-Development and validation are organized by hardware cohort to avoid needless machine switching.
-Work on a phase can stay on the current machine until a coherent slice is ready: Apple-specific
-work validates through the Apple Silicon host-native lane, and Linux or CUDA work validates on the
-CUDA-capable Linux lane. Phase closure batches the counterpart host run, so full cross-hardware
-evidence comes from one Apple Silicon full-suite pass and one CUDA Linux full-suite pass against
-the same phase state rather than alternating machines for every sprint. The active cycle's
-batched-switch boundaries are tracked in
-[DEVELOPMENT_PLAN/cohort-validation-waves.md](DEVELOPMENT_PLAN/cohort-validation-waves.md).
+Hardware-specific claims require the relevant full-suite gate on the machine that owns the
+accelerator: Apple behavior on the Apple Silicon host-native lane and CUDA behavior on a
+CUDA-capable Linux host. A cross-hardware claim requires both gates against the same source
+fingerprint; `linux-cpu` is a portable CPU lane and does not substitute for either accelerator.
 
-Direct host `cabal install --installdir=./.build ... all:exes` is the Apple Silicon host-native
-reference path only. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation
+Bare host Cabal is not a supported validation path. Apple clean-clone and rebuild work goes through
+`./bootstrap/apple-silicon.sh build`, whose fixed stage-0 preflight uses
+`/opt/homebrew/bin/colima` plus `/opt/homebrew/bin/jq` to measure physical memory and the active
+Colima pledge, then requires at least 12288 MiB effective memory before its exact seed-bound Cabal
+invocation. The bootstrap may reconcile `jq` through Homebrew, but it does not install Colima or
+create a profile or VM. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation
 commands run through the outer-container launcher.
 
-Every host toolchain invocation runs under a declared memory ceiling derived from measured physical
-RAM, together with the job count it is multiplied by — the toolchain is a named account on host
-memory, not a residual. See
+Every Haskell toolchain invocation runs under authority-derived heap caps and a complete claimant
+account: `jobs × compilerHeap + (jobs + 1) × controlHeap`. The extra claims cover the live Cabal
+driver and one worker-associated helper/native-auxiliary slot per compiler. On Darwin the complete
+sum is arithmetic plus sampled evidence, not an enforced aggregate; the operator CLI parent and
+fixed observer tools remain in the non-toolchain host reserve. See
 [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md).
+One authority serializes its own CLI child lifecycles through Cabal-leader reap, with owned-group
+cleanup on exceptions before that reap. It is not a host-global or crash-surviving lease:
+independent CLI images/checkouts and stage-0 bootstrap builds are unsupported concurrent claimants,
+the account does not fund their overlap, and governed workflows must serialize them.
 
 - `infernix test lint`
 - `infernix test unit`
@@ -593,27 +613,45 @@ Apple Silicon has no Dockerfile. The supported entrypoint is the repo-owned boot
 ./bootstrap/apple-silicon.sh build
 ./bootstrap/apple-silicon.sh up
 ./bootstrap/apple-silicon.sh status
-./bootstrap/apple-silicon.sh test
 ./bootstrap/apple-silicon.sh down
 ```
 
-Direct reference commands:
+The operator/demo cluster must be down before the harness workflow; `test` owns its own
+`HarnessOwned` cluster lifecycle and refuses a live `OperatorOwned` cluster:
 
 ```bash
-cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes
+./bootstrap/apple-silicon.sh test
+```
+
+Post-build operator/demo commands (rebuild again through the bootstrap, not bare Cabal):
+
+```bash
+./bootstrap/apple-silicon.sh build
 ./.build/infernix init
 ./.build/infernix cluster up
 ./.build/infernix cluster status
-./.build/infernix test all
 ./.build/infernix cluster down
 ```
+
+Post-build harness validation, after the operator cluster is down:
+
+```bash
+./.build/infernix init --runtime-mode apple-silicon --demo-ui true --if-missing
+./.build/infernix test init --runtime-mode apple-silicon --demo-ui true
+./.build/infernix test all
+```
+
+The Apple bootstrap `test` command runs the governed `init --if-missing` and test initialization
+before `test all`, so a clean workspace needs no separate config step. `--if-missing` preserves an
+existing operator config, and the harness backs it up and restores it; the wrapper does not run
+`cluster up` and refuses rather than deleting a live operator-owned cluster.
 
 `cluster up` publishes `./.build/infernix.kubeconfig` and never touches `$HOME/.kube/config`.
 Kind create or delete uses a transient host-local scratch kubeconfig first, so the supported
 repo-local kubeconfig remains the only operator-facing file under `./.build/`. On the supported
 minimal-prerequisites path, the bootstrap and then the binary reconcile Homebrew-managed operator
-tools and Poetry bootstrap before an adapter setup or validation path first needs the shared
-`python/.venv/`.
+tools and Poetry bootstrap before adapter setup or validation first needs the shared quality venv
+or the canonical per-engine Apple framework venvs.
 
 ### Linux CPU (outer container)
 
@@ -627,8 +665,8 @@ Supported bootstrap path:
 ```bash
 ./bootstrap/linux-cpu.sh up
 ./bootstrap/linux-cpu.sh status
-./bootstrap/linux-cpu.sh test
 ./bootstrap/linux-cpu.sh down
+./bootstrap/linux-cpu.sh test
 ```
 
 Direct reference commands:
@@ -636,9 +674,12 @@ Direct reference commands:
 ```bash
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster up
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster status
-docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster down
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
 ```
+
+The final command is the separate harness workflow: it must run only after the operator-owned
+cluster is down, and it owns its own cluster lifecycle.
 
 The Linux launcher bind-mounts only `./.data/` and the Docker socket. The baked image owns the
 full toolchain, source snapshot, build root, and `/opt/infernix/chart/charts/` chart archive
@@ -664,8 +705,8 @@ Supported bootstrap path:
 ```bash
 ./bootstrap/linux-gpu.sh up
 ./bootstrap/linux-gpu.sh status
-./bootstrap/linux-gpu.sh test
 ./bootstrap/linux-gpu.sh down
+./bootstrap/linux-gpu.sh test
 ```
 
 On a host that does not already pass `nvidia-smi -L`, the first `doctor`, `up`, or `test` run may
@@ -678,9 +719,11 @@ Direct reference commands:
 LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster up
 LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster status
 LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix kubectl get nodes -l infernix.runtime/gpu=true -o 'custom-columns=NAME:.metadata.name,GPU:.status.allocatable.nvidia\.com/gpu'
-LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test all
 LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix cluster down
+LAUNCHER_IMAGE=infernix-linux-gpu:local docker compose --project-name infernix-linux-gpu --file compose.yaml run --rm infernix infernix test all
 ```
+
+Here too, `test all` is the separate harness workflow after the operator-owned cluster is down.
 
 The CUDA substrate image bundles CUDA-aware engine builds such as `llama.cpp` CUDA and `vLLM` at
 image build time. `cluster up` installs the Envoy Gateway controller, the NVIDIA device plugin,
@@ -698,8 +741,11 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix init [--runtime-mode M] [--demo-ui true|false]` — generate the operator's runtime
   `./infernix.dhall` (the substrate) and host manifest `./infernix-host.dhall`. All other commands
   fail fast with a "run init" reminder until this exists; there is no hidden auto-generation
-  backstop inside ordinary `infernix` commands. `./bootstrap/apple-silicon.sh up` explicitly runs
-  `./.build/infernix init --if-missing` before `cluster up`
+  backstop inside ordinary `infernix` commands. Help and init themselves are config-independent;
+  `init --force` can replace a stale host schema through the closed runtime-config writer without
+  making runtime commands tolerant. `./bootstrap/apple-silicon.sh up` explicitly runs
+  `./.build/infernix init --if-missing` before `cluster up`; `./bootstrap/apple-silicon.sh test`
+  runs the runtime-mode-specific `init --if-missing` before test initialization and `test all`
 - `infernix test init` — generate the thin `./infernix.test.dhall` the test harness reads
 - `infernix service` — production Pulsar consumer; binds no HTTP listener. Routing is owned
   by the Helm-installed Envoy Gateway controller plus repo-owned HTTPRoute manifests
@@ -718,6 +764,9 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix test all`
 - `infernix docs check`
 - `infernix internal generate-purs-contracts`
+- `infernix internal validate-darwin-build-memory`
+- `infernix internal validate-darwin-audiveris-cancellation`
+- `infernix internal validate-darwin-installed-python-source-isolation`
 - `infernix internal discover {images,claims,harbor-overlay}`
 - `infernix internal publish-chart-images`
 - `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]`
@@ -738,27 +787,30 @@ lifecycle surface.
 
 ## Runtime and Image Flow
 
-- `cluster up` is the supported HA testing and demo-ground bring-up command
+- `cluster up` is the supported single-instance testing and demo-ground bring-up command
 - `cluster up` declaratively reconciles Kind, manual storage, Harbor-backed images, Helm workloads,
   repo-local kubeconfig publication, and publication of the active substrate configuration; Kind
   or `nvkind` create or delete uses a transient scratch kubeconfig while the published repo-local
   kubeconfig remains the supported operator surface
 - `bootstrap/*.sh` commands are launchers for `infernix` commands only after host prerequisites and
-  the substrate-specific binary or container launcher are ready; Apple `up` also invokes
-  `./.build/infernix init --if-missing` before `cluster up`. The bootstrap scripts do not directly
-  manage Kind, Kubernetes resources, manifests, or cluster workload image pulls
+  the substrate-specific binary or container launcher are ready; Apple `up` invokes
+  `./.build/infernix init --if-missing` before `cluster up`, while Apple `test` invokes the
+  runtime-mode-specific `init --if-missing` before test initialization and the harness-owned
+  `test all`. The bootstrap scripts do not directly manage Kind, Kubernetes resources, manifests,
+  or cluster workload image pulls
 - `infernix init` is the operator surface for creating the runtime `infernix.dhall`;
   `infernix internal materialize-substrate <runtime-mode> [--demo-ui true|false]` is the internal
   generator (used by `init`, the test harness, and `cluster up`) that renders the demo substrate
   `.dhall` defining the demo catalog and the engine binding for each demo-visible model on that
-  substrate
+  substrate, publishes the host/build-memory inputs, and prepares the closed per-engine Python plan
+  for Apple or Linux CPU. Linux GPU remains engine-image-owned
 - `infernix internal materialize-linux-native-engines` bakes image-owned Linux native runner roots
-  under `/opt/infernix/engines/<adapterId>/`; the Linux GPU/CPU images now carry runtime-backed
+  under `/opt/infernix/engines/<adapterId>/`; the Linux GPU/CPU images carry runtime-backed
   wrappers over image-baked native payloads for llama.cpp, whisper.cpp, ONNX Runtime/Basic Pitch,
   CTranslate2/faster-whisper, and Audiveris app jars plus an image-architecture Temurin 25 JRE.
   Strict image smoke checks validate payload presence, imports, and command wiring, including the
-  native Java Audiveris classpath launch; full routed MinIO-backed real-output evidence
-  was proven by Wave I (closed 2026-06-20) and re-validated by Waves K/L/P
+  native Java Audiveris classpath launch; selected-accelerator validation requires full routed
+  MinIO-backed real output
 - `cluster up` bootstraps Harbor first through Helm and allows Harbor plus only the storage or
   support services Harbor needs during bootstrap, including MinIO and PostgreSQL, to pull from
   public container repositories
@@ -791,7 +843,7 @@ lifecycle surface.
   MinIO into runtime cache
 - engine workers remain process-isolated and own their own batching, execution scheduling, and
   backpressure behavior
-- the HA demo ground exercises and demonstrates the control plane contract across the three
+- the local demo ground exercises and demonstrates the control plane contract across the three
   supported runtime modes
 
 ## Storage Model
@@ -844,9 +896,8 @@ this section is an orientation summary.
 - the union of configs generated for all supported substrates must cover every model or workload row
   in the comprehensive model, format, and engine matrix
 - each daemon reads its effective runtime config at startup; the coordinator eagerly stages every
-  model it lists into the model cache before serving. Changing model or member assignment is currently a
-  regenerate-and-restart or rollout boundary. Future hot reload, if implemented, flows
-  through compacted assignment records rather than ad hoc admin HTTP or raw topic remapping
+  model it lists into the model cache before serving. Changing model or member assignment is a
+  regenerate-and-restart or rollout boundary; hot reload is outside the supported contract
 - the production inference surface is Pulsar subscription only and includes both the stateless
   coordinator role (`infernix-coordinator` Deployment) and engine pools (`infernix-engine` plus
   any Linux GPU framework-specific Deployments on Linux substrates; on-host `infernix service`
@@ -860,34 +911,30 @@ this section is an orientation summary.
 - local cache state is never authoritative; it is reconstructed from durable metadata and durable
   artifacts
 - inference memory admission compiles each configured model against an explicit, resource-specific
-  budget: Apple uses a checked unified-host-RAM partition and Linux CPU uses the engine-pod capacity,
-  while Linux GPU currently fails closed until independently indexed pod-RAM and GPU-VRAM
-  enforcement is available. An oversized Apple/Linux CPU model remains an explicit
+  budget: Apple uses a checked unified-host-RAM partition, Linux CPU uses the engine-pod capacity,
+  and Linux GPU uses independently indexed pod-RAM and GPU-VRAM enforcement. A single-resource GPU
+  plan fails closed with `GpuDualResourceBudgetRequired`. An oversized model remains an explicit
   `UnavailableModel` carrying typed `ModelMemoryLimitExceeded` data rather than invalidating smaller
-  placements; normal coordinator result delivery passed the complete source-matched Phase 1 gate
-  on 2026-07-25, but that result is not post-correction Phase 2 evidence. The
-  stronger memory-safety construction
+  placements. The memory-safety construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)),
   rests on a compiled and refined execution plan, encapsulated serialized execution, exact
   per-model Linux enforcement, verified GPU VRAM enforcement, and resource-indexed launch
-  capabilities. Even so,
-  the landed capability core and watchdogs are not proof that every resource-exhaustion state is
+  capabilities. Even so, these mechanisms are not proof that every resource-exhaustion state is
   unrepresentable
 - host memory has more than one claimant, and inference is only one of them. The host toolchain is
   the other large one: an uncapped `cabal build` from this checkout reached 109.46 GiB resident on a
   124.94 GiB machine, and the kernel — which selects per process and ranks a build below every
-  cluster pod — destroyed 111 pod processes without ever touching it. Every host toolchain process
-  now runs under a declared ceiling derived from measured physical RAM together with its job count,
-  because a per-process cap under a host-core-count job setting bounds the host at `jobs × cap`. The
-  ledger, the per-lane enforcement mechanism, and an explicit statement of which out-of-memory
-  conditions remain *outside* the bound are owned by
+  cluster pod — destroyed 111 pod processes without ever touching it. The Haskell toolchain
+  carries authority-derived compiler/control heap caps and the complete
+  `jobs × compilerHeap + (jobs + 1) × controlHeap` claimant account. Darwin provides arithmetic and
+  sampled aggregate physical-footprint evidence, not an enforced aggregate; native helper growth,
+  the operator CLI parent, and fixed observer processes stay explicitly outside that enforcement.
+  The ledger, per-lane mechanism, and remaining out-of-memory conditions are owned by
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - cluster lifecycle and image-publication commands use closed semantic commands with generated
-  per-operation timeout/retry policies and one capability-gated command kernel. The all-Haskell
-  lifecycle-lock and subprocess implementations are present, and the obsolete subprocess C source
-  and Cabal declaration are removed. Phase 0's focused correction proof, final review, and complete
-  Stage 1 are green; Phase 2's own ordered final review, complete Stage 1, Apple, and paired
-  `linux-cpu` evidence remain blocked by active Phase 1
+  per-operation timeout/retry policies and one capability-gated command kernel. The lifecycle lock
+  and subprocess boundary are all-Haskell; no repository-owned subprocess C source or matching
+  Cabal declaration exists
 
 ## Messaging and Lane Model
 
@@ -901,7 +948,7 @@ section is an orientation summary.
   topics are derived from runtime mode, pool id, model id, and optional pinned member id
 - request routing is pool-oriented: one model resolves to one or more eligible engine pools, and
   Pulsar broker backpressure distributes work across eligible members in normal `Shared` pools
-- topic publication is capability-gated from the compiled plan; the raw publisher is removed, and
+- topic publication is capability-gated from the compiled plan; there is no raw publisher, and
   compilation rejects reuse across request, result, bootstrap-request, bootstrap-ready, and
   engine-route topic families
 - model-bootstrap publication requires an opaque plan-derived capability, and consumers revalidate
@@ -928,7 +975,7 @@ contracts.
   system packages, and the three browser engines; `infernix test e2e` runs
   `npm --prefix web exec -- playwright test` inside that same image
 - the Apple Silicon host-native routed-E2E executor uses host `npm exec` with the same typed
-  fixture path as Linux and is covered by the Apple cohort validation batch
+  fixture path as Linux and must pass the Apple routed real-output gate
 - the `infernix-demo` workload is deployed through repo-owned Helm chart templates and values, and
   is gated by the `.dhall` `demo_ui` flag; production deployments leave it off
 - the demo UI catalog is derived from the generated mode-specific demo `.dhall` file for the active
@@ -940,16 +987,17 @@ contracts.
   image, and the test orchestration lives in the Haskell integration test suite
 - the demo UI can submit manual inference requests against any registered model in the active demo
   catalog; the production inference surface remains Pulsar topics named in the active `.dhall`
-- the demo UI, demo API surface, generated PureScript contracts, and validation suites must expand
-  until every supported model, format, and engine combination has a browser-visible and testable
-  path under the demo surface
+- the demo UI, demo API surface, generated PureScript contracts, and validation suites provide a
+  browser-visible, testable path for every supported model, format, and engine combination under
+  the demo surface
 - validation asserts a per-family result contract for every active-substrate catalog row (LLM and
   speech inline text; source-separation, audio-to-MIDI, music-transcription, image, video,
   audio-generation, and OMR object-reference artifacts) and fails closed on `status=failed`, with
   typed inference errors classified separately from successful output payloads. Realness is
   guaranteed by construction — the engine code is structurally incapable of returning a fabricated
-  result (the realness lint forbids it). Cohort waves prove the catalog that existed when they ran;
-  A row is an explicit residual only when its achievability is uncertain; a row that is merely
+  result (the realness lint forbids it). Each validation receipt names the exact source fingerprint
+  and generated catalog it proves; a source or catalog mismatch invalidates the receipt. A row is
+  an explicit residual only when its achievability is uncertain; a row that is merely
   unbuilt stays declared-runnable and fails closed. One DRY
   substrate-aware integration suite traverses the README matrix and the union across the
   `apple-silicon`, `linux-cpu`, and `linux-gpu` catalogs covers every matrix row. See
@@ -965,7 +1013,7 @@ contracts.
   view plus a per-user Files view that render
   image, playable audio, and video artifacts inline, previews bounded text/JSON, uses
   browser-native PDF handling, and renders MIDI, MusicXML/MXL notation, and ZIP-stem archives
-  inline (Phase 7 Sprint 7.27); backend pods are stateless and the browser
+  inline; backend processes are stateless and the browser
   holds no durable state, so signing in on any device fully reconstitutes the user's
   contexts, drafts, transcripts, and artifacts; business logic — reducer, dispatcher, prefix-
   hash, idempotency — lives only in Haskell and surfaces to the SPA as typed snapshots and
@@ -981,7 +1029,7 @@ contracts.
 
 ## Comprehensive Model / Format / Engine Matrix
 
-The platform targets the following model, format, and engine coverage envelope. The Kind HA demo
+The platform targets the following model, format, and engine coverage envelope. The Kind demo
 ground and demo webapp provide the shared operator and demo substrate for this matrix.
 
 | Model / workload type | Artifact / format type | Reference model | Download URL | Best Linux CPU engine | Best Linux CUDA engine | Best Apple Silicon engine | Notes |
@@ -989,20 +1037,20 @@ ground and demo webapp provide the shared operator and demo substrate for this m
 | LLM (general text) | HF safetensors | SmolLM2-135M-Instruct | https://huggingface.co/HuggingFaceTB/SmolLM2-135M-Instruct | Transformers + PyTorch CPU | vLLM | Transformers + PyTorch MPS | Small real safetensors checkpoint for constrained CPU and Apple lanes |
 | LLM (quantized, CUDA-focused) | AWQ | Qwen2.5-1.5B-Instruct-AWQ | https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-AWQ | Not recommended | vLLM | Not recommended | GPU-oriented quantized checkpoint |
 | LLM (quantized, CUDA-focused) | GPTQ | TinyLlama-1.1B-Chat-v1.0-GPTQ | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GPTQ | Not recommended | vLLM | Not recommended | Older but useful quantized checkpoint family |
-| LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path. The CUDA column runs the CPU llama.cpp Ubuntu binary today; a CUDA-accelerated llama.cpp build is tracked as the named `linux-gpu` Wave Q cohort residual |
+| LLM (local / edge) | GGUF | TinyLlama-1.1B-Chat-v1.0-GGUF | https://huggingface.co/TheBloke/TinyLlama-1.1B-Chat-v1.0-GGUF | llama.cpp | llama.cpp | llama.cpp (Metal) | Best cross-platform local runtime path. The CUDA column runs the CPU llama.cpp Ubuntu binary; a CUDA-accelerated llama.cpp build is a named `linux-gpu` residual |
 | LLM (Apple-native) | MLX | Qwen1.5-1.8B-Chat-4bit (MLX) | https://huggingface.co/mlx-community/Qwen1.5-1.8B-Chat-4bit | Not recommended | Not recommended | MLX / MLX-LM | Apple-native converted artifact family |
-| Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path. The CUDA column runs the CPU whisper.cpp binary today; a CUDA-accelerated whisper.cpp build is tracked as the named `linux-gpu` Wave Q cohort residual |
+| Speech transcription | whisper.cpp model set / GGML-style | whisper-small | https://github.com/ggml-org/whisper.cpp/tree/master/models | whisper.cpp | whisper.cpp | whisper.cpp (Metal) | Best compact or native path. The CUDA column runs the CPU whisper.cpp binary; a CUDA-accelerated whisper.cpp build is a named `linux-gpu` residual |
 | Speech transcription | CTranslate2 | faster-whisper-small | https://huggingface.co/Systran/faster-whisper-small | CTranslate2 | CTranslate2 | CTranslate2 (CPU) | Viable Apple CPU path; CUDA remains the throughput-oriented lane |
 | Source separation | PyTorch checkpoint | htdemucs | https://dl.fbaipublicfiles.com/demucs/hybrid_transformer/955717e8-8726e21a.th | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Canonical Demucs execution path |
 | Source separation | PyTorch checkpoint | Open-Unmix | https://zenodo.org/records/3370489 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Alternate separation path |
 | Audio-to-MIDI / pitch transcription | Core ML | basic-pitch | https://github.com/spotify/basic-pitch | Not recommended | Not recommended | Core ML | Preferred Apple production lane for Basic Pitch |
 | Audio-to-MIDI / pitch transcription | ONNX | basic-pitch release artifacts | https://github.com/spotify/basic-pitch/releases | ONNX Runtime CPU | ONNX Runtime (CPU) | ONNX Runtime | Useful portable fallback artifact. The `linux-gpu` lane runs the CPU ONNX provider (`CPUExecutionProvider`, CPU `onnxruntime` wheel), so the cell is labeled `ONNX Runtime (CPU)` and the row is not GPU-scheduled; a `CUDAExecutionProvider` + `onnxruntime-gpu` path remains a named `linux-gpu` CUDA-accuracy residual (needs a CUDA Linux host) |
-| Multi-instrument music transcription | PyTorch checkpoint | MT3-PyTorch | https://github.com/kunato/mt3-pytorch/tree/master/pretrained | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MT3-PyTorch row; Apple uses the CPU path until upstream MPS support is validated |
-| Multi-instrument music transcription | PyTorch checkpoint | MR-MT3 | https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MR-MT3 row; Apple uses the CPU path until upstream MPS support is validated |
-| Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter, replacing the ancient-TensorFlow Omnizart stack; real engine landed and wired on the pytorch adapter, real-output evidence closed under the cohort gate (Wave R Apple 2026-07-08, Wave S Linux 2026-07-09) |
+| Multi-instrument music transcription | PyTorch checkpoint | MT3-PyTorch | https://github.com/kunato/mt3-pytorch/tree/master/pretrained | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MT3-PyTorch row; the Apple binding is CPU-only and MPS is unsupported |
+| Multi-instrument music transcription | PyTorch checkpoint | MR-MT3 | https://huggingface.co/gudgud1014/MR-MT3/resolve/main/mt3.pth | PyTorch CPU | PyTorch CUDA | PyTorch CPU | mt3-infer-backed MR-MT3 row; the Apple binding is CPU-only and MPS is unsupported |
+| Music transcription / MIR family | PyTorch | piano_transcription_inference | https://zenodo.org/record/4034264/files/CRNN_note_F1%3D0.9677_pedal_F1%3D0.9186.pth?download=1 | PyTorch CPU | PyTorch CUDA | PyTorch MPS | ByteDance piano transcription (qiuqiangkong) on the pytorch adapter; the support contract requires routed real output on each claimed accelerator |
 | Image generation | Diffusers / safetensors pipeline | SDXL Turbo | https://huggingface.co/stabilityai/sdxl-turbo | Not recommended | Diffusers or ComfyUI | Diffusers on MPS | Standard open image-generation stack |
 | Image generation | Core ML | Apple Stable Diffusion Core ML v1.5 palettized | https://huggingface.co/apple/coreml-stable-diffusion-v1-5-palettized | Not recommended | Not recommended | Core ML | Apple-native exported Core ML path using preconverted Hugging Face packages |
-| Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; the Apple cell is the named residual tracked in `residualMatrixRowIdsForMode AppleSilicon` (MPS video diffusion not promoted until validated), with matrix union coverage satisfied by the real `linux-gpu` Diffusers cell |
+| Video generation | Diffusers / safetensors pipeline | Wan2.1-T2V-1.3B | https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers | Not recommended | Diffusers or ComfyUI | Named residual: Diffusers on MPS viability spike | Small reference text-to-video model; MPS video diffusion is an unsupported named Apple residual in `residualMatrixRowIdsForMode AppleSilicon`, with matrix union coverage satisfied by the real `linux-gpu` Diffusers cell |
 | Audio generation / TTS-style | PyTorch / HF | bark-small | https://huggingface.co/suno/bark-small | PyTorch CPU | PyTorch CUDA | PyTorch MPS | Representative audio-generation family |
 | OMR / notation extraction tool | JVM application | Audiveris | https://github.com/Audiveris/audiveris | JVM | JVM | JVM | Treat as tool runtime, not a separately managed ANN kernel family |
 
@@ -1012,8 +1060,8 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   demo-visible models and engine bindings for that mode
 - across Apple, CPU, and CUDA demo `.dhall` generation, every row in the comprehensive matrix must
   be represented by an explicit model or workload entry
-- the model catalog, manifests, and runtime registration surface must grow until every matrix row is
-  representable by a registered model and a typed request contract
+- the model catalog, manifests, and runtime registration surface represent every matrix row through
+  a registered model and a typed request contract
 - the demo SPA must present a usable browser path for manual inference against every supported
   matrix row, including request forms, progress states, result rendering, and object-reference
   handling where needed
@@ -1027,7 +1075,7 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   typed errors such as `ModelMemoryLimitExceeded` by constructor and explicit MiB quantities rather
   than parsing human-readable text, and — under memory-safety by construction
   ([documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)) —
-  the owning Phase 4/6 full per-model real-inference lanes must complete with zero host
+  the selected-accelerator full per-model real-inference lanes must complete with zero host
   out-of-memory kill, an over-capacity model surfacing that same typed rejection rather than a
   `SIGKILL`. Realness is guaranteed by construction — the engine code cannot
   fabricate a result (enforced by the realness lint), and a row is an explicit residual only when

@@ -1,11 +1,14 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Active — reopened 2026-08-08 by the
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active — reopened 2026-08-08 by the
 [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Sprint 7.29's closure rests
 explicitly on the Wave V (2026-07-20) apple-silicon plus linux-cpu full-suite `test all` green, and
 that attestation predates 82 files / 67,232 insertions landed 2026-07-25..2026-08-07 with no Darwin
-validation. `test all` currently cannot run on either lane, so the evidence this phase's `Done`
-depended on cannot be reproduced today. No defect is known in this phase's own surface — the reopen
+validation. No complete current-source Phase 1 gate or replacement Apple/paired-`linux-cpu`
+attestation exists, so the evidence this phase's `Done` depended on is not current proof. No defect
+is known in this phase's own surface — the reopen
 is an evidence reopen, and it re-closes when Wave Y records a result. Sprint 7.28 closed by full
 linux-gpu + linux-cpu cohort validation, and the Sprint 7.29 Managed-State-Transition plus
 Bounded-Command/Bounded-HTTP reopen closed by [Wave V](cohort-validation-waves.md) (2026-07-20) on
@@ -19,6 +22,9 @@ the apple-silicon plus linux-cpu full-suite `test all` green
 > proves all of it under load and pod failure.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 7 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > **Common-shape reopen (Webapp role).** Closed 2026-06-30: the demo frontend now runs as the
 > one-binary `Webapp` role selected by typed Dhall and `infernix service --role webapp`, per the
@@ -3239,13 +3245,12 @@ None. The generated-artifact legacy row has moved to Completed in
 
 ---
 
-## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Done]
+## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Active — Validation Only]
 
-**Status**: Done — typed transition-evidence retirement of the `ClusterState`/`LifecycleProgress`
-stringly fields, the `DemoBucketsProvisioned`-gated object-proxy routes, and the proven `.ready`
-sentinel gate; code-side closure (machine-independent gates) plus the single-accelerator
-(apple-silicon) plus linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md)
-on 2026-07-20.
+**Status**: Active — Validation Only. The typed transition-evidence retirement of the
+`ClusterState`/`LifecycleProgress` stringly fields, the `DemoBucketsProvisioned`-gated object-proxy
+routes, and the proven `.ready` sentinel gate remain landed. Wave V's 2026-07-20 Apple plus
+`linux-cpu` sign-off was reset as current proof on 2026-08-08; reproduce it in Wave Y after Phase 1.
 **Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
 `poetry run check-code` all green on the apple-silicon lane.
@@ -3282,6 +3287,9 @@ not hope. It generalizes the results-side realness contract to state transitions
 
 ### Remaining Work
 
+- **Authoritative current remainder (2026-08-09):** reproduce the Apple plus paired `linux-cpu`
+  cohort evidence in Wave Y after Phase 1's current-source closure. The chronology below records the
+  prior closure and is historical evidence only.
 - code-side closed 2026-07-16. Landed this sprint:
   - the stringly `LifecycleProgress` type and its `lifecycleAction` / `lifecyclePhase` /
     `lifecycleDetail` / `lifecycleHeartbeatAt` fields are retired from `src/Infernix/Types.hs`;
@@ -3311,8 +3319,8 @@ not hope. It generalizes the results-side realness contract to state transitions
   [Wave V](cohort-validation-waves.md) on 2026-07-20 — apple-silicon `./.build/infernix test all` green
   (integration 16/16 real inference + e2e routed Playwright 16/16) and linux-cpu
   `./bootstrap/linux-cpu.sh test` green (integration with 6 real inference + 6 typed over-budget
-  admission rejections + full HA/throughput/lifecycle + e2e routed Playwright 16/16). No remaining work
-  exists
+  admission rejections + full HA/throughput/lifecycle + e2e routed Playwright 16/16). That result
+  closed the historical source but is not current evidence after the reset
 - post-closure current-source validation on 2026-07-20 caught one routed artifact UI timing race: a
   fresh Apple aggregate rerun passed lint/unit/integration and failed only the artifact
   upload/preview/download Playwright spec because the download grant became ready before the text
@@ -3328,9 +3336,9 @@ Reproduce the Sprint 7.29 cohort evidence. The Wave V (2026-07-20) attestation t
 was reset on 2026-08-08 and is no longer a current proof point; nothing in this phase's own surface is
 known broken, and no code-side work is claimed here. The residual is validation-only.
 
-**Cohort gate**: [Wave Y](cohort-validation-waves.md). Blocked upstream by Phase 1 Sprint 1.20's
-bounded-command environment defect, which currently prevents `cluster up` and `test all` on both
-lanes.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md), after Phase 1's complete current-source gates
+and Apple/paired-`linux-cpu` cohorts. The former Sprint 1.20 bounded-command environment defect is
+corrected and is historical context, not the current blocker.
 
 The Sprint 7.29 reopen work closed by [Wave V](cohort-validation-waves.md) (2026-07-20) for that
 wave's recorded scope.

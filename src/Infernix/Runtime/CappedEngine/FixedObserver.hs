@@ -18,9 +18,12 @@ module Infernix.Runtime.CappedEngine.FixedObserver
     parseFootprintPhysicalBytes,
     parseNvidiaComputeApps,
     parseNvidiaDeviceTotalMib,
+    parseTopProcessGroupLiveMembersAbsent,
     parseTopProcessGroupMembers,
+    parseTopProcessGroupSamplingMembers,
     probeNvidiaVramObserver,
     probePhysicalFootprintObserver,
+    processGroupHasNoLiveMembers,
     processGroupPhysicalFootprintBytes,
     runFixedObserverFixtureModeIfRequested,
     runFixedObserverKernelTest,
@@ -139,6 +142,10 @@ data FixedObserverKernelTest
   | ObserverStoppedGroupCleanup
   | ObserverDescendantGroupCleanup
   | ObserverOutputBoundsCleanup
+  | ObserverMemberTurnoverRestart
+  | ObserverLiveMemberFailure
+  | ObserverTerminalMemberFailure
+  | ObserverMembershipRecheckFailure
   deriving (Bounded, Enum, Eq, Show)
 
 -- The fixed observation requests exist only where their public tools do: the
@@ -207,6 +214,23 @@ data ObserverSpawnEvidence = ObserverSpawnEvidence
     observerSpawnBirthIdentity :: Maybe ProcessBirthIdentity
   }
 
+-- | Prove through the fixed complete @/usr/bin/top@ snapshot that a retained
+-- process-group identity has no live members. Darwin omits an unreaped zombie
+-- leader from @top@ and answers @kill(-pgid, 0)@ with @EPERM@, so this is the
+-- pre-reap live-member proof. The owner then crosses a masked leader-reap
+-- transition and must not treat the reusable numeric PGID as evidence.
+processGroupHasNoLiveMembers :: CPid -> IO (Either Text Bool)
+#if defined(darwin_HOST_OS)
+processGroupHasNoLiveMembers processGroup =
+  captureSynchronousFailure "Apple process-group live-member observation failed" $ do
+    deadline <- deadlineFromNow observerSampleTimeoutMicros
+    output <- runFixedObserverRequest deadline (DiscoverProcessGroup processGroup)
+    pure (output >>= parseTopProcessGroupLiveMembersAbsent processGroup)
+#else
+processGroupHasNoLiveMembers _ =
+  pure (Left "Apple process-group live-member observation is unavailable on this platform")
+#endif
+
 processGroupPhysicalFootprintBytes :: CPid -> IO (Either Text Word64)
 #if defined(darwin_HOST_OS)
 processGroupPhysicalFootprintBytes processGroup =
@@ -215,24 +239,62 @@ processGroupPhysicalFootprintBytes processGroup =
     discovered <- discoverProcessGroupMembers deadline processGroup
     case discovered of
       Left reason -> pure (Left reason)
-      Right members -> sampleMembers deadline members 0
+      Right members ->
+        sampleCompleteProcessGroupSnapshotWith
+          (observeProcessGroupMembers deadline processGroup)
+          (measureProcessFootprint deadline)
+          members
+#else
+processGroupPhysicalFootprintBytes _ =
+  pure (Left "Apple physical-footprint observation is unavailable on this platform")
+#endif
+
+-- | Sum one complete process-group membership snapshot. A member can exit
+-- after @top@ publishes the snapshot but before @footprint@ opens that PID. A
+-- failed member is therefore rechecked through another complete snapshot. If
+-- it has gone, every partial byte count is discarded and sampling restarts
+-- from the refreshed membership; if it remains live, the observer failure is
+-- preserved. Production supplies observations and measurements that all share
+-- one fixed 'ObserverDeadline', so repeated turnover cannot extend the sample.
+sampleCompleteProcessGroupSnapshotWith ::
+  IO (Either Text [CPid]) ->
+  (CPid -> IO (Either Text Word64)) ->
+  [CPid] ->
+  IO (Either Text Word64)
+sampleCompleteProcessGroupSnapshotWith observeMembers measureMember initialMembers
+  | null initialMembers =
+      pure (Left "Apple top output omitted every live process-group member")
+  | otherwise = sampleMembers initialMembers 0
   where
-    sampleMembers _ [] total = pure (Right total)
-    sampleMembers deadline (processId : remaining) total = do
-      sampled <- measureProcessFootprint deadline processId
+    sampleMembers [] total = pure (Right total)
+    sampleMembers (processId : remaining) total = do
+      sampled <- measureMember processId
       case sampled of
-        Left reason -> pure (Left reason)
+        Left footprintFailure -> do
+          refreshed <- observeMembers
+          case refreshed of
+            Left membershipFailure ->
+              pure
+                ( Left
+                    ( footprintFailure
+                        <> "; Apple process-group membership recheck failed: "
+                        <> membershipFailure
+                    )
+                )
+            Right refreshedMembers
+              | processId `elem` refreshedMembers ->
+                  pure (Left footprintFailure)
+              | null refreshedMembers ->
+                  pure (Left footprintFailure)
+              | otherwise ->
+                  sampleMembers refreshedMembers 0
         Right physicalBytes ->
           case checkedAddWord64 total physicalBytes of
             Nothing ->
               pure
                 (Left "Apple process-group physical-footprint total overflowed Word64")
             Just nextTotal ->
-              sampleMembers deadline remaining nextTotal
-#else
-processGroupPhysicalFootprintBytes _ =
-  pure (Left "Apple physical-footprint observation is unavailable on this platform")
-#endif
+              sampleMembers remaining nextTotal
 
 verifyPhysicalFootprintObserver :: IO Bool
 #if defined(darwin_HOST_OS)
@@ -347,8 +409,19 @@ discoverProcessGroupMembers ::
   CPid ->
   IO (Either Text [CPid])
 discoverProcessGroupMembers deadline processGroup = do
+  observed <- observeProcessGroupMembers deadline processGroup
+  pure (observed >>= requireProcessGroupSamplingMembers)
+
+-- Keep the empty membership shape available to a failed-member recheck: it is
+-- terminal evidence for the caller to settle alongside relay closure, never a
+-- fabricated zero-byte sample.
+observeProcessGroupMembers ::
+  ObserverDeadline ->
+  CPid ->
+  IO (Either Text [CPid])
+observeProcessGroupMembers deadline processGroup = do
   output <- runFixedObserverRequest deadline (DiscoverProcessGroup processGroup)
-  pure (output >>= parseTopProcessGroupMembers processGroup)
+  pure (output >>= parseTopProcessGroupMemberRows processGroup)
 
 measureProcessFootprint ::
   ObserverDeadline ->
@@ -990,7 +1063,48 @@ parseTopProcessGroupMembers ::
   CPid ->
   ByteString ->
   Either Text [CPid]
-parseTopProcessGroupMembers processGroup contents
+parseTopProcessGroupMembers processGroup contents = do
+  members <- parseTopProcessGroupMemberRows processGroup contents
+  unless
+    (processGroup `elem` members)
+    (Left "Apple top output omitted the exact process-group leader")
+  pure members
+
+-- | Members that remain sampleable while the caller retains the unreaped
+-- process-group leader's numeric identity. Darwin omits a zombie leader from
+-- @top@, so requiring the leader row here would discard the footprint of live
+-- descendants. An empty group is terminal, not a zero-byte sample.
+parseTopProcessGroupSamplingMembers ::
+  CPid ->
+  ByteString ->
+  Either Text [CPid]
+parseTopProcessGroupSamplingMembers processGroup contents = do
+  members <- parseTopProcessGroupMemberRows processGroup contents
+  requireProcessGroupSamplingMembers members
+
+requireProcessGroupSamplingMembers :: [CPid] -> Either Text [CPid]
+requireProcessGroupSamplingMembers members = do
+  when
+    (null members)
+    (Left "Apple top output omitted every live process-group member")
+  pure members
+
+-- | Whether the fixed complete top snapshot contains no live member of the
+-- requested process group. Unlike 'parseTopProcessGroupMembers', this accepts
+-- the ordinary terminal Darwin shape in which the unreaped zombie leader is
+-- absent from @top@; every row and bound is still validated identically.
+parseTopProcessGroupLiveMembersAbsent ::
+  CPid ->
+  ByteString ->
+  Either Text Bool
+parseTopProcessGroupLiveMembersAbsent processGroup contents =
+  null <$> parseTopProcessGroupMemberRows processGroup contents
+
+parseTopProcessGroupMemberRows ::
+  CPid ->
+  ByteString ->
+  Either Text [CPid]
+parseTopProcessGroupMemberRows processGroup contents
   | not (validProcessId processGroup) =
       Left "Apple process-group observer received an invalid process-group id"
   | ByteString.length contents > maximumTopOutputBytes =
@@ -1018,11 +1132,6 @@ parseTopProcessGroupMembers processGroup contents
           Left "Apple top output exceeded its process-row bound"
       | otherwise = do
           (_, members) <- foldM parseRow (Set.empty, Set.empty) rows
-          unless
-            (Set.member processGroup members)
-            ( Left
-                "Apple top output omitted the exact process-group leader"
-            )
           unless
             (Set.size members <= maximumObservedGroupMembers)
             ( Left
@@ -1289,6 +1398,14 @@ runKernelTest testCase =
       testDescendantGroupCleanup
     ObserverOutputBoundsCleanup ->
       testOutputBoundsCleanup
+    ObserverMemberTurnoverRestart ->
+      testMemberTurnoverRestart
+    ObserverLiveMemberFailure ->
+      testLiveMemberFailure
+    ObserverTerminalMemberFailure ->
+      testTerminalMemberFailure
+    ObserverMembershipRecheckFailure ->
+      testMembershipRecheckFailure
 
 data ObserverFixture
   = FixtureNormal
@@ -1455,6 +1572,147 @@ testOutputBoundsCleanup = do
     )
     (kernelTestFailure "observer drains did not retain exactly their configured bounds")
   requireExactFixtureAbsence evidence
+
+data MemberSamplingFixtureStep
+  = FixtureObserveMembers (Either Text [CPid])
+  | FixtureMeasureMember CPid (Either Text Word64)
+  deriving (Eq, Show)
+
+testMemberTurnoverRestart :: IO ()
+testMemberTurnoverRestart =
+  testMemberSamplingFixture
+    "departed member restarts the complete refreshed snapshot from zero"
+    [fixtureProcessId42, fixtureProcessId43]
+    [ FixtureMeasureMember fixtureProcessId42 (Right 100),
+      FixtureMeasureMember fixtureProcessId43 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Right [fixtureProcessId42, fixtureProcessId44]),
+      FixtureMeasureMember fixtureProcessId42 (Right 100),
+      FixtureMeasureMember fixtureProcessId44 (Right 200)
+    ]
+    (Right 300)
+
+testLiveMemberFailure :: IO ()
+testLiveMemberFailure =
+  testMemberSamplingFixture
+    "a still-live failed member preserves the footprint failure"
+    [fixtureProcessId42]
+    [ FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Right [fixtureProcessId42])
+    ]
+    (Left fixtureFootprintFailure)
+
+testTerminalMemberFailure :: IO ()
+testTerminalMemberFailure =
+  testMemberSamplingFixture
+    "an empty refreshed group preserves the failure for terminal settlement"
+    [fixtureProcessId42]
+    [ FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Right [])
+    ]
+    (Left fixtureFootprintFailure)
+
+testMembershipRecheckFailure :: IO ()
+testMembershipRecheckFailure =
+  testMemberSamplingFixture
+    "a failed membership recheck fails closed with both diagnostics"
+    [fixtureProcessId42]
+    [ FixtureMeasureMember fixtureProcessId42 (Left fixtureFootprintFailure),
+      FixtureObserveMembers (Left fixtureMembershipFailure)
+    ]
+    ( Left
+        "injected footprint failure; Apple process-group membership recheck failed: injected membership failure"
+    )
+
+testMemberSamplingFixture ::
+  String ->
+  [CPid] ->
+  [MemberSamplingFixtureStep] ->
+  Either Text Word64 ->
+  IO ()
+testMemberSamplingFixture label initialMembers steps expected = do
+  stepsRef <- newIORef steps
+  actual <-
+    sampleCompleteProcessGroupSnapshotWith
+      (fixtureObserveMembers stepsRef)
+      (fixtureMeasureMember stepsRef)
+      initialMembers
+  unless (actual == expected) $
+    kernelTestFailure
+      ( label
+          <> ": returned "
+          <> show actual
+          <> " instead of "
+          <> show expected
+      )
+  remaining <- readIORef stepsRef
+  unless (null remaining) $
+    kernelTestFailure
+      ( label
+          <> ": left unconsumed scripted operations "
+          <> show remaining
+      )
+
+fixtureObserveMembers ::
+  IORef [MemberSamplingFixtureStep] ->
+  IO (Either Text [CPid])
+fixtureObserveMembers stepsRef = do
+  step <- takeMemberSamplingFixtureStep stepsRef
+  case step of
+    FixtureObserveMembers observed -> pure observed
+    FixtureMeasureMember processId _ ->
+      kernelTestFailure
+        ( "member-sampling fixture observed membership before measuring PID "
+            <> show processId
+        )
+
+fixtureMeasureMember ::
+  IORef [MemberSamplingFixtureStep] ->
+  CPid ->
+  IO (Either Text Word64)
+fixtureMeasureMember stepsRef processId = do
+  step <- takeMemberSamplingFixtureStep stepsRef
+  case step of
+    FixtureMeasureMember expectedProcessId observed
+      | processId == expectedProcessId -> pure observed
+      | otherwise ->
+          kernelTestFailure
+            ( "member-sampling fixture measured PID "
+                <> show processId
+                <> " instead of "
+                <> show expectedProcessId
+            )
+    FixtureObserveMembers _ ->
+      kernelTestFailure
+        ( "member-sampling fixture measured PID "
+            <> show processId
+            <> " before refreshing membership"
+        )
+
+takeMemberSamplingFixtureStep ::
+  IORef [MemberSamplingFixtureStep] ->
+  IO MemberSamplingFixtureStep
+takeMemberSamplingFixtureStep stepsRef = do
+  steps <- readIORef stepsRef
+  case steps of
+    [] -> kernelTestFailure "member-sampling fixture exhausted its scripted operations"
+    step : remaining -> do
+      writeIORef stepsRef remaining
+      pure step
+
+fixtureProcessId42 :: CPid
+fixtureProcessId42 = 42
+
+fixtureProcessId43 :: CPid
+fixtureProcessId43 = 43
+
+fixtureProcessId44 :: CPid
+fixtureProcessId44 = 44
+
+fixtureFootprintFailure :: Text
+fixtureFootprintFailure = "injected footprint failure"
+
+fixtureMembershipFailure :: Text
+fixtureMembershipFailure = "injected membership failure"
 
 requireUnboundedDrain :: DrainCapture -> Either Text ByteString
 requireUnboundedDrain capture

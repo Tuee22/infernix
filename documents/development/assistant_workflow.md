@@ -21,7 +21,7 @@ this canonical list.
 
 - make requested file changes directly in the working tree; use read-only Git inspection when needed
 - never run `git add`, `git commit`, or `git push`
-- keep `DEVELOPMENT_PLAN/` truthful as implementation status changes
+- keep implementation status and validation receipts truthful in `DEVELOPMENT_PLAN/`
 - use `documents/` as the canonical home for architecture, development, engineering, operations, and
   reference guidance; the root entry docs summarize and link here
 - update `README.md`, `AGENTS.md`, and `CLAUDE.md` together when root workflow guidance or the
@@ -36,9 +36,11 @@ this canonical list.
   scripts may reconcile prerequisites and build or enter the active launcher, while cluster
   lifecycle, Kubernetes manifests, cluster workload image pulls, Harbor publication, validation,
   and teardown remain `infernix`-owned
-- use direct host `cabal` only for the Apple Silicon host-native control plane; do not use host
-  `cabal` for Linux or CUDA validation — use the containerized outer-control-plane path. Every host
-  `cabal` invocation runs under the declared build ceiling
+- do not use bare host `cabal` commands for validation. Apple clean-clone and rebuild work goes through
+  `./bootstrap/apple-silicon.sh build`, whose fixed stage-0 preflight measures physical memory and
+  the active Colima pledge before its exact seed-bound Cabal invocation; after `infernix init`,
+  focused Haskell gates run through the closed CLI toolchain vocabulary and live derived authority.
+  Linux and CUDA validation use the containerized outer-control-plane path
   ([../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md))
 - never use cross-architecture emulation for development or validation; do not create or switch
   Docker contexts or provision a Colima VM on Apple Silicon (the existing native arm64 daemon is used)
@@ -59,9 +61,10 @@ this canonical list.
 - zero version-controlled `.dhall`: the `infernix` binary is the sole generator of every `.dhall`;
   operators create config with `infernix init` / `infernix test init`; ordinary `infernix`
   commands fail fast if config is missing, while `./bootstrap/apple-silicon.sh up` explicitly runs
-  `./.build/infernix init --if-missing` before `cluster up`.
+  `./.build/infernix init --if-missing` before `cluster up` and its `test` command runs the
+  runtime-mode-specific `init --if-missing` before test initialization and `test all`.
   Canonical: [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
-- evidence-gated state transitions are the target construction: every operation that acts on a system state consumes typed
+- evidence-gated state transitions: every operation that acts on a system state consumes typed
   evidence that its transition completed; the raw destructive, commit, and spawn primitives (the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode`) are unexported, so acting on an unmanaged state does not
@@ -117,10 +120,10 @@ this canonical list.
   mints a resource-indexed `MemoryGrant`, package-owned live observations pair it with the matching
   `Enforcer`, and an inference subprocess can launch only from the resulting opaque
   `ExecutableModel`. The capped-engine kernel OS-bounds actual resident memory to its
-  `MemoryCeiling`; a measured breach is a clean typed `ModelMemoryLimitExceeded`. Apple and Linux CPU
-  watchdog implementations are present, but their adversarial proof and an execution authority that
-  makes concurrent reuse unrepresentable remain Phase 4 work. NVIDIA enforcement and broad raw-spawn
-  exemption removal remain Phase 6 work. Physical RAM is a checked `HostMemoryPartition`, every model
+  `MemoryCeiling`; a measured breach is a clean typed `ModelMemoryLimitExceeded`. The execution
+  authority remains inside the opaque engine capability so concurrent reuse is unrepresentable;
+  Apple/Linux CPU observers enforce resident-memory ceilings, and Linux GPU execution requires
+  independently indexed RAM and VRAM grants and observers. Physical RAM is a checked `HostMemoryPartition`, every model
   declares a required `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
   Canonical:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
@@ -133,8 +136,13 @@ this canonical list.
   space by default, so the built executable declares a bounded reservation before any memory limit
   is installable. The mechanism is resolved per lane and fails closed when unavailable: a cgroup
   scope bounds the aggregate on Linux, while Darwin has neither cgroups nor an enforced
-  address-space limit and gets a runtime heap cap plus bounded concurrency only. This does **not**
-  make a host out-of-memory condition impossible; the doctrine names what it does not bound.
+  address-space limit and gets a runtime heap cap plus bounded concurrency only. One opaque
+  authority serializes its own package-owned child lifecycles; it is not a host-global or
+  crash-surviving lease. Governed workflows must serialize independent CLI images, checkouts, and
+  stage-0 bootstrap builds because the toolchain account does not fund their overlap. Normal
+  completion trusts/reaps Cabal's scheduler leader, while exceptional cleanup owns its group; no
+  normal descendant-absence or hard-kill-survival proof is claimed. This does **not** make a host
+  out-of-memory condition impossible; the doctrine names what it does not bound.
   Canonical:
   [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md)
 - `close_fds` is only bounded because the descriptor space is: `Infernix.DescriptorSpace` lowers the
@@ -150,9 +158,10 @@ this canonical list.
 
 - prefer the supported stage-0 bootstrap entrypoints:
   `./bootstrap/apple-silicon.sh`, `./bootstrap/linux-cpu.sh`, and `./bootstrap/linux-gpu.sh`
-- use direct host builds only for the Apple Silicon host-native control plane:
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`,
-  under the declared build ceiling
+- on Apple Silicon, run clean-clone and rebuild work through
+  `./bootstrap/apple-silicon.sh build`; once `infernix init` has produced the measured plan, run
+  focused Haskell validation through the installed `./.build/infernix` command's closed toolchain
+  vocabulary and live derived authority
   ([../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md))
 - on supported Linux and CUDA paths, do not build or validate with host `cabal`; use the
   containerized Linux outer-control-plane path through `./bootstrap/linux-cpu.sh`,
@@ -162,8 +171,8 @@ this canonical list.
 - never use cross-architecture emulation for development or validation. `linux-cpu` validation
   belongs on native Linux amd64 or native Linux arm64; Apple Silicon must not run an emulated
   amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
-- preserve the distinction between current implementation state and the target platform contract in
-  root docs
+- keep governed documents prescriptive and record implementation status, sequencing, and validation
+  receipts only in `DEVELOPMENT_PLAN/`
 
 ## Platform Doctrine To Preserve
 
@@ -185,16 +194,19 @@ this canonical list.
   webapp `/api/objects` proxy is its only browser-facing surface)
 - custom platform logic is Haskell; Python is permitted only under `python/adapters/` and only
   when the bound inference engine has no non-Python binding
-- the shared Poetry project lives at `python/pyproject.toml`; all adapter execution goes through
-  `poetry run`, and the canonical quality gate is `poetry run check-code`
+- the framework-free shared Poetry project lives at `python/pyproject.toml` and owns adapter quality,
+  protobuf generation, and the canonical `poetry run check-code` gate. Python-stdio inference runs
+  through prepared per-engine Poetry environments under `python/engines/<engine>/.venv/`; the binary
+  produces and verifies their fixed markers before inference, never on a request path
 - on Apple Silicon, the minimal pre-existing host prerequisites are Homebrew plus ghcup. Any
   Docker-backed Apple work must use the already selected native arm64 Docker daemon and must stop
   if that daemon is not available; assistants must not create or switch Docker contexts or create
   Colima VMs
-- Apple host paths materialize `python/.venv/` only on demand, after `infernix` bootstraps a
-  user-local `poetry` executable after reconciling the Homebrew-managed `python@3.12` formula and
-  `python3.12` command when necessary; the Poetry bootstrap may reuse an already available
-  compatible Python 3.12+ executable when one passes the implemented version check
+- Apple host paths materialize the shared `python/.venv/` plus the canonical Apple framework plan
+  (`transformers`, `pytorch`, and `diffusers` under `python/engines/`) before inference, after
+  `infernix` bootstraps a user-local `poetry` executable and reconciles the Homebrew-managed
+  `python@3.12` formula and `python3.12` command when necessary; the Poetry bootstrap may reuse an
+  already available compatible Python 3.12+ executable when one passes the implemented version check
 - Linux substrate images install adapter dependencies during image build, and Linux host
   prerequisites stop at Docker plus the NVIDIA host prerequisites for `linux-gpu`
 - the demo UI is PureScript; frontend contracts are emitted into `web/src/Generated/` by
@@ -202,8 +214,11 @@ this canonical list.
   from dedicated Haskell browser-contract ADTs in `src/Infernix/Web/Contracts.hs`
 - the demo UI is built with spago and tested with `purescript-spec`
 - the tracked repository limits repo-owned shell to `bootstrap/*.sh` and carries no committed
-  generated artifacts such as Poetry lockfiles, generated protobuf stubs, `*.pyc`,
-  `web/spago.lock`, or `web/src/Generated/`
+  generated artifacts such as Poetry lockfiles, Python protobuf stubs, `*.pyc`, `web/spago.lock`,
+  or `web/src/Generated/`. The only tracked protobuf-generator outputs are the four exact Haskell
+  modules below `src/Proto/`, governed with their canonical schemas by
+  `proto/haskell-bindings.sha256`; they remain generated, not handwritten, and are excluded from
+  style only by exact path
 
 ## Validation Before Handoff
 

@@ -66,8 +66,8 @@ pairs that grant with a live `Enforcer` for the same resource and therefore has 
   topic capability, so a caller cannot pair a plan with a foreign token or reach execution
   unguarded. One engine process per machine plus one authority per plan means the resident set on a
   machine is **one model at a time**, so the aggregate a machine must satisfy is
-  `max(footprint of the models it serves)`, not their sum. That is exactly what per-model admission
-  already checks — which is why the fleet's memory contract is sound locally and needs no
+  `max(footprint of the models it serves)`, not their sum. Per-model admission checks that maximum,
+  which is why the fleet's memory contract is sound locally and needs no
   cross-machine arithmetic. It is also why a second engine process on one machine is a correctness
   bug rather than a scaling choice: see
   [daemon_topology.md](daemon_topology.md).
@@ -129,7 +129,7 @@ the wire; the machine's capacity is a local observation and does not.**
 |---|---|---|
 | Types | GHC module export lists (opaque `CompiledRuntimePlan`, `RuntimePlan`, `ExecutableModel`, and resource-indexed grant/enforcer types) under `-Wall -Werror` | constructing or relabeling a grant; refining from caller-fabricated observations; launching from a raw model/config record; a bare-`Int`/absent-zero footprint; a budget with no named enforcer |
 | Region | package-internal rank-2 capped-engine region with `bracket` teardown, entered only from an `ExecutableModel`-gated worker launch | an engine handle that escapes its capped region; a subprocess that runs or persists without the executable's ceiling and watchdog |
-| Serialization (Phase 4 target) | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
+| Serialization | one opaque process-local execution authority owned inside the engine API | concurrent reuse of independently admitted footprints that collectively exceed the host/pod partition |
 | OS | physical-footprint watchdog + process-group `SIGKILL` (`apple-silicon`); process-group RSS watchdog under a larger pod envelope (`linux-cpu`); independent RSS + NVIDIA process-group VRAM accounting (`linux-gpu`) | actual resident memory of an admitted engine exceeding its ceiling without a clean, typed, terminal per-request failure. This is sample-and-kill on a fixed cadence, not a kernel-imposed allocation ceiling: a breach is detected and terminated, not prevented |
 | Partition | `HostMemoryPartition` smart constructor | `vmReserve + hostHeadroom + inferenceCapacity` oversubscribing physical RAM; a headroom too small to cover the OS and the routed end-to-end browser |
 | Haskell (lint) | `Infernix.Lint.HaskellStyle` `unboundedEngineSpawnViolations` | raw `readCreateProcessWithExitCode` / `createProcess` / `withCreateProcess` / `waitForProcess` engine spawn outside the capped-engine kernel — the raw primitives that have no type-level chokepoint. `withCreateProcess` is included because whole-token matching alone lets a bracketed unbounded spawn through |
@@ -137,12 +137,12 @@ the wire; the machine's capacity is a local observation and does not.**
 The residual review obligations are deliberately explicit: **compiler honesty**
 (`compileRuntimePlan` is the only grant mint and compares the required footprint with the declared
 capacity), **refinement honesty** (only live package-owned observations mint enforcers),
-**serialization containment** (Phase 4 moves the single-flight authority inside the opaque execution
+**serialization containment** (the single-flight authority remains inside the opaque execution
 API), and **retry containment** (an `EngineExceededCeiling` maps directly to a typed terminal failure,
 never a string-classified retryable outcome).
 
 **Declared exemption.** The operator CLI passthrough and the pre-manifest host-tool probes are named
-exemptions from the raw-spawn gate rather than unclosed migrations: their executable and argv come
+exemptions from the raw-spawn gate: their executable and argv come
 from the operator's own invocation, or they run before the manifest a closed command would need
 exists. The exemption list is enumerated in `Infernix.Lint.HaskellStyle` and is part of the
 contract, not a gap in it.
@@ -176,15 +176,10 @@ typed `ModelMemoryLimitExceeded` per-request failure. The device's total VRAM is
 grant must fit inside, the GPU analogue of the cgroup memory limit read for the resident-set lane;
 an absent or non-positive envelope is a refinement rejection (`NvidiaEnvelopeUnavailable` /
 `NvidiaEnvelopeTooSmall`), never an assumed value.
-Until the later behavioral/enforcement work passes, this claimant can still contribute to host
-exhaustion despite the landed resource/enforcer type coherence. A host out-of-memory condition
-remains representable for the further reasons enumerated in
-[bounded_host_memory.md](bounded_host_memory.md) — most of which no work in this phase can close.
+A host out-of-memory condition remains representable for the reasons enumerated in
+[bounded_host_memory.md](bounded_host_memory.md), including memory outside this repository's
+process groups and resources the kernel does not attribute to a process.
 
-The retired surfaces — `admitModelMemory :: … -> Maybe`, the unenforced budget arm, the bare-`Int`
-footprint, the raw unbounded engine spawns, and the fixed `appleHostReserveMib = 3072` host reserve
-— are recorded in
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
 With the checked `minHostHeadroomMib` partition on a 64 GiB / 48 GiB-Colima-pledge host, the
 resolved inference capacity is 10240 MiB, so the heavy diffusion rows remain explicit unavailable
 models rather than invalidating the whole catalog.
@@ -206,8 +201,7 @@ a fabricated pass.
   capability-gating lint and keeps the style gate clean; `cabal test infernix-unit` covers the
   `HostMemoryPartition` oversubscription rejection, `ModelMemoryFootprint` non-positive rejection,
   exhaustive compiler placement-or-unavailable accounting, and live-refinement failures.
-- The Phase 4 cohort full-suite (`infernix test all` on the selected `apple-silicon` accelerator plus
-  `linux-cpu`) is the CPU/Apple behavioral
+- The CPU/Apple behavioral suite (`infernix test all` on `apple-silicon` plus `linux-cpu`) is the
   proof: the full per-model real-inference lane completes without exhausting the host, and an
   over-capacity model produces a typed `status=failed` `ModelMemoryLimitExceeded` rather than a
   `SIGKILL`. Completing without exhaustion is a sample of this lane's behaviour, not evidence that a

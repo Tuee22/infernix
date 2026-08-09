@@ -3,16 +3,20 @@
 
 module Infernix.Python.MutationLock.Internal
   ( PoetryProjectMutationAuthority,
+    PoetryProjectReadAuthority,
     PoetryBootstrapMutationAuthority,
     GeneratedBindingsMutationAuthority,
     withPoetryProjectMutationLockInternal,
+    withPoetryProjectReadLockInternal,
     withPoetryBootstrapMutationLockInternal,
     withGeneratedBindingsMutationLockInternal,
   )
 where
 
 import Infernix.Cluster.LifecycleLock (withKernelFileLock)
+import Infernix.Error (bracketPreservingPrimary)
 import System.Directory (createDirectoryIfMissing)
+import System.FileLock qualified as FileLock
 import System.FilePath ((</>))
 
 data PoetryProjectMutationAuthority p
@@ -29,6 +33,36 @@ withPoetryProjectMutationLockInternal projectDirectory action =
     "Poetry project mutation"
     (projectDirectory </> ".infernix-poetry-install.lock")
     (action PoetryProjectMutationAuthority)
+
+-- | Shared runtime custody over the same kernel lock that excludes Poetry
+-- project writers. The nominal authority can exist only inside this rank-2
+-- region; a prepared-environment reader wraps it only after validating the
+-- exact marker and interpreter while the lock remains held.
+data PoetryProjectReadAuthority r
+  = PoetryProjectReadAuthority
+
+type role PoetryProjectReadAuthority nominal
+
+withPoetryProjectReadLockInternal ::
+  FilePath ->
+  (forall r. PoetryProjectReadAuthority r -> IO a) ->
+  IO a
+withPoetryProjectReadLockInternal projectDirectory action =
+  bracketPreservingPrimary acquire FileLock.unlockFile $ \_ ->
+    action PoetryProjectReadAuthority
+  where
+    lockPath = projectDirectory </> ".infernix-poetry-install.lock"
+    acquire = do
+      lockResult <- FileLock.tryLockFile lockPath FileLock.Shared
+      case lockResult of
+        Just lockToken -> pure lockToken
+        Nothing ->
+          ioError
+            ( userError
+                ( "Poetry project read lock is excluded by an active writer: "
+                    <> lockPath
+                )
+            )
 
 data PoetryBootstrapMutationAuthority b
   = PoetryBootstrapMutationAuthority

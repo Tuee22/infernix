@@ -1,6 +1,24 @@
 module Main (main) where
 
+import Control.Exception (SomeException, bracket, displayException, try)
 import Control.Monad (unless, when)
+import Data.ByteString qualified as ByteString
+import Data.ByteString.Char8 qualified as ByteString.Char8
+import Data.Char (isSpace)
+import Data.List (isInfixOf, isPrefixOf, sort)
+import Data.Text.IO.Utf8 qualified as Text.Utf8
+import GHC.RTS.Flags qualified as RTSFlags
+import Infernix.BuildMemory
+  ( ToolchainTestSuite (UnitSuite),
+    allToolchainTestSuites,
+    toolchainTestSuiteName,
+  )
+import Infernix.Config (Paths (..), discoverPathsWithHostManifest)
+import Infernix.Lint.Docs
+  ( prohibitedStatusMarkerForTest,
+    prohibitedStatusSectionForTest,
+    retiredDoctrineViolationsForTest,
+  )
 import Infernix.Lint.HaskellStyle
   ( appleArtifactProvisioningViolations,
     appleClosureFixtureOwnershipViolations,
@@ -9,14 +27,31 @@ import Infernix.Lint.HaskellStyle
     artifactWriterBoundaryViolations,
     boundedEngineOutputViolations,
     cappedEngineBoundaryViolations,
+    isGeneratedHaskellProtoSource,
     linuxNativeMaterializationBoundaryViolations,
     nativeArtifactInvocationKernelOwnershipViolations,
     provisioningKernelOwnershipViolations,
-    runHaskellStyleLint,
+    runHaskellStyleLintWith,
   )
+import Infernix.Lint.Proto
+  ( generatedHaskellProtoFiles,
+    generatedHaskellProtoTreeViolations,
+    protoSnapshotManifestViolations,
+  )
+import Language.Haskell.HLint qualified as HLint
+import Ormolu qualified
+import System.Directory
+  ( createDirectory,
+    getTemporaryDirectory,
+    removeFile,
+    removePathForcibly,
+  )
+import System.FilePath ((</>))
+import System.IO (hClose, openTempFile)
 
 main :: IO ()
 main = do
+  assertRetiredDoctrineBoundary
   assertAppleArtifactProvisioningBoundary
   assertAppleClosureFixtureOwnership
   assertAppleMaterializationTransactionOwnership
@@ -24,10 +59,437 @@ main = do
   assertArtifactWriterBoundary
   assertBoundedEngineOutput
   assertCappedEngineBoundary
+  assertGeneratedProtoStyleExclusion
+  assertProtoSnapshotDriftGate
+  assertInProcessHaskellStyleBehavior
+  assertComponentRtsClosure
+  assertStyleRuntimeHeapCap
   assertLinuxNativeMaterializationBoundary
   assertNativeArtifactInvocationKernelOwnership
   assertProvisioningKernelOwnership
-  runHaskellStyleLint
+  runHaskellStyleLintWith checkOrmoluFormatting checkHLintHints
+
+assertRetiredDoctrineBoundary :: IO ()
+assertRetiredDoctrineBoundary = do
+  unless
+    ( prohibitedStatusMarkerForTest "README.md" "## Current Audit Note"
+        && prohibitedStatusMarkerForTest "README.md" "### current status"
+        && prohibitedStatusMarkerForTest "README.md" "  ### current audit"
+        && prohibitedStatusMarkerForTest "README.md" "  ## Repository Status"
+        && prohibitedStatusMarkerForTest "documents/development/python_policy.md" "Current state:"
+        && not (prohibitedStatusMarkerForTest "README.md" "Current state:")
+        && not (prohibitedStatusMarkerForTest "README.md" "## Runtime State")
+        && not (prohibitedStatusMarkerForTest "README.md" "## Current State Machine")
+        && not
+          ( prohibitedStatusMarkerForTest
+              "README.md"
+              "The current state: pending until eligible engine"
+          )
+        && not
+          ( prohibitedStatusSectionForTest
+              "README.md"
+              "```markdown\n## Current Status\n```"
+          )
+    )
+    (fail "docs-lint fixture did not preserve the narrow status-heading boundary")
+  mapM_
+    assertRejected
+    [ ( "README.md",
+        "The local Kind cluster is the mandatory HA service topology.",
+        "mandatory HA service topology"
+      ),
+      ( "documents/engineering/object_storage.md",
+        "**Exactly-once semantics** come from the surviving coordinator replica.",
+        "**Exactly-once semantics** come from"
+      ),
+      ( "documents/operations/cluster_bootstrap_runbook.md",
+        "Run Patroni replica reinitialization after the leader changes.",
+        "Patroni replica reinitialization"
+      ),
+      ( "documents/architecture/daemon_topology.md",
+        "Pulsar `Failover` provides leader election for repository coordinator replicas.",
+        "Pulsar `Failover` provides leader election"
+      ),
+      ( "documents/development/demo_app_test_plan.md",
+        "The integration covers durable dispatcher, engine pod replacement, engine node drain.",
+        "engine node drain"
+      ),
+      ( "documents/architecture/daemon_topology.md",
+        "Phase\n4 owns the future SPA-style flow.",
+        "Phase 4"
+      )
+    ]
+  let accepted =
+        concat
+          [ retiredDoctrineViolationsForTest
+              "documents/tools/pulsar.md"
+              "Pulsar `Failover` provides broker-managed single-active subscription coordination; a pending request remains eligible for redelivery.",
+            retiredDoctrineViolationsForTest
+              "documents/architecture/daemon_topology.md"
+              "Shared members on multiple machines leave an interrupted request pending for redelivery.",
+            retiredDoctrineViolationsForTest
+              "documents/architecture/managed_state_transitions.md"
+              "Managed engine node drain reconciliation preserves the lifecycle lease.",
+            retiredDoctrineViolationsForTest
+              "documents/engineering/k8s_storage.md"
+              "A single-instance chart expresses replica sizing as one replica per role and restarts the process after loss.",
+            retiredDoctrineViolationsForTest
+              "documents/tools/pulsar.md"
+              "A broker-managed Failover handoff may select another consumer.",
+            retiredDoctrineViolationsForTest
+              "documents/architecture/pulsar_ml_workflow.md"
+              "data Phase = Prepared | Published",
+            retiredDoctrineViolationsForTest
+              "documents/architecture/runtime_modes.md"
+              "The domain value `Phase 1` is not schedule provenance.",
+            retiredDoctrineViolationsForTest
+              "documents/architecture/runtime_modes.md"
+              "```text\nPhase 4 owns no schedule here.\n```"
+          ]
+  unless
+    (null accepted)
+    ( fail
+        ( "docs-lint fixture rejected broker Failover/runtime-state doctrine: "
+            <> show accepted
+        )
+    )
+  where
+    assertRejected (relativePath, fixture, expectedMatch) =
+      unless
+        ( any
+            (expectedMatch `isInfixOf`)
+            (retiredDoctrineViolationsForTest relativePath fixture)
+        )
+        ( fail
+            ( "docs-lint fixture did not reject retired doctrine in "
+                <> relativePath
+                <> ": "
+                <> expectedMatch
+            )
+        )
+
+-- | Reproduce @ormolu --mode check@ in-process. The Cabal and @.ormolu@
+-- refinement steps are part of the formatter's CLI semantics: using only
+-- 'Ormolu.defaultConfig' would silently omit component extensions,
+-- dependencies, fixities, and module re-exports.
+checkOrmoluFormatting :: [FilePath] -> IO ()
+checkOrmoluFormatting sourceFiles = do
+  violations <- concat <$> mapM checkSource sourceFiles
+  unless
+    (null violations)
+    (fail ("haskell-style-check: Ormolu formatting differs:\n" <> unlines violations))
+  where
+    checkSource sourceFile = do
+      cabalSearchResult <- Ormolu.getCabalInfoForSourceFile sourceFile
+      let cabalInfo = case cabalSearchResult of
+            Ormolu.CabalNotFound -> Nothing
+            Ormolu.CabalDidNotMention info -> Just info
+            Ormolu.CabalFound info -> Just info
+      (dotFixities, dotModuleReexports) <-
+        Ormolu.getDotOrmoluForSourceFile sourceFile
+      let rawConfig = Ormolu.defaultConfig
+          config =
+            Ormolu.refineConfig
+              (Ormolu.detectSourceType sourceFile)
+              cabalInfo
+              (Just (Ormolu.cfgFixityOverrides rawConfig))
+              (Just (Ormolu.cfgModuleReexports rawConfig))
+              rawConfig
+                { Ormolu.cfgFixityOverrides = dotFixities,
+                  Ormolu.cfgModuleReexports = dotModuleReexports
+                }
+      original <- Text.Utf8.readFile sourceFile
+      formatted <- Ormolu.ormolu config sourceFile original
+      pure [sourceFile | formatted /= original]
+
+-- | The executable shipped by HLint is this API call followed by a non-empty
+-- result check, so the in-process form preserves its findings and diagnostics.
+checkHLintHints :: [FilePath] -> IO ()
+checkHLintHints sourceFiles = do
+  ideas <- HLint.hlint sourceFiles
+  failOnHLintIdeas ideas
+
+failOnHLintIdeas :: [HLint.Idea] -> IO ()
+failOnHLintIdeas ideas =
+  unless
+    (null ideas)
+    ( fail
+        ( "haskell-style-check: HLint reported findings:\n"
+            <> unlines (map show ideas)
+        )
+    )
+
+-- | Exercise both in-process callbacks against deliberately bad inputs. These
+-- fixtures guard behavior, not merely the absence of the retired child process
+-- strings.
+assertInProcessHaskellStyleBehavior :: IO ()
+assertInProcessHaskellStyleBehavior =
+  withStyleFixtureDirectory $ \fixtureRoot -> do
+    let unformattedSource = fixtureRoot </> "Unformatted.hs"
+        hintedSource = fixtureRoot </> "Hinted.hs"
+    writeFile
+      unformattedSource
+      "module Unformatted where\n\nfixtureValue=1\n"
+    assertActionFailsWith
+      "deliberately unformatted Haskell"
+      "Ormolu formatting differs"
+      (checkOrmoluFormatting [unformattedSource])
+
+    writeFile
+      hintedSource
+      ( unlines
+          [ "module Hinted where",
+            "",
+            "fixtureValue :: Eq value => value -> value -> Bool",
+            "fixtureValue left right = not (left == right)"
+          ]
+      )
+    ideas <- HLint.hlint ["--quiet", hintedSource]
+    unless
+      (length ideas == 1)
+      (fail "haskell-style-check: the focused HLint fixture must produce exactly one idea")
+    assertActionFailsWith
+      "one HLint hint"
+      "HLint reported findings"
+      (failOnHLintIdeas ideas)
+
+assertActionFailsWith :: String -> String -> IO () -> IO ()
+assertActionFailsWith fixtureLabel expectedMessage action = do
+  outcome <- try action
+  case outcome :: Either SomeException () of
+    Left failure ->
+      unless
+        (expectedMessage `isInfixOf` displayException failure)
+        ( fail
+            ( "haskell-style-check: "
+                <> fixtureLabel
+                <> " failed with the wrong diagnostic: "
+                <> displayException failure
+            )
+        )
+    Right () ->
+      fail
+        ( "haskell-style-check: "
+            <> fixtureLabel
+            <> " unexpectedly passed"
+        )
+
+withStyleFixtureDirectory :: (FilePath -> IO result) -> IO result
+withStyleFixtureDirectory =
+  bracket createStyleFixtureDirectory removePathForcibly
+
+createStyleFixtureDirectory :: IO FilePath
+createStyleFixtureDirectory = do
+  temporaryRoot <- getTemporaryDirectory
+  (temporaryPath, handle) <-
+    openTempFile temporaryRoot "infernix-haskell-style-"
+  hClose handle
+  removeFile temporaryPath
+  createDirectory temporaryPath
+  pure temporaryPath
+
+-- | Pin the per-component RTS contract in the Cabal source. The live style
+-- assertion below independently proves that this component actually entered
+-- with the baked heap cap.
+assertComponentRtsClosure :: IO ()
+assertComponentRtsClosure = do
+  paths <- discoverPathsWithHostManifest Nothing
+  cabalSource <- readFile (repoRoot paths </> "infernix.cabal")
+  projectSource <- readFile (repoRoot paths </> "cabal.project")
+  cabalFormatSource <-
+    readFile
+      ( repoRoot paths
+          </> "test"
+          </> "cabal-format"
+          </> "infernix-cabal-format.cabal"
+      )
+  cabalFormatProjectSource <-
+    readFile (repoRoot paths </> "test" </> "cabal-format" </> "cabal.project")
+  let declaredSuiteNames = sort (topLevelTestSuiteNames cabalSource)
+      closedSuiteNames = sort (map toolchainTestSuiteName allToolchainTestSuites)
+  unless
+    (declaredSuiteNames == closedSuiteNames)
+    ( fail
+        ( "haskell-style-check: Cabal test-suite inventory differs from the closed toolchain vocabulary: "
+            <> show declaredSuiteNames
+            <> " /= "
+            <> show closedSuiteNames
+        )
+    )
+  unless
+    (topLevelTestSuiteNames cabalFormatSource == ["infernix-cabal-format"])
+    (fail "haskell-style-check: the solver-isolated package must declare exactly the Cabal-format suite")
+  unless
+    ( "packages: test/cabal-format/infernix-cabal-format.cabal"
+        `elem` lines cabalFormatProjectSource
+        && length
+          ( filter
+              ("packages:" `isPrefixOf`)
+              (lines cabalFormatProjectSource)
+          )
+          == 1
+        && not ("infernix.cabal" `isInfixOf` cabalFormatProjectSource)
+    )
+    ( fail
+        "haskell-style-check: the Cabal-format project must contain only its repository-root-relative solver-isolated package"
+    )
+  let cabalFormatComponent =
+        componentBody cabalFormatSource "test-suite infernix-cabal-format"
+  unless
+    ( "Cabal ==3.16.1.0" `isInfixOf` cabalFormatComponent
+        && not ("infernix" `isInfixOf` cabalFormatComponent)
+    )
+    (fail "haskell-style-check: the Cabal-format suite must pin Cabal 3.16 without depending on infernix")
+  assertComponentOption
+    cabalSource
+    "executable infernix"
+    "-rtsopts=ignoreAll -with-rtsopts=-xr1024M"
+  assertComponentOption
+    cabalSource
+    "test-suite infernix-unit"
+    "-rtsopts -with-rtsopts=-M1024M"
+  when
+    ( "-rtsopts=ignoreAll"
+        `isInfixOf` componentBody cabalSource "test-suite infernix-unit"
+    )
+    (fail "haskell-style-check: the unit component must retain its intentional -rtsopts surface")
+  mapM_
+    ( \suite ->
+        assertComponentOption
+          cabalSource
+          ("test-suite " <> toolchainTestSuiteName suite)
+          "-rtsopts=ignoreAll -with-rtsopts=-M1024M"
+    )
+    (filter (/= UnitSuite) allToolchainTestSuites)
+  assertComponentOption
+    cabalFormatSource
+    "test-suite infernix-cabal-format"
+    "-rtsopts=ignoreAll -with-rtsopts=-M1024M"
+  unless
+    ( all
+        (`isInfixOf` cabalFormatProjectSource)
+        [ "write-ghc-environment-files: never",
+          "with-compiler: ghc-9.12.4",
+          "jobs: 1",
+          "ghc-options: +RTS -M4096M -xr12288M -RTS"
+        ]
+    )
+    (fail "haskell-style-check: the Cabal-format project is missing its bounded fallback account")
+  when
+    ("-rtsopts" `isInfixOf` projectSource)
+    (fail "haskell-style-check: cabal.project must not inject a global RTS-options surface")
+
+topLevelTestSuiteNames :: String -> [String]
+topLevelTestSuiteNames cabalSource =
+  [ drop (length testSuitePrefix) sourceLine
+  | sourceLine <- lines cabalSource,
+    testSuitePrefix `isPrefixOf` sourceLine
+  ]
+  where
+    testSuitePrefix = "test-suite "
+
+assertComponentOption :: String -> String -> String -> IO ()
+assertComponentOption cabalSource componentName requiredOption =
+  unless
+    (requiredOption `isInfixOf` componentBody cabalSource componentName)
+    ( fail
+        ( "haskell-style-check: "
+            <> componentName
+            <> " is missing the required RTS closure: "
+            <> requiredOption
+        )
+    )
+
+componentBody :: String -> String -> String
+componentBody cabalSource componentName =
+  case dropWhile (/= componentName) (lines cabalSource) of
+    [] -> ""
+    _ : bodyLines ->
+      unlines (takeWhile isComponentLine bodyLines)
+  where
+    isComponentLine lineValue =
+      case lineValue of
+        [] -> True
+        firstCharacter : _ -> isSpace firstCharacter
+
+assertStyleRuntimeHeapCap :: IO ()
+assertStyleRuntimeHeapCap = do
+  activeFlags <- RTSFlags.getRTSFlags
+  let activeMaxHeapBlocks =
+        toInteger (RTSFlags.maxHeapSize (RTSFlags.gcFlags activeFlags))
+      expectedMaxHeapBlocks = 1024 * 1024 * 1024 `div` 4096
+  unless
+    (activeMaxHeapBlocks == expectedMaxHeapBlocks)
+    ( fail
+        ( "haskell-style-check: active RTS heap cap is not the baked 1024 MiB value: "
+            <> show activeMaxHeapBlocks
+        )
+    )
+
+assertGeneratedProtoStyleExclusion :: IO ()
+assertGeneratedProtoStyleExclusion = do
+  let exactGeneratedSources =
+        [ "src/Proto/Infernix/Manifest/RuntimeManifest.hs",
+          "src/Proto/Infernix/Manifest/RuntimeManifest_Fields.hs",
+          "src/Proto/Infernix/Runtime/Inference.hs",
+          "src/Proto/Infernix/Runtime/Inference_Fields.hs"
+        ]
+  unless
+    ( generatedHaskellProtoFiles == exactGeneratedSources
+        && all isGeneratedHaskellProtoSource exactGeneratedSources
+    )
+    (fail "the Haskell style exclusion must inventory exactly the four generated proto-lens modules")
+  when
+    ( any
+        isGeneratedHaskellProtoSource
+        [ "src/Proto/Infernix/Runtime/Handwritten.hs",
+          "test/Proto/Infernix/Runtime/Inference.hs",
+          "src/Infernix/Runtime/Inference.hs"
+        ]
+    )
+    (fail "the Haskell style exclusion widened beyond the four generated proto-lens modules")
+  unless
+    (null (generatedHaskellProtoTreeViolations exactGeneratedSources))
+    (fail "the generated Haskell protobuf source tree must match its exact four-file inventory")
+  when
+    ( null
+        ( generatedHaskellProtoTreeViolations
+            ("src/Proto/Infernix/Runtime/Unexpected.hs" : exactGeneratedSources)
+        )
+    )
+    (fail "the generated Haskell protobuf source tree gate must reject an unexpected file")
+
+assertProtoSnapshotDriftGate :: IO ()
+assertProtoSnapshotDriftGate = do
+  paths <- discoverPathsWithHostManifest Nothing
+  let snapshotFiles =
+        [ "proto/infernix/runtime/inference.proto",
+          "proto/infernix/manifest/runtime_manifest.proto"
+        ]
+          <> generatedHaskellProtoFiles
+      manifestPath = repoRoot paths </> "proto/haskell-bindings.sha256"
+  snapshotContents <-
+    mapM
+      ( \relativePath -> do
+          contents <- ByteString.readFile (repoRoot paths </> relativePath)
+          pure (relativePath, contents)
+      )
+      snapshotFiles
+  manifestContents <- ByteString.Char8.unpack <$> ByteString.readFile manifestPath
+  unless
+    (null (protoSnapshotManifestViolations snapshotContents manifestContents))
+    (fail "the checked-in Haskell protobuf snapshot must satisfy its byte-exact manifest")
+  case snapshotContents of
+    [] -> fail "the Haskell protobuf snapshot inventory must not be empty"
+    (firstPath, firstContents) : remainingContents ->
+      when
+        ( null
+            ( protoSnapshotManifestViolations
+                ((firstPath, ByteString.cons 0 firstContents) : remainingContents)
+                manifestContents
+            )
+        )
+        (fail "the Haskell protobuf snapshot gate must reject one-byte source drift")
 
 assertAppleClosureFixtureOwnership :: IO ()
 assertAppleClosureFixtureOwnership = do
@@ -337,7 +799,8 @@ assertArtifactWriterBoundary = do
           (3, "Artifact.withEngineArtifactActivation authority installRoot candidateRoot digest continuation"),
           (4, "Artifact.finishEngineArtifactActivation CommitArtifactActivation activation"),
           (5, "Artifact.activateAppleEngineArtifactWithInstalledSmoke authority environment deadline adapter installRoot candidateRoot digest"),
-          (6, "Artifact.activateLinuxEngineArtifactWithInstalledSmoke authority environment identity policy installRoot candidateRoot digest")
+          (6, "Artifact.activateLinuxEngineArtifactWithInstalledSmoke authority environment identity policy installRoot candidateRoot digest"),
+          (7, "Artifact.activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke authority environment deadline adapter spec installRoot candidateRoot digest")
         ]
       rawWriterLock =
         [(1, "withEngineMaterializationLock enginesRoot action")]

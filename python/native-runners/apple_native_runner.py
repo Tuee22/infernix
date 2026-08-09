@@ -4,10 +4,10 @@ import argparse
 import importlib.metadata
 import json
 import math
+import os
 import pathlib
 import sys
 from dataclasses import dataclass
-
 
 NATIVE_ARTIFACT_PREFIX = "infernix-native-artifact-file:"
 
@@ -26,12 +26,17 @@ class RunnerArgs:
     model_cache_root: pathlib.Path | None
     output_dir: pathlib.Path | None
     expected_python_prefix: pathlib.Path
+    expected_unavailable_source_directories: tuple[pathlib.Path, ...]
+    expected_unavailable_source_files: tuple[pathlib.Path, ...]
+    expected_unavailable_source_write_probe: pathlib.Path | None
+    source_isolation_receipt: str
     smoke_only: bool
 
 
 def main() -> int:
     args = _parse_args()
     try:
+        _verify_expected_source_isolation(args)
         if args.smoke_only:
             return _run_smoke(args)
         _require_model_cache_ready(args)
@@ -70,6 +75,14 @@ def _parse_args() -> RunnerArgs:
     parser.add_argument("--minio-region", default="")
     parser.add_argument("--output-dir", default="")
     parser.add_argument("--expected-python-prefix", required=True)
+    parser.add_argument(
+        "--expected-unavailable-source-directory", action="append", default=[]
+    )
+    parser.add_argument(
+        "--expected-unavailable-source-file", action="append", default=[]
+    )
+    parser.add_argument("--expected-unavailable-source-write-probe", default="")
+    parser.add_argument("--source-isolation-receipt", default="")
     parser.add_argument("--smoke", action="store_true", dest="smoke_only")
     parser.add_argument("--require-native-payload", action="store_true")
     parser.add_argument("--allow-missing-native-payload", action="store_true")
@@ -93,8 +106,110 @@ def _parse_args() -> RunnerArgs:
         ),
         output_dir=pathlib.Path(parsed.output_dir) if parsed.output_dir else None,
         expected_python_prefix=pathlib.Path(parsed.expected_python_prefix),
+        expected_unavailable_source_directories=tuple(
+            pathlib.Path(path) for path in parsed.expected_unavailable_source_directory
+        ),
+        expected_unavailable_source_files=tuple(
+            pathlib.Path(path) for path in parsed.expected_unavailable_source_file
+        ),
+        expected_unavailable_source_write_probe=(
+            pathlib.Path(parsed.expected_unavailable_source_write_probe)
+            if parsed.expected_unavailable_source_write_probe
+            else None
+        ),
+        source_isolation_receipt=str(parsed.source_isolation_receipt),
         smoke_only=bool(parsed.smoke_only),
     )
+
+
+def _verify_expected_source_isolation(args: RunnerArgs) -> None:
+    directories = args.expected_unavailable_source_directories
+    files = args.expected_unavailable_source_files
+    writable_probe = args.expected_unavailable_source_write_probe
+    receipt = args.source_isolation_receipt
+    if not directories and not files and writable_probe is None and not receipt:
+        return
+    source_paths = (*directories, *files)
+    digest = receipt.removeprefix("sha256:")
+    if (
+        not args.smoke_only
+        or len(directories) != 1
+        or len(files) > 512
+        or len({str(path) for path in source_paths}) != len(source_paths)
+        or any(not path.is_absolute() for path in source_paths)
+        or writable_probe is None
+        or writable_probe not in files
+        or not writable_probe.is_absolute()
+        or len(digest) != 64
+        or any(character not in "0123456789abcdef" for character in digest)
+        or receipt != "sha256:" + digest
+    ):
+        raise RunnerFailure("invalid installed Python source-isolation contract", 64)
+    allowed_sentinel = pathlib.Path(__file__)
+    try:
+        with allowed_sentinel.open("rb") as handle:
+            sentinel_byte = handle.read(1)
+    except OSError as exc:
+        raise RunnerFailure(
+            f"installed runner sentinel became unreadable: {allowed_sentinel}", 70
+        ) from exc
+    if not sentinel_byte:
+        raise RunnerFailure(
+            f"installed runner sentinel is empty: {allowed_sentinel}", 70
+        )
+    for source_directory in directories:
+        try:
+            next(source_directory.iterdir())
+        except PermissionError:
+            pass
+        except StopIteration as exc:
+            raise RunnerFailure(
+                f"expected source directory is readable and empty: {source_directory}",
+                70,
+            ) from exc
+        except OSError as exc:
+            raise RunnerFailure(
+                f"expected source directory denial was not PermissionError: "
+                f"{source_directory}: {exc}",
+                70,
+            ) from exc
+        else:
+            raise RunnerFailure(
+                f"expected source directory remains readable: {source_directory}", 70
+            )
+    for source_file in files:
+        try:
+            with source_file.open("rb") as handle:
+                handle.read(1)
+        except PermissionError:
+            pass
+        except OSError as exc:
+            raise RunnerFailure(
+                f"expected source file denial was not PermissionError: "
+                f"{source_file}: {exc}",
+                70,
+            ) from exc
+        else:
+            raise RunnerFailure(
+                f"expected source file remains readable: {source_file}", 70
+            )
+    try:
+        writable_probe_fd = os.open(writable_probe, os.O_WRONLY)
+    except PermissionError:
+        pass
+    except OSError as exc:
+        raise RunnerFailure(
+            f"expected writable source probe denial was not PermissionError: "
+            f"{writable_probe}: {exc}",
+            70,
+        ) from exc
+    else:
+        os.close(writable_probe_fd)
+        raise RunnerFailure(
+            f"expected source write probe remains writable: {writable_probe}", 70
+        )
+    sys.stderr.write(f"infernix-source-isolation-v1:{len(source_paths)}:{receipt}\n")
+    sys.stderr.flush()
 
 
 def _run_smoke(args: RunnerArgs) -> int:

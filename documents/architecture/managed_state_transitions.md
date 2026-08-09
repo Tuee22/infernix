@@ -75,70 +75,36 @@ The raw destructive, commit, and spawn primitives are **not exported**; the only
 evidence:
 
 - the retained-state scrub takes a `WriterQuiesced` lease, so a scrub against a live writer is not a
-constructible term; - cluster teardown consumes an opaque `ClusterTeardownAuthority s` minted from
-`Lease s ClusterMutationLocked`, persisted owner, requested runtime, exact reservation access, and
-global live-runtime inventory. `PreWorkloadKindRecovery s` and `KindDeleteAuthorization s` retain
-the same region, so authority cannot escape or be reused under another lifecycle-lock acquisition;
-nominal roles on the lease and authorization types prevent `Data.Coerce` from erasing the region.
-The effect-adjacent check rereads reservation access and requires the exact captured record,
-including owner PID, process group, and birth identity, before revalidating owner/runtime. nominal
-nominal`. `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry the same index. The owner
-field is now the singleton `SClusterOwner owner` rather than a bare value, so the index and the
-value it stands for cannot drift, and `requireClusterOwnership` — still the sole mint — takes the
-singleton and returns the correspondingly indexed authority. A fourth compile-fail fixture,
-`fail-cannot-substitute-cluster-teardown-owner`, shares the region variable so the *only* thing GHC
-rejects is the owner, and rejects it with `Couldn't match type 'HarnessOwned' with 'OperatorOwned'`.
-
-  Be equally precise about what the index does **not** buy, because that is the over-claim this work
-  exists to retire. Substituting one owner's authority for the other's is now a type error. Deciding
-  who owns a *live* cluster is not, and cannot be: that is discovered at run time by rereading the
-  persisted record and the Kind inventory under the held lease, so tearing down an `OperatorOwned`
-  cluster from the harness is still refused by a checked `ioError`, not by the type checker. No
-  runtime check was weakened to add the index. Where the owner is only known at run time —
-  `withPersistedClusterMutation`, which reads it inside the lock — a rank-2
-  `withClusterOwnerSingleton` selects the singleton *from the owner just read*, so no index is
-  fabricated.
-
-  The defect was that ownership evidence did not travel with the resource:
-  `clusterLifecycleLockPath`, `harnessReservationPath`, and `clusterStatePath` all derive from the
-  per-checkout `runtimeRoot`, while `kindClusterName` drops its `dataRoot` discriminator for the
-  default `.data` layout that every ordinary checkout uses — so two checkouts locked different
-  inodes while contending for one machine-global Kind cluster, and each authorized against the
-  *other's* live inventory using its *own* state file. A killed harness run leaves a `HarnessOwned`
-  state file behind, so a second checkout starting `infernix test all` could observe the operator's
-  live cluster, match it against that leftover record, and delete it.
-
-  Both mechanisms the sprint originally proposed were rejected on analysis, and the reason is worth
-  keeping: neither works in *both* supported execution contexts. Relocating the lock to a
-  machine-scoped path is unreachable from inside a launcher container, and the container's baked
-  manifest gives every checkout `hostRepoRoot = /workspace` and `hostDataRoot = /workspace/.data`,
-  so a path-derived identity actively *collides* there — which also means the cluster-name
-  discriminator does not discriminate on the lane where contention is most likely. What the two
-  contexts genuinely share is the Docker daemon, so the identity lives on the protected resource:
-  `stampClusterSlotIdentity` records the creating checkout's **host-side** repository root inside the
-  control-plane node at `/etc/infernix/cluster-checkout-identity`, and `readClusterSlotIdentity`
-  reads it back through the same closed `ClusterCommand` catalog. No new command constructor and no
-  new host-manifest field were needed, so an operator's already-generated `./infernix-host.dhall`
-  keeps decoding.
-
-  `localClusterCheckoutIdentity` **fails closed** rather than reusing `resolveHostRepoRoot`'s
-  fallback. Answering `/workspace` is the right conservative answer when *rendering a path* and the
-  worst possible answer for an *identity*, because every launcher container would then claim the
-  same one. `authorizeClusterOwnership` consumes the local identity and the observed slot identity
-  alongside the inventory and the persisted record, and returns a `ClusterSlotAdmission` rather than
-  `()`. `requireClusterOwnership` — still the sole mint — reads both under the held lease, so every
-  authority is minted from evidence gathered inside one critical section.
-
-  The two owners are deliberately asymmetric on a cluster that predates the identity. The operator
-  may **adopt** it, because refusing would strand a running cluster behind a manual `kind delete`;
-  adoption stamps this checkout's identity under the same lease that authorized it, so the next
-  authorization is a positive match. The harness may **not**: it is the destructive actor in the
-  defect above — an unattended `infernix test all` that tears down whatever it finds — so it must
-  prove the slot is its own, and an unidentified slot is exactly the proof it lacks. An unreadable
-  control-plane node is treated as unidentified for the same reason. Adoption itself is reported
-  and not fatal, because it upgrades evidence on a cluster that already passed the ownership check;
-  aborting there would put a damaged node ahead of the bring-up path's own recovery, and leaving the
-  slot unidentified keeps the harness fenced, which is the property that matters;
+  constructible term;
+- cluster teardown consumes an opaque `ClusterTeardownAuthority owner s` minted from
+  `Lease s ClusterMutationLocked`, an `SClusterOwner owner`, the persisted owner, requested runtime,
+  exact reservation access, checkout identity, and global live-runtime inventory.
+  `PreWorkloadKindRecovery owner s` and `KindDeleteAuthorization owner s` retain both nominal
+  indices, so authority cannot escape, cross owner boundaries, or be reused under another
+  lifecycle-lock acquisition. The effect-adjacent check rereads reservation access and requires
+  the exact captured record — including owner PID, process group, and birth identity — before
+  revalidating owner, runtime, and checkout identity. The
+  `fail-cannot-substitute-cluster-teardown-owner` compile-fail fixture shares the region variable so
+  its rejected substitution isolates the owner index;
+- the owner index prevents substituting one owner's authority for another; it does not decide who
+  owns a live cluster. `requireClusterOwnership` is the sole mint and discovers ownership by
+  rereading the persisted record, global Kind inventory, and slot identity under the held lease.
+  `withPersistedClusterMutation` uses rank-2 `withClusterOwnerSingleton` to select the singleton
+  from the owner read inside that critical section, so no index is fabricated. A harness teardown
+  of an `OperatorOwned` cluster fails by checked refusal at that evidence boundary;
+- checkout identity travels with the protected machine-global Kind slot. Repo-local lifecycle
+  locks, reservations, and state files cannot by themselves distinguish checkouts contending for
+  the same Docker daemon, and `/workspace` is deliberately invalid as an identity because every
+  launcher container uses it. `stampClusterSlotIdentity` records the creating checkout's host-side
+  repository root inside the control-plane node at
+  `/etc/infernix/cluster-checkout-identity`; `readClusterSlotIdentity` reads it through the closed
+  `ClusterCommand` catalog; and `localClusterCheckoutIdentity` fails closed when it cannot resolve a
+  discriminating host path. `authorizeClusterOwnership` consumes the local identity, observed slot
+  identity, inventory, and persisted record and returns `ClusterSlotAdmission`;
+- an unidentified live cluster is adoptable only by the operator, which stamps its checkout
+  identity under the same held lease. The harness must prove a positive slot-identity match and
+  refuses an absent or unreadable identity. This asymmetry preserves operator recovery without
+  granting an unattended test run destructive authority over an unidentified cluster;
 - the readiness-sentinel commit takes a `PayloadVerified`, so a sentinel written without proof does not
   typecheck;
 - the lifecycle lock is acquired only through the library-internal
@@ -319,20 +285,19 @@ setup/compile/exec/capture `CommandFailedKernel` or `CommandTimedOut` fails imme
 completed target's `CommandFailedFatal`, only a live observation that the cluster is absent converts
 the transition to success.
 The test-harness `./infernix.dhall` swap is crash-safe in the same spirit: a leftover
-`.harness-backup` from a killed current-format run is reconciled on entry only after the dead
+`.harness-backup` from a killed version-3 run is reconciled on entry only after the dead
 reservation's bounded-command activity leases prove every recorded process group absent, so a crash cannot
 leave the operator's runtime config clobbered by the test config. A scoped pre-v2 compatibility path
-also restores a backup for which no reservation identity was ever recorded; it runs under the
-lifecycle lock, cannot claim activity-quiescence evidence, and is tracked for deletion rather than
-being included in the current-format proof.
+restores a backup for which no reservation identity was ever recorded; it runs under the lifecycle
+lock and cannot claim activity-quiescence evidence. No other identity-free shape is accepted.
 
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a
 `5xx` "server not initialized", a `403` before the object layer is ready — is neither "ready" nor "a
 concrete not-ready count"; it is a failure *to measure at all*. Collapsing that third fact into a
 `Bool` (or a fabricated progress count) is a representable invalid state: a present-but-momentarily-
-unreachable `.ready` sentinel counted as "absent" is exactly what stalled an already-warm model cache
-to its give-up deadline (the "11/16" second-`cluster up` symptom). The readiness kernel's poll outcome
+unreachable `.ready` sentinel counted as "absent" would stall an already-warm model cache to its
+give-up deadline. The readiness kernel's poll outcome
 is therefore `PollOutcome e = Measured (Either Progress e) | Unobservable Text`, and the
 warm-model-cache sentinel probe is
 `SentinelObservation = SentinelPresent | SentinelAbsent | SentinelUnobservable Text` whose only
@@ -357,8 +322,8 @@ retained cache.
 
 ### Bounded descriptor space
 
-A bounded command is not bounded if its own spawn is unbounded. Until this doctrine's
-follow-on it was not. Every spawn kernel here sets `close_fds = True` so a child inherits nothing but
+A bounded command is not bounded if its own spawn is unbounded. Every spawn kernel here sets
+`close_fds = True` so a child inherits nothing but
 the standard streams it is handed. `close_fds` is a configuration `posix_spawn` cannot express, so
 `process` falls back to fork/exec and, in the forked child, closes every descriptor from 3 up to
 `sysconf(_SC_OPEN_MAX)` — the soft `RLIMIT_NOFILE` — before `exec`. The walk is linear in a limit the
@@ -378,10 +343,10 @@ preserved, and the hard limit is written back unchanged, so no privilege is requ
 
 `requireBoundedDescriptorSpace` is the fail-closed half, called by each kernel immediately before
 `createProcess`: an unbounded process image is a named refusal identifying the spawning kernel rather
-than a stall that reads as a hang. Because it is an observation at the point of use, it holds even if
-a future process image forgets to establish the bound.
+than a stall that reads as a hang. Because it is an observation at the point of use, it holds when a
+process image fails to establish the bound.
 
-Two residual review-obligations remain and are minimized to a small audit surface: **probe honesty**
+Two audit obligations bound the review surface: **probe honesty**
 (each evidence type has exactly one mint, co-located with its hidden constructor, that must consume a
 real artifact — a probe that fabricates is the same forbidden mask the [realness
 contract](realness_contract.md) rejects), and **bottom** (every operation forces its evidence, so a
@@ -457,7 +422,6 @@ stopped-target-group cleanup, supervisor death, descendant termination, exact bi
 recovery, and designated-owner reaping — without timing sleeps or PID-only evidence. Activity
 retires only after the anchor, supervisor, and target groups are proven absent.
 
-
 - `cabal build all` under `-Wall -Werror` is the primary proof: an operation reachable without its
   evidence, or a raw hatch called outside its evidence-taking wrapper, is a build error.
 - Host-schema and subprocess unit tests must round-trip the proper retry/failure unions, cover all 36
@@ -471,7 +435,7 @@ retires only after the anchor, supervisor, and target groups are proven absent.
   supervisor and stopped target-group cleanup, supervisor death, target setup/exec provenance,
   genuine target exits 126/127, designated-owner reaping, pre-publication owner death with no target,
   helper, or activity residue, and post-publication recovery from exact persisted identities. The
-  complete focused and phase gates are required before that scope may be marked done.
+  complete focused gates are required for that scope.
 - Lifecycle-lock tests require same-thread nesting, concurrent same-process thread contention,
   cross-process contention, normal and exceptional release, asynchronous cancellation release, and
   automatic kernel release after owner death. None may use a timing sleep as readiness evidence.
@@ -483,7 +447,7 @@ retires only after the anchor, supervisor, and target groups are proven absent.
   remains held.
 - A second runtime race must replace the reservation record after initial authorization and prove
   that the final check rereads and rejects it before delete; negative compilation must prove a
-  `ClusterTeardownAuthority s` or `Lease s` cannot be coerced across regions and authority cannot
+  `ClusterTeardownAuthority owner s` or `Lease s` cannot be coerced across regions and authority cannot
   escape or be reused with another lifecycle-lock region.
 - Compile-fail fixtures must reject external imports of `Infernix.Cluster.Command`,
   `Infernix.Cluster.Subprocess`, `Infernix.Cluster.LifecycleLock`, and raw protocol constructors.
@@ -492,7 +456,7 @@ retires only after the anchor, supervisor, and target groups are proven absent.
   component's home-module build, not the public library surface.
 - Apple artifact tests must additionally reject imports of
   `Infernix.Engines.AppleSilicon.Internal`, `Infernix.Engines.Artifact`,
-  `Infernix.Engines.Provisioning`, and `Infernix.Engines.Provisioning.Internal`, plus the removed
+  `Infernix.Engines.Provisioning`, and `Infernix.Engines.Provisioning.Internal`, plus access to the
   raw per-artifact installer. The focused transaction suite must exercise actual payload-tree
   identity, unsafe symlink/special-file rejection, exact-root validation, sync/async rollback, and
   crash reconciliation without using a package installation or network call as its oracle.

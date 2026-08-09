@@ -1,5 +1,3 @@
-{-# LANGUAGE RankNTypes #-}
-
 -- | Phase 1 Sprint 1.16 — the readiness kernel of the managed-state-transition
 -- doctrine ('documents/architecture/managed_state_transitions.md'). A readiness
 -- wait returns typed evidence instead of @IO ()@ or @IO Bool@: 'awaitReadiness'
@@ -19,6 +17,7 @@ module Infernix.Evidence.Readiness
     PollOutcome (..),
     foldReadiness,
     awaitReadiness,
+    awaitProcessExitReadiness,
     awaitReadinessObservable,
     budgetDeadline,
     pollLimitedDeadline,
@@ -26,10 +25,13 @@ module Infernix.Evidence.Readiness
 where
 
 import Control.Concurrent (threadDelay)
+import Control.Exception (mask_)
 import Control.Monad (when)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import GHC.Clock (getMonotonicTimeNSec)
+import System.Exit (ExitCode)
+import System.Process (ProcessHandle, getProcessExitCode)
 import System.Timeout (timeout)
 
 -- | A bounded wait budget. Every field is required, so a wait with no
@@ -113,6 +115,36 @@ awaitReadiness :: Deadline -> IO (Either Progress e) -> IO (Readiness e)
 awaitReadiness deadline step =
   awaitReadinessObservable deadline (Measured <$> step)
 
+-- | Poll the public nonblocking process-exit API while keeping both its waitpid
+-- probe and the transition from a positive result masked. Only the fixed delay
+-- between negative observations is interruptible. The closed signature is
+-- load-bearing: omitting the ordinary per-probe timeout is sound for
+-- 'getProcessExitCode', not for arbitrary caller-supplied IO.
+awaitProcessExitReadiness ::
+  Deadline ->
+  ProcessHandle ->
+  IO (Readiness ExitCode)
+awaitProcessExitReadiness deadline processHandle =
+  mask_ $
+    awaitReadinessObservableWith
+      PreserveMaskedNonblockingReady
+      deadline
+      ( \_ _ -> do
+          maybeExitCode <- getProcessExitCode processHandle
+          pure
+            ( Just
+                ( Measured
+                    (maybe (Left processStillLive) Right maybeExitCode)
+                )
+            )
+      )
+  where
+    processStillLive =
+      Progress
+        0
+        1
+        (Text.pack "process scheduler leader remains live")
+
 -- | Poll an /observable/ @step@ until it yields evidence or the 'Deadline' is
 -- reached. Identical to 'awaitReadiness' on 'Measured' outcomes (so it is a
 -- behaviour-preserving generalization: 'awaitReadiness' is exactly this fed
@@ -124,7 +156,26 @@ awaitReadiness deadline step =
 -- every recent poll was unobservable, the last real 'Progress' (or a zero
 -- baseline) rides the 'Expired' / 'NotReady' outcome.
 awaitReadinessObservable :: Deadline -> IO (PollOutcome e) -> IO (Readiness e)
-awaitReadinessObservable deadline step = do
+awaitReadinessObservable deadline step =
+  awaitReadinessObservableWith
+    EnforcePostProbeCutoff
+    deadline
+    ( \cutoffAt beforePoll ->
+        timeout
+          (boundedTimeoutMicros (max 1 (cutoffAt - beforePoll)))
+          step
+    )
+
+data PostProbeCutoffPolicy
+  = EnforcePostProbeCutoff
+  | PreserveMaskedNonblockingReady
+
+awaitReadinessObservableWith ::
+  PostProbeCutoffPolicy ->
+  Deadline ->
+  (Integer -> Integer -> IO (Maybe (PollOutcome e))) ->
+  IO (Readiness e)
+awaitReadinessObservableWith cutoffPolicy deadline runStep = do
   startedAt <- monotonicMicros
   go
     startedAt
@@ -161,14 +212,15 @@ awaitReadinessObservable deadline step = do
       if polls > 0 && beforePoll >= cutoffAt
         then pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
         else do
-          maybeOutcome <-
-            timeout
-              (boundedTimeoutMicros (max 1 (cutoffAt - beforePoll)))
-              step
+          maybeOutcome <- runStep cutoffAt beforePoll
           observedAt <- monotonicMicros
           case maybeOutcome of
             Nothing ->
               pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
+            Just outcome
+              | PreserveMaskedNonblockingReady <- cutoffPolicy,
+                Just evidence <- readyEvidenceAfterCutoff outcome ->
+                  pure (Ready evidence)
             Just _outcome
               | observedAt >= cutoffAt ->
                   pure (deadlineOutcome ceilingAt stallAt lastPollAdvanced lastProgress)
@@ -255,6 +307,10 @@ awaitReadinessObservable deadline step = do
       | stallAt < ceilingAt = Expired progress
       | stallAt == ceilingAt && not lastPollAdvanced = Expired progress
       | otherwise = NotReady progress
+
+readyEvidenceAfterCutoff :: PollOutcome e -> Maybe e
+readyEvidenceAfterCutoff (Measured (Right evidence)) = Just evidence
+readyEvidenceAfterCutoff _ = Nothing
 
 secondsToMicros :: Int -> Integer
 secondsToMicros seconds =

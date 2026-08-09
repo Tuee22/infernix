@@ -7,27 +7,21 @@ maintainer:         noreply@example.com
 author:             Infernix
 tested-with:        ghc ==9.12.4
 category:           Development
-build-type:         Custom
+build-type:         Simple
 extra-source-files:
     README.md
+    proto/haskell-bindings.sha256
     proto/infernix/runtime/inference.proto
     proto/infernix/manifest/runtime_manifest.proto
+    test/cabal-format/Spec.hs
+    test/cabal-format/cabal.project
+    test/cabal-format/infernix-cabal-format.cabal
     test/compile-fail/cabal.project
     test/compile-fail/infernix-compile-fixtures.cabal
     test/compile-fail/support/DesiredApi.hs
     test/compile-fail/pass/*.hs
     test/compile-fail/fail/*.hs
     test/execution-plan-internal/Spec.hs
-
-custom-setup
-    setup-depends:
-        base,
-        Cabal,
-        directory,
-        filepath,
-        process,
-        proto-lens-setup,
-        unix
 
 library
     exposed-modules:
@@ -85,7 +79,6 @@ library
         Infernix.Objects.Sts
         Infernix.Objects.Upload
         Infernix.ProjectInit
-        Infernix.Python
         Infernix.Routes
         Infernix.Runtime
         Infernix.Runtime.Cache
@@ -132,6 +125,7 @@ library
         Infernix.Engines.MaterializationLock.Internal
         Infernix.Engines.Provisioning
         Infernix.Engines.Provisioning.Internal
+        Infernix.Python
         Infernix.Python.MutationLock.Internal
         Infernix.DescriptorSpace
         Infernix.ProcessIdentity
@@ -144,12 +138,6 @@ library
         Infernix.Runtime.CappedEngine.OutputCapture
         Infernix.Runtime.Enforcer.Internal
         Infernix.Substrate.Internal
-        Proto.Infernix.Manifest.RuntimeManifest
-        Proto.Infernix.Manifest.RuntimeManifest_Fields
-        Proto.Infernix.Runtime.Inference
-        Proto.Infernix.Runtime.Inference_Fields
-
-    autogen-modules:
         Proto.Infernix.Manifest.RuntimeManifest
         Proto.Infernix.Manifest.RuntimeManifest_Fields
         Proto.Infernix.Runtime.Inference
@@ -198,7 +186,9 @@ executable infernix
     main-is:          Main.hs
     hs-source-dirs:   app
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded -with-rtsopts=-xr1024M
+    ghc-options:
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr1024M
+
     build-depends:
         base >=4.18 && <4.23,
         bytestring >=0.11 && <0.13,
@@ -334,14 +324,8 @@ test-suite infernix-unit
         Proto.Infernix.Runtime.Inference_Fields
         ProcessIdentitySpec
 
-    autogen-modules:
-        Proto.Infernix.Manifest.RuntimeManifest
-        Proto.Infernix.Manifest.RuntimeManifest_Fields
-        Proto.Infernix.Runtime.Inference
-        Proto.Infernix.Runtime.Inference_Fields
-
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded -rtsopts
+    ghc-options:      -Wall -Werror -threaded -rtsopts -with-rtsopts=-M1024M
     build-depends:
         aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
@@ -401,7 +385,9 @@ test-suite infernix-artifact-transaction
         Infernix.Error
 
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-M1024M
+
     build-depends:
         aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
@@ -466,7 +452,9 @@ test-suite infernix-apple-materializer
         Infernix.Types
 
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-M1024M
+
     build-depends:
         aeson >=2.1 && <2.3,
         base >=4.18 && <4.23,
@@ -500,7 +488,9 @@ test-suite infernix-capped-engine-observer
         Infernix.Runtime.CappedEngine.OutputCapture
 
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-M1024M
+
     build-depends:
         base >=4.18 && <4.23,
         base16-bytestring >=1.0 && <1.1,
@@ -519,7 +509,7 @@ test-suite infernix-compile-fail
     main-is:          Main.hs
     hs-source-dirs:   test/compile-fail
     default-language: GHC2021
-    ghc-options:      -Wall -Werror
+    ghc-options:      -Wall -Werror -rtsopts=ignoreAll -with-rtsopts=-M1024M
     build-depends:
         base >=4.18 && <4.23,
         directory >=1.3 && <1.4,
@@ -532,7 +522,7 @@ test-suite infernix-execution-plan-internal
     main-is:          Spec.hs
     hs-source-dirs:   test/execution-plan-internal
     default-language: GHC2021
-    ghc-options:      -Wall -Werror
+    ghc-options:      -Wall -Werror -rtsopts=ignoreAll -with-rtsopts=-M1024M
     build-depends:
         base >=4.18 && <4.23,
         infernix
@@ -657,14 +647,10 @@ test-suite infernix-integration
         Proto.Infernix.Runtime.Inference
         Proto.Infernix.Runtime.Inference_Fields
 
-    autogen-modules:
-        Proto.Infernix.Manifest.RuntimeManifest
-        Proto.Infernix.Manifest.RuntimeManifest_Fields
-        Proto.Infernix.Runtime.Inference
-        Proto.Infernix.Runtime.Inference_Fields
-
     default-language: GHC2021
-    ghc-options:      -Wall -Werror -threaded
+    ghc-options:
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-M1024M
+
     build-depends:
         aeson >=2.2 && <2.3,
         base >=4.18 && <4.23,
@@ -710,17 +696,13 @@ test-suite infernix-haskell-style
     main-is:          Spec.hs
     hs-source-dirs:   test/haskell-style
     default-language: GHC2021
-    ghc-options:      -Wall -Werror
+    ghc-options:      -Wall -Werror -rtsopts=ignoreAll -with-rtsopts=-M1024M
     build-depends:
         base >=4.18 && <4.23,
         bytestring >=0.11 && <0.13,
-        containers >=0.6 && <0.9,
         directory >=1.3 && <1.4,
         filepath >=1.4 && <1.6,
-        lens-family >=1.2 && <2.2,
-        process >=1.6 && <1.7,
-        proto-lens >=0.7 && <0.8,
-        proto-lens-runtime >=0.7 && <0.8,
+        hlint ==3.10,
+        ormolu ==0.8.0.2,
         text >=2.0 && <2.2,
-        time >=1.12 && <1.16,
         infernix

@@ -18,7 +18,7 @@ separately through `residualMatrixRowIdsForMode`. `infernix lint docs` mechanica
 matrix cells against the generated runnable catalogs, named residual rows, and `Not recommended`
 states, so documentation cannot silently re-promote a residual or hide a runnable binding. Realness
 for the runnable rows is enforced in the engine code by the realness lint: a row whose engine is not
-yet real stays declared-runnable and fails closed rather than fabricating.
+capable of real output fails closed rather than fabricating.
 
 ## Contract
 
@@ -37,23 +37,28 @@ The model catalog is Haskell-owned typed configuration derived from the README m
 
 Each generated entry includes:
 
-- matrix-row identity - stable model identifier - display label and workload family - artifact or
-format type - reference model metadata and download URL - selected engine for the active runtime
-mode - named residual status when a researched matrix cell is intentionally not runnable - request
-shape metadata used by the API, UI, and tests - runtime-lane metadata such as GPU requirement and
-lane identifier - `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one
+- matrix-row identity
+- stable model identifier
+- display label and workload family
+- artifact or format type
+- reference model metadata and download URL
+- selected engine for the active runtime mode
+- a named residual when a researched matrix cell is intentionally not runnable
+- request-shape metadata used by the API, UI, and tests
+- runtime-lane metadata such as GPU requirement and lane identifier
+- `modelRamFootprintMib`: a conservative peak model memory footprint (MiB) for one
 inference on the selected engine path. `Models.hs` `conservativeRamFootprintMibForRow` assigns
-per-family/per-engine footprints (biased high) until measured peak RSS / VRAM passes refine them.
+conservative per-family/per-engine footprints; only measured peak RSS/VRAM evidence may refine them.
 The field is threaded through the hand-written JSON codec, the Dhall decoder/renderer/type in
 `src/Infernix/Substrate.hs`, and the purescript-bridge `ModelDescriptor` (generated
 `web/src/Generated/Contracts.purs`), so every generated catalog entry carries it. The Haskell
-execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. Linux GPU
-plan compilation currently fails closed with `GpuDualResourceBudgetRequired` until Phase 6 adds
-independently indexed RAM/VRAM enforcement. The field is now a required, positive
+execution-plan compiler uses it for Apple unified-host and Linux CPU pod-RAM accounting. A Linux GPU
+plan without independently indexed RAM/VRAM enforcement fails closed with
+`GpuDualResourceBudgetRequired`. The field is a required, positive
 `ModelMemoryFootprint` newtype (accessor `modelMemoryFootprintMib`): the wire field name stays
 `modelRamFootprintMib` (an Integer), but the smart constructor `mkModelMemoryFootprint` and the
-decoder fail closed when it is absent or non-positive — the old bare-`Int` that defaulted to `0` and
-silently disabled admission is gone. Once admitted, this footprint is the `MemoryCeiling` the
+decoder fail closed when it is absent or non-positive; a missing value cannot silently disable
+admission. Once admitted, this footprint is the `MemoryCeiling` the
 capped-engine kernel OS-bounds the engine subprocess's resident memory to; canonical home
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
@@ -86,7 +91,7 @@ eagerly pre-staged `infernix-models` MinIO bucket via `adapters.model_cache.get_
 typed per-family result surface. Realness is guaranteed by construction: the engine code cannot
 return a fabricated result (any missing-weights/load/engine failure raises → `failed`), enforced by
 the realness lint. Adding
-a catalog row requires fresh cohort evidence before that row is claimed proven, and any row whose
+a catalog row requires fresh real-output evidence before that row is claimed proven, and any row whose
 achievability is uncertain is an explicit residual in `residualMatrixRowIdsForMode`; a row that is
 merely unbuilt stays declared-runnable and fails closed.
 
@@ -151,7 +156,7 @@ they are deliberate unresolved support instead of accidental catalog drift.
 
 ### Engine-cell accuracy for the CPU-provider and residual rows
 
-The generated binding records each engine cell exactly as the runner executes it today, so the
+The generated binding records each engine cell exactly as the runner executes it, so the
 catalog does not overstate GPU acceleration:
 
 - Row 11 (basic-pitch ONNX): the linux-gpu cell reads `ONNX Runtime (CPU)` with `requiresGpu=False`
@@ -159,9 +164,9 @@ catalog does not overstate GPU acceleration:
   wheel, so the row is not GPU-scheduled. The real `CUDAExecutionProvider` + `onnxruntime-gpu` path
   is a named linux-gpu residual.
 - Rows 4 and 6 (llama.cpp GGUF, whisper.cpp): the engine cells are retained, but the linux-gpu
-  column runs the CPU Ubuntu binary today; a CUDA-built binary is the named linux-gpu residual.
-- Row 14 (piano_transcription / music-omnizart): the binding is landed and wired on the pytorch
-  adapter; real-output evidence is pending its cohort wave.
+  column runs the CPU Ubuntu binary; a CUDA-built binary is the named linux-gpu residual.
+- Row 14 (piano_transcription / music-omnizart): the binding uses the PyTorch adapter and must
+  produce real output under its routed validation gate.
 - Row 17 (Wan2.1-T2V): the Apple cell stays a documented residual
   (`residualMatrixRowIdsForMode AppleSilicon`); union coverage is satisfied by the real linux-gpu
   Diffusers cell.

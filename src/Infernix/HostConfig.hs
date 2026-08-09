@@ -69,8 +69,6 @@ data HostToolPaths = HostToolPaths
     hostCabal :: Text,
     hostGhc :: Text,
     hostGhcup :: Text,
-    hostOrmolu :: Text,
-    hostHlint :: Text,
     hostNpm :: Text,
     hostNode :: Text,
     hostPython3 :: Text,
@@ -78,7 +76,6 @@ data HostToolPaths = HostToolPaths
     hostLlamaCli :: Text,
     hostWhisperCli :: Text,
     hostPoetry :: Text,
-    hostProtoc :: Text,
     hostGit :: Text,
     hostTar :: Text,
     hostCurl :: Text,
@@ -113,11 +110,13 @@ instance Dhall.FromDhall HostToolPaths where
 --
 -- Both quantities are observations, never declarations.
 -- 'Infernix.HostMemory.observeHostMemoryFacts' reads @\/proc\/meminfo@ on Linux
--- and @sysctl -n hw.memsize@ on Darwin for 'hostPhysicalMemoryMib', and
--- intersects the Linux figure with the cgroup v2 maximum in force for
--- 'hostEffectiveMemoryMib' — inside the outer launcher container the physical
--- figure is the whole machine's and the container's own limit is the one a
--- build actually gets.
+-- and @sysctl -n hw.memsize@ on Darwin for 'hostPhysicalMemoryMib'. For
+-- 'hostEffectiveMemoryMib', it intersects the Linux figure with the cgroup v2
+-- maximum in force and subtracts the conservatively observed aggregate active
+-- Colima pledge from the Darwin figure. Inside the outer launcher container the
+-- Linux physical figure is the whole machine's and the container's own limit is
+-- the one a build actually gets; on the Apple host, the co-resident VM pledge is
+-- physical RAM the host-native build may not also spend.
 --
 -- 'unmeasuredHostMemoryFacts' is the shape the pure manifest defaults carry
 -- before measurement. It is zero on both fields, and every consumer rejects
@@ -463,8 +462,6 @@ renderHostConfig hostConfig =
             <> renderText "cabal" hostCabal
             <> renderText "ghc" hostGhc
             <> renderText "ghcup" hostGhcup
-            <> renderText "ormolu" hostOrmolu
-            <> renderText "hlint" hostHlint
             <> renderText "npm" hostNpm
             <> renderText "node" hostNode
             <> renderText "python3" hostPython3
@@ -472,7 +469,6 @@ renderHostConfig hostConfig =
             <> renderText "llamaCli" hostLlamaCli
             <> renderText "whisperCli" hostWhisperCli
             <> renderText "poetry" hostPoetry
-            <> renderText "protoc" hostProtoc
             <> renderText "git" hostGit
             <> renderText "tar" hostTar
             <> renderText "curl" hostCurl
@@ -627,8 +623,6 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostCabal = homeDir <> "/.ghcup/bin/cabal",
             hostGhc = homeDir <> "/.ghcup/bin/ghc",
             hostGhcup = "",
-            hostOrmolu = "/workspace/.build/haskell-style-tools/bin/ormolu",
-            hostHlint = "/workspace/.build/haskell-style-tools/bin/hlint",
             hostNpm = "/usr/bin/npm",
             hostNode = "/usr/bin/node",
             hostPython3 = "/usr/bin/python3",
@@ -636,7 +630,6 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostLlamaCli = "",
             hostWhisperCli = "",
             hostPoetry = "/opt/poetry/bin/poetry",
-            hostProtoc = "/usr/bin/protoc",
             hostGit = "/usr/bin/git",
             hostTar = "/usr/bin/tar",
             hostCurl = "/usr/bin/curl",
@@ -696,8 +689,6 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostCabal = homeDir <> "/.ghcup/bin/cabal",
             hostGhc = homeDir <> "/.ghcup/bin/ghc",
             hostGhcup = homeDir <> "/.ghcup/bin/ghcup",
-            hostOrmolu = repoRoot <> "/.build/haskell-style-tools/bin/ormolu",
-            hostHlint = repoRoot <> "/.build/haskell-style-tools/bin/hlint",
             hostNpm = "/opt/homebrew/bin/npm",
             hostNode = "/opt/homebrew/bin/node",
             hostPython3 = "/opt/homebrew/bin/python3.12",
@@ -706,7 +697,6 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostWhisperCli = "/opt/homebrew/bin/whisper-cli",
             hostPoetry =
               homeDir <> "/.local/share/pypoetry/venv/bin/poetry",
-            hostProtoc = "/opt/homebrew/bin/protoc",
             hostGit = "/usr/bin/git",
             hostTar = "/usr/bin/tar",
             hostCurl = "/usr/bin/curl",

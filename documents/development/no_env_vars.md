@@ -10,8 +10,7 @@
 ## TL;DR
 
 - **Never call** `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, or `unsetEnv` in Haskell runtime,
-  test, or lint code. The only current exception is `Setup.hs`'s deterministic `Env.setEnv "PATH"`
-  shim for Cabal/proto-lens custom setup.
+  test, or lint code. There is no Cabal Setup exception; the package is `build-type: Simple`.
 - **Never call** `proc "<bare-name>"` for any external command. Use
   `runHostTool hostConfig <toolName> args` instead.
 - **Never call** `findExecutable` or `findExecutables` to discover a manifest-owned tool. Use
@@ -23,13 +22,12 @@
 - **Always thread** typed `HostConfig` / `ClusterConfig` / `SecretsConfig` records as
   parameters down your call tree.
 
-## Current Audit Note
+## Enforcement Boundary
 
-The enforcement surface is now
-closed. `Setup.hs` no longer reads operator environment and keeps only a deterministic setup-local
-`PATH` mutation for proto-lens; bootstrap shell no longer accepts inherited command overrides or
-inherited `PATH` joins; Haskell-style Cabal invocations resolve through `HostConfig` or fixed
-candidates; and the PureScript compiler installer no longer shells out to bare `mktemp` / `tar`.
+The package uses `build-type: Simple` and has no Custom `Setup.hs` or setup-local `PATH` mutation.
+Bootstrap shell accepts neither inherited command overrides nor inherited `PATH` joins;
+Haskell-style Cabal invocations resolve through `HostConfig` or fixed candidates; and the
+PureScript compiler installer does not shell out to bare `mktemp` / `tar`.
 
 ## Haskell
 
@@ -202,8 +200,8 @@ install root, optional MinIO object key, closed recipe fingerprint, direct-targe
 fingerprint, and exact resolved provenance are explicit record fields. Executable paths, argument
 prefixes, and smoke operations come only from Cabal-hidden closed catalogs; they are not
 manifest-supplied commands. Every bounded helper receives an explicit constructed environment, so
-no host environment variable crosses into the materialization path. The old Tart helper path has
-been removed, and new Apple engine work must not add Tart, keychain, Xcode UI, or
+no host environment variable crosses into the materialization path. There is no Tart helper path,
+and Apple engine work must not add Tart, keychain, Xcode UI, or
 `ssh`-with-env dependencies. The canonical home for this substrate is
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md).
 
@@ -211,7 +209,7 @@ been removed, and new Apple engine work must not add Tart, keychain, Xcode UI, o
 
 Keycloak's upstream image consumes `KC_DB_*` env vars; the Keycloak pod spec retains those
 entries, sourced from a mounted Secret where possible. The lint gates allow them by exception.
-Document any future exception in `documents/tools/<tool>.md` and add it to the lint exception
+Document any additional exception in `documents/tools/<tool>.md` and add it to the lint exception
 list in `src/Infernix/Lint/Chart.hs`.
 
 ## Lint enforcement
@@ -220,15 +218,16 @@ The repo-local lint gates are:
 
 - `src/Infernix/Lint/HaskellStyle.hs.forbiddenEnvFunctions` — rejects any of
   `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`, `unsetEnv` in
-  `src/`, `app/`, `test/`, and `Setup.hs` except for the deterministic `Env.setEnv "PATH"` setup shim.
+  `src/`, `app/`, and `test/`.
 - `src/Infernix/Lint/HaskellStyle.hs.forbiddenBareProcCommands` — rejects
   `proc "<bare-name>"` whose name matches a registered host tool. The list is derived from the
   `Infernix.HostTools.HostTool` enum via `hostToolCommandNames` (which mirrors the
-  `HostConfig`/`HostToolPaths` schema), so it cannot drift from the tool set.
+  `HostConfig`/`HostToolPaths` schema), plus explicit `protoc` / `proto-lens-protoc` guards; neither
+  generator is runtime-selectable.
 - `src/Infernix/Lint/Docs.hs` — rejects governed-doc language that presents project-prefixed env
   names or shell path overrides as supported operator configuration outside the legacy-tracking
-  ledger and documented exception docs. The check covers required-doc and phase-doc
-  coverage so newly authoritative configuration and Phase 7 documents cannot drift outside the lint
+  ledger and documented exception docs. The check covers required-doc and plan-doc
+  coverage so newly authoritative configuration and shared-library documents cannot drift outside the lint
   set.
 - `src/Infernix/Lint/Chart.hs` — rejects any `env:` block in
   `chart/templates/deployment-{coordinator,engine,demo}.yaml`.

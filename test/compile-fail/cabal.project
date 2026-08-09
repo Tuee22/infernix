@@ -8,14 +8,15 @@ with-compiler: ghc-9.12.4
 -- Bounded host build memory (Phase 1 Sprint 1.21). Canonical doctrine:
 -- documents/architecture/bounded_host_memory.md
 --
--- The per-fixture negative-compilation builds are one of the nested builds the
--- doctrine names as outside the outer ceiling: they carry their own job count,
--- so they carry their own bound. Same committed floor as the root
--- `cabal.project`: 4 jobs x 4096 MiB = 16384 MiB of runtime heap worst case.
-jobs: 4
+-- This serialized nested surface has its own closed account: one 2048 MiB GHC
+-- plus four 1024 MiB control/auxiliary claimants (outer Cabal, test runner,
+-- nested Cabal, and the nested worker auxiliary) totals 6144 MiB, inside the
+-- outer 8192 MiB account. Main.hs repeats these exact values as final Cabal
+-- arguments so a later project-file read cannot widen them.
+jobs: 1
 
 package *
-    ghc-options: +RTS -M4096M -xr12288M -RTS
+    ghc-options: +RTS -M2048M -xr6144M -RTS
 
 allow-newer:
     *:base
@@ -26,4 +27,3 @@ allow-newer:
   , lens-family:lens-family-core
   , lens-family-core:containers
   , proto-lens:lens-family
-  , proto-lens-setup:Cabal

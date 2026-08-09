@@ -28,6 +28,9 @@
   plus fixed system fallbacks; callers cannot replace it. The Haskell-style lint gate rejects both
   `proc "<bare-name>"` and direct `findExecutable` / `findExecutables` discovery for manifest-owned
   host tools.
+- Ormolu and HLint are libraries linked only into root-package `infernix-haskell-style`, not runtime
+  host tools; the Cabal-manifest formatter uses the pinned Cabal library API in the separate
+  `test/cabal-format/` package. None has a manifest field or a runtime executable lookup.
 
 ## Schema
 
@@ -42,8 +45,6 @@ let ToolPaths =
       , cabal : HostTool
       , ghc : HostTool
       , ghcup : HostTool
-      , ormolu : HostTool
-      , hlint : HostTool
       , npm : HostTool
       , node : HostTool
       , python3 : HostTool
@@ -51,7 +52,6 @@ let ToolPaths =
       , llamaCli : HostTool
       , whisperCli : HostTool
       , poetry : HostTool
-      , protoc : HostTool
       , git : HostTool
       , tar : HostTool
       , curl : HostTool
@@ -179,10 +179,13 @@ outer-container default so a missing field or default-policy drift fails before 
 `memory` is the only record in this manifest that is **measured rather than declared**. `infernix
 init` reads `MemTotal` from `/proc/meminfo` on Linux and intersects it with the cgroup v2 maximum in
 force — inside the outer launcher container the first figure is the whole machine's and the second
-is what a build actually gets — and reads `sysctl -n hw.memsize` on Darwin, where there are no
-cgroups and the two figures are therefore equal. The measurement is fail-closed: `infernix init`
-refuses to write a manifest it could not measure, because a build ceiling derived from an unmeasured
-host is a declared number wearing a measurement's clothes. Both fields feed
+is what a build actually gets. On Darwin it reads `sysctl -n hw.memsize` for physical RAM and
+subtracts the aggregate pledge of every Colima profile not explicitly reported `Stopped` for the
+effective figure. The Colima observation uses a fixed absolute executable candidate, fixed argv,
+and a required deadline; unavailable or malformed observation fails closed rather than defaulting
+the pledge to zero. `infernix init` refuses to write a manifest it could not measure, because a
+build ceiling derived from an unmeasured host is a declared number wearing a measurement's clothes.
+Both fields feed
 [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md): the toolchain
 account is a share of `effectiveMemoryMib`, and `infernix init` divides it by a job count into the
 untracked repo-root `cabal.project.local`.
@@ -203,8 +206,6 @@ to delete the file and re-run `infernix init`.
 | cabal | `toolPaths.cabal` | `${HOME}/.ghcup/bin/cabal` | baked: `/root/.ghcup/bin/cabal` |
 | ghc | `toolPaths.ghc` | `${HOME}/.ghcup/bin/ghc` | baked: `/root/.ghcup/bin/ghc` |
 | ghcup | `toolPaths.ghcup` | `${HOME}/.ghcup/bin/ghcup` | (unused; image already has ghc/cabal) |
-| ormolu | `toolPaths.ormolu` | `./.build/haskell-style-tools/bin/ormolu` | same |
-| hlint | `toolPaths.hlint` | `./.build/haskell-style-tools/bin/hlint` | same |
 | npm | `toolPaths.npm` | `/opt/homebrew/bin/npm` | baked: `/usr/local/bin/npm` |
 | node | `toolPaths.node` | `/opt/homebrew/bin/node` | baked: `/usr/local/bin/node` |
 | python3 | `toolPaths.python3` | `/opt/homebrew/bin/python3.12` | `/usr/bin/python3` |
@@ -212,7 +213,6 @@ to delete the file and re-run `infernix init`.
 | llama-cli | `toolPaths.llamaCli` | `/opt/homebrew/bin/llama-cli` | unavailable (empty) |
 | whisper-cli | `toolPaths.whisperCli` | `/opt/homebrew/bin/whisper-cli` | unavailable (empty) |
 | poetry | `toolPaths.poetry` | `${HOME}/.local/share/pypoetry/venv/bin/poetry` | baked: `/opt/poetry/bin/poetry`; the Apple default is created by the kernel-locked bounded bootstrap, while manifestless fallback checks fixed Homebrew/image/system absolute paths only |
-| protoc | `toolPaths.protoc` | `/opt/homebrew/bin/protoc` | `/usr/bin/protoc` |
 | git | `toolPaths.git` | `/usr/bin/git` | `/usr/bin/git` |
 | tar | `toolPaths.tar` | `/usr/bin/tar` | `/usr/bin/tar` |
 | curl | `toolPaths.curl` | `/usr/bin/curl` | `/usr/bin/curl` |
@@ -228,17 +228,20 @@ to delete the file and re-run `infernix init`.
 | hostname | `toolPaths.hostname` | `/bin/hostname` | `/usr/bin/hostname` |
 | sysctl | `toolPaths.sysctl` | `/usr/sbin/sysctl` | n/a |
 
-`colima` is deliberately not a manifest field. The Apple memory-partition probe may read it through
-the fixed bootstrap-adjacent `/opt/homebrew/bin/colima` candidate, but Infernix never manages it and
-normal command execution cannot select it from runtime configuration.
+`colima` is deliberately not a manifest field. The shared Darwin build- and inference-memory
+observer may read it through the fixed bootstrap-adjacent `/opt/homebrew/bin/colima` candidate, but
+Infernix never manages it and normal command execution cannot select it from runtime configuration.
 
-The former `tart` field (Haskell record selector `hostTart`) is no longer part of the current
-schema. There is no `HostTool.HostTart`, no `AppleTart` prerequisite, and no
-Tart-backed command helpers; `infernix internal materialize-metal-engines` now materializes typed
+`protoc` is not a host-manifest field. Ordinary Haskell builds consume the exact tracked
+`src/Proto/` snapshot and Python generation invokes `python -m grpc_tools.protoc` from its governed
+venv. The only standalone compiler is pinned inside the Linux Docker build's regeneration gate; it
+is not a runtime-selectable host tool and Darwin bootstrap does not install it.
+
+The schema has no `tart` field or `hostTart` Haskell record selector. There is no
+`HostTool.HostTart`, `AppleTart` prerequisite, or Tart-backed command helper;
+`infernix internal materialize-metal-engines` materializes typed
 engine-artifact manifests through the headless host lane described in
-[apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md). The cleanup
-receipt is recorded in
-[../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md).
+[apple_silicon_metal_headless_builds.md](apple_silicon_metal_headless_builds.md).
 
 The Apple defaults assume Homebrew (`/opt/homebrew/bin`) and ghcup. Docker-backed Apple work
 requires the current Docker context to already point at a native arm64 Docker daemon; Infernix must
@@ -356,7 +359,7 @@ readonly CABAL="${HOME_DIR}/.ghcup/bin/cabal"
 The supported pre-binary command set is limited to the hardcoded constants or derived absolute paths in
 `bootstrap/*.sh`: `apt-get`, `bash`, `brew`, `cabal`, `chmod`, `cmp`, `cp`, `curl`, `dirname`,
 `docker`, `dpkg`, `dscl`, `env`, `getent`, `ghc`, `ghcup`, `gpg`, `grep`, `id`, `install`, `mktemp`,
-`nvidia-ctk`, `nvidia-smi`, `protoc`, `rm`, `sed`, `skopeo`, `sudo`, `systemctl`, `tr`,
+`nvidia-ctk`, `nvidia-smi`, `rm`, `sed`, `skopeo`, `sudo`, `systemctl`, `tr`,
 `ubuntu-drivers`, `uname`, and `usermod`. Everything else should flow through the launcher binary,
 which reads its tool paths and native host architecture from `HostConfig`. None of these names may
 become inherited environment overrides or ambient `PATH` lookups.
@@ -397,7 +400,7 @@ When a sprint introduces a new external CLI:
   module's own token list. Adding a new command without adding the schema field first fails this
   check.
 - `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|python3\.11|llama-cli|whisper-cli|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches, and
-  `rg -n 'findExecutable|findExecutables' Setup.hs src test` returns only the lint module's forbidden-token
+  `rg -n 'findExecutable|findExecutables' app src test` returns only the lint module's forbidden-token
   list.
 
 ## Cross-References

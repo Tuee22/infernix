@@ -55,7 +55,7 @@ canonical contract for the admin-vs-user split. There is no `/minio/s3` edge rou
 
 ## Durable Context Surface
 
-Phase 7 added three routed prefixes to the registry above. They are demo-gated and absent
+The routed registry contains three durable-context prefixes. They are demo-gated and absent
 when the active substrate's generated `.dhall` carries `demo_ui = false`:
 
 - `/auth` — Keycloak login pages and OIDC endpoints. Backs the SPA's signup, login, and JWT
@@ -75,13 +75,13 @@ when the active substrate's generated `.dhall` carries `demo_ui = false`:
   [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md),
   [api_surface.md](api_surface.md), and [../tools/minio.md](../tools/minio.md).
 
-  The webapp object-proxy is the live path, the browser-direct presigned-URL path is gone, and Phase
-  There is no `/minio/s3` route, no SecurityPolicy target for it, and no
+  The webapp object proxy is the only browser artifact path. There is no
+  `/minio/s3` route, no SecurityPolicy target for it, and no
   `presignPublicEndpoint` field.
 
 The demo `Service` sets `sessionAffinity: None` and the HTTPRoute does not enable client-IP or
-cookie affinity. WS pods use Pulsar `Reader` subscriptions for per-WS fan-out, so any replica
-can host any session. The routed browser surface terminates at the frontend pod
+cookie affinity. One frontend process runs per machine and uses Pulsar `Reader` subscriptions for
+per-connection fan-out; it may host any session. The routed browser surface terminates at the frontend pod
 (`infernix-demo`); the coordinator and engine pods named in
 [../architecture/daemon_topology.md](../architecture/daemon_topology.md) are not directly
 addressable from the browser.
@@ -109,8 +109,8 @@ shell against that class so neither flashes during the boot pass that reads the 
 JWT.
 
 After a successful PKCE authorization-code exchange (login or registration), the JWT is
-written into the in-memory `TokenStore` and the app shell renders as it did before Sprint
-7.19; logout / token-clear returns the user to the landing card.
+written into the in-memory `TokenStore` and the app shell renders; logout / token-clear returns the
+user to the landing card.
 
 The routed Keycloak forms use the repo-owned `infernix` login theme. The login form title is
 `Sign in to Infernix`, the direct registration form title is `Create your Infernix account`, and
@@ -138,9 +138,9 @@ cannot set headers on. The admin cluster-wide monitoring panel reads the admin-g
 `GET /api/admin/overview`, and the backend additionally admin-gates `GET /api/cache` and
 `/api/cache/{evict,rebuild}`.
 
-The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. The former
-`MinIO S3` ribbon link is removed: MinIO is no longer browser-reachable;
-browser object access flows through the webapp's `/api/objects` endpoints
+The `Harbor` and `Pulsar Admin` operator links are the operator ribbon's full set. MinIO is not
+browser-reachable and the ribbon has no `MinIO S3` link; browser object access flows through the
+webapp's `/api/objects` endpoints
 (see [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
 
 ## Account Deletion
@@ -174,14 +174,14 @@ Pulsar topics under `persistent://infernix/demo/`: `demo.user.<userId>.contexts`
   `/api/publication`
 - supported routed E2E on Linux uses Playwright from the substrate image with
   `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
-  `npm exec` with the same typed fixture and is covered by the Apple cohort validation batch
+  `npm exec` with the same typed fixture and is covered by the Apple selected-accelerator gate
 - the SPA surfaces the active runtime mode, control-plane context, daemon location, inference
   executor location in the publication payload, catalog source, chosen edge port, inference
   dispatch mode, demo-config path, and routed publication inventory through
   `/api/publication`
 - the user can browse any generated model entry and inspect its selected engine and request shape
-- supported manual-inference dispatch closes through the durable-context Chat surface introduced
-  by Phase 7: the browser opens a WebSocket against `/ws`, sends typed
+- supported manual-inference dispatch closes through the durable-context Chat surface: the browser
+  opens a WebSocket against `/ws`, sends typed
   `WsClientMessage` actions, and receives `ConversationState` snapshots plus
   `ConversationStatePatch` deltas. The coordinator daemon
   (`infernix-coordinator`) publishes Pulsar batches; the engine role (`infernix-engine` on

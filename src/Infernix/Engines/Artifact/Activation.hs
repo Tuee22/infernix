@@ -5,6 +5,7 @@
 -- specifications remain outside this module's export surface.
 module Infernix.Engines.Artifact.Activation
   ( activateAppleEngineArtifactWithInstalledSmoke,
+    activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke,
     activateLinuxEngineArtifactWithInstalledSmoke,
   )
 where
@@ -85,6 +86,57 @@ activateAppleEngineArtifactWithInstalledSmoke
             adapter
             generationLease
             retainedRoot
+            activeEnvironment
+            timeout
+      )
+      environment
+      smokeTimeout
+
+activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke ::
+  MaterializationAuthority w ->
+  Artifact.ArtifactRootMutator w ->
+  Subprocess.AbandonedActivitiesRecovered ->
+  ArtifactGenerationLease ->
+  Subprocess.SubprocessEnv ->
+  Provisioning.PositiveProvisioningTimeout ->
+  Provisioning.AppleAdapterId ->
+  Provisioning.InstalledPythonSourceIsolationSpec ->
+  FilePath ->
+  FilePath ->
+  Text ->
+  IO (Either String Subprocess.NativeArtifactCommandOutcome)
+activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke
+  authority
+  mutator
+  recovered
+  generationLease
+  environment
+  smokeTimeout
+  adapter
+  sourceIsolationSpec
+  installRoot
+  tempRoot
+  expectedDigest = do
+    identity <-
+      either
+        (ioError . userError)
+        pure
+        (Provisioning.nativeArtifactIdentity adapter)
+    activateEngineArtifactWithInstalledSmoke
+      authority
+      mutator
+      recovered
+      generationLease
+      identity
+      installRoot
+      tempRoot
+      expectedDigest
+      ( \retainedRoot _manifestFingerprint activeEnvironment timeout ->
+          Subprocess.runClosedInstalledPythonSourceIsolationSmoke
+            adapter
+            generationLease
+            retainedRoot
+            sourceIsolationSpec
             activeEnvironment
             timeout
       )

@@ -77,9 +77,12 @@ module Infernix.Engines.Provisioning
     installedMachORuntimeClosureBytes,
     installedMachORuntimeClosureDigest,
     installedMachORuntimeClosureSources,
+    InstalledPythonSourceIsolationReport (..),
     MachOFixturePlan (..),
     inspectMachOFixtureForTest,
+    planMachOMetadataReadsForTest,
     machOInstallNameTargetForTest,
+    pythonHomeClosureFileExcludedForTest,
     shebangBindsHostInstallationForTest,
     supportedMachOMagicForTest,
     resolveMachOPathsFixtureForTest,
@@ -108,6 +111,7 @@ module Infernix.Engines.Provisioning
     admitPackageClosureFileForTest,
     admitPackageClosureTotalsForTest,
     completeAppleCandidate,
+    completeApplePythonCandidateWithSourceIsolation,
     completeLinuxCandidate,
     withProvisioningGrant,
     withEngineProvisioningSession,
@@ -120,6 +124,8 @@ module Infernix.Engines.Provisioning
     pauseProvisioningSessionForTest,
     commitAfterInterruptibleProvisioning,
     provisioningPoetryProjectReady,
+    provisioningProjectExecutableReady,
+    provisioningProjectReadFile,
     provisioningPoetryBootstrapExecutable,
     provisioningGeneratedBindingsRequired,
     provisioningAppleSetupReady,
@@ -200,7 +206,7 @@ where
 
 import Control.Concurrent.MVar (MVar, putMVar, takeMVar)
 import Control.Exception (IOException, displayException, mask, throwIO, try)
-import Control.Monad (foldM, unless, when, zipWithM)
+import Control.Monad (foldM, unless, void, when, zipWithM)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.Aeson qualified as Aeson
 import Data.Aeson.Key qualified as AesonKey
@@ -679,6 +685,17 @@ data InstalledMachORuntimeClosure s = InstalledMachORuntimeClosure
   }
 
 type role InstalledMachORuntimeClosure nominal
+
+data InstalledPythonSourceIsolationReport
+  = InstalledPythonSourceIsolationReport
+  { installedPythonSourceIsolationReportAdapter :: !ApplePythonAdapterId,
+    installedPythonSourceIsolationReportInstallRoot :: !FilePath,
+    installedPythonSourceIsolationReportArtifactDigest :: !Text,
+    installedPythonSourceIsolationReportReceiptDigest :: !Text,
+    installedPythonSourceIsolationReportDirectoryCount :: !Int,
+    installedPythonSourceIsolationReportFileCount :: !Int
+  }
+  deriving (Eq, Show)
 
 newtype AppleRuntimeVersion
   = AppleRuntimeVersion Text
@@ -2617,24 +2634,16 @@ machOCpuTypes =
 inspectExactMachOImage ::
   ResolvedExecutableIdentity ->
   IO MachOInspection
-inspectExactMachOImage identity = do
-  contents <- readExactExecutableBytes identity
-  requireMachOResolution (parseMachOInspection contents)
-
-readExactExecutableBytes ::
-  ResolvedExecutableIdentity ->
-  IO ByteString.ByteString
-readExactExecutableBytes identity =
+inspectExactMachOImage identity =
   mask $ \restore -> do
     let path = resolvedExecutableCanonicalPath identity
         expectedStatus =
           resolvedExecutableCanonicalStatus identity
-        expectedSize =
-          fromIntegral (Posix.fileSize expectedStatus)
+        expectedSize :: Integer
+        expectedSize = fromIntegral (Posix.fileSize expectedStatus)
     unless
       ( expectedSize >= 0
           && expectedSize <= maximumExactRuntimeFileBytes
-          && expectedSize <= fromIntegral (maxBound :: Int)
       )
       (ioError (userError "Mach-O image exceeds its fixed per-file bound"))
     descriptor <-
@@ -2650,37 +2659,246 @@ readExactExecutableBytes identity =
           openedStatus <- Posix.getFdStatus descriptor
           unless
             (stableExecutableStatus expectedStatus openedStatus)
-            (ioError (userError "Mach-O image changed before exact read"))
-          contents <-
-            readProvisioningDescriptorBounded
-              descriptor
-              (fromIntegral expectedSize)
-              0
-              []
+            (ioError (userError "Mach-O image changed before metadata read"))
+          inspection <-
+            inspectMachOMetadataDescriptor descriptor expectedSize
           finalStatus <- Posix.getFdStatus descriptor
           finalPathStatus <- Posix.getSymbolicLinkStatus path
           unless
-            ( ByteString.length contents == fromIntegral expectedSize
-                && stableExecutableStatus openedStatus finalStatus
+            ( stableExecutableStatus openedStatus finalStatus
                 && stableExecutableStatus finalStatus finalPathStatus
             )
-            (ioError (userError "Mach-O image changed during exact read"))
-          pure contents
+            (ioError (userError "Mach-O image changed during metadata read"))
+          pure inspection
       )
       (closeFd descriptor)
+
+-- | Inspect only the bounded metadata dyld consumes from a Mach-O image.
+--
+-- The exact identity has already streamed and hashed the complete payload.
+-- Retaining that payload again merely to parse its header allocated one
+-- file-sized pinned buffer for large libraries such as @libtorch_cpu.dylib@;
+-- a short multi-read can also require a concatenation copy. A thin image needs
+-- its 32-byte header plus at most 4 MiB of load commands. A fat image
+-- additionally needs its bounded architecture table before the selected arm64
+-- slice can be addressed. Every read remains on the retained no-follow
+-- descriptor, and the caller rechecks both that descriptor and the path after
+-- this inspection completes.
+inspectMachOMetadataDescriptor ::
+  Fd ->
+  Integer ->
+  IO MachOInspection
+inspectMachOMetadataDescriptor descriptor imageBytes = do
+  leading <- readProvisioningDescriptorRange descriptor 0 8
+  if
+    | ByteString.take 4 leading == thinMachOMagic -> do
+        header <- readProvisioningDescriptorRange descriptor 0 32
+        metadataBytes <-
+          requireMachOResolution
+            (thinMachOMetadataReadBytes imageBytes header)
+        contents <-
+          readProvisioningDescriptorRange descriptor 0 metadataBytes
+        requireMachOResolution (parseThinMachO contents)
+    | ByteString.take 4 leading == fat32MachOMagic ->
+        inspectFatMachOMetadataDescriptor descriptor imageBytes False leading
+    | ByteString.take 4 leading == fat64MachOMagic ->
+        inspectFatMachOMetadataDescriptor descriptor imageBytes True leading
+    | otherwise ->
+        ioError (userError "unsupported or non-arm64 Mach-O magic")
+
+inspectFatMachOMetadataDescriptor ::
+  Fd ->
+  Integer ->
+  Bool ->
+  ByteString.ByteString ->
+  IO MachOInspection
+inspectFatMachOMetadataDescriptor descriptor imageBytes is64 leading = do
+  tableBytes <-
+    requireMachOResolution
+      (fatMachOArchitectureTableBytes imageBytes is64 leading)
+  architectureTable <-
+    readProvisioningDescriptorRange descriptor 0 tableBytes
+  (sliceOffset, sliceBytes) <-
+    requireMachOResolution
+      (selectFatMachOArm64Range is64 architectureTable)
+  requireMachOResolution
+    (validateFatMachOSliceRange imageBytes sliceOffset sliceBytes)
+  sliceHeader <-
+    readProvisioningDescriptorRange
+      descriptor
+      (fromIntegral sliceOffset)
+      32
+  metadataBytes <-
+    requireMachOResolution
+      (thinMachOMetadataReadBytes (fromIntegral sliceBytes) sliceHeader)
+  contents <-
+    readProvisioningDescriptorRange
+      descriptor
+      (fromIntegral sliceOffset)
+      metadataBytes
+  requireMachOResolution (parseThinMachO contents)
+
+thinMachOMagic :: ByteString.ByteString
+thinMachOMagic = ByteString.pack [0xcf, 0xfa, 0xed, 0xfe]
+
+fat32MachOMagic :: ByteString.ByteString
+fat32MachOMagic = ByteString.pack [0xca, 0xfe, 0xba, 0xbe]
+
+fat64MachOMagic :: ByteString.ByteString
+fat64MachOMagic = ByteString.pack [0xca, 0xfe, 0xba, 0xbf]
+
+thinMachOMetadataReadBytes ::
+  Integer ->
+  ByteString.ByteString ->
+  Either String Integer
+thinMachOMetadataReadBytes imageBytes header = do
+  unlessEither
+    (imageBytes >= 32 && ByteString.take 4 header == thinMachOMagic)
+    "Mach-O slice is not little-endian 64-bit"
+  cpuType <- readWord32LE header 4
+  unlessEither
+    (cpuType == 0x0100000c)
+    "Mach-O slice is not arm64"
+  commandCount <- readWord32LE header 16
+  commandBytes <- readWord32LE header 20
+  let metadataBytes = 32 + fromIntegral commandBytes
+  unlessEither
+    ( commandCount <= maximumMachOLoadCommands
+        && commandBytes <= maximumMachOLoadCommandBytes
+        && metadataBytes <= imageBytes
+    )
+    "Mach-O load-command table exceeds its fixed bound"
+  pure metadataBytes
+
+fatMachOArchitectureTableBytes ::
+  Integer ->
+  Bool ->
+  ByteString.ByteString ->
+  Either String Integer
+fatMachOArchitectureTableBytes imageBytes is64 leading = do
+  architectureCount <- readWord32BE leading 4
+  unlessEither
+    (architectureCount > 0 && architectureCount <= maximumFatArchitectures)
+    "fat Mach-O architecture count is invalid"
+  let recordBytes :: Integer
+      recordBytes = if is64 then 32 else 20
+      tableBytes = 8 + fromIntegral architectureCount * recordBytes
+  unlessEither
+    (tableBytes <= imageBytes)
+    "fat Mach-O architecture table is out of bounds"
+  pure tableBytes
+
+validateFatMachOSliceRange ::
+  Integer ->
+  Word64 ->
+  Word64 ->
+  Either String ()
+validateFatMachOSliceRange imageBytes sliceOffset sliceBytes = do
+  let offset = fromIntegral sliceOffset
+      bytes = fromIntegral sliceBytes
+  unlessEither
+    ( bytes >= 32
+        && offset <= imageBytes
+        && bytes <= imageBytes - offset
+    )
+    "fat Mach-O slice is out of bounds"
+
+-- | Pure regression surface for the exact read ranges production derives.
+-- The first bytes must contain a complete thin header or fat architecture
+-- table; a fat image additionally supplies the selected arm64 slice header.
+planMachOMetadataReadsForTest ::
+  Integer ->
+  ByteString.ByteString ->
+  Maybe ByteString.ByteString ->
+  Either String [(Integer, Integer)]
+planMachOMetadataReadsForTest imageBytes outerMetadata maybeSliceHeader
+  | ByteString.take 4 outerMetadata == thinMachOMagic = do
+      metadataBytes <-
+        thinMachOMetadataReadBytes imageBytes outerMetadata
+      pure [(0, metadataBytes)]
+  | ByteString.take 4 outerMetadata == fat32MachOMagic =
+      planFatMachOMetadataReadsForTest imageBytes False outerMetadata maybeSliceHeader
+  | ByteString.take 4 outerMetadata == fat64MachOMagic =
+      planFatMachOMetadataReadsForTest imageBytes True outerMetadata maybeSliceHeader
+  | otherwise = Left "unsupported or non-arm64 Mach-O magic"
+
+planFatMachOMetadataReadsForTest ::
+  Integer ->
+  Bool ->
+  ByteString.ByteString ->
+  Maybe ByteString.ByteString ->
+  Either String [(Integer, Integer)]
+planFatMachOMetadataReadsForTest imageBytes is64 architectureTable maybeSliceHeader = do
+  tableBytes <-
+    fatMachOArchitectureTableBytes imageBytes is64 architectureTable
+  unlessEither
+    (fromIntegral (ByteString.length architectureTable) >= tableBytes)
+    "fat Mach-O architecture table is truncated"
+  (sliceOffset, sliceBytes) <-
+    selectFatMachOArm64Range is64 architectureTable
+  validateFatMachOSliceRange imageBytes sliceOffset sliceBytes
+  sliceHeader <-
+    maybe
+      (Left "fat Mach-O arm64 slice header is missing")
+      Right
+      maybeSliceHeader
+  metadataBytes <-
+    thinMachOMetadataReadBytes (fromIntegral sliceBytes) sliceHeader
+  pure
+    [ (0, tableBytes),
+      (fromIntegral sliceOffset, metadataBytes)
+    ]
+
+-- | Read exactly one small, positioned Mach-O metadata range. The fixed cap is
+-- deliberately the thin header plus the closed load-command bound; this helper
+-- cannot regress into another whole-image allocation without first widening a
+-- named invariant.
+readProvisioningDescriptorRange ::
+  Fd ->
+  Integer ->
+  Integer ->
+  IO ByteString.ByteString
+readProvisioningDescriptorRange descriptor offset requestedBytes = do
+  let maximumRangeBytes =
+        32 + fromIntegral maximumMachOLoadCommandBytes
+      descriptorOffset = fromIntegral offset :: FileOffset
+  unless
+    ( offset >= 0
+        && requestedBytes >= 0
+        && requestedBytes <= maximumRangeBytes
+        && fromIntegral descriptorOffset == offset
+    )
+    (ioError (userError "Mach-O metadata range exceeds its fixed bound"))
+  observedOffset <- fdSeek descriptor AbsoluteSeek descriptorOffset
+  unless
+    (observedOffset == descriptorOffset)
+    (ioError (userError "Mach-O metadata descriptor seek disagreed"))
+  readExactly requestedBytes []
+  where
+    readExactly remaining chunks
+      | remaining == 0 = pure (ByteString.concat (reverse chunks))
+      | otherwise = do
+          let chunkBytes = min remaining (64 * 1024)
+          chunk <-
+            readProvisioningDescriptorChunk
+              descriptor
+              (fromIntegral chunkBytes)
+          when
+            (ByteString.null chunk)
+            (ioError (userError "Mach-O metadata range is truncated"))
+          readExactly
+            (remaining - fromIntegral (ByteString.length chunk))
+            (chunk : chunks)
 
 parseMachOInspection ::
   ByteString.ByteString ->
   Either String MachOInspection
 parseMachOInspection contents
-  | ByteString.take 4 contents
-      == ByteString.pack [0xcf, 0xfa, 0xed, 0xfe] =
+  | ByteString.take 4 contents == thinMachOMagic =
       parseThinMachO contents
-  | ByteString.take 4 contents
-      == ByteString.pack [0xca, 0xfe, 0xba, 0xbe] =
+  | ByteString.take 4 contents == fat32MachOMagic =
       selectFatMachOSlice False contents >>= parseThinMachO
-  | ByteString.take 4 contents
-      == ByteString.pack [0xca, 0xfe, 0xba, 0xbf] =
+  | ByteString.take 4 contents == fat64MachOMagic =
       selectFatMachOSlice True contents >>= parseThinMachO
   | otherwise = Left "unsupported or non-arm64 Mach-O magic"
 
@@ -2993,9 +3211,20 @@ selectFatMachOSlice ::
   ByteString.ByteString ->
   Either String ByteString.ByteString
 selectFatMachOSlice is64 contents = do
+  (sliceOffset, sliceSize) <-
+    selectFatMachOArm64Range is64 contents
+  boundedByteStringSlice contents sliceOffset sliceSize
+
+selectFatMachOArm64Range ::
+  Bool ->
+  ByteString.ByteString ->
+  Either String (Word64, Word64)
+selectFatMachOArm64Range is64 contents = do
   architectureCount <- readWord32BE contents 4
   unlessEither
-    (architectureCount > 0 && architectureCount <= 32)
+    ( architectureCount > 0
+        && architectureCount <= maximumFatArchitectures
+    )
     "fat Mach-O architecture count is invalid"
   let recordBytes = if is64 then 32 else 20
       offsets =
@@ -3021,8 +3250,7 @@ selectFatMachOSlice is64 contents = do
       )
       offsets
   case catMaybes candidates of
-    [(sliceOffset, sliceSize)] ->
-      boundedByteStringSlice contents sliceOffset sliceSize
+    [sliceRange] -> Right sliceRange
     [] -> Left "fat Mach-O has no arm64 slice"
     _ -> Left "fat Mach-O has ambiguous arm64 slices"
 
@@ -3031,7 +3259,7 @@ parseThinMachO ::
   Either String MachOInspection
 parseThinMachO contents = do
   unlessEither
-    (ByteString.take 4 contents == ByteString.pack [0xcf, 0xfa, 0xed, 0xfe])
+    (ByteString.take 4 contents == thinMachOMagic)
     "Mach-O slice is not little-endian 64-bit"
   cpuType <- readWord32LE contents 4
   unlessEither
@@ -3819,7 +4047,24 @@ resolvePackageClosureIdentity ::
   Internal.ProvisioningPackageClosureRole ->
   FilePath ->
   IO Internal.ProvisioningPackageClosureIdentity
-resolvePackageClosureIdentity role closureRoot =
+resolvePackageClosureIdentity =
+  resolvePackageClosureIdentityFor RetainedPackageClosureIdentity
+
+-- | Whether a closure identity is being minted from its retained external
+-- source or from the already-filtered copy. The source identity omits the
+-- Python-home entries that cannot be sealed; the copy must hash every entry
+-- that remains so reinjection cannot hide behind the source exclusion policy.
+data PackageClosureIdentityTarget
+  = RetainedPackageClosureIdentity
+  | SealedPackageClosureIdentity
+  deriving (Eq, Show)
+
+resolvePackageClosureIdentityFor ::
+  PackageClosureIdentityTarget ->
+  Internal.ProvisioningPackageClosureRole ->
+  FilePath ->
+  IO Internal.ProvisioningPackageClosureIdentity
+resolvePackageClosureIdentityFor verificationTarget role closureRoot =
   mask $ \restore -> do
     listedRootStatus <- Posix.getSymbolicLinkStatus closureRoot
     unless
@@ -3847,7 +4092,9 @@ resolvePackageClosureIdentity role closureRoot =
               (ioError (userError "Poetry package closure root changed before descriptor traversal"))
             result <-
               digestPackageClosure
-                (role == Internal.ProvisioningPythonHomeClosure)
+                ( verificationTarget == RetainedPackageClosureIdentity
+                    && role == Internal.ProvisioningPythonHomeClosure
+                )
                 closureRoot
                 closureRoot
                 rootDescriptor
@@ -4027,17 +4274,18 @@ digestPackageClosure
             (closureDigestContext state)
             ("D\NUL" <> relativePath <> "\NUL")
     observed <-
-      foldM
-        ( digestPackageClosureEntry
-            excludeBaseSitePackages
-            closureRoot
-            directoryPath
-            directoryDescriptor
-            relativePath
-            depth
-        )
-        (closureBytes state, closureFiles state, directoryContext)
-        entries
+      directoryContext `seq`
+        foldM
+          ( digestPackageClosureEntry
+              excludeBaseSitePackages
+              closureRoot
+              directoryPath
+              directoryDescriptor
+              relativePath
+              depth
+          )
+          (closureBytes state, closureFiles state, directoryContext)
+          entries
     finalStatus <- Posix.getFdStatus directoryDescriptor
     unless
       (stableExecutableStatus listedStatus finalStatus)
@@ -4129,13 +4377,25 @@ digestPackageClosureEntry
           Right descriptor ->
             finallyPreservingPrimary
               ( do
+                  status <- Posix.getFdStatus descriptor
+                  unless
+                    (Posix.isRegularFile status)
+                    (ioError (userError ("Poetry closure entry is not a regular file: " <> path)))
                   excluded <-
                     excludedPythonHomeShebangFile
                       excludeBaseSitePackages
+                      closureRoot
                       relativePath
                       descriptor
                   if excluded
-                    then pure state
+                    then do
+                      recheckRetainedPackageClosureFile
+                        parentDescriptor
+                        entry
+                        path
+                        descriptor
+                        status
+                      pure state
                     else
                       digestPackageClosureFile
                         parentDescriptor
@@ -4213,7 +4473,7 @@ digestPackageClosureFile
                 <> Text.unpack digest
                 <> "\NUL"
             )
-    pure (nextBytes, nextFiles, context)
+    context `seq` pure (nextBytes, nextFiles, context)
 
 digestPackageClosureLink ::
   Bool ->
@@ -4273,18 +4533,16 @@ digestPackageClosureLink
                 (closureBytes state, closureFiles state)
                 linkBytes
             )
-        pure
-          ( nextBytes,
-            nextFiles,
-            updateClosureDigest
-              (closureDigestContext state)
-              ( "L\NUL"
-                  <> relativePath
-                  <> "\NUL"
-                  <> linkTarget
-                  <> "\NUL"
-              )
-          )
+        let nextContext =
+              updateClosureDigest
+                (closureDigestContext state)
+                ( "L\NUL"
+                    <> relativePath
+                    <> "\NUL"
+                    <> linkTarget
+                    <> "\NUL"
+                )
+        nextContext `seq` pure (nextBytes, nextFiles, nextContext)
 
 validRelativeClosureLink :: FilePath -> FilePath -> Bool
 validRelativeClosureLink relativePath linkTarget =
@@ -4302,52 +4560,81 @@ excludedPythonBaseSitePackagesLink relativePath =
       "python" `List.isPrefixOf` pythonDirectory
     _ -> False
 
--- | Whether a file in a host Python home is bound to that host installation by
--- its shebang.
+-- | Whether a file in a host Python home is an unsealable launcher.
 --
--- A Python installation carries two distinct kinds of shebang, and only one is
--- a problem. Its launchers and build helpers -- @bin\/2to3-3.11@,
--- @lib\/pythonX.Y\/config-X.Y-\<plat\>\/python-config.py@ -- name an absolute
--- path into that specific installation
--- (@#!\/opt\/homebrew\/Cellar\/python@3.11\/…\/bin\/python3.11@). Numerous
--- standard-library modules -- @quopri@, @base64@, @platform@ -- instead carry
--- the portable @#! \/usr\/bin\/env python3@ form, which names no installation,
--- resolves through @PATH@ at exec time, and exists on every substrate.
+-- Console scripts below @bin@ are excluded when their absolute shebang binds
+-- any host installation, preserving the historical rule. CPython also emits
+-- @lib\/pythonX.Y\/config-X.Y-\<plat\>\/python-config.py@ outside @bin@ with a
+-- shebang naming the exact source Python home's @bin\/pythonX.Y@; that generated
+-- launcher is excluded by the same binding.
 --
--- Only the first kind is excluded. Such a file cannot become part of a sealed
--- artifact: retained and run it would exec the /host/ interpreter and escape
--- the generation, which is what the residual scan exists to catch. Rewriting
--- the shebang instead is not robust across substrates -- Linux truncates a
--- shebang at 127 bytes (@BINPRM_BUF_SIZE@) where Darwin allows 512, and the
--- artifact-local interpreter path is long and depends on the operator's data
--- root, so a rewrite that fits on the Apple host can silently produce an
--- unexecutable script on a Linux substrate. Excluding removes the failure mode
--- rather than relocating it.
+-- Location alone and a blanket absolute-shebang rule are both too broad:
+-- importable stdlib files such as @lib\/pythonX.Y\/cgi.py@ can carry
+-- @#!\/usr\/local\/bin\/python@, and other stdlib tooling can carry @#!\/bin\/sh@.
+-- Outside @bin@ those files remain unless the parsed interpreter is the exact
+-- closure root's immediate @bin\/python*@ child. Portable @#! \/usr\/bin\/env
+-- python3@ files remain everywhere.
 --
--- The rule is derived from content rather than from a name or a directory, so
--- it needs no inventory of a host's console scripts and behaves identically on
--- every substrate: a Linux @#!\/usr\/bin\/python3.11@ launcher is excluded for
--- exactly the same reason as a Homebrew one. The interpreter binaries the venv
--- resolves through @pyvenv.cfg@ are not shebang files and are unaffected.
+-- A selected launcher cannot become part of a sealed artifact: running it
+-- would exec the host interpreter and escape the generation. Rewriting is not
+-- robust across substrate shebang limits, so exclusion removes the failure
+-- mode rather than relocating it. Interpreter binaries resolved through
+-- @pyvenv.cfg@ are not shebang files and are unaffected.
 --
--- The digest walk and the copy walk share this predicate, so the source and
--- destination closure identities continue to describe the same payload.
-excludedPythonHomeShebangFile :: Bool -> FilePath -> Fd -> IO Bool
-excludedPythonHomeShebangFile excludeBaseSitePackages relativePath descriptor
-  | not excludeBaseSitePackages
-      || take 1 (splitDirectories (normalise relativePath)) /= ["bin"] =
-      pure False
-  | otherwise = do
-      _ <- fdSeek descriptor AbsoluteSeek 0
-      leading <-
-        readProvisioningDescriptorChunk
-          descriptor
-          maximumShebangProbeBytes
-      _ <- fdSeek descriptor AbsoluteSeek 0
-      pure (shebangBindsHostInstallation leading)
+-- The retained-source digest and copy walks share this predicate. The copied
+-- destination is then verified in sealed mode with no exclusions, so its
+-- complete physical payload must equal that filtered source identity.
+excludedPythonHomeShebangFile :: Bool -> FilePath -> FilePath -> Fd -> IO Bool
+excludedPythonHomeShebangFile
+  excludePythonHomeHostBindings
+  closureRoot
+  relativePath
+  descriptor
+    | not excludePythonHomeHostBindings = pure False
+    | otherwise = do
+        _ <- fdSeek descriptor AbsoluteSeek 0
+        leading <-
+          readProvisioningDescriptorPrefix
+            descriptor
+            maximumShebangProbeBytes
+        _ <- fdSeek descriptor AbsoluteSeek 0
+        pure
+          ( pythonHomeClosureFileExcluded
+              excludePythonHomeHostBindings
+              closureRoot
+              relativePath
+              leading
+          )
 
--- | The bytes examined when classifying a shebang. A shebang line is bounded by
--- the kernel well below this on every supported substrate.
+-- | Classify Python-home launchers from their relative position, parsed
+-- interpreter, and the exact retained closure root.
+pythonHomeClosureFileExcluded ::
+  Bool ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+pythonHomeClosureFileExcluded
+  excludePythonHomeHostBindings
+  closureRoot
+  relativePath
+  leading =
+    excludePythonHomeHostBindings
+      && shebangBindsHostInstallation leading
+      && ( pythonHomeBinEntry relativePath
+             || shebangBindsExactPythonHome closureRoot leading
+         )
+
+pythonHomeClosureFileExcludedForTest ::
+  Bool ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+pythonHomeClosureFileExcludedForTest = pythonHomeClosureFileExcluded
+
+-- | The fixed prefix examined when classifying a shebang. It covers the
+-- supported substrate parser limits without allowing a whole-file read.
 maximumShebangProbeBytes :: ByteCount
 maximumShebangProbeBytes = 512
 
@@ -4355,15 +4642,45 @@ maximumShebangProbeBytes = 512
 -- other than the portable @\/usr\/bin\/env@ launcher.
 shebangBindsHostInstallation :: ByteString.ByteString -> Bool
 shebangBindsHostInstallation leading =
-  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+  case shebangInterpreterPath leading of
+    Just interpreterPath ->
+      isAbsolute interpreterPath
+        && normalise interpreterPath /= portableEnvLauncher
     Nothing -> False
+
+-- | Parse only the interpreter token. Arguments following it are irrelevant
+-- to whether the file is tied to a particular installation.
+shebangInterpreterPath :: ByteString.ByteString -> Maybe FilePath
+shebangInterpreterPath leading =
+  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+    Nothing -> Nothing
     Just afterMarker ->
       case ByteString8.words (ByteString8.takeWhile (/= '\n') afterMarker) of
-        interpreter : _ ->
-          let interpreterPath = ByteString8.unpack interpreter
-           in isAbsolute interpreterPath
-                && normalise interpreterPath /= portableEnvLauncher
-        [] -> False
+        interpreter : _ -> Just (ByteString8.unpack interpreter)
+        [] -> Nothing
+
+-- | Preserve the historical console-script rule under @bin@. Outside that
+-- subtree, omit only a launcher whose interpreter is the exact Python home's
+-- immediate @bin/python*@ executable. This catches CPython's generated
+-- @lib/pythonX.Y/config-.../python-config.py@ without deleting importable
+-- stdlib files that happen to carry @/usr/local/bin/python@ or @/bin/sh@.
+pythonHomeBinEntry :: FilePath -> Bool
+pythonHomeBinEntry relativePath =
+  case splitDirectories (normalise relativePath) of
+    "bin" : _ -> True
+    _ -> False
+
+shebangBindsExactPythonHome :: FilePath -> ByteString.ByteString -> Bool
+shebangBindsExactPythonHome closureRoot leading =
+  case shebangInterpreterPath leading of
+    Just interpreterPath ->
+      isAbsolute interpreterPath
+        && '\NUL' `notElem` interpreterPath
+        && normalise interpreterPath == interpreterPath
+        && normalise (takeDirectory interpreterPath)
+          == normalise (closureRoot </> "bin")
+        && "python" `List.isPrefixOf` takeFileName interpreterPath
+    Nothing -> False
 
 -- | The one absolute shebang interpreter that names no installation.
 portableEnvLauncher :: FilePath
@@ -4421,6 +4738,7 @@ copyExactPackageClosure
             PackageClosureCopyContext
               { closureCopyExcludeBaseSitePackages =
                   role == Internal.ProvisioningPythonHomeClosure,
+                closureCopySourceRoot = source,
                 closureCopyWriterRoot = authorizedRoot
               }
       observedSource <- resolvePackageClosureIdentity role source
@@ -4474,7 +4792,11 @@ copyExactPackageClosure
         )
         (closeFd sourceDescriptor)
       finalSource <- resolvePackageClosureIdentity role source
-      installed <- resolvePackageClosureIdentity role destination
+      installed <-
+        resolvePackageClosureIdentityFor
+          SealedPackageClosureIdentity
+          role
+          destination
       unless
         ( finalSource == expectedSource
             && packageClosurePayloadMatches expectedSource installed
@@ -4607,6 +4929,7 @@ withRetainedClosureDestination =
 -- | The context a package-closure copy carries unchanged down its recursion.
 data PackageClosureCopyContext = PackageClosureCopyContext
   { closureCopyExcludeBaseSitePackages :: !Bool,
+    closureCopySourceRoot :: !FilePath,
     closureCopyWriterRoot :: !AuthorizedWriterRoot
   }
 
@@ -4777,12 +5100,23 @@ copyPackageClosureEntry
                   excluded <-
                     excludedPythonHomeShebangFile
                       excludeBaseSitePackages
+                      (closureCopySourceRoot context)
                       relativePath
                       sourceFileDescriptor
                   unless excluded $ do
                     _ <-
                       copyRegularFileStableIntoRetainedParent
-                        (StableCopySourceInRoot authorizedRoot)
+                        ( StableCopySourceRetainedDescriptor
+                            sourceFileDescriptor
+                            sourceFileStatus
+                            ( recheckRetainedPackageClosureFile
+                                sourceParentDescriptor
+                                entry
+                                source
+                                sourceFileDescriptor
+                                sourceFileStatus
+                            )
+                        )
                         authorizedRoot
                         destinationParentDescriptor
                         entry
@@ -4790,14 +5124,12 @@ copyPackageClosureEntry
                         source
                         destination
                     pure ()
-                  finalFileStatus <- Posix.getFdStatus sourceFileDescriptor
-                  reopenedStatus <-
-                    reopenFileEntryStatus sourceParentDescriptor entry
-                  unless
-                    ( stableExecutableStatus sourceFileStatus finalFileStatus
-                        && stableExecutableStatus finalFileStatus reopenedStatus
-                    )
-                    (ioError (userError "fixed runtime closure file changed during copy"))
+                  recheckRetainedPackageClosureFile
+                    sourceParentDescriptor
+                    entry
+                    source
+                    sourceFileDescriptor
+                    sourceFileStatus
                   pure (if excluded then entriesSeen else nextEntries)
               )
               (closeFd sourceFileDescriptor)
@@ -5319,7 +5651,7 @@ installedRuntimeEvidence root sources = do
       byteCount =
         sum (map installedRuntimeSourceBytes ordered)
       digestContext =
-        foldl
+        List.foldl'
           hashInstalledRuntimeSource
           (SHA256.update SHA256.init "infernix-installed-runtime-v1\NUL")
           ordered
@@ -5436,6 +5768,27 @@ reopenFileEntryStatus parentDescriptor entry =
       )
       (closeFd descriptor)
 
+recheckRetainedPackageClosureFile ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  Fd ->
+  Posix.FileStatus ->
+  IO ()
+recheckRetainedPackageClosureFile
+  sourceParentDescriptor
+  entry
+  source
+  sourceFileDescriptor
+  sourceFileStatus = do
+    finalStatus <- Posix.getFdStatus sourceFileDescriptor
+    reopenedStatus <- reopenFileEntryStatus sourceParentDescriptor entry
+    unless
+      ( stableExecutableStatus sourceFileStatus finalStatus
+          && stableExecutableStatus finalStatus reopenedStatus
+      )
+      (ioError (userError ("stable copy source changed while copying: " <> source)))
+
 digestExactProvisioningDescriptor :: Fd -> Integer -> IO Text
 digestExactProvisioningDescriptor descriptor expectedBytes =
   go 0 SHA256.init
@@ -5462,10 +5815,14 @@ digestExactProvisioningDescriptor descriptor expectedBytes =
               let nextBytes =
                     observedBytes
                       + fromIntegral (ByteString.length chunk)
+                  nextContext = SHA256.update context chunk
               unless
                 (nextBytes <= expectedBytes)
                 (ioError (userError "package descriptor grew beyond its exact byte bound"))
-              go nextBytes (SHA256.update context chunk)
+              -- 'SHA256.update' is pure but defers its descriptor-chunk work
+              -- until the resulting context is demanded. Force every step so
+              -- a large file cannot remain live as a chain of chunk thunks.
+              nextContext `seq` go nextBytes nextContext
 
 readExactProvisioningDescriptorBytes ::
   Fd ->
@@ -5657,6 +6014,28 @@ readProvisioningDescriptorChunk descriptor requested = do
       | isEOFError failure -> pure ByteString.empty
       | otherwise -> ioError failure
 
+-- | Read a regular-file prefix through bounded requests. A successful POSIX
+-- read may legally return fewer bytes than requested, so classification must
+-- continue to the cap or EOF rather than treating one short read as the whole
+-- prefix.
+readProvisioningDescriptorPrefix ::
+  Fd ->
+  ByteCount ->
+  IO ByteString.ByteString
+readProvisioningDescriptorPrefix descriptor maximumBytes =
+  go maximumBytes []
+  where
+    go remaining chunks
+      | remaining == 0 = pure (ByteString.concat (reverse chunks))
+      | otherwise = do
+          chunk <- readProvisioningDescriptorChunk descriptor remaining
+          if ByteString.null chunk
+            then pure (ByteString.concat (reverse chunks))
+            else
+              go
+                (remaining - fromIntegral (ByteString.length chunk))
+                (chunk : chunks)
+
 hashExecutableDescriptor :: SHA256.Ctx -> Fd -> IO SHA256.Ctx
 hashExecutableDescriptor digestContext descriptor = do
   readResult <-
@@ -5670,10 +6049,9 @@ hashExecutableDescriptor digestContext descriptor = do
         | otherwise -> ioError failure
   if ByteString.null chunk
     then pure digestContext
-    else
-      hashExecutableDescriptor
-        (SHA256.update digestContext chunk)
-        descriptor
+    else do
+      let nextContext = SHA256.update digestContext chunk
+      nextContext `seq` hashExecutableDescriptor nextContext descriptor
 
 executableDigestChunkBytes :: ByteCount
 executableDigestChunkBytes = 64 * 1024
@@ -6945,13 +7323,302 @@ completeAppleCandidate ::
   AppleManifestBuilder ->
   ProvisioningSession s ()
 completeAppleCandidate
+  writer
+  grant
+  deadline
+  adapter
+  installRoot
+  candidateRoot
+  manifestBuilder =
+    void
+      ( completeAppleCandidateWithSmoke
+          writer
+          grant
+          deadline
+          adapter
+          installRoot
+          candidateRoot
+          manifestBuilder
+          StandardAppleInstalledSmoke
+      )
+
+completeApplePythonCandidateWithSourceIsolation ::
+  EngineWriter w s q ->
+  ProvisioningGrant s ->
+  ProvisioningDeadline ->
+  CandidatePythonTarget s ->
+  InstalledMachORuntimeClosure s ->
+  FilePath ->
+  FilePath ->
+  AppleManifestBuilder ->
+  ProvisioningSession s InstalledPythonSourceIsolationReport
+completeApplePythonCandidateWithSourceIsolation
+  writer
+  grant
+  deadline
+  target
+  runtimeClosure
+  installRoot
+  candidateRoot
+  manifestBuilder = do
+    let pythonAdapter = candidatePythonTargetInternalAdapter target
+        adapter = Internal.appleAdapterForPython pythonAdapter
+    _ <- requireCandidatePythonTarget pythonAdapter candidateRoot target
+    unless
+      ( normalise (installedMachORuntimeClosureRoot runtimeClosure)
+          == normalise candidateRoot
+      )
+      (failProvisioningSession "installed Python runtime closure belongs to another candidate")
+    sourceIsolationSpec <-
+      ProvisioningSession
+        (deriveInstalledPythonSourceIsolationSpec candidateRoot runtimeClosure)
+    maybeReport <-
+      completeAppleCandidateWithSmoke
+        writer
+        grant
+        deadline
+        (AppleAdapterId adapter)
+        installRoot
+        candidateRoot
+        manifestBuilder
+        (SourceIsolatedAppleInstalledSmoke pythonAdapter sourceIsolationSpec)
+    maybe
+      (failProvisioningSession "installed Python source-isolation completion produced no report")
+      pure
+      maybeReport
+
+data AppleInstalledSmoke
+  = StandardAppleInstalledSmoke
+  | SourceIsolatedAppleInstalledSmoke
+      !Internal.ApplePythonAdapterId
+      !Internal.InstalledPythonSourceIsolationSpec
+
+deriveInstalledPythonSourceIsolationSpec ::
+  FilePath ->
+  InstalledMachORuntimeClosure s ->
+  IO Internal.InstalledPythonSourceIsolationSpec
+deriveInstalledPythonSourceIsolationSpec candidateRoot runtimeClosure = do
+  unless
+    (SystemInfo.os == "darwin")
+    (ioError (userError "installed Python source isolation requires Darwin"))
+  unless
+    ( normalise candidateRoot == candidateRoot
+        && normalise (installedMachORuntimeClosureRoot runtimeClosure)
+          == candidateRoot
+        && not (null sources)
+        && length sources <= 1024
+    )
+    (ioError (userError "installed Python source isolation has an invalid runtime closure"))
+  classified <- mapM classifySource sources
+  let directories =
+        List.sortOn
+          Internal.provisioningPackageClosureRoot
+          [identity | SourceIsolationDirectory identity <- classified]
+      classifiedFiles =
+        List.sortOn
+          Internal.provisioningRuntimeLibraryCanonicalPath
+          [identity | SourceIsolationFile identity <- classified]
+  frameworkHome <-
+    case directories of
+      [directory] -> pure directory
+      _ ->
+        ioError
+          (userError "installed Python source isolation requires one framework home")
+  writableProbe <-
+    resolveWritableSourceIsolationProbe
+      (Internal.provisioningPackageClosureRoot frameworkHome </> "Python")
+  let files =
+        List.sortOn
+          Internal.provisioningRuntimeLibraryCanonicalPath
+          ( writableProbe
+              : filter
+                ( ( /=
+                      normalise
+                        (Internal.provisioningRuntimeLibraryCanonicalPath writableProbe)
+                  )
+                    . normalise
+                    . Internal.provisioningRuntimeLibraryCanonicalPath
+                )
+                classifiedFiles
+          )
+  unless
+    ( length directories == 1
+        && length files <= 512
+        && length
+          ( List.nub
+              ( map Internal.provisioningPackageClosureRoot directories
+                  <> map Internal.provisioningRuntimeLibraryCanonicalPath files
+              )
+          )
+          == length directories + length files
+    )
+    (ioError (userError "installed Python source isolation has an invalid source cohort"))
+  sandboxIdentity <-
+    resolveExactExecutableIdentity
+      Internal.installedPythonSourceIsolationSandboxExecutable
+  unless
+    ( normalise (resolvedExecutableConfiguredPath sandboxIdentity)
+        == normalise Internal.installedPythonSourceIsolationSandboxExecutable
+        && executableIdentityHasExecuteBit sandboxIdentity
+    )
+    (ioError (userError "fixed Darwin sandbox executable is unavailable"))
+  auditInjectorIdentity <-
+    resolveExactExecutableIdentity
+      Internal.installedPythonSourceIsolationAuditInjectorExecutable
+  unless
+    ( normalise (resolvedExecutableConfiguredPath auditInjectorIdentity)
+        == normalise Internal.installedPythonSourceIsolationAuditInjectorExecutable
+        && executableIdentityHasExecuteBit auditInjectorIdentity
+    )
+    (ioError (userError "fixed Darwin loader-audit injector is unavailable"))
+  let receipt =
+        Internal.installedPythonSourceIsolationReceiptDigestFor
+          directories
+          files
+  pure
+    Internal.InstalledPythonSourceIsolationSpec
+      { Internal.installedPythonSourceIsolationSandboxIdentity =
+          toKernelExecutableIdentity sandboxIdentity [] [],
+        Internal.installedPythonSourceIsolationAuditInjectorIdentity =
+          toKernelExecutableIdentity auditInjectorIdentity [] [],
+        Internal.installedPythonSourceIsolationDirectories = directories,
+        Internal.installedPythonSourceIsolationFiles = files,
+        Internal.installedPythonSourceIsolationWritableProbeIdentity =
+          writableProbe,
+        Internal.installedPythonSourceIsolationReceiptDigest = receipt
+      }
+  where
+    sources = installedMachORuntimeClosureSources runtimeClosure
+
+    classifySource source = do
+      let sourcePath = installedRuntimeSourcePath source
+          ownedPath = installedRuntimeOwnedPath source
+      unless
+        ( writerPathWithin candidateRoot ownedPath
+            && normalise ownedPath == ownedPath
+        )
+        (ioError (userError "installed Python runtime evidence escaped its candidate root"))
+      case List.stripPrefix "relative-link:" sourcePath of
+        Just linkTarget -> do
+          let relativeOwnedPath = makeRelative candidateRoot ownedPath
+              encodedTarget = TextEncoding.encodeUtf8 (Text.pack linkTarget)
+              expectedDigest =
+                "sha256:"
+                  <> TextEncoding.decodeUtf8
+                    (Base16.encode (SHA256.hash encodedTarget))
+          status <- Posix.getSymbolicLinkStatus ownedPath
+          observedTarget <- Posix.readSymbolicLink ownedPath
+          unless
+            ( Posix.isSymbolicLink status
+                && validRelativeClosureLink relativeOwnedPath linkTarget
+                && observedTarget == linkTarget
+                && installedRuntimeSourceFiles source == 1
+                && installedRuntimeSourceBytes source
+                  == fromIntegral (ByteString.length encodedTarget)
+                && installedRuntimeSourceDigest source == expectedDigest
+            )
+            (ioError (userError "installed Python runtime link sentinel changed"))
+          pure SourceIsolationOwnedLink
+        Nothing -> do
+          unless
+            ( isAbsolute sourcePath
+                && normalise sourcePath == sourcePath
+                && not (writerPathWithin candidateRoot sourcePath)
+                && not (writerPathWithin sourcePath candidateRoot)
+            )
+            (ioError (userError "installed Python source path is unsafe"))
+          status <- Posix.getSymbolicLinkStatus sourcePath
+          if
+            | Posix.isDirectory status && not (Posix.isSymbolicLink status) -> do
+                identity <-
+                  resolvePackageClosureIdentity
+                    Internal.ProvisioningPythonHomeClosure
+                    sourcePath
+                unless
+                  ( Internal.provisioningPackageClosureFiles identity
+                      == installedRuntimeSourceFiles source
+                      && Internal.provisioningPackageClosureBytes identity
+                        == installedRuntimeSourceBytes source
+                      && Internal.provisioningPackageClosureDigest identity
+                        == installedRuntimeSourceDigest source
+                  )
+                  (ioError (userError "installed Python source directory identity changed"))
+                pure (SourceIsolationDirectory identity)
+            | Posix.isRegularFile status && not (Posix.isSymbolicLink status) -> do
+                resolved <- resolveExactExecutableIdentity sourcePath
+                let identity =
+                      runtimeLibraryIdentityFromResolved
+                        (takeFileName sourcePath)
+                        resolved
+                unless
+                  ( installedRuntimeSourceFiles source == 1
+                      && Internal.provisioningRuntimeLibrarySize identity
+                        == installedRuntimeSourceBytes source
+                      && Internal.provisioningRuntimeLibraryDigest identity
+                        == installedRuntimeSourceDigest source
+                  )
+                  (ioError (userError "installed Python source file identity changed"))
+                pure (SourceIsolationFile identity)
+            | otherwise ->
+                ioError (userError "installed Python source is neither one exact directory nor file")
+
+    resolveWritableSourceIsolationProbe path = do
+      resolved <- resolveExactExecutableIdentity path
+      let identity = runtimeLibraryIdentityFromResolved (takeFileName path) resolved
+      descriptor <-
+        openFd
+          (Internal.provisioningRuntimeLibraryCanonicalPath identity)
+          WriteOnly
+          defaultFileFlags
+            { nofollow = True,
+              cloexec = True
+            }
+      finallyPreservingPrimary
+        ( do
+            status <- Posix.getFdStatus descriptor
+            unless
+              ( fromIntegral (Posix.deviceID status)
+                  == Internal.provisioningRuntimeLibraryDeviceId identity
+                  && fromIntegral (Posix.fileID status)
+                    == Internal.provisioningRuntimeLibraryFileId identity
+                  && fromIntegral (Posix.fileMode status)
+                    == Internal.provisioningRuntimeLibraryMode identity
+                  && fromIntegral (Posix.fileSize status)
+                    == Internal.provisioningRuntimeLibrarySize identity
+              )
+              (ioError (userError "installed Python writable source probe identity changed"))
+        )
+        (closeFd descriptor)
+      finalResolved <- resolveExactExecutableIdentity path
+      unless
+        (resolvedIdentityMatchesRuntimeIdentity finalResolved identity)
+        (ioError (userError "installed Python writable source probe changed during preflight"))
+      pure identity
+
+data SourceIsolationClassifiedSource
+  = SourceIsolationDirectory !Internal.ProvisioningPackageClosureIdentity
+  | SourceIsolationFile !Internal.ProvisioningRuntimeLibraryIdentity
+  | SourceIsolationOwnedLink
+
+completeAppleCandidateWithSmoke ::
+  EngineWriter w s q ->
+  ProvisioningGrant s ->
+  ProvisioningDeadline ->
+  AppleAdapterId ->
+  FilePath ->
+  FilePath ->
+  AppleManifestBuilder ->
+  AppleInstalledSmoke ->
+  ProvisioningSession s (Maybe InstalledPythonSourceIsolationReport)
+completeAppleCandidateWithSmoke
   writer@(EngineWriter authority recovered authorizedRoot)
   (ProvisioningGrant environment)
   deadline@(ProvisioningDeadline timeout)
   (AppleAdapterId adapter)
   installRoot
   candidateRoot
-  (AppleManifestBuilder buildManifest) =
+  (AppleManifestBuilder buildManifest)
+  installedSmoke =
     ProvisioningSession $ do
       authorizedInstallRoot <-
         authorizedWriterPath
@@ -7021,9 +7688,30 @@ completeAppleCandidate
         timeout
         published
         manifest
+        installedSmoke
       validateWriterRootIdentity
         "Apple candidate completion"
         authorizedRoot
+      case installedSmoke of
+        StandardAppleInstalledSmoke -> pure Nothing
+        SourceIsolatedAppleInstalledSmoke pythonAdapter spec ->
+          pure
+            ( Just
+                InstalledPythonSourceIsolationReport
+                  { installedPythonSourceIsolationReportAdapter =
+                      ApplePythonAdapterId pythonAdapter,
+                    installedPythonSourceIsolationReportInstallRoot =
+                      authorizedInstallRoot,
+                    installedPythonSourceIsolationReportArtifactDigest =
+                      Artifact.manifestDigest manifest,
+                    installedPythonSourceIsolationReportReceiptDigest =
+                      Internal.installedPythonSourceIsolationReceiptDigest spec,
+                    installedPythonSourceIsolationReportDirectoryCount =
+                      length (Internal.installedPythonSourceIsolationDirectories spec),
+                    installedPythonSourceIsolationReportFileCount =
+                      length (Internal.installedPythonSourceIsolationFiles spec)
+                  }
+            )
 
 appleCompletionGenerationLease ::
   AppleCompletionState s 'GenerationSharedReaped ->
@@ -7332,6 +8020,7 @@ activateAppleCompletionState ::
   Internal.PositiveProvisioningTimeout ->
   AppleCompletionState s 'Published ->
   Artifact.EngineArtifactManifest ->
+  AppleInstalledSmoke ->
   IO ()
 activateAppleCompletionState
   authority
@@ -7347,19 +8036,38 @@ activateAppleCompletionState
       lease
       _mutationRoot
     )
-  _manifest = do
+  _manifest
+  installedSmoke = do
     result <-
-      ArtifactActivation.activateAppleEngineArtifactWithInstalledSmoke
-        authority
-        mutator
-        recovered
-        lease
-        environment
-        timeout
-        adapter
-        installRoot
-        candidateRoot
-        digest
+      case installedSmoke of
+        StandardAppleInstalledSmoke ->
+          ArtifactActivation.activateAppleEngineArtifactWithInstalledSmoke
+            authority
+            mutator
+            recovered
+            lease
+            environment
+            timeout
+            adapter
+            installRoot
+            candidateRoot
+            digest
+        SourceIsolatedAppleInstalledSmoke pythonAdapter sourceIsolationSpec -> do
+          unless
+            (Internal.appleAdapterForPython pythonAdapter == adapter)
+            (ioError (userError "source-isolation smoke adapter changed before activation"))
+          ArtifactActivation.activateAppleEngineArtifactWithInstalledPythonSourceIsolationSmoke
+            authority
+            mutator
+            recovered
+            lease
+            environment
+            timeout
+            adapter
+            sourceIsolationSpec
+            installRoot
+            candidateRoot
+            digest
     case result of
       Right
         ( Subprocess.NativeArtifactCommandExited
@@ -7577,6 +8285,91 @@ provisioningPoetryProjectReady (ProjectWriter _ projectRoot) =
       Posix.getFdStatus
         (authorizedWriterRootDescriptor projectRoot)
     pure (Posix.isDirectory status)
+
+-- | Observe an executable below the locked Poetry project without granting
+-- the caller raw filesystem authority. A stable absence is @Right False@;
+-- dangling links, permission failures, identity changes, and every other
+-- malformed observation are @Left@ so a producer cannot mistake an
+-- unavailable observation for permission to publish readiness.
+--
+-- Poetry normally creates @.venv/bin/python@ as a symlink. Resolve and digest
+-- its exact target, then revalidate that identity while the project mutation
+-- lock is held rather than rejecting the normal venv layout merely because
+-- its configured entry is a link.
+provisioningProjectExecutableReady ::
+  ProjectWriter p s q ->
+  FilePath ->
+  ProvisioningSession s (Either String Bool)
+provisioningProjectExecutableReady
+  (ProjectWriter _ projectRoot)
+  requestedPath =
+    ProvisioningSession $ do
+      observed <-
+        try @IOException $ do
+          _ <-
+            authorizedWriterRelativeComponents
+              "project executable observation"
+              projectRoot
+              requestedPath
+          validateWriterRootIdentity
+            "project executable observation"
+            projectRoot
+          present <- Directory.doesPathExist requestedPath
+          if not present
+            then pure False
+            else do
+              identity <- resolveExactExecutableIdentity requestedPath
+              revalidated <- revalidateExecutableIdentity identity
+              either (ioError . userError) pure revalidated
+              validateWriterRootIdentity
+                "project executable observation"
+                projectRoot
+              pure (executableIdentityHasExecuteBit identity)
+      pure (displayCaughtProvisioningFailure observed)
+
+-- | Bounded, descriptor-retained read below the locked Poetry project. The
+-- @Maybe@ distinguishes a stable absence from a present file; the outer
+-- @Either@ keeps malformed, oversized, symlinked, or changing entries
+-- fail-closed. This is the observation half of the prepared-framework marker
+-- protocol; publication continues through 'provisioningProjectWriteFile'.
+provisioningProjectReadFile ::
+  ProjectWriter p s q ->
+  FilePath ->
+  Integer ->
+  ProvisioningSession s (Either String (Maybe ByteString.ByteString))
+provisioningProjectReadFile
+  (ProjectWriter _ projectRoot)
+  requestedPath
+  maximumBytes =
+    ProvisioningSession $ do
+      observed <-
+        try @IOException $ do
+          validateWriterRootIdentity
+            "project bounded file read"
+            projectRoot
+          status <-
+            observeAuthorizedPathStatus
+              "project bounded file read"
+              projectRoot
+              requestedPath
+          contents <-
+            case status of
+              Nothing -> pure Nothing
+              Just fileStatus -> do
+                unless
+                  (realRegularFileStatus fileStatus)
+                  (ioError (userError "project bounded file read is not a real regular file"))
+                Just
+                  <$> readAuthorizedRegularFile
+                    "project bounded file read"
+                    projectRoot
+                    requestedPath
+                    maximumBytes
+          validateWriterRootIdentity
+            "project bounded file read"
+            projectRoot
+          pure contents
+      pure (displayCaughtProvisioningFailure observed)
 
 provisioningPoetryBootstrapExecutable ::
   PoetryBootstrapWriter b s q ->
@@ -8895,16 +9688,25 @@ appleNativeRunnerLibraryBytes = 1024 * 1024
 -- retained parent descriptor, so an intermediate parent swapped at the read
 -- boundary is a failure rather than a redirect.
 --
--- A source outside every owned root cannot have a retained parent, because this
--- module holds no authority over it -- a host CLI or runtime library lives under
--- a Homebrew or system prefix. Such a source is instead bound by the exact
--- content digest its caller already resolved. For a /read/ that is the stronger
--- binding: it constrains the bytes actually copied rather than the directory
--- they were reached through, so a source swapped mid-copy fails on content even
--- when the pathname still resolves.
+-- An arbitrary source outside every owned root has no retained traversal -- a
+-- host CLI or runtime library resolved only by pathname lives under a Homebrew
+-- or system prefix. Such a source is bound by the exact content digest its
+-- caller already resolved. For a /read/ that is the stronger binding: it
+-- constrains the bytes actually copied rather than the directory they were
+-- reached through, so a source swapped mid-copy fails on content even when the
+-- pathname still resolves.
+--
+-- A package-closure entry is different: the bounded recursive walk already
+-- owns its nofollow source-parent and file descriptors. That retained custody
+-- is carried directly into the copy; it must not be misclassified as a source
+-- inside the unrelated destination writer root.
 data StableCopySource
   = StableCopySourceInRoot !AuthorizedWriterRoot
   | StableCopySourceExactContent !Text
+  | StableCopySourceRetainedDescriptor
+      !Fd
+      !Posix.FileStatus
+      !(IO ())
 
 -- | Copy one regular file into an authorized writer root, descriptor-anchored
 -- on both sides.
@@ -8998,6 +9800,7 @@ stableCopyExpectedDigest sourceAuthority =
   case sourceAuthority of
     StableCopySourceInRoot _ -> Nothing
     StableCopySourceExactContent expected -> Just expected
+    StableCopySourceRetainedDescriptor {} -> Nothing
 
 -- | Open a stable copy's source and hand its descriptor, its initial status, and
 -- an unchanged-since-open recheck to the copy.
@@ -9075,6 +9878,19 @@ withStableCopySourceDescriptor sourceAuthority maximumBytes source action =
               )
         )
         (closeFd descriptor)
+    -- The package-closure traversal already reached this file through a
+    -- retained, nofollow directory chain and owns the descriptor until its
+    -- enclosing bracket returns. Reusing that descriptor preserves the source
+    -- custody without pretending the external Homebrew/Python closure lies
+    -- under the destination engine writer root.
+    StableCopySourceRetainedDescriptor descriptor listedStatus recheckSource -> do
+      openedStatus <- Posix.getFdStatus descriptor
+      unless
+        (stableExecutableStatus listedStatus openedStatus)
+        (ioError (userError ("stable copy source changed before copy: " <> source)))
+      requireStableCopySource source maximumBytes openedStatus
+      _ <- fdSeek descriptor AbsoluteSeek 0
+      action descriptor listedStatus recheckSource
 
 -- | A stable copy source must be a bounded real regular file.
 requireStableCopySource ::
@@ -9318,12 +10134,14 @@ copyProvisioningDescriptor source destination copiedBytes context maximumBytes =
         (nextBytes <= maximumBytes)
         (ioError (userError "stable copy exceeded its fixed byte bound"))
       writeProvisioningDescriptor destination chunk
-      copyProvisioningDescriptor
-        source
-        destination
-        nextBytes
-        (SHA256.update context chunk)
-        maximumBytes
+      let nextContext = SHA256.update context chunk
+      nextContext `seq`
+        copyProvisioningDescriptor
+          source
+          destination
+          nextBytes
+          nextContext
+          maximumBytes
 
 writeProvisioningDescriptor :: Fd -> ByteString.ByteString -> IO ()
 writeProvisioningDescriptor descriptor contents

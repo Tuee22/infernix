@@ -1,6 +1,8 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Active. Sprint 8.9 and Sprint 8.10 are both validation-only, sharing the `linux-gpu` plus
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active. Sprint 8.9 and Sprint 8.10 are both validation-only, sharing the `linux-gpu` plus
 `linux-cpu` rebuild. Sprint 8.10 (delete the derivable wire fields) is code-side closed on
 2026-08-07: Phase 4 Sprint 4.34's admission move discharged its blocker, and the reflected substrate
 schema went from 110 lines to 54 with every retired field absent rather than merely rejected.
@@ -29,6 +31,9 @@ explicitly as follow-on work in the sprint section. Sprints 8.1–8.8 retain the
 > coordinator model-cache staging driven by the mounted `infernix.dhall`.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 8 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > Phase 8 reconciles the configuration substrate to the doctrine in
 > [configuration_doctrine.md](../documents/architecture/configuration_doctrine.md). It supersedes the

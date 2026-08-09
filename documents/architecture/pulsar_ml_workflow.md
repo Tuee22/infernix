@@ -7,14 +7,12 @@
 > sister project — for ML workflows (training and inference) over Pulsar: the
 > three-role split (Engine / Coordinator / Webapp), the derived topic algebra,
 > the `Work*` envelope family, the artifact + readiness contract, the websocket
-> snapshot/patch surface, and the coordination primitives. `infernix` and `jitML`
-> both implement this shape so the eventual migration onto the shared
-> `hostbootstrap` base is a lift-and-shift rather than two divergent rewrites.
+> snapshot/patch surface, and the coordination primitives shared by `infernix` and `jitML`.
 
 ## Why this contract exists
 
 `infernix` (Pulsar-driven model **inference serving**) and `jitML` (JIT-compiled,
-multi-substrate **training + inference**) are converging on one Pulsar-based
+multi-substrate **training + inference**) share one Pulsar-based
 ML-workflow shape. This document is the authoritative, **project-neutral**
 contract; the identical text lives at `documents/engineering/pulsar_ml_workflow.md`
 in `jitML`. Where a project specializes the contract, it does so only in the
@@ -24,9 +22,9 @@ family, or phasing rules.
 
 ## The three roles
 
-One binary; the role is selected by the typed Dhall config it is given (no
-separate per-role executables — `infernix` has retired the two-binary
-`infernix` + `infernix-demo` split in favour of a Webapp role). Every role runs
+One binary; the role is selected by the typed Dhall config it is given. There
+are no separate per-role executables: `infernix` exposes Engine, Coordinator,
+and Webapp roles. Every role runs
 the same lifecycle skeleton — `Load → Prereq → Acquire → Ready → Serve → Drain →
 Exit` — with role-specific `acquire`/`serve`/`drain` callbacks.
 
@@ -105,8 +103,8 @@ unrepresentable in the domain.
 - Typed **snapshot + patch** frames. The browser applies patches mechanically; no
   business logic in the browser (`infernix`'s `purescript-bridge` snapshot/patch
   surface is the reference implementation).
-- Per-subject Pulsar **Readers**; **no session affinity** (any webapp pod serves
-  any connection).
+- Per-subject Pulsar **Readers**; **no session affinity**. One Webapp process
+  runs per machine, and a reconnect replays state through fresh Readers.
 - Static artifacts (SPA bundle, uploads, result blobs) move via MinIO **presigned
   URLs**.
 - Inference is **asynchronous to the browser**: the panel publishes a request and
@@ -116,8 +114,9 @@ unrepresentable in the domain.
 
 - **Failover subscriptions** for every single-owner coordinator loop (dispatch,
   result-bridge, readiness/bootstrap): stable subscription name = ownership,
-  process-qualified consumer name = replica observability. HA with no external
-  consensus system. (`infernix`'s coordinator Failover loops are the reference.)
+  process-qualified consumer name = consumer observability. This is stable
+  single-active broker coordination, not standby-role availability or repo-owned
+  HA. (`infernix`'s coordinator Failover loops are the reference.)
 - **Producer-side broker dedup** keyed by `callId` → at-least-once becomes
   effectively-once; the dedup decision stays a pure fold over the work log.
 - **Single-flight / batching** expressed as pure reducers over the work log
@@ -128,54 +127,29 @@ unrepresentable in the domain.
 - One binary; `activeRole : Role = < Engine | Coordinator | Webapp >` plus
   per-role config is read from typed Dhall at startup (no env-var role selection —
   consistent with `infernix`'s no-env-var doctrine).
-- **Reflected Dhall schema**: the binary emits the schema its decoders accept
-  (so the schema cannot drift from the types). This is the convention both repos
-  adopt now and the lever for the eventual `hostbootstrap` lift.
-
-`infernix` status as of 2026-06-18: the coordinator calls startup-topic
-reconciliation from the typed demo/runtime graph before schema registration, and
-the binary exposes `infernix internal dhall-schema host|cluster|secrets|substrate`
-for decoder-reflected schema output. The one-binary Webapp-role consolidation has
-landed: `infernix.cabal` declares the single `executable infernix`, and the Webapp
-runs as `DaemonRole = Webapp` (the legacy `infernix` + `infernix-demo` split was
-retired 2026-06-30).
-
-## Phasing rules (both repos)
-
-These two rules govern every phase in both repos' `DEVELOPMENT_PLAN/`:
-
-1. **Forward-only DAG.** Every `Blocked by` / dependency edge references an
-   equal-or-lower-numbered phase. No earlier phase is blocked by an incomplete
-   later phase. The plan is workable strictly in numerical order.
-2. **Single-accelerator per phase.** A phase that needs an accelerator validates on
-   **exactly one** of `{apple-silicon, the GPU lane}` plus `linux-cpu` (which runs
-   on both hardware sets and is the common lane). No phase's validation gate
-   requires both accelerators. Cross-accelerator aggregation is a `linux-cpu`-only
-   phase that merges committed per-lane attestations. (This replaces `infernix`'s
-   prior two-axis cohort-wave model that batched Apple Metal and CUDA together.)
-
-> The GPU lane is `linux-gpu` in `infernix` and `linux-cuda` in `jitML`; substrate
-> identifiers stay per-repo and are not renamed.
+- **Reflected Dhall schema**: the binary emits the schema its decoders accept,
+  so the schema cannot drift from the types.
 
 ## Conformance checklist
 
 A project conforms to this contract when all hold:
 
-- [x] One binary; role ∈ `{Engine, Coordinator, Webapp}` selected by typed Dhall.
-- [ ] Engine is the only role that computes; Webapp and Coordinator run no ML.
-- [ ] Webapp is substrate-agnostic (talks to Pulsar + MinIO only).
-- [x] Coordinator owns explicit topic lifecycle; no implicit auto-create, no
-      hardcoded topic list.
-- [ ] Every topic is derived from the typed descriptor + validated routing graph.
-- [ ] Training and inference use the `WorkCommand → WorkEvent* → WorkResult`
-      family, correlated by `callId`.
-- [ ] A serveable `ArtifactRef` is mintable only from a completed derivation; a
-      `.ready` sentinel is written last.
-- [ ] The browser receives snapshot + patch frames over websocket; inference is
-      asynchronous to the browser.
-- [ ] Failover subscriptions + producer dedup provide HA and effectively-once.
-- [x] The binary emits its own (reflected) Dhall schema.
-- [ ] Every phase obeys forward-only DAG + single-accelerator-per-phase.
+- One binary selects `{Engine, Coordinator, Webapp}` through typed Dhall.
+- Engine is the only role that computes; Webapp and Coordinator run no ML.
+- Webapp is substrate-agnostic and talks only to Pulsar and object storage.
+- Coordinator owns explicit topic lifecycle; there is no implicit auto-create or
+  hardcoded topic list.
+- Every topic derives from the typed descriptor and validated routing graph.
+- Training and inference use the `WorkCommand → WorkEvent* → WorkResult` family,
+  correlated by `callId`.
+- A serveable `ArtifactRef` is mintable only from a completed derivation; a
+  `.ready` sentinel is written last.
+- The browser receives snapshot and patch frames over WebSocket; inference is
+  asynchronous to the browser.
+- Failover subscriptions provide stable single-active coordination;
+  acknowledgement ordering plus producer dedup provide at-least-once delivery
+  with an effectively-once observable outcome.
+- The binary emits its own reflected Dhall schema.
 
 ## Related Documents
 
@@ -184,8 +158,8 @@ A project conforms to this contract when all hold:
 
 > Architecture docs that elaborate the project-specific surfaces of this contract
 > (`daemon_topology.md`, `engine_pool_routing.md`, `configuration_doctrine.md`,
-> `web_ui_architecture.md`, `../tools/pulsar.md`) cross-reference it as the
-> convergence work lands; the `documents/` suite map lists it for discovery.
+> `web_ui_architecture.md`, `../tools/pulsar.md`) cross-reference it; the
+> `documents/` suite map lists it for discovery.
 
 ## Cross-References
 

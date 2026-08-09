@@ -38,7 +38,9 @@ import Infernix.Runtime.CappedEngine.FixedObserver
     parseFootprintPhysicalBytes,
     parseNvidiaComputeApps,
     parseNvidiaDeviceTotalMib,
+    parseTopProcessGroupLiveMembersAbsent,
     parseTopProcessGroupMembers,
+    parseTopProcessGroupSamplingMembers,
     runFixedObserverFixtureModeIfRequested,
     runFixedObserverKernelTest,
   )
@@ -277,6 +279,33 @@ parserTests = do
     ( parseTopProcessGroupMembers
         (pid 42)
         "PID PGRP MEM\n43 42 8K\n"
+    )
+  assertEqual
+    "sampling parser retains live descendants after the unreaped leader becomes a zombie"
+    (Right [pid 43])
+    ( parseTopProcessGroupSamplingMembers
+        (pid 42)
+        "PID PGRP MEM\n43 42 8K\n"
+    )
+  assertLeft
+    "sampling parser treats a group with no live member as terminal rather than a zero-byte sample"
+    ( parseTopProcessGroupSamplingMembers
+        (pid 42)
+        "PID PGRP MEM\n7 7 8K\n"
+    )
+  assertEqual
+    "terminal top parser accepts a snapshot with no live requested-group member"
+    (Right True)
+    ( parseTopProcessGroupLiveMembersAbsent
+        (pid 42)
+        "PID PGRP MEM\n7 7 8K\n"
+    )
+  assertEqual
+    "terminal top parser rejects absence while the group leader is live"
+    (Right False)
+    ( parseTopProcessGroupLiveMembersAbsent
+        (pid 42)
+        validTopOutput
     )
   assertLeft
     "top parser rejects duplicate process rows"

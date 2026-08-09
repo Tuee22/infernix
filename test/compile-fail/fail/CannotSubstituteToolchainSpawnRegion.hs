@@ -13,8 +13,8 @@ sameRegion _ _ = pure ()
 
 substituteRegion :: BuildMemoryPlan -> IO ()
 substituteRegion plan =
-  withToolchainSpawnAuthority plan $ \outer ->
-    withToolchainSpawnAuthority plan $ \inner ->
+  withToolchainSpawnAuthority "/tmp/infernix-compile-fail" plan $ \outer ->
+    withToolchainSpawnAuthority "/tmp/infernix-compile-fail" plan $ \inner ->
       sameRegion outer inner
 
 main :: IO ()

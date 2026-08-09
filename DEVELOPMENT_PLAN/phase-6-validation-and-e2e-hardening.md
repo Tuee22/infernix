@@ -1,14 +1,19 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Active — **no longer Validation Only as of 2026-08-08.** Sprint 6.49 opened code-side
-work: `test-suite infernix-capped-engine-observer` is selected by no gate, so 449 lines of Apple
-observer cleanup and group-identity machinery are unverified on both lanes. The validation-only text
-that follows describes the position before that finding and is retained for its recorded scope.
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active. Sprint 6.49's code-side correction is present: the closed toolchain vocabulary
+now includes `CappedEngineObserverSuite`, and `infernix test unit` selects it. Its aggregate
+current-source and Apple/paired-Linux evidence remains open. The validation-only text that follows
+describes the position before that finding and is retained for its recorded scope.
 Sprint 6.46 (toolchain spawn boundary and capability-gating
-lint) is `Done` as of 2026-08-06, and Sprint 6.47 (retiring the chaos and HA validation surface) is
+lint) is `Done` as of 2026-08-06 for its original scope; Phase 1 Sprint 1.21 owns the
+validation-pending same-authority single-flight/normal lifecycle follow-on. Sprint 6.47 (retiring
+the chaos and HA validation surface) is
 code-side closed and holds only the `linux-cpu` lifecycle run it shares with Phase 3 Sprint 3.16.
 Sprint 6.48 (making the command-shim root reclaimable rather than sealed) is code-side closed and
-holds only its gate rerun, which a separate pre-existing Darwin build defect currently blocks.
+holds only its gate rerun. The former Darwin address-space-limit defect is corrected in current
+Phase 1 source; the current Phase 1 aggregate gate is still pending.
 Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
 exemption reduction) is **code-side closed on 2026-08-02** and is no longer blocked: Phase 4 Sprint
 4.32's code-side closure landed the shared resource-indexed execution boundary it consumes. The
@@ -72,6 +77,9 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 6 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > **Cluster-Ownership & Mutation-Position reopen (2026-07-23).** An externally-killed `infernix test all`
 > exposed a DSL smell: because `ClusterState` had no owner and `ClusterLifecycle` had no mutating
@@ -155,12 +163,12 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > `Setup.hs` reads `PATH` / `INFERNIX_BUILD_ROOT` and calls `setEnv`, `bootstrap/common.sh` accepts
 > inherited `BOOTSTRAP_*` command overrides, `src/Infernix/Lint/HaskellStyle.hs` invokes bare `cabal`,
 > and `web/scripts/install-purescript.mjs` invokes bare `mktemp` / `tar`. The target doctrine remains
-> no env vars and no ambient `PATH`; Sprint 6.34 is now closed. `Setup.hs` no longer reads
-> `INFERNIX_BUILD_ROOT` or inherited `PATH`, and its sole environment mutation is the mechanically
-> allowed deterministic `Env.setEnv "PATH"` shim required by Cabal/proto-lens setup. Bootstrap command
-> constants no longer inherit `BOOTSTRAP_*` or `PATH`, Haskell-style Cabal invocations resolve through
-> `HostConfig` or fixed candidates, the PureScript compiler installer uses Node tar/gzip handling, and
-> docs lint now covers the authoritative configuration/tool/realness docs plus Phase 7.
+> no env vars and no ambient `PATH`; Sprint 6.34 closed its then-current scope by confining Setup to a
+> deterministic `PATH` shim. Phase 1 Sprint 1.24 superseded that residual on 2026-08-09: `Setup.hs`,
+> Custom build type, and the proto-lens setup bootstrap are deleted, so no Setup environment
+> exception remains. Bootstrap command constants no longer inherit `BOOTSTRAP_*` or `PATH`, the
+> PureScript compiler installer uses Node tar/gzip handling, and docs lint covers the authoritative
+> configuration/tool/realness docs plus Phase 7.
 
 > **MT3 catalog-validation reopen (closed).** Phase 6 reopened Sprint 6.35 after the 2026-06-30
 > catalog replacement added `music-mt3-infer` and `music-mr-mt3` to the generated substrate
@@ -237,10 +245,11 @@ substrate decoder type, generated files no longer carry banner-prefixed JSON, an
 `cabal.project` records the supported wildcard `allow-newer` posture against the project
 `ghc-9.12.4` toolchain.
 
-The worktree carries the formatter-toolchain closure:
-`src/Infernix/Lint/HaskellStyle.hs` installs `ormolu` and `hlint` through `cabal install` against
-the project `ghc-9.12.4` compiler into `./.build/haskell-style-tools/bin/`, and the Linux
-substrate image installs a single `ghc-9.12.4` toolchain. The supported Linux outer-container launcher keeps its build
+The worktree carries the formatter-toolchain closure superseding the historical Phase 6 bootstrap:
+root-package `infernix-haskell-style` links pinned Ormolu/HLint, while the genuinely separate
+package under `test/cabal-format/` links Cabal 3.16; the closed aggregate lint command runs both
+in-process without a formatter subprocess. The Linux substrate image installs a single
+`ghc-9.12.4` toolchain. The supported Linux outer-container launcher keeps its build
 root and chart archive cache in the image overlay, hydrates MinIO through the supported direct
 tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
 Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
@@ -1174,6 +1183,9 @@ None.
 ## Sprint 6.20: Haskell Style Toolchain Compatibility Closure [Done]
 
 **Status**: Done
+**Superseded runtime topology (2026-08-09):** Phase 1 Sprint 1.25 retires this sprint's runtime
+formatter install and executable bootstrap. The objective, deliverables, and validation below are
+historical evidence for the topology that closed Sprint 6.20, not the current style-gate design.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `docker/Dockerfile`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
 **Docs to update**: `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `documents/engineering/docker_policy.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
 
@@ -1258,6 +1270,9 @@ None.
 ## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
 
 **Status**: Done
+**Superseded protobuf prerequisite (2026-08-09):** the same-process `ghc`/`cabal` activation result
+remains, but Phase 1 Sprint 1.24 deleted Custom Setup and the Apple Homebrew `protoc` prerequisite.
+The `protoc` bullets below are retained only as evidence of the 2026-06-25 source this sprint ran.
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1595,6 +1610,9 @@ None.
 ## Sprint 6.28: Test Fixture and Lint Gate Retirement [Done]
 
 **Status**: Done
+**Superseded Setup exception (2026-08-09):** Phase 1 Sprint 1.24 deletes `Setup.hs` and its
+proto-lens bootstrap entirely. The Setup-specific allowlist and validation commands below describe
+the historical source of this completed sprint, not the current lint surface.
 **Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/development/no_env_vars.md`, `documents/development/testing_strategy.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 
@@ -1701,6 +1719,10 @@ None.
 ## Sprint 6.30: Single-Toolchain GHC 9.12.4 Closure [Done]
 
 **Status**: Done
+**Superseded formatter bootstrap (2026-08-09):** the one-project-compiler result remains current,
+but Phase 1 Sprint 1.25 deletes the runtime `cabal install` and formatter executables described
+below. Separate in-process package solver worlds now own Ormolu/HLint and Cabal-format so their incompatible
+Cabal-syntax worlds do not share one solver plan.
 **Implementation**: `cabal.project`, `infernix.cabal`, `docker/Dockerfile`, `src/Infernix/Lint/HaskellStyle.hs`, `bootstrap/apple-silicon.sh`, `README.md`, `documents/engineering/dependency_management.md`, `documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`, `documents/engineering/testing.md`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
 **Docs to update**: every file in `Implementation` above
 
@@ -1883,10 +1905,10 @@ single-host logical backpressure gate.
 `test:infernix-integration`, with `infernix lint docs` / `test unit` / `test lint` green). Built on the
 realness enforcement established by Phase 0 (the `infernix-haskell-style` realness check + the
 `check-code` AST guard) and the real Linux engines + real per-family fixtures + fail-closed per-row
-int/e2e owned by Phase 4, it strengthened the HA / chaos / service-loop suites so they assert a real,
-completed result instead of tolerating a status-only pass (this is proven on the Linux lanes; on
-apple-silicon a full per-model service-loop cannot currently assert completion because the run
-OS-OOM-kills the daemon before results exist — owned by Sprint 6.37 / Phase 4 Sprint 4.26, red):
+int/e2e owned by Phase 4, it strengthened the then-current HA / chaos / service-loop suites so they
+asserted a real, completed result instead of tolerating a status-only pass. At this sprint's
+2026-06-24 closure, the Apple per-model run still OS-OOM-killed the daemon before results existed;
+that historical residual was owned by Sprint 6.37 / Phase 4 Sprint 4.26:
 `validateServiceRuntimeLoop`
 (`test/integration/Spec.hs`) now uploads the per-family input fixture and asserts completion + per-family
 result shape (it previously asserted neither), and `assertCompletedResultPayload` is now family-aware via
@@ -1922,11 +1944,19 @@ None.
 ## Sprint 6.34: Docs-Lint Coverage and No-Env/No-PATH Enforcement Closure [Done]
 
 **Status**: Done
+**Superseded Setup exception (2026-08-09):** Phase 1 Sprint 1.24 removes `Setup.hs`, Custom Setup,
+and build-time proto-lens generation. The Setup confinement below is historical validation evidence;
+the current package has no Setup exception.
+**Superseded style-process resolution (2026-08-09):** Phase 1 Sprint 1.25 removes formatter
+bootstrap, Ormolu/HLint host-tool paths, the temporary manifest, and the nested Cabal formatter.
+The current root style component and solver-isolated Cabal-format package invoke pinned libraries
+in-process; the resolution account below is
+historical validation evidence.
 **Code-side closure**: Complete 2026-06-29. `src/Infernix/Lint/Docs.hs` now includes the authoritative
 configuration, no-env, host-tool, cluster-config, realness, Apple materialization, Keycloak, and Phase 7
-plan docs in the governed lint set. `src/Infernix/Lint/HaskellStyle.hs` resolves formatter bootstrap and
+plan docs in the governed lint set. At that closure point, `src/Infernix/Lint/HaskellStyle.hs` resolved formatter bootstrap and
 `cabal format` through `HostConfig.toolPaths.cabal` or fixed `HostTools` candidates instead of bare
-`cabal`; `HostTools.hostToolFallbackCandidates` includes the Linux launcher `/root/.ghcup/bin/{cabal,ghc}`
+`cabal`; `HostTools.hostToolFallbackCandidates` included the Linux launcher `/root/.ghcup/bin/{cabal,ghc}`
 defaults. `Setup.hs` no longer reads `INFERNIX_BUILD_ROOT` or inherited `PATH`, resolves Cabal from fixed
 absolute candidates, and keeps only the mechanically allowed deterministic `Env.setEnv "PATH"` shim for
 the proto-lens custom setup. `bootstrap/common.sh`, `bootstrap/linux-cpu.sh`, and
@@ -3514,8 +3544,8 @@ behaviour here, so there is no cohort gate.
 
 ### Objective
 
-Make a toolchain spawn without a declared ceiling fail to typecheck, and resolve the enforcement
-mechanism per lane rather than assuming one.
+Close the repository-owned toolchain vocabulary behind a declared ceiling, lint a raw spawn beside
+that path, and resolve the enforcement mechanism per lane rather than assuming one.
 
 `runCommandWithCwdAndEnvRemovingWithPaths` is the operator passthrough behind `infernix test ...`
 and `infernix kubectl ...`, and it is exempt from the raw-spawn lint. That exemption is recorded as
@@ -3538,13 +3568,17 @@ All landed.
   authority.
 - **`unboundedToolchainSpawnViolations`** is structurally a copy of
   `unboundedDescriptorSpawnViolations`: file-scoped, fires on the naming of `HostCabal` in a file
-  that also spawns, and clears when the file observes `withBoundedToolchainChild`. Four declared
-  exemptions, each a decision: the module that owns the boundary, the lint module itself, the
-  pre-manifest host-tool probes (fixed-argv version probes that run before the manifest a ceiling is
-  measured against exists, and never start a build), and the `PATH`-composition site where the
-  `HostCabal` mention is a directory rather than an invocation.
-- **Three negative-compilation fixtures** — a forged authority, an escaped authority, and an
-  authority substituted across region tags. The suite is now 6 positive / 85 negative.
+  that also spawns, and clears only when the file carries `withBoundedToolchainChild`, the descriptor
+  precheck, closed descriptors, a fresh group, the masked nonblocking leader-reap helper, and
+  exceptional group cleanup. Four declared exemptions, each a decision: the module that owns the
+  boundary, the lint module itself, the pre-manifest host-tool probes (fixed-argv version probes that
+  run before the manifest a ceiling is measured against exists, and never start a build), and the
+  `PATH`-composition site where the `HostCabal` mention is a directory rather than an invocation.
+- **Five negative-compilation fixtures in current source** — a forged authority, an escaped
+  authority, an authority substituted across region tags, and nominal-coercion refusals for both
+  the spawn authority and Darwin refinement. The suite is now 6 positive / 92 negative. The two
+  coercion fixtures belong to Phase 1's validation-pending follow-on, not the historical Sprint 6.46
+  GREEN evidence.
 - **The per-lane mechanism resolver.** `resolveBuildMemoryMechanism` returns
   `CgroupAggregateMechanism` when a finite cgroup v2 maximum is in force (the outer-container lane's
   own limit, and a Linux host-native lane inside a limited slice), `LinuxProcessCeilingMechanism`
@@ -3668,8 +3702,9 @@ cleanup.
 
 ## Sprint 6.48: Make The Command-Shim Root Reclaimable [Active]
 
-**Status**: Active — code and unit coverage landed and GREEN on Apple Silicon; the full host gate
-rerun is blocked by a separate pre-existing Darwin defect (see Remaining Work).
+**Status**: Active — code and unit coverage landed. The former Darwin address-space-limit defect is
+corrected in current Phase 1 source; this sprint remains open for the aggregate current-source host
+gate and paired lane evidence.
 **Implementation**: `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs` (adjacent build fix, below)
 **Docs to update**: `documents/architecture/managed_state_transitions.md`
@@ -3739,14 +3774,9 @@ the Linux sampling kernel and would be unused on Darwin, which `-Wall -Werror` r
 
 ### Remaining Work
 
-- `cabal test infernix-unit` reaches PASS on Darwin only with `runBuildMemoryAssertions` skipped. A
-  second, unrelated pre-existing defect stops the suite before any later assertion: that function
-  drives `requireBoundedBuildMemory`, which installs an address-space ceiling through
-  `setResourceLimit ResourceTotalMemory`, and macOS rejects `setrlimit(RLIMIT_AS)` outright —
-  verified independently, `current limit exceeds maximum limit`. This is Phase 1 Sprint 1.21
-  territory, where [bounded_host_memory.md](../documents/architecture/bounded_host_memory.md)
-  already records that Darwin has no enforced address-space limit, and it is owned there. The skip
-  was a local verification scaffold and was reverted; it is not in the tree.
+- Run the aggregate current-source host gate and paired lane evidence after Phase 1's current style
+  gate closes. The former `setResourceLimit ResourceTotalMemory` Darwin failure is corrected by
+  Phase 1 Sprint 1.21; the rejected local skip remains historical and is not in the tree.
 - What this sprint does **not** fix, recorded rather than left implied: the shim root is prepended
   to `searchPathForHost`, not substituted for it, so ~2400 binaries in the host's ordinary tool
   directories stay resolvable behind the ~35 the manifest pins; the `0500` directory modes on the
@@ -3755,17 +3785,17 @@ the Linux sampling kernel and would be unused on Darwin, which `-Wall -Werror` r
 
 ## Sprint 6.49: A Suite No Gate Can Select Is Not Coverage [Active]
 
-**Status**: Active — opened 2026-08-08 by the
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md).
+**Status**: Active — the code-side correction is present. `CappedEngineObserverSuite` is part of the
+closed `ToolchainTestSuite` vocabulary and `infernix test unit` selects it; aggregate
+current-source execution on Apple and the paired Linux lane remains.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `infernix.cabal`
 **Docs to update**: none
 
 ### Objective
 
-`test-suite infernix-capped-engine-observer` (`infernix.cabal:489`) is compiled and run by **no
-gate**. `ToolchainTestSuite` (`src/Infernix/BuildMemory.hs:673-678`) admits only `HaskellStyleSuite`,
-`UnitSuite` and `IntegrationSuite`; `ToolchainBuildAll` renders exactly `["build","all"]`
-(`:664`) with no `--enable-tests`; and `cabal.project` sets no `tests: True`. Its 449 lines — the
+The 2026-08-08 audit found that `test-suite infernix-capped-engine-observer` was compiled and run by
+no gate. At that point `ToolchainTestSuite` admitted only `HaskellStyleSuite`, `UnitSuite`, and
+`IntegrationSuite`, while the build-all vector did not enable tests. Its 449 lines — the
 cleanup, timeout, stopped-group, descendant-group and output-bounds machinery for the Apple observer,
 plus the Darwin-only probe at `test/capped-engine-observer/Spec.hs:246-260` — are unverified on
 **both** lanes.
@@ -3776,11 +3806,10 @@ unselectable. A guarantee nobody can run is not a guarantee.
 
 ### Deliverables
 
-- The suite either joins the closed `ToolchainTestSuite` vocabulary and is run by a gate, or it is
-  retired and its coverage folded into a suite that is. Ledgered pending that decision in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- Whichever way it goes, the Apple observer's cleanup and group-identity machinery ends up covered by
-  something a gate selects.
+- The suite joins the closed `ToolchainTestSuite` vocabulary as `CappedEngineObserverSuite` and is
+  selected by `infernix test unit`.
+- The Apple observer's cleanup and group-identity machinery is therefore reachable through a
+  supported gate rather than only by a caller-authored Cabal command.
 
 ### Validation
 
@@ -3788,7 +3817,8 @@ unselectable. A guarantee nobody can run is not a guarantee.
 
 ### Remaining Work
 
-All of it. **Cohort gate**: [Wave Y](cohort-validation-waves.md).
+Run the aggregate current-source gate on Apple and the paired Linux lane, then record the result in
+[Wave Y](cohort-validation-waves.md). No code-side deliverable remains.
 
 ---
 

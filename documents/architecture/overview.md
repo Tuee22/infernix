@@ -19,7 +19,7 @@ governed documentation suite.
   workload when the active `.dhall` `demo_ui` flag is off
 - when the demo UI is enabled, the browser entrypoint is the shared routed surface on one
   localhost port and the demo UI is served by the Webapp role in the `infernix-demo` workload
-- the reusable durable-context primitives that shape the demo UI and any future SPA-style app
+- the reusable durable-context primitives that shape the demo UI and other SPA-style apps
   on the platform — event-sourced state, deterministic reducer, single-flight dispatcher,
   prefix-hash chain, webapp-mediated object storage, JWKS-backed JWT, and stateless WebSocket
   coordination — are defined in [durable_context_design.md](durable_context_design.md). The
@@ -32,8 +32,8 @@ governed documentation suite.
   [../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md](../../DEVELOPMENT_PLAN/phase-7-demo-app-durable-context.md)
 - the runtime executor dispatches to real engine entrypoints: the engine worker invokes the selected
   Python adapter or native runner, streams model weights from the eagerly pre-staged `infernix-models` MinIO
-  bucket, and publishes the typed per-family result surface. Hardware proof for real output remains
-  tracked in `DEVELOPMENT_PLAN/` cohort waves until the Apple Metal/Core ML and CUDA gates close.
+  bucket, and publishes the typed per-family result surface. A support claim for real output requires
+  the corresponding Apple Metal/Core ML or CUDA real-output gate.
   Inference work still flows only over Pulsar topics across the role-selected Haskell daemons; see
   [daemon_topology.md](daemon_topology.md) and [engine_pool_routing.md](engine_pool_routing.md) for
   the role split and topic flow.

@@ -6,7 +6,7 @@
     "node": ">=22.5"
   },
   "scripts": {
-    "generate:contracts": "cabal run exe:infernix -- internal generate-purs-contracts ./src",
+    "generate:contracts": "../.build/infernix internal generate-purs-contracts ./src",
     "postinstall": "node scripts/install-purescript.mjs",
     "build:purs": "sh -c 'set -eu; rm -rf dist; mkdir -p dist; cp src/index.html dist/index.html; npm exec -- spago build; npm exec -- spago bundle --module Main --outfile dist/app.js --platform browser --bundle-type app --force'",
     "build": "npm run generate:contracts && npm run build:purs",

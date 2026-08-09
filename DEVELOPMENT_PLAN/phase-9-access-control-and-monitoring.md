@@ -1,12 +1,16 @@
 # Phase 9: Access Control and Monitoring Surfaces
 
-**Status**: Done — with a named open dependency, per Section C of
+**Status**: Blocked — Phase 0 Sprint 0.22 is an internal governance prerequisite, not an allowed
+external or supported-lane validation dependency.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Done — with a named open dependency, per Section C of
 [development_plan_standards.md](development_plan_standards.md). The
 [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) of 2026-08-08 means the routed
-Playwright and `cluster up` evidence cited below cannot be reproduced today: `cluster up` fails on
-both lanes on Phase 1 Sprint 1.20's bounded-command environment defect. This phase owns no surveyed
-Darwin blocker and has no open code-side work, so it stays `Done` while naming the dependency; its
-cohort evidence is reproduced under [Wave Y](cohort-validation-waves.md).
+Playwright and `cluster up` evidence cited below is not current-source proof. This phase owns no
+known current defect and has no open code-side work, so it stays `Done` while naming the dependency;
+its cohort evidence is reproduced under [Wave Y](cohort-validation-waves.md) after Phase 1's
+complete current-source gates and cohorts. The former Sprint 1.20 bounded-command environment
+defect is corrected and is historical context, not the current blocker.
 RBAC/STS/dashboard code-side closed (2026-07-06) and **Wave Q cohort validated on BOTH
 `apple-silicon` and `linux-cpu` (2026-07-07)** for the RBAC/STS/dashboard surface: full `cluster up`
 on each cohort proved the RBAC 403/2xx-by-role contract, the admin `realm_access.roles` claim, the
@@ -32,6 +36,10 @@ and non-admin-to-admin switching. **The Managed-State-Transition Doctrine reopen
 > loopback data-plane posture that keeps trust-boundary-internal traffic off the Keycloak-gated edge.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 9 is blocked by Phase 0 Sprint 0.22. Its prior `Done` state and
+> named evidence dependency are suspended intact; this internal prerequisite is not a Section C
+> exception.
 
 Per-user *object and chat* isolation already exists and is unchanged (Phase 7:
 `pathBelongsToUser`/`topicBelongsToUser`, `users/<sub>/` prefix — see

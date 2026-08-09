@@ -11,7 +11,11 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Either (isLeft)
 import Infernix.Config (Paths (buildRoot))
-import Infernix.DemoConfig.Colima (colimaPledgeMibFromJsonLines)
+import Infernix.DemoConfig.Colima
+  ( activeColimaPledgeMibFromObservation,
+    colimaPledgeMibFromJsonLines,
+    effectiveHostMemoryMibAfterColimaPledge,
+  )
 import Infernix.DemoConfig.Internal
   ( decodeBootstrapDemoConfigFile,
     decodeDemoConfigFile,
@@ -35,6 +39,36 @@ import System.FilePath ((</>))
 
 runColimaPledgeParserProperties :: IO ()
 runColimaPledgeParserProperties = do
+  assertEqual
+    "the Darwin build account subtracts the active 48 GiB VM pledge from 64 GiB physical RAM"
+    (Right 16384)
+    ( do
+        pledgedMib <-
+          activeColimaPledgeMibFromObservation
+            (Just (profile "default" "Running" (48 * 1024 * bytesPerMib)))
+        effectiveHostMemoryMibAfterColimaPledge 65536 pledgedMib
+    )
+  assertEqual
+    "an explicitly stopped VM leaves all physical RAM effective for the Darwin build account"
+    (Right 65536)
+    ( do
+        pledgedMib <-
+          activeColimaPledgeMibFromObservation
+            (Just (profile "default" "Stopped" (48 * 1024 * bytesPerMib)))
+        effectiveHostMemoryMibAfterColimaPledge 65536 pledgedMib
+    )
+  assert
+    (isLeft (activeColimaPledgeMibFromObservation Nothing))
+    "an unavailable fixed Colima executable fails closed"
+  assert
+    (isLeft (activeColimaPledgeMibFromObservation (Just "{not-json")))
+    "a malformed fixed Colima observation fails closed"
+  assert
+    (isLeft (effectiveHostMemoryMibAfterColimaPledge 49152 49152))
+    "a Colima pledge that exhausts physical RAM fails closed"
+  assert
+    (isLeft (effectiveHostMemoryMibAfterColimaPledge 49152 65536))
+    "a Colima pledge larger than physical RAM fails closed"
   assertEqual
     "multiple active profiles are summed before a single MiB round-up"
     (Right 4)

@@ -7,12 +7,14 @@
 
 ## Storage Doctrine
 
-- default storage classes are deleted during bootstrap - `infernix-manual` is the only supported
-persistent storage class and uses `kubernetes.io/no-provisioner` - every PVC-backed Helm workload
-explicitly sets `storageClassName: infernix-manual` - PVCs come only from Helm-owned stateful
-workloads, including operator-managed claims reconciled from repo-owned Helm releases - PVs are
-created manually only by `infernix cluster up` and bind explicitly to their intended claims - no
-PVC-backed Helm workload relies on dynamic provisioning or an implicit default storage class -
+- default storage classes are deleted during bootstrap
+- `infernix-manual` is the only supported persistent storage class and uses
+  `kubernetes.io/no-provisioner`
+- every PVC-backed Helm workload explicitly sets `storageClassName: infernix-manual`
+- PVCs come only from Helm-owned stateful workloads, including operator-managed claims reconciled
+  from repo-owned Helm releases
+- PVs are created manually only by `infernix cluster up` and bind explicitly to their intended claims
+- no PVC-backed Helm workload relies on dynamic provisioning or an implicit default storage class
 `cluster up` renders the Helm release shape, discovers the PVC inventory from that owned chart or
 operator input, and prepares one matching PV per claim before workload rollout - PV paths follow
 `./.data/kind/<runtime-mode>/<namespace>/<release>/<workload>/<ordinal>/<claim>` - the claim
@@ -30,8 +32,8 @@ KV cache is in-memory and rebuilds from the Pulsar conversation log on restart v
 by runtime admission. Each model's `modelRamFootprintMib` is compiled against the active Apple host
 or Linux CPU pod capacity. Oversized rows remain explicit `UnavailableModel` values; fitting rows
 receive indexed grants and must pass live-enforcer refinement before engine launch accepts an
-`ExecutableModel`. Linux GPU plan compilation currently fails closed with
-`GpuDualResourceBudgetRequired` until Phase 6 provides dual RAM/VRAM enforcement (canonical home
+`ExecutableModel`. A Linux GPU plan without independently indexed RAM/VRAM enforcement fails closed
+with `GpuDualResourceBudgetRequired` (canonical home
 [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md)). Model
 weights themselves live in the `infernix-models` MinIO bucket on the four `64Gi` MinIO data claims
 and are streamed into the engine pod's `emptyDir` from the eagerly pre-staged bucket (the

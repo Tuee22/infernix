@@ -24,9 +24,12 @@ substrate-neutral engine pools run inference on Kubernetes workloads or Apple ho
 > Darwin); and `infernix init` derives the untracked per-machine `cabal.project.local` from it.
 > `cabal.project` carries a calibrated floor for a fresh clone. The floor is a measured multiple:
 > a complete clean `cabal build all --enable-tests` peaked at 1328 MiB resident in the largest single
-> compiler process. The *spawn* boundary — a closed toolchain invocation vocabulary that makes
-> starting a build from a bare command list not typecheck — is Phase 6 Sprint 6.46 and is not
-> claimed yet, and the Apple lane's mechanism is unmeasured until its cohort wave.
+> compiler process. Phase 6 Sprint 6.46 closed the repository-owned CLI spawn boundary: the closed
+> toolchain invocation vocabulary removes a caller-supplied command list from that path, while the
+> Haskell-style lint rejects a new raw `HostCabal` spawn that omits the complete owned lifecycle.
+> The current authority-local serialization/lifecycle follow-on and Apple sampled-mechanism proof
+> remain validation-pending under Phase 1 and Wave AA; this is not a universal `System.Process` or
+> host-global-lock guarantee.
 
 > **No-native-source correction and evidence reset (2026-07-26).** Repository-owned native
 > implementation source is forbidden in native files or embedded/generated payloads, as are Cabal
@@ -61,19 +64,99 @@ substrate-neutral engine pools run inference on Kubernetes workloads or Apple ho
 
 ## Current Repo Assessment
 
-> **Neither supported lane completes its lifecycle today (2026-08-08).** Eight commits landed between
-> 2026-07-25 and 2026-08-07 — **82 files and 67,232 insertions under `src/`** — none validated on
-> Darwin, and the
-> [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) retires every Apple and `linux-cpu`
-> attestation dated 2026-07-20 (Wave V) and 2026-07-24 (Waves W, X) as a current proof point.
-> `infernix test all` and `cluster up` fail on both lanes: the bounded-command target-environment
-> allowlist admits no row for the Poetry snapshot environment any renderer produces (Phase 1
-> Sprint 1.20). What is re-established is the machine-independent set — the library and every suite
-> compile on Darwin under `-Wall -Werror`, and `infernix-unit`, `infernix-haskell-style`,
-> `infernix-compile-fail` and `infernix lint docs|files` are green. A survey of 10 of the 82 changed
-> files found 3 will-break and 7 might-break Darwin blockers; **72 files remain unaudited**, so that
-> inventory is a floor. Phase 0 and Phase 7 are reopened, Phases 5 and 9 stay `Done` with the
-> dependency named, and Phases 1, 4 and 6 carry the code-side residuals.
+> **Phase 0 Sprint 0.22 is the current execution gate (2026-08-09).** A read-only audit found the
+> per-machine fleet doctrine reconciliation incomplete and the status-free governed-doc rule
+> semantically under-enforced. Sprint 0.22 is Active; its formatter-stable governed Apple rebuild
+> is GREEN for compile/install only, and the docs-only monitoring-stance correction has whole lint
+> GREEN for style/policy/compile. Full unit is genuinely RED before suites at bounded Python
+> provisioning; diagnosis/residue is next. The prior RED chronology remains recorded;
+> it owns the stale HA/replication/leader-election/exactly-once/surviving-coordinator/Patroni-repair
+> and pod/node-failure-injection prose, the timeless one-process-per-role/per-machine,
+> at-least-once/effectively-once, single-instance-recovery replacements, removal of governed-doc
+> implementation status, and semantic negative docs-lint tests. No accelerator cohort applies.
+> Landed categories are the README HA cleanup; topology/recovery rewrites across the daemon, demo,
+> durable-context, web, object, Pulsar, PostgreSQL, testing, and runbook surfaces; unsupported
+> Patroni replica-reinit removal with live startup-pod recycle preserved; Pulsar-workflow
+> status/phasing/checklist removal; timeless bounded-inference/host-memory rewrites; and
+> `runtime_modes.md` / `model_catalog.md` / `k8s_storage.md` direct-contract rewrites. The timeless
+> typed-execution-plan rewrite and complete status inventory are landed with semantic enforcement
+> in `src/Infernix/Lint/Docs.hs` and focused executable fixtures/path guards in
+> `test/haskell-style/Spec.hs`. Exact retired/status zero scans, the body mirror, and scoped diff
+> check are clean; independent settled-tree review is CLEAN with no High/Medium and confirms the
+> safe controls preserve Failover, Shared, drain, single-instance, code, runtime, and pending
+> semantics. After 5m54s claimant-free readiness following the external Cabal owner's end, the
+> monitor pinned owned PID 53817 and saw zero external claimants through settlement/final scan;
+> exact `./bootstrap/apple-silicon.sh build`
+> exited 0 with 65536 - 49152 = 16384 MiB effective, `J1*H4096 + 2*C1024 = 6144 MiB`, `GHCRTS`
+> driver 1024 MiB, sdist, all 114 GHC 9.12.4 modules including `Infernix.Lint.Docs` module 63,
+> `Main` link, install/copy, and corrected postamble. This is compile/install evidence only. After
+> the clean monitored readiness window 17:15:56–17:21:18 = 5m22s, the monitor pinned owned PID
+> 63879 and observed zero external claimant through settlement/final scan. Exact
+> `./.build/infernix test lint` exited 1 after rebuilding `Infernix.Lint.Docs` module 63 and CLI
+> module 114, compiling/linking `test/haskell-style/Spec.hs`, and starting the test. Its sole
+> diagnostic was `haskell-style-check: Ormolu formatting differs:` followed by exactly
+> `src/Infernix/Lint/Docs.hs`; Cabal reported 0/1 and `Error: [Cabal-7125]`. Fail-fast left
+> HLint/readability, the isolated Cabal formatter, Python/Black, build-all, unit, and docs unrun.
+> This is a genuine formatting RED with no semantic/runtime claim. After the clean monitored
+> readiness window 17:27:50–17:33:15 = 5m25s, the monitor pinned owned PID 68221 and found zero
+> external claimant through final scan. One exact `./.build/infernix test lint` invocation exited 1
+> intentionally after `user error (governed Ormolu apply completed idempotently for
+> src/Infernix/Lint/Docs.hs)`. Only Haskell style compiled/linked/ran; the stop preceded
+> HLint/readability, the isolated formatter, Python, build-all, and later gates. Target prehash
+> `fb929508...e4bd7` became formatted `396cac91...ce68`; linked output canonicalized equivalent
+> `zipWith3 (,,)` to `zip3` and adjusted multiline pattern/comprehension layout; second apply was
+> exact. The temporary checker restored byte-for-byte at SHA-256 `880a2763...f37`; scoped diff is
+> clean. Independent formatter-delta review is CLEAN with no High/Medium: `zip3` is semantically
+> identical here, tuple bindings and `where` scope are preserved, and fixture wiring/controls remain
+> coherent. The prerequisite window 17:39:56–17:45:11 was claimant-free for 5m15s. The monitor
+> pinned owned bootstrap PID 73643 from its start around 17:45:29 through settlement at
+> 17:48:18–17:48:24 and saw zero external claimant through post-settlement and the independent final
+> scan at 17:49:10. Exact `./bootstrap/apple-silicon.sh build` exited 0: 65536 - 49152 = 16384 MiB
+> effective; `J1*H4096 + 2*C1024 = 6144 MiB`; `GHCRTS` driver 1024 MiB; sdist; all 114 GHC 9.12.4
+> library modules including formatted `Infernix.Lint.Docs` module 63; `Main` link; install/copy to
+> `.build/infernix`; and corrected postamble. This is compile/install evidence only. The next
+> prerequisite window, 17:53:05–17:58:18, was claimant-free for 5m13s. The monitor owned PID 84529
+> from about 17:58:30 through 18:00:34, observed settlement by 18:00:39, and saw zero external
+> claimant through the final scan at 18:01:30. Exact `./.build/infernix test lint` exited 1.
+> Haskell style rebuilt `Infernix.Lint.Docs` module 63 and `test/haskell-style`, then emitted
+> `haskell-style-check: ok` and passed. Isolated Cabal 3.16 emitted `cabal-format-check: ok` and
+> passed; its fixture warning was expected. The exact docs-policy failure was
+> `user error (documents/README.md must declare the monitoring stance with the sentence: Monitoring
+> is not a supported first-class surface.)`, at `Docs.hs:1206:9`. Python/Black, build-all, and later
+> stages did not run; no semantic/runtime GREEN follows. Exact diagnosis found
+> `documents/README.md` used comma form `surface, and`, so the standalone validator sentence was
+> absent. The sole landed change is `Monitoring is not a supported first-class surface. The governed
+> docs suite has no canonical` plus the existing path line. Validator/Haskell are unchanged. All
+> five `monitoringStancePaths` now contain the exact sentence; no `monitoring.md` or dormant stack
+> exists; scoped document diff and independent final review are CLEAN with no High/Medium. Review
+> explicitly finds no rebuild warranted. The existing build GREEN remains valid. After the
+> 18:08:43–18:13:59 prerequisite was claimant-free for 5m16s, the monitor owned PID 92170 from about
+> 18:14:09 through 18:21:27, observed settlement by 18:21:32, and found zero external claimant
+> through final 18:22:35. Exact `./.build/infernix test lint` exited 0: Haskell style emitted
+> `haskell-style-check: ok`; isolated Cabal 3.16 emitted `cabal-format-check: ok` with its expected
+> fixture warning; Python checking succeeded for 8 source files; Black left all 8 unchanged; and
+> `All checks passed!` was emitted. Final bounded build-all completed all declared components and
+> linked integration 116/116 plus unit 117/117. This is style/policy/compile only, not unit runtime,
+> docs, or runtime evidence. The monitoring RED is closed.
+> The 18:25:06–18:30:40 prerequisite was claimant-free for 5m34s. The monitor owned PID 1752 from
+> about 18:30:50 through 18:31:25, observed settlement by 18:31:33, and saw zero external claimant
+> through final 18:32:42. Exact `./.build/infernix test unit` exited 1 before suites with
+> `bounded Python project provisioning failed` for `/Users/matthewnowak/infernix/python`. Kernel
+> failure: `anchor terminal disagreed with anchor exit ExitFailure (-9); input InputCompleted;
+> stdout CaptureCompleted "Installing dependencies from lock file\n\nNo dependencies to install or
+> update\n\nInstalling the current project: infernix-adapters (0.1.0)\n"; stderr CaptureCompleted ""`;
+> call stack `Python.hs:215:13`. Aggregate lint GREEN remains valid; no unit/runtime GREEN follows.
+> Diagnose failure/residue, correct or disposition it, rebuild/lint as source requires, then rerun
+> full unit; docs/diff remain later.
+> Every code-writing Phase 1-9 is `Blocked by Phase 0 Sprint 0.22` until that machine-independent
+> governance gate closes; each phase document retains its exact prior state and evidence as
+> suspended context.
+>
+> **Suspended Phase 1 boundary.** The Audiveris correction's governed Apple build is GREEN, the
+> fully uncontested materializer remains genuinely RED at Audiveris extraction, and the latest
+> aggregate lint attempt is INVALIDATED—never RED and never aggregate GREEN—after narrower
+> style/Cabal/Python passes and unrelated claimant overlap. Its whole lint rerun, unit, docs/diff,
+> materializer, Apple, and paired `linux-cpu` gates resume only after Sprint 0.22 closes.
 
 The repository implements the runtime-config architecture, bootstrap responsibility boundary, and
 Harbor-first image-boundary doctrine described in this overview. The governed validation surface
@@ -212,13 +295,16 @@ retired the reservation, and restored operator config. The all-Haskell lock and 
 implementations are present, including the version-3 exact-identity lease and hidden rank-2 linear
 session, and the obsolete C/Cabal boundary is removed. Phase 0's focused proof and fresh
 review/Stage 1 are green. Phase 2's own closure after Phase 1, Apple, and then `linux-cpu` are
-outstanding. Phase 6 remains blocked.
+outstanding. Phase 6 is Active: Sprint 6.43 is blocked by that ordered Phase 1→2→4 chain, while its
+other current validation/code-side residuals are tracked independently in the Phase 6 document.
 The headless target uses no Tart VM, no user keychain dependency, no host Xcode UI flow,
-and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented and validated: the stage-0
-entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before direct
-`cabal install`, reconciles Homebrew `protoc`, and lets Apple adapter setup or validation paths
-reconcile the Homebrew-managed `python@3.12` formula and `python3.12` command plus a user-local
-Poetry bootstrap on demand. The native-only workflow doctrine now forbids Apple Docker-context
+and no request-time toolchain installation. The Apple clean-host bootstrap hardening is implemented: the stage-0
+entrypoint verifies same-process ghcup-managed `ghc` and `cabal` resolution before its fixed,
+authority-derived build/install. Operators use `./bootstrap/apple-silicon.sh build` and then the
+generated `./.build/infernix` command surface, not bare host Cabal. Phase 1 Sprint 1.24 deletes the Custom Setup path and consumes an exact tracked
+Haskell protobuf snapshot, so Darwin no longer installs or starts a standalone compiler/plugin.
+Apple adapter setup or validation paths reconcile the Homebrew-managed `python@3.12` formula and
+`python3.12` command plus a user-local Poetry bootstrap on demand. The native-only workflow doctrine now forbids Apple Docker-context
 creation or switching, Colima VM creation, and cross-architecture emulation; Phase 1 Sprint 1.12
 replaced the previous Colima reconciliation path with a prerequisite check that reports the
 selected Docker context and daemon architecture, then stops before cluster work if the daemon is
@@ -230,9 +316,8 @@ host-native `npm exec` against the published
 `127.0.0.1` edge port. The shared cluster lifecycle persists explicit phase, child-operation detail, and heartbeat
 data in `cluster status` during monitored Docker build, Harbor publication, Harbor-backed
 final-image preload, and Apple retained-state replay steps; explicit runtime-config
-writes are atomic so concurrent readers do not observe truncated payloads; and
-retained-state Apple reruns automatically reinitialize stopped Harbor PostgreSQL replicas from the
-current Patroni leader when timeline drift leaves replicas unready after promotion. On detached
+writes are atomic so concurrent readers do not observe truncated payloads. The former Patroni
+replica-reinitialization path is retired with the replicated topology. On detached
 snapshot lanes, the explicit rebuildable Harbor/Keycloak scrub set is removed only from the local
 retained copy after Kind deletion under `WriterQuiesced`. The shared lifecycle skips broad
 pre-Harbor support-image preloads and performs binary-owned Harbor-first image preparation, where
@@ -334,12 +419,12 @@ Playwright `9/9`.
 
 | Area | Supported contract | Current repo state |
 |------|--------------------|--------------------|
-| Root-document governance | the governed docs, root docs, and plan describe the same explicit-init runtime-config doctrine and Apple daemon-role topology | Sprint 0.18 Done on 2026-07-27 for the no-repo-owned-native-source mirror, evidence reset, focused proof, final review, and correction Stage 1; Sprint 1.20 is Active |
+| Root-document governance | the governed docs, root docs, and plan describe the same explicit-init runtime-config doctrine and Apple daemon-role topology | Sprint 0.22 is Active; build and aggregate lint GREEN, but full unit genuinely RED before suites at bounded Python provisioning (`ExitFailure (-9)`). Diagnose residue/cause, correct or disposition, rebuild/lint as required, then rerun unit before docs/diff; no later phase resumes first, and Sprint 0.18's recorded closure remains narrower historical evidence |
 | CLI ownership | one Haskell command registry owns the supported command surface without any `--runtime-mode` override | implemented |
 | Substrate selection | repo-root `./infernix.dhall`, created explicitly by `infernix init` or temporarily by the test harness from `infernix test init`, is the runtime source of truth for substrate identity and generated catalog selection | implemented; ordinary config-dependent commands fail fast naming the required init |
 | Runtime-config format | the operator runtime config and its deployment mirrors use a reflected typed Dhall contract | implemented; repo-root `./infernix.dhall` is decoded in-process by the `dhall` Haskell library, while cluster publication may retain a compatibility mount filename |
 | Apple split-executor lane | the host-built binary manages Kind, the cluster runs the coordinator role for Pulsar ingress and derived pool-topic handoff, and Apple-native inference batches are delegated to same-binary host engine daemons through Pulsar | implemented |
-| Apple stage-0 bootstrap determinism | a first-run Apple bootstrap verifies newly installed same-process tool resolution before handing off to direct `cabal` work | implemented; Wave A is historical evidence |
+| Apple stage-0 bootstrap determinism | `./bootstrap/apple-silicon.sh build` verifies same-process tool resolution and performs the fixed authority-derived build/install; subsequent focused work uses `./.build/infernix`, never an operator bare-Cabal validation command | implemented; Wave A is historical evidence and current-source proof remains in Phase 1/Wave AA |
 | Bootstrap responsibility boundary | shell bootstrap builds or enters the active launcher only, then delegates lifecycle, validation, image preparation, and teardown to `infernix`; Harbor-first image loading includes the active runtime image on every substrate after Harbor is responsive | implemented; Waves A/C are historical evidence and do not close reopened Phase 2 |
 | Lifecycle false-negative protection | supported lifecycle surfaces report long-running build, publication, preload, and teardown phases clearly enough that operators do not mistake progress for failure | implemented before the correction; attempt 5 exposed same-process lifecycle-lock cleanup contention (`errno 35`). The all-Haskell lock replacement and its focused adversarial and correction Stage 1 proof are green on the 2026-07-27 identity; Phase 2 remains blocked by Phase 1 and has no post-correction behavioral evidence |
 | Linux control plane | all supported Linux CLI commands run through `docker compose run --rm infernix infernix ...` | implemented; Wave C is historical native Linux/CUDA evidence |
@@ -347,7 +432,7 @@ Playwright `9/9`.
 | Serialized substrate naming | the initialized runtime config, publication JSON, `cluster status`, and browser contracts still carry the active substrate under `runtimeMode` field names | implemented |
 | Demo UI gating | the initialized runtime config can disable the clustered demo surface | implemented; `infernix init` accepts `--demo-ui false` |
 | Simulation stance | no simulated cluster, route, or generic inference-success fallback remains in the supported runtime or validation contract, and routed Pulsar checks require the real Gateway-backed upstream | cluster/route simulation removal stands; the repo-local topic spool is a harness-only endpoint-absent path. The realness lint remains a regression tripwire and engine failures remain fail-closed. The historical Waves T/W validate their recorded pre-audit admission scopes only. Phase 1 now compiles resource-indexed grants, retains oversized Apple/Linux CPU rows as `UnavailableModel`, refines matching live enforcers into `ExecutableModel`, and restricts public engine launch to that capability. Coordinator/engine request handling returns terminal failed results for unavailable, empty, unknown, wrong-route, and malformed inputs before source removal/acknowledgement; the complete source-matched Phase 1 gate passed on 2026-07-25. Phase 4 owns Apple/Linux CPU adversarial enforcement plus encapsulated serialization, Phase 6 owns the currently fail-closed Linux GPU RAM/VRAM path and raw-spawn exemption closure, and Phase 8 owns the final wire schema. |
-| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one initialized substrate at a time | Phase 0's fresh correction review/Stage 1 is green; all pre-correction identities remain superseded and nonreusable. Phase 1 is Active, Phase 2 remains blocked, and Apple plus `linux-cpu` remain |
+| Validation scope | integration uses one `.dhall`-driven suite over the README matrix, E2E stays substrate-agnostic at the browser layer, and `test all` runs every supported validation layer for one initialized substrate at a time | Phase 0 Sprint 0.22 is the sole current gate and has no accelerator cohort; Phases 1-9 are blocked, with their prior validation evidence retained as suspended context |
 | Hardware cohort cadence | code-side closure (implementation plus the machine-independent gate set) is completed in natural phase order on whichever single machine is present and gates the next phase's implementation; `Done` requires exactly one chosen accelerator plus `linux-cpu`, never both accelerators in one phase gate | implemented in the plan doctrine; operationalized in [cohort-validation-waves.md](cohort-validation-waves.md), where validation-only residuals are queued as named per-accelerator attestations instead of ad hoc machine-switch requests |
 | Native container architecture | Apple Silicon -> `linux/arm64`; `linux-cpu` -> native Linux host architecture (`linux/amd64` or `linux/arm64`); `linux-gpu` -> `linux/amd64`; no development or validation lane uses cross-architecture emulation | implemented and validated: `linux-cpu` publication reads the normalized native host architecture from `InfernixHost.dhall`; Wave F closed the native arm64 `linux-cpu` full-suite gate on the recorded validation through the selected native arm64 Docker daemon |
 
@@ -384,8 +469,8 @@ the execution-ordered build out lives at
 a Keycloak release with its own Patroni Postgres, a per-context Pulsar conversation log topic
 family, compacted per-user metadata and drafts topics, a shared MinIO bucket with per-user
 prefixes, stateless WebSocket coordination via Pulsar `Reader` subscriptions, and a chart
-refactor that replaces the fused `infernix-service` Deployment with role-specific
-`infernix-coordinator` and `infernix-engine` Deployments under HA defaults. The
+refactor that replaces the fused `infernix-service` Deployment with role-specific, single-replica
+`infernix-coordinator` and `infernix-engine` Deployments. The
 durable-context surface, including Keycloak, the WS endpoint, the `/auth` and `/api/objects`
 routes, and the demo MinIO bucket, is gated by the same `demo_ui` flag that gates the rest
 of the `infernix-demo` browser surface. Phase 7 supersedes the previous single-form manual
@@ -508,15 +593,20 @@ the execution-ordered buildout lives at
   phase that merges committed per-accelerator attestations (see
   [development_plan_standards.md](development_plan_standards.md) Section Q)
 - the supported control plane keeps one Haskell command registry,
-  imperative cluster or host prerequisite orchestration, the current `ormolu` plus `hlint` plus
-  `cabal format` style stack,
+  imperative cluster or host prerequisite orchestration, root-package in-process Ormolu/HLint plus
+  the solver-isolated Cabal-format package,
   and the existing files or docs or chart or proto validation entrypoints rather than layering on
   an additional architecture-doctrine backlog
 - every `infernix service` daemon remains startup-configured and Pulsar-driven without a separate
   admin-HTTP, hot-reload, or typed-event-ledger subsystem in the supported contract
-- the test surface remains the current three Cabal stanzas plus the frontend unit suite:
-  `infernix-unit`, `infernix-integration`, and `infernix-haskell-style`, exercised through the
-  supported `infernix test lint|unit|integration|e2e|all` command surface
+- the test surface contains eight root-package Cabal test suites, one solver-isolated Cabal-format
+  package suite, and the frontend unit suite: `infernix-unit`,
+  `infernix-artifact-transaction`, `infernix-apple-materializer`,
+  `infernix-capped-engine-observer`, `infernix-compile-fail`,
+  `infernix-execution-plan-internal`, `infernix-integration`, and
+  `infernix-haskell-style` in the root package, plus `infernix-cabal-format` in its own package;
+  all are exercised through the appropriate supported
+  `infernix test lint|unit|integration|e2e|all` command surface
 - when `demo_ui = true`, Phase 7 adds a multi-user durable-context surface served by the
   existing `infernix-demo` workload: Keycloak self-signup, WebSocket post-login transport,
   per-context Pulsar conversation log topics, compacted per-user metadata and drafts topics,
@@ -599,14 +689,13 @@ infernix/
 ├── AGENTS.md
 ├── CLAUDE.md
 ├── README.md
-├── Setup.hs
 ├── compose.yaml
 ├── infernix.cabal
 ├── cabal.project
 ├── app/
 │   └── Main.hs
 ├── src/
-│   └── Infernix/
+│   ├── Infernix/
 │       ├── Auth/
 │       ├── Bootstrap/
 │       ├── Bridge/
@@ -643,7 +732,10 @@ infernix/
 │       ├── Web/
 │       │   └── Contracts.hs
 │       └── Workflow.hs
+│   └── Proto/                 # four tracked byte-exact proto-lens generator outputs
 ├── proto/
+│   ├── README.md
+│   ├── haskell-bindings.sha256
 │   └── infernix/
 ├── python/
 │   ├── pyproject.toml
@@ -827,12 +919,12 @@ The plan keeps control-plane execution context separate from substrate.
 
 ### 7a. Local Service Topology
 
-- Linux validation lanes close Harbor, MinIO, Pulsar, and PostgreSQL on the mandatory local HA
-  topology
-- Apple host-native generated values may use a single-replica local Harbor/Pulsar/coordinator/demo
-  topology for the real Apple engine gate on the operator's already selected native arm64 Docker
-  daemon; this is an Apple validation fit for constrained Colima memory, not a replacement for the
-  Linux HA evidence
+- every supported lane runs one instance of Harbor, MinIO, each Pulsar component, each Patroni
+  cluster and pgBouncer, the coordinator, and the optional demo/Keycloak services; each machine runs
+  exactly one engine process
+- lifecycle validation proves the collapsed topology reaches readiness without a `Pending` replica
+  and recovers its supported single-instance state. It does not claim replica failover, chaos
+  tolerance, or a repo-owned HA topology
 
 ### 8. Stable Edge Port and Route Prefixes via Envoy Gateway API
 
@@ -904,10 +996,14 @@ The plan keeps control-plane execution context separate from substrate.
 ### 13. Python Restriction
 
 - custom platform logic is Haskell
-- Python is allowed only under `python/adapters/`
-- each adapter is invoked only through `poetry run`
+- Python source is allowed only in the shared adapter package under `python/adapters/` and the
+  declared Poetry metadata under `python/` and `python/engines/`
+- the framework-free shared project owns quality/protobuf work; Python-stdio inference runs only
+  through a prepared `python/engines/<engine>/.venv/bin/python` whose project digest marker matches
 - the canonical Python quality gate is `poetry run check-code`
-- on Apple Silicon, Poetry may materialize `python/.venv/` on demand
+- Apple materialization prepares the shared venv plus the `transformers`, `pytorch`, and `diffusers`
+  `apple-silicon` environments before inference; request-time repair and shared-venv fallback are
+  forbidden
 
 ### 14. Production Surface Is Pulsar-Only
 

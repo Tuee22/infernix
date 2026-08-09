@@ -26,6 +26,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Data.Time.Clock (getCurrentTime)
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Infernix.CLI qualified as CLI
 import Infernix.Cluster
 import Infernix.Cluster.Subprocess qualified as Subprocess
 import Infernix.Config (Paths (..))
@@ -84,6 +85,7 @@ import Network.Socket
   )
 import Network.WebSockets qualified as WebSockets
 import System.Directory
+import System.Environment (getArgs, getExecutablePath, withArgs)
 import System.Exit (ExitCode (ExitSuccess))
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
@@ -125,23 +127,35 @@ instance Aeson.FromJSON IntegrationPulsarEnvelope where
 
 main :: IO ()
 main = do
-  -- Test images spawn self-exec children through the same close_fds
-  -- kernels the production binary uses, so they bound their descriptor
-  -- space first. See "Infernix.DescriptorSpace".
-  _ <- establishBoundedDescriptorSpace
-  Subprocess.dispatchInternalSubprocessMode
-  integrationTestRoot <- testRootPath "integration"
-  withTestRoot integrationTestRoot $ do
-    paths <- Config.discoverPaths
-    runtimeModes <- integrationRuntimeModes
-    mapM_ (exerciseRuntimeMode paths) runtimeModes
-    mapM_ (validateDemoUiDisabled paths) runtimeModes
-    case runtimeModes of
-      runtimeMode : _
-        | Config.controlPlaneContext paths /= Config.OuterContainer ->
-            validateEdgePortConflictAndRediscovery paths runtimeMode
-      _ -> pure ()
-    putStrLn "integration tests passed"
+  arguments <- getArgs
+  case arguments of
+    marker : cliArguments
+      | marker == integrationCliSelfExecMarker ->
+          withArgs cliArguments CLI.main
+    _ -> do
+      -- Test images spawn self-exec children through the same close_fds
+      -- kernels the production binary uses, so they bound their descriptor
+      -- space first. See "Infernix.DescriptorSpace".
+      _ <- establishBoundedDescriptorSpace
+      Subprocess.dispatchInternalSubprocessMode
+      integrationTestRoot <- testRootPath "integration"
+      withTestRoot integrationTestRoot $ do
+        paths <- Config.discoverPaths
+        runtimeModes <- integrationRuntimeModes
+        mapM_ (exerciseRuntimeMode paths) runtimeModes
+        mapM_ (validateDemoUiDisabled paths) runtimeModes
+        case runtimeModes of
+          runtimeMode : _
+            | Config.controlPlaneContext paths /= Config.OuterContainer ->
+                validateEdgePortConflictAndRediscovery paths runtimeMode
+          _ -> pure ()
+        putStrLn "integration tests passed"
+
+-- The integration image already contains the exact CLI modules under test.
+-- A fixed self-exec marker re-enters that CLI without starting a nested Cabal
+-- build or discovering a second executable through ambient PATH.
+integrationCliSelfExecMarker :: String
+integrationCliSelfExecMarker = "__infernix_integration_cli_self_exec"
 
 integrationRuntimeModes :: IO [RuntimeMode]
 integrationRuntimeModes =
@@ -1998,12 +2012,7 @@ validateDemoUiDisabled paths runtimeMode =
     `finallyPreservingPrimary` materializeGeneratedSubstrate runtimeMode True
 
 resolveInfernixExecutable :: IO FilePath
-resolveInfernixExecutable =
-  trimTrailingWhitespace <$> readProcess "cabal" ["list-bin", "exe:infernix"] ""
-
-trimTrailingWhitespace :: String -> String
-trimTrailingWhitespace =
-  reverse . dropWhile (`elem` [' ', '\n', '\r', '\t']) . reverse
+resolveInfernixExecutable = getExecutablePath
 
 trim :: String -> String
 trim =
@@ -2017,15 +2026,11 @@ cleanupRuntimeState = cleanupHarnessRuntimeState
 
 captureInfernixOutput :: [String] -> IO String
 captureInfernixOutput args = do
+  infernixExecutable <- resolveInfernixExecutable
   (exitCode, stdoutOutput, stderrOutput) <-
     readProcessWithExitCode
-      "cabal"
-      ( [ "run",
-          "exe:infernix",
-          "--"
-        ]
-          <> args
-      )
+      infernixExecutable
+      (integrationCliSelfExecMarker : args)
       ""
   assert (exitCode == ExitSuccess) ("infernix command succeeded: " <> stderrOutput)
   pure stdoutOutput
@@ -2934,7 +2939,7 @@ withLoggedServiceDaemon paths infernixExecutable args logPath action =
   withLoggedProcess
     logPath
     ( pure
-        (proc infernixExecutable args)
+        (proc infernixExecutable (integrationCliSelfExecMarker : args))
           { cwd = Just (repoRoot paths)
           }
     )

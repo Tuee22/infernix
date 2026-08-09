@@ -1,6 +1,8 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Active — Sprint 3.16 is code-side closed as of the 2026-08-07 generated-overlay
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active — Sprint 3.16 is code-side closed as of the 2026-08-07 generated-overlay
 correction and owns only its `linux-cpu` lifecycle cohort gate. Executing that gate found the
 sprint's headline deliverable unmet: the chart defaults were 1 but the generated Helm overlay still
 deployed the retired replicated counts, so a `linux-cpu` cluster ran two engine pods on one worker.
@@ -15,6 +17,9 @@ Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-
 > duplication across Haskell, Helm, route-oriented docs, and route-aware validation.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 3 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md) (2026-07-20).**
 > The 2026-07-18 single-accelerator cohort run surfaced a Harbor `docker pull` verify hang during
@@ -52,11 +57,13 @@ green) and cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 w
 `linux-gpu` accelerator plus `linux-cpu` full-suite evidence. The route-inventory prose below now
 reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint`).
 
-## HA Reconcile Surface
+## Single-Instance Reconcile Surface
 
-- `infernix cluster up` is the declarative and idempotent entrypoint for the mandatory local HA topology
-- the supported cluster path always deploys the local HA topology
-- no service-specific HA bootstrap command family exists outside the supported cluster reconcile surface
+- `infernix cluster up` is the declarative and idempotent entrypoint for the supported
+  single-instance platform topology
+- the supported cluster path deploys one instance of each platform service and exactly one engine
+  process per machine
+- no service-specific bootstrap command family exists outside the supported cluster reconcile surface
 
 ## PostgreSQL Doctrine
 
@@ -199,13 +206,15 @@ None.
 
 ### Objective
 
-Provide the mandatory local HA image registry and browser portal for cluster images.
+Historical objective: provide the then-replicated image registry and browser portal. Sprint 3.16
+supersedes the replica outcome; the current Harbor service is single-instance.
 
 ### Deliverables
 
 - Harbor deploys through its Helm chart
 - Harbor stores image blobs in MinIO and uses an operator-managed Patroni PostgreSQL backend
-- Harbor application-plane workloads use the mandatory HA topology where the chart exposes it
+- Harbor application-plane workloads use the supported single-instance topology; the former
+  replicated deliverable is retired by Sprint 3.16
 - the Harbor portal is exposed through the shared edge
 
 ### Validation

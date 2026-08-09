@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Infernix.Engines.Provisioning.Internal
   ( AppleAdapterId (..),
     ApplePythonAdapterId (..),
@@ -7,6 +9,7 @@ module Infernix.Engines.Provisioning.Internal
     ProvisioningPackageClosureIdentity (..),
     ProvisioningRuntimeLibraryIdentity (..),
     ProvisioningExecutableIdentity (..),
+    InstalledPythonSourceIsolationSpec (..),
     PositiveProvisioningTimeout,
     mkPositiveProvisioningTimeout,
     positiveProvisioningTimeoutMicros,
@@ -28,14 +31,28 @@ module Infernix.Engines.Provisioning.Internal
     installedSmokeArguments,
     nativeArtifactIdentity,
     linuxNativeArtifactSmokeArguments,
+    installedPythonSourceIsolationSandboxExecutable,
+    installedPythonSourceIsolationAuditInjectorExecutable,
+    installedPythonDyldRuntimeEnvironment,
+    installedPythonSourceIsolationProfile,
+    installedPythonSourceIsolationProfileForCounts,
+    installedPythonSourceIsolationArguments,
+    installedPythonSourceIsolationArgumentsForPaths,
+    installedPythonSourceIsolationMarker,
+    installedPythonSourceIsolationReceiptDigestFor,
     audiverisVersion,
     audiverisDmgFileName,
     audiverisDmgUrl,
     provisioningCommandOperation,
+    applePythonAdapterForApple,
   )
 where
 
+import Crypto.Hash.SHA256 qualified as SHA256
+import Data.ByteString.Base16 qualified as Base16
+import Data.List qualified as List
 import Data.Text qualified as Text
+import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Engines.Artifact.Identity qualified as Identity
 import Infernix.Engines.Artifact.Recipe qualified as Recipe
 import System.FilePath ((</>))
@@ -90,6 +107,25 @@ data ProvisioningExecutableIdentity = ProvisioningExecutableIdentity
   }
   deriving (Eq, Show)
 
+-- | Exact external source-runtime identities denied only by the Darwin cohort
+-- installed smoke. Paths never enter the SBPL program text: the fixed renderer
+-- supplies them solely as @-D@ parameter values. The sandbox executable is an
+-- exact platform-binary identity rather than a caller-selected wrapper.
+data InstalledPythonSourceIsolationSpec = InstalledPythonSourceIsolationSpec
+  { installedPythonSourceIsolationSandboxIdentity ::
+      !ProvisioningExecutableIdentity,
+    installedPythonSourceIsolationAuditInjectorIdentity ::
+      !ProvisioningExecutableIdentity,
+    installedPythonSourceIsolationDirectories ::
+      ![ProvisioningPackageClosureIdentity],
+    installedPythonSourceIsolationFiles ::
+      ![ProvisioningRuntimeLibraryIdentity],
+    installedPythonSourceIsolationWritableProbeIdentity ::
+      !ProvisioningRuntimeLibraryIdentity,
+    installedPythonSourceIsolationReceiptDigest :: !Text.Text
+  }
+  deriving (Eq, Show)
+
 newtype PositiveProvisioningTimeout
   = PositiveProvisioningTimeout Int
   deriving (Eq, Show)
@@ -130,7 +166,7 @@ data AppleAdapterId
   | MlxAdapter
   | CoreMlAdapter
   | JvmAdapter
-  deriving (Eq, Show)
+  deriving (Bounded, Enum, Eq, Show)
 
 -- | The subset whose payload is hydrated into a per-artifact Python virtual
 -- environment. Keeping this separate makes a pip operation for a non-Python
@@ -140,7 +176,7 @@ data ApplePythonAdapterId
   | OnnxRuntimePythonAdapter
   | MlxPythonAdapter
   | CoreMlPythonAdapter
-  deriving (Eq, Show)
+  deriving (Bounded, Enum, Eq, Show)
 
 -- | The four Poetry-backed engine setup entrypoints admitted on Apple. The
 -- entrypoint and adapter id are paired by construction.
@@ -173,6 +209,17 @@ appleAdapterForPython adapter =
     OnnxRuntimePythonAdapter -> OnnxRuntimeAdapter
     MlxPythonAdapter -> MlxAdapter
     CoreMlPythonAdapter -> CoreMlAdapter
+
+applePythonAdapterForApple :: AppleAdapterId -> Maybe ApplePythonAdapterId
+applePythonAdapterForApple adapter =
+  case adapter of
+    CTranslate2Adapter -> Just CTranslate2PythonAdapter
+    OnnxRuntimeAdapter -> Just OnnxRuntimePythonAdapter
+    MlxAdapter -> Just MlxPythonAdapter
+    CoreMlAdapter -> Just CoreMlPythonAdapter
+    LlamaCppCliAdapter -> Nothing
+    WhisperCppCliAdapter -> Nothing
+    JvmAdapter -> Nothing
 
 appleAdapterSlug :: AppleAdapterId -> String
 appleAdapterSlug adapter =
@@ -286,7 +333,7 @@ installedSmokeArguments ::
   AppleAdapterId ->
   FilePath ->
   [String]
-installedSmokeArguments adapter _artifactRoot =
+installedSmokeArguments adapter artifactRoot =
   case adapter of
     LlamaCppCliAdapter -> ["--version"]
     WhisperCppCliAdapter -> ["--version"]
@@ -302,8 +349,235 @@ installedSmokeArguments adapter _artifactRoot =
         appleAdapterSlug adapter,
         "--engine-name",
         appleAdapterSlug adapter,
+        "--expected-python-prefix",
+        artifactRoot </> "venv",
         "--smoke"
       ]
+
+installedPythonSourceIsolationSandboxExecutable :: FilePath
+installedPythonSourceIsolationSandboxExecutable =
+  "/usr/bin/sandbox-exec"
+
+installedPythonSourceIsolationAuditInjectorExecutable :: FilePath
+installedPythonSourceIsolationAuditInjectorExecutable =
+  "/usr/bin/env"
+
+-- | The exact dynamic-loader environment for the installed Python target.
+-- The ordinary installed smoke and the source-isolation bridge both consume
+-- this renderer, so the bridge cannot silently drift from the relocated
+-- framework and library roots whose loader provenance is audited.
+installedPythonDyldRuntimeEnvironment ::
+  FilePath ->
+  [(String, String)]
+installedPythonDyldRuntimeEnvironment artifactRoot =
+  [ ( "DYLD_FRAMEWORK_PATH",
+      artifactRoot </> "python-frameworks"
+    ),
+    ( "DYLD_LIBRARY_PATH",
+      List.intercalate
+        ":"
+        [ artifactRoot </> "native" </> "lib",
+          artifactRoot </> "native" </> "libexec"
+        ]
+    ),
+    ("DYLD_PRINT_LIBRARIES", "1")
+  ]
+
+installedPythonSourceIsolationProfile ::
+  InstalledPythonSourceIsolationSpec ->
+  String
+installedPythonSourceIsolationProfile spec =
+  installedPythonSourceIsolationProfileForCounts
+    (length (installedPythonSourceIsolationDirectories spec))
+    (length (installedPythonSourceIsolationFiles spec))
+
+installedPythonSourceIsolationProfileForCounts ::
+  Int ->
+  Int ->
+  String
+installedPythonSourceIsolationProfileForCounts directoryCount fileCount =
+  unlines
+    ( ["(version 1)", "(allow default)"]
+        <> concatMap directoryRules directoryParameters
+        <> concatMap fileRules fileParameters
+    )
+  where
+    directoryParameters =
+      zipWith
+        (\index _ -> sourceDirectoryParameter index)
+        [(0 :: Int) ..]
+        [1 .. directoryCount]
+    fileParameters =
+      zipWith
+        (\index _ -> sourceFileParameter index)
+        [(0 :: Int) ..]
+        [1 .. fileCount]
+    directoryRules parameter =
+      [ "(deny file-read* (subpath (param \"" <> parameter <> "\")))",
+        "(deny file-write* (subpath (param \"" <> parameter <> "\")))"
+      ]
+    fileRules parameter =
+      [ "(deny file-read* (literal (param \"" <> parameter <> "\")))",
+        "(deny file-write* (literal (param \"" <> parameter <> "\")))"
+      ]
+
+installedPythonSourceIsolationArguments ::
+  AppleAdapterId ->
+  FilePath ->
+  InstalledPythonSourceIsolationSpec ->
+  [String]
+installedPythonSourceIsolationArguments adapter artifactRoot spec =
+  installedPythonSourceIsolationArgumentsForPaths
+    adapter
+    artifactRoot
+    ( map
+        provisioningPackageClosureRoot
+        (installedPythonSourceIsolationDirectories spec)
+    )
+    ( map
+        provisioningRuntimeLibraryCanonicalPath
+        (installedPythonSourceIsolationFiles spec)
+    )
+    ( provisioningRuntimeLibraryCanonicalPath
+        (installedPythonSourceIsolationWritableProbeIdentity spec)
+    )
+    (installedPythonSourceIsolationReceiptDigest spec)
+
+installedPythonSourceIsolationArgumentsForPaths ::
+  AppleAdapterId ->
+  FilePath ->
+  [FilePath] ->
+  [FilePath] ->
+  FilePath ->
+  Text.Text ->
+  [String]
+installedPythonSourceIsolationArgumentsForPaths
+  adapter
+  artifactRoot
+  directoryPaths
+  filePaths
+  writableProbePath
+  receiptDigest =
+    [ "-p",
+      installedPythonSourceIsolationProfileForCounts
+        (length directoryPaths)
+        (length filePaths)
+    ]
+      <> concatMap
+        (\(parameter, path) -> ["-D", parameter <> "=" <> path])
+        (directoryBindings <> fileBindings)
+      <> [installedPythonSourceIsolationAuditInjectorExecutable]
+      <> map
+        (\(name, value) -> name <> "=" <> value)
+        (installedPythonDyldRuntimeEnvironment artifactRoot)
+      <> [artifactRoot </> installedSmokeExecutableRelativePath adapter]
+      <> installedSmokeArguments adapter artifactRoot
+      <> concatMap
+        (\(_, path) -> ["--expected-unavailable-source-directory", path])
+        directoryBindings
+      <> concatMap
+        (\(_, path) -> ["--expected-unavailable-source-file", path])
+        fileBindings
+      <> [ "--expected-unavailable-source-write-probe",
+           writableProbePath
+         ]
+      <> [ "--source-isolation-receipt",
+           Text.unpack receiptDigest
+         ]
+    where
+      directoryBindings =
+        zipWith
+          ( \index path ->
+              ( sourceDirectoryParameter index,
+                path
+              )
+          )
+          [(0 :: Int) ..]
+          directoryPaths
+      fileBindings =
+        zipWith
+          ( \index path ->
+              ( sourceFileParameter index,
+                path
+              )
+          )
+          [(0 :: Int) ..]
+          filePaths
+
+installedPythonSourceIsolationMarker ::
+  InstalledPythonSourceIsolationSpec ->
+  String
+installedPythonSourceIsolationMarker spec =
+  "infernix-source-isolation-v1:"
+    <> show sourceCount
+    <> ":"
+    <> Text.unpack (installedPythonSourceIsolationReceiptDigest spec)
+  where
+    sourceCount =
+      length (installedPythonSourceIsolationDirectories spec)
+        + length (installedPythonSourceIsolationFiles spec)
+
+installedPythonSourceIsolationReceiptDigestFor ::
+  [ProvisioningPackageClosureIdentity] ->
+  [ProvisioningRuntimeLibraryIdentity] ->
+  Text.Text
+installedPythonSourceIsolationReceiptDigestFor directories files =
+  "sha256:"
+    <> TextEncoding.decodeUtf8
+      ( Base16.encode
+          ( SHA256.hash
+              ( TextEncoding.encodeUtf8
+                  (Text.intercalate "\0" receiptFields)
+              )
+          )
+      )
+  where
+    receiptFields =
+      [ "infernix-installed-python-source-isolation-v1",
+        "directories=" <> Text.pack (show (length sortedDirectories)),
+        "files=" <> Text.pack (show (length sortedFiles))
+      ]
+        <> concatMap directoryFields sortedDirectories
+        <> concatMap fileFields sortedFiles
+    sortedDirectories =
+      List.sortOn provisioningPackageClosureRoot directories
+    sortedFiles =
+      List.sortOn provisioningRuntimeLibraryCanonicalPath files
+    directoryFields identity =
+      [ "directory-role=" <> packageClosureRoleText (provisioningPackageClosureRole identity),
+        "directory-root=" <> Text.pack (provisioningPackageClosureRoot identity),
+        "directory-device=" <> decimal (provisioningPackageClosureDeviceId identity),
+        "directory-file=" <> decimal (provisioningPackageClosureFileId identity),
+        "directory-mode=" <> decimal (provisioningPackageClosureMode identity),
+        "directory-bytes=" <> decimal (provisioningPackageClosureBytes identity),
+        "directory-files=" <> decimal (provisioningPackageClosureFiles identity),
+        "directory-digest=" <> provisioningPackageClosureDigest identity
+      ]
+    fileFields identity =
+      [ "file-leaf=" <> Text.pack (provisioningRuntimeLibraryLeafName identity),
+        "file-configured=" <> Text.pack (provisioningRuntimeLibraryConfiguredPath identity),
+        "file-canonical=" <> Text.pack (provisioningRuntimeLibraryCanonicalPath identity),
+        "file-device=" <> decimal (provisioningRuntimeLibraryDeviceId identity),
+        "file-id=" <> decimal (provisioningRuntimeLibraryFileId identity),
+        "file-mode=" <> decimal (provisioningRuntimeLibraryMode identity),
+        "file-size=" <> decimal (provisioningRuntimeLibrarySize identity),
+        "file-digest=" <> provisioningRuntimeLibraryDigest identity
+      ]
+    packageClosureRoleText role =
+      case role of
+        ProvisioningPythonHomeClosure -> "python-home"
+        ProvisioningPythonPathClosure -> "python-path"
+        ProvisioningProjectSourceClosure -> "project-source"
+        ProvisioningArtifactRootClosure -> "artifact-root"
+    decimal = Text.pack . show
+
+sourceDirectoryParameter :: Int -> String
+sourceDirectoryParameter index =
+  "INFERNIX_SOURCE_DIRECTORY_" <> show index
+
+sourceFileParameter :: Int -> String
+sourceFileParameter index =
+  "INFERNIX_SOURCE_FILE_" <> show index
 
 fixedVenvPythonRelativePath :: FilePath
 fixedVenvPythonRelativePath =
@@ -370,6 +644,10 @@ data ProvisioningCommand
   | SmokeInstalledRunner
       !AppleAdapterId
       !FilePath
+  | SmokeInstalledPythonRunnerSourceIsolated
+      !AppleAdapterId
+      !FilePath
+      !InstalledPythonSourceIsolationSpec
   | -- | The architecture is part of the command because a @linux-native@
     -- target is an absolute image path that depends on it
     -- (@whisper-bin-ubuntu-x64@ versus @-arm64@). Carrying it here is what lets
@@ -403,6 +681,7 @@ data ProvisioningOperation
   | AudiverisDetachOperation
   | AudiverisJavaCppExtractionOperation
   | InstalledRunnerSmokeOperation !AppleAdapterId
+  | InstalledPythonSourceIsolationSmokeOperation !AppleAdapterId
   | LinuxNativeArtifactSmokeOperation !Identity.NativeArtifactIdentity !Text.Text
   | PythonVersionQueryOperation !ApplePythonAdapterId
   | PythonProvenanceQueryOperation !ApplePythonAdapterId
@@ -435,6 +714,8 @@ provisioningCommandOperation command =
       AudiverisJavaCppExtractionOperation
     SmokeInstalledRunner adapter _ ->
       InstalledRunnerSmokeOperation adapter
+    SmokeInstalledPythonRunnerSourceIsolated adapter _ _ ->
+      InstalledPythonSourceIsolationSmokeOperation adapter
     SmokeLinuxNativeArtifact identity architecture _ _ ->
       LinuxNativeArtifactSmokeOperation identity architecture
     QueryPythonVersion adapter _ ->

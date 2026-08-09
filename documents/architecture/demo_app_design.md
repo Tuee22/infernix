@@ -57,17 +57,16 @@ The browser speaks one typed envelope family over a single WebSocket:
   mechanically and holds no business rules.
 - An unknown model id is rejected as a typed `unknown-model` failure rather than dispatched.
 
-The webapp is stateless: any pod serves any session, and reconnect replays from the durable
-conversation log rather than from pod-local memory.
+The webapp is stateless: one frontend process runs per machine and may serve any session, while a
+reconnect replays from the durable conversation log rather than process-local memory.
 
 ## Identity and Authentication
 
 The demo's IdP binding is a Keycloak release deployed in the cluster
 with its own Patroni Postgres cluster managed by the Percona operator.
 The Keycloak realm is pre-seeded by an in-binary reconcile path on
-`cluster up`. The demo runs one Keycloak application pod against a single-instance PostgreSQL
-backend. Multi-pod Keycloak serving is gated on routed proxy-affinity or clustered-cache
-validation.
+`cluster up`. The demo runs one Keycloak application process against a single-instance PostgreSQL
+backend.
 
 - Realm configuration: registration enabled (self-signup), email
   verification disabled, username/password authentication only, public
@@ -119,7 +118,7 @@ shows it only when the token carries the `infernix-admin` realm role, and Envoy 
 that cookie (or a direct `Authorization: Bearer ...` header) **and** requires the `infernix-admin` role
 before forwarding browser traffic to `/harbor`, `/harbor/api`, `/pulsar/admin`, or `/pulsar/ws` — a
 non-admin token is rejected with HTTP 403. Non-admin users get chat / artifacts / files and a personal
-dashboard scoped to their own `sub`; the admin cluster-wide panel is the Phase 9 monitoring surface.
+dashboard scoped to their own `sub`; the admin cluster-wide panel exposes platform monitoring.
 There is no `/minio/s3` route. See
 [access_control_doctrine.md](access_control_doctrine.md).
 
@@ -151,17 +150,17 @@ to these concrete routes:
   This is the single per-user trust boundary defined in
   [object_access_doctrine.md](object_access_doctrine.md) and
   [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md).
-
-  The webapp proxies the bytes server-side and the browser never receives a presigned MinIO URL.
   Per-user isolation holds at one server-side choke point (`pathBelongsToUser` on the verified
-  `sub`). - **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The
+  `sub`).
+- **`/api/account` (HTTP DELETE, same JWT).** Account cleanup before IdP deletion. The
   backend validates the JWT, derives `userId = sub`, removes
   `infernix-demo-objects/users/<userId>/`, deletes the user's demo Pulsar topics, and returns a
-  cleanup summary before the browser enters Keycloak account deletion. - **`/auth`.** The Keycloak
+  cleanup summary before the browser enters Keycloak account deletion.
+- **`/auth`.** The Keycloak
   login surface. The browser hits `/auth` to start the OIDC code flow.
 
-The demo Service has `sessionAffinity: None`. WS pods use Pulsar
-`Reader` subscriptions per the primitives doc; the per-context
+The demo Service has `sessionAffinity: None`. The frontend process uses a Pulsar
+`Reader` subscription per connection; the per-context
 dispatcher uses a Pulsar named `Failover` subscription per conversation
 topic.
 
@@ -177,11 +176,12 @@ The demo binds the three-role daemon model in
   verified `sub` and performs the MinIO read/write itself over the
   cluster-internal endpoint, so the browser never reaches MinIO
   directly (see [object_access_doctrine.md](object_access_doctrine.md)).
-  Stateless, replicas ≥ 2 by default.
+  Stateless, with one frontend process per machine.
 - **Coordinator.** The `infernix-coordinator` Deployment runs the
   single-flight dispatcher and the result-bridge on the demo's
-  conversation and result topics. Stateless, replicas ≥ 2 by default;
-  Pulsar `Failover` provides leader election.
+  conversation and result topics. It runs one coordinator process per
+  machine. Pulsar `Failover` provides stable single-active broker
+  ownership; it is not leader election or standby-replica availability.
 - **Engine.** Linux engine pool workloads or on-host Apple daemon
   members run the inference engine. Linux placement is managed by
   Kubernetes rules; Apple placement is managed by stable host ids and
@@ -314,7 +314,7 @@ never receives a presigned MinIO URL.
 
 ## Gating
 
-Every Phase 7 surface is gated by the active substrate's generated
+Every demo surface is gated by the active substrate's generated
 `.dhall` `demo_ui` flag. When `demo_ui = false`:
 
 - the Keycloak release and its Patroni Postgres cluster are absent
@@ -343,8 +343,8 @@ and covers three layers:
   codec roundtrip across the demo's `WsClientMessage` and
   `WsServerMessage` variants.
 - **Integration** — real Pulsar / MinIO / Keycloak round-trips against
-  the demo bindings; producer-dedup verification across simulated
-  dispatcher restart; Failover handoff; cross-user object-access
+  the demo bindings; producer-dedup verification and stable Failover
+  resubscription after a simulated coordinator restart; cross-user object-access
   negative (a caller's JWT receives HTTP 403 on another user's object
   key through the webapp object-proxy per
   [object_access_doctrine.md](object_access_doctrine.md));
@@ -355,8 +355,8 @@ and covers three layers:
 - **E2E** — Playwright flows for auth, context, conversation (including
   two-in-a-row and cancel), draft, artifact upload/download/render per
   MIME family, generated-artifact lifecycle, multi-tab convergence,
-  client reconstitution via Browser Context storage-clear,
-  pod-failover-from-browser, plus the **per-model smoke matrix** driven
+  client reconstitution via Browser Context storage-clear, forced
+  WebSocket disconnect/reconnect, plus the **per-model smoke matrix** driven
   by the active substrate's generated `.dhall` catalog (every
   non-`Not recommended` row gets one passing flow). The Playwright
   source is identical across `apple-silicon`, `linux-cpu`, and

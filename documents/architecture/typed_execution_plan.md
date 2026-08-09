@@ -8,11 +8,10 @@
 
 ## TL;DR
 
-- The target generated Dhall describes a closed execution plan, not a bag of descriptive settings.
-  The wire carries no transitional descriptive shape to
-  proper Dhall unions and `Natural` quantities.
-- The current Haskell capability core already models resource and enforcer alternatives as indexed
-  ADTs; text tags plus zeroed inapplicable fields are forbidden in the final generated language.
+- Generated Dhall describes a closed execution plan, not a bag of descriptive settings. The wire
+  uses proper Dhall unions and `Natural` quantities and carries no transitional descriptive shape.
+- The Haskell capability core models resource and enforcer alternatives as indexed ADTs; text tags
+  plus zeroed inapplicable fields are forbidden in the generated language.
 - Decoding proves structural validity. Runtime probes refine the decoded plan into opaque
   capabilities proving that the declared enforcer exists now.
 - Coordinator routing consumes only compiled placements and daemon/topic capabilities. Engine
@@ -35,7 +34,7 @@ binary-generated Dhall
 
 | Boundary | Input | Output | Invalid states rejected |
 |---|---|---|---|
-| Dhall typecheck (Phase 8 target) | generated expression | structurally typed expression | missing union payloads, fields from the wrong alternative, negative quantities |
+| Dhall typecheck | generated expression | structurally typed expression | missing union payloads, fields from the wrong alternative, negative quantities |
 | Haskell decode and compile | `RawRuntimeConfig` | `CompiledRuntimePlan` | zero quantities, dangling pool/member references, resource/enforcer mismatch, capacity oversubscription, unroutable models |
 | Runtime refinement | `CompiledRuntimePlan` + live observations | `RuntimePlan` | unavailable process-group RSS sampler, ineffective outer cgroup envelope, unavailable Apple footprint probe, unavailable NVIDIA accounting, chart/config limit drift |
 | Capability-gated routing/execution | coordinator projections from `CompiledRuntimePlan`; engine projections from `RuntimePlan` | total outcomes | raw unbounded command spawn, coordinator routing without compiled placement/daemon authority, engine launch without a matching grant and enforcer |
@@ -46,39 +45,31 @@ Neither proof substitutes for the other.
 
 ## Closed Dhall Language
 
-The reflected schema uses proper alternatives: every enum-like choice in the substrate wire is a Dhall
-union rather than `Text` refined after decode, every quantity is `Natural` rather than `Integer`,
-and the last zero-filled placeholder is gone. The migrated fields are `runtimeMode` (four wire
-positions), `daemonRole` (two), `pulsarConnectionMode`, engine-pool `subscription`, model
-`runtimeLane`, request-shape `fieldType`, engine-binding `adapterType`, and the `resource` and
-`source` fields inside the substrate limit record.
+The reflected schema uses proper alternatives: every enum-like choice in the substrate wire is a
+Dhall union rather than `Text` refined after decode, and every quantity is `Natural` rather than
+`Integer`. The union-typed fields are `runtimeMode` (four wire positions), `daemonRole` (two),
+`pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape `fieldType`,
+engine-binding `adapterType`, and the `resource` and `source` fields inside the substrate limit
+record.
 
-Two of those had **no refiner at all** before this sprint — `adapterType` and `source` were raw
-`Text` from wire to consumer, closed only by a `Set` membership check and a non-blank check
-respectively — so they gained domain types (`EngineAdapterType`, `PodMemoryLimitSource`) rather than
-only a wire union. Both checks were then deleted along with their failure arms: an unsupported
-adapter type and a blank enforcer source are no longer constructible terms, so
-`UnsupportedEngineAdapterType`, the runtime's `unsupported_engine_runner` arm, and the non-empty
-source check are gone rather than left unreachable.
+`adapterType` and `source` use domain types (`EngineAdapterType`, `PodMemoryLimitSource`) rather than
+raw `Text` refined by membership or non-blank checks. An unsupported adapter type and a blank
+enforcer source are therefore not constructible terms.
 
-`configEdgePort` is removed outright rather than refined. It was generated as a literal `+0` on
-every payload and had exactly two consumers, both of which were range checks on the value it was
-hardcoded to; the port the system actually uses is `ClusterState.edgePort`, which is chosen during
-`cluster up` and never travelled through this language. Refining a field no consumer reads would
-have dressed up a placeholder instead of removing one.
+`configEdgePort` is not part of the execution language. The routed port is
+`ClusterState.edgePort`, chosen during `cluster up`; it does not travel through this wire format.
 
-Two mechanical facts are worth recording because both were found by round-tripping rather than by
-review. A Dhall union alternative is a **label**, so the wire spelling necessarily changes from
-`"apple-silicon"` to `AppleSilicon`; a stale payload therefore reports its retired shape through the
-targeted migration diagnostic instead of a bare structural type error, and `daemonRole` is the
-sharpest case because its three retired aliases (`frontend`, `cluster`, `host`) are values a union
-cannot express at all. And `genericAutoWith` dispatches on a datatype's GHC-Generics shape, so a
+Two mechanical facts are load-bearing. A Dhall union alternative is a **label**, so the wire spelling
+is `AppleSilicon`, not `"apple-silicon"`; invalid legacy spellings receive a targeted diagnostic
+instead of a bare structural type error. `daemonRole` is the sharpest case because its invalid
+aliases (`frontend`, `cluster`, `host`) are values a union cannot express at all.
+`genericAutoWith` dispatches on a datatype's GHC-Generics shape, so a
 **single-constructor** mirror derives as a record rather than as a one-alternative union;
 `fieldType` needs an explicitly built union decoder, which the generate-then-decode round trip is
 what catches.
 
-The Haskell compiler already models resource/enforcer alternatives as indexed ADTs. The target
-memory shape is equivalent to:
+The Haskell compiler models resource/enforcer alternatives as indexed ADTs. The generated memory
+shape is equivalent to:
 
 ```dhall
 let HostPartition =
@@ -156,9 +147,8 @@ Compilation validates at least:
 launch. A model cannot enter a compiled route unless its placement compiled, and cannot launch unless
 its enforcer refined successfully.
 
-**Refinement is engine-only, and that is the intended end state rather than a gap.** Phase 8 Sprint
-8.9 left this as an open doctrine question; it is settled here. All three roles compile the plan at
-startup. Only the engine refines it, before publishing readiness. The coordinator publishes
+**Refinement is engine-only.** All three roles compile the plan at startup. Only the engine refines
+it, before publishing readiness. The coordinator publishes
 readiness on the compiled plan and the webapp builds no plan beyond compilation, because refinement
 is not a stronger validation of the same thing — it is an observation of *the refining process's
 own machine*: the live sampler probes, the host partition, this process's own cgroup `memory.max`,
@@ -181,9 +171,7 @@ accounts for every input model in exactly one of two disjoint maps: a `CompiledP
 advance to live refinement, or an explicit `UnavailableModel` carrying the compiler-produced
 `InferenceError` (normally `ModelMemoryLimitExceeded`). It never uses filtering or `mapMaybe` to
 lose an over-capacity model. Only the placement map feeds routing; the unavailable map is the
-required source of the typed terminal rejection for an explicitly requested configured model. The
-all-Haskell lifecycle/subprocess correction supersedes that gate as current-worktree evidence, so
-the fresh complete Stage 1 must prove it again.
+required source of the typed terminal rejection for an explicitly requested configured model.
 
 Request consumption is likewise total on both coordinator and engine paths. An empty model id,
 unknown model, or route/capability mismatch produces a failed `InferenceResult`; malformed protobuf
@@ -192,7 +180,7 @@ written before the source file is removed. On Pulsar, the terminal result is pub
 source message is acknowledged. No invalid request is silently dropped, indefinitely redelivered,
 or allowed to reach an engine through a fallback route.
 
-The supported raw topic publisher is removed. Model-bootstrap publication accepts only an opaque
+There is no raw topic publisher. Model-bootstrap publication accepts only an opaque
 `ModelBootstrapRequestCapability` prepared from the compiled plan. The consumer revalidates the
 exact model identity, compiled download URL, and canonical UTC request timestamp before download,
 upload, or ready-event side effects. `TopicFamilyCollision` rejects any cross-family reuse among
@@ -221,25 +209,24 @@ consumed by a RAM enforcer. Constructors for `Enforcer resource`, `MemoryGrant r
 from the engine binding carried by that same executable value; arbitrary shell or cluster-config
 command overrides are absent.
 
-The implemented/target substrate split is:
+Per-substrate enforcement is:
 
 - `apple-silicon`: a package-internal observer runs only fixed, absolute `/usr/bin/top` and
   `/usr/bin/footprint` commands under one total deadline and bounded captures, then the watchdog
   kills the child process group on a measured breach. No direct FFI or caller-supplied observer
-  command exists; Phase 4 owns adversarial behavioral proof;
-- `linux-cpu`: the implemented `/proc` process-group RSS watchdog sums every member conservatively and
+  command exists;
+- `linux-cpu`: the `/proc` process-group RSS watchdog sums every member conservatively and
   kills only the child execution group on breach; the pod cgroup is a larger verified outer
   envelope covering the daemon, admitted child ceiling, and polling overshoot, never the
-  per-request breach classifier; Phase 4 owns adversarial behavioral proof;
-- `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting (Phase 6
-  A device-using model compiles two independently indexed grants from a
+  per-request breach classifier;
+- `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting. A
+  device-using model compiles two independently indexed grants from a
   `DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough
   for the admitted VRAM ceiling, and the capped-engine kernel runs one watchdog per grant. A pod
   limit or a CUDA exit code is still never accepted as VRAM evidence: an unavailable sampler is
   `NvidiaSamplerUnavailable` at refinement and `EngineEnforcementUnavailable` at run time. A
   `linux-gpu` model that does *not* use the device stays on the resident-set lane alone, because a
-  VRAM grant it would never consume is not evidence of anything. The adversarial CUDA breach proof is
-  owned by the `linux-gpu` behavioral cohort.
+  VRAM grant it would never consume is not evidence of anything.
 
 If a mechanism cannot be verified, refinement fails and the engine member never becomes ready. A
 pod-wide capacity value or CUDA OOM classification is not evidence that an individual model ceiling
@@ -368,9 +355,9 @@ enforcement.
 
 ## Validation
 
-The completed implementation must prove:
+The contract is proved by:
 
-- Phase 8 reflected-schema tests reject the retired flat/tagged representation and round-trip every
+- reflected-schema tests reject flat/tagged representations and round-trip every
   generated execution union;
 - property tests reject zero quantities, incompatible resource/enforcer pairs, dangling graph
   references, oversubscription, live-envelope drift, coordinator routing without a compiled
@@ -397,13 +384,9 @@ The completed implementation must prove:
 - production `System.Process` use is confined to the bounded command, capped engine, fixed
   public-tool observer, and bounded provisioning kernels, plus the CLI-passthrough and host-tool
   surfaces that remain explicitly exempt;
-- The raw-spawn exemption set is narrow — the runtime transport module's Docker address
-  probe and its model-weight snapshot bootstrap became closed bounded commands, and the two rows that
-  no longer contained any raw spawn were deleted — and closed the whole-token gap that had let
-  `withCreateProcess` through; the remaining exempt modules are named with the design decision each
-  still needs;
-- the machine-independent gates and each owning phase's selected accelerator plus `linux-cpu` gate
-  pass.
+- the raw-spawn exemption set remains narrow: every exempt module is named with its exact design
+  decision, and whole-token matching includes `withCreateProcess`;
+- the machine-independent gates plus the selected accelerator and `linux-cpu` gates pass.
 
 ## Cross-References
 

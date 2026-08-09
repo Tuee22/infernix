@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE RoleAnnotations #-}
 
 -- |
 -- Bounded host build memory for the toolchain account.
@@ -55,7 +56,8 @@
 -- address-space ceiling and a runtime heap cap rather than one number.
 --
 -- What this does /not/ bound is stated in the doctrine and is not restated
--- here: on a lane with no cgroup, @jobs × cap@ is arithmetic performed by this
+-- here: on a lane with no cgroup, the compiler subtotal plus the Cabal and
+-- worker-associated control/helper subtotal is arithmetic performed by this
 -- repository, not a bound enforced by the kernel. Canonical doctrine:
 -- documents\/architecture\/bounded_host_memory.md.
 module Infernix.BuildMemory
@@ -74,8 +76,12 @@ module Infernix.BuildMemory
     deriveBuildMemoryPlan,
     planBudgetMib,
     planJobs,
+    planControlHeapMib,
     planProcessAddressMib,
     planRtsHeapMib,
+    planCompilerHeapAccountMib,
+    planControlAccountMib,
+    planToolchainAccountMib,
 
     -- * Installed bound
     BuildMemoryBound,
@@ -88,13 +94,39 @@ module Infernix.BuildMemory
     -- * Toolchain spawn boundary
     ToolchainInvocation (..),
     ToolchainTestSuite (..),
+    allToolchainTestSuites,
+    toolchainTestSuiteName,
+    DarwinAppleMaterializerTest (..),
     ToolchainSpawnAuthority,
     toolchainInvocationArguments,
+    toolchainAuthorityEnvironmentEntries,
     toolchainInvocationLabel,
+    requireToolchainInvocationProjectState,
     toolchainSpawnAuthorityPlan,
     withToolchainSpawnAuthority,
     withBoundedToolchainChild,
     applyToolchainChildVictimRank,
+
+    -- * Darwin build-memory validation
+    DarwinBuildMemoryValidationAuthority,
+    DarwinBuildMemoryInvocation (..),
+    DarwinBuildMemorySamples,
+    DarwinBuildMemoryInvocationEvidence,
+    DarwinInstalledCliIsolationEvidence,
+    DarwinBuildMemoryEvidence,
+    checkedToolchainAccountMib,
+    requireDarwinBuildMemoryValidationAuthority,
+    withDarwinBuildMemoryValidationChild,
+    darwinBuildMemoryInvocationArguments,
+    darwinBuildMemoryAuthorityEnvironmentEntries,
+    darwinBuildMemoryInvocationLabel,
+    darwinBuildMemorySampleIntervalMicros,
+    emptyDarwinBuildMemorySamples,
+    recordDarwinBuildMemorySample,
+    mkDarwinBuildMemoryInvocationEvidence,
+    mkDarwinInstalledCliIsolationEvidence,
+    mkDarwinBuildMemoryEvidence,
+    renderDarwinBuildMemoryEvidence,
 
     -- * Resolved enforcement mechanism
     AddressSpaceEnforcement (..),
@@ -114,6 +146,7 @@ module Infernix.BuildMemory
     committedRtsHeapMib,
     heapToAddressSpaceMultiplier,
     maximumBuildJobs,
+    toolchainControlHeapMib,
     minimumProcessAddressMib,
     minimumProcessHeapMib,
     toolchainAddressSpaceReservationMib,
@@ -122,12 +155,16 @@ module Infernix.BuildMemory
   )
 where
 
-import Control.Exception (IOException, SomeException, bracket, try)
+import Control.Concurrent.MVar (MVar, newMVar, withMVar)
+import Control.Exception (IOException, bracket, try)
+import Control.Monad (filterM, unless, void)
 import Data.Char (isDigit)
 import Data.List qualified as List
-import Data.Maybe (listToMaybe)
+import Data.Maybe (isNothing)
+import Data.Word (Word64)
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
-import System.FilePath ((</>))
+import System.Directory (doesPathExist)
+import System.FilePath (isAbsolute, (</>))
 import System.IO (readFile')
 import System.Info (os)
 import System.Posix.Resource
@@ -152,19 +189,19 @@ newtype BuildMemoryBudget = BuildMemoryBudget Int
 buildMemoryBudgetMib :: BuildMemoryBudget -> Int
 buildMemoryBudgetMib (BuildMemoryBudget budgetMib) = budgetMib
 
--- | The job count the budget is divided by.
+-- | The compiler-worker count the budget is divided across.
 --
 -- The constructor is unexported for the same reason the budget's is: the whole
 -- point of this module is that neither number is usable without the other.
 newtype BuildConcurrency = BuildConcurrency Int
   deriving (Eq, Show)
 
--- | The job count.
+-- | The compiler-worker count supplied to Cabal's @--jobs@.
 buildConcurrencyJobs :: BuildConcurrency -> Int
 buildConcurrencyJobs (BuildConcurrency jobs) = jobs
 
--- | A budget paired with the concurrency it is divided by, plus the two
--- per-process ceilings that division yields.
+-- | A budget paired with compiler concurrency, the control-image heap cap,
+-- and the two compiler-process ceilings that division yields.
 --
 -- The constructor is unexported and 'deriveBuildMemoryPlan' is the only mint,
 -- so 'planProcessAddressMib' and 'planRtsHeapMib' have no inhabitant that was
@@ -172,6 +209,7 @@ buildConcurrencyJobs (BuildConcurrency jobs) = jobs
 data BuildMemoryPlan = BuildMemoryPlan
   { planBudget :: BuildMemoryBudget,
     planConcurrency :: BuildConcurrency,
+    planControlHeap :: Int,
     planProcessAddress :: Int,
     planRtsHeap :: Int
   }
@@ -181,9 +219,13 @@ data BuildMemoryPlan = BuildMemoryPlan
 planBudgetMib :: BuildMemoryPlan -> Int
 planBudgetMib = buildMemoryBudgetMib . planBudget
 
--- | The job count this plan divides by.
+-- | The compiler-worker count supplied to Cabal's @--jobs@.
 planJobs :: BuildMemoryPlan -> Int
 planJobs = buildConcurrencyJobs . planConcurrency
+
+-- | The heap cap for Cabal and Haskell control/helper images, in MiB.
+planControlHeapMib :: BuildMemoryPlan -> Int
+planControlHeapMib = planControlHeap
 
 -- | The per-process address-space ceiling (@RLIMIT_AS@), in MiB.
 planProcessAddressMib :: BuildMemoryPlan -> Int
@@ -192,6 +234,23 @@ planProcessAddressMib = planProcessAddress
 -- | The per-process runtime heap cap (@+RTS -M@), in MiB.
 planRtsHeapMib :: BuildMemoryPlan -> Int
 planRtsHeapMib = planRtsHeap
+
+-- | The compiler-worker heap subtotal, in MiB.
+planCompilerHeapAccountMib :: BuildMemoryPlan -> Int
+planCompilerHeapAccountMib plan = planJobs plan * planRtsHeapMib plan
+
+-- | The conservative control/helper subtotal, in MiB.
+--
+-- One claimant is the live Cabal driver and one accompanies each compiler job
+-- (Setup, linker, or another serialized helper in that worker slot).
+planControlAccountMib :: BuildMemoryPlan -> Int
+planControlAccountMib plan =
+  (planJobs plan + 1) * planControlHeapMib plan
+
+-- | The complete compiler-phase account, in MiB.
+planToolchainAccountMib :: BuildMemoryPlan -> Int
+planToolchainAccountMib plan =
+  planCompilerHeapAccountMib plan + planControlAccountMib plan
 
 -- | Evidence that this process image's address space is bounded by a derived
 -- per-process ceiling.
@@ -263,6 +322,17 @@ toolchainSharePercent = 50
 maximumBuildJobs :: Int
 maximumBuildJobs = 8
 
+-- | The fixed heap cap for Cabal and Haskell control/helper images, in MiB.
+--
+-- The clean-build calibration measured 1798 MiB across the complete concurrent
+-- compiler/driver tree while its largest compiler alone held 1328 MiB. A 1024
+-- MiB control slot is therefore more than twice the measured non-compiler
+-- remainder. It is deliberately distinct from 'minimumProcessHeapMib': giving
+-- every Cabal, test, Setup, and helper image a compiler-sized claim made the
+-- account arithmetic false before a compiler could start.
+toolchainControlHeapMib :: Int
+toolchainControlHeapMib = 1024
+
 -- | The smallest per-process runtime heap cap a plan may carry, in MiB.
 --
 -- This is the calibrated number, and the measurement rather than the value is
@@ -316,13 +386,13 @@ toolchainReservationFitsEveryPlan =
 -- project for a fresh clone.
 --
 -- Those files have to carry a bound before any @infernix@ binary exists, so
--- they cannot be derived from a measured fact. The committed pair is the floor
--- itself: 4 jobs at a 4096 MiB heap cap is a 16 GiB worst case, which fits the
--- smallest host this repository is developed on and still leaves every job
--- 3.1 times the measured single-process peak.
+-- they cannot be derived from a measured fact. The committed account is three
+-- 4096 MiB compiler slots plus four 1024 MiB control/helper slots: exactly
+-- 16384 MiB. It fits the smallest host this repository is developed on and
+-- still leaves every compiler 3.1 times the measured single-process peak.
 -- 'renderCabalProjectLocal' supersedes it per machine.
 committedBuildJobs :: Int
-committedBuildJobs = 4
+committedBuildJobs = 3
 
 -- | The per-process runtime heap cap committed to @cabal.project@, in MiB.
 committedRtsHeapMib :: Int
@@ -335,16 +405,23 @@ committedProcessAddressMib = committedRtsHeapMib * heapToAddressSpaceMultiplier
 -- | Check an explicit account budget, in MiB.
 mkBuildMemoryBudget :: Int -> Either String BuildMemoryBudget
 mkBuildMemoryBudget budgetMib
-  | budgetMib < minimumProcessHeapMib =
+  | budgetMib < minimumToolchainAccountMib =
       Left
         ( "a toolchain memory budget of "
             <> show budgetMib
             <> " MiB is below the "
-            <> show minimumProcessHeapMib
-            <> " MiB a single compiler process needs; a budget that cannot fund "
-            <> "one job is not a budget"
+            <> show minimumToolchainAccountMib
+            <> " MiB needed for one compiler plus its helper and the live Cabal "
+            <> "driver; a budget that cannot fund the complete claimant set is "
+            <> "not a budget"
         )
   | otherwise = Right (BuildMemoryBudget budgetMib)
+
+-- One compiler at the calibrated floor, one worker-associated helper, and the
+-- live Cabal driver are the smallest complete toolchain claimant set.
+minimumToolchainAccountMib :: Int
+minimumToolchainAccountMib =
+  minimumProcessHeapMib + 2 * toolchainControlHeapMib
 
 -- | Mint the account budget from a measured host memory fact, in MiB.
 --
@@ -359,8 +436,12 @@ buildMemoryBudgetForPhysicalMib effectiveMib
             <> " MiB; a toolchain ceiling derived from an unmeasured host is a "
             <> "declared number wearing a measurement's clothes"
         )
-  | otherwise =
-      mkBuildMemoryBudget ((effectiveMib * toolchainSharePercent) `div` 100)
+  | budgetInteger > toInteger (maxBound :: Int) =
+      Left "measured host memory produced a toolchain budget that overflowed Int"
+  | otherwise = mkBuildMemoryBudget (fromInteger budgetInteger)
+  where
+    budgetInteger =
+      toInteger effectiveMib * toInteger toolchainSharePercent `div` 100
 
 -- | Check an explicit job count.
 mkBuildConcurrency :: Int -> Either String BuildConcurrency
@@ -378,12 +459,22 @@ mkBuildConcurrency jobs
         )
   | otherwise = Right (BuildConcurrency jobs)
 
--- | The largest job count the budget funds at or above
--- 'minimumProcessHeapMib', capped by 'maximumBuildJobs'.
+-- | The largest compiler-worker count the complete account funds at or above
+-- 'minimumProcessHeapMib', capped by 'maximumBuildJobs'. Each worker needs one
+-- compiler slot and one control/helper slot; the live Cabal driver needs one
+-- additional control slot.
 resolveBuildConcurrency :: BuildMemoryBudget -> Either String BuildConcurrency
 resolveBuildConcurrency budget =
   mkBuildConcurrency
-    (max 1 (min maximumBuildJobs (buildMemoryBudgetMib budget `div` minimumProcessHeapMib)))
+    ( max
+        1
+        ( min
+            maximumBuildJobs
+            ( (buildMemoryBudgetMib budget - toolchainControlHeapMib)
+                `div` (minimumProcessHeapMib + toolchainControlHeapMib)
+            )
+        )
+    )
 
 -- | The single mint of a 'BuildMemoryPlan'.
 --
@@ -397,11 +488,14 @@ deriveBuildMemoryPlan ::
   BuildConcurrency ->
   Either String BuildMemoryPlan
 deriveBuildMemoryPlan budget concurrency
-  | perProcessHeapMib < minimumProcessHeapMib =
+  | availableCompilerMib <= 0 || perProcessHeapMib < minimumProcessHeapMib =
       Left
         ( "a toolchain budget of "
             <> show (buildMemoryBudgetMib budget)
-            <> " MiB divided by "
+            <> " MiB, after reserving "
+            <> show controlAccountMib
+            <> " MiB for the live Cabal driver and worker-associated helpers, "
+            <> "divided by "
             <> show (buildConcurrencyJobs concurrency)
             <> " jobs leaves "
             <> show perProcessHeapMib
@@ -409,17 +503,25 @@ deriveBuildMemoryPlan budget concurrency
             <> show minimumProcessHeapMib
             <> " MiB floor; lower the job count or raise the budget"
         )
+  | processAddressMibInteger > toInteger (maxBound :: Int) =
+      Left "the derived compiler address-space reservation overflowed Int"
   | otherwise =
       Right
         BuildMemoryPlan
           { planBudget = budget,
             planConcurrency = concurrency,
-            planProcessAddress = perProcessHeapMib * heapToAddressSpaceMultiplier,
+            planControlHeap = toolchainControlHeapMib,
+            planProcessAddress = fromInteger processAddressMibInteger,
             planRtsHeap = perProcessHeapMib
           }
   where
+    jobs = buildConcurrencyJobs concurrency
+    controlAccountMib = (jobs + 1) * toolchainControlHeapMib
+    availableCompilerMib = buildMemoryBudgetMib budget - controlAccountMib
     perProcessHeapMib =
-      buildMemoryBudgetMib budget `div` buildConcurrencyJobs concurrency
+      availableCompilerMib `div` jobs
+    processAddressMibInteger =
+      toInteger perProcessHeapMib * toInteger heapToAddressSpaceMultiplier
 
 -- | Lower this process image's address-space limit to the plan's per-process
 -- ceiling if it is not already at or below it.
@@ -427,8 +529,8 @@ deriveBuildMemoryPlan budget concurrency
 -- Both the soft and the hard limit are written: lowering only the soft limit
 -- would leave a bound any child could raise back, and lowering the hard limit
 -- is unprivileged and one-way. The bound is inherited across @fork@ and
--- @exec@, so @cabal@, its setup helper, and the compiler itself each carry the
--- identical limit without doing anything themselves.
+-- @exec@, so @cabal@, compiler images, and their worker-associated helpers each
+-- carry the identical limit without doing anything themselves.
 --
 -- Fails closed: if the limit cannot be observed as bounded after the write, the
 -- process image refuses to continue rather than proceeding to an unbounded
@@ -502,7 +604,8 @@ establishEnforcedAddressSpaceBound plan mechanism = do
 -- The label names the spawning surface so an unbounded process image is
 -- attributable from one line of output. On an address-space-enforcing lane this
 -- is a @getrlimit(2)@ call; on an unenforced one it re-reads the committed
--- runtime heap cap, because that is the mechanism actually in force there.
+-- job count, runtime heap cap, and runtime reservation, because that complete
+-- generated triple is the mechanism actually in force there.
 requireBoundedBuildMemory ::
   FilePath ->
   String ->
@@ -559,17 +662,45 @@ requireEnforcedAddressSpaceBound label plan mechanism = do
 -- | Observe the bound on a lane that installs no address-space ceiling.
 --
 -- There is no @getrlimit@ answer to read here, so this reads the mechanism the
--- lane does have: the runtime heap cap committed to @cabal.project.local@, which
--- every toolchain child inherits through its own @+RTS -M@. Refusing when the
--- committed cap disagrees with the plan is the same act as the enforced lane's
--- post-write re-observation — it is what stops the returned value from being an
--- assertion about the caller's own argument.
+-- lane does have: the job count, runtime heap cap, and runtime reservation
+-- committed to @cabal.project.local@. Refusing when any member of that triple
+-- disagrees with the plan is the same act as the enforced lane's post-write
+-- re-observation — it is what stops the returned value from being an assertion
+-- about the caller's own argument.
 observeHeapCapOnlyBound ::
   FilePath ->
   BuildMemoryPlan ->
   BuildMemoryMechanism 'AddressSpaceUnavailable ->
   IO (BuildMemoryBound 'AddressSpaceUnavailable)
 observeHeapCapOnlyBound repoRootPath plan mechanism = do
+  _ <- requireCommittedToolchainSettings repoRootPath plan
+  pure (HeapCapOnlyBound (planProcessAddressMib plan) mechanism)
+
+-- | The three settings in the generated @cabal.project.local@ that make the
+-- Darwin bound one fact: concurrency, per-process heap, and the compiler
+-- runtime's address-space reservation. The constructor remains private so an
+-- authority can carry only settings observed from the generated file.
+data CommittedToolchainSettings = CommittedToolchainSettings
+  { committedToolchainJobs :: !Int,
+    committedToolchainHeapMib :: !Int,
+    committedToolchainAddressReservationMib :: !Int
+  }
+  deriving (Eq, Show)
+
+-- | Strictly observe the settings 'renderCabalProjectLocal' generates and
+-- require the complete triple to agree with the live plan.
+--
+-- Requiring exactly one occurrence matters. Cabal can accept repeated fields,
+-- and accepting the first matching @jobs:@ or RTS token would authenticate one
+-- value while the toolchain consumes another. This file is binary-owned and
+-- documented as regenerate-rather-than-edit, so an absent, duplicate, or
+-- malformed setting is a named refusal rather than an invitation to guess
+-- Cabal's precedence rules.
+requireCommittedToolchainSettings ::
+  FilePath ->
+  BuildMemoryPlan ->
+  IO CommittedToolchainSettings
+requireCommittedToolchainSettings repoRootPath plan = do
   let projectPath = repoRootPath </> "cabal.project.local"
   -- Strict: a lazy read keeps the handle open until the string is forced, and
   -- the refusal paths below never force it. The next writer then fails with
@@ -580,60 +711,96 @@ observeHeapCapOnlyBound repoRootPath plan mechanism = do
     Left readError ->
       ioError
         ( userError
-            ( "this lane installs no address-space ceiling, so the runtime heap "
-                <> "cap in "
+            ( "the generated toolchain settings in "
                 <> projectPath
-                <> " is the whole bound -- and it could not be read: "
+                <> " could not be read: "
                 <> show readError
-                <> ". Run `infernix init` to generate it."
+                <> ". Run `infernix init` to generate them."
             )
         )
     Right projectText ->
-      case committedRuntimeHeapCapMib projectText of
+      case committedToolchainSettings projectText of
         Nothing ->
           ioError
             ( userError
                 ( projectPath
-                    <> " declares no `+RTS -M<n>M` runtime heap cap, so this "
-                    <> "lane -- which installs no address-space ceiling -- has "
-                    <> "no bound at all"
+                    <> " must contain exactly one generated `jobs: <n>` row, "
+                    <> "one `-M<n>M` runtime heap cap, and one `-xr<n>M` "
+                    <> "runtime address-space reservation; regenerate it with "
+                    <> "`infernix init`"
                 )
             )
-        Just committedMib
-          | committedMib /= planRtsHeapMib plan ->
+        Just committed
+          | committedToolchainJobs committed /= planJobs plan
+              || committedToolchainHeapMib committed /= planRtsHeapMib plan
+              || committedToolchainAddressReservationMib committed
+                /= planProcessAddressMib plan ->
               ioError
                 ( userError
                     ( projectPath
-                        <> " commits a "
-                        <> show committedMib
-                        <> " MiB runtime heap cap but the derived plan is "
-                        <> show (planRtsHeapMib plan)
-                        <> " MiB ("
+                        <> " commits jobs/heap/address settings "
+                        <> show
+                          ( committedToolchainJobs committed,
+                            committedToolchainHeapMib committed,
+                            committedToolchainAddressReservationMib committed
+                          )
+                        <> " but the live derived plan requires "
+                        <> show
+                          ( planJobs plan,
+                            planRtsHeapMib plan,
+                            planProcessAddressMib plan
+                          )
+                        <> " ("
                         <> show (planBudgetMib plan)
-                        <> " MiB budget / "
-                        <> show (planJobs plan)
-                        <> " jobs); regenerate it with `infernix init` rather "
-                        <> "than compiling under a stale bound"
+                        <> " MiB account); regenerate it with `infernix init` "
+                        <> "rather than compiling under stale concurrency or "
+                        <> "runtime limits"
                     )
                 )
-          | otherwise ->
-              pure (HeapCapOnlyBound (planProcessAddressMib plan) mechanism)
+          | otherwise -> pure committed
 
--- | The @-M\<n\>M@ runtime heap cap committed to a @cabal.project.local@ body.
---
--- Reads back what 'renderCabalProjectLocal' writes.
-committedRuntimeHeapCapMib :: String -> Maybe Int
-committedRuntimeHeapCapMib projectText =
-  listToMaybe
-    [ capMib
-    | line <- lines projectText,
-      token <- words line,
-      Just rest <- [List.stripPrefix "-M" token],
-      Just (digits, 'M') <- [List.unsnoc rest],
-      not (null digits),
-      all isDigit digits,
-      Just capMib <- [readMaybe digits]
-    ]
+-- | Parse exactly the generated settings this module renders. The parser is
+-- deliberately narrower than Cabal's complete project grammar: the file is
+-- generated by Infernix, and every other shape is refused.
+committedToolchainSettings :: String -> Maybe CommittedToolchainSettings
+committedToolchainSettings projectText = do
+  jobs <- exactlyOne (generatedJobCounts projectText)
+  heapMib <- exactlyOne (generatedRuntimeMibValues "-M" projectText)
+  addressMib <- exactlyOne (generatedRuntimeMibValues "-xr" projectText)
+  pure
+    CommittedToolchainSettings
+      { committedToolchainJobs = jobs,
+        committedToolchainHeapMib = heapMib,
+        committedToolchainAddressReservationMib = addressMib
+      }
+
+generatedJobCounts :: String -> [Int]
+generatedJobCounts projectText =
+  [ jobs
+  | line <- lines projectText,
+    ["jobs:", rawJobs] <- [words line],
+    not (null rawJobs),
+    all isDigit rawJobs,
+    Just jobs <- [readMaybe rawJobs]
+  ]
+
+generatedRuntimeMibValues :: String -> String -> [Int]
+generatedRuntimeMibValues prefix projectText =
+  [ valueMib
+  | line <- lines projectText,
+    token <- words line,
+    Just rest <- [List.stripPrefix prefix token],
+    Just (digits, 'M') <- [List.unsnoc rest],
+    not (null digits),
+    all isDigit digits,
+    Just valueMib <- [readMaybe digits]
+  ]
+
+exactlyOne :: [value] -> Maybe value
+exactlyOne values =
+  case values of
+    [value] -> Just value
+    _ -> Nothing
 
 -- | The closed vocabulary of toolchain invocations.
 --
@@ -643,39 +810,214 @@ committedRuntimeHeapCapMib projectText =
 -- so a new invocation is a new constructor with a review rather than a string
 -- assembled at a call site.
 data ToolchainInvocation
-  = -- | @cabal build all@ — the largest memory consumer in the gate set.
+  = -- | @cabal build all --enable-tests@ — the largest memory consumer in the gate set.
     ToolchainBuildAll
-  | -- | @cabal test \<suite\>@ for one of the repository's declared suites.
+  | -- | @cabal test \<suite\>@ for one of the root package's declared suites.
     ToolchainTest ToolchainTestSuite
+  | -- | The exact Cabal-format check in its solver-isolated package.
+    ToolchainCabalFormat
+  | -- | One fixed Darwin-only Apple materializer cohort mode.
+    ToolchainDarwinAppleMaterializerTest DarwinAppleMaterializerTest
   deriving (Eq, Show)
 
--- | The declared Cabal test suites a toolchain invocation may name.
+-- | The root package's declared Cabal test suites a toolchain invocation may name.
 data ToolchainTestSuite
   = HaskellStyleSuite
   | UnitSuite
+  | CompileFailSuite
+  | ArtifactTransactionSuite
+  | AppleMaterializerSuite
+  | CappedEngineObserverSuite
+  | ExecutionPlanInternalSuite
   | IntegrationSuite
+  deriving (Bounded, Enum, Eq, Show)
+
+-- | The complete constructor-derived suite inventory. Adding a constructor
+-- automatically extends the manifest-closure test rather than requiring a
+-- second hand-maintained list.
+allToolchainTestSuites :: [ToolchainTestSuite]
+allToolchainTestSuites = [minBound .. maxBound]
+
+-- | The two Darwin-only Apple materializer modes that are deliberately absent
+-- from the default machine-independent suite. Their option strings are not
+-- caller data: selecting a mode chooses one exact reviewed Cabal vector.
+data DarwinAppleMaterializerTest
+  = DarwinProductionAudiverisCancellation
+  | DarwinInstalledPythonSourceIsolation
   deriving (Eq, Show)
 
--- | The exact argument vector for an invocation.
-toolchainInvocationArguments :: ToolchainInvocation -> [String]
-toolchainInvocationArguments invocation =
-  case invocation of
-    ToolchainBuildAll -> ["build", "all"]
-    ToolchainTest suite -> ["test", toolchainTestSuiteName suite]
+-- | The exact argument vector for an invocation, including the memory plan
+-- carried by its spawn authority.
+--
+-- Cabal reads @cabal.project.local@ after the parent has spawned it, so a
+-- pre-spawn observation of that file cannot itself bind what the child later
+-- consumes. Command-line configuration has the final precedence, and deriving
+-- these arguments from the opaque authority closes that recheck-to-read gap:
+-- neither a caller nor a concurrent file replacement can substitute an
+-- unbounded job count or compiler runtime limit. The leading RTS segment caps
+-- the Cabal driver image itself; the final Cabal options cap the compiler
+-- images and retain their bounded address-space reservation.
+toolchainInvocationArguments ::
+  ToolchainSpawnAuthority s ->
+  ToolchainInvocation ->
+  [String]
+toolchainInvocationArguments authority invocation =
+  toolchainDriverRtsArguments authority
+    <> invocationArguments
+    <> toolchainAuthorityArguments authority
+  where
+    invocationArguments =
+      case invocation of
+        ToolchainBuildAll -> ["build", "all", "--enable-tests"]
+        ToolchainTest suite -> ["test", toolchainTestSuiteName suite, "--enable-tests"]
+        ToolchainCabalFormat ->
+          [ "test",
+            "--project-file=test/cabal-format/cabal.project",
+            "--builddir=" <> toolchainCabalFormatBuildDirectory authority,
+            "infernix-cabal-format:test:infernix-cabal-format",
+            "--enable-tests"
+          ]
+        ToolchainDarwinAppleMaterializerTest darwinTest ->
+          [ "test",
+            toolchainTestSuiteName AppleMaterializerSuite,
+            "--enable-tests",
+            "--test-show-details=direct",
+            "--test-options=" <> darwinAppleMaterializerTestOption darwinTest
+          ]
+
+-- | The fixed explicit environment entries every toolchain child receives.
+--
+-- @GHCRTS@ is process control derived solely from the opaque authority, not an
+-- operator configuration surface. It gives the already-built Cabal driver and
+-- system Haskell build tools the fixed control/helper cap. Repo executables
+-- are linked to ignore inherited @GHCRTS@ and tests carry their own baked
+-- control cap, so this build-only setting cannot leak into runtime inference.
+-- It intentionally omits @-xr@: the supported host Cabal is built with GHC
+-- 9.6.7, whose RTS does not implement that option. Compiler images receive the
+-- reservation through the explicit, version-compatible Cabal option below.
+toolchainAuthorityEnvironmentEntries ::
+  ToolchainSpawnAuthority s ->
+  [(String, String)]
+toolchainAuthorityEnvironmentEntries authority =
+  [("GHCRTS", "-M" <> show (planControlHeapMib plan) <> "M")]
+  where
+    plan = toolchainSpawnAuthorityPlan authority
+
+-- Keep the driver cap before Cabal's program arguments. These tokens are
+-- consumed by Cabal's own RTS and therefore cannot be mistaken for a Cabal
+-- subcommand or forwarded to GHC.
+toolchainDriverRtsArguments :: ToolchainSpawnAuthority s -> [String]
+toolchainDriverRtsArguments authority =
+  [ "+RTS",
+    "-M" <> show (planControlHeapMib plan) <> "M",
+    "-RTS"
+  ]
+  where
+    plan = toolchainSpawnAuthorityPlan authority
+
+-- Keep these as the final Cabal arguments. Cabal merges project files before
+-- command-line configuration, so their position and authority-derived values
+-- are what make a later @cabal.project.local@ replacement unable to widen the
+-- production child.
+toolchainAuthorityArguments :: ToolchainSpawnAuthority s -> [String]
+toolchainAuthorityArguments authority =
+  [ "--jobs=" <> show (planJobs plan),
+    -- One plural option is load-bearing. The rejected repeated-singular form
+    -- did not preserve the RTS grouping at configure time and handed -M/-xr to
+    -- GHC as compiler flags. The plural form parses this one value into the
+    -- exact ordered GHC argv.
+    "--ghc-options=+RTS -M"
+      <> show (planRtsHeapMib plan)
+      <> "M -xr"
+      <> show (planProcessAddressMib plan)
+      <> "M -RTS"
+  ]
+  where
+    plan = toolchainSpawnAuthorityPlan authority
 
 -- | A short label naming the invocation in a refusal.
-toolchainInvocationLabel :: ToolchainInvocation -> String
-toolchainInvocationLabel invocation =
+toolchainInvocationLabel ::
+  ToolchainSpawnAuthority s ->
+  ToolchainInvocation ->
+  String
+toolchainInvocationLabel authority invocation =
   case invocation of
-    ToolchainBuildAll -> "cabal build all"
-    ToolchainTest suite -> "cabal test " <> toolchainTestSuiteName suite
+    ToolchainBuildAll -> "cabal build all --enable-tests"
+    ToolchainTest suite ->
+      "cabal test " <> toolchainTestSuiteName suite <> " --enable-tests"
+    ToolchainCabalFormat ->
+      "cabal test --project-file=test/cabal-format/cabal.project "
+        <> "--builddir="
+        <> toolchainCabalFormatBuildDirectory authority
+        <> " "
+        <> "infernix-cabal-format:test:infernix-cabal-format --enable-tests"
+    ToolchainDarwinAppleMaterializerTest darwinTest ->
+      "cabal test "
+        <> toolchainTestSuiteName AppleMaterializerSuite
+        <> " --enable-tests"
+        <> " --test-show-details=direct --test-options="
+        <> darwinAppleMaterializerTestOption darwinTest
+
+darwinAppleMaterializerTestOption :: DarwinAppleMaterializerTest -> String
+darwinAppleMaterializerTestOption darwinTest =
+  case darwinTest of
+    DarwinProductionAudiverisCancellation ->
+      "--darwin-production-audiveris-cancellation"
+    DarwinInstalledPythonSourceIsolation ->
+      "--darwin-installed-python-source-isolation"
 
 toolchainTestSuiteName :: ToolchainTestSuite -> String
 toolchainTestSuiteName suite =
   case suite of
     HaskellStyleSuite -> "infernix-haskell-style"
     UnitSuite -> "infernix-unit"
+    CompileFailSuite -> "infernix-compile-fail"
+    ArtifactTransactionSuite -> "infernix-artifact-transaction"
+    AppleMaterializerSuite -> "infernix-apple-materializer"
+    CappedEngineObserverSuite -> "infernix-capped-engine-observer"
+    ExecutionPlanInternalSuite -> "infernix-execution-plan-internal"
     IntegrationSuite -> "infernix-integration"
+
+toolchainCabalFormatBuildDirectory :: ToolchainSpawnAuthority s -> FilePath
+toolchainCabalFormatBuildDirectory authority =
+  toolchainSpawnAuthorityRepoRoot authority </> ".build" </> "cabal-format"
+
+toolchainSpawnAuthorityRepoRoot :: ToolchainSpawnAuthority s -> FilePath
+toolchainSpawnAuthorityRepoRoot
+  (ToolchainSpawnAuthority repoRootPath _ _ _ _) = repoRootPath
+
+-- | Refuse unreviewed sibling project overlays before a toolchain child starts.
+--
+-- The solver-isolated Cabal-format project is tracked source, while Cabal
+-- automatically merges sibling @.local@ and @.freeze@ files. The supported
+-- workflow freezes source for a validation run, so an absence check at the
+-- masked pre-spawn boundary is the required fail-closed contract; this does not
+-- claim a cross-process filesystem lease.
+requireToolchainInvocationProjectState ::
+  ToolchainSpawnAuthority s ->
+  ToolchainInvocation ->
+  IO ()
+requireToolchainInvocationProjectState authority invocation =
+  case invocation of
+    ToolchainCabalFormat -> do
+      unexpectedPaths <- filterM doesPathExist cabalFormatOverlayPaths
+      unless (null unexpectedPaths) $
+        ioError
+          ( userError
+              ( "refusing Cabal-format validation with unreviewed sibling project overlays: "
+                  <> show unexpectedPaths
+              )
+          )
+    _ -> pure ()
+  where
+    projectRoot =
+      toolchainSpawnAuthorityRepoRoot authority
+        </> "test"
+        </> "cabal-format"
+    cabalFormatOverlayPaths =
+      [ projectRoot </> "cabal.project.local",
+        projectRoot </> "cabal.project.freeze"
+      ]
 
 -- | Authority to start a toolchain process under a derived ceiling.
 --
@@ -684,16 +1026,34 @@ toolchainTestSuiteName suite =
 -- region that established its ceiling and a plan minted for one region cannot be
 -- substituted for another's.
 --
--- The authority carries the mechanism its region resolved as well as the plan.
--- Resolving the lane and then discarding the answer is what made every gate
--- command fail on Darwin: the spawn wrapper below assumed an address-space
--- rlimit that this platform does not implement.
+-- The authority carries the mechanism its region resolved, the plan, and the
+-- exact generated settings observed when the region was entered. Resolving the
+-- lane and then discarding the answer is what made every gate command fail on
+-- Darwin; minting authority without observing the file would be the symmetric
+-- error, asserting the only bound that lane has without checking it exists.
+-- Its private single-flight token serializes concurrent calls through the
+-- package-owned child-lifecycle wrapper for /this authority/. It cannot stop a
+-- caller from ignoring that wrapper and using @System.Process@ directly; the
+-- closed repository-owned CLI caller plus the raw-spawn lint are the other half
+-- of this boundary. This is deliberately not a machine-global lease:
+-- independently minted authorities in separate CLI images remain an
+-- unsupported concurrent-claimant case named in the doctrine.
+newtype ToolchainSingleFlight
+  = ToolchainSingleFlight (MVar ())
+
+type role ToolchainSpawnAuthority nominal
+
 data ToolchainSpawnAuthority s
-  = ToolchainSpawnAuthority BuildMemoryPlan ResolvedBuildMemoryMechanism
+  = ToolchainSpawnAuthority
+      FilePath
+      BuildMemoryPlan
+      ResolvedBuildMemoryMechanism
+      CommittedToolchainSettings
+      ToolchainSingleFlight
 
 -- | The plan whose ceiling this authority carries.
 toolchainSpawnAuthorityPlan :: ToolchainSpawnAuthority s -> BuildMemoryPlan
-toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority plan _) = plan
+toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority _ plan _ _ _) = plan
 
 -- | Enter a region in which toolchain processes may be started under a derived
 -- ceiling.
@@ -702,25 +1062,45 @@ toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority plan _) = plan
 -- is a named refusal before any process starts. The resolved mechanism is then
 -- /retained/ on the authority, because what bounds a toolchain child differs by
 -- lane and the spawn wrapper has to act on that difference rather than on an
--- assumption.
+-- assumption. Authority minting also consumes an exact observation of the
+-- binary-owned @cabal.project.local@ settings; the spawn boundary re-observes
+-- them so changing the file inside the region cannot reuse stale authority.
 withToolchainSpawnAuthority ::
+  FilePath ->
   BuildMemoryPlan ->
   (forall s. ToolchainSpawnAuthority s -> IO result) ->
   IO result
-withToolchainSpawnAuthority plan action = do
-  mechanism <- resolveBuildMemoryMechanism
-  case mechanism of
-    Left reason ->
+withToolchainSpawnAuthority repoRootPath plan action
+  | not (isAbsolute repoRootPath) || '\0' `elem` repoRootPath =
       ioError
         ( userError
-            ( "no host memory mechanism resolves on this lane, so a toolchain "
-                <> "process cannot be bounded: "
-                <> reason
-            )
+            "refusing to mint toolchain authority from a non-absolute or NUL-containing repository root"
         )
-    Right resolved -> action (ToolchainSpawnAuthority plan resolved)
+  | otherwise = do
+      committed <- requireCommittedToolchainSettings repoRootPath plan
+      mechanism <- resolveBuildMemoryMechanism
+      case mechanism of
+        Left reason ->
+          ioError
+            ( userError
+                ( "no host memory mechanism resolves on this lane, so a toolchain "
+                    <> "process cannot be bounded: "
+                    <> reason
+                )
+            )
+        Right resolved -> do
+          singleFlight <- ToolchainSingleFlight <$> newMVar ()
+          action
+            ( ToolchainSpawnAuthority
+                repoRootPath
+                plan
+                resolved
+                committed
+                singleFlight
+            )
 
--- | Hold the derived per-process ceiling in force across a toolchain spawn.
+-- | Hold one authority's single-flight token and derived per-process ceiling
+-- across a complete toolchain-child lifecycle.
 --
 -- The soft limit alone is lowered here, and the hard limit is deliberately left
 -- untouched, because this authority is held by the long-lived operator CLI image
@@ -730,8 +1110,8 @@ withToolchainSpawnAuthority plan action = do
 --
 -- What that costs is stated rather than hidden: a child could raise its own soft
 -- limit back within the inherited hard limit. No toolchain does, and the
--- structural half of the guarantee is elsewhere — the closed vocabulary and this
--- authority are what make an unbounded toolchain spawn unrepresentable.
+-- repository-owned boundary is the closed vocabulary, this authority, and the
+-- lint that rejects a raw toolchain spawn beside the package-owned caller.
 -- 'establishBoundedBuildMemory' remains the stronger form for a process image
 -- dedicated to a build, where lowering the hard limit costs nothing.
 --
@@ -740,26 +1120,52 @@ withToolchainSpawnAuthority plan action = do
 -- against the infinite hard limit it reports, so @setrlimit@ returns @EINVAL@
 -- and this wrapper threw before the child was ever started — taking
 -- @infernix test lint@, @test unit@, @test integration@ and @test all@ with it.
--- On that lane the bound is the runtime heap cap and the job count, both already
--- committed to @cabal.project.local@ and both inherited by the child without a
--- bracket. Acting on the resolved mechanism is what keeps this honest: the
--- alternative is asserting a ceiling the platform never installed.
+-- On that lane the bound is the runtime heap cap and the job count, with the
+-- runtime reservation making that cap installable in each compiler image. All
+-- three are committed to @cabal.project.local@, observed both when authority is
+-- minted and here immediately before the spawn, and rendered from this same
+-- authority into Cabal's command-line configuration. The explicit arguments
+-- are load-bearing: Cabal opens the project file in the child after this
+-- wrapper returns to its action, so the observation alone would leave a
+-- recheck-to-child-read race. Acting on the resolved mechanism and binding the
+-- child arguments are what keep this honest: the alternative is asserting a
+-- ceiling the platform never installed or the child never consumed.
+--
+-- The caller's action owns spawn, victim-rank adjustment, sampling where
+-- applicable, wait, and exceptional cleanup/reap. Returning a live child from
+-- the action would release both the token and the inherited soft ceiling too
+-- early; the only production callers keep that entire lifecycle inside.
 withBoundedToolchainChild :: ToolchainSpawnAuthority s -> IO result -> IO result
-withBoundedToolchainChild (ToolchainSpawnAuthority plan resolved) action =
-  case resolved of
-    EnforcedLane _ -> bracket acquire restore (const action)
-    UnenforcedLane _ -> action
-  where
-    ceilingMib = planProcessAddressMib plan
-    acquire = do
-      limits <- getResourceLimit ResourceTotalMemory
-      case boundedAddressLimit ceilingMib (softLimit limits) of
-        Just _ -> pure limits
-        Nothing -> do
-          target <- targetAddressLimit ceilingMib limits
-          setResourceLimit ResourceTotalMemory limits {softLimit = target}
-          pure limits
-    restore = setResourceLimit ResourceTotalMemory
+withBoundedToolchainChild
+  ( ToolchainSpawnAuthority
+      repoRootPath
+      plan
+      resolved
+      committedAtMint
+      (ToolchainSingleFlight singleFlight)
+    )
+  childLifecycle =
+    withMVar singleFlight $ \() -> do
+      committedAtSpawn <- requireCommittedToolchainSettings repoRootPath plan
+      unless (committedAtSpawn == committedAtMint) $
+        ioError
+          ( userError
+              "generated toolchain settings changed after spawn authority was minted"
+          )
+      case resolved of
+        EnforcedLane _ -> bracket acquire restore (const childLifecycle)
+        UnenforcedLane _ -> childLifecycle
+    where
+      ceilingMib = planProcessAddressMib plan
+      acquire = do
+        limits <- getResourceLimit ResourceTotalMemory
+        case boundedAddressLimit ceilingMib (softLimit limits) of
+          Just _ -> pure limits
+          Nothing -> do
+            target <- targetAddressLimit ceilingMib limits
+            setResourceLimit ResourceTotalMemory limits {softLimit = target}
+            pure limits
+      restore = setResourceLimit ResourceTotalMemory
 
 -- | Raise the spawned child's out-of-memory victim rank.
 --
@@ -777,25 +1183,18 @@ applyToolchainChildVictimRank :: ToolchainSpawnAuthority s -> ProcessID -> IO ()
 applyToolchainChildVictimRank _authority childPid =
   case os of
     "linux" -> do
-      written <-
-        try
-          ( writeFile
-              ("/proc/" <> show childPid <> "/oom_score_adj")
-              (show toolchainChildVictimRank <> "\n")
-          )
-      case written :: Either SomeException () of
-        Right () -> pure ()
-        -- A rank that cannot be written is reported and not fatal: it is the
-        -- weakest leg, and refusing the build because the kernel would pick a
-        -- different victim would trade a real capability for a ranking.
-        Left rankError ->
-          ioError
-            ( userError
-                ( "could not raise the toolchain child's out-of-memory victim "
-                    <> "rank: "
-                    <> show rankError
-                )
-            )
+      -- An ordinary /proc write failure is not fatal: victim selection is the
+      -- weakest leg, and refusing the build would trade a real capability for
+      -- a ranking. Catch only IOException; asynchronous cancellation must
+      -- escape into the caller's owned-group cleanup rather than be demoted.
+      void
+        ( try
+            ( writeFile
+                ("/proc/" <> show childPid <> "/oom_score_adj")
+                (show toolchainChildVictimRank <> "\n")
+            ) ::
+            IO (Either IOException ())
+        )
     _ -> pure ()
 
 -- | The @oom_score_adj@ a toolchain child runs at.
@@ -806,6 +1205,416 @@ applyToolchainChildVictimRank _authority childPid =
 -- destroyed 111 pod processes without ever selecting it.
 toolchainChildVictimRank :: Int
 toolchainChildVictimRank = 800
+
+-- | Darwin-only refinement of a toolchain authority for the opt-in measured
+-- build validation. The constructor is hidden: the retained mechanism and the
+-- complete account arithmetic must be checked together before a validation
+-- child can be named.
+type role DarwinBuildMemoryValidationAuthority nominal
+
+data DarwinBuildMemoryValidationAuthority s
+  = DarwinBuildMemoryValidationAuthority
+      (ToolchainSpawnAuthority s)
+      Int
+
+-- | The two closed Cabal invocations exercised in one fresh scratch build
+-- root. The install follows the build only after the build succeeds, so it can
+-- reuse the same compiled graph while still proving the executable install
+-- surface carries the identical authority-derived limits.
+data DarwinBuildMemoryInvocation
+  = DarwinBuildAllWithTests
+  | DarwinInstallAllExecutables
+  deriving (Eq, Show)
+
+-- | Checked complete compiler-phase account, in MiB.
+--
+-- This accepts primitive integers so the overflow and over-budget refusal can
+-- be pinned without fabricating a 'BuildMemoryPlan'. Production calls it only
+-- through 'requireDarwinBuildMemoryValidationAuthority'.
+checkedToolchainAccountMib :: Int -> Int -> Int -> Int -> Either String Int
+checkedToolchainAccountMib jobs heapMib controlHeapMib budgetMib
+  | jobs <= 0 = Left "Darwin build-memory validation requires a positive job count"
+  | heapMib <= 0 = Left "Darwin build-memory validation requires a positive compiler heap cap"
+  | controlHeapMib <= 0 = Left "Darwin build-memory validation requires a positive control/helper heap cap"
+  | budgetMib <= 0 = Left "Darwin build-memory validation requires a positive account budget"
+  | accountInteger > toInteger (maxBound :: Int) =
+      Left "Darwin build-memory validation complete claimant arithmetic overflowed Int"
+  | accountInteger > toInteger budgetMib =
+      Left
+        ( "Darwin build-memory validation refuses compiler plus control/helper claims of "
+            <> show accountInteger
+            <> " MiB above its "
+            <> show budgetMib
+            <> " MiB account budget"
+        )
+  | otherwise = Right (fromInteger accountInteger)
+  where
+    accountInteger =
+      toInteger jobs * toInteger heapMib
+        + (toInteger jobs + 1) * toInteger controlHeapMib
+
+-- | Refine an existing exact-file spawn authority to the one supported Darwin
+-- validation mechanism and check the complete account before any scratch root,
+-- descriptor, observer, or child is created.
+requireDarwinBuildMemoryValidationAuthority ::
+  ToolchainSpawnAuthority s ->
+  Either String (DarwinBuildMemoryValidationAuthority s)
+requireDarwinBuildMemoryValidationAuthority authority
+  | os /= "darwin" =
+      Left "Darwin build-memory validation is available only on Darwin"
+  | otherwise =
+      case toolchainSpawnAuthorityMechanism authority of
+        UnenforcedLane DarwinHeapCapMechanism -> do
+          accountMib <-
+            checkedToolchainAccountMib
+              (planJobs plan)
+              (planRtsHeapMib plan)
+              (planControlHeapMib plan)
+              (planBudgetMib plan)
+          Right (DarwinBuildMemoryValidationAuthority authority accountMib)
+        resolved ->
+          Left
+            ( "Darwin build-memory validation requires exactly the unenforced "
+                <> "Darwin heap-cap mechanism, but resolved "
+                <> renderResolvedBuildMemoryMechanism resolved
+            )
+  where
+    plan = toolchainSpawnAuthorityPlan authority
+
+toolchainSpawnAuthorityMechanism ::
+  ToolchainSpawnAuthority s ->
+  ResolvedBuildMemoryMechanism
+toolchainSpawnAuthorityMechanism (ToolchainSpawnAuthority _ _ resolved _ _) = resolved
+
+-- | Re-observe the exact generated settings at the validation spawn boundary
+-- without exposing the underlying general toolchain authority.
+withDarwinBuildMemoryValidationChild ::
+  DarwinBuildMemoryValidationAuthority s ->
+  IO result ->
+  IO result
+withDarwinBuildMemoryValidationChild
+  (DarwinBuildMemoryValidationAuthority authority _) =
+    withBoundedToolchainChild authority
+
+-- | The same fixed descendant heap-cap environment, exposed through only the
+-- Darwin validation authority so that command cannot recover the underlying
+-- general spawn capability.
+darwinBuildMemoryAuthorityEnvironmentEntries ::
+  DarwinBuildMemoryValidationAuthority s ->
+  [(String, String)]
+darwinBuildMemoryAuthorityEnvironmentEntries
+  (DarwinBuildMemoryValidationAuthority authority _) =
+    toolchainAuthorityEnvironmentEntries authority
+
+-- | Render one validation invocation. The caller supplies only the internally
+-- minted scratch root; the executable remains the manifest's closed HostCabal
+-- selection in the CLI and every behavioral operand is fixed by this enum.
+-- The authority-derived Cabal-driver RTS prefix begins both vectors, while
+-- authority-derived concurrency and compiler RTS limits deliberately remain
+-- the final Cabal arguments.
+darwinBuildMemoryInvocationArguments ::
+  DarwinBuildMemoryValidationAuthority s ->
+  DarwinBuildMemoryInvocation ->
+  FilePath ->
+  Either String [String]
+darwinBuildMemoryInvocationArguments
+  (DarwinBuildMemoryValidationAuthority authority _)
+  invocation
+  scratchRoot
+    | not (isAbsolute scratchRoot) || '\0' `elem` scratchRoot =
+        Left "Darwin build-memory validation scratch root must be an absolute NUL-free path"
+    | otherwise =
+        Right
+          ( toolchainDriverRtsArguments authority
+              <> invocationArguments
+              <> toolchainAuthorityArguments authority
+          )
+    where
+      buildRoot = scratchRoot </> "dist-newstyle"
+      installRoot = scratchRoot </> "bin"
+      invocationArguments =
+        case invocation of
+          DarwinBuildAllWithTests ->
+            [ "build",
+              "all",
+              "--enable-tests",
+              "--builddir=" <> buildRoot
+            ]
+          DarwinInstallAllExecutables ->
+            [ "install",
+              "all:exes",
+              "--installdir=" <> installRoot,
+              "--install-method=copy",
+              "--overwrite-policy=always",
+              "--builddir=" <> buildRoot
+            ]
+
+darwinBuildMemoryInvocationLabel :: DarwinBuildMemoryInvocation -> String
+darwinBuildMemoryInvocationLabel invocation =
+  case invocation of
+    DarwinBuildAllWithTests -> "cabal build all --enable-tests"
+    DarwinInstallAllExecutables -> "cabal install all:exes"
+
+-- | Fixed pause between complete aggregate physical-footprint samples. Each
+-- sample itself has the observer kernel's independent bounded deadline.
+darwinBuildMemorySampleIntervalMicros :: Int
+darwinBuildMemorySampleIntervalMicros = 1000000
+
+-- | Count and maximum for one invocation's observations. No samples are
+-- summed: the metric is a sampled peak of an aggregate process-group physical
+-- footprint, not a time integral and not a per-process maximum.
+data DarwinBuildMemorySamples = DarwinBuildMemorySamples
+  { darwinBuildMemorySampleCount :: !Word64,
+    darwinBuildMemorySampledPeakBytes :: !Word64
+  }
+  deriving (Eq, Show)
+
+emptyDarwinBuildMemorySamples :: DarwinBuildMemorySamples
+emptyDarwinBuildMemorySamples = DarwinBuildMemorySamples 0 0
+
+recordDarwinBuildMemorySample ::
+  Word64 ->
+  DarwinBuildMemorySamples ->
+  Either String DarwinBuildMemorySamples
+recordDarwinBuildMemorySample physicalFootprintBytes samples
+  | darwinBuildMemorySampleCount samples == maxBound =
+      Left "Darwin build-memory validation sample count overflowed Word64"
+  | otherwise =
+      Right
+        DarwinBuildMemorySamples
+          { darwinBuildMemorySampleCount = darwinBuildMemorySampleCount samples + 1,
+            darwinBuildMemorySampledPeakBytes =
+              max
+                physicalFootprintBytes
+                (darwinBuildMemorySampledPeakBytes samples)
+          }
+
+data DarwinBuildMemoryInvocationEvidence = DarwinBuildMemoryInvocationEvidence
+  { darwinBuildMemoryEvidenceInvocation :: !DarwinBuildMemoryInvocation,
+    darwinBuildMemoryEvidenceExitStatus :: !Int,
+    darwinBuildMemoryEvidenceDurationMicros :: !Word64,
+    darwinBuildMemoryEvidenceSampleCount :: !Word64,
+    darwinBuildMemoryEvidenceSampledPeakBytes :: !Word64
+  }
+  deriving (Eq, Show)
+
+-- | Evidence that the freshly installed runtime CLI ignored an adversarial
+-- inherited @GHCRTS@ value. The constructor is hidden; only an ordinary zero
+-- exit from the closed proof can enter the final report.
+data DarwinInstalledCliIsolationEvidence
+  = DarwinInstalledCliIsolationEvidence
+  deriving (Eq, Show)
+
+mkDarwinInstalledCliIsolationEvidence :: Int -> Either String DarwinInstalledCliIsolationEvidence
+mkDarwinInstalledCliIsolationEvidence exitStatus
+  | exitStatus == 0 = Right DarwinInstalledCliIsolationEvidence
+  | otherwise =
+      Left
+        ( "the freshly installed runtime CLI processed the build-only GHCRTS environment (isolation proof exit "
+            <> show exitStatus
+            <> ")"
+        )
+
+-- | The build is the measurement-bearing invocation and must cross at least
+-- one fixed-cadence footprint probe. The install deliberately reuses that build
+-- root and can therefore reach ordinary terminal completion before the first
+-- one-second probe. A zero-sample install is retained as explicit terminal
+-- evidence (and rendered as such), never converted into a fabricated
+-- footprint; the aggregate evidence constructor still requires a positive
+-- sampled build.
+mkDarwinBuildMemoryInvocationEvidence ::
+  DarwinBuildMemoryInvocation ->
+  Int ->
+  Word64 ->
+  DarwinBuildMemorySamples ->
+  Either String DarwinBuildMemoryInvocationEvidence
+mkDarwinBuildMemoryInvocationEvidence invocation exitStatus durationMicros samples
+  | darwinBuildMemorySampleCount samples == 0
+      && invocation == DarwinBuildAllWithTests =
+      Left
+        ( darwinBuildMemoryInvocationLabel invocation
+            <> " completed without a sampled aggregate physical footprint"
+        )
+  | otherwise =
+      Right
+        DarwinBuildMemoryInvocationEvidence
+          { darwinBuildMemoryEvidenceInvocation = invocation,
+            darwinBuildMemoryEvidenceExitStatus = exitStatus,
+            darwinBuildMemoryEvidenceDurationMicros = durationMicros,
+            darwinBuildMemoryEvidenceSampleCount = darwinBuildMemorySampleCount samples,
+            darwinBuildMemoryEvidenceSampledPeakBytes = darwinBuildMemorySampledPeakBytes samples
+          }
+
+data DarwinBuildMemoryEvidence = DarwinBuildMemoryEvidence
+  { darwinBuildMemoryPhysicalMib :: !Integer,
+    darwinBuildMemoryEffectiveMib :: !Integer,
+    darwinBuildMemoryActiveColimaPledgeMib :: !Integer,
+    darwinBuildMemoryBudgetMib :: !Int,
+    darwinBuildMemoryJobs :: !Int,
+    darwinBuildMemoryHeapMib :: !Int,
+    darwinBuildMemoryControlHeapMib :: !Int,
+    darwinBuildMemoryAddressReservationMib :: !Int,
+    darwinBuildMemoryCompilerAccountMib :: !Int,
+    darwinBuildMemoryControlAccountMib :: !Int,
+    darwinBuildMemoryAccountMib :: !Int,
+    darwinBuildMemoryInstalledCliIsolated :: !(Maybe DarwinInstalledCliIsolationEvidence),
+    darwinBuildMemoryEvidenceIntervalMicros :: !Int,
+    darwinBuildMemoryEvidenceTotalSamples :: !Word64,
+    darwinBuildMemoryEvidencePeakBytes :: !Word64,
+    darwinBuildMemoryEvidenceInvocations :: ![DarwinBuildMemoryInvocationEvidence]
+  }
+  deriving (Eq, Show)
+
+mkDarwinBuildMemoryEvidence ::
+  Integer ->
+  Integer ->
+  Integer ->
+  DarwinBuildMemoryValidationAuthority s ->
+  Int ->
+  [DarwinBuildMemoryInvocationEvidence] ->
+  Maybe DarwinInstalledCliIsolationEvidence ->
+  Either String DarwinBuildMemoryEvidence
+mkDarwinBuildMemoryEvidence
+  physicalMib
+  effectiveMib
+  activeColimaPledgeMib
+  (DarwinBuildMemoryValidationAuthority authority accountMib)
+  intervalMicros
+  invocationEvidence
+  installedCliIsolation = do
+    if physicalMib <= 0
+      then Left "Darwin build-memory evidence requires positive physical memory"
+      else Right ()
+    if effectiveMib <= 0 || effectiveMib > physicalMib
+      then Left "Darwin build-memory evidence requires positive effective memory no larger than physical memory"
+      else Right ()
+    if activeColimaPledgeMib < 0 || effectiveMib + activeColimaPledgeMib /= physicalMib
+      then Left "Darwin build-memory evidence carries an inconsistent active Colima pledge"
+      else Right ()
+    if intervalMicros <= 0
+      then Left "Darwin build-memory evidence requires a positive sampling interval"
+      else Right ()
+    if validInvocationSequence invocationEvidence
+      then Right ()
+      else Left "Darwin build-memory evidence carries an invalid invocation sequence"
+    if installedCliIsolationMatches invocationEvidence installedCliIsolation
+      then Right ()
+      else Left "a successful Darwin install requires the closed installed-CLI GHCRTS isolation proof"
+    totalSamples <- checkedTotalSamples invocationEvidence
+    if totalSamples == 0
+      then Left "Darwin build-memory evidence contains no physical-footprint samples"
+      else Right ()
+    let sampledPeakBytes =
+          maximum (map darwinBuildMemoryEvidenceSampledPeakBytes invocationEvidence)
+    if sampledPeakBytes == 0
+      then Left "Darwin build-memory evidence requires a positive sampled aggregate physical footprint"
+      else Right ()
+    let plan = toolchainSpawnAuthorityPlan authority
+    Right
+      DarwinBuildMemoryEvidence
+        { darwinBuildMemoryPhysicalMib = physicalMib,
+          darwinBuildMemoryEffectiveMib = effectiveMib,
+          darwinBuildMemoryActiveColimaPledgeMib = activeColimaPledgeMib,
+          darwinBuildMemoryBudgetMib = planBudgetMib plan,
+          darwinBuildMemoryJobs = planJobs plan,
+          darwinBuildMemoryHeapMib = planRtsHeapMib plan,
+          darwinBuildMemoryControlHeapMib = planControlHeapMib plan,
+          darwinBuildMemoryAddressReservationMib = planProcessAddressMib plan,
+          darwinBuildMemoryCompilerAccountMib = planCompilerHeapAccountMib plan,
+          darwinBuildMemoryControlAccountMib = planControlAccountMib plan,
+          darwinBuildMemoryAccountMib = accountMib,
+          darwinBuildMemoryInstalledCliIsolated = installedCliIsolation,
+          darwinBuildMemoryEvidenceIntervalMicros = intervalMicros,
+          darwinBuildMemoryEvidenceTotalSamples = totalSamples,
+          darwinBuildMemoryEvidencePeakBytes = sampledPeakBytes,
+          darwinBuildMemoryEvidenceInvocations = invocationEvidence
+        }
+    where
+      validInvocationSequence evidence =
+        map darwinBuildMemoryEvidenceInvocation evidence
+          `elem` [ [DarwinBuildAllWithTests],
+                   [DarwinBuildAllWithTests, DarwinInstallAllExecutables]
+                 ]
+      installedCliIsolationMatches evidence isolation =
+        case reverse evidence of
+          latest : _
+            | darwinBuildMemoryEvidenceInvocation latest == DarwinInstallAllExecutables
+                && darwinBuildMemoryEvidenceExitStatus latest == 0 ->
+                case isolation of
+                  Just _ -> True
+                  Nothing -> False
+          _ -> isNothing isolation
+      checkedTotalSamples = foldl addSamples (Right 0)
+      addSamples accumulated evidence = do
+        current <- accumulated
+        let next = darwinBuildMemoryEvidenceSampleCount evidence
+        if maxBound - current < next
+          then Left "Darwin build-memory evidence total sample count overflowed Word64"
+          else Right (current + next)
+
+-- | Stable, line-oriented report for operator evidence capture.
+renderDarwinBuildMemoryEvidence :: DarwinBuildMemoryEvidence -> String
+renderDarwinBuildMemoryEvidence evidence =
+  unlines
+    ( [ "darwinBuildMemoryEvidence: v1",
+        "physicalMemoryMib: " <> show (darwinBuildMemoryPhysicalMib evidence),
+        "effectiveMemoryMib: " <> show (darwinBuildMemoryEffectiveMib evidence),
+        "activeColimaPledgeMib: " <> show (darwinBuildMemoryActiveColimaPledgeMib evidence),
+        "planBudgetMib: " <> show (darwinBuildMemoryBudgetMib evidence),
+        "planJobs: " <> show (darwinBuildMemoryJobs evidence),
+        "planCompilerRtsHeapMib: " <> show (darwinBuildMemoryHeapMib evidence),
+        "planControlHeapMib: " <> show (darwinBuildMemoryControlHeapMib evidence),
+        "planProcessAddressReservationMib: " <> show (darwinBuildMemoryAddressReservationMib evidence),
+        "planCompilerJobsTimesHeapMib: " <> show (darwinBuildMemoryCompilerAccountMib evidence),
+        "planControlClaimCount: " <> show (darwinBuildMemoryJobs evidence + 1),
+        "planControlAccountMib: " <> show (darwinBuildMemoryControlAccountMib evidence),
+        "planAccountMib: " <> show (darwinBuildMemoryAccountMib evidence),
+        "installedRuntimeCliInheritedGhcrts: "
+          <> case darwinBuildMemoryInstalledCliIsolated evidence of
+            Just _ -> "ignored (proved with adversarial invalid GHCRTS)"
+            Nothing -> "not-run (build or install did not complete successfully)",
+        "excludedHostReserveClaimants: operator CLI parent and fixed observer tools (outside the toolchain account and sampled Cabal process group)",
+        "sampleMetric: sampled peak aggregate physical footprint",
+        "sampleIntervalMicros: " <> show (darwinBuildMemoryEvidenceIntervalMicros evidence),
+        "sampleCount: " <> show (darwinBuildMemoryEvidenceTotalSamples evidence),
+        "sampledPeakAggregatePhysicalFootprintBytes: " <> show (darwinBuildMemoryEvidencePeakBytes evidence),
+        "planAccountToSampledPeakMultiple: " <> renderAccountToSampledPeakMultiple evidence
+      ]
+        <> concatMap renderInvocation (zip [(1 :: Int) ..] (darwinBuildMemoryEvidenceInvocations evidence))
+        <> [ "darwinCaveat: Darwin provides no enforced aggregate or address-space ceiling for this lane; fixed-interval samples can miss a transient peak and do not bound processes outside the measured Cabal process group."
+           ]
+    )
+  where
+    renderInvocation (index, invocationEvidence) =
+      let prefix = "invocation." <> show index <> "."
+       in [ prefix <> "name: " <> darwinBuildMemoryInvocationLabel (darwinBuildMemoryEvidenceInvocation invocationEvidence),
+            prefix <> "exitStatus: " <> show (darwinBuildMemoryEvidenceExitStatus invocationEvidence),
+            prefix <> "durationMicros: " <> show (darwinBuildMemoryEvidenceDurationMicros invocationEvidence),
+            prefix <> "samplingOutcome: " <> renderInvocationSamplingOutcome invocationEvidence,
+            prefix <> "sampleCount: " <> show (darwinBuildMemoryEvidenceSampleCount invocationEvidence),
+            prefix <> "sampledPeakAggregatePhysicalFootprintBytes: " <> show (darwinBuildMemoryEvidenceSampledPeakBytes invocationEvidence)
+          ]
+
+    renderInvocationSamplingOutcome invocationEvidence
+      | darwinBuildMemoryEvidenceSampleCount invocationEvidence == 0 =
+          "terminal-before-first-fixed-cadence-probe"
+      | otherwise = "sampled"
+
+-- Integer hundredths keep the evidence deterministic and avoid both floating
+-- formatting drift and fixed-width multiplication overflow. The smart
+-- constructor has already proved the sampled peak is positive.
+renderAccountToSampledPeakMultiple :: DarwinBuildMemoryEvidence -> String
+renderAccountToSampledPeakMultiple evidence =
+  show whole <> "." <> paddedHundredths <> "x"
+  where
+    accountBytes =
+      toInteger (darwinBuildMemoryAccountMib evidence) * 1024 * 1024
+    peakBytes = toInteger (darwinBuildMemoryEvidencePeakBytes evidence)
+    fixedHundredths = accountBytes * 100 `div` peakBytes
+    (whole, hundredths) = fixedHundredths `divMod` 100
+    paddedHundredths
+      | hundredths < 10 = "0" <> show hundredths
+      | otherwise = show hundredths
 
 -- | Whether the lane installs an address-space ceiling the kernel enforces.
 --
@@ -871,9 +1680,9 @@ renderBuildMemoryMechanism mechanism =
     CgroupAggregateMechanism limitMib ->
       "cgroup v2 maximum of " <> show limitMib <> " MiB bounding the build tree's aggregate"
     LinuxProcessCeilingMechanism ->
-      "per-process address-space rlimit and runtime heap cap; the aggregate is jobs x cap arithmetic"
+      "per-process address-space rlimit and runtime heap caps; the aggregate is compiler plus control/helper claimant arithmetic"
     DarwinHeapCapMechanism ->
-      "runtime heap cap and bounded concurrency; the aggregate is jobs x cap arithmetic"
+      "runtime heap caps and bounded concurrency; the aggregate is compiler plus control/helper claimant arithmetic"
 
 -- | Render a resolved lane whichever arm it took.
 renderResolvedBuildMemoryMechanism :: ResolvedBuildMemoryMechanism -> String
@@ -904,9 +1713,9 @@ resolveBuildMemoryMechanism =
 
 -- | Render the untracked per-machine @cabal.project.local@.
 --
--- Both numbers appear in the banner because neither is meaningful alone; the
--- worst case the file actually bounds is spelled out rather than left to the
--- reader.
+-- Every claimant appears in the banner because no per-process cap is meaningful
+-- alone; the complete compiler-phase account is spelled out rather than left
+-- to the reader.
 renderCabalProjectLocal :: BuildMemoryPlan -> String
 renderCabalProjectLocal plan =
   unlines
@@ -917,24 +1726,36 @@ renderCabalProjectLocal plan =
       "-- The toolchain account holds "
         <> show (planBudgetMib plan)
         <> " MiB of measured host memory,",
-      "-- divided by "
+      "-- with "
         <> show (planJobs plan)
-        <> " jobs into a "
+        <> " compiler jobs at a "
         <> show (planRtsHeapMib plan)
-        <> " MiB per-process runtime heap cap",
-      "-- and a "
+        <> " MiB runtime heap cap and a",
+      "-- "
         <> show (planProcessAddressMib plan)
-        <> " MiB per-process address-space reservation.",
+        <> " MiB compiler address-space reservation. Cabal and each",
+      "-- worker-associated control/helper slot carry a separate "
+        <> show (planControlHeapMib plan)
+        <> " MiB heap cap.",
       "--",
-      "-- A per-process cap is not a host bound on its own. Both numbers are",
-      "-- stated because the worst case is the product: "
+      "-- A per-process cap is not a host bound on its own. The compiler subtotal is",
+      "-- "
         <> show (planJobs plan)
         <> " jobs x "
         <> show (planRtsHeapMib plan)
-        <> " MiB",
+        <> " MiB = "
+        <> show (planCompilerHeapAccountMib plan)
+        <> " MiB; the control/helper subtotal is",
+      "-- "
+        <> show (planJobs plan + 1)
+        <> " claims x "
+        <> show (planControlHeapMib plan)
+        <> " MiB = "
+        <> show (planControlAccountMib plan)
+        <> " MiB.",
       "-- = "
-        <> show (planJobs plan * planRtsHeapMib plan)
-        <> " MiB of runtime heap, inside the "
+        <> show (planToolchainAccountMib plan)
+        <> " MiB total inside the "
         <> show (planBudgetMib plan)
         <> " MiB account.",
       "",

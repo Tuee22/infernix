@@ -11,18 +11,17 @@
 ## TL;DR
 
 The execution-related portion of this manifest is governed by
-[Typed Execution Plan](../architecture/typed_execution_plan.md). The current wiring records remain
-implemented. Startup now compiles the hidden raw decode into an opaque `CompiledRuntimePlan`;
+[Typed Execution Plan](../architecture/typed_execution_plan.md). Startup compiles the hidden raw
+decode into an opaque `CompiledRuntimePlan`;
 coordinator routing projects only compiled placements and daemon capabilities, while engine startup
 pairs live enforcer observations with compiled grants to refine a `RuntimePlan` of
 `ExecutableModel` capabilities. Raw decoded records do not flow directly into routing or process
-launch. Phase 8 owns the final proper Dhall-union and `Natural` wire schema, not this Haskell
-capability boundary.
+launch. The wire schema uses proper Dhall unions and `Natural` quantities.
 
 - The `ClusterConfig` Haskell type (rendered by the binary at `cluster up` from
   `defaultClusterConfig`) is the typed source of truth for every in-cluster wiring value that
-  previously lived in `chart/templates/deployment-*.yaml` `env:` blocks. No `.dhall` is
-  version-controlled; the schema is reflected from the decoder type.
+  workloads consume. The deployment templates contain no `env:` configuration blocks. No `.dhall`
+  is version-controlled; the schema is reflected from the decoder type.
 - The binary renders this record to a `cluster.dhall` string at `cluster up` and injects it into
   Helm, which embeds it verbatim (`nindent`) into `ConfigMap/infernix-cluster-config`, mounted
   read-only at `/opt/infernix/cluster.dhall` in coordinator / engine / webapp pods. **Helm never

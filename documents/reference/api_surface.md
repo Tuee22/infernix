@@ -24,9 +24,9 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
   information
 - `GET /api/demo-config` returns the serialized generated demo config for the active runtime mode
 - `GET /api/cache` (**admin-only**) returns manifest-backed cache status for the active runtime mode
-- `POST /api/cache/evict` (**admin-only**, Phase 9) removes derived cache directories while retaining the durable manifest
-- `POST /api/cache/rebuild` (**admin-only**, Phase 9) rebuilds derived cache directories from the durable manifest set
-- `GET /api/admin/overview` (**admin-only**, Phase 9) returns cluster-wide monitoring for the admin panel
+- `POST /api/cache/evict` (**admin-only**) removes derived cache directories while retaining the durable manifest
+- `POST /api/cache/rebuild` (**admin-only**) rebuilds derived cache directories from the durable manifest set
+- `GET /api/admin/overview` (**admin-only**) returns cluster-wide monitoring for the admin panel
 - `GET /api/cache`, `POST /api/cache/evict`, `POST /api/cache/rebuild`, and `GET /api/admin/overview` all require the `infernix-admin` realm role (`jwtClaimsHasRealmRole`, backend `withAdminRequest`): 401 without a token, 403 for a valid non-admin token, 2xx for an admin token. See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md)
 - `DELETE /api/account` (JWT-validated, per-user; `handleAccountDeletion`) deletes the caller's account data — it reaps the caller's `users/<sub>/` MinIO prefix and the caller's demo Pulsar conversation / metadata / draft topics. See [web_portal_surface.md](web_portal_surface.md)
 - the `/api/objects` family is the webapp object-proxy: the browser
@@ -58,27 +58,33 @@ surface is the `.dhall` topic contract described in [../tools/pulsar.md](../tool
 
 ## Rules
 
-- the demo API surface is implemented in Haskell as `src/Infernix/Demo/Api.hs` and exposed by
+- the demo API surface is served by Haskell `src/Infernix/Demo/Api.hs` and exposed by
 `infernix service --role webapp`; coordinator and engine service roles do not bind any HTTP port and
-never serve these endpoints - request validation uses Haskell-owned model metadata; the same Haskell
-typed runtime contract is shared with the non-HTTP production daemon - invalid requests return typed
-user-facing errors - large outputs from generative engines (image, audio, video, large
+never serve these endpoints
+- request validation uses Haskell-owned model metadata; the same Haskell typed runtime contract is
+  shared with the non-HTTP production daemon
+- invalid requests return typed user-facing errors
+- large outputs from generative engines (image, audio, video, large
 structured-text) are written server-side to the `infernix-demo-objects` MinIO bucket under the
 caller's generated prefix; the inference result message carries an `ObjectRef`, and the browser
 fetches the bytes through the webapp `GET /api/objects/download` proxy (never directly from MinIO).
 Text outputs ride inline in the result message. Cache manifests sit beside the cached weights at
 `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb` and are rebuildable via
-`infernix cache rebuild` - publication details stay mode-stable and source from the repo-local
-publication-state file - on Apple, the supported clustered lifecycle publishes `daemonLocation:
+`infernix cache rebuild`.
+- publication details stay mode-stable and source from the repo-local publication-state file
+- on Apple, the supported clustered lifecycle publishes `daemonLocation:
 cluster-pod`, `inferenceExecutorLocation: control-plane-host`, and `inferenceDispatchMode:
 pulsar-bridge-to-host-daemon`; on Linux, the same dispatch field advertises
 `pulsar-bridge-to-cluster-daemon` and the executor location remains `cluster-pod`. Publication
-exposes derived engine-pool routing metadata and omits the retired `hostInferenceBatchTopic`
-compatibility field - `GET /api/demo-config` and `GET /api/models` stay aligned with the generated
-active-mode demo catalog - the demo `/api` remains stable across Apple and Linux substrates because
-the routed demo surface is always cluster-resident - the demo API surface is stable even when
-switching runtime modes because only the generated catalog content changes - the supported
-manual-inference path closes through the durable-context Chat surface introduced by Phase 7: the
+exposes derived engine-pool routing metadata; `hostInferenceBatchTopic` is absent from the contract
+compatibility field
+- `GET /api/demo-config` and `GET /api/models` stay aligned with the generated active-mode demo catalog
+- the demo `/api` remains stable across Apple and Linux substrates because the routed demo surface
+  is always cluster-resident
+- the demo API surface is stable when switching runtime modes because only the generated catalog
+  content changes
+- the supported
+manual-inference path closes through the durable-context Chat surface: the
 browser opens a WebSocket against `/ws` (see [web_portal_surface.md](web_portal_surface.md)) and
 receives typed `ConversationState` snapshots plus `ConversationStatePatch` deltas, and artifact
 transfer uses the webapp `/api/objects` byte proxy

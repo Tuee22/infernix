@@ -1,11 +1,24 @@
 module Infernix.Lint.Docs
-  ( runDocsLint,
+  ( prohibitedStatusMarkerForTest,
+    prohibitedStatusSectionForTest,
+    retiredDoctrineViolationsForTest,
+    runDocsLint,
   )
 where
 
 import Control.Monad (forM, forM_, unless, when)
 import Data.Char (isSpace, toLower)
-import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, tails)
+import Data.List
+  ( dropWhileEnd,
+    find,
+    intercalate,
+    isInfixOf,
+    isPrefixOf,
+    isSuffixOf,
+    mapAccumL,
+    nub,
+    tails,
+  )
 import Data.Maybe (isNothing)
 import Data.Text qualified as Text
 import Infernix.CommandRegistry
@@ -468,12 +481,15 @@ runDocsLint = do
     validateRelativeLinks paths relativePath contents
     validateForbiddenPhrases relativePath contents
     validateProhibitedStatusSection relativePath contents
+    validateRetiredDoctrineClaims relativePath contents
     validateForbiddenConfigurationOverrideReferences relativePath contents
   forM_ rootDocRules $ \rule -> do
     contents <- readFile (repoRoot paths </> rootDocPath rule)
     validateRootDocMetadata rule contents
     validateRelativeLinks paths (rootDocPath rule) contents
     validateForbiddenPhrases (rootDocPath rule) contents
+    validateProhibitedStatusSection (rootDocPath rule) contents
+    validateRetiredDoctrineClaims (rootDocPath rule) contents
     validateForbiddenConfigurationOverrideReferences (rootDocPath rule) contents
   forM_ generatedSectionRules $ \rule -> do
     contents <- readFile (repoRoot paths </> generatedSectionPath rule)
@@ -606,23 +622,59 @@ validateForbiddenPhrases relativePath contents
 -- prevent, and it was previously *required* by a structure rule, so the
 -- rejection replaces that requirement rather than merely supplementing it.
 --
--- Anchored to line start: an unanchored match would fire on any document that
--- merely names the heading, including the standard that defines this rule.
+-- Matching normalizes Markdown heading case and indentation but excludes
+-- fenced and indented code, so examples and domain syntax do not become status.
 validateProhibitedStatusSection :: FilePath -> String -> IO ()
 validateProhibitedStatusSection relativePath contents = do
   validateProhibitedStatusReferences relativePath contents
   when
-    (any isStatusHeading (lines contents))
+    (prohibitedStatusSectionForTest relativePath contents)
     ( ioError
         ( userError
             ( relativePath
-                <> " must not carry a '## Current Status' section: documents/ declares the "
+                <> " must not carry a status/audit section: documents/ declares the "
                 <> "target and DEVELOPMENT_PLAN/ tracks implementation status"
             )
         )
     )
+
+-- | Pure whole-document seam that excludes fenced and indented Markdown code.
+prohibitedStatusSectionForTest :: FilePath -> String -> Bool
+prohibitedStatusSectionForTest relativePath =
+  any (prohibitedStatusMarkerForTest relativePath) . markdownNonCodeBlockLines . lines
+
+-- | Pure seam for focused lint fixtures.
+prohibitedStatusMarkerForTest :: FilePath -> String -> Bool
+prohibitedStatusMarkerForTest relativePath lineValue =
+  isStatusHeading || isPolicyStatusLabel
   where
-    isStatusHeading line = "## Current Status" `isPrefixOf` line
+    normalizedLine = map toLower (dropWhileEnd isSpace (dropWhile isSpace lineValue))
+    (headingMarks, headingSuffix) = span (== '#') normalizedLine
+    headingTitle = dropWhile isSpace headingSuffix
+    isStatusHeading = length headingMarks >= 2 && headingTitle `elem` statusTitles
+    isPolicyStatusLabel =
+      relativePath
+        `elem` [ "documents/development/python_policy.md",
+                 "documents/development/purescript_policy.md"
+               ]
+        && normalizedLine `elem` statusLabels
+    statusTitles =
+      [ "current status",
+        "current audit",
+        "current audit note",
+        "implementation status",
+        "implementation state",
+        "repository status",
+        "validation status"
+      ]
+    statusLabels =
+      [ "current status:",
+        "current state:",
+        "implementation status:",
+        "implementation state:",
+        "repository status:",
+        "validation status:"
+      ]
 
 -- | Reject wave, sprint, and dated-evidence references in a governed document.
 --
@@ -634,16 +686,13 @@ validateProhibitedStatusSection relativePath contents = do
 -- route", which is both shorter and true independently of who did it.
 -- | Documents exempt from the wave/sprint/date rejection.
 --
--- Two distinct reasons, kept in one list because both are permanent:
--- 'documentation_standards.md' must be able to demonstrate the form it bans,
--- and 'pulsar_ml_workflow.md' is the cross-project contract shared verbatim
--- with the jitML sister project — editing it here would fork a document this
--- repository does not solely own.
+-- 'documentation_standards.md' must be able to demonstrate the form it bans.
+-- No architecture document receives a whole-file status exemption: a shared
+-- contract is still prescriptive, and an exemption would mask repository-local
+-- drift in every unrelated paragraph.
 statusReferenceAllowedPaths :: [FilePath]
 statusReferenceAllowedPaths =
-  [ "documents/documentation_standards.md",
-    "documents/architecture/pulsar_ml_workflow.md"
-  ]
+  ["documents/documentation_standards.md"]
 
 validateProhibitedStatusReferences :: FilePath -> String -> IO ()
 validateProhibitedStatusReferences relativePath contents
@@ -652,7 +701,7 @@ validateProhibitedStatusReferences relativePath contents
       go
   where
     go =
-      case filter (not . null . snd) (zipWith scan [1 :: Int ..] (lines contents)) of
+      case filter (not . null . snd) (zipWith3 scan [1 :: Int ..] sourceLines nextLines) of
         [] -> pure ()
         ((lineNumber, matched) : _) ->
           ioError
@@ -666,7 +715,16 @@ validateProhibitedStatusReferences relativePath contents
                     <> "evidence belong in DEVELOPMENT_PLAN/"
                 )
             )
-    scan lineNumber line = (lineNumber, firstMatch line)
+    sourceLines = markdownProseLines (lines contents)
+    nextLines = drop 1 sourceLines <> [""]
+    scan lineNumber lineValue nextLine =
+      ( lineNumber,
+        case firstMatch lineValue of
+          "" ->
+            let boundaryMatch = firstMatch (lineValue <> " " <> nextLine)
+             in if boundaryMatch `isInfixOf` nextLine then "" else boundaryMatch
+          directMatch -> directMatch
+      )
     firstMatch line
       | Just rest <- afterToken "Wave " line, startsUpper rest = "Wave " <> take 1 rest
       | Just rest <- afterToken "Sprint " line, isDottedNumber rest = "Sprint " <> takeWhile (/= ' ') rest
@@ -686,6 +744,183 @@ validateProhibitedStatusReferences relativePath contents
     isDateTail rest = case rest of
       (a : '-' : b : c : '-' : d : e : _) -> all (`elem` ['0' .. '9']) [a, b, c, d, e]
       _ -> False
+
+-- | Exact semantic guards for topology and status claims that have been
+-- removed from the supported contract. These are intentionally narrower than
+-- a vocabulary ban: terms such as Pulsar @Failover@, Kubernetes @pod@, and a
+-- runtime's current state remain valid when they describe broker coordination,
+-- placement, or an observation rather than repository-owned HA or schedule.
+validateRetiredDoctrineClaims :: FilePath -> String -> IO ()
+validateRetiredDoctrineClaims relativePath contents =
+  case retiredDoctrineViolationsForTest relativePath contents of
+    [] -> pure ()
+    violations ->
+      ioError
+        ( userError
+            ( "retired topology/status doctrine found:\n"
+                <> intercalate "\n" violations
+            )
+        )
+
+-- | Pure seam for deterministic focused fixtures.
+retiredDoctrineViolationsForTest :: FilePath -> String -> [String]
+retiredDoctrineViolationsForTest relativePath contents
+  | relativePath == "documents/documentation_standards.md" = []
+  | otherwise = concatMap violationsForLine lineWindows
+  where
+    semanticLines = markdownNonCodeBlockLines (lines contents)
+    phaseProseLines = map stripInlineCode semanticLines
+    currentLines = zip semanticLines phaseProseLines
+    nextLines = drop 1 currentLines <> [("", "")]
+    lineWindows = zip3 [1 :: Int ..] currentLines nextLines
+    violationsForLine
+      ( lineNumber,
+        (semanticLine, phaseProseLine),
+        (nextSemanticLine, nextPhaseProseLine)
+        ) =
+        [ renderViolation lineNumber matched
+        | matched <- directMatches <> boundaryMatches
+        ]
+        where
+          directMatches = retiredDoctrineMatches relativePath semanticLine phaseProseLine
+          boundaryMatches =
+            [ matched
+            | matched <-
+                retiredDoctrineMatches
+                  relativePath
+                  (semanticLine <> " " <> nextSemanticLine)
+                  (phaseProseLine <> " " <> nextPhaseProseLine),
+              matched `notElem` directMatches,
+              not (matched `isInfixOf` nextSemanticLine),
+              not (matched `isInfixOf` nextPhaseProseLine)
+            ]
+    renderViolation lineNumber matched =
+      relativePath
+        <> ":"
+        <> show lineNumber
+        <> " carries retired topology/status doctrine: "
+        <> matched
+
+markdownProseLines :: [String] -> [String]
+markdownProseLines = map stripInlineCode . markdownNonCodeBlockLines
+
+markdownNonCodeBlockLines :: [String] -> [String]
+markdownNonCodeBlockLines = snd . mapAccumL stripLine False
+  where
+    stripLine insideFence lineValue
+      | isFence = (not insideFence, "")
+      | insideFence || isIndentedCode = (insideFence, "")
+      | otherwise = (insideFence, lineValue)
+      where
+        trimmed = dropWhile isSpace lineValue
+        isFence = "```" `isPrefixOf` trimmed || "~~~" `isPrefixOf` trimmed
+        isIndentedCode = "    " `isPrefixOf` lineValue || "\t" `isPrefixOf` lineValue
+
+stripInlineCode :: String -> String
+stripInlineCode = go False
+  where
+    go _ [] = []
+    go insideCode ('`' : rest) = go (not insideCode) rest
+    go True (_ : rest) = go True rest
+    go False (character : rest) = character : go False rest
+
+retiredDoctrineMatches :: FilePath -> String -> String -> [String]
+retiredDoctrineMatches relativePath semanticLine phaseProseLine =
+  [ phrase
+  | phrase <- retiredTopologyAndStatusPhrases <> pathScopedRetiredPhrases relativePath,
+    phrase `isInfixOf` semanticLine
+  ]
+    <> case numberedPhaseReference phaseProseLine of
+      Nothing -> []
+      Just reference -> [reference]
+
+numberedPhaseReference :: String -> Maybe String
+numberedPhaseReference lineValue =
+  case filter ("Phase " `isPrefixOf`) (tails lineValue) of
+    (hit : _) ->
+      let suffix = drop (length "Phase ") hit
+          digits = takeWhile (`elem` ['0' .. '9']) suffix
+       in if null digits then Nothing else Just ("Phase " <> digits)
+    [] -> Nothing
+
+retiredTopologyAndStatusPhrases :: [String]
+retiredTopologyAndStatusPhrases =
+  [ "mandatory HA service topology",
+    "HA testing and demo ground",
+    "local Kind and HA substrate",
+    "local HA Kind cluster",
+    "HA demo ground",
+    "Kind HA demo",
+    "replicas ≥ 2 by default",
+    "Pulsar `Failover` provides leader election",
+    "multiple coordinator pods do not race",
+    "surviving coordinator replica",
+    "Client reconnects to any replica",
+    "Any WS connection lands on any replica",
+    "any replica can host any session",
+    "any pod serves any session",
+    "**Exactly-once semantics** come from",
+    "provide HA and effectively-once",
+    "HA with no external",
+    "Patroni replica reinitialization",
+    "replica repair from the current leader",
+    "pod-failover-from-browser",
+    "Pod failover from the browser",
+    "pod-failover-safe",
+    "deletes the Harbor PostgreSQL primary to verify failover",
+    "kill the WS-hosting pod",
+    "not implemented in the current sprint",
+    "implementation status for the convergence work",
+    "as convergence work lands",
+    "current Apple validation evidence is recorded",
+    "Cohort validation evidence lives in"
+  ]
+
+pathScopedRetiredPhrases :: FilePath -> [String]
+pathScopedRetiredPhrases relativePath =
+  case relativePath of
+    "documents/architecture/daemon_topology.md" ->
+      [ "present build",
+        "transitional wire",
+        "currently serializes",
+        "retired engine pod anti-affinity",
+        "future SPA-style"
+      ]
+    "documents/architecture/bounded_inference_memory.md" ->
+      [ "later behavioral/enforcement work",
+        "landed resource/enforcer",
+        "The retired surfaces",
+        "no work in this phase"
+      ]
+    "documents/architecture/bounded_host_memory.md" ->
+      [ "before this correction",
+        "predecessor doctrine",
+        "does not yet include it",
+        "until its cohort wave",
+        "once this doctrine lands",
+        "development plan keeps",
+        "current-source invocation",
+        "Until that wave"
+      ]
+    "documents/architecture/typed_execution_plan.md" ->
+      [ "target generated Dhall",
+        "current Haskell capability",
+        "already models",
+        "intended end state rather than a gap",
+        "current-worktree evidence",
+        "fresh complete Stage",
+        "implemented/target",
+        "completed implementation",
+        "no longer contained any raw spawn",
+        "owning phase"
+      ]
+    "documents/development/demo_app_test_plan.md" ->
+      ["integration covers durable dispatcher, engine pod replacement, engine node drain"]
+    "documents/development/testing_strategy.md" ->
+      ["Pod kills, node drains, and failover handoffs"]
+    "documents/operations/apple_silicon_runbook.md" ->
+      ["one Pulsar replica per role"]
+    _ -> []
 
 validateForbiddenConfigurationOverrideReferences :: FilePath -> String -> IO ()
 validateForbiddenConfigurationOverrideReferences relativePath contents

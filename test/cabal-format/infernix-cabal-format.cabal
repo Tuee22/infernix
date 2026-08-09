@@ -1,0 +1,16 @@
+cabal-version: 3.8
+name:          infernix-cabal-format
+version:       0.1.0.0
+license:       MIT
+build-type:    Simple
+
+test-suite infernix-cabal-format
+    type:             exitcode-stdio-1.0
+    main-is:          Spec.hs
+    default-language: GHC2021
+    ghc-options:      -Wall -Werror -rtsopts=ignoreAll -with-rtsopts=-M1024M
+    build-depends:
+        Cabal ==3.16.1.0,
+        base >=4.18 && <4.23,
+        directory >=1.3 && <1.4,
+        filepath >=1.4 && <1.6

@@ -13,12 +13,15 @@
 - Native engine artifacts and engine install roots live under `./.data/engines/<adapterId>/`,
   never `./.build/`; the Haskell binaries still build host-native to `./.build/`.
 - Apple Metal/Core ML engine materialization uses a Tart-free headless host lane and typed
-  engine-artifact manifests; the old `hostTart` / `AppleTart` helper path is removed. All
+  engine-artifact manifests, with no `hostTart` / `AppleTart` helper path. All
   provisioning and installed-smoke processes run through the opaque bounded provisioning region,
   and a root becomes visible only after candidate hydration, smoke, provenance capture, actual
   payload hashing, and the fsynced sibling activation transaction.
 - Generated frontend contracts live only under `web/src/Generated/`, and generated browser bundles
   live under `web/dist/`.
+- Four byte-exact Haskell `proto-lens-protoc` outputs are deliberately tracked below `src/Proto/`;
+  the canonical `.proto` inputs and `proto/haskell-bindings.sha256` govern them, and only those four
+  paths are excluded from handwritten-Haskell style checks.
 - Runtime inference results reload only from protobuf-backed `./.data/runtime/results/*.pb`
   records.
 - Operator config is not a build artifact: `infernix init` owns the gitignored repo-root
@@ -77,8 +80,15 @@ of the supported artifact contract.
 - inference-result reloads use `./.data/runtime/results/*.pb`
 - cache manifests sit beside the cached weights at
   `./.data/runtime/model-cache/<runtime-mode>/<model-id>/manifest.pb`
+- the four tracked Haskell protobuf modules under `src/Proto/` are generated source, not an authoring
+  surface. `infernix lint proto` proves their exact inventory and hashes without code generation;
+  the native Linux launcher image build regenerates with pinned `libprotoc 34.1` and
+  `proto-lens-protoc 0.9.0.1` and byte-compares every output
 - `ensurePoetryProjectReady` regenerates Python protobuf stubs under `tools/generated_proto/` when
   they are missing
+- the prepared-environment producer materializes canonical Python-stdio framework venvs under
+  `python/engines/<engine>/.venv/` before inference and writes the fixed marker only after
+  recomputing the post-install `pyproject.toml` plus optional `poetry.lock` digest
 
 ## Native Engine Artifacts
 
@@ -99,22 +109,17 @@ There is no `hostTart` host-manifest field, no `AppleTart` prerequisite, and no 
 builder. The `infernix internal materialize-metal-engines` helper writes a typed
 `engine-artifact.json` manifest for each allowlisted Apple adapter into its final engine root. There
 is no standalone bridge root, embedded native source, generated native file, or compiler script.
-replaced the former Apple
-validation-wrapper roots with real native runners: llama.cpp/whisper.cpp delegate to host CLIs,
-CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs the pinned macOS
-arm64 app. The correction's focused direct upstream MLX and coremltools preflights are green, but
-Apple integration evidence
-from the prior lane validates pinned Apple
-host-engine `Exclusive` duplicate rejection, proves same-machine Apple `Shared` subscription
-coexistence, and covers Apple production `demo_ui = false` assertions. It also proves the
-source-fingerprint rebuild/reuse path by
-rebuilding the changed repo-owned image once before reusing the stamped image on later edge-port
-validation cycles. Follow-up plain-progress probing of the earlier long Docker interval showed
-active Cabal dependency compilation, image export, Harbor push, and Helm/Pulsar readiness waits
-rather than a Docker daemon deadlock, and current source adds source-fingerprint image reuse plus
-Dockerfile dependency caching for that host-native Apple cluster-image path. The Apple-only cohort
-residual is the remaining routed real-output e2e/all evidence recorded in
-[../../DEVELOPMENT_PLAN/cohort-validation-waves.md](../../DEVELOPMENT_PLAN/cohort-validation-waves.md).
+After the native-artifact session releases its lock, the same helper also invokes the shared
+per-engine Python producer for `transformers`, `pytorch`, and `diffusers`; those execution venvs live
+under `python/engines/` and are distinct from package-backed native artifact payloads under
+`./.data/engines/`. Native roots bind real runners: llama.cpp/whisper.cpp delegate to host CLIs,
+CTranslate2/ONNX/MLX/Core ML hydrate per-engine venvs, and Audiveris installs the pinned macOS arm64
+app. Validation requires direct upstream MLX and coremltools preflights, pinned-member `Exclusive`
+duplicate rejection, the production `demo_ui = false` shape, and routed real output. One engine runs
+per machine; any multi-host `Shared` claim requires evidence from distinct Apple hosts. The cluster
+image path uses source-fingerprint reuse and Dockerfile dependency caching; long Cabal compilation,
+image export, Harbor push, and Helm/Pulsar readiness intervals remain healthy only while lifecycle
+heartbeat evidence advances.
 
 Every materialized engine root carries a typed manifest recording `adapterId`, `engineName`,
 `substrate`, `architecture`, `artifactKind`, `sourceRef`, exact engine/Python/runtime versions,
@@ -131,10 +136,9 @@ the fixed release checksum gates the cache and kernel device identity gates deta
 Activation fsyncs the complete candidate and parent directory around sibling renames, retains the
 prior exact root through final-path revalidation, rolls back on synchronous failure or asynchronous
 cancellation, and reconciles only unambiguous complete `.previous` / `.tmp` crash residue. The
-focused transaction, full-materializer, and compile-boundary suites are being expanded with the
-the materialization surface. Fresh final
-review, exact-source complete Stage 1, and real Apple rematerialization/runtime plus paired
-`linux-cpu` cohort evidence remain.
+focused transaction, full-materializer, and compile-boundary suites validate the materialization
+surface, including exact-source completeness, Apple rematerialization/runtime behavior, and
+cross-lane `linux-cpu` parity.
 
 ## Linux Native Engine Artifacts
 
@@ -214,14 +218,16 @@ that consume the file link the same library through the in-cluster `infernix` bi
   Playwright default output directories such as `test-results/` and `playwright-report/` under the
   active runner working tree when emitted, and compose-run artifacts are container-local unless
   explicitly bind-mounted
-- engine-adapter Python builds use Poetry against the shared `python/` project; outside the
-  cluster, `poetry install --directory python` materializes a repo-local adapter virtual
-  environment at `python/.venv/`, and Linux substrate image builds run the same shared install
+- engine-adapter quality/protobuf builds use Poetry against the framework-free shared `python/`
+  project and materialize `python/.venv/`. Python-stdio execution uses the canonical prepared
+  project under `python/engines/<engine>/.venv/`; Apple and Linux CPU call the same bounded Haskell
+  producer before inference, while Linux GPU's selected engine image owns its CUDA venv. Runtime
+  verifies the executable and marker and never installs on a request path
 - the supported web build runs on Node.js 22.5+ on both the host and Linux substrate-image paths
 - `.gitignore` and `.dockerignore` mirror the generated-artifact ignore set: Poetry lockfiles,
   generated protobuf stubs, Python bytecode, mypy and ruff caches, `web/spago.lock`,
   `web/package-lock.json`, `web/src/Generated/`, `web/dist/`, `web/output/`, and
-  `python/.venv/` are not tracked
+  `python/.venv/` and `python/engines/*/.venv/` are not tracked
 
 ## Validation
 
@@ -229,11 +235,13 @@ that consume the file link the same library through the in-cluster `infernix` bi
   metadata contract.
 - `infernix test unit` covers protobuf-backed result reloads, protobuf-backed cache-manifest
   handling, and PureScript contract generation to `web/src/Generated/Contracts.purs`.
-- `infernix lint files` fails if the implemented tracked generated-source set returns to tracked
-  paths, including generated protobuf stubs, generated PureScript contracts, Python bytecode,
-  Poetry or Spago lockfiles, and mypy or ruff cache directories.
+- `infernix lint files` fails if the ordinary untracked generated-source set returns to tracked
+  paths, including Python protobuf stubs, generated PureScript contracts, Python bytecode, Poetry
+  or Spago lockfiles, and mypy or ruff cache directories. The four-path tracked Haskell protobuf
+  exception is governed separately and exactly by `infernix lint proto`.
 - `git ls-files` remains the direct audit surface for ignored derived outputs such as
-  `web/package-lock.json`, `web/dist/`, `web/output/`, and `python/.venv/`.
+  `web/package-lock.json`, `web/dist/`, `web/output/`, `python/.venv/`, and
+  `python/engines/*/.venv/`.
 
 ## Cross-References
 

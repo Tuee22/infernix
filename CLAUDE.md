@@ -28,17 +28,16 @@ Read first:
 - never run `git add`
 - never run `git commit`
 - never run `git push`
-- keep `DEVELOPMENT_PLAN/` aligned with the current implementation state
+- keep implementation status and validation receipts aligned in `DEVELOPMENT_PLAN/`
 - realness by construction: inference engine adapters (`python/adapters/*_python.py`) and native
   runners (`src/Infernix/Engines/{LinuxNative,AppleSilicon}.hs`) must return only real model output or
   raise / exit non-zero (→ `status=failed`). No fabricated results — no
   `_validation_*`/`*_smoke*`/`*_fallback*` helpers, no hardcoded artifact/base64 constants, no
   `np.zeros`→`session.run`, no print-and-`exit 0` failure masks, no `infernix_emit_validation_result`
   wrapper. The realness lint (`realnessFabricationViolations` in `Infernix.Lint.HaskellStyle` plus the
-  `check-code` AST pass), owned by Phase 0 Sprint 0.12 with its per-runner scope extended by Phases 1/4,
-  enforces this. Canonical doctrine:
+  `check-code` AST pass) enforces this. Canonical doctrine:
   [documents/architecture/realness_contract.md](documents/architecture/realness_contract.md)
-- evidence-gated state transitions are the target construction: every operation that acts on a system state consumes typed
+- evidence-gated state transitions: every operation that acts on a system state consumes typed
   evidence that its transition completed. The raw destructive, commit, and spawn primitives — the
   retained-state `rm` scrub, the readiness-sentinel commit, and unbounded
   `readCreateProcessWithExitCode` — are unexported, so acting on an unmanaged state (a race or flake)
@@ -92,15 +91,15 @@ Read first:
 - cluster ownership and mutation-position by construction: the persisted cluster state names its owner
   (`ClusterOwner = OperatorOwned | HarnessOwned`) and the raw `clusterDown` teardown consumes typed
   ownership evidence, so a teardown outside a held lifecycle-lock lease does not typecheck and a
-  teardown authority can neither escape its region nor be reused. `ClusterTeardownAuthority` is now
+  teardown authority can neither escape its region nor be reused. `ClusterTeardownAuthority` is
   indexed by a promoted `ClusterOwner` as well as its lock region, so an authority minted for the
   harness is not the same type as one minted for the operator and cannot be substituted for it — a
   compile-fail fixture pins that. Be precise about what the index does *not* buy: it decides nothing
   about who owns a *live* cluster. That remains a fail-closed evidence check under the same held
   lease — the persisted owner and the live Kind inventory are reread and compared inside the lock —
   so `infernix test all` fails closed on an operator's running cluster by a checked refusal, not by
-  GHC. Ownership evidence now travels *with* the protected resource: the Kind cluster name is
-  machine-global while the lock, reservation, and persisted state are repo-local, so Sprint 6.45
+  GHC. Ownership evidence travels *with* the protected resource: the Kind cluster name is
+  machine-global while the lock, reservation, and persisted state are repo-local, so the lifecycle
   records the creating checkout's host-side repo root inside the control-plane node at
   `/etc/infernix/cluster-checkout-identity` and every authorization reads it back and requires
   agreement. Relocating the lock and renaming the cluster were both rejected: neither works inside a
@@ -120,28 +119,40 @@ Read first:
   `Enforcer`, and an inference subprocess can launch only from the resulting opaque
   `ExecutableModel`. The capped-engine kernel bounds actual resident memory to its
   `MemoryCeiling`; a measured breach is a clean `status=failed` `ModelMemoryLimitExceeded`, not a
-  fabricated result. Apple and Linux CPU watchdog implementations are present, but their adversarial
-  proof and an execution authority that makes concurrent reuse unrepresentable remain Phase 4 work.
-  NVIDIA per-process VRAM enforcement and broad raw-spawn exemption removal remain Phase 6 work.
+  fabricated result. The execution authority remains inside the opaque engine capability so
+  concurrent reuse is unrepresentable; Apple/Linux CPU observers enforce resident-memory ceilings,
+  and Linux GPU execution requires independently indexed RAM and VRAM grants and observers.
   Physical host RAM is a checked `HostMemoryPartition`, every model declares a required positive
   `ModelMemoryFootprint`, and every `InferenceMemoryBudget` names its enforcer.
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
-- bounded host memory: every host toolchain process runs under a declared memory ceiling derived
-  from measured physical RAM, and a ceiling is inseparable from the concurrency it is multiplied by
-  — a per-process cap under `jobs: $ncpus` bounds the host at `jobs × cap`, not at `cap`.
+- bounded host memory: every Haskell toolchain image runs under an authority-derived heap ceiling,
+  and a ceiling is inseparable from the complete claimant arithmetic it participates in. The normal
+  compiler phase is `jobs × compilerHeap + (jobs + 1) × controlHeap`: one fixed control/helper slot
+  per compiler worker plus the live Cabal driver. Native compiler helpers occupy those declared
+  slots; on Darwin that reserve is arithmetic and sampled evidence, not a kernel-enforced native
+  heap bound.
   Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
-  exhausted a 124.94 GiB development host on 2026-08-03 while the kernel, which selects per process
+  exhausted a 124.94 GiB development host while the kernel, which selects per process
   and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
   The compiler runtime reserves 1024.65 GiB of address space by default, so the built executable
   declares a bounded reservation before any memory limit is installable at all. The mechanism is
-  resolved per lane and fails closed when unavailable: a cgroup scope bounds the aggregate of a
-  build tree on Linux, while Darwin has neither cgroups nor an enforced address-space limit and gets
-  a runtime heap cap plus bounded concurrency only. This does **not** make a host out-of-memory
-  condition impossible — page cache, kernel slab, the OOM-protected container runtime, and every
-  process infernix did not start remain outside the bound — and the doctrine names what it does not
-  bound rather than overstating the guarantee. Canonical doctrine:
+  resolved per lane and fails closed when unavailable: an existing cgroup maximum bounds the
+  aggregate on the Linux container lane, while Darwin has neither cgroups nor an enforced
+  address-space limit and gets Haskell heap caps, bounded concurrency, claimant arithmetic, and an
+  opt-in sampled process-group proof. The shipped operator CLI and its fixed observer tools are not
+  toolchain claimants; they remain in the host reserve and outside the sampled Cabal group. One
+  opaque authority serializes its own package-owned child lifecycles, but this is not a host-global
+  or crash-surviving lease: independent CLI images, checkouts, and stage-0 bootstraps are unsupported
+  concurrent toolchain claimants, the 50% account does not fund their overlap, and governed
+  workflows must serialize them. Normal completion trusts and reaps the Cabal scheduler leader;
+  only exceptional cleanup signals its still-owned process group, so no normal descendant-absence
+  or hard-kill-survival proof is claimed. This does **not** make a host out-of-memory condition
+  impossible — native-helper growth beyond its measured
+  slot, page cache, kernel slab, the OOM-protected container runtime, and every process infernix did
+  not start remain outside the enforced bound — and the doctrine names what it does not bound rather
+  than overstating the guarantee. Canonical doctrine:
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**
   engine process, all consuming the same Pulsar `Shared` pool topic, each with its own model cache
@@ -164,19 +175,20 @@ Read first:
 - run `infernix lint docs` before closing documentation changes, using the active execution
   context: direct `./.build/infernix` only on Apple Silicon, and the Linux outer-container
   launcher for `linux-cpu` or `linux-gpu`
-- do not use host `cabal` builds for Linux or CUDA validation; direct
-  `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-  is the Apple Silicon host-native reference path only, and every host `cabal` invocation runs
-  under the declared build ceiling
+- do not use bare host `cabal` commands for validation. Linux and CUDA use the outer-container
+  launcher. Apple clean-clone/rebuild uses `./bootstrap/apple-silicon.sh build`, whose fixed stage-0
+  preflight measures physical memory and the active Colima pledge before its exact seed-bound Cabal
+  invocation; after `infernix init`, focused Haskell gates run through the closed CLI toolchain
+  vocabulary and live derived authority
   ([documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md))
 - do not install Xcode on the Apple host and do not rely on Tart for new Apple engine work. The
-  target Apple Metal/Core ML materialization path is headless without VM startup, user keychain
+  Apple Metal/Core ML materialization path is headless without VM startup, user keychain
   state, Xcode UI flows, or repo-owned native source: use typed engine-artifact manifests and
   upstream-owned MLX/Core ML package APIs as described in
   [documents/engineering/apple_silicon_metal_headless_builds.md](documents/engineering/apple_silicon_metal_headless_builds.md).
-  The legacy `tart` / `hostTart` / `AppleTart` implementation has been removed; the retained
-  `materialize-metal-engines` helper is the Tart-free manifest materialization surface, with Apple
-  hardware smoke evidence tracked under active Phase 1 Sprint 1.20
+  No `tart` / `hostTart` / `AppleTart` implementation exists; the retained
+  `materialize-metal-engines` helper is the Tart-free manifest materialization surface. Validation
+  requires upstream MLX GPU operation, Core ML device observation, native load, and routed real output
 - never use cross-architecture emulation for development or validation. Do not run amd64 Linux
   through Apple Silicon emulation, and do not create or switch Docker contexts or create a Colima
   VM on Apple Silicon
@@ -200,9 +212,12 @@ Read first:
   sole generator of every `.dhall` — including the ConfigMap/Secret bodies (Helm only `nindent`s a
   binary-produced string, never renders/parses Dhall). Schemas are reflected from the Haskell
   decoder types. Operators create config with `infernix init` (runtime `./infernix.dhall` + host
-  manifest) and `infernix test init` (`./infernix.test.dhall`); ordinary `infernix` commands fail
-  fast if config is missing, naming the init to run, while `./bootstrap/apple-silicon.sh up`
-  explicitly runs `./.build/infernix init --if-missing` before `cluster up`. The test harness generates
+  manifest) and `infernix test init` (`./infernix.test.dhall`); help and init are config-independent
+  so `init --force` can replace a stale host schema through the closed writer. Ordinary `infernix`
+  commands still fail fast if config is missing, naming the init to run;
+  `./bootstrap/apple-silicon.sh up` explicitly runs `./.build/infernix init --if-missing` before
+  `cluster up`, while its `test` command runs the runtime-mode-specific `init --if-missing` before
+  test initialization and `test all`. The test harness generates
   `./infernix.dhall` from `./infernix.test.dhall`, runs, and deletes it. The model set is whatever
   the mounted runtime `infernix.dhall` lists (the `src/Infernix/Models.hs` matrix is a demo-only
   generator); the coordinator eager-stages that set at startup. Canonical doctrine:

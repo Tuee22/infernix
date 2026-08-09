@@ -254,10 +254,12 @@ Rules:
   must call out compatibility layers explicitly until that is true.
 - Apple Silicon host builds place the compiled `infernix` binary and other generated build
   artifacts under `./.build/`, and supported host-native command examples use `./.build/infernix`.
-- Plan documents may reference the bounded `bootstrap/*.sh` stage-0 entrypoints for supported host
-  provisioning and launcher construction, but they still spell out the underlying direct `cabal`,
-  `docker compose run --rm infernix infernix ...`, and `infernix` invocations when explicit flags
-  or substrate mechanics matter.
+- Supported Apple build examples use `./bootstrap/apple-silicon.sh build`; after that governed
+  bootstrap produces the binary, focused examples use `./.build/infernix ...`. Raw Cabal remains an
+  internal, fixed, authority-derived bootstrap/toolchain mechanism and is never an operator
+  validation instruction. Linux examples may spell out the outer-container
+  `docker compose run --rm infernix infernix ...` form when explicit flags or substrate mechanics
+  matter.
 - Stage-0 shell scripts are responsible only for host prerequisites and building or entering the
   substrate-specific `infernix` launcher. They must not directly create or delete Kind clusters,
   apply Kubernetes manifests, run Helm rollout logic, pull containers, publish images, or
@@ -610,9 +612,10 @@ Substrate-specific validation is explicit.
 - Supported validation removes simulated cluster, route, transport, and generic inference-success
   fallback behavior from the supported execution path. Test results name the single substrate they
   exercised and do not imply coverage that was not run.
-- when an owning phase calls out real-cluster HA or lifecycle assertions, the supported
-  non-Apple-cluster lane also owns those pod-replacement, durability, failover, or rebinding
-  checks on the deployed substrate rather than any simulated fallback.
+- when an owning phase calls out real-cluster lifecycle or recovery assertions, the supported
+  non-Apple-cluster lane owns those checks on the deployed single-instance substrate rather than
+  any simulated fallback. Replica failover, anti-affinity, and chaos results belong only to
+  explicitly historical evidence for the retired topology and are not current closure criteria.
 - `infernix test e2e` for a given initialized substrate exercises every demo-visible catalog entry
   present in that same generated file through the routed web surface unless a narrower exception is
   called out explicitly in the owning phase document.
@@ -704,11 +707,16 @@ Rules:
 > **Implement in natural phase order on whichever single machine is present, and
 > validate each phase on exactly one accelerator plus `linux-cpu` — never both
 > accelerators.** Every open phase has two independent axes. *Code-side closure*
-> (Axis 1) is the implementation plus the machine-independent gate set —
-> `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-> `infernix lint files/docs/chart/proto`, `infernix docs check`, the web unit
-> suite, and `poetry run check-code`; completed in natural order on one machine, it
-> is the gate to begin the *next* phase's implementation. *Single-accelerator
+> (Axis 1) is the implementation plus the machine-independent gate set. On Apple,
+> build/rebuild through `./bootstrap/apple-silicon.sh build`, initialize through the
+> generated binary, and run focused gates through the closed `./.build/infernix test
+> lint|unit` and `./.build/infernix lint files|docs|chart|proto` / `docs check`
+> vocabulary; the binary owns the Haskell, web, and Python sub-gates. On Linux use
+> the corresponding outer-container launcher. A plan may name the fixed internal
+> suite selected by a closed CLI gate as evidence, but may not prescribe bare host
+> Cabal, Poetry, or npm as the supported validation surface. Completed in natural
+> order on one machine, Axis 1 is the gate to begin the *next* phase's
+> implementation. *Single-accelerator
 > sign-off* (Axis 2) is the hardware-specific full-suite for the phase's **one**
 > chosen accelerator (`apple-silicon` Metal/Core ML, **or** `linux-gpu` CUDA) plus
 > `linux-cpu`, recorded as a committed per-lane attestation; it is the gate for
@@ -756,15 +764,25 @@ Static quality and compiler hygiene are first-class repository requirements.
   shape, function shape, effect-boundary clarity, and typed control flow.
 - The Haskell style guide states the fail-fast rule explicitly: supported validation fails on
   hard-gate violations and does not silently rewrite tracked source.
-- `ormolu` is the canonical Haskell source formatter on the supported path. The style gate
-  bootstraps a dedicated compatible toolchain under `.build/haskell-style-tools/bin/`, using the
-  formatter compiler version required by `src/Infernix/Lint/HaskellStyle.hs` rather than the
-  project's main compiler.
-- `hlint` runs through that same repo-owned style bootstrap against the supported Haskell source
-  roots; the plan must not claim a committed root `.hlint.yaml` until the repository actually
-  carries one.
-- `cabal format` round-trips the `.cabal` file through a temp-file byte-equality check; the check
-  surface does not rewrite tracked source in place.
+- `ormolu` is the canonical Haskell source formatter on the supported path. The dedicated
+  `infernix-haskell-style` component pins `ormolu ==0.8.0.2`, invokes its API in-process with the same Cabal and `.ormolu`
+  refinement as `--mode check`, and compares rendered source without rewriting tracked files.
+- `hlint ==3.10` runs in-process over that same exact inventory; the plan must not claim a committed
+  root `.hlint.yaml` until the repository actually carries one.
+- source inventory is recursive below `app/`, `src/`, and `test/`. Its only exclusions are the four
+  exact checked-in paths in `Infernix.Lint.Proto.generatedHaskellProtoFiles`, whose generator-exact
+  bytes are governed by `infernix lint proto` and `proto/haskell-bindings.sha256`; similarly named
+  handwritten files remain style-gated.
+- the genuinely separate package under `test/cabal-format/` links `Cabal ==3.16.1.0`, parses and
+  renders both Cabal manifests in-process, and compares the results byte-for-byte. This is the
+  pinned `cabal format` payload without a temp file, nested style-tool process, or tracked-source
+  rewrite. A second suite in the root package is insufficient because enabled suites still share
+  one solver universe; the separate package keeps Cabal-syntax 3.16 out of Ormolu's Cabal-syntax
+  3.14 world.
+- neither style check installs or discovers formatter executables at runtime. Ormolu/HLint have no
+  host-manifest fields and are dependencies only of root-package `infernix-haskell-style`; Cabal
+  3.16 is a dependency only of the solver-isolated package. `infernix test lint` owns both closed,
+  sequential top-level toolchain invocations.
 - Repo-owned validation enables strict compiler warnings and treats warnings as errors on supported
   paths.
 - If the repository later adopts additional external formatters or linters, the plan must be updated

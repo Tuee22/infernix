@@ -15,9 +15,10 @@
 -- lane actually gets: inside the Linux outer launcher container,
 -- @\/proc\/meminfo@ still reports the whole machine while the container's own
 -- cgroup maximum is the real bound, so the Linux path intersects the two and
--- the smaller wins. Darwin has no cgroups, so the two figures are equal there
--- and this module says so rather than implying an intersection it did not
--- perform.
+-- the smaller wins. On Darwin, the supported container lanes consume a
+-- co-resident Colima VM pledge from the same physical RAM, so the host-native
+-- toolchain's effective figure subtracts the conservatively observed aggregate
+-- active pledge. An unavailable or malformed Colima observation fails closed.
 --
 -- Canonical doctrine: documents\/architecture\/bounded_host_memory.md.
 module Infernix.HostMemory
@@ -36,6 +37,7 @@ import Infernix.BuildMemory
     deriveBuildMemoryPlan,
     resolveBuildConcurrency,
   )
+import Infernix.DemoConfig.Colima qualified as Colima
 import Infernix.HostConfig (HostConfig, HostMemoryFacts (..))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools qualified as HostTools
@@ -47,9 +49,11 @@ import System.Info (os)
 --
 -- Linux reads @\/proc\/meminfo@ and intersects it with the cgroup v2 maximum in
 -- force. Darwin reads @sysctl -n hw.memsize@ through the manifest-owned
--- absolute path — the manifest record is passed in rather than read back,
--- because the sole caller is the manifest materializer itself and the file it
--- is about to write does not exist yet.
+-- absolute path, then subtracts the aggregate active Colima pledge observed by
+-- the shared fixed-path producer in 'Infernix.DemoConfig.Colima'. The manifest
+-- record is passed in rather than read back because the sole caller is the
+-- manifest materializer itself and the file it is about to write does not
+-- exist yet.
 --
 -- An unsupported platform, an unreadable probe, or a non-positive result is a
 -- named 'Left'.
@@ -64,7 +68,8 @@ observeHostMemoryFacts hostConfig =
             ( "host memory cannot be measured on the unsupported platform `"
                 <> other
                 <> "`; the supported lanes are Linux (/proc/meminfo intersected "
-                <> "with the cgroup maximum) and Darwin (sysctl hw.memsize)"
+                <> "with the cgroup maximum) and Darwin (sysctl hw.memsize minus "
+                <> "the active Colima pledge)"
             )
         )
 
@@ -158,17 +163,19 @@ observeDarwinHostMemoryFacts hostConfig = do
             )
         Just bytes ->
           let physicalMib = fromInteger (bytes `div` bytesPerMib) :: Natural
-           in pure
-                ( Right
+           in do
+                observedPledge <- Colima.observeActiveColimaPledgeMib
+                pure $ do
+                  pledgedMib <- observedPledge
+                  effectiveMib <-
+                    Colima.effectiveHostMemoryMibAfterColimaPledge
+                      physicalMib
+                      pledgedMib
+                  Right
                     HostMemoryFacts
                       { hostPhysicalMemoryMib = physicalMib,
-                        -- Darwin has no cgroups, so there is nothing to
-                        -- intersect with and the effective figure is the
-                        -- physical one. Recorded explicitly rather than left
-                        -- to a reader to infer.
-                        hostEffectiveMemoryMib = physicalMib
+                        hostEffectiveMemoryMib = effectiveMib
                       }
-                )
 
 -- | The @MemTotal:@ line of a @\/proc\/meminfo@ payload, in MiB.
 --

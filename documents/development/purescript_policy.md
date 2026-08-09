@@ -35,7 +35,7 @@ flag. Production deployments leave the flag off and the cluster has no demo UI w
   active Linux substrate image build, both on Node.js 22.5+
 - supported routed Playwright E2E on Linux stays container-owned inside the substrate image with
   `npm --prefix web exec -- playwright test`; Apple host-native routed E2E uses host
-  `npm exec` with the same typed fixture and is covered by the Apple cohort validation batch
+  `npm exec` with the same typed fixture and is covered by the Apple selected-accelerator gate
 - the substrate image copies `web/scripts/` before npm `postinstall`, so the official PureScript
   compiler acquisition path is available in the image build context
 
@@ -45,12 +45,12 @@ Warnings from the npm toolchain are not accepted as permanent background noise. 
 owns the dependency edge, the supported fix is to migrate to a maintained tool release and validate
 the PureScript unit suite plus routed Playwright coverage.
 
-Current status:
+Supported dependency contract:
 
-- the legacy `purescript` npm installer package is not used; `web/scripts/install-purescript.mjs`
+- the `purescript` npm installer package is not used; `web/scripts/install-purescript.mjs`
   installs the official `purs` binary into `web/node_modules/.bin/`
 - Spago is pinned to the maintained 1.x line, and `web/package.json` overrides Spago's transitive
-  `glob` dependency to `glob@13.0.6` so the legacy `glob@11` warning is not part of the current
+  `glob` dependency to `glob@13.0.6` so the `glob@11` warning is not part of the supported
   install
 - direct-tool warnings from packages the repository pins directly, such as Playwright, Spago,
   `esbuild`, or future npm-distributed tooling, are ordinary maintenance work and should be

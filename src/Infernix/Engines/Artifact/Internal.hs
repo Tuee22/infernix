@@ -1379,12 +1379,14 @@ hashDescriptorAtExactSize
                     )
                 )
             let nextObservedBytes = observedBytes + chunkBytes
+                nextContext = SHA256.update currentContext chunk
             observeBoundary
               (ArtifactSnapshotFileChunkRead relativePath nextObservedBytes)
-            readChunks
-              (SHA256.update currentContext chunk)
-              (remainingBytes - chunkBytes)
-              nextObservedBytes
+            nextContext `seq`
+              readChunks
+                nextContext
+                (remainingBytes - chunkBytes)
+                nextObservedBytes
 
 payloadDigestChunkBytes :: ByteCount
 payloadDigestChunkBytes = 64 * 1024

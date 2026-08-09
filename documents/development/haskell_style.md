@@ -83,15 +83,47 @@
 
 ## Enforcement Model
 
-- `src/Infernix/Lint/HaskellStyle.hs` is the implementation source of truth for the style gate.
-- `runHaskellStyleLint` bootstraps `ormolu` and `hlint` into `./.build/haskell-style-tools/bin/`
-  through `cabal install ormolu hlint --installdir=./.build/haskell-style-tools/bin/` against the
-  project `ghc-9.12.4` toolchain; supported validation fails fast when the project compiler is
-  unavailable.
-- the style gate checks `Setup.hs`, `app/`, `src/`, and `test/` with `ormolu --mode check` and
-  `hlint`
-- the style gate checks `infernix.cabal` by formatting a temporary copy with `cabal format` and
-  comparing the result rather than rewriting the tracked manifest in place
+- `src/Infernix/Lint/HaskellStyle.hs` owns the exact source inventory and repo-specific readability
+  rules. Its `runHaskellStyleLintWith` seam accepts formatter and linter callbacks;
+  `test/haskell-style/Spec.hs` supplies the heavyweight in-process implementations so production
+  executables do not link those libraries.
+- the root package's `infernix-haskell-style` component pins and links `ormolu ==0.8.0.2` and
+  `hlint ==3.10`. The solver-isolated `test/cabal-format/infernix-cabal-format.cabal` package pins
+  and links `Cabal ==3.16.1.0`. The package boundary is load-bearing: enabling two test suites in
+  one package still gives Cabal one solver universe, while Ormolu and Cabal 3.16 require
+  incompatible `Cabal-syntax` versions. Neither check installs tools at runtime, discovers a
+  formatter through `PATH`, or starts nested `ormolu`, `hlint`, or caller-shaped `cabal` processes.
+- both lint processes have baked 1024 MiB RTS heap caps and reject caller-supplied RTS overrides.
+  Live `GHC.RTS.Flags` assertions prove that each process entered with that exact cap, while the
+  Haskell-style manifest fixture requires exact equality between the top-level Cabal test-suite
+  stanzas and the constructor-derived closed toolchain vocabulary, pins every corresponding
+  per-component RTS row, and rejects a global `cabal.project` override.
+- formatter-gate repository discovery explicitly ignores the operator host manifest. Missing or
+  stale host-schema state therefore cannot prevent either focused component from locating and
+  checking the worktree.
+- source discovery recursively checks `app/`, `src/`, and `test/`. The only exclusions are the four
+  exact paths in `Infernix.Lint.Proto.generatedHaskellProtoFiles`; their generator-exact bytes and
+  tree shape are governed by `infernix lint proto` plus `proto/haskell-bindings.sha256`. A similarly
+  named handwritten file remains in the Ormolu, HLint, and readability inventory.
+- the Ormolu callback recreates `ormolu --mode check` semantics for every inventory path, including
+  Cabal component discovery, source-type detection, and `.ormolu` fixity/module-re-export
+  refinement, then compares the rendered text without rewriting the source.
+- the HLint callback passes that same exact inventory to `Language.Haskell.HLint.hlint`; any finding
+  fails the gate.
+- the Cabal-format package reads both `infernix.cabal` and its own package manifest with the pinned
+  Cabal API and compares `showGenericPackageDescription` with the tracked bytes. The closed
+  `ToolchainCabalFormat` invocation runs that package as a sequential top-level child of the same
+  build-memory authority and keeps its build directory below the repo-root `.build/`, outside the
+  recursively styled `test/` tree. Its project fixes GHC 9.12.4, disables environment-file writes,
+  carries a bounded standalone fallback, and the spawn boundary refuses sibling
+  `cabal.project.local` or `cabal.project.freeze` overlays. This is the pinned `cabal format`
+  payload without a temporary file, nested Cabal process, or in-place rewrite.
+- focused negative fixtures require a deliberately unformatted Haskell module and a module
+  producing exactly one HLint idea to fail in `infernix-haskell-style`; a deliberately de-formatted
+  but valid Cabal manifest must fail in `infernix-cabal-format`.
+- `ormolu` and `hlint` remain explicit forbidden bare-`proc` command names even though their
+  `HostTool` constructors are retired, so reintroducing an ambient executable path fails the same
+  no-PATH lint as other host tools.
 - the style gate rejects every direct `foreign import` in repository-owned Haskell; there is no
   observer allowlist
 - the repo-owned files gate (`infernix lint files`) rejects the governed native-source extension
@@ -105,7 +137,7 @@
   environment, and standard-stream pipes; that anchor starts and reaps the supervisor. A total
   length-bounded typed framed protocol and hidden linear phase transitions inside a rank-2 session
   region make durable activity publication a type-level prerequisite for target start
-- the style gate enforces the engine-runtime import boundary and the Phase 7 shared-library
+- the style gate enforces the engine-runtime import boundary and the shared-library
   import boundary described in
   [implementation_boundaries.md](../engineering/implementation_boundaries.md)
 - the style gate carries the managed-state capability-gating rules that back the raw primitives the
@@ -130,13 +162,13 @@
   `runBoundedCommand` use across the Apple facade, its hidden implementation, the artifact
   transaction, and provisioning modules. Only the hidden provisioning facade may interpret its
   closed commands through the bounded subprocess kernel
-- `infernix test lint` runs the Haskell style gate together with the repo-owned files, chart,
-  proto, docs, Python, and build-warning checks
+- `infernix test lint` runs both in-process formatter checks together with the repo-owned files,
+  chart, proto, docs, Python, and build-warning checks
 
 ## Validation
 
-- `cabal test infernix-haskell-style` is the mechanical formatter and linter gate
-- `infernix test lint` is the canonical static-quality entrypoint
+- `infernix test lint` is the canonical static-quality entrypoint and owns both solver-isolated
+  formatter invocations; no bare Cabal command is a supported validation instruction
 - supported validation is fail-fast and stops on drift instead of rewriting tracked files
 
 ## Cross-References

@@ -1,13 +1,17 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Done — with a named open dependency, per Section C of
+**Status**: Blocked — Phase 0 Sprint 0.22 is an internal governance prerequisite, not an allowed
+external or supported-lane validation dependency.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Done — with a named open dependency, per Section C of
 [development_plan_standards.md](development_plan_standards.md). The
 [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) of 2026-08-08 invalidated the Wave T
-(2026-07-12) and Wave V (2026-07-20) attestations this phase cites, and `test all` cannot currently
-run on either lane. This phase owns no surveyed Darwin blocker and no code-side work is open in it,
+(2026-07-12) and Wave V (2026-07-20) attestations this phase cites. This phase owns no known current
+defect and no code-side work is open in it,
 so it stays `Done` while naming the dependency: its cohort evidence is reproduced under
-[Wave Y](cohort-validation-waves.md), gated behind Phase 1 Sprint 1.20's bounded-command environment
-defect. Sprint 5.11 is closed for typed inference errors in browser contracts and the
+[Wave Y](cohort-validation-waves.md) after Phase 1's complete current-source gates and cohorts. The
+former Sprint 1.20 bounded-command environment defect is corrected and is historical context, not
+the current blocker. Sprint 5.11 is closed for typed inference errors in browser contracts and the
 demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
 no-env scopes. Wave T closed on 2026-07-12 with `linux-cpu` plus the selected `linux-gpu`
 accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by
@@ -19,6 +23,10 @@ accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by
 > generated-path cleanup that reserves `Generated/` directories for real generated outputs only.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 5 is blocked by Phase 0 Sprint 0.22. Its prior `Done` state and
+> named evidence dependency are suspended intact; this internal prerequisite is not a Section C
+> exception.
 
 Phase 5's original PureScript demo UI, Haskell-owned browser-contract source, generated contract
 path under `web/src/Generated/`, clustered demo hosting rule, container-owned routed Playwright

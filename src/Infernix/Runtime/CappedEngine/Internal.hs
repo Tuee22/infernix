@@ -80,6 +80,7 @@ import Infernix.ExecutionPlan.Internal
         RuntimePodResources
       ),
   )
+import Infernix.Python qualified as Python
 import Infernix.Runtime.CappedEngine.Cleanup qualified as CappedCleanup
 -- The @\/proc@ resident-set reader is reachable only from the Linux pair, so
 -- its imports belong to the branch that uses it. The fixed public-tool
@@ -425,19 +426,22 @@ nativeArtifactInstallRoots
 -- the runtime-refined model and repository paths. No caller can provide a raw
 -- process specification.
 runExecutablePythonWorker ::
+  Python.PreparedPythonEnvironmentReadAuthority s ->
   Paths ->
   ExecutableModel ->
   Subprocess.SubprocessEnv ->
   ByteString ->
   IO PythonWorkerLaunchOutcome
-runExecutablePythonWorker paths executableModel processEnvironment inputPayload =
+runExecutablePythonWorker authority paths executableModel processEnvironment inputPayload =
   case canonicalPythonWorkerBinding executableModel of
     Left failure ->
       pure (PythonWorkerInvocationRejected failure)
     Right engineBinding -> do
       command <-
         resolvePythonWorkerCommand
+          authority
           paths
+          (executableModelRuntimeMode executableModel)
           engineBinding
           processEnvironment
       (outcome, exitCode, stdoutOutput, stderrOutput) <-
@@ -471,46 +475,35 @@ canonicalPythonWorkerBinding
               <> modelId descriptor
           )
 
+executableModelRuntimeMode :: ExecutableModel -> RuntimeMode
+executableModelRuntimeMode (ExecutableModel descriptor _engineBinding _routes _resources) =
+  runtimeMode descriptor
+
 resolvePythonWorkerCommand ::
+  Python.PreparedPythonEnvironmentReadAuthority s ->
   Paths ->
+  RuntimeMode ->
   EngineBinding ->
   Subprocess.SubprocessEnv ->
   IO EngineCommand
-resolvePythonWorkerCommand paths engineBinding processEnvironment = do
-  perEnginePythonPresent <- Directory.doesFileExist perEnginePython
-  if perEnginePythonPresent
-    then pure command
-    else
-      ioError
-        ( userError
-            ( "prepared Python engine interpreter is missing for "
-                <> Text.unpack (engineBindingAdapterId engineBinding)
-                <> ": "
-                <> perEnginePython
-            )
-        )
-  where
-    command =
-      DirectEngineCommand
+resolvePythonWorkerCommand authority paths requestedRuntime engineBinding processEnvironment = do
+  perEnginePython <-
+    either
+      (ioError . userError)
+      pure
+      ( Python.preparedPythonEnvironmentReadInterpreter
+          authority
+          requestedRuntime
+          engineBinding
+      )
+  pure
+    ( DirectEngineCommand
         perEnginePython
         ["-m", adapterModule]
         (repoRoot paths)
         renderedEnvironment
-    perEnginePython =
-      repoRoot paths
-        </> "python"
-        </> "engines"
-        </> perEngineName
-        </> ".venv"
-        </> "bin"
-        </> "python"
-    perEngineName =
-      Text.unpack
-        ( Text.replace
-            "-python"
-            ""
-            (engineBindingAdapterId engineBinding)
-        )
+    )
+  where
     adapterModule =
       "adapters."
         <> Text.unpack

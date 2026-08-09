@@ -25,9 +25,16 @@ together with a coordinated bump of the runtime `protobuf` major and the generat
 
 The supported Haskell toolchain is `ghc-9.12.4`. The cabal manifest declares it via
 `tested-with: ghc ==9.12.4`, and `cabal.project` pins it via `with-compiler: ghc-9.12.4`. The
-formatter tools `ormolu` and `hlint` install into `./.build/haskell-style-tools/bin/` through
-`cabal install` against the same project compiler; `src/Infernix/Lint/HaskellStyle.hs` manages
-that install.
+root-package `infernix-haskell-style` test component pins and links `ormolu ==0.8.0.2` and
+`hlint ==3.10`; the solver-isolated package at `test/cabal-format/` pins and links
+`Cabal ==3.16.1.0`. Both gates execute their library APIs in-process and never install formatter
+executables at runtime. The package split is required rather than cosmetic: separate suites in one
+package still share one solver universe, while Ormolu's Cabal-syntax 3.14 dependency and Cabal
+3.16's Cabal-syntax 3.16 dependency cannot coexist there. The Cabal library pin still makes
+manifest rendering independent of whether the outer `cabal-install` driver is 3.14 or 3.16.
+The isolated project fixes `ghc-9.12.4`, disables environment-file writes, and rejects sibling
+local/freeze overlays before its closed child starts; the live authority's final arguments remain
+the binding job/compiler-memory settings.
 
 ## Project-wide `cabal.project`
 
@@ -37,9 +44,10 @@ The repo carries `cabal.project` at the worktree root. It performs three roles:
 - enables `allow-newer: *:base, *:template-haskell` so transitive Hackage packages whose declared
   upper bounds lag behind the project's GHC resolve cleanly;
 - retains targeted package-specific `allow-newer` entries for the existing `lens-family`,
-  `proto-lens`, `binary`, and setup-tool closure;
+  `proto-lens`, and `binary` closure;
 - carries any `source-repository-package` overrides needed when an upstream package has a real API
-  break against `base 4.22` rather than a conservative declared bound. None are required today.
+  break against `base 4.22` rather than a conservative declared bound. The declared dependency
+  closure requires no such override.
 
 ## Why wildcard `allow-newer`
 
@@ -48,7 +56,9 @@ transitive dependency closure (`serialise`, `cborg`, `cborg-json`, `half`) decla
 upper bounds against `base` and `template-haskell` that lag a release or two behind the project
 toolchain. The wildcard `allow-newer: *:base, *:template-haskell` relaxes those declarations
 without broadening the wildcard further; the targeted package-specific rows cover the remaining
-`lens-family`, `proto-lens`, `binary`, and setup-tool closure.
+`lens-family`, `proto-lens`, and `binary` closure. The Docker-only Haskell protobuf regeneration
+gate also resolves `proto-lens-protoc 0.9.0.1` under these same lens-family constraints; no Cabal
+component or Custom Setup hook depends on it.
 
 If a future GHC bump uncovers genuine breakage in one of those packages, the supported response is
 to add a targeted `source-repository-package` stanza pointing at a patched fork in `cabal.project`,

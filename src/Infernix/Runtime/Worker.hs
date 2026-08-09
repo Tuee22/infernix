@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeApplications #-}
 
 module Infernix.Runtime.Worker
@@ -21,7 +22,7 @@ import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (isAsciiLower, isAsciiUpper, isDigit)
-import Data.List (dropWhileEnd, intercalate)
+import Data.List (dropWhileEnd)
 import Data.Maybe (fromMaybe)
 import Data.ProtoLens (decodeMessage, defMessage, encodeMessage)
 import Data.ProtoLens.Field (field)
@@ -43,6 +44,7 @@ import Infernix.ExecutionPlan
 import Infernix.Models (resultFamilyForDescriptor)
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Upload qualified as ObjectUpload
+import Infernix.Python qualified as Python
 import Infernix.Runtime.CappedEngine
   ( EngineOutcome
       ( EngineEnforcementUnavailable,
@@ -84,7 +86,6 @@ import System.Directory (createDirectoryIfMissing, doesFileExist, getTemporaryDi
 import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath (takeDirectory, takeExtension, (</>))
 import System.IO (IOMode (ReadMode), hFileSize, withFile)
-import System.Info qualified as SystemInfo
 import System.Posix.Process (getProcessID)
 
 data WorkerModelCacheConfig = WorkerModelCacheConfig
@@ -118,8 +119,8 @@ runExecutableInferenceWorker paths executableModel request cacheObservation
       -- cannot execute, which the wire language no longer expresses.
       case engineBindingAdapterType engineBinding of
         PythonStdio ->
-          ensurePythonEngineSetupReady paths modelRuntimeMode engineBinding
-            >> runPythonWorker paths executableModel request cacheObservation
+          withPythonEngineSetupReady paths modelRuntimeMode engineBinding $ \readAuthority ->
+            runPythonWorker readAuthority paths executableModel request cacheObservation
         NativeProcessRunner ->
           runNativeWorker paths executableModel request cacheObservation
   where
@@ -205,15 +206,16 @@ engineOutputStreamLabel outputStream =
     EngineStandardError -> "standard-error"
 
 runPythonWorker ::
+  Python.PreparedPythonEnvironmentReadAuthority s ->
   Paths ->
   ExecutableModel ->
   InferenceRequest ->
   Maybe KVCache.KVCacheObservation ->
   IO (Either ErrorResponse Text)
-runPythonWorker paths executableModel request _cacheObservation = do
+runPythonWorker readAuthority paths executableModel request _cacheObservation = do
   maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
   let workerRequest = encodeMessage (buildWorkerRequest paths maybeModelCacheConfig executableModel request)
-  workerResult <- runWorkerInvocation paths executableModel model workerRequest
+  workerResult <- runWorkerInvocation readAuthority paths executableModel model workerRequest
   pure (workerResultToOutput workerResult)
   where
     model = executableModelDescriptor executableModel
@@ -242,8 +244,13 @@ decodedWorkerOutput encodedResponse =
     Right workerResponse ->
       workerOutputFromResponse workerResponse
 
-ensurePythonEngineSetupReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
-ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
+withPythonEngineSetupReady ::
+  Paths ->
+  RuntimeMode ->
+  EngineBinding ->
+  (forall s. Python.PreparedPythonEnvironmentReadAuthority s -> IO result) ->
+  IO result
+withPythonEngineSetupReady paths runtimeMode engineBinding action = do
   when (pythonEngineBootstrapManifestRequired runtimeMode) $ do
     let installRoot = engineInstallRootPath paths engineBinding
         bootstrapManifest = installRoot </> "bootstrap.json"
@@ -257,11 +264,17 @@ ensurePythonEngineSetupReady paths runtimeMode engineBinding = do
                 <> bootstrapManifest
             )
         )
-  ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding
+  -- Phase 1 Sprint 1.23: inference consumes the shared prepared-environment
+  -- contract and has no Poetry/install repair path.
+  Python.withPreparedPythonEngineEnvironmentReadAuthority
+    paths
+    runtimeMode
+    engineBinding
+    action
 
 -- | Linux framework environments are immutable image payloads proven by their
--- fixed per-engine marker. Only the Apple host materializer publishes the
--- adapter bootstrap manifest into its retained engine root.
+-- fixed per-engine marker. Apple publishes both this bootstrap manifest and
+-- the per-engine framework marker before the service accepts work.
 pythonEngineBootstrapManifestRequired :: RuntimeMode -> Bool
 pythonEngineBootstrapManifestRequired AppleSilicon = True
 pythonEngineBootstrapManifestRequired LinuxCpu = False
@@ -270,133 +283,6 @@ pythonEngineBootstrapManifestRequired LinuxGpu = False
 pythonEngineBootstrapManifestRequiredForTest :: RuntimeMode -> Bool
 pythonEngineBootstrapManifestRequiredForTest =
   pythonEngineBootstrapManifestRequired
-
-ensurePerEngineFrameworkVenvReady :: Paths -> RuntimeMode -> EngineBinding -> IO ()
-ensurePerEngineFrameworkVenvReady paths runtimeMode engineBinding = do
-  let groups = perEngineFrameworkGroups runtimeMode engineBinding
-      pythonPath = perEnginePythonPath paths engineBinding
-  maybeVenvPython <- perEngineVenvPython paths engineBinding
-  markerMatches <-
-    case groups of
-      [] -> pure True
-      _ -> do
-        let projectDirectory = perEngineProjectDirectory paths engineBinding
-            markerPath = perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups
-        expectedMarker <- perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups
-        markerPresent <- doesFileExist markerPath
-        if markerPresent
-          then (== expectedMarker) <$> readStrictUtf8File markerPath
-          else pure False
-  case maybeVenvPython of
-    Just _
-      | markerMatches -> pure ()
-    _ ->
-      ioError
-        ( userError
-            ( "prepared per-engine Python environment is missing or stale for "
-                <> Text.unpack (engineBindingAdapterId engineBinding)
-                <> ": "
-                <> pythonPath
-            )
-        )
-
-perEngineFrameworkGroups :: RuntimeMode -> EngineBinding -> [String]
-perEngineFrameworkGroups runtimeMode engineBinding =
-  case runtimeMode of
-    AppleSilicon
-      | SystemInfo.os == "darwin"
-          && engineBindingAdapterId engineBinding `elem` appleSiliconFrameworkAdapterIds ->
-          ["apple-silicon"]
-    LinuxCpu
-      | SystemInfo.os == "linux"
-          && engineBindingAdapterId engineBinding `elem` linuxCpuFrameworkAdapterIds ->
-          ["linux-cpu"]
-    _ -> []
-
-appleSiliconFrameworkAdapterIds :: [Text]
-appleSiliconFrameworkAdapterIds =
-  [ "transformers-python",
-    "pytorch-python",
-    "diffusers-python"
-  ]
-
-linuxCpuFrameworkAdapterIds :: [Text]
-linuxCpuFrameworkAdapterIds =
-  [ "transformers-python",
-    "pytorch-python"
-  ]
-
-perEngineFrameworkMarkerPath :: Paths -> RuntimeMode -> EngineBinding -> [String] -> FilePath
-perEngineFrameworkMarkerPath paths runtimeMode engineBinding groups =
-  perEngineProjectDirectory paths engineBinding
-    </> ".venv"
-    </> ( ".infernix-framework-groups-"
-            <> Text.unpack (runtimeModeId runtimeMode)
-            <> "-"
-            <> intercalate "-" groups
-        )
-
-perEngineFrameworkMarkerContents :: FilePath -> RuntimeMode -> EngineBinding -> [String] -> IO String
-perEngineFrameworkMarkerContents projectDirectory runtimeMode engineBinding groups = do
-  projectDigest <- perEngineFrameworkProjectDigest projectDirectory
-  pure
-    ( unlines
-        [ "runtimeMode=" <> Text.unpack (runtimeModeId runtimeMode),
-          "adapterId=" <> Text.unpack (engineBindingAdapterId engineBinding),
-          "groups=" <> intercalate "," groups,
-          "projectDigest=" <> projectDigest
-        ]
-    )
-
-readStrictUtf8File :: FilePath -> IO String
-readStrictUtf8File path =
-  ByteString8.unpack <$> ByteString.readFile path
-
-perEngineFrameworkProjectDigest :: FilePath -> IO String
-perEngineFrameworkProjectDigest projectDirectory = do
-  let pyprojectPath = projectDirectory </> "pyproject.toml"
-      lockPath = projectDirectory </> "poetry.lock"
-  pyprojectBytes <- ByteString.readFile pyprojectPath
-  lockPresent <- doesFileExist lockPath
-  lockBytes <-
-    if lockPresent
-      then ByteString.readFile lockPath
-      else pure ""
-  pure
-    ( Text.unpack
-        ( TextEncoding.decodeUtf8
-            (Base16.encode (SHA256.hash (ByteString.concat [pyprojectBytes, ByteString8.pack "\n", lockBytes])))
-        )
-    )
-
--- | Phase 4 Sprint 4.16 — resolve the per-engine isolated framework venv's
--- python interpreter, when present. The image build populates
--- @python/engines/<engine>/.venv@ with the substrate's framework wheels plus
--- the shared @adapters@ package (editable path dependency). Runtime launch
--- fails closed when this prepared interpreter is absent.
-perEngineVenvPython :: Paths -> EngineBinding -> IO (Maybe FilePath)
-perEngineVenvPython paths engineBinding = do
-  let pythonPath = perEnginePythonPath paths engineBinding
-  present <- doesFileExist pythonPath
-  pure (if present then Just pythonPath else Nothing)
-
-perEngineProjectDirectory :: Paths -> EngineBinding -> FilePath
-perEngineProjectDirectory paths engineBinding =
-  repoRoot paths
-    </> "python"
-    </> "engines"
-    </> perEngineName engineBinding
-
-perEnginePythonPath :: Paths -> EngineBinding -> FilePath
-perEnginePythonPath paths engineBinding =
-  perEngineProjectDirectory paths engineBinding
-    </> ".venv"
-    </> "bin"
-    </> "python"
-
-perEngineName :: EngineBinding -> String
-perEngineName engineBinding =
-  Text.unpack (Text.replace "-python" "" (engineBindingAdapterId engineBinding))
 
 -- | Phase 4 Sprints 4.2/4.12 — invoke the real native engine binary
 -- resolved from its repo-local engine install root (under @HostConfig@'s
@@ -1011,11 +897,18 @@ safeSegmentChar character =
 -- with the reserved 'modelMemoryLimitExceededErrorCode' marker so the runtime
 -- rebuilds a typed 'ModelMemoryLimitExceeded' result rather than a generic
 -- worker failure.
-runWorkerInvocation :: Paths -> ExecutableModel -> ModelDescriptor -> ByteString.ByteString -> IO (Either ErrorResponse ByteString.ByteString)
-runWorkerInvocation paths executableModel model inputPayload = do
+runWorkerInvocation ::
+  Python.PreparedPythonEnvironmentReadAuthority s ->
+  Paths ->
+  ExecutableModel ->
+  ModelDescriptor ->
+  ByteString.ByteString ->
+  IO (Either ErrorResponse ByteString.ByteString)
+runWorkerInvocation readAuthority paths executableModel model inputPayload = do
   processEnvironment <- Subprocess.clusterSubprocessEnv paths
   launchOutcome <-
     runExecutablePythonWorker
+      readAuthority
       paths
       executableModel
       processEnvironment

@@ -1,16 +1,300 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — **no longer Validation Only as of 2026-08-08.** The
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) surfaced two code-side defects inside
-Sprint 1.20's own surface (the bounded-command target-environment allowlist, which blocks `test lint`
-and `cluster up` on both lanes, and the Audiveris installed-smoke path drift), and a measurement
-residual in Sprint 1.21 (the Darwin toolchain account does not intersect the co-resident VM pledge).
-Sprint 1.22 landed the lane-resolved build-memory correction and is code-side closed. The
-validation-only text that follows describes the position as of 2026-08-02 and is retained for that
-recorded scope. Sprint 1.20's `linux-cpu` cohort closed on exact image
-`sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67` and its remaining half is
-Apple accelerator evidence. Sprint 1.21 (bounded host build-memory kernel) is code-side closed on
-2026-08-06 and `Active` only for the Apple lane's unmeasured mechanism, which its cohort wave owns.
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active — **not Validation Only.** The current source contains the code-side corrections
+opened by the 2026-08-08 evidence reset and the 2026-08-09 claimant audit. The exact current-source
+aggregate lint/build, documentation, and closed unit gates were GREEN before the latest
+FixedObserver correction. The first Darwin specialized attempt failed closed on member turnover;
+the diagnosed correction is landed and the exact quiet-host Apple bootstrap now compiles and
+installs it GREEN. The rebuilt binary's exact forced Apple init also exits GREEN and writes only its
+four generated/ignored configuration paths, establishing the same host-observation/configuration
+basis required by later capacity evidence without creating version-controlled Dhall. Corrected
+current-source aggregate lint and closed unit are also GREEN, including execution of all four new
+observer-kernel turnover branches. Immediately afterward, `./.build/infernix docs check` exited 0
+with no output and repo-wide `git diff --check` exited 0 with no output. Current corrected-source
+Stage 1 build/init/lint/unit/docs/diff is GREEN. The first
+post-turnover `./.build/infernix internal validate-darwin-build-memory` has now exited 0 and crossed
+the prior module-59 turnover failure. Its v1 report records 65,536 MiB physical, 49,152 MiB active
+Colima, 16,384 MiB effective, an 8,192 MiB plan budget/account, jobs 1, 6,144 MiB compiler heap,
+1,024 MiB control heap, 18,432 MiB address reservation, a 6,144 MiB compiler subtotal, and two
+controls totaling 2,048 MiB. The first post-validator
+`./.build/infernix internal materialize-metal-engines` attempt then exited 1 essentially
+immediately with `infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException: user error (stable copy source escaped its authorized root)` and
+`HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. It made no successful
+materialization or smoke claim. Diagnosis identified the `llama-cpp-cli` external Homebrew closure
+`/opt/homebrew/Cellar/ggml/0.15.3/libexec`, whose first sorted entry is `libggml-blas.so`, being
+copied into `.data/engines`: its retained source fd was mislabeled `StableCopySourceInRoot` with the
+destination writer. Current source adds private `StableCopySourceRetainedDescriptor`, carrying the
+already-open nofollow fd/status/recheck; it verifies identity and bound, seeks to zero, copies into
+the retained authorized destination, and rechecks inside completion and afterward. Arbitrary
+external paths remain `ExactContent`; truly owned sources remain `InRoot`. A normalized unit source
+guard finds one correct use and zero forbidden uses. Cleanup left only empty owned
+scaffolding/locks/shim, with no artifact, cache, prepared environment, or activity. Independent
+review found no High or Medium issue; scoped diff and hanging needles are clean. The correction is
+source-stable. Exact governed `./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured
+65536 MiB physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+Provisioning correction, linked executable `Main`, installed and copied `.build/infernix`, and
+emitted the corrected operator-versus-harness postamble. Exact current-source
+`./.build/infernix test lint` then exited 0: it rebuilt the affected Provisioning graph; root
+`haskell-style-check: ok` and isolated `cabal-format-check: ok` passed; Python reported
+`Success: no issues found in 8 source files`, Black reported `8 files would be left unchanged`,
+and the gate reported `All checks passed!`; and bounded final `build all --enable-tests` rebuilt
+and linked every declared component, including Apple materializer, integration, and unit with the
+source guard. On a quiet host with no external claimant, exact `./.build/infernix test unit` then
+exited 0. Compile-time fixtures passed 6 positive/92 negative; artifact transaction passed 48;
+Apple materializer passed 12; capped observer and execution-plan passed; full Haskell printed
+`unit tests passed` and Cabal passed 1/1, crossing the new retained-descriptor source guard; and
+web build/bundle completed with 0 warnings/errors and 83/83 tests passed. Current-source lint and
+unit are GREEN. Immediately afterward, `./.build/infernix docs check` exited 0 with no output and
+repo-wide `git diff --check` exited 0 with no output. The retained-descriptor correction is GREEN
+through build/lint/unit/docs/diff. The full corrected
+`./.build/infernix internal materialize-metal-engines` rerun crossed the prior immediate
+stable-copy authority refusal, ran for about 20 seconds, then exited 251 with the sole output
+`infernix: out of memory`. It supplies no success, materialization, or smoke claim. Diagnosis
+found a complete Core ML temporary venv of about 1.3 GiB/28,589 files but no Python-home or final
+manifest, locating the failure after hydration and before Python-home copy in Mach-O discovery.
+`libtorch_cpu.dylib` is exactly 337911904 bytes, a thin arm64 image with 28 commands/3936 command
+bytes requiring only 3968 bytes; old `fdRead` requested `fileSize + 1`, whose pinned allocation
+under main `-xr1024M` consumed about one third of usable heap and caused exit 251.
+`libllvmlite` is 129479904 bytes/2344 command bytes, and 12 fat32 images require table-plus-slice
+handling. Current source removes `readExactExecutableBytes`, retains the nofollow fd, bounds thin
+reads to 32 + `sizeofcmds` (at most 4 MiB + 32), validates a fat table and unique arm64 range
+against the exact image before reading its slice header/commands, limits every `fdRead` to 64 KiB,
+and performs final fd/path recheck; full digest and logical-byte accounting are unchanged. Tests
+measure 337911904 → 3968, cover the 48-byte fat table/range and oversized/out-of-bounds cases, and
+pin the source guard; review found no High or Medium issue. Residue is complete llama/whisper plus
+a recoverable unactivated Core ML temp, with no live process/activity. The correction is
+source-stable. Exact governed `./bootstrap/apple-silicon.sh build` exited 0: stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the bounded reader, linked `Main`, installed it, and
+copied `.build/infernix`. Exact current-source `./.build/infernix test lint` then exited 0: root
+Haskell style and isolated Cabal 3.16 formatting passed; Python reported no issues in 8 files,
+Black left them unchanged and all checks passed; final bounded build-all completed after rebuilding
+the Provisioning-dependent graph and linked the 117-module `infernix-unit` target. This is
+formatting/policy/compile closure. Exact current-source `./.build/infernix test unit` then exited
+0: compile-time capability fixtures passed 6 positive/92 negative; artifact transaction 48;
+Apple materializer 12 including bounded Mach-O fixtures/source guards; capped-engine observer;
+execution-plan internal; main Haskell (`unit tests passed`, Cabal 1/1); and web build/bundle with
+0 warnings/errors and 83/83 all passed. The loud real-GHC compiler-chain skip remains the existing
+expected image condition. Immediately afterward, `./.build/infernix docs check` exited 0 with no
+output and repo-wide `git diff --check` exited 0 with no output. Current bounded Mach-O correction
+build/lint/unit/docs/diff is GREEN. The full current bounded-Mach-O
+`./.build/infernix internal materialize-metal-engines` rerun then ran for about 30 seconds in the
+governed session, produced no stdout, emitted sole stderr `infernix: out of memory`, and exited
+251. It supplies no materialization or smoke success claim. The exact new boundary is now
+diagnosed in the candidate Core ML venv, before Python-home creation, inside
+`resolvePackageClosureIdentity`: hashing the 337911904-byte `libtorch_cpu.dylib` retained about
+5,157 64 KiB chunks because the pure `NOINLINE` `SHA256.update` result contexts were not forced
+before the next descriptor read. The landed strict-SHA correction forces `nextContext` before the
+next read in all seven streaming loops — three in Provisioning, one in Artifact/Internal, one in
+Artifact/Loader, and two in Cluster/Subprocess — forces each package-closure entry context, and
+uses `List.foldl'` for installed-runtime metadata. Unit source pins cover the assignments and
+forced call shapes. Exhaustive audit and independent review found no High or Medium issue, and the
+scoped diff is clean. Exact governed `./bootstrap/apple-silicon.sh build` then exited 0. Stage 0
+measured 65536 MiB physical minus 49152 MiB active Colima as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+strict loops in Provisioning, Artifact/Internal, Artifact/Loader, and Cluster/Subprocess, linked
+`Main`, installed/copied `.build/infernix`, and emitted the corrected postamble. This is
+compile/install evidence only. Residue remains complete llama/whisper roots plus the incomplete
+Core ML temp, with no live process/activity. Exact `./.build/infernix test lint` then exited 1. It
+recompiled the strict-SHA affected graph — Artifact/Loader, Artifact/Internal, Cluster/Subprocess,
+Provisioning, and dependents — under `-Werror`, then `infernix-haskell-style` failed only with
+`haskell-style-check: Ormolu formatting differs:` for exactly
+`src/Infernix/Engines/Artifact/Internal.hs`, `src/Infernix/Engines/Artifact/Loader.hs`, and
+`src/Infernix/Engines/Provisioning.hs`. Fail-fast left the isolated Cabal formatter, Python checks,
+final build-all, and later lint stages unrun. This supplies no semantic/runtime claim. One governed
+`./.build/infernix test lint` diagnostic then intentionally exited 1 inside root style after
+formatting exactly those three files and proving formatter idempotence; HLint/readability, the
+isolated formatter, Python, and build-all did not run. The checker was restored byte-for-byte
+(SHA-256 `76d4b148…`;
+`cmp = 0`). The exact four-site delta is Artifact/Internal `hashDescriptorAtExactSize` (2+/2-),
+Artifact/Loader `digestLoaderDescriptor` (2+/2-), and Provisioning `digestPackageClosure`'s
+`directoryContext` plus `copyProvisioningDescriptor`'s `nextContext` (4+/4- total). Only layout
+changed from ``value\n  `seq` call`` to ``value `seq`\n  call``; line/byte counts and
+whitespace-stripped bytes are unchanged, with zero token-character change. The scoped diff is
+clean. Exact governed `./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured
+65536 MiB physical minus 49152 MiB active Colima as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+formatter-stable Artifact/Internal, Artifact/Loader, and Provisioning strict-SHA files, linked
+`Main`, installed/copied `.build/infernix`, and emitted the corrected postamble. This is
+compile/install evidence only. Exact `./.build/infernix test lint` then exited 0. Root
+`haskell-style-check: ok` passed; isolated Cabal 3.16 emitted `cabal-format-check: ok`; Python
+emitted `Success: no issues found in 8 source files`; Black left all 8 unchanged; and the gate
+emitted `All checks passed!`. Its final bounded all-component build rebuilt the strict-SHA affected
+graph, linked the 116-module `infernix-integration` target, and finally linked the 117-module
+`infernix-unit` target. The previous three-file Ormolu RED is closed. This is style/policy/compile
+closure only. On a quiet host with no external claimant, exact `./.build/infernix test unit` then
+exited 0. Compile-fail passed 6 positive/92 negative; artifact transaction passed 48; Apple
+materializer passed 12; capped observer and execution-plan passed; main Haskell printed
+`unit tests passed` and Cabal passed 1/1; and the strict-SHA production source guards were crossed.
+The expected loud no-real-GHC compiler-chain skip remained. Web build/bundle completed with 0
+warnings, 0 errors, and 83/83 tests passed. The full closed unit gate is GREEN. Immediately after
+the build/lint/unit sequence, exact `./.build/infernix docs check` exited 0 with no output, then
+repo-wide `git diff --check` exited 0 with no output. The strict-SHA correction
+build/lint/unit/docs/diff is GREEN. Exact `./.build/infernix internal materialize-metal-engines`
+then ran about 2m10s with no prior output and exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN remains valid. Exact diagnosis identifies the rejected outside-bin
+CPython config helper `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes
+with a retained-root interpreter shebang. A blanket absolute policy was rejected because `cgi`
+legitimately contains `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric;
+Provisioning now represents retained-versus-sealed destination identity explicitly, uses looped
+probes bounded to ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17
+source guards pin the behavior; independent review found no High or Medium issue. This identity is
+SOURCE-STABLE. On the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity
+and executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots
+and owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no
+behavioral or source-failure claim. After a verified 303s claimant-free and pane-clear window, the
+first fully uncontested current-source `./.build/infernix internal materialize-metal-engines` run
+started; the external monitor stayed clean through settlement. It ran silently for ~13m and exited
+1 with the exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only
+complete roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but
+the runtime gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely
+passes the exact bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime
+libraries, but generic `provisioningCommandUsesArtifactSnapshot` omitted
+`ExtractAudiverisJavaCppNatives`; its fallback therefore required an empty closure and
+deterministically rejected before argv, environment, path validation, or spawn. The frozen
+correction touches only `src/Infernix/Cluster/Subprocess.hs` and `test/unit/Spec.hs`. Production
+shares the unchanged exact role/cardinality predicate, renames the classifier to
+`provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch requiring
+exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure remains
+mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command
+produced the sdist, compiled all 114 modules under GHC 9.12.4—including corrected
+Cluster/Subprocess as module 66 and the Provisioning/Apple callers—linked `Main`, installed and
+copied `.build/infernix`, and emitted the corrected operator/harness postamble. This is
+compile/install evidence only: lint, unit, and runtime have not run on the correction. The runtime
+gate remains RED. After a verified 304s claimant-free and pane-clear window, exact
+`./.build/infernix test lint` started. Before overlap, the affected graph compiled under
+`-Werror`; root `haskell-style-check: ok` passed; isolated Cabal 3.16
+`cabal-format-check: ok` passed; Python reported no issues in 8 source files, Black left all 8
+unchanged, and `All checks passed!`; bounded build-all entered component compile/link and linked
+apple-materializer. At 15:01:59, unrelated hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID
+86109 with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s
+and ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. The whole aggregate lint rerun awaits a genuinely settled claimant; then
+run full unit, docs/diff, and the full materializer rerun, with no later gate first. Phase 1 remains
+Active.
+
+Sprint 1.20 now derives bounded-command environments from the renderer, derives the Audiveris smoke
+target from the bundled JVM, and requires each installed Python smoke to name its exact artifact
+venv. Sprint 1.21 now subtracts the active Colima pledge, accounts the complete Darwin compiler
+phase as `jobs × compilerHeap + (jobs + 1) × 1024 MiB`, binds Cabal and GHC through the opaque
+authority's final arguments and environment, owns every focused suite through a closed vocabulary,
+and provides a closed fresh-build/install command that reports **sampled peak aggregate physical
+footprint**. The committed clean-clone account, the Apple stage-0 seed, the nested compile-fail
+account, and the Docker-only protobuf regeneration surface each have an explicit claimant model.
+Stage 1 was GREEN on the pre-correction identity; the first specialized real Darwin attempt failed
+closed in its fixed observer and supplied no sampled-memory evidence. The member-turnover
+correction is landed, current-source Stage 1 is GREEN through build/init/lint/unit/docs/diff, the
+unit gate executed all four new observer-kernel branches, and the current-source specialized Darwin
+validator is now GREEN with sampled evidence.
+
+Sprint 1.23 re-homes the per-engine Python producer into a package-hidden facade, durably
+invalidates prior readiness before Poetry mutation, and holds a shared project read/launch lease
+from exact interpreter/marker validation through child completion. Sprint 1.24 makes the package
+`Simple`, removes build-time Darwin protobuf generation, tracks the exact four generated modules,
+and confines byte regeneration to a pinned Linux image gate. Sprint 1.25 runs pinned Ormolu/HLint
+behavior in the root package and pinned Cabal-format behavior in a genuinely separate package,
+removing runtime formatter installation without forcing their incompatible Cabal-syntax worlds into
+one solver plan. Those three
+sprints are code-side implemented in current source and remain validation-pending. Sprint 1.22's
+lane resolution remains code-side closed. Historical GREEN results below retain only their exact
+recorded source scope; Phase 1 remains Active for the current-source gates, Apple materialization and
+runtime rows, paired `linux-cpu`, and Wave Y attestation.
 
 ## Current validation run (2026-07-31)
 
@@ -446,6 +730,9 @@ publish the artifact. No review, Stage 1, or cohort evidence is accepted for thi
 > generated-artifact hygiene, and the repository ownership rules that later phases build on.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 1 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > **No-repo-owned-native-source reopen (2026-07-26).** The correction audit found that
 > `src/Infernix/Engines/AppleSilicon.hs` embeds complete Objective-C/C/Metal implementation source
@@ -1580,6 +1867,233 @@ retained for its recorded scope: code-side closed on 2026-08-02; Apple accelerat
 validation-only blocker under Wave Y. The settled source passes the complete machine-independent
 gate set and the paired source-matched `linux-cpu` full-suite cohort on exact image
 `sha256:51292f6f3d98560b383a4ab5cc8a1807aa5388fa5cc0ba8c99b305d90ba9ff67`.
+Current corrected-source Stage 1 and the post-turnover Darwin validator are GREEN. The first
+post-validator `./.build/infernix internal materialize-metal-engines` attempt exited 1 essentially
+immediately with `infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException: user error (stable copy source escaped its authorized root)` and
+`HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. It supplies no successful
+materialization or smoke evidence. The exact cause is the external Homebrew `llama-cpp-cli` closure
+`/opt/homebrew/Cellar/ggml/0.15.3/libexec` (first sorted entry `libggml-blas.so`) targeting
+`.data/engines`: a retained source fd was mislabeled `StableCopySourceInRoot` with the destination
+writer. The private `StableCopySourceRetainedDescriptor` correction is landed and independently
+reviewed with no High or Medium finding. Exact governed `./bootstrap/apple-silicon.sh build` exited
+0 after stage 0 measured 65536 − 49152 = 16384 MiB and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+Provisioning correction, linked `Main`, installed/copied `.build/infernix`, and emitted the
+corrected operator-versus-harness postamble. Exact current-source
+`./.build/infernix test lint` then exited 0 after rebuilding the affected Provisioning graph:
+root `haskell-style-check: ok`, isolated `cabal-format-check: ok`, and Python quality/Black all
+passed for eight source files; bounded final `build all --enable-tests` rebuilt and linked all
+declared components, including Apple materializer, integration, and unit with the source guard.
+On a quiet host with no external claimant, exact `./.build/infernix test unit` then exited 0:
+compile-time 6 positive/92 negative, artifact transaction 48, Apple materializer 12, capped
+observer, execution-plan, full Haskell (`unit tests passed`, Cabal 1/1), and web build/bundle with
+0 warnings/errors and 83/83 all passed, including the retained-descriptor source guard.
+Immediately afterward, `./.build/infernix docs check` exited 0 with no output and repo-wide
+`git diff --check` exited 0 with no output. Correction build/lint/unit/docs/diff is GREEN; the
+full corrected materializer rerun crossed the prior authority refusal, ran about 20 seconds, and
+exited 251 with sole output `infernix: out of memory`. No success/materialization/smoke claim is
+made. Diagnosis identified old `fdRead (fileSize + 1)` of 337911904-byte `libtorch_cpu.dylib`
+under main `-xr1024M`; only 3968 Mach-O bytes were needed. Current source lands the bounded
+nofollow-fd thin/fat parser with ≤64 KiB reads, exact range validation, final recheck, unchanged
+digest/accounting, measured thin/fat/invalid fixtures, and no High/Medium review issue. It is
+source-stable. Complete llama/whisper plus a recoverable unactivated ~1.3 GiB Core ML
+temp remain, with no live process/activity. Exact governed `./bootstrap/apple-silicon.sh build`
+then exited 0 after 65536 − 49152 = 16384 MiB and `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the bounded reader, linked/installed `Main`, and
+copied `.build/infernix`. Exact current-source `./.build/infernix test lint` then exited 0: root
+style, isolated Cabal 3.16 formatting, Python quality/Black, and bounded final build-all passed;
+the Provisioning-dependent graph rebuilt and the 117-module `infernix-unit` target linked. This is
+formatting/policy/compile closure. Exact `./.build/infernix test unit` then exited 0: capability
+fixtures 6 positive/92 negative, artifact 48, Apple materializer 12 including bounded Mach-O
+guards, capped observer, execution-plan, Haskell 1/1, and web 83/83 with 0 warnings/errors all
+passed. The loud real-GHC compiler-chain skip remains the expected image condition. Immediately
+afterward, `./.build/infernix docs check` exited 0 with no output and repo-wide
+`git diff --check` exited 0 with no output. Current bounded Mach-O correction
+build/lint/unit/docs/diff is GREEN. Its full runtime rerun then ran about 30 seconds in the
+governed session, produced no stdout, emitted sole stderr `infernix: out of memory`, and exited
+251. It supplies no materialization/smoke success claim. Exact diagnosis now places the failure in
+the candidate Core ML venv before Python-home creation, inside `resolvePackageClosureIdentity`:
+the 337911904-byte `libtorch_cpu.dylib` produced about 5,157 retained 64 KiB chunks because pure
+`NOINLINE` `SHA256.update` contexts were unforced across recursive descriptor reads. Current
+source forces `nextContext` before every next read in all seven streaming loops (Provisioning 3,
+Artifact/Internal 1, Artifact/Loader 1, Cluster/Subprocess 2), forces package-closure entry
+contexts, and uses `List.foldl'` for installed-runtime metadata. Tests source-pin the assignments
+and forced call shapes; exhaustive audit and independent review found no High or Medium issue;
+the scoped diff is clean. Exact governed `./bootstrap/apple-silicon.sh build` exited 0 after
+measuring 65536 − 49152 = 16384 MiB and selecting
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+four strict-loop owners, linked `Main`, installed/copied `.build/infernix`, and emitted the
+corrected postamble. This is compile/install evidence only. Complete llama/whisper and the
+incomplete Core ML temp remain, with no live process/activity. Prior GREEN gates and the Darwin
+validator retain their recorded identity. Exact `./.build/infernix test lint` then exited 1 after
+recompiling the strict-SHA graph under `-Werror`; `infernix-haskell-style` failed only with
+`haskell-style-check: Ormolu formatting differs:` for exactly
+`src/Infernix/Engines/Artifact/Internal.hs`, `src/Infernix/Engines/Artifact/Loader.hs`, and
+`src/Infernix/Engines/Provisioning.hs`. Fail-fast prevented the isolated Cabal formatter, Python,
+final build-all, and later stages. No semantic/runtime claim is made. The governed
+`./.build/infernix test lint` linked-Ormolu diagnostic then intentionally exited 1 inside root
+style after formatting exactly those files and proving idempotence; HLint/readability, the isolated
+formatter, Python, and build-all did not run. The
+checker was restored byte-for-byte (SHA-256 `76d4b148…`; `cmp = 0`). Four sites changed only from
+``value\n  `seq` call`` to ``value `seq`\n  call``: Artifact/Internal
+`hashDescriptorAtExactSize` (2+/2-), Artifact/Loader `digestLoaderDescriptor` (2+/2-), and
+Provisioning `digestPackageClosure`'s `directoryContext` plus `copyProvisioningDescriptor`'s
+`nextContext` (4+/4- total). Line/byte counts and whitespace-stripped bytes are unchanged, with
+zero token-character change; scoped diff is clean. Exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0 after stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the formatter-stable Artifact/Internal,
+Artifact/Loader, and Provisioning strict-SHA files, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This proves compile/install only. Aggregate
+lint then reran GREEN: exact `./.build/infernix test lint` exited 0; root
+`haskell-style-check: ok`, isolated Cabal 3.16 `cabal-format-check: ok`, Python
+`Success: no issues found in 8 source files`, Black's 8 unchanged files, and
+`All checks passed!` all passed. The final bounded all-component build rebuilt the strict-SHA
+affected graph, linked the 116-module `infernix-integration` target, and finally linked the
+117-module `infernix-unit` target. The prior Ormolu RED is closed. This proves
+style/policy/compile closure only. On a quiet host with no external claimant, exact
+`./.build/infernix test unit` then exited 0. Compile-fail passed 6 positive/92 negative; artifact
+transaction passed 48; Apple materializer passed 12; capped observer and execution-plan passed;
+main Haskell printed `unit tests passed`, Cabal passed 1/1, and the strict-SHA production source
+guards were crossed. The expected loud no-real-GHC compiler-chain skip remained. Web build/bundle
+completed with 0 warnings, 0 errors, and 83/83 tests passed. The full closed unit gate is GREEN.
+Immediately after the build/lint/unit sequence, exact `./.build/infernix docs check` exited 0 with
+no output, then repo-wide `git diff --check` exited 0 with no output. The strict-SHA correction
+build/lint/unit/docs/diff is GREEN. Exact `./.build/infernix internal materialize-metal-engines`
+then ran about 2m10s with no prior output and exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN remains valid. Exact diagnosis identifies the rejected outside-bin
+CPython config helper `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes
+with a retained-root interpreter shebang. A blanket absolute policy was rejected because `cgi`
+legitimately contains `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric;
+Provisioning now represents retained-versus-sealed destination identity explicitly, uses looped
+probes bounded to ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17
+source guards pin the behavior; independent review found no High or Medium issue. This identity is
+SOURCE-STABLE. On the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity
+and executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots
+and owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no
+behavioral or source-failure claim. After a verified 303s claimant-free and pane-clear window, the
+first fully uncontested current-source `./.build/infernix internal materialize-metal-engines` run
+started; the external monitor stayed clean through settlement. It ran silently for ~13m and exited
+1 with the exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only
+complete roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but
+the runtime gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely
+passes the exact bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime
+libraries, but generic `provisioningCommandUsesArtifactSnapshot` omitted
+`ExtractAudiverisJavaCppNatives`; its fallback therefore required an empty closure and
+deterministically rejected before argv, environment, path validation, or spawn. The frozen
+correction touches only `src/Infernix/Cluster/Subprocess.hs` and `test/unit/Spec.hs`. Production
+shares the unchanged exact role/cardinality predicate, renames the classifier to
+`provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch requiring
+exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure remains
+mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command
+produced the sdist, compiled all 114 modules under GHC 9.12.4—including corrected
+Cluster/Subprocess as module 66 and the Provisioning/Apple callers—linked `Main`, installed and
+copied `.build/infernix`, and emitted the corrected operator/harness postamble. This is
+compile/install evidence only: lint, unit, and runtime have not run on the correction. The runtime
+gate remains RED. After a verified 304s claimant-free and pane-clear window, exact
+`./.build/infernix test lint` started. Before overlap, the affected graph compiled under
+`-Werror`; root `haskell-style-check: ok` passed; isolated Cabal 3.16
+`cabal-format-check: ok` passed; Python reported no issues in 8 source files, Black left all 8
+unchanged, and `All checks passed!`; bounded build-all entered component compile/link and linked
+apple-materializer. At 15:01:59, unrelated hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID
+86109 with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s
+and ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. The whole aggregate lint rerun awaits a genuinely settled claimant; then
+run full unit, docs/diff, and the full materializer rerun, with no later gate first. Phase 1 remains
+Active.
 The final settled-source adversarial review found no High or Medium residual. The historical
 correction narrative below records how earlier rejected identities were repaired and must not be
 read as current remaining work. The capped-engine/anchor group-owner defect recorded below **is** corrected — cleanup no
@@ -3701,8 +4215,7 @@ packages, without direct FFI, inline native source in another language, or a ren
   fixed post-mount hook with exact mount, candidate-root, prior-root, and lock evidence
 - after a green `./.build/infernix internal materialize-metal-engines` creates the required current
   prior root, the exact opt-in cohort command is
-  `cabal test infernix-apple-materializer --test-show-details=direct
-  --test-options='--darwin-production-audiveris-cancellation'`; this command is pending
+  `./.build/infernix internal validate-darwin-audiveris-cancellation`; this command is pending
 - `cabal test infernix-compile-fail --test-show-details=direct` passes every settled-source positive
   and negative fixture, including hidden Apple internal/artifact/provisioning imports and the removed raw
   per-artifact installer
@@ -3716,15 +4229,17 @@ packages, without direct FFI, inline native source in another language, or a ren
   and completes the correction-dependent routed lane before any Apple closure is claimed
 - the paired source-matched `linux-cpu` cohort completes before Phase 1 is marked `Done`
 
-### Remaining Work
+### Historical Remaining-Work Record (superseded 2026-08-08)
 
-Authoritative current remainder (2026-08-02): **validation only**. On an Apple Silicon host,
+Historical 2026-08-02 remainder, superseded by the authoritative `Remaining Work` block below: at
+that source point the sprint was **validation only**. On an Apple Silicon host, the remaining gate
+was to
 rematerialize the corrected MLX/Core ML/native-runner roots, run the opt-in production Audiveris
 cancellation case and installed upstream authoritative smokes with the source runtimes unavailable,
 then complete `infernix test integration`, `infernix test e2e`, and `infernix test all` for the
 Apple catalog and record the Wave Y attestation. The exact-source Stage 1 and paired `linux-cpu`
 cohort are GREEN; no code-side item below remains open. The remainder of this section is retained
-as rejected-identity audit chronology and is superseded as a work list by this paragraph.
+as rejected-identity audit chronology and is not a current work list.
 
 The gate set now builds and runs on a second machine. Four machine-independence defects are closed,
 and the two Linux process-group lifecycle races are **now corrected** across the eight sites the
@@ -3796,14 +4311,14 @@ affected artifact, run installed authoritative smokes, prove routed runtime load
 Apple and paired `linux-cpu` cohorts, and record Wave Y evidence. Phase 0's accepted all-Haskell
 identity remains unchanged and closes Sprint 0.18 only.
 
-### Remaining Work — reopened 2026-08-08
+### Remaining Work
 
 Two defects in this sprint's own surface, both found on Darwin after the
 [2026-08-08 evidence reset](cohort-validation-waves.md). Both are code-side, so this sprint is no
 longer validation-only.
 
-- **The bounded-command target-environment allowlist admits no row for the Poetry snapshot
-  environment any renderer produces.** `validateRenderedEnvironment`'s exact-match set at
+- **Finding at reopen — the bounded-command target-environment allowlist admitted no row for the
+  Poetry snapshot environment any renderer produced.** `validateRenderedEnvironment`'s exact-match set at
   `src/Infernix/Cluster/Subprocess.hs:8337-8352` requires `PYTHONNOUSERSITE` on both
   `poetrySnapshotNames` (`:8278`) and `poetrySnapshotDyldNames` (`:8288`), while
   `packageClosureSnapshotEnvironment` (`:15032-15048`) emits only `PYTHONHOME`, `PYTHONPATH`, and on
@@ -3818,13 +4333,330 @@ longer validation-only.
   `fixedProvisioningProcessWithEnvironment` (`:4250`) always prepends the guard, so re-adding the
   name through a renderer fails at a second site. The four dead rows are ledgered in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- **Audiveris installed-smoke path drift.** `Engines/Provisioning/Internal.hs:282-283` now returns
+- **Finding at reopen — Audiveris installed-smoke path drift.**
+  `Engines/Provisioning/Internal.hs:282-283` returned
   `Audiveris.app/Contents/runtime/Contents/Home/bin/java`, while the consumer at
-  `Cluster/Subprocess.hs:15109-15119` still matches only
-  `["Audiveris.app","Contents","MacOS","Audiveris"]` and falls through to `[]`, dropping
+  `Cluster/Subprocess.hs:15109-15119` matched only
+  `["Audiveris.app","Contents","MacOS","Audiveris"]` and fell through to `[]`, dropping
   `DYLD_PRINT_LIBRARIES`. The environment gate does not catch it — the set collapses to the
   allowlisted `pythonNoBytecodeNames` — so it fails later at the loader audit with "sealed runner
   emitted no DYLD loader provenance". Producer and consumer are again two copies of one path.
+
+**Current correction state (2026-08-08):** both defects above are corrected in source. The
+supervisor's admissible name sets are derived from renderer-owned command, fixed-provisioning,
+Python-snapshot, and sealed-artifact vocabularies; the dead standalone `PYTHONNOUSERSITE` shapes are
+rejected. The Audiveris runtime-environment consumer compares against
+`installedSmokeExecutableRelativePath JvmAdapter`, so the current bundled JVM receives
+`DYLD_PRINT_LIBRARIES=1` and the retired `Contents/MacOS/Audiveris` launcher does not. Focused
+regressions cover those shapes. Python installed smokes additionally receive
+`--expected-python-prefix <artifactRoot>/venv`, with an exact unit assertion, so an installed smoke
+cannot silently run against a different interpreter prefix. The reopened sprint does not regain a
+closure claim until the complete current-source gates and Wave Y evidence run.
+
+**First post-validator materialization attempt — RED (2026-08-09):** exact
+`./.build/infernix internal materialize-metal-engines` exited 1 essentially immediately with
+`infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException: user error (stable copy source escaped its authorized root)` and `HasCallStack` `throwIO` at
+`src/Infernix/Error.hs:87:41`. It failed before any success, materialization, or smoke claim.
+The current corrected-source Darwin validator GREEN remains valid. Diagnosis, correction, and a
+full materialization rerun were pending at that boundary.
+
+**Diagnosed and landed retained-descriptor correction (2026-08-09):** the failing row is the
+`llama-cpp-cli` external Homebrew artifact closure
+`/opt/homebrew/Cellar/ggml/0.15.3/libexec`; its first sorted entry is `libggml-blas.so`, and the
+authorized destination is `.data/engines`. The retained source fd was incorrectly labeled
+`StableCopySourceInRoot` with the destination writer. Current source adds private
+`StableCopySourceRetainedDescriptor`, which carries the already-open nofollow fd/status/recheck,
+verifies identity and bound, seeks to zero, copies to the retained authorized destination, and
+rechecks inside completion and after it. Arbitrary external paths retain `ExactContent`, while
+truly owned sources retain `InRoot`. A normalized source guard has one correct and zero forbidden
+uses. Cleanup/residue consists only of empty owned scaffolding/locks/shim: no artifact, cache,
+prepared environment, or activity remains. Independent review found no High or Medium issue;
+scoped diff and hanging needles are clean. Exact governed `./bootstrap/apple-silicon.sh build`
+then exited 0. Stage 0 measured 65536 MiB physical − 49152 MiB active Colima = 16384 MiB effective
+and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules
+including the Provisioning correction, linked `Main`, installed/copied `.build/infernix`, and
+emitted the corrected operator-versus-harness postamble. This is compile/install evidence only.
+
+**Retained-descriptor current-source aggregate lint — GREEN (2026-08-09):** exact
+`./.build/infernix test lint` exited 0. It rebuilt the affected Provisioning graph; root
+`haskell-style-check: ok` and isolated `cabal-format-check: ok` passed; Python emitted
+`Success: no issues found in 8 source files`, Black emitted `8 files would be left unchanged`, and
+the gate emitted `All checks passed!`; bounded final `build all --enable-tests` rebuilt and linked
+every declared component, including Apple materializer, integration, and unit with the source
+guard. This is current-source lint/compile closure only.
+
+**Retained-descriptor current-source unit — GREEN (2026-08-09):** on a quiet host with no external
+claimant, exact `./.build/infernix test unit` exited 0. Compile-time fixtures passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12; capped observer and
+execution-plan passed; full Haskell printed `unit tests passed` and Cabal passed 1/1, crossing the
+new retained-descriptor source guard; and web build/bundle completed with 0 warnings/errors and
+83/83 tests passed.
+
+**Retained-descriptor current-source docs/diff — GREEN (2026-08-09):** immediately after the
+current-source build/lint/unit sequence, `./.build/infernix docs check` exited 0 with no output and
+repo-wide `git diff --check` exited 0 with no output. Correction build/lint/unit/docs/diff is
+GREEN.
+
+**Full retained-descriptor materializer rerun — RED (2026-08-09):** exact
+`./.build/infernix internal materialize-metal-engines` crossed the prior immediate stable-copy
+authority refusal, ran for about 20 seconds, and exited 251 with the sole output
+`infernix: out of memory`. It supplies no success, materialization, or smoke claim.
+
+**OOM diagnosis and bounded Mach-O correction build — GREEN (2026-08-09):** the complete
+Core ML temporary venv is about 1.3 GiB/28,589 files but has no Python-home or final manifest,
+locating failure after hydration and before Python-home copy during Mach-O discovery. Exact
+`libtorch_cpu.dylib` is 337911904 bytes, thin arm64 with 28 commands/3936 command bytes, so only
+3968 bytes are needed; old `fdRead (fileSize + 1)` made a pinned allocation under main `-xr1024M`
+of about one third usable heap. `libllvmlite` is 129479904 bytes/2344 command bytes; 12 fat32
+images require table-plus-slice handling. Current source removes `readExactExecutableBytes`, keeps
+the nofollow fd, bounds thin reads to 32 + `sizeofcmds` ≤ 4 MiB + 32, validates the fat table and
+unique arm64 range against the exact image before slice header/commands, limits each `fdRead` to
+64 KiB, and performs final fd/path recheck. Full digest and logical byte accounting are unchanged.
+Tests measure 337911904 → 3968, cover the 48-byte fat table/range and oversized/out-of-bounds
+cases, and pin the source guard; review found no High/Medium issue. Residue is complete
+llama/whisper plus a recoverable unactivated Core ML temp, with no live process/activity.
+Exact governed `./bootstrap/apple-silicon.sh build` then exited 0: stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the bounded reader, linked `Main`, installed it, and
+copied `.build/infernix`. This is compile/install evidence only; lint/unit/docs/diff and the
+materializer rerun remain. The earlier Darwin validator remains GREEN for its source identity.
+
+**Bounded Mach-O current-source aggregate lint — GREEN (2026-08-09):** exact
+`./.build/infernix test lint` exited 0. Root Haskell style passed; isolated Cabal 3.16 formatting
+passed; Python reported no issues in 8 files, Black left them unchanged, and all checks passed;
+final bounded build-all completed after rebuilding the Provisioning-dependent graph and linked the
+117-module `infernix-unit` target. This is formatting/policy/compile closure only.
+
+**Bounded Mach-O current-source closed unit — GREEN (2026-08-09):** exact
+`./.build/infernix test unit` exited 0. Compile-time capability fixtures passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including bounded Mach-O
+fixtures/source guards; capped-engine observer and execution-plan internal passed; main Haskell
+printed `unit tests passed` and Cabal passed 1/1; web build/bundle completed with 0 warnings/errors
+and 83/83 passed. The loud real-GHC compiler-chain skip remains the existing expected image
+condition.
+
+**Bounded Mach-O current-source docs/diff — GREEN (2026-08-09):** immediately after current-source
+build/lint/unit GREEN, `./.build/infernix docs check` exited 0 with no output and repo-wide
+`git diff --check` exited 0 with no output. Correction build/lint/unit/docs/diff is GREEN.
+
+**Bounded Mach-O full materializer rerun — RED (2026-08-09):** exact
+`./.build/infernix internal materialize-metal-engines` ran about 30 seconds in the governed
+session, produced no stdout, emitted sole stderr `infernix: out of memory`, and exited 251. The
+bounded-reader build/lint/unit/docs/diff evidence remains valid, but the runtime correction is
+insufficient. It supplies no materialization/smoke success claim.
+
+**Exact second-OOM diagnosis and landed strict-SHA correction — source-stable (2026-08-09):** the
+failure occurs in the candidate Core ML venv before Python-home creation, while
+`resolvePackageClosureIdentity` hashes the package closure. The 337911904-byte
+`libtorch_cpu.dylib` produced about 5,157 retained 64 KiB chunks because pure `NOINLINE`
+`SHA256.update` result contexts were not forced before recursive descriptor reads. Current source
+forces `nextContext` before the next descriptor read in every affected streaming loop:
+Provisioning has three, Artifact/Internal one, Artifact/Loader one, and Cluster/Subprocess two.
+It also forces package-closure entry contexts and replaces the installed-runtime metadata fold
+with `List.foldl'`. Unit source guards pin both the `nextContext` assignments and their forced call
+shapes. An exhaustive loop audit and independent review found no High or Medium issue; the scoped
+diff is clean.
+
+**Strict-SHA governed build — GREEN (2026-08-09):** exact
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus 49152 MiB
+active Colima as 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including Provisioning, Artifact/Internal, Artifact/Loader,
+and Cluster/Subprocess, linked `Main`, installed/copied `.build/infernix`, and emitted the corrected
+postamble. This proves compile/install only. Residue is complete llama/whisper plus the incomplete
+Core ML temp, with no live process/activity.
+
+**Strict-SHA aggregate lint attempt — RED at formatting only (2026-08-09):** exact
+`./.build/infernix test lint` exited 1. It recompiled Artifact/Loader, Artifact/Internal,
+Cluster/Subprocess, Provisioning, and their affected dependents under `-Werror`, then
+`infernix-haskell-style` failed only with `haskell-style-check: Ormolu formatting differs:` and
+listed exactly `src/Infernix/Engines/Artifact/Internal.hs`,
+`src/Infernix/Engines/Artifact/Loader.hs`, and `src/Infernix/Engines/Provisioning.hs`. Fail-fast
+prevented the isolated Cabal formatter, Python checks, final build-all, and later lint stages from
+running. This supplies no semantic/runtime claim.
+
+**Exact linked-Ormolu correction and governed build — GREEN for compile/install (2026-08-09):**
+one governed `./.build/infernix test lint` diagnostic intentionally exited 1 inside root style
+after formatting exactly the three listed files and proving formatter idempotence.
+HLint/readability, the isolated
+Cabal formatter, Python, and final build-all did not run. The checker was restored byte-for-byte:
+SHA-256 `76d4b148…`, with `cmp = 0` (passed). The correction has four sites:
+Artifact/Internal `hashDescriptorAtExactSize` (2+/2-), Artifact/Loader `digestLoaderDescriptor`
+(2+/2-), and Provisioning `digestPackageClosure`'s `directoryContext` plus
+`copyProvisioningDescriptor`'s `nextContext` (4+/4- total). Every edit changes only layout from
+``value\n  `seq` call`` to ``value `seq`\n  call``. Line and byte counts plus
+whitespace-stripped bytes are unchanged, with zero token-character change; scoped diff is clean.
+Exact `./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the formatter-stable Artifact/Internal,
+Artifact/Loader, and Provisioning strict-SHA files, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This proves compile/install only.
+
+**Formatter-stable strict-SHA aggregate lint — GREEN (2026-08-09):** exact
+`./.build/infernix test lint` exited 0. Root `haskell-style-check: ok` and isolated Cabal 3.16
+`cabal-format-check: ok` passed. Python emitted `Success: no issues found in 8 source files`, Black
+left all 8 unchanged, and the gate emitted `All checks passed!`. The final bounded all-component
+build rebuilt the strict-SHA affected graph, linked the 116-module `infernix-integration` target,
+and finally linked the 117-module `infernix-unit` target. The prior Ormolu RED is closed. This is
+style/policy/compile closure only.
+
+**Formatter-stable strict-SHA full closed unit — GREEN (2026-08-09):** on a quiet host with no
+external claimant, exact `./.build/infernix test unit` exited 0. Compile-fail passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12; capped observer and
+execution-plan passed; main Haskell printed `unit tests passed`, Cabal passed 1/1, and the
+strict-SHA production source guards were crossed. The expected loud no-real-GHC compiler-chain
+skip remained. Web build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed.
+
+**Formatter-stable strict-SHA pre-runtime docs/diff — GREEN (2026-08-09):** immediately after the
+build/lint/unit sequence, exact `./.build/infernix docs check` exited 0 with no output, then
+repo-wide `git diff --check` exited 0 with no output. The strict-SHA correction
+build/lint/unit/docs/diff is GREEN.
+
+**Strict-SHA real materializer rerun — RED at a later boundary (2026-08-09):** exact
+`./.build/infernix internal materialize-metal-engines` ran about 2m10s with no prior output and
+exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN remains valid. Exact diagnosis identifies the rejected outside-bin
+CPython config helper `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes
+with a retained-root interpreter shebang. A blanket absolute policy was rejected because `cgi`
+legitimately contains `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric;
+Provisioning now represents retained-versus-sealed destination identity explicitly, uses looped
+probes bounded to ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17
+source guards pin the behavior; independent review found no High or Medium issue. This identity is
+SOURCE-STABLE. On the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity and
+executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots and
+owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no behavioral
+or source-failure claim. After a verified 303s claimant-free and pane-clear window, the first fully
+uncontested current-source `./.build/infernix internal materialize-metal-engines` run started; the
+external monitor stayed clean through settlement. It ran silently for ~13m and exited 1 with the
+exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only complete
+roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but the runtime
+gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely passes the exact
+bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime libraries, but generic
+`provisioningCommandUsesArtifactSnapshot` omitted `ExtractAudiverisJavaCppNatives`; its fallback
+therefore required an empty closure and deterministically rejected before argv, environment, path
+validation, or spawn. The frozen correction touches only `src/Infernix/Cluster/Subprocess.hs` and
+`test/unit/Spec.hs`. Production shares the unchanged exact role/cardinality predicate, renames the
+classifier to `provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch
+requiring exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure
+remains mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command
+produced the sdist, compiled all 114 modules under GHC 9.12.4—including corrected
+Cluster/Subprocess as module 66 and the Provisioning/Apple callers—linked `Main`, installed and
+copied `.build/infernix`, and emitted the corrected operator/harness postamble. This is
+compile/install evidence only: lint, unit, and runtime have not run on the correction. The runtime
+gate remains RED. After a verified 304s claimant-free and pane-clear window, exact
+`./.build/infernix test lint` started. Before overlap, the affected graph compiled under `-Werror`;
+root `haskell-style-check: ok` passed; isolated Cabal 3.16 `cabal-format-check: ok` passed; Python
+reported no issues in 8 source files, Black left all 8 unchanged, and `All checks passed!`; bounded
+build-all entered component compile/link and linked apple-materializer. At 15:01:59, unrelated
+hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID 86109
+with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s and
+ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. The whole aggregate lint rerun awaits a genuinely settled claimant; then
+run full unit, docs/diff, and the full materializer rerun, with no later gate first.
+After a corrected rerun rematerializes the Apple roots and Python environments, pass the fixed
+production Audiveris
+cancellation and installed-Python source-isolation commands plus the authoritative installed
+smokes; require real output from the seven in-budget Apple Python-stdio rows; and require
+`image-sdxl-turbo` to return the exact typed refusal derived from the same final current-host
+observation used by `init --force` and `test init`. The currently recorded observation
+(65536 MiB physical - 49152 MiB active Colima pledge - 6144 MiB headroom) yields
+`ModelMemoryLimitExceeded { requiredMib = 12288, availableMib = 10240, resource = UnifiedHostRam,
+source = "host-memory-partition-inference-capacity" }`; changed host facts must change the expected
+`availableMib` instead of preserving that recorded literal. Complete the Apple
+`integration`/`e2e`/`all` gates and the paired frozen-source `linux-cpu` cohort, then record the Wave
+Y attestation. No earlier Stage 1 or cohort result closes this current source.
 
 **Cohort gate**: [Wave Y](cohort-validation-waves.md).
 
@@ -3832,32 +4664,91 @@ longer validation-only.
 
 ## Sprint 1.21: Bounded Host Build Memory Kernel [Active]
 
-**Status**: Active — code-side closed; the Apple lane's mechanism is validation-only and belongs to
-its cohort wave.
-**Code-side closure**: the kernel, the calibrated committed floor, the measured manifest facts, and
-the generated per-machine ceiling are implemented and GREEN on the machine-independent gate set
-(`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
-`infernix lint files|chart|proto|docs`).
+**Status**: Active — the complete-claimant correction is implemented in current source. The third
+2026-08-09 governed Apple bootstrap passed its corrected stage-0 preflight and compiled/installed all
+114 library modules plus the executable under the closed account. Its subsequent real
+`infernix init --force` exposed a stale-host-schema chicken-and-egg defect before measurement; the
+closed startup/init correction then rebuilt GREEN and the installed binary proved real forced init.
+The later Proto text-hygiene correction also rebuilt all 114 library modules plus the executable
+GREEN, and fresh `lint proto`, `lint files`, and `lint chart` are GREEN. The focused unit/style/docs
+gate then exposed a closed-vocabulary test-planning defect; that correction subsequently compiled
+and was covered by the later pre-observer-correction Stage 1 GREEN. A subsequent adversarial audit
+found that the same authority could start a second Cabal scheduler while its first child was still
+live. Current source
+contains the authority-local single-flight/lifecycle correction. Its first frozen-source governed rebuild
+compiled modules 1–113 and reached `Infernix.CLI` at module 114 before `-Werror` rejected the sole
+now-unused `Data.Foldable (for_)` import left by removal of the post-reap group probe. After that
+mechanical import removal, the identical governed bootstrap rebuilt all 114 modules, linked and
+installed the executable, and exited GREEN. That exact installed binary then completed forced Apple
+init GREEN, recording `physicalMemoryMib = 65536`, `effectiveMemoryMib = 16384`, and the generated
+8192 MiB toolchain account as `jobs: 1`, `-M6144M`, `-xr18432M`. Pre-observer-correction Stage 1 was
+GREEN at that identity.
+The first quiet-host Darwin evidence command reached module 59/114, then failed closed because a
+short-lived same-UID GHC/helper PID departed between the complete `/usr/bin/top` group snapshot and
+the sequential `/usr/bin/footprint` call. Current source contains the source-stable FixedObserver
+member-turnover correction described below. The exact quiet-host governed Apple bootstrap compiled
+and installed it GREEN; the rebuilt binary then completed forced Apple init and aggregate lint
+GREEN. The quiet-host closed unit gate then executed all four new enum branches and passed.
+Immediately afterward, the documentation gate and repo-wide diff check passed with no output.
+Current corrected-source Stage 1 build/init/lint/unit/docs/diff is GREEN; the specialized rerun
+then exited 0 and crossed the prior module-59 turnover failure. Its v1 report records 65,536 MiB
+physical, 49,152 MiB active Colima, 16,384 MiB effective, an 8,192 MiB plan budget/account, jobs 1,
+6,144 MiB compiler heap, 1,024 MiB control heap, 18,432 MiB address reservation, a 6,144 MiB
+compiler subtotal, and two controls totaling 2,048 MiB. At a one-second interval, 518 total samples
+measured an overall peak of 1810860984 bytes and an account/peak ratio of 4.74x. The installed
+runtime CLI ignored inherited `GHCRTS`, proven with an adversarial invalid `GHCRTS`; excluded
+claimants were the operator CLI parent and fixed observer tools. Invocation 1, `cabal build all
+--enable-tests`, exited 0 after 591645817 us with 511 samples and a 1810860984-byte peak. Invocation
+2, `cabal install all:exes`, exited 0 after 8221664 us with 7 samples and a 624591784-byte peak.
+Darwin has no enforced aggregate/address-space ceiling; samples can miss transient peaks and exclude
+processes outside the measured Cabal group.
+**Code-side closure**: the original kernel, calibration, measured manifest facts, and generated
+per-machine ceiling retain their recorded narrower evidence. The current source additionally
+subtracts the active Colima pledge; accounts compiler, driver, and worker-helper claims; binds the
+final Cabal driver/GHC arguments and build-only environment to the opaque authority; closes all
+focused Cabal suite vectors; gives each authority a private serialized child-lifecycle token with
+nominal region roles; and implements the typed Darwin sampler/evidence command. The normal CLI now
+observes the descriptor ceiling, closes inherited descriptors, owns a fresh group through
+exceptional cleanup, and retains the token through trusted Cabal-leader reap. The 2026-08-09
+governed bootstrap compile/install is GREEN for that production source; no focused unit,
+compile-fail, style, or behavioral result was inferred from that executable-only build. Subsequent
+pre-observer-correction unit/lint/docs/diff gates were GREEN; the first Darwin runtime attempt was
+RED. The landed observer correction's governed build supplies compile/install evidence only; no
+focused, style, documentation, or observer result is inferred from that build itself. Its rebuilt
+binary separately completed forced init, aggregate lint, the closed unit gate, documentation check,
+and repo-wide diff check GREEN. Current corrected-source Stage 1 is GREEN. The corrected Darwin
+observer then completed the specialized validator GREEN and crossed the earlier turnover failure.
 **Cohort gate**: `apple-silicon` — Wave Y. Darwin's mechanism is a runtime heap cap plus bounded
-concurrency and nothing here measures it.
+concurrency. The command is the measurement surface; its current corrected-source execution is now
+recorded GREEN below.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`, `infernix.cabal`,
-`cabal.project`, `test/compile-fail/cabal.project`, `src/Infernix/HostConfig.hs`,
+`cabal.project`, `test/compile-fail/cabal.project`, `test/compile-fail/Main.hs`,
+`test/integration/Spec.hs`, `bootstrap/apple-silicon.sh`, `web/package.json`,
+`src/Infernix/HostConfig.hs`,
 `src/Infernix/Runtime/Enforcer/Internal.hs`, `src/Infernix/DemoConfig/Internal.hs`,
-`src/Infernix/ProjectInit.hs`, `src/Infernix/CLI.hs`, `docker/Dockerfile`
-**Docs to update**: `documents/architecture/bounded_host_memory.md`,
-`documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`
+`src/Infernix/ProjectInit.hs`, `src/Infernix/CommandRegistry.hs`, `src/Infernix/CLI.hs`,
+`src/Infernix/Evidence/Readiness.hs`,
+`src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `test/unit/Spec.hs`,
+`test/capped-engine-observer/Spec.hs`, `test/compile-fail/fail/CannotCoerceToolchainSpawnAuthority.hs`,
+`test/compile-fail/fail/CannotCoerceDarwinBuildMemoryValidationAuthority.hs`,
+`src/Infernix/Lint/HaskellStyle.hs`, `docker/Dockerfile`
+**Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `documents/architecture/bounded_host_memory.md`,
+`documents/engineering/host_tools_manifest.md`, `documents/development/local_dev.md`,
+`documents/reference/cli_reference.md`
 
 ### Objective
 
 Give the host toolchain a declared account on physical memory, and make a ceiling that was never
 divided by its concurrency impossible to construct.
 
-The declared quantity is a budget for the toolchain account together with the job count it will be
-multiplied by. `deriveBuildMemoryPlan` is the single mint and the only producer of the
-hidden-constructor `BuildMemoryPlan`; `planRtsHeapMib` and `planProcessAddressMib` are accessors on
-that type alone, so a per-process ceiling cannot exist without the budget and concurrency that
-produced it. This is the sprint that refuses the obvious wrong fix: a 48 GiB per-process heap cap
-under `jobs: $ncpus` on a 32-core host permits 1536 GiB.
+The declared quantity is a budget for the complete toolchain account together with the job count.
+`deriveBuildMemoryPlan` is the single mint and the only producer of the hidden-constructor
+`BuildMemoryPlan`. It reserves a fixed 1024 MiB control/helper claim for the live Cabal driver and
+one for each compiler worker, then divides the residual across compiler heaps. The normal account is
+therefore `jobs × compilerHeap + (jobs + 1) × controlHeap`; neither the compiler ceiling nor its
+concurrency exists independently. This is the sprint that refuses the obvious wrong fix: a 48 GiB
+per-process heap cap under `jobs: $ncpus` on a 32-core host permits 1536 GiB before the driver and
+helpers are counted.
 
 The kernel is only installable because the built executable declares a bounded runtime address-space
 reservation first. Measured on the development host: the compiler runtime reserves 1024.65 GiB by
@@ -3868,17 +4759,22 @@ transfer.
 
 ### Deliverables
 
-All five are implemented.
+All five original deliverables are implemented. The current source also implements the Apple
+measurement surface required to validate the otherwise unenforced aggregate.
 
-- **A bounded runtime address-space reservation on the built executable.** The `infernix` executable
-  carries `-with-rtsopts=-xr1024M`; the linked binary is verified to carry it. `toolchainReservationFitsEveryPlan`
-  pins the invariant that the reservation stays below the smallest per-process ceiling the mint can
-  produce, and the unit suite asserts it rather than trusting two constants to stay in agreement.
-- **A calibrated ceiling and bounded job count committed to `cabal.project` and the compile-fixture
-  project**, covering a fresh clone and an operator's own direct `cabal` invocation. Both files carry
-  `jobs: 4` plus `ghc-options: +RTS -M4096M -xr12288M -RTS`, and both state the product rather than
-  the per-process number alone. The compile-fixture project is one of the nested builds the doctrine
-  names as outside the outer ceiling, so it carries its own.
+- **A bounded runtime address-space reservation on the built executable.** The shipped operator
+  `infernix` carries `-with-rtsopts=-xr1024M` but deliberately no toolchain `-M`: it ignores inherited
+  build-only `GHCRTS`, because service/inference runtime belongs to the non-toolchain host reserve and
+  has not been calibrated to the 1024 MiB control cap. Test/tool images carry their explicit
+  component caps. `toolchainReservationFitsEveryPlan` pins the address-reservation invariant.
+- **A calibrated clean-clone account committed to `cabal.project`.** It carries three compiler jobs
+  at 4096 MiB plus four 1024 MiB control/helper claims, exactly 16384 MiB, with a 12288 MiB compiler
+  address reservation. Command-line authority remains binding over project files. The serialized
+  compile-fail child has a separate one-job project and final vector: one 2048 MiB nested GHC plus
+  four 1024 MiB outer-Cabal/test-runner/nested-Cabal/worker-auxiliary claims, 6144 MiB inside the
+  outer 8192 MiB account. A clean Apple clone has a separate fixed stage-0 seed of one 4096 MiB
+  compiler plus two 1024 MiB control claims, also 6144 MiB; its fixed-path preflight first proves that
+  seed fits the measured 50% share after subtracting every active Colima pledge.
 - **`Infernix.BuildMemory`** exporting `BuildMemoryBudget`, `BuildConcurrency`, and `BuildMemoryPlan`
   abstractly with `deriveBuildMemoryPlan` as the only mint, following the hidden-constructor,
   lower-only, fail-closed shape of `Infernix.DescriptorSpace`. `establishBoundedBuildMemory` writes
@@ -3886,14 +4782,54 @@ All five are implemented.
   `requireBoundedBuildMemory` is the fail-closed observation at the point of use.
 - **Physical-memory facts in the host manifest, measured rather than declared.** `Infernix.HostMemory`
   reads `MemTotal` from `/proc/meminfo` and intersects it with the cgroup v2 maximum on Linux, and
-  `sysctl -n hw.memsize` on Darwin, reusing the cgroup reader lifted out of
-  `Infernix.Runtime.Enforcer` into `Infernix.Runtime.Enforcer.Internal`. `infernix init` refuses to
-  write a manifest it could not measure.
+  reads `sysctl -n hw.memsize` on Darwin and subtracts the aggregate pledge of every Colima profile
+  not explicitly stopped. The fixed-path, deadline-bounded Colima producer and conservative parser
+  are shared with inference-memory partitioning; missing, malformed, failed, or non-positive
+  observations fail closed. `infernix init` refuses to write a manifest it could not measure.
 - **The per-machine ceiling generated into the untracked `cabal.project.local` by `infernix init`**,
-  derived from those facts, superseding the hand-written stopgap, which is deleted. `internal
-  materialize-substrate` writes it too, so the launcher image's own build is bounded by the same
-  derivation. On the 124.94 GiB development host that is a 63967 MiB account divided by 8 jobs into
-  a 7995 MiB heap cap and a 23985 MiB address-space reservation.
+  derived from those facts, superseding the hand-written stopgap. `internal
+  materialize-substrate` writes it too. The mint chooses the largest funded job count at the
+  calibrated compiler floor, reserves `(jobs + 1) × 1024 MiB`, and assigns the residual to the
+  compiler slots. On the measured 124.94 GiB host, a 63967 MiB account selects eight jobs, a 6843 MiB
+  compiler heap, and a 20529 MiB compiler address reservation; the exact claimant sum is 63960 MiB.
+  An 8192 MiB account selects one job and a 6144 MiB compiler heap after its two control claims; the
+  heap floor is not silently substituted for the residual.
+- **A closed opt-in Darwin evidence command.** `infernix internal
+  validate-darwin-build-memory` accepts only the resolved `UnenforcedLane
+  DarwinHeapCapMechanism`, consumes the live plan and exact committed jobs/heap/reservation
+  observation, checks the complete claimant sum without arithmetic overflow and against the account
+  before spawning, and gives fresh scratch-root build/install process groups the exact
+  authority-derived vector. Cabal receives leading `+RTS -M1024M -RTS` and build-only
+  `GHCRTS=-M1024M`; GHC receives final `--jobs` and one ordered
+  `--ghc-options=+RTS -M... -xr... -RTS`. The existing fixed Apple observer samples each owned
+  group at a fixed cadence and the typed report names the result **sampled peak aggregate physical
+  footprint**, alongside physical/effective memory, active Colima pledge, complete plan/subtotals,
+  interval/count/maximum, an Integer fixed-point account-to-sampled-peak multiple, exits, and
+  durations. The build requires a positive sample; a reused install that terminates before the first
+  fixed-cadence probe records an explicit zero-sample terminal outcome instead of inventing a
+  footprint. A final adversarial invalid-`GHCRTS` self-exec proves the freshly installed operator CLI
+  ignores the build-only cap. Live observer loss while a group remains live fails closed. Normal
+  completion observes no live group member while the leader still pins its identity; exceptional
+  cleanup signals the owned group and performs the same pre-reap observation. Both cross a masked
+  nonblocking leader-reap transition afterward, with no numeric PGID probe or signal after reap. The
+  operator CLI parent and fixed observer tools are explicit non-toolchain host reserve claimants
+  outside the sampled Cabal group and account. This deliverable is implemented, not yet validated.
+- **A closed validation vocabulary for every retained Cabal surface.** `infernix test unit` owns the
+  exact compile-fail, artifact-transaction, Apple-materializer, capped-observer,
+  execution-plan-internal, and unit vectors. Integration no longer discovers or re-enters Cabal, web
+  contract generation invokes the installed launcher, and the bootstrap/Docker paths carry their
+  own exact accounts. Two non-default Apple materializer gates are fixed commands rather than
+  caller-supplied Cabal options: `infernix internal validate-darwin-audiveris-cancellation` and
+  `infernix internal validate-darwin-installed-python-source-isolation`.
+- **Authority-local single-flight and an owned normal child lifecycle.** The authority and Darwin
+  refinement have nominal region roles, and one private token serializes complete package-owned
+  lifecycle calls using the same authority. The normal child observes the descriptor bound, uses
+  `close_fds` and a fresh process group, retains the token through rank and Cabal-leader reap, and
+  kills/reaps the still-owned group on an exception before that reap. This is intentionally not a
+  host-global or crash-surviving lease. Independent CLI images, checkouts, and stage-0 bootstraps
+  are unsupported concurrent claimants; the 50% account does not fund overlap and governed
+  workflows must serialize them. Normal success trusts Cabal to await its workers and makes no
+  post-reap descendant/PGID-absence claim.
 
 Two decisions inside are worth stating rather than leaving implicit.
 
@@ -3903,59 +4839,376 @@ its copying collector needs two semispaces, so usable heap tracks an address-spa
 third of it. Carrying both numbers independently would let them drift; the plan therefore derives
 `planProcessAddressMib` from `planRtsHeapMib` through one `heapToAddressSpaceMultiplier`.
 
-**A stale host manifest is a named refusal, not a raw Dhall type error, and the named remedy is
-`delete and re-run infernix init`.** Adding a record to the manifest breaks every previously
-generated file, and startup deliberately fails closed on a manifest it cannot decode rather than
-falling through to convention defaults that could misclassify the execution context. Making
-`infernix init` itself tolerant was considered and rejected: `init` is reached only after several
-earlier startup paths have already loaded the manifest, so tolerance would have to be threaded
-through all of them to buy an operator one `rm`.
+**A stale host manifest is a named refusal for ordinary commands, while init is the closed migration
+surface.** Adding a record breaks every previously generated file, and runtime/cluster/test startup
+still fails closed rather than falling through to defaults that could misclassify the execution
+context. Help and init alone bypass configured startup. Init derives config-independent paths and
+writes under runtime-config authority, so `infernix init --force` can replace a stale schema without
+making any ordinary command tolerant. The first real attempt exposed that this bypass was incomplete;
+the current correction is recorded below and remains validation-pending.
 
 ### Validation
 
-- **The calibration run.** A complete clean `cabal build all --enable-tests` — 611 module
-  compilations across six components, so the largest module in `src/` is compiled six times — peaked
-  at **1328 MiB** resident in the largest single compiler process and **1798 MiB** summed across every
-  concurrent compiler and `cabal` process, in 8 m 13 s. The shipped 4096 MiB per-process floor is
-  3.1 times the single-process peak. The measurement, not the number, is what is maintained.
-- `cabal test infernix-unit` proves the bound is inherited through the compiler chain (a spawned
-  child reports the identical limit, and the real `ghc` compiles a module under it), that an
-  unresolvable ceiling is a named refusal, that establishing it never raises a tighter host-imposed
-  limit, and that the generated `cabal.project.local` states its job count, its per-process cap, and
-  their product.
-- An adversarial over-allocation under the ceiling exits non-zero and cleanly, with no global
-  out-of-memory condition. Every case that installs a ceiling runs in a re-exec of the suite binary
-  with an explicit `+RTS -xr` reservation, because the suite's own image takes the default
-  1024.65 GiB and could not lower its own limit below it.
-- `cabal build all --enable-tests` under `-Wall -Werror` and `infernix lint docs` are GREEN, and the
-  whole gate set above ran under the new committed floor rather than the retired stopgap.
+- **Historical calibration retained for the floor.** The recorded complete clean build compiled 611
+  modules across six components, peaked at 1328 MiB in the largest compiler and 1798 MiB summed
+  across the observed compiler/Cabal processes, and completed in 8 m 13 s. The 4096 MiB compiler
+  floor is 3.1 times that single-process observation. This run predates the complete claimant model
+  and is calibration evidence, not current-source closure.
+- **Historical kernel evidence retained for its exact source.** The original focused unit fixture
+  proved inherited Linux address limits, real-GHC compilation under the limit, named mechanism
+  refusal, lower-only establishment, and generated settings. The 2026-08-08 authority fixture then
+  proved that equal heaps with different jobs are not interchangeable and that stale jobs or
+  reservations refuse. A later bounded central compile rejected the repeated singular
+  `--ghc-option` rendering because Cabal handed `-M4096M` and `-xr12288M` to GHC as compiler flags.
+  That failed compile is diagnostic evidence only.
+- **Pre-execution source state (historical boundary).** Authority mint and pre-spawn observation
+  consume the same
+  generated jobs/heap/reservation triple. Cabal may still read its project files after spawn, so the
+  binding property comes from final command-line precedence: one authority-derived `--jobs`, one
+  plural ordered `--ghc-options=+RTS -M... -xr... -RTS`, the leading Cabal control cap, and the fixed
+  build-only environment. Focused unit cases pin complete-account overflow/over-budget refusal,
+  same-heap/different-jobs separation, exact build/install/suite argument vectors, installed-runtime
+  environment isolation, report rendering, build-positive/install-zero sampling, deterministic
+  same-authority serialization and exception release, nominal-role coercion refusal, and Darwin
+  normal/exceptional pre-reap live-member observation plus terminal-crossing cleanup. The new normal
+  lifecycle source also pins descriptor precheck, `close_fds`, fresh-group spawn, masked
+  nonblocking leader reap, absence of a post-reap numeric-group probe, and exceptional cleanup. A
+  bounded Darwin re-exec uses a 64 MiB
+  heap cap, verifies the active RTS maximum, allocates roughly twice it, and requires an ordinary
+  positive nonzero exit. At that boundary these additions had compiled in the third bootstrap, but
+  the focused cases had not executed and later CLI/ProjectInit changes required a new aggregate
+  build. The later pre-observer-correction Stage 1 GREEN record below supersedes that execution
+  status for that identity; the observer correction still requires a current-source rerun.
+- **Rejected stage-0 attempt (2026-08-09).** The governed Apple build stopped before Cabal because
+  fixed `/opt/homebrew/bin/colima` inherited the bootstrap's global `PATH=/usr/bin:/bin` and therefore
+  could not locate its own `limactl`. The current correction invokes the fixed Colima executable
+  through `/usr/bin/env` with the deterministic launcher PATH and adds a source guard. The second
+  governed attempt passed that preflight and compiled all 114 library modules before a redundant
+  style-module import failed `-Wall -Werror`. After that import was removed, the third attempt
+  compiled and installed all 114 library modules plus the executable under the exact seed account.
+  The post-install heredoc then evaluated an unescaped documentation backtick as `build`, printing
+  `build: command not found` despite the successful exit. Current source escapes it and adds a unit
+  source guard; `bash -n` and the help smoke were GREEN at that boundary. The guard later passed in
+  the pre-observer-correction Stage 1; the observer correction still requires a current-source rerun.
+- **Real init diagnostic and correction (2026-08-09).** After the successful compile/install,
+  `infernix init --force`
+  still entered configured startup and `syncBuildRootExecutable`/ProjectInit decoded the stale host
+  schema before init could replace it. Current source makes only help/init bypass configured startup,
+  derives init paths without a host manifest, and performs the write through the closed runtime-config
+  authority. A full governed bootstrap rebuilt all 114 library modules plus the executable GREEN,
+  after which the installed binary proved help and `init --force` against the stale schema. It
+  generated physical 65536 MiB, effective 16384 MiB, and the exact one-job plan with a 6144 MiB
+  compiler heap and 18432 MiB reservation. A pure unit assertion pins the command predicate.
+  The subsequent Proto lint source changes rebuilt GREEN and do not invalidate that live init
+  observation.
+- **Pre-observer-correction Stage 1 — GREEN at that identity (2026-08-09).** The closed unit and
+  aggregate lint gates passed,
+  followed by `docs check` and repo-wide `git diff --check` with exit 0 and no output. The focused
+  bootstrap/init source guards, nominal-role/refinement cases, serialization, and exception-release
+  coverage belong to that pre-observer-correction identity; the current source remains unvalidated.
+- **First pre-observer-correction Darwin specialized attempt — RED/fail-closed (2026-08-09).** On a
+  quiet host,
+  `./.build/infernix internal validate-darwin-build-memory` exited 1. Its fresh temporary build
+  reached module 59/114; this was not a compiler failure. The fixed `/usr/bin/footprint` observer
+  for live PGID/PID 48982 emitted
+  `footprint: Unable to analyze process with pid 48982 (try as root?)` and
+  `Unable to find any processes matching...`. `FixedObserver` still reported a live group member,
+  so the CLI refused incomplete sampling. Owned Cabal/GHC/temporary-group cleanup succeeded;
+  post-exit `ps` showed no survivor. No sampled-memory GREEN claim exists. Diagnosis and correction
+  remained pending at that boundary.
+- **Diagnosed and landed member-turnover correction (2026-08-09).** A short-lived same-UID
+  GHC/helper PID departed between the complete `/usr/bin/top` group snapshot and sequential
+  `/usr/bin/footprint`. Probing a nonexistent PID reproduces the exact exit 66 and two-line stderr;
+  live same-UID probes work, ruling out tool outage. The fix is confined to `FixedObserver`: one
+  shared five-second deadline governs a raw bounded membership recheck. If the failed PID remains,
+  the original failure stays fatal; an empty recheck returns the original `Left` for terminal
+  settlement; recheck failure reports a combined fail-closed error; and a departed PID with a
+  nonempty refreshed group discards the partial total and restarts the full snapshot from zero.
+  Four closed kernel-enum fixtures pin 300-not-400 turnover, retained member, empty, and recheck
+  failure. Independent review found no blocker; scoped diff, hanging-expression needles, and static
+  checks are clean.
+- **Post-correction governed build — GREEN (2026-08-09).** On a quiet host, exact
+  `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65,536 MiB physical minus the
+  49,152 MiB active Colima pledge as 16,384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`. The command created the sdist, compiled all 114 library
+  modules including the corrected `FixedObserver`, linked executable `Main`, installed and copied
+  `.build/infernix`, and emitted the corrected operator-versus-harness postamble. This is
+  compile/install evidence only; observer behavior and the current-source closed unit/lint/docs
+  gates remained unexecuted at that boundary.
+- **Post-correction forced init — GREEN (2026-08-09).** The rebuilt binary's exact
+  `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --force` exited 0 and wrote
+  `infernix.dhall`, `infernix-host.dhall`, `.data/runtime/secrets/InfernixSecrets.dhall`, and
+  `cabal.project.local`. Those four paths are generated/ignored evidence, not version-controlled
+  Dhall, and establish the same host-observation/configuration basis required by the later capacity
+  evidence. At that boundary this did not validate observer behavior or the closed unit/lint/docs
+  gates.
+- **Post-correction aggregate lint — GREEN (2026-08-09).** Exact
+  `./.build/infernix test lint` exited 0 after rebuilding the corrected `FixedObserver` dependency
+  graph. Root `haskell-style-check` passed; the isolated Cabal 3.16 formatter passed; Python quality
+  reported no issues in eight source files, Black left all eight unchanged, and the Python gate
+  reported all checks passed. The final bounded `build all --enable-tests` compiled and linked the
+  corrected capped observer, integration, unit, and every other declared component. This validates
+  formatting, policy, and compile closure; it does not execute the runtime kernel fixture owned by
+  closed `test unit` or supply Darwin validator evidence.
+- **Post-correction closed unit — GREEN (2026-08-09).** On a quiet host, exact
+  `./.build/infernix test unit` exited 0. Its focused prerequisites passed: compile-fail 6 positive /
+  92 negative, artifact transaction 48 scenarios, Apple materializer 12 scenarios, the corrected
+  capped-engine fixed public-tool observer, and execution-plan internal. The capped observer's
+  `allKernelTests` executed all four new enum turnover branches. Full Haskell unit printed
+  `unit tests passed` and Cabal passed 1/1, crossing the Sprint 1.20 marker and all prior lease/path
+  failure points. Web contract generation, build, and bundle completed with 0 warnings and 0 errors,
+  and 83/83 web tests passed. The current-source runtime correction is unit-validated; this is not
+  Darwin specialized evidence.
+- **Post-correction Stage 1 docs/diff — GREEN (2026-08-09).** Immediately after the current-source
+  aggregate lint and closed unit gates passed, `./.build/infernix docs check` exited 0 with no output
+  and repo-wide `git diff --check` exited 0 with no output. Current corrected-source Stage 1
+  build/init/lint/unit/docs/diff is GREEN.
+- **First post-turnover Darwin validator — GREEN (2026-08-09).** Exact
+  `./.build/infernix internal validate-darwin-build-memory` exited 0 on the current corrected source
+  and crossed the prior module-59 turnover failure. Evidence v1 records physical 65536 MiB, active
+  Colima pledge 49152 MiB, effective 16384 MiB, plan budget/account 8192 MiB, jobs 1, compiler heap
+  6144 MiB, control heap 1024 MiB, address reservation 18432 MiB, compiler subtotal 6144 MiB, and
+  two controls/subtotal 2048 MiB. The installed runtime CLI ignored inherited `GHCRTS`, proved with
+  an adversarial invalid `GHCRTS`; excluded claimants are the operator CLI parent and fixed observer
+  tools. The one-second interval produced `sampleCount = 518`, overall peak 1810860984 bytes, and
+  account/peak 4.74x. Invocation 1, `cabal build all --enable-tests`, exited 0 after 591645817 us,
+  sampled 511 times, and peaked at 1810860984 bytes. Invocation 2, `cabal install all:exes`, exited
+  0 after 8221664 us, sampled 7 times, and peaked at 624591784 bytes. Darwin has no enforced
+  aggregate/address-space ceiling; samples can miss transient peaks and exclude processes outside
+  the measured Cabal group.
+- **Pending closed validation.** Current-source retained-descriptor build/lint/unit/docs/diff is
+  GREEN. Rerun `materialize-metal-engines`; afterward run the Audiveris cancellation and installed-Python
+  source-isolation gates before the Apple cohort and paired `linux-cpu`/Wave Y.
+- **First rejected closed lint attempt (2026-08-09).** `infernix test lint` failed before compiling the
+  style suite because `ToolchainTest` omitted `--enable-tests`, so Cabal's solver plan excluded that
+  component. Current source makes `--enable-tests` part of every fixed test and specialized Darwin
+  vector, and corrects `ToolchainBuildAll` to the calibrated `build all --enable-tests` form; exact
+  unit vectors changed in lockstep.
+- **Second rejected closed lint attempt (2026-08-09).** After that vector correction reached the
+  solver, one monolithic style component could not satisfy Ormolu 0.8.0.2's Cabal-syntax 3.14 world
+  together with Cabal 3.16.1.0's Cabal-syntax 3.16 world. A later closed attempt proved that merely
+  declaring two suites in one package still shares that solver universe. Current source therefore
+  keeps `infernix-haskell-style` (Ormolu/HLint) in the root package and moves Cabal 3.16 into the
+  genuinely separate package under `test/cabal-format/`; the closed `test lint` vocabulary selects
+  both sequentially. The package split later built and passed in the pre-observer-correction Stage
+  1; at that boundary the later observer correction still required a complete current-source
+  rerun, which is now Stage 1 GREEN above.
 
 ### Remaining Work
 
-The Apple lane's mechanism is unmeasured and is proved by its cohort wave, not by this gate set:
-Darwin aliases the address-space limit to an advisory resident-set limit, has no cgroups, and has no
-equivalent global out-of-memory killer, so its bound is a runtime heap cap plus bounded concurrency
-and the aggregate is arithmetic rather than enforcement. Until Wave Y records a result, no claim in
-this sprint covers it.
+The landed FixedObserver member-turnover correction now has current-source Stage 1 GREEN plus the
+post-turnover Darwin validator GREEN. Its 518 one-second samples measured a 1810860984-byte overall
+peak against the 8192 MiB account (4.74x), and its build/install invocations both exited 0. Darwin
+still has no enforced aggregate/address-space ceiling; samples can miss transient peaks and exclude
+processes outside the measured Cabal group. Complete `materialize-metal-engines`, the Audiveris
+cancellation gate, installed-Python source isolation, the Apple cohort, and paired
+`linux-cpu`/Wave Y before closing Phase 1. The current bounded Mach-O correction is
+build/lint/unit/docs/diff GREEN, but its full materializer rerun exited 251 OOM after about 30
+seconds with no stdout. Exact diagnosis places the failure before Python-home creation in candidate
+Core ML `resolvePackageClosureIdentity`: the 337911904-byte `libtorch_cpu.dylib` retained about
+5,157 64 KiB chunks because pure `NOINLINE` `SHA256.update` contexts were unforced. The strict-SHA
+correction is source-stable after exhaustive audit, independent no-High/Medium review, and clean
+scoped diff. Exact governed `./bootstrap/apple-silicon.sh build` exited 0 after the 65536 − 49152 =
+16384 MiB observation and `J1 × H4096 + 2 × C1024 = 6144 MiB` selection; it built the sdist and all
+114 modules including the four strict-loop owners, linked `Main`, installed/copied the executable,
+and emitted the corrected postamble. This is compile/install evidence only. Exact
+`./.build/infernix test lint` then exited 1 after recompiling that graph under `-Werror`;
+`infernix-haskell-style` failed only with `haskell-style-check: Ormolu formatting differs:` for
+exactly `src/Infernix/Engines/Artifact/Internal.hs`,
+`src/Infernix/Engines/Artifact/Loader.hs`, and `src/Infernix/Engines/Provisioning.hs`, while
+fail-fast left all later lint stages unrun. This is no semantic/runtime claim. Exact linked-Ormolu
+formatting then covered exactly those files in one governed `./.build/infernix test lint`
+diagnostic that intentionally exited 1 inside root style after proving idempotence;
+HLint/readability, the isolated formatter, Python, and build-all did not run, and the checker was
+restored byte-for-byte (SHA-256 `76d4b148…`; `cmp = 0`). Four sites change only
+``value\n  `seq` call`` to
+``value `seq`\n  call``: Artifact/Internal `hashDescriptorAtExactSize` 2+/2-,
+Artifact/Loader `digestLoaderDescriptor` 2+/2-, and Provisioning `digestPackageClosure`
+`directoryContext` plus `copyProvisioningDescriptor` `nextContext` 4+/4- total. Line/byte counts,
+whitespace-stripped bytes, and token characters are unchanged; scoped diff is clean. Exact
+`./bootstrap/apple-silicon.sh build` then exited 0 after stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; sdist, all
+114 modules including the formatter-stable Artifact/Internal, Artifact/Loader, and Provisioning
+strict-SHA files, `Main` link, install/copy to `.build/infernix`, and corrected postamble completed.
+This is compile/install evidence only. Exact `./.build/infernix test lint` then exited 0: root
+`haskell-style-check: ok`, isolated Cabal 3.16 `cabal-format-check: ok`, Python
+`Success: no issues found in 8 source files`, Black's 8 unchanged files, and
+`All checks passed!` all passed. Its final bounded all-component build rebuilt the strict-SHA
+affected graph, linked 116-module `infernix-integration`, and finally linked 117-module
+`infernix-unit`. The previous Ormolu RED is closed. This is style/policy/compile evidence only.
+On a quiet host with no external claimant, exact `./.build/infernix test unit` then exited 0.
+Compile-fail passed 6 positive/92 negative; artifact transaction passed 48; Apple materializer
+passed 12; capped observer and execution-plan passed; main Haskell printed `unit tests passed`,
+Cabal passed 1/1, and the strict-SHA production source guards were crossed. The expected loud
+no-real-GHC compiler-chain skip remained. Web build/bundle completed with 0 warnings, 0 errors, and
+83/83 tests passed. Immediately after the build/lint/unit sequence, exact
+`./.build/infernix docs check` exited 0 with no output, then repo-wide `git diff --check` exited 0
+with no output. The strict-SHA correction build/lint/unit/docs/diff is GREEN. Exact
+`./.build/infernix internal materialize-metal-engines` then ran about 2m10s with no prior output and
+exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN remains valid. Exact diagnosis identifies the rejected outside-bin
+CPython config helper `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes
+with a retained-root interpreter shebang. A blanket absolute policy was rejected because `cgi`
+legitimately contains `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric;
+Provisioning now represents retained-versus-sealed destination identity explicitly, uses looped
+probes bounded to ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17
+source guards pin the behavior; independent review found no High or Medium issue. This identity is
+SOURCE-STABLE. On the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity
+and executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots
+and owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no
+behavioral or source-failure claim. After a verified 303s claimant-free and pane-clear window, the
+first fully uncontested current-source `./.build/infernix internal materialize-metal-engines` run
+started; the external monitor stayed clean through settlement. It ran silently for ~13m and exited
+1 with the exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only
+complete roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but
+the runtime gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely
+passes the exact bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime
+libraries, but generic `provisioningCommandUsesArtifactSnapshot` omitted
+`ExtractAudiverisJavaCppNatives`; its fallback therefore required an empty closure and
+deterministically rejected before argv, environment, path validation, or spawn. The frozen
+correction touches only `src/Infernix/Cluster/Subprocess.hs` and `test/unit/Spec.hs`. Production
+shares the unchanged exact role/cardinality predicate, renames the classifier to
+`provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch requiring
+exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure remains
+mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command
+produced the sdist, compiled all 114 modules under GHC 9.12.4—including corrected
+Cluster/Subprocess as module 66 and the Provisioning/Apple callers—linked `Main`, installed and
+copied `.build/infernix`, and emitted the corrected operator/harness postamble. This is
+compile/install evidence only: lint, unit, and runtime have not run on the correction. The runtime
+gate remains RED. After a verified 304s claimant-free and pane-clear window, exact
+`./.build/infernix test lint` started. Before overlap, the affected graph compiled under
+`-Werror`; root `haskell-style-check: ok` passed; isolated Cabal 3.16
+`cabal-format-check: ok` passed; Python reported no issues in 8 source files, Black left all 8
+unchanged, and `All checks passed!`; bounded build-all entered component compile/link and linked
+apple-materializer. At 15:01:59, unrelated hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID
+86109 with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s
+and ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. The whole aggregate lint rerun awaits a genuinely settled claimant; then
+run full unit, docs/diff, and the full materializer rerun, with no later gate first. Phase 1 remains
+Active.
 
-The toolchain *spawn boundary* — the closed invocation vocabulary that makes starting a build from a
-bare command list not typecheck, plus the `unboundedToolchainSpawnViolations` lint and the child
-victim rank — is Phase 6 Sprint 6.46 and is deliberately not claimed here. Until it lands, the
-ceiling is installed by the committed and generated project files rather than by an evidence-gated
-spawn.
+The toolchain *spawn boundary* — the closed invocation vocabulary, opaque observed authority,
+`unboundedToolchainSpawnViolations` lint, and child victim rank — is owned by Phase 6 Sprint 6.46 and
+implemented in current source. The 2026-08-08 review found that its production authority mint did not
+consume `requireBoundedBuildMemory` and its Darwin observer compared only `-M`, so stale concurrency
+could pass. The correction keeps the first exact settings observation inside the authority and
+repeats it immediately before every child spawn. Cabal may reopen mutable project files later; that
+TOCTOU is closed by final authority-derived command-line precedence, not by pretending the read is
+the last one: exact driver RTS tokens, `--jobs`, plural GHC RTS value, and build-only environment
+remain binding even if the file changes. Missing, duplicate, or stale observed settings refuse
+before `createProcess`. One authority now serializes its package-owned lifecycles through the Cabal
+leader reap, and the normal spawn observes the descriptor ceiling, closes descriptors, and owns its
+fresh group for exceptional cleanup. That does not serialize independent CLI images/checkouts or
+stage-0 and does not prove normal descendant absence; governed workflows must avoid that unsupported
+overlap. The expanded closed suite vocabulary and structural removal of nested
+integration/web/style/Setup spawns must now pass the aggregate gate.
 
-**Reopened 2026-08-08 — the Darwin account does not intersect the co-resident VM pledge.**
-`observeHostMemoryFacts` (`src/Infernix/HostMemory.hs:160-170`) sets effective memory equal to
-physical on Darwin, while the Linux arm intersects the cgroup maximum at `:125`. On the supported
-Apple host both lanes run inside the same Colima VM, and that VM's pledge is not physical memory the
-toolchain may also spend. Measured on the development host on 2026-08-08: physical **65536 MiB**;
-generated `cabal.project.local` grants `jobs: 8` x `-M4096M` = **32768 MiB**; `colima list` reports
-the default profile Running with a **48 GiB** pledge. 32768 + 49152 exceeds 65536, so the account is
-over-subscribed by 16 GiB and the doctrine's own "a ceiling is inseparable from the concurrency it is
-multiplied by" arithmetic is being performed against the wrong denominator. The intersection
-machinery already exists and the *inference* budget already applies it on Darwin
-(`src/Infernix/DemoConfig/Internal.hs:428-448`), so two subsystems currently disagree about the same
-RAM. The doctrine gap is owned by Phase 0; this sprint owns the measurement.
+**Reopened 2026-08-08 — the Darwin account did not intersect the co-resident VM pledge.** Before the
+correction, `observeHostMemoryFacts` set effective memory equal to physical on Darwin while the Linux
+arm intersected the cgroup maximum. On the supported Apple host both lanes run inside the same
+Colima VM, and that VM's pledge is not physical memory the toolchain may also spend. Measured on the
+development host: physical **65536 MiB**; the old generated `cabal.project.local` granted `jobs: 8`
+x `-M4096M` = **32768 MiB**; `colima list` reported the default profile Running with a **48 GiB**
+pledge. 32768 + 49152 exceeded 65536, so the account was over-subscribed by 16 GiB. The shared
+producer now subtracts the 49152 MiB pledge before the toolchain share is minted, yielding 16384 MiB
+effective memory and an 8192 MiB account rendered as one 6144 MiB compiler job plus two 1024 MiB
+control/helper claims. The exact settings
+observation above prevents a stale 8-job file from laundering that corrected arithmetic back into
+the old account. The closed Darwin evidence command is implemented to measure the corrected plan,
+but its focused compile and Apple execution remain Wave Y work.
 
 ---
 
@@ -4025,11 +5278,1710 @@ threw before the child was started, so `infernix test lint`, `test unit`, `test 
 
 - The `linux-cpu` lane run. The enforced arm is unchanged in behaviour but its code moved, and this
   host cannot exercise it natively; drive it through the existing colima native arm64 daemon.
-- `infernix test lint` still does not complete on Darwin — it now reaches a **separate, unrelated**
-  pre-existing failure in `Infernix.Python` provisioning: `bounded-command target environment does
-  not match a closed rendered environment`, naming `DYLD_FRAMEWORK_PATH`, `DYLD_LIBRARY_PATH`,
-  `PYTHONHOME`, `PYTHONPATH`, `PYTHONDONTWRITEBYTECODE`. That is an environment-closure defect, not a
-  build-memory one, and is owned separately.
+- Historical rejected attempt: `infernix test lint` reached the bounded-command environment mismatch
+  in `Infernix.Python`. Sprint 1.20 corrects that provisioning defect in current source. The latest
+  first closed `test lint` attempt instead exposed fixed Cabal test vectors missing
+  `--enable-tests`. After that correction reached the solver, a second attempt exposed incompatible
+  Cabal-syntax requirements in the monolithic style suite. A third attempt proved that two suites
+  in one package remain one solver universe. Sprint 1.25 now splits Ormolu/HLint from Cabal-format
+  across two packages and closed top-level invocations. Stage 1 subsequently passed on the
+  pre-observer-correction identity; the landed member-turnover correction must now rebuild and
+  repeat the current-source gates before the `linux-cpu` lane named above.
+
+---
+
+## Sprint 1.23: Prepare Per-Engine Python Environments Before Inference [Active]
+
+**Status**: Active — code-side complete in current source as of 2026-08-09. The 2026-08-08 focused
+library/unit results predate the durable invalidation, package-hiding, and shared read/launch lease
+corrections. The aggregate build/unit/compile-fail/style/docs surface passed on the later
+pre-observer-correction identity, but the landed member-turnover correction makes a current-source
+rerun pending again. The Apple plus paired `linux-cpu` Wave Y cohort is also open; neither this
+sprint nor Phase 1 is validation-complete.
+**Implementation**: `src/Infernix/Python.hs`, `src/Infernix/Engines/Provisioning.hs`,
+`src/Infernix/Python/MutationLock/Internal.hs`,
+`src/Infernix/Engines/AppleSilicon/Internal.hs`, `src/Infernix/CLI.hs`,
+`src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`,
+`src/Infernix/CommandRegistry.hs`, `docker/Dockerfile`, `infernix.cabal`, `test/unit/Spec.hs`,
+`test/compile-fail/fail/CannotImportPython.hs`,
+`test/compile-fail/fail/CannotImportRawPythonWorkerLaunch.hs`
+**Docs to update**: `documents/development/python_policy.md`,
+`documents/development/assistant_workflow.md`, `documents/engineering/portability.md`,
+`documents/engineering/implementation_boundaries.md`, `documents/engineering/model_lifecycle.md`,
+`documents/engineering/build_artifacts.md`, `documents/engineering/docker_policy.md`,
+`documents/engineering/storage_and_state.md`, `documents/engineering/apple_silicon_metal_headless_builds.md`,
+`documents/operations/apple_silicon_runbook.md`, `documents/reference/cli_reference.md`, `README.md`
+**Cohort gate**: `apple-silicon` plus paired `linux-cpu` — [Wave Y](cohort-validation-waves.md)
+
+### Objective
+
+Make the per-engine Python environment a materialization-time product on every lane that consumes
+one, with a single derivation and marker contract. This prerequisite is re-homed from superseded
+Phase 4 Sprint 4.36 so strict numerical Phase 1 validation has no forward dependency on Phase 4.
+Inference remains an observer: it never installs or repairs a framework environment on a request.
+
+### Deliverables
+
+- **One canonical plan.** `Infernix.Python` derives the closed Python-stdio set from
+  `EngineBindings.canonicalEngineBindingsForMode`, not from the demo-only model matrix. Darwin
+  prepares `transformers`, `pytorch`, and `diffusers` with `apple-silicon`; the Linux CPU base image
+  prepares `transformers` and `pytorch` with `linux-cpu`; the Linux GPU base materializer is a no-op
+  because each selected engine image owns its `cuda` environment. Adapter ids must end in the exact
+  `-python` suffix and the derived engine name must be one safe path component.
+- **One producer and marker contract.** Every install runs through the closed, bounded Provisioning
+  language under that engine project's writer lock. Readiness requires the exact executable
+  `.venv/bin/python`. A first install with stable marker absence is already fail-closed evidence and
+  does not require a future `.venv` parent merely to publish a tombstone. If a marker exists, the
+  writer durably replaces it with the fixed incomplete tombstone before Poetry can mutate anything;
+  an interruption leaves readiness invalid, and a repeated attempt sees the tombstone as unready and
+  re-enters repair. After a successful install, the producer recomputes the digest of
+  `pyproject.toml` plus the optional, possibly newly created `poetry.lock`, publishes the fixed
+  framework marker through the project writer, and reads it back exactly before releasing the
+  project. Missing, malformed, changing, oversized, or non-executable evidence fails closed.
+- **Every supported materialization boundary produces the plan.** `internal materialize-substrate`
+  prepares it after publishing and reloading the host manifest; Apple runtime startup prepares it
+  after the shared adapter session; and `internal materialize-metal-engines` prepares it after the
+  native-artifact session. The Apple calls run outside the shared/native project locks, avoiding a
+  nested-lock deadlock while keeping all repair off the request path.
+- **One consumer derivation with launch custody.** `Runtime.Worker` enters the package-hidden Python
+  facade, which acquires a shared lease on the exact per-project writer lock, validates the marker
+  and interpreter under that lease, and carries opaque nominal read authority through the capped
+  subprocess's completion. Concurrent inference readers may coexist, but the exclusive Poetry
+  writer cannot tombstone or mutate the environment while a child imports from it.
+  `Runtime.CappedEngine.Internal` obtains the interpreter only by consuming that authority. The
+  hand-written path, group, marker-body, and digest copies and the orphaned
+  `ensurePoetryProjectInstalledWithGroups` export are removed with request-time repair.
+- **A package-hidden facade.** `Infernix.Python` and the mutation-lock kernel are not exposed library
+  modules. Compile-fail fixtures reject an external import of the producer/read-authority surface and
+  an attempted raw Python worker launch, so callers cannot bypass the locked facade by constructing
+  an interpreter path themselves.
+- **No shell producer.** The Linux CPU Dockerfile's direct Poetry install, `sha256sum`, and marker
+  writes are deleted. Its existing `internal materialize-substrate linux-cpu` invocation is the
+  sole base-image producer, so Apple and CPU cannot drift into different marker formats.
+
+### Validation
+
+- Unit assertions pin the exact Darwin three-engine and Linux CPU two-engine plans, the Linux GPU
+  no-op, the exact suffix/path rejection, and that a newly created `poetry.lock` changes the marker
+  digest.
+- Filesystem fixtures prove that matching executable/digest/marker evidence passes and that a
+  malformed or missing marker, project-lock drift, or missing interpreter fails closed without
+  invoking Poetry. Source assertions pin deletion of the Docker hand-written producer and both
+  Apple producer boundaries: runtime startup and explicit metal materialization.
+- Crash-consistency fixtures prove stable first-install absence remains unready, an existing marker
+  is durably tombstoned before the injected pre-Poetry interruption, and repeated interruption
+  re-enters repair without reviving stale readiness. Lease fixtures prove two readers may coexist,
+  the nonblocking writer is excluded throughout validation/launch custody, and the writer can enter
+  after every reader releases. Compile-fail fixtures pin the package-hidden boundary. These
+  additions were covered by the pre-observer-correction Stage 1 GREEN gate.
+- `cabal build lib:infernix test:infernix-unit` completed under `-Wall -Werror`, and
+  `cabal test infernix-unit --test-options='--hide-successes'` passed 1/1 suites on 2026-08-08 before
+  the final source-only Apple entrypoint assertion was added. Those historical focused results are
+  superseded by the later pre-observer-correction Stage 1 GREEN; neither result replaces the
+  current-source rerun or cohort below.
+
+### Remaining Work
+
+Current corrected-source Stage 1 is GREEN through build/forced-init/lint/unit/docs/diff after the
+member-turnover correction. Rematerialize the Apple environment and require real inference from
+the seven in-budget Apple Python-stdio catalog rows named in the Wave Y reset. The eighth row,
+`image-sdxl-turbo`, must instead
+return the exact typed refusal derived from the same final host observation used by
+`init --force` and `test init`. The currently recorded 65536 - 49152 - 6144 MiB partition yields
+`ModelMemoryLimitExceeded { requiredMib = 12288, availableMib = 10240, resource = UnifiedHostRam,
+source = "host-memory-partition-inference-capacity" }`; if the host observation changes, the
+expected `availableMib` changes with it. Complete the paired
+source-matched `linux-cpu` cohort to prove the collapsed producer did not regress the base image.
+Record those results with the rest of Phase 1's current-source gates; until then this sprint and
+Phase 1 remain `Active`.
+
+---
+
+## Sprint 1.24: Remove Build-Time Haskell Protobuf Generation From Darwin [Active]
+
+**Status**: Active — code-side complete in current source on 2026-08-09. The latest governed Apple
+bootstrap compiled all 114 library modules plus the executable GREEN, and fresh `lint proto`,
+`lint files`, and `lint chart` are GREEN with the exact text-hygiene exemption. The
+pre-observer-correction Stage 1 covered the focused unit guard; the landed observer correction
+requires the current-source rerun, and the pinned Linux byte-regeneration image gate has not run.
+**Implementation**: `infernix.cabal`, deleted `Setup.hs`,
+`proto/haskell-bindings.sha256`, `src/Proto/Infernix/Manifest/RuntimeManifest.hs`,
+`src/Proto/Infernix/Manifest/RuntimeManifest_Fields.hs`,
+`src/Proto/Infernix/Runtime/Inference.hs`,
+`src/Proto/Infernix/Runtime/Inference_Fields.hs`, `src/Infernix/Lint/Proto.hs`,
+`src/Infernix/Lint/Files.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/HostConfig.hs`,
+`src/Infernix/HostTools.hs`, `src/Infernix/CLI.hs`,
+`src/Infernix/Cluster/Subprocess.hs`, `bootstrap/apple-silicon.sh`,
+`docker/Dockerfile`, `test/haskell-style/Spec.hs`, `test/unit/Spec.hs`
+**Docs to update**: `proto/README.md`, `documents/development/haskell_style.md`,
+`documents/development/no_env_vars.md`, `documents/development/local_dev.md`,
+`documents/development/assistant_workflow.md`, `documents/engineering/build_artifacts.md`,
+`documents/engineering/host_tools_manifest.md`,
+`documents/engineering/implementation_boundaries.md`,
+`documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`,
+`documents/operations/cluster_bootstrap_runbook.md`, `DEVELOPMENT_PLAN/00-overview.md`,
+`DEVELOPMENT_PLAN/system-components.md`, `DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`
+**Cohort gate**: paired native `linux-cpu` image build plus the ordinary Apple source gate —
+[Wave Y](cohort-validation-waves.md)
+
+### Objective
+
+Keep the two `.proto` schemas canonical while making a normal package build consume, rather than
+produce, Haskell modules. Darwin must not start Cabal, `protoc`, or a Haskell generator plugin from a
+Custom Setup hook. Generated source must remain visibly generated and byte-exact rather than being
+formatted or maintained as handwritten Haskell.
+
+### Deliverables
+
+- **A Simple package with no Setup program.** `infernix.cabal` uses `build-type: Simple`; the
+  `custom-setup` and `autogen-modules` declarations are gone; `Setup.hs` is deleted; Docker and the
+  style source inventory no longer name it. The four modules remain ordinary `other-modules`, so
+  every library/test consumer compiles the same checked-in bytes. The setup-only
+  `proto-lens-setup:Cabal` solver exceptions are retired while the lens-family exceptions required
+  by the runtime remain.
+- **Canonical schemas and explicitly generated Haskell.** The two files below `proto/infernix/`
+  remain the only authoring surface. The four files below `src/Proto/` are byte-for-byte generator
+  output, including their generator banner and layout; they are not passed through Ormolu or HLint.
+  The style and generic text-hygiene exclusions are both the exact four-path manifest-backed
+  predicate shared with the proto lint, so generator-owned trailing whitespace or final-newline
+  layout stays byte-exact while any similarly named handwritten file remains in both gates.
+- **One exact, no-spawn drift invariant.** `proto/haskell-bindings.sha256` has a fixed v1 header that
+  names `proto-lens-protoc 0.9.0.1` and `libprotoc 34.1`, then exactly six ordered lowercase SHA-256
+  entries: two canonical schemas and four generated modules. `infernix lint proto` recursively
+  enumerates regular files below `src/Proto`, rejects a missing, extra, empty, or symbolic-link
+  artifact, requires that exact four-file inventory, retains the schema/package/symbol checks, and
+  verifies all six bytestrings against the manifest. The lint never starts a compiler or plugin.
+- **One real Linux regeneration proof.** No Cabal component declares a generator build tool, so an
+  ordinary Linux build also only consumes tracked source. The Docker gate alone runs a bounded,
+  exact `cabal install proto-lens-protoc-0.9.0.1` into `/opt/infernix/proto-tools`, linking the
+  plugin with `-rtsopts=ignore -with-rtsopts=-M1024M` so its fixed `GHCRTS=-M1024M` execution is
+  admitted rather than rejected. It fetches official `libprotoc 34.1` archives for native
+  `amd64`/`x86_64` or `arm64`/`aarch_64` and verifies their SHA-256 values
+  (`af27ea66cd26938fe48587804ca7d4817457a08350021a1c6e23a27ccc8c6904` and
+  `31c5e9e3c7bf013cf41fb97765ee255c140024a6b175b6cc9b64beddd7c23ba7`, respectively). After the
+  complete source copy it regenerates both schemas into a temporary root, requires exactly the four
+  expected outputs, and byte-compares every output with `src/Proto`. Ubuntu's unpinned
+  `protobuf-compiler` package and the runtime `HostProtoc` manifest field are removed.
+- **No Darwin generator prerequisite.** Apple bootstrap no longer installs or probes Homebrew
+  `protobuf`; Python binding generation continues through the package-owned venv's fixed
+  `python -m grpc_tools.protoc` provisioning command and does not consume a host `protoc`. A normal
+  Apple build and `infernix lint proto` therefore have no raw compiler/plugin descendant.
+
+### Validation
+
+- Static checks on 2026-08-09 confirmed that the four checked-in modules match the former library,
+  unit, and integration autogen copies byte-for-byte, that the governed six SHA-256 values match
+  current files, that `src/Proto` contains exactly four regular non-symlink files, and that the
+  non-generated patch has no whitespace errors. Focused pure tests cover a one-byte snapshot mutation, an
+  unexpected fifth file, and the exact style-exclusion boundary, but those tests remain part of the
+  pending current-source run. The Docker source assertion pins both `GHCRTS=-M1024M` on Cabal and
+  protoc/plugin execution and the plugin's `-rtsopts=ignore -with-rtsopts=-M1024M` link flags;
+  successful regeneration is the protocol-success proof that the later plugin image accepts that
+  fixed environment cap.
+- **Current-source compile evidence:** the corrected Apple bootstrap compiled and installed all 114
+  library modules plus the executable under its seed account on 2026-08-09. The post-init-correction
+  bootstrap repeated GREEN and the installed binary proved stale-schema help/init. The later
+  `Lint.Files`/unit source then rebuilt all 114 library modules plus the executable GREEN.
+- **Rejected files lint (2026-08-09):** `infernix lint proto` and `lint chart` passed, then
+  `infernix lint files` rejected generator-owned trailing whitespace and missing-final-newline bytes
+  in the exact four tracked outputs. Formatting them would violate the byte-regeneration contract.
+  Current source exempts only paths present in the exact generated-module manifest, with positive and
+  similarly-named-negative unit guards; native-source, environment, symlink, and inventory checks
+  remain active. The correction rebuilt GREEN and fresh `lint proto`, `lint files`, and `lint chart`
+  all pass; its positive/negative unit guards passed in the pre-observer-correction Stage 1.
+- **Pending generator gate:** build the native `linux-cpu` image from the same source. The Docker
+  `RUN` step is the required execution evidence for both the pinned generator inventory and all four
+  byte comparisons; prose or the Darwin hash lint does not substitute for it.
+
+### Remaining Work
+
+Current corrected-source Stage 1 is GREEN through build/forced-init/lint/unit/docs/diff after the
+observer correction. Run the pending native Linux generator gate and record its exact source/image
+identity and result. Do not invoke raw
+`protoc` on Darwin to produce evidence: the ordinary Apple gate proves consumption without a
+generator, while the native Linux image gate owns regeneration. Confirm in the Linux build log that
+the pinned plugin install
+and the `GHCRTS=-M1024M` regeneration command both execute successfully.
+
+---
+
+## Sprint 1.25: Run the Haskell Style Gate In-Process [Active]
+
+**Status**: Active — code-side implementation is present on 2026-08-09. The bounded
+bootstrap compile/install is GREEN after removing the import rejected by its first compile. Later
+shared CLI/ProjectInit corrections also rebuilt GREEN; the latest Proto lint/unit changes postdate
+that build and have now rebuilt GREEN too. The first closed style attempt exposed the missing
+`--enable-tests` vector; after its correction reached the solver, the second exposed incompatible
+Cabal-syntax worlds in the monolithic suite. A third attempt proved that two test suites in the same
+Cabal package still share one enabled-test solver universe, so the component-only split remains
+invalid. Current source isolates the Cabal-format check into its own package and closed top-level
+toolchain invocation, keeps its build output outside `test/`, and refuses unreviewed sibling project
+overlays. The governed Apple bootstrap compiled all 114 library modules and installed the executable
+GREEN for this package-split identity. A sixth closed lint attempt recompiled the affected
+production modules and root style process, then ran the style inventory; Ormolu rejected only
+`src/Infernix/BuildMemory.hs` and `src/Infernix/CLI.hs`. After their structural correction rebuilt
+GREEN, the seventh attempt compiled and passed `infernix-haskell-style` over the complete
+Ormolu/HLint/policy inventory. The isolated Cabal-format top-level invocation then failed before
+package configuration because package location `infernix-cabal-format.cabal` did not exist under
+that project resolution; later lint stages did not run. The eighth attempt again passed the root
+style process, resolved the corrected isolated-package path, and configured, compiled, linked, and
+ran the separate Cabal 3.16 package. That process rejected the root `infernix.cabal` because it is
+not clean under the pinned Cabal formatter; fail-fast again prevented the later lint stages from
+running. Applying that exact Cabal 3.16 rendering changed only five long root `ghc-options`
+presentations and nested top-field alignment. The ninth attempt passed root style and the isolated
+package reported `cabal-format-check: ok`, then bounded provisioning of `<repo>/python` failed
+closed with `sealed target closure environment disagreed for DYLD_FRAMEWORK_PATH`; captured stdout
+and stderr were empty, and later lint stages did not run. Diagnosis found that the exact snapshot
+renderer used each anchor's child root while supervisor validation retained the parent root.
+Current source propagates the child root into supervisor validation, uses one shared
+expected/observed environment validator, and adds a focused child-root-pass/parent-root-refuse test
+plus a source guard. Independent review found no High or Medium issue, but this correction is
+only compile-validated: the governed Apple bootstrap compiled all 114 library modules, linked and
+installed the executable, and exited GREEN, and the subsequent closed init succeeded. The tenth
+aggregate attempt recompiled the affected modules, then root style stopped before the isolated
+formatter or any later stage because Ormolu rejected only
+`src/Infernix/Cluster/Subprocess.hs`. The corrected snapshot behavior was not reached; unit,
+governed-doc gates, and Wave Y lane evidence also remain open. Applying the linked Ormolu output
+changed only the exact two-column right-hand-side indentation in
+`darwinPythonSnapshotClosureEnvironmentContractForTest`, with no token change, and the checker is
+restored. All six governed hanging-expression needles now return zero matches, and independent
+snapshot-semantics review found no High or Medium issue. The governed Apple bootstrap compiled all
+114 library modules from that exact formatted source, linked and installed the executable, and
+exited GREEN; the subsequent closed init succeeded. The eleventh aggregate attempt passed the root
+Ormolu phase and reached HLint, then failed with only the generic `HLint reported findings`
+diagnostic. Fail-fast prevented the isolated Cabal formatter, Python provisioning, and all later
+stages from running. Current source changes only the test gate's `failOnHLintIdeas` diagnostic to
+include the exact `show`ed ideas while preserving the fixture's required substring; that diagnostic
+change rebuilt and ran in the twelfth attempt. Root Ormolu was clean, and the improved diagnostic
+identified one HLint eta-reduction finding in
+`darwinPythonSnapshotClosureEnvironmentContractForTest` at its final `environment` argument.
+Current source applies that exact eta reduction as a partial application. The governed Apple
+bootstrap compiled all 114 library modules from that exact eta-reduced source, linked and installed
+the executable, and exited GREEN. The thirteenth aggregate attempt passed root style and the
+isolated Cabal 3.16 formatter. Bounded Python provisioning crossed the prior
+`DYLD_FRAMEWORK_PATH` agreement check, then failed closed before prepare in the supervisor with
+`sealed package closure content disagreed`, classified `TargetKernelFailure`; captured input and
+output were empty. Later lint subgates and final build-all did not run. The corrected child-root
+environment agreement is therefore exercised, but no prepared target or aggregate success is
+claimed. A disposable exact-fold reproduction measured PythonHome at 70,880,979 bytes / 3,724
+entries / `3296174b…` and Poetry site-packages at 51,222,366 bytes / 4,134 entries / `a016024e…`,
+ruling out generic copy/APFS drift. Current source enriches only the fail-closed diagnostic with the
+exact role, root, stability, and expected/observed byte, file, and digest values; the mismatch
+predicate is unchanged, a pure test covers the report, and independent review found no High or
+Medium issue. `./bootstrap/apple-silicon.sh build` compiled all 114 library modules from that exact
+diagnostic source, linked and installed `.build/infernix`, and exited GREEN. This is compile/install
+evidence only. The fourteenth aggregate attempt rebuilt the affected dependency graph and passed
+root Ormolu, then HLint reported one eta-reduction finding in the test-only
+`sealedPackageClosureContentDisagreementForTest` at its final five arguments. Fail-fast prevented
+the isolated formatter, Python provisioning, and later stages from running. Current source applies
+that exact partial application. The governed Apple bootstrap compiled all 114 library modules from
+that exact source, linked and installed the executable, and exited GREEN. This is compile/install
+evidence only. The fifteenth aggregate attempt passed root style and the isolated Cabal 3.16
+`cabal-format-check: ok`, then the enriched runtime diagnostic identified `SnapshotPythonHome` at
+`/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12` with
+`identity = True` and `stability = True`: expected 70,880,979 bytes / 3,724 files /
+`3296174b…`, observed 70,884,060 bytes / 3,731 files / `9b69521a…`, a delta of +3,081 bytes
+and +7 files. The target did not prepare or launch, and later lint subgates and final build-all did
+not run. Diagnosis showed a deterministic verifier-mode bug rather than mutation: six excluded
+absolute-shebang PythonHome launchers total 3,035 bytes and the excluded base site-packages symlink
+is 46 bytes, exactly the observed +7 entries / +3,081 bytes. Current source introduces a hidden
+`RetainedSource` versus `SealedSnapshot` verification target. Retained PythonHome applies the
+same exclusions as mint/copy, every other retained role hashes all content, and a sealed snapshot
+hashes every copied or reinjected entry. All three retained call families and the sole sealed call
+were audited; a deterministic unit test and production-dispatch source pin cover the distinction,
+and independent review found no High or Medium issue. The governed Apple bootstrap compiled all 114
+library modules from that exact verifier-split source, linked and installed the executable, and
+exited GREEN; closed init also succeeded. The sixteenth aggregate attempt recompiled the affected
+dependency graph, then root Ormolu rejected only `src/Infernix/Cluster/Subprocess.hs`. HLint, the
+isolated formatter, Python provisioning, later lint gates, and final build-all did not run. The
+governed one-shot linked-Ormolu diagnostic then intentionally failed in its temporary callback
+before later stages; the checker was restored byte-for-byte (`SHA-256 76d4b148…`, `cmp = 0`). Its
+only source correction is whitespace in `digestSealedPackageClosureLink`: the
+`if packageClosureLinkExcluded` line layout changed by net -1 line / -10 bytes, with an identical
+whitespace-stripped hash and zero token change. All six governed hanging-expression needles return
+zero matches. The governed Apple bootstrap compiled all 114 library modules from that exact
+whitespace-only formatted verifier source, linked and installed the executable, and exited GREEN.
+Aggregate attempt 17 passed the root in-process Ormolu/HLint/policy process
+(`haskell-style-check: ok`), the isolated Cabal 3.16 formatter (`cabal-format-check: ok`), and the
+corrected Python snapshot/provisioning path. Its final bounded `cabal build all --enable-tests`
+compiled and linked apple-materializer, artifact-transaction, capped-engine-observer, compile-fail,
+execution-plan-internal, haskell-style, and the full 115-module integration target, then failed only
+while compiling unit `Main` at `test/unit/Spec.hs:18665`. Under `-Wtype-defaults -Werror`, the
+polymorphic `sum [fileBytes ...] == 3035` plus fixture numeric-literal constraints defaulted `b0` to
+`Integer`. The unit target did not link and no aggregate GREEN is claimed. A narrow explicit
+byte-count type correction is now source-stable but unbuilt: the one-line local signature
+`excludedPythonHomeFiles :: [(FilePath, Integer, String)]` in `test/unit/Spec.hs`, chosen to match
+production `closureSnapshotBytes :: Integer`. Its literals, predicates, and `sum` are unchanged;
+scoped `git diff --check` is clean and all six governed hanging-expression needles return zero
+matches. Governed `./bootstrap/apple-silicon.sh build` measured 65,536 MiB physical minus the
+49,152 MiB active Colima pledge as 16,384 MiB effective, selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`, produced the sdist, compiled all 114 library modules with the
+current one-line `Integer` signature, and linked, installed, and copied the executable to `.build`.
+It exited GREEN. The rebuilt binary's
+`./.build/infernix init --runtime-mode apple-silicon --demo-ui true --force` then exited 0 and wrote
+`infernix.dhall`, `infernix-host.dhall`, `.data/runtime/secrets/InfernixSecrets.dhall`, and
+`cabal.project.local`. These are generated/ignored validation evidence, not version-controlled
+Dhall. On that exact rebuilt `Integer`-signature source, `./.build/infernix test lint` exited 0.
+Root in-process Ormolu/HLint/policy passed 1/1 with `haskell-style-check: ok`; the isolated Cabal
+3.16 formatter passed 1/1 with `cabal-format-check: ok`; Python quality reported
+`Success: no issues found in 8 source files`, Black reported `8 files would be left unchanged`, and
+the gate reported `All checks passed!`. The corrected sealed snapshot/provisioning path crossed,
+and final bounded `cabal build all --enable-tests` completed; unit `Main` compiled and
+`infernix-unit` linked, closing the prior `-Wtype-defaults` failure. Aggregate lint is GREEN.
+The first closed `test unit` attempt was invalidated and deliberately aborted during
+`infernix-compile-fail` after about three minutes when an unrelated hostbootstrap
+`cabal build hostbootstrap-core-test --ghc-options=-Werror` and GHC appeared after this gate began,
+overlapping its independent claimant. Ctrl-C was sent only to the owned CLI/session, which exited 1.
+This is neither unit success/failure evidence nor a source defect. Per the authority-local,
+non-host-global doctrine, the whole closed unit gate must rerun after the host is quiet. Phase 1
+remains Active pending that rerun, the Darwin specialized commands, the Apple cohort, and paired
+`linux-cpu`. While the unrelated claimant remained active, the rebuilt binary's in-process
+`./.build/infernix docs check` ran without a Cabal/GHC claimant, exited 0, and emitted no output.
+On the quiet host with no external claimant, the whole `./.build/infernix test unit` rerun exited 1.
+Before the failure it passed compile-fail (6 positive, 92 negative), artifact-transaction (48
+cases), apple-materializer (12 cases), the capped-engine fixed public-tool observer, and the
+execution-plan internal refinement gate. `infernix-unit` then ran, including the existing loud
+real-GHC skip `build-memory: no ghc on this image`, and failed only with user error
+`the optional Linux victim-rank write ignores only ordinary I/O refusal and preserves asynchronous cleanup`.
+The unit suite is RED and the later web stage was not reached. Diagnose implementation versus the
+source assertion before editing. Read-only diagnosis confirms production semantics are correct:
+`BuildMemory` catches exactly `IOException` through `try`; `AsyncException` is not `IOException`
+and propagates into CLI's `onExceptionPreservingPrimary ... cleanupOwnedToolchainProcess` path.
+The failure is lexical only: Ormolu rendered `) ::` and `IO (Either IOException ())` on adjacent
+lines, while the spec searched for contiguous `:: IO (Either IOException ())`; the async comment
+and both negative guards remain. The minimal test-only correction defines
+`normalizedBuildMemorySource = unwords (words buildMemorySource)` and uses it only for those exact
+exception-type source assertions. That correction is now landed in `test/unit/Spec.hs` beside the
+existing source reads: only the victim-rank assertion's four exception/comment positive/negative
+checks use the normalized text, while neighboring guards remain raw. Production is unchanged. A
+static check finds `IOException` and the async comment, refuses `SomeException` and the fatal
+diagnostic, and the scoped diff and all six hanging-expression needles are clean. The source is
+stable, and governed `./bootstrap/apple-silicon.sh build` exited 0: stage 0 measured
+65,536 − 49,152 = 16,384 MiB, selected `J1 × H4096 + 2 × C1024 = 6144 MiB`, produced the sdist,
+compiled all 114 library modules with the test-only correction, and linked, installed, and copied
+the executable to `.build`. Production remains unchanged. This is compile/install evidence only;
+the next quiet-host `./.build/infernix test unit` rerun exited 1 with no external claimant.
+Compile-fail (6 positive, 92 negative), artifact-transaction (48), apple-materializer (12), the
+capped observer, and execution-plan all passed. `infernix-unit` rebuilt and ran, crossed the prior
+victim-rank assertion, and passed many later property suites. Immediately after the exact line
+`executable launch-boundary properties passed`, it threw `IOException`
+`src/Infernix/Cluster/Subprocess.hs: openFile: does not exist (No such file or directory)`, with an
+`ioError` call stack. The unit suite failed and the later web stage was not reached. This was a new,
+later test-harness/path failure. Read-only diagnosis confirms
+the sandbox CWD is intentional, not leaked: unit `main` captures `realRepoRoot`, then runs its whole
+body under `withTestRoot unitTestRoot`; `withCurrentDirectory` is the sole CWD API, there is no raw set/get,
+and restoration occurs after the action. The first failing read is nested through
+`runAppleCohortRegressionAssertions` into `runSealedArtifactEnvironmentRegressionAssertions` near
+line 13001. The audit found five latent relative repo-source reads inside the sandbox: two
+Subprocess reads (near 13001 and 18691), one Python read, and the Capped facade/kernel pair (near
+11627–11629). The landed test-harness correction keeps `unitTestRoot` separate while `main` passes
+`repoRoot paths` into the Apple cohort-to-sealed-environment guard, ELF sealed-run audit, and
+prepared-Python assertions. Their five reads now use `readFile (repoRootPath </> ...)`: Subprocess
+twice, Python once, and the CappedEngine facade and internal module once each. Production and CWD
+behavior are unchanged. Each explicit-root call appears exactly once; no relative
+`<- readFile "src/` remains after sandbox entry or in the helper region, and the scoped diff and
+all six hanging-expression needles are clean. This five-read source is stable and unbuilt.
+Independent audit found it correct, with no High issue and no other High or Medium relative read.
+The audit found one additional Medium custody issue: `assertHostConfig unitTestRoot` derived the
+real repo root with `takeDirectory (takeDirectory testRoot)` before reading
+`python/native-runners/apple_native_runner.py`, so it succeeded only because `unitTestRoot` was
+`<repo>/.build/test-unit`. The landed correction gives `assertHostConfig` separate
+`FilePath` repo-root and test-root arguments, with the sole call
+`assertHostConfig (repoRoot paths) unitTestRoot`. The Apple runner read uses explicit
+`repoRootPath`; synthetic `Paths` and state retain `testRoot`. The hidden
+`takeDirectory (takeDirectory testRoot)` derivation has zero occurrences and the explicit call has
+one. Production and CWD behavior are unchanged, and the scoped diff and all six hanging-expression
+needles are clean. Independent audit finds no remaining High or Medium issue. Governed
+`./bootstrap/apple-silicon.sh build` exited 0 on this exact source: stage 0 measured
+65,536 − 49,152 = 16,384 MiB, selected `J1 × H4096 + 2 × C1024 = 6144 MiB`, produced the sdist,
+compiled all 114 library modules, and linked, installed, and copied the executable to `.build`.
+These test-only explicit-root and custody changes compile; production remains unchanged. This is
+compile/install evidence only. The next exact quiet-host full `./.build/infernix test unit` rerun
+had no external claimant and exited 1. Compile-fail (6 positive/92 negative), artifact-transaction
+(48), Apple materializer (12), the capped observer, and execution-plan all passed. `infernix-unit`
+rebuilt and crossed the prior victim-rank guard, prior Subprocess path point, and
+`executable launch-boundary properties passed`, then printed
+`Sprint 1.20 Apple-cohort regressions passed`. It next failed only with user error
+`the Poetry project writer can enter after every shared read lease is released` in the
+prepared-Python shared-read/write fixture. The unit suite failed and the later web stage was not
+reached. Read-only diagnosis identifies a fixture expectation bug, not a leaked lock or path. The
+initial marker/readiness is valid; the contended writer fails before mutation and leaves the marker
+valid. After readers release, the interrupt-seam writer acquires the exclusive session, but
+production first calls `preparedEnvironmentReadyInSession`; `Right True` returns `Right ()` before
+the interruption branch. The residual valid four-line marker plus
+`tools/.infernix-generated-proto.lock` corroborate that it entered the session. The correct planned
+assertion is `isRight writerAfterReaders`, with the marker still `snd markerWithLock` and a message
+that a no-op writer preserves current readiness. That test-only correction is now landed: the
+post-reader writer asserts the idempotent ready fast path with `isRight`,
+`markerAfterReaders == snd markerWithLock` asserts readiness preservation, and the redundant valid-
+marker rewrite is removed. The exact fixture order remains initial valid → unchanged shared custody
+and contended refusal → released-reader no-op unchanged → explicit malformed → fail-closed →
+injected interruption/tombstone → retry/tombstone; fresh-absence tests remain intact. Production is
+unchanged, and the scoped diff and all six hanging-expression needles are clean. Governed
+`./bootstrap/apple-silicon.sh build` exited 0 on this exact fixture source with the same stage-0
+accounting (65,536 − 49,152 = 16,384 MiB;
+`J1 × H4096 + 2 × C1024 = 6144 MiB`), produced the sdist, compiled all 114 library modules, and
+linked, installed, and copied the executable to `.build`. The test-only fixture correction
+compiles and production remains unchanged. The latest valid quiet-host closed
+`./.build/infernix test unit` gate had no external claimant, exited 0, and was GREEN on the
+then-current pre-observer-correction source. Its five focused prerequisites passed: compile-fail 6
+positive/92 negative,
+artifact-transaction 48 scenarios, Apple materializer 12 scenarios, capped-engine-observer, and
+execution-plan-internal. Main Haskell unit then passed completely (`unit tests passed`; Cabal 1/1
+suite and case), crossing the prior victim-rank, explicit-root/custody, Apple-cohort marker, and
+prepared-Python lease-fixture failures. The web stage generated contracts, built and bundled
+PureScript with 0 warnings/0 errors, and passed 83/83 tests. Aggregate lint on that same
+pre-observer-correction source was also GREEN after the latest test-only fixture/root-custody edits
+and unit GREEN:
+`./.build/infernix test lint` exited 0; complete root style passed with
+`haskell-style-check: ok`; isolated Cabal 3.16 passed with `cabal-format-check: ok`; Python quality
+reported `Success: no issues found in 8 source files`, Black reported 8 files unchanged, and the
+gate reported `All checks passed!`; corrected bounded Python provisioning crossed; and final
+bounded `build all --enable-tests` completed preprocessing/building every declared test component,
+including unit, with exit 0. Immediately afterward, `./.build/infernix docs check` exited 0 with no
+output, and repo-wide `git diff --check` exited 0 with no output. Stage 1
+build/init/lint/unit/docs/diff was GREEN on the pre-observer-correction source. The first quiet-host
+`./.build/infernix internal validate-darwin-build-memory` attempt then exited 1 after the temporary
+build reached module 59/114. This was not a compiler failure: fixed `/usr/bin/footprint` refused
+live PGID/PID 48982 with `Unable to analyze process ... (try as root?)` and
+`Unable to find any processes matching...`; `FixedObserver` still saw a live member, so the CLI
+refused incomplete sampling. Owned Cabal/GHC/temporary-group cleanup completed, and post-exit `ps`
+showed no survivor. No sampled-memory GREEN claim exists. Neither this sprint nor Phase 1 is
+validation-complete. Diagnosis found that a short-lived same-UID GHC/helper PID departed between
+the complete top snapshot and sequential footprint call; nonexistent-PID probes reproduce the
+exact exit 66/two-line stderr and live same-UID probes work. The landed FixedObserver-only
+correction shares one five-second deadline and boundedly rechecks raw membership: retained PID is
+fatal, empty preserves terminal `Left`, recheck failure combines fail-closed errors, and departed
+PID plus nonempty refreshed membership discards partial totals and restarts from zero. Four closed
+kernel-enum fixtures pin turnover, retained, empty, and recheck-failure cases. Independent review
+found no blocker; scoped diff/hanging/static checks are clean. On a quiet host, exact
+`./bootstrap/apple-silicon.sh build` then exited 0: stage 0 measured 65,536 MiB physical minus the
+49,152 MiB active Colima pledge as 16,384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; the command created the sdist, compiled all 114 library modules
+including corrected `FixedObserver`, linked executable `Main`, installed and copied
+`.build/infernix`, and emitted the corrected operator-versus-harness postamble. This is
+compile/install evidence only. The rebuilt binary's exact
+`./.build/infernix init --runtime-mode apple-silicon --demo-ui true --force` then exited 0 and wrote
+`infernix.dhall`, `infernix-host.dhall`, `.data/runtime/secrets/InfernixSecrets.dhall`, and
+`cabal.project.local`. These four generated/ignored paths are not version-controlled Dhall and
+establish the same host-observation/configuration basis for later capacity evidence. At that
+forced-init boundary, observer behavior, aggregate lint, the closed unit, docs/diff, Darwin rerun,
+Apple cohort, and paired `linux-cpu`/Wave Y remained. Exact `./.build/infernix test lint` now exits
+0 after rebuilding the corrected `FixedObserver` graph: root Haskell style and isolated Cabal 3.16
+formatting pass; Python
+reports no issues in eight files, Black leaves all eight unchanged, and all checks pass; final
+bounded `build all --enable-tests` compiles and links the corrected capped observer, integration,
+unit, and all declared components. This closes formatting/policy/compile, not the runtime kernel
+fixture owned by `test unit` or the Darwin validator. On a quiet host, exact
+`./.build/infernix test unit` then exited 0. Compile-fail passed 6 positive/92 negative fixtures;
+artifact transaction passed 48 scenarios; Apple materializer passed 12; the corrected capped-engine
+fixed public-tool observer passed and `allKernelTests` executed all four new enum turnover branches;
+execution-plan internal passed. Full Haskell unit printed `unit tests passed`, Cabal passed 1/1, and
+crossed the Sprint 1.20 marker plus the prior lease/path failures. Web generate/build/bundle had 0
+warnings and 0 errors, and 83/83 tests passed. The current-source runtime correction is
+unit-validated. Immediately afterward, `./.build/infernix docs check` exited 0 with no output and
+repo-wide `git diff --check` exited 0 with no output. Current corrected-source Stage 1
+build/init/lint/unit/docs/diff is GREEN. Exact
+`./.build/infernix internal validate-darwin-build-memory` then exited 0, crossing the prior
+module-59 turnover failure. Evidence v1 records the 65536/49152/16384 MiB physical/Colima/effective
+partition, 8192 MiB budget/account, jobs 1, 6144 MiB compiler heap/subtotal, 1024 MiB control heap,
+two controls totaling 2048 MiB, and 18432 MiB address reservation. At a one-second interval, 518
+samples measured a 1810860984-byte overall peak and 4.74x account/peak. The installed runtime CLI
+ignored inherited `GHCRTS` under an adversarial invalid value; the operator CLI parent and fixed
+observer tools were excluded. Build-all exited 0 after 591645817 us with 511 samples/1810860984-byte
+peak; install-all exited 0 after 8221664 us with 7 samples/624591784-byte peak. Darwin has no
+enforced aggregate/address-space ceiling; samples can miss transient peaks and exclude processes
+outside the measured Cabal group. The first post-validator
+`./.build/infernix internal materialize-metal-engines` attempt then exited 1 essentially
+immediately with `infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException: user error (stable copy source escaped its authorized root)` and `HasCallStack`
+`throwIO` at `src/Infernix/Error.hs:87:41`. It failed before any success, materialization, or
+smoke claim. The `llama-cpp-cli` external Homebrew closure
+`/opt/homebrew/Cellar/ggml/0.15.3/libexec` (first sorted `libggml-blas.so`) exposed a retained source
+fd mislabeled `StableCopySourceInRoot` with destination `.data/engines`. Current source adds private
+`StableCopySourceRetainedDescriptor` with already-open nofollow fd/status/recheck, identity/bound
+verification, seek-to-zero, retained authorized-destination copy, and completion/after rechecks.
+External paths retain `ExactContent`; owned sources retain `InRoot`. The normalized guard is one
+correct/zero forbidden; cleanup left only empty owned scaffolding/locks/shim and no
+artifact/cache/prepared environment/activity. Independent review found no High or Medium issue;
+scoped diff and hanging needles are clean. Exact governed `./bootstrap/apple-silicon.sh build`
+exited 0 after stage 0 measured 65536 − 49152 = 16384 MiB and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+Provisioning correction, linked `Main`, installed/copied `.build/infernix`, and emitted the
+corrected operator-versus-harness postamble. Exact current-source
+`./.build/infernix test lint` then exited 0: the affected Provisioning graph rebuilt; root
+`haskell-style-check: ok`, isolated `cabal-format-check: ok`, and Python quality/Black all passed
+for eight source files; and bounded final `build all --enable-tests` rebuilt and linked every
+declared component, including Apple materializer, integration, and unit with the source guard.
+On a quiet host with no external claimant, exact `./.build/infernix test unit` then exited 0:
+compile-time 6 positive/92 negative, artifact transaction 48, Apple materializer 12, capped
+observer, execution-plan, full Haskell (`unit tests passed`, Cabal 1/1), and web build/bundle with
+0 warnings/errors and 83/83 all passed, including the new retained-descriptor source guard.
+Immediately afterward, `./.build/infernix docs check` exited 0 with no output and repo-wide
+`git diff --check` exited 0 with no output. Current-source retained-descriptor
+build/lint/unit/docs/diff is GREEN. The full corrected materializer rerun crossed the prior
+immediate stable-copy authority refusal, ran about 20 seconds, and exited 251 with sole output
+`infernix: out of memory`. It supplies no success/materialization/smoke claim. The complete Core
+ML temp (~1.3 GiB/28,589 files) but missing Python-home/final manifest locates failure in Mach-O
+discovery. Old `fdRead (fileSize + 1)` tried to pin the 337911904-byte thin-arm64
+`libtorch_cpu.dylib` under main `-xr1024M`, although only 3968 bytes were needed; a
+129479904-byte `libllvmlite` and 12 fat32 images pin the other cases. Current source replaces this
+with nofollow-fd bounded thin/fat parsing, ≤64 KiB reads, exact range/final fd-path validation,
+unchanged digest/logical accounting, measured thin/fat/invalid tests and a source guard. Review
+found no High/Medium issue. Residue is complete llama/whisper plus a recoverable unactivated Core
+ML temp and no live process/activity. Exact governed `./bootstrap/apple-silicon.sh build` exited
+0 after 65536 − 49152 = 16384 MiB and `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist,
+compiled all 114 modules including the bounded reader, linked/installed `Main`, and copied
+`.build/infernix`. Exact current-source `./.build/infernix test lint` then exited 0: root Haskell
+style, isolated Cabal 3.16 formatting, Python quality/Black, and final bounded build-all passed;
+the Provisioning-dependent graph rebuilt and the 117-module `infernix-unit` target linked. This is
+formatting/policy/compile closure. Exact `./.build/infernix test unit` then exited 0: capability
+fixtures 6 positive/92 negative, artifact 48, Apple materializer 12 including bounded Mach-O
+guards, capped observer, execution-plan, Haskell 1/1, and web 83/83 with 0 warnings/errors all
+passed. The loud real-GHC compiler-chain skip remains the expected image condition. Immediately
+afterward, `./.build/infernix docs check` exited 0 with no output and repo-wide
+`git diff --check` exited 0 with no output. Current bounded Mach-O correction
+build/lint/unit/docs/diff is GREEN. Its full runtime rerun then ran about 30 seconds in the
+governed session, produced no stdout, emitted sole stderr `infernix: out of memory`, and exited
+251. It supplies no materialization/smoke success claim. Exact diagnosis now places the failure in
+the candidate Core ML venv before Python-home creation, inside `resolvePackageClosureIdentity`:
+the 337911904-byte `libtorch_cpu.dylib` left about 5,157 64 KiB chunks retained because pure
+`NOINLINE` `SHA256.update` contexts were unforced. The landed strict-SHA source forces the next
+context before every subsequent descriptor read across all seven loops (Provisioning 3,
+Artifact/Internal 1, Artifact/Loader 1, Cluster/Subprocess 2), forces package-closure entry
+contexts, and uses `List.foldl'` for installed-runtime metadata. Unit source guards pin the
+assignments/forced call shapes; exhaustive audit and independent review found no High or Medium
+issue; scoped diff is clean. Exact governed `./bootstrap/apple-silicon.sh build` exited 0 after
+65536 − 49152 = 16384 MiB and `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled
+all 114 modules including all four strict-loop owners, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This proves compile/install only; lint,
+unit, docs/diff, and materializer remained. Exact `./.build/infernix test lint` then exited 1 after
+recompiling the strict-SHA graph under `-Werror`; `infernix-haskell-style` failed only with
+`haskell-style-check: Ormolu formatting differs:` for exactly
+`src/Infernix/Engines/Artifact/Internal.hs`, `src/Infernix/Engines/Artifact/Loader.hs`, and
+`src/Infernix/Engines/Provisioning.hs`. Fail-fast left the isolated formatter, Python, final
+build-all, and later stages unrun. No semantic/runtime claim follows. Exact linked-Ormolu
+formatting then covered exactly those files in one governed `./.build/infernix test lint`
+diagnostic that intentionally exited 1 inside root style after proving idempotence;
+HLint/readability, the isolated formatter, Python, and build-all did not run.
+The checker was restored byte-for-byte (SHA-256 `76d4b148…`; `cmp = 0`). The four-site delta is
+Artifact/Internal `hashDescriptorAtExactSize` 2+/2-, Artifact/Loader `digestLoaderDescriptor`
+2+/2-, and Provisioning `digestPackageClosure` `directoryContext` plus
+`copyProvisioningDescriptor` `nextContext` 4+/4- total. Only ``value\n  `seq` call`` becomes
+``value `seq`\n  call``; line/byte counts and whitespace-stripped bytes are unchanged, with zero
+token-character change. Scoped diff is clean. Exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0 after stage 0 measured
+65536 − 49152 = 16384 MiB effective and selected `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created
+the sdist, compiled all 114 modules including the formatter-stable Artifact/Internal,
+Artifact/Loader, and Provisioning strict-SHA files, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only;
+exact `./.build/infernix test lint` then exited 0. Root `haskell-style-check: ok`, isolated Cabal
+3.16 `cabal-format-check: ok`, Python `Success: no issues found in 8 source files`, Black's 8
+unchanged files, and `All checks passed!` all passed. The final bounded all-component build rebuilt
+the strict-SHA affected graph, linked the 116-module `infernix-integration` target, and finally
+linked the 117-module `infernix-unit` target. The previous Ormolu RED is closed. This is
+style/policy/compile closure only. On a quiet host with no external claimant, exact
+`./.build/infernix test unit` then exited 0. Compile-fail passed 6 positive/92 negative; artifact
+transaction passed 48; Apple materializer passed 12; capped observer and execution-plan passed;
+main Haskell printed `unit tests passed`, Cabal passed 1/1, and the strict-SHA production source
+guards were crossed. The expected loud no-real-GHC compiler-chain skip remained. Web build/bundle
+completed with 0 warnings, 0 errors, and 83/83 tests passed. Immediately after the build/lint/unit
+sequence, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The strict-SHA correction build/lint/unit/docs/diff is
+GREEN. Exact `./.build/infernix internal materialize-metal-engines` then ran about 2m10s with no
+prior output and exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN and validator identity remain valid. Exact diagnosis identifies the
+rejected outside-bin CPython config helper
+`python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes with a retained-root
+interpreter shebang. A blanket absolute policy was rejected because `cgi` legitimately contains
+`/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric; Provisioning now
+represents retained-versus-sealed destination identity explicitly, uses looped probes bounded to
+≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17 source guards pin
+the behavior; independent review found no High or Medium issue. This identity is SOURCE-STABLE. On
+the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity
+and executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots
+and owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no
+behavioral or source-failure claim. After a verified 303s claimant-free and pane-clear window, the
+first fully uncontested current-source `./.build/infernix internal materialize-metal-engines` run
+started; the external monitor stayed clean through settlement. It ran silently for ~13m and exited
+1 with the exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only
+complete roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but
+the runtime gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely
+passes the exact bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime
+libraries, but generic `provisioningCommandUsesArtifactSnapshot` omitted
+`ExtractAudiverisJavaCppNatives`; its fallback therefore required an empty closure and
+deterministically rejected before argv, environment, path validation, or spawn. The frozen
+correction touches only `src/Infernix/Cluster/Subprocess.hs` and `test/unit/Spec.hs`. Production
+shares the unchanged exact role/cardinality predicate, renames the classifier to
+`provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch requiring
+exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure remains
+mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command
+produced the sdist, compiled all 114 modules under GHC 9.12.4—including corrected
+Cluster/Subprocess as module 66 and the Provisioning/Apple callers—linked `Main`, installed and
+copied `.build/infernix`, and emitted the corrected operator/harness postamble. This is
+compile/install evidence only: lint, unit, and runtime have not run on the correction. The runtime
+gate remains RED. After a verified 304s claimant-free and pane-clear window, exact
+`./.build/infernix test lint` started. Before overlap, the affected graph compiled under
+`-Werror`; root `haskell-style-check: ok` passed; isolated Cabal 3.16
+`cabal-format-check: ok` passed; Python reported no issues in 8 source files, Black left all 8
+unchanged, and `All checks passed!`; bounded build-all entered component compile/link and linked
+apple-materializer. At 15:01:59, unrelated hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID
+86109 with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s
+and ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. The whole aggregate lint rerun awaits a genuinely settled claimant; then
+run full unit, docs/diff, and the full materializer rerun, with no later gate first. Phase 1 remains
+Active.
+**Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `test/haskell-style/Spec.hs`,
+`test/cabal-format/Spec.hs`, `test/cabal-format/cabal.project`,
+`test/cabal-format/infernix-cabal-format.cabal`,
+`src/Infernix/HostConfig.hs`, `src/Infernix/HostTools.hs`, `src/Infernix/CLI.hs`,
+`test/unit/Spec.hs`, `infernix.cabal`, `docker/Dockerfile`
+**Docs to update**: `documents/development/haskell_style.md`,
+`documents/engineering/dependency_management.md`, `documents/engineering/testing.md`,
+`documents/engineering/docker_policy.md`, `documents/engineering/host_tools_manifest.md`,
+`documents/architecture/configuration_doctrine.md`, `documents/reference/cli_reference.md`,
+`DEVELOPMENT_PLAN/development_plan_standards.md`, `DEVELOPMENT_PLAN/README.md`,
+`DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`,
+`DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md`,
+`DEVELOPMENT_PLAN/phase-6-validation-and-e2e-hardening.md`
+**Cohort gate**: ordinary Apple source gate plus paired native `linux-cpu` source/image gate —
+[Wave Y](cohort-validation-waves.md)
+
+### Objective
+
+Make the Haskell quality gate bounded package components rather than a runtime package installer
+and process launcher. Preserve the exact Ormolu CLI configuration, HLint findings, Cabal-format
+payload, repo readability rules, and generated-source boundary without relying on ambient `PATH`,
+operator host-manifest state, temporary manifest rewrites, or unconstrained child toolchains.
+
+### Deliverables
+
+- **One lightweight source-style ownership seam.** `Infernix.Lint.HaskellStyle.runHaskellStyleLintWith` remains
+  the sole owner of recursive source discovery, the exact generated-source exclusion, and all
+  repo-specific readability checks. It accepts formatter and linter callbacks so only
+  `infernix-haskell-style` links Ormolu and HLint.
+- **Exact in-process formatter and linter behavior.** The test component pins
+  `ormolu ==0.8.0.2` and `hlint ==3.10`. For each relative inventory path, the Ormolu callback
+  performs Cabal component discovery, source-type detection, and `.ormolu` fixity/re-export
+  refinement exactly as `ormolu --mode check` does, then byte-compares the rendered text. The HLint
+  callback passes the same exact path list to its CLI-compatible library entrypoint and fails on any
+  returned idea.
+- **A separate versioned Cabal renderer, not a nested Cabal.** The package under
+  `test/cabal-format/` links only its minimal dependencies plus `Cabal ==3.16.1.0`, and
+  parses/renders both itself and `infernix.cabal` with `readGenericPackageDescription` and
+  `showGenericPackageDescription`, the payload used by that Cabal line's `format` command. This
+  stays deterministic when the outer build driver is cabal-install 3.14 or 3.16. A separate suite
+  in the root package was rejected because it still entered the same enabled-test solver universe;
+  the genuinely separate package lets Ormolu's transitive Cabal-syntax 3.14 world and Cabal 3.16's
+  syntax world coexist without one solver plan or values crossing the API boundary. Neither
+  package adds a direct Cabal-syntax dependency. `ToolchainCabalFormat` renders the fixed project,
+  target, and absolute repo-root build directory and runs it as a sequential top-level child under
+  the same build-memory authority. The isolated project fixes GHC 9.12.4, disables environment-file
+  writes, carries a bounded fallback, and the pre-spawn boundary fails closed on sibling
+  `cabal.project.local` or `cabal.project.freeze` overlays.
+- **No generated-code formatting drift.** Discovery recurses only through `app/`, `src/`, and
+  `test/`, excluding exactly the four paths in `Proto.generatedHaskellProtoFiles`. Their byte-exact
+  generator layout belongs to `infernix lint proto` and `proto/haskell-bindings.sha256`; similarly
+  named handwritten paths remain styled.
+- **No formatter host tools.** `HostOrmolu`, `HostHlint`, `hostOrmolu`, `hostHlint`, their generated
+  manifest rows/defaults, CLI parent-directory entries, and hermetic unit stubs are deleted. The
+  style path contains no runtime install root, executable discovery, temporary Cabal file, or style
+  subprocess.
+- **Closed component RTS posture.** The production executable rejects caller-supplied RTS options
+  while retaining its baked reservation. Both style processes and every other non-unit test reject caller overrides and carry
+  a baked 1024 MiB heap cap; the unit suite retains its intentional `-rtsopts` surface and gains the
+  same baked heap cap. There is no global project or launcher RTS override.
+
+### Validation
+
+- Focused source assertions retain the exact four-path Proto exclusion and prove that similarly
+  named handwritten paths are not excluded.
+- Focused behavioral fixtures require a deliberately unformatted Haskell module and a module with
+  exactly one HLint idea to fail through `infernix-haskell-style`, while a de-formatted valid Cabal
+  manifest fails through `infernix-cabal-format`.
+- Live `GHC.RTS.Flags.maxHeapSize` assertions prove that both style processes entered with their
+  baked 1024 MiB caps. A separate Cabal-source fixture pins the main/unit/non-unit component flag
+  split and proves `cabal.project` does not inject a global `-rtsopts` surface.
+- A source-only audit must show no formatter bootstrap symbol, formatter build root, Ormolu/HLint
+  host-manifest field, or nested style process in current nonhistorical source/docs.
+- **Source stabilization, not gate closure:** targeted Ormolu 0.8.0.2 and HLint 3.10 checks are
+  clean on `HaskellStyle.hs` and the style `Spec.hs`; the standalone HLint probe confirms the
+  negative fixture produces exactly one idea; targeted `git diff --check` is clean; and static
+  package metadata confirms Cabal 3.16.1.0 and Ormolu's Cabal-syntax 3.14.2.0 dependency belong to
+  separate package solver universes. No Cabal/GHC build result is claimed by these checks.
+- **Rejected aggregate build (2026-08-09):** the governed build compiled all 114 library modules,
+  including the four tracked generated Proto modules, then `-Wall -Werror` rejected only a redundant
+  `Control.Monad (when)` import in `HaskellStyle.hs`. Current source removes that import. A subsequent
+  governed bootstrap compiled and installed all 114 library modules plus the executable, closing the
+  compile diagnostic; that is not a style-test/unit/docs result.
+- **First rejected closed style attempt (2026-08-09):** `infernix test lint` reached the closed toolchain
+  boundary but Cabal's solver excluded the style test because the fixed test vector lacked
+  `--enable-tests`. The corrected fixed vocabulary now includes it for every test/specialized mode;
+  this is not style-gate evidence.
+- **Second rejected closed style attempt (2026-08-09):** the corrected vector reached dependency
+  solving, which rejected the single component's simultaneous Ormolu/Cabal-syntax 3.14 and
+  Cabal/Cabal-syntax 3.16 requirements. The attempted correction introduced a separate
+  `infernix-cabal-format` suite and added `CabalFormatSuite` to the closed vocabulary.
+- **Third rejected closed style attempt (2026-08-09):** after a current-source governed rebuild and
+  forced init passed, `infernix test lint` again stopped at dependency solving. Separate test suites
+  inside one Cabal package still share the package's enabled-test solver universe, so Ormolu's
+  Cabal-syntax 3.14 requirement still conflicts with Cabal 3.16.1.0's Cabal-syntax 3.16 requirement.
+  No style test compiled or ran. Current source now uses a genuinely separate Cabal package invoked
+  as its own closed top-level toolchain child.
+- **Package-split governed rebuild (2026-08-09):** `./bootstrap/apple-silicon.sh build` compiled all
+  114 library modules, linked the executable, copied it to `.build/infernix`, and exited GREEN under
+  the fixed stage-0 6144 MiB seed account. This proves the package-split production source compiles;
+  it does not prove either style process or any behavioral suite.
+- **Fourth rejected closed style attempt (2026-08-09):** the solver-isolated source reached and
+  compiled all production modules plus configuration of `infernix-haskell-style`, proving the prior
+  Cabal-syntax conflict is gone. The test component then failed `-Werror=x-partial` on one `head` in
+  its new Cabal-component inventory parser, before either style process ran. Current source replaces
+  that branch with total list pattern matching. The governed bootstrap then rebuilt GREEN.
+- **Fifth rejected closed style attempt (2026-08-09):** the rebuilt root style process compiled,
+  linked, and completed its full inventory scan, then rejected fifteen hanging-`case` readability
+  shapes across `BuildMemory`, `CLI`, `Provisioning`, `Python`, and the unit fixture. The separate
+  Cabal-format package did not run because aggregate lint is fail-fast. Current source makes each
+  case an outer expression or a named total predicate while preserving effect/authority order; the
+  correction is statically clean. A follow-up source audit also corrected the unit guard's stale
+  pre-authority cleanup call literal. The governed Apple bootstrap then rebuilt all 114 library
+  modules, linked and installed the executable, and exited GREEN for those corrections. The
+  aggregate lint rerun and the separate Cabal-format package remained unexecuted at that point.
+- **Sixth rejected closed style attempt (2026-08-09):** the governed `infernix test lint`
+  recompiled the affected production modules and root style process, then ran the style inventory.
+  Ormolu rejected only `src/Infernix/BuildMemory.hs` and `src/Infernix/CLI.hs`. Because aggregate
+  lint is fail-fast, the isolated Cabal-format package and all later lint stages did not run. The
+  linked in-process formatter then produced its exact AST-preserving output. That output exposed
+  two formatter-unstable `else case` shapes, so current source makes both branches structurally
+  outer `case` expressions instead of relying on line breaks. The governed Apple bootstrap rebuilt
+  all 114 library modules, linked and installed the executable, and exited GREEN for those final
+  structural corrections. The complete aggregate rerun remained pending at that point.
+- **Seventh rejected closed style attempt (2026-08-09):** current-source
+  `infernix-haskell-style` compiled and passed the complete Ormolu, HLint, and repository-policy
+  inventory. The aggregate then entered the isolated Cabal-format top-level invocation, which
+  failed before package configuration because package location `infernix-cabal-format.cabal` did
+  not exist under that project resolution. No Cabal-format result is claimed, and fail-fast
+  prevented every later lint stage from running. Current source now pins the project's sole package
+  row as the explicit repository-root-relative
+  `test/cabal-format/infernix-cabal-format.cabal`, matching the closed child's fixed repository-root
+  working directory; that correction was unexecuted at the end of this attempt.
+- **Eighth rejected closed style attempt (2026-08-09):** the root
+  `infernix-haskell-style` process passed again. The corrected isolated-package path resolved, and
+  the separate Cabal 3.16 package configured, compiled, linked, and ran. Its pinned renderer then
+  rejected the root `infernix.cabal` as not Cabal-format clean. No formatter success is claimed,
+  and aggregate fail-fast prevented every later lint stage from running. The root-manifest
+  formatting correction and complete aggregate rerun remained pending at that point.
+- **Ninth rejected closed lint attempt (2026-08-09):** applying the exact Cabal 3.16 output changed
+  only five long root `ghc-options` presentations and nested top-field alignment, then restored the
+  checker. The root `infernix-haskell-style` process passed and the isolated package reported
+  `cabal-format-check: ok`, proving the checked manifests were idempotent under that pinned
+  renderer. The next bounded Python project provisioning step failed before later stages with
+  `sealed target closure environment disagreed for DYLD_FRAMEWORK_PATH` for project
+  `<repo>/python`; captured stdout and stderr were both empty. No later lint result is claimed. The
+  provisioning-environment failure and complete aggregate rerun remained pending at that point.
+- **Post-ninth diagnosis and unvalidated correction (2026-08-09):** the exact snapshot renderer
+  constructed the sealed child environment from each anchor's per-anchor child root, but the
+  supervisor's validation retained the parent root and therefore compared against a different
+  `DYLD_FRAMEWORK_PATH`. Current source propagates the child root into supervisor validation and
+  routes expected and observed environments through one shared validator. A focused test accepts
+  the child-root environment and refuses the parent-root environment, and a source guard pins the
+  propagation. Independent review found no High or Medium issue. This correction has not been
+  behaviorally executed; the governed Apple bootstrap compiled all 114 library modules, linked and
+  installed the executable, and exited GREEN after it landed. That closes only the compile/install
+  check. Attempt 9's root-style and `cabal-format-check: ok` results remain narrower pre-correction
+  evidence, and the corrected aggregate rerun remained pending at that point.
+- **Tenth rejected closed lint attempt (2026-08-09):** after the governed Apple bootstrap compiled
+  all 114 library modules, linked and installed the executable GREEN, the subsequent closed init
+  succeeded. `infernix test lint` then recompiled the affected modules and entered root style.
+  Ormolu rejected only `src/Infernix/Cluster/Subprocess.hs`; fail-fast stopped the attempt before
+  the isolated Cabal formatter, corrected snapshot provisioning, or any later lint stage ran. No
+  behavioral result for the snapshot-root correction is claimed, and the complete aggregate
+  remained pending at that point.
+- **Post-tenth unvalidated format correction (2026-08-09):** applying the linked Ormolu result
+  changed only the exact two-column right-hand-side indentation inside
+  `darwinPythonSnapshotClosureEnvironmentContractForTest`; no token changed, and the checker was
+  restored after the application. All six governed hanging-expression needles return zero matches.
+  Independent review of the snapshot semantics found no High or Medium issue. The governed Apple
+  bootstrap compiled all 114 library modules from this exact formatted source, linked and installed
+  the executable, and exited GREEN. That is compile/install evidence only; no corrected behavioral
+  result is claimed, and the aggregate rerun remained pending at that point.
+- **Eleventh rejected closed lint attempt (2026-08-09):** closed init succeeded for the exact
+  formatted snapshot source. The aggregate root style process passed its Ormolu phase, establishing
+  that inventory as Ormolu-clean, and reached HLint, where it failed with only the generic
+  `HLint reported findings` message. Fail-fast prevented the isolated Cabal formatter, bounded
+  Python project provisioning, and every later lint stage from running. Current source changes only
+  the test gate's `failOnHLintIdeas` failure text to include the exact `show`ed ideas while retaining
+  the fixture's required `HLint reported findings` substring. This diagnostic-only change is
+  unbuilt at the end of this attempt; no production behavior or aggregate success is claimed.
+- **Twelfth rejected closed lint attempt (2026-08-09):** the rebuilt diagnostic-only change ran.
+  Root Ormolu was clean, and HLint's exact output contained one finding: eta-reduce
+  `darwinPythonSnapshotClosureEnvironmentContractForTest` at its final `environment` argument.
+  Fail-fast prevented the isolated Cabal formatter, bounded Python provisioning, and every later
+  lint stage from running. Current source applies that exact eta reduction by leaving the function
+  as a partial application. The governed Apple bootstrap compiled all 114 library modules from
+  that exact eta-reduced source, linked and installed the executable, and exited GREEN. That is
+  compile/install evidence only; no snapshot behavioral or aggregate success is claimed, and the
+  rerun remained pending at that point.
+- **Thirteenth rejected closed lint attempt (2026-08-09):** the exact current source passed the
+  complete root style process and the isolated Cabal 3.16 formatter. Bounded Python project
+  provisioning then crossed the prior `DYLD_FRAMEWORK_PATH` agreement check, proving the corrected
+  child-root environment comparison was reached and accepted, but failed closed before prepare in
+  the supervisor with `sealed package closure content disagreed`. The outcome was classified
+  `TargetKernelFailure`, with empty captured input and output. No target prepare or launch is
+  claimed; fail-fast prevented every later lint subgate and final build-all from running. Phase 1
+  remained Active and the complete aggregate rerun remained pending at that point.
+- **Post-thirteenth content-fold diagnosis (2026-08-09):** a disposable exact-fold reproduction
+  measured PythonHome at 70,880,979 bytes across 3,724 entries with digest `3296174b…`, and Poetry
+  site-packages at 51,222,366 bytes across 4,134 entries with digest `a016024e…`. Those stable
+  reproductions rule out generic copy/APFS drift; they do not identify or correct the supervisor
+  mismatch. Current source changes only its failure report to include the exact role, root,
+  stability, and expected/observed byte, file, and digest values while retaining the identical
+  fail-closed predicate. A pure test covers the enriched report, and independent review found no
+  High or Medium issue. `./bootstrap/apple-silicon.sh build` compiled all 114 library modules from
+  that exact diagnostic source, linked and installed `.build/infernix`, and exited GREEN. This is
+  compile/install evidence only; the enriched runtime diagnostic has not run, Phase 1 remains
+  Active, and the complete aggregate rerun remained pending at that point.
+- **Fourteenth rejected closed lint attempt (2026-08-09):** the exact diagnostic source rebuilt its
+  affected dependency graph and passed root Ormolu. HLint then reported one finding: eta-reduce the
+  test-only `sealedPackageClosureContentDisagreementForTest` over its final five arguments.
+  Fail-fast prevented the isolated Cabal formatter, bounded Python provisioning, and every later
+  lint stage from running. Current source applies that exact partial application. This latest source
+  then passed the governed Apple bootstrap: all 114 library modules compiled, the executable linked
+  and installed, and the command exited GREEN. This is compile/install evidence only; the enriched
+  runtime diagnostic remained unexecuted, Phase 1 remained Active, and the complete aggregate rerun
+  remained pending at that point.
+- **Fifteenth rejected closed lint attempt (2026-08-09):** the exact current source passed the
+  complete root style process and isolated Cabal 3.16 `cabal-format-check: ok`. The enriched
+  fail-closed diagnostic then identified role `SnapshotPythonHome`, root
+  `/opt/homebrew/Cellar/python@3.12/3.12.13/Frameworks/Python.framework/Versions/3.12`,
+  `identity = True`, and `stability = True`. Expected content was 70,880,979 bytes across 3,724
+  files with digest `3296174b…`; observed content was 70,884,060 bytes across 3,731 files with
+  digest `9b69521a…`, exactly +3,081 bytes and +7 files. The target did not prepare or launch;
+  fail-fast prevented every later lint subgate and final build-all from running. The mismatch's
+  diagnosis and correction remained pending at the end of this attempt.
+- **Post-fifteenth verifier-mode diagnosis and unvalidated correction (2026-08-09):** the delta is
+  deterministic, not mutation. Six PythonHome launchers excluded by their absolute shebangs total
+  3,035 bytes, and the excluded base site-packages symlink is 46 bytes: exactly the seven entries
+  and 3,081 bytes added by the incorrect verifier mode. Current source adds a hidden
+  `RetainedSource` versus `SealedSnapshot` verification target. Retained PythonHome applies the
+  identical mint/copy exclusions; every other retained role hashes all content; a sealed snapshot
+  hashes every copied or reinjected entry. All three retained call families and the sole sealed
+  call were audited. A deterministic unit test and production-dispatch source pin cover the mode
+  split, and independent review found no High or Medium issue. The governed Apple bootstrap
+  compiled all 114 library modules from that exact verifier-split source, linked and installed the
+  executable, and exited GREEN. This was compile/install evidence only; the aggregate remained
+  pending, and Phase 1 remained Active at that point.
+- **Sixteenth rejected closed lint attempt (2026-08-09):** closed init succeeded for the exact
+  verifier-split source. The aggregate rebuilt the affected dependency graph and entered root
+  style, where Ormolu rejected only `src/Infernix/Cluster/Subprocess.hs`. HLint, the isolated Cabal
+  formatter, bounded Python provisioning, every later lint gate, and final build-all did not run.
+  The exact formatter correction and complete aggregate rerun remained pending at that point.
+- **Post-sixteenth exact formatter correction (2026-08-09):** one governed one-shot linked-Ormolu
+  diagnostic intentionally failed in its temporary callback before later stages. The checker was
+  restored byte-for-byte with `SHA-256 76d4b148…` and `cmp = 0`. The only source delta is
+  whitespace inside `digestSealedPackageClosureLink`: Ormolu changed the line layout of
+  `if packageClosureLinkExcluded`, yielding net -1 line / -10 bytes while the whitespace-stripped
+  hash remains identical and no token changes. All six governed hanging-expression needles return
+  zero matches. The governed Apple bootstrap compiled all 114 library modules from that exact
+  whitespace-only formatted verifier source, linked and installed the executable, and exited
+  GREEN. This was compile/install evidence only; aggregate attempt 17 remained pending at that
+  point.
+- **Seventeenth rejected closed lint attempt (2026-08-09):** the exact current source passed the
+  complete root in-process Ormolu/HLint/policy process (`haskell-style-check: ok`) and isolated
+  Cabal 3.16 formatter (`cabal-format-check: ok`). The corrected Python snapshot/provisioning path
+  also crossed successfully. The aggregate reached its final bounded
+  `cabal build all --enable-tests`, which compiled and linked apple-materializer,
+  artifact-transaction, capped-engine-observer, compile-fail, execution-plan-internal,
+  haskell-style, and the full 115-module integration target. It then failed only while compiling
+  unit `Main` at `test/unit/Spec.hs:18665`: with `-Wtype-defaults -Werror`, polymorphic
+  `sum [fileBytes ...] == 3035` and the fixture's numeric-literal constraints defaulted `b0` to
+  `Integer`. The unit target did not link and the aggregate is not GREEN. A narrow explicit
+  byte-count type correction remained pending and unbuilt at the end of this attempt.
+- **Post-seventeenth unit type correction (2026-08-09):** current source adds exactly one local
+  signature in `test/unit/Spec.hs`:
+  `excludedPythonHomeFiles :: [(FilePath, Integer, String)]`. `Integer` matches production
+  `closureSnapshotBytes :: Integer`; the fixture literals, predicates, and `sum` are unchanged.
+  Scoped `git diff --check` is clean and all six governed hanging-expression needles return zero
+  matches. Governed `./bootstrap/apple-silicon.sh build` then measured 65,536 MiB physical minus
+  the 49,152 MiB active Colima pledge as 16,384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`. It produced the sdist, compiled all 114 library modules with
+  this exact one-line `Integer` signature, linked and installed the executable, copied it to
+  `.build`, and exited GREEN. This is compile/install evidence only; aggregate attempt 18 remains
+  pending at that point, and Phase 1 remains Active. The rebuilt binary's
+  `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --force` subsequently exited
+  0 and wrote `infernix.dhall`, `infernix-host.dhall`,
+  `.data/runtime/secrets/InfernixSecrets.dhall`, and `cabal.project.local`. These generated/ignored
+  files are evidence only and are not version-controlled Dhall.
+- **Eighteenth closed lint attempt — GREEN (2026-08-09):** on the exact rebuilt one-line
+  `Integer`-signature source, `./.build/infernix test lint` exited 0. Root in-process
+  Ormolu/HLint/policy passed 1/1 with `haskell-style-check: ok`; the isolated Cabal 3.16 formatter
+  passed 1/1 with `cabal-format-check: ok`. Python quality emitted
+  `Success: no issues found in 8 source files`, Black emitted `8 files would be left unchanged`,
+  and the gate emitted `All checks passed!`. The corrected sealed snapshot/provisioning path
+  crossed successfully. Final bounded `cabal build all --enable-tests` completed, including unit
+  `Main` compilation and `infernix-unit` linking, so the prior `-Wtype-defaults` defect is closed.
+  This closes the aggregate lint gate, not Sprint 1.25 or Phase 1.
+- **First closed unit attempt invalidated (2026-08-09):** about three minutes into
+  `infernix-compile-fail`, an unrelated hostbootstrap
+  `cabal build hostbootstrap-core-test --ghc-options=-Werror` and GHC appeared after this gate had
+  begun, overlapping the independent claimant. The attempt was deliberately aborted with Ctrl-C
+  sent only to its owned CLI/session and exited 1. No `test unit` GREEN or failure is claimed and no
+  source defect was identified. The authority-local/no-host-global doctrine requires waiting for a
+  quiet host and rerunning the whole closed unit gate.
+- **Documentation gate — GREEN (2026-08-09):** while the unrelated host claimant remained active,
+  the rebuilt binary's in-process `./.build/infernix docs check` used no Cabal/GHC claimant, exited
+  0, and emitted no output.
+- **Quiet-host closed unit rerun — RED (2026-08-09):** with no external claimant,
+  `./.build/infernix test unit` exited 1. Compile-fail passed 6 positive and 92 negative fixtures;
+  artifact-transaction passed 48 cases; apple-materializer passed 12 cases; the capped-engine fixed
+  public-tool observer and execution-plan internal refinement gates passed. `infernix-unit` ran,
+  including the existing loud real-GHC skip `build-memory: no ghc on this image`, then failed only
+  with user error
+  `the optional Linux victim-rank write ignores only ordinary I/O refusal and preserves asynchronous cleanup`.
+  The unit suite failed and the later web stage was not reached. Diagnose whether implementation or
+  the source assertion is wrong before editing; no correction is yet claimed.
+- **Read-only unit-failure diagnosis (2026-08-09):** production semantics are correct.
+  `BuildMemory` catches exactly `IOException` through `try`; because `AsyncException` is not
+  `IOException`, it propagates into CLI's
+  `onExceptionPreservingPrimary ... cleanupOwnedToolchainProcess` cleanup path. The failure is only
+  lexical: Ormolu split `) ::` from `IO (Either IOException ())`, while the spec searched for the
+  contiguous text `:: IO (Either IOException ())`. The async comment and both negative guards are
+  still present. The minimal planned test-only correction defines
+  `normalizedBuildMemorySource = unwords (words buildMemorySource)` and uses it only for those exact
+  exception-type source assertions. No production change is planned; this correction is pending
+  and unbuilt at the end of the diagnosis.
+- **Landed test-only source normalization (2026-08-09):** `test/unit/Spec.hs` now defines
+  `normalizedBuildMemorySource = unwords (words buildMemorySource)` beside the existing source
+  reads. Only the victim-rank assertion's four exception/comment positive/negative checks consume
+  normalized text; neighboring guards remain on raw source and production is unchanged. A static
+  check proves `IOException` plus the async comment are present and `SomeException` plus the fatal
+  diagnostic are absent. Scoped diff and all six governed hanging-expression needles are clean.
+  Governed `./bootstrap/apple-silicon.sh build` then exited 0: stage 0 measured
+  65,536 − 49,152 = 16,384 MiB, selected `J1 × H4096 + 2 × C1024 = 6144 MiB`, produced the sdist,
+  compiled all 114 library modules, and linked, installed, and copied the executable to `.build`.
+  Production remains unchanged and the test-only correction compiles. This is compile/install
+  evidence only; Phase 1 remains Active pending the full closed unit rerun.
+- **Next quiet-host closed unit rerun — RED later (2026-08-09):** with no external claimant,
+  `./.build/infernix test unit` exited 1. Compile-fail passed 6 positive/92 negative fixtures,
+  artifact-transaction passed 48 cases, apple-materializer passed 12 cases, and the capped observer
+  and execution-plan gates passed. `infernix-unit` rebuilt and ran; the previous victim-rank
+  assertion crossed, and many property suites passed. Immediately after
+  `executable launch-boundary properties passed`, the process threw `IOException`
+  `src/Infernix/Cluster/Subprocess.hs: openFile: does not exist (No such file or directory)` with an
+  `ioError` call stack. The unit suite failed and the later web stage was not reached. This is a new
+  later test-harness/path failure; diagnosis is pending and no implementation defect or correction
+  is yet claimed.
+- **Read-only sandbox-path diagnosis (2026-08-09):** the sandbox CWD is intentional, not leaked.
+  Unit `main` captures `realRepoRoot` and then wraps its whole body in
+  `withTestRoot unitTestRoot`; `withCurrentDirectory` is the sole CWD API, no raw set/get exists,
+  and it restores only after the action. The first failing read is nested from
+  `runAppleCohortRegressionAssertions` into `runSealedArtifactEnvironmentRegressionAssertions`
+  near line 13001. An audit found five latent relative repo-source reads inside the sandbox: two
+  Subprocess reads near lines 13001 and 18691, one Python read, and two Capped facade/kernel reads
+  near lines 11627–11629. The correct planned test-harness change explicitly plumbs
+  `repoRoot paths` or the captured real repo root through those three helper families and joins
+  with `(</>)`; it does not change CWD or substitute synthetic `fixturePaths`. The correction is
+  planned and unbuilt; Phase 1 remains Active.
+- **Landed explicit-root test correction (2026-08-09):** `test/unit/Spec.hs` keeps
+  `unitTestRoot` separate while `main` passes `repoRoot paths` into the Apple cohort-to-sealed-
+  environment guard, ELF sealed-run audit, and prepared-Python assertions. The five affected reads
+  are now `readFile (repoRootPath </> ...)`: Subprocess twice, Python once, and the CappedEngine
+  facade and internal module once each. Production and CWD behavior are unchanged. Each new call
+  appears exactly once; no relative `<- readFile "src/` remains after sandbox entry or in the helper
+  region, and the scoped diff and all six hanging-expression needles are clean. The source is
+  stable and unbuilt; independent audit was pending at that boundary.
+- **Independent sandbox audit and additional custody finding (2026-08-09):** the five-read patch is
+  correct, with no High issue and no other High or Medium relative read. One additional Medium
+  custody issue remains: `assertHostConfig unitTestRoot` derives the real repo root with
+  `takeDirectory (takeDirectory testRoot)` before it reads
+  `python/native-runners/apple_native_runner.py`, which succeeds only because `unitTestRoot` is
+  currently `<repo>/.build/test-unit`. The planned correction is
+  `assertHostConfig :: FilePath -> FilePath -> IO ()`, called as
+  `assertHostConfig (repoRoot paths) unitTestRoot`; the explicit repo root supplies the runner read
+  while sandbox `testRoot` remains the source for synthetic paths. This correction is not yet
+  landed or built, and Phase 1 remains Active.
+- **Landed `assertHostConfig` custody correction (2026-08-09):** the signature now accepts separate
+  `FilePath` repo-root and test-root arguments, and its sole call is
+  `assertHostConfig (repoRoot paths) unitTestRoot`. The Apple runner read uses explicit
+  `repoRootPath`; synthetic `Paths` and state continue to use `testRoot`. The hidden
+  `takeDirectory (takeDirectory testRoot)` derivation has zero occurrences and the explicit call
+  has one. Production and CWD behavior are unchanged, and the scoped diff and all six
+  hanging-expression needles are clean. Independent audit finds no remaining High or Medium issue.
+  Governed `./bootstrap/apple-silicon.sh build` exited 0 on this exact source: stage 0 measured
+  65,536 − 49,152 = 16,384 MiB, selected `J1 × H4096 + 2 × C1024 = 6144 MiB`, produced the sdist,
+  compiled all 114 library modules, and linked, installed, and copied the executable to `.build`.
+  The test-only path/custody changes compile and production remains unchanged. This is
+  compile/install evidence only; the full unit rerun remained pending at that boundary.
+- **Next quiet-host full unit rerun — RED deeper (2026-08-09):** with no external claimant,
+  `./.build/infernix test unit` exited 1. Compile-fail passed 6 positive/92 negative fixtures;
+  artifact-transaction passed 48 cases; Apple materializer passed 12 cases; the capped observer
+  and execution-plan gates passed. `infernix-unit` rebuilt, crossed the prior victim-rank guard and
+  prior Subprocess path point, passed `executable launch-boundary properties passed`, and printed
+  `Sprint 1.20 Apple-cohort regressions passed`. It next failed only with user error
+  `the Poetry project writer can enter after every shared read lease is released` in the
+  prepared-Python shared-read/write fixture. The unit suite failed and the later web stage was not
+  reached. This is a new, deeper behavioral fixture failure; diagnosis is pending and Phase 1
+  remains Active.
+- **Read-only prepared-Python fixture diagnosis (2026-08-09):** this is an expectation bug, not a
+  leaked lock or path. Initial marker/readiness is valid; the contended writer fails before
+  mutation and leaves the marker valid. After readers release, the interrupt-seam writer acquires
+  the exclusive session, but production calls `preparedEnvironmentReadyInSession` first;
+  `Right True` returns `Right ()` before the interruption branch. The residual valid four-line
+  marker plus `tools/.infernix-generated-proto.lock` corroborate session entry. The correct planned
+  assertion is `isRight writerAfterReaders`, with the marker still `snd markerWithLock` and a
+  message that a no-op writer preserves current readiness. The later malformed-marker block already
+  forces `Right False` and proves injected interruption plus tombstone/retry, so coverage is not
+  lost. This test-only correction is planned and unbuilt; production remains unchanged and Phase 1
+  remains Active.
+- **Landed prepared-Python fixture correction (2026-08-09):** the post-reader writer now asserts
+  the idempotent ready fast path with `isRight`; `markerAfterReaders == snd markerWithLock` asserts
+  readiness preservation; and the redundant valid-marker rewrite is removed. The exact order
+  remains initial valid → unchanged shared custody/contended refusal → released-reader no-op
+  unchanged → explicit malformed → fail-closed → injected interruption/tombstone →
+  retry/tombstone. Fresh-absence tests remain intact. Production is unchanged, and the scoped diff
+  and all six hanging-expression needles are clean. Governed `./bootstrap/apple-silicon.sh build`
+  exited 0 on this exact fixture source with the same stage-0 accounting
+  (65,536 − 49,152 = 16,384 MiB; `J1 × H4096 + 2 × C1024 = 6144 MiB`), produced the sdist,
+  compiled all 114 library modules, and linked, installed, and copied the executable to `.build`.
+  The test-only fixture correction compiles and production remains unchanged. This is
+  compile/install evidence only; the full unit rerun remained pending at that boundary.
+- **Latest pre-observer-correction quiet-host closed unit gate — GREEN (2026-08-09):** with no external claimant,
+  `./.build/infernix test unit` exited 0. Compile-fail passed 6 positive/92 negative fixtures;
+  artifact-transaction passed 48 scenarios; Apple materializer passed 12 scenarios;
+  capped-engine-observer and execution-plan-internal passed. Main Haskell unit then passed
+  completely (`unit tests passed`; Cabal 1/1 suite and case), crossing the prior victim-rank,
+  explicit-root/custody, Apple-cohort marker, and prepared-Python lease-fixture failures. The web
+  stage generated contracts, built and bundled PureScript with 0 warnings/0 errors, and passed
+  83/83 tests. This closes that identity's unit gate, not the post-correction current-source gate,
+  Sprint 1.25, or Phase 1.
+- **Pre-observer-correction aggregate lint confirmation — GREEN (2026-08-09):** after the latest test-only
+  fixture/root-custody edits and unit GREEN, `./.build/infernix test lint` exited 0. Complete root
+  style passed with `haskell-style-check: ok`; isolated Cabal 3.16 passed with
+  `cabal-format-check: ok`; Python quality reported `Success: no issues found in 8 source files`,
+  Black reported 8 files unchanged, and the gate reported `All checks passed!`. Corrected bounded
+  Python provisioning crossed. Final bounded `build all --enable-tests` completed
+  preprocessing/building every declared test component, including unit, with exit 0. This closes
+  that identity's aggregate lint gate, not the post-correction current-source gate, Sprint 1.25, or
+  Phase 1.
+- **Final pre-observer-correction Stage 1 closure — GREEN at that identity (2026-08-09):**
+  immediately after
+  unit and aggregate lint GREEN, `./.build/infernix docs check` exited 0 with no output and
+  repo-wide `git diff --check` exited 0 with no output. Stage 1 build/init/lint/unit/docs/diff is
+  GREEN on that pre-observer-correction identity.
+- **First pre-observer-correction Darwin specialized attempt — RED/fail-closed (2026-08-09):** on a quiet
+  host, `./.build/infernix internal validate-darwin-build-memory` exited 1. The fresh temporary
+  build reached module 59/114; no compiler failure occurred. Fixed `/usr/bin/footprint` observed
+  live PGID/PID 48982 but emitted
+  `footprint: Unable to analyze process with pid 48982 (try as root?)` and
+  `Unable to find any processes matching...`. Because `FixedObserver` still reported a live group
+  member, the CLI refused incomplete sampling. Owned Cabal/GHC/temporary-group cleanup succeeded;
+  post-exit `ps` showed no survivor. No sampled-memory GREEN claim exists. Diagnosis/correction is
+  pending at that boundary.
+- **Diagnosed and landed Darwin member-turnover correction (2026-08-09):** a short-lived same-UID
+  GHC/helper PID departed between the complete top snapshot and sequential footprint call.
+  Nonexistent PID reproduces the exact exit 66/two-line stderr; live same-UID probes work. The fix
+  is confined to `FixedObserver`: one shared five-second deadline and bounded raw membership
+  recheck preserve fatal failure for a retained PID, original terminal `Left` for empty membership,
+  combined fail-closed reporting for recheck failure, and full zero-based refreshed-snapshot retry
+  for a departed PID plus nonempty membership. Four closed kernel-enum fixtures pin 300-not-400
+  turnover, retained member, empty, and recheck failure. Independent review found no blocker;
+  scoped diff/hanging/static checks are clean.
+- **Post-correction governed build — GREEN (2026-08-09):** on a quiet host, exact
+  `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65,536 MiB physical minus the
+  49,152 MiB active Colima pledge as 16,384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`. It created the sdist, compiled all 114 library modules
+  including corrected `FixedObserver`, linked executable `Main`, installed and copied
+  `.build/infernix`, and emitted the corrected operator-versus-harness postamble. This is
+  compile/install evidence only; it supplies no observer-behavior or closed unit/lint/docs result.
+- **Post-correction forced init — GREEN (2026-08-09):** exact
+  `./.build/infernix init --runtime-mode apple-silicon --demo-ui true --force` on that rebuilt binary
+  exited 0 and wrote `infernix.dhall`, `infernix-host.dhall`,
+  `.data/runtime/secrets/InfernixSecrets.dhall`, and `cabal.project.local`. All four are
+  generated/ignored evidence, not version-controlled Dhall; they establish the same
+  host-observation/configuration basis required by later capacity evidence. Current-source
+  lint had not yet rerun at that boundary.
+- **Post-correction current-source aggregate lint — GREEN (2026-08-09):** exact
+  `./.build/infernix test lint` exited 0. It rebuilt the corrected `FixedObserver` dependency graph;
+  root `haskell-style-check` and the isolated Cabal 3.16 formatter passed; Python reported no issues
+  in eight source files, Black left all eight unchanged, and all checks passed. Final bounded
+  `build all --enable-tests` compiled and linked the corrected capped observer, integration, unit,
+  and every declared component. This proves formatting/policy/compile closure, not execution of the
+  runtime kernel fixture owned by closed `test unit` or the Darwin validator.
+- **Post-correction current-source closed unit — GREEN (2026-08-09):** on a quiet host, exact
+  `./.build/infernix test unit` exited 0. Focused prerequisites passed: compile-fail 6 positive /
+  92 negative, artifact transaction 48 scenarios, Apple materializer 12 scenarios, corrected
+  capped-engine fixed public-tool observer, and execution-plan internal. `allKernelTests` executed
+  all four new enum turnover branches. Full Haskell unit printed `unit tests passed`, Cabal passed
+  1/1, and crossed the Sprint 1.20 marker plus all prior lease/path failure points. Web
+  generate/build/bundle completed with 0 warnings and 0 errors, and 83/83 tests passed. The
+  current-source runtime correction is unit-validated.
+- **Post-correction current-source Stage 1 docs/diff — GREEN (2026-08-09):** immediately after
+  aggregate lint and closed unit GREEN, `./.build/infernix docs check` exited 0 with no output and
+  repo-wide `git diff --check` exited 0 with no output. Current corrected-source Stage 1
+  build/init/lint/unit/docs/diff is GREEN.
+- **Post-turnover Darwin validator — GREEN (2026-08-09):** exact
+  `./.build/infernix internal validate-darwin-build-memory` exited 0 and crossed the earlier
+  module-59 turnover failure. Evidence v1: physical 65536 MiB; active Colima 49152 MiB; effective
+  16384 MiB; plan budget/account 8192 MiB; jobs 1; compiler heap/subtotal 6144 MiB; control heap 1024
+  MiB; two controls/subtotal 2048 MiB; address reservation 18432 MiB. Installed runtime ignored
+  inherited `GHCRTS`, proved with adversarial invalid `GHCRTS`; excluded claimants were the operator
+  CLI parent and fixed observer tools. Interval 1 s; `sampleCount = 518`; overall peak 1810860984
+  bytes; account/peak 4.74x. `cabal build all --enable-tests` exited 0 after 591645817 us with 511
+  samples and peak 1810860984; `cabal install all:exes` exited 0 after 8221664 us with 7 samples and
+  peak 624591784. Darwin has no enforced aggregate/address-space ceiling; samples can miss transient
+  peaks and exclude processes outside the measured Cabal group.
+- **First post-validator materialization attempt — RED (2026-08-09):** exact
+  `./.build/infernix internal materialize-metal-engines` exited 1 essentially immediately with
+  `infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException: user error (stable copy source escaped its authorized root)` and `HasCallStack`
+  `throwIO` at `src/Infernix/Error.hs:87:41`. It failed before any success, materialization, or
+  smoke claim. Diagnosis/correction were pending at that boundary; validator GREEN remains valid.
+- **Retained-descriptor correction build — GREEN (2026-08-09):** the failing row is
+  `llama-cpp-cli`'s external Homebrew closure `/opt/homebrew/Cellar/ggml/0.15.3/libexec`, first
+  sorted entry `libggml-blas.so`, targeting `.data/engines`. A retained source fd was mislabeled
+  `StableCopySourceInRoot` with the destination writer. Private
+  `StableCopySourceRetainedDescriptor` now carries the already-open nofollow fd/status/recheck,
+  verifies identity/bound, seeks to zero, copies to the retained authorized destination, and
+  rechecks inside completion and afterward. External paths retain `ExactContent`; owned sources
+  retain `InRoot`. The normalized unit guard finds one correct and zero forbidden uses. Cleanup
+  left only empty owned scaffolding/locks/shim and no artifact/cache/prepared environment/activity.
+  Independent review found no High or Medium issue; scoped diff and hanging needles are clean.
+  Exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured physical 65536 MiB
+  minus active Colima 49152 MiB as effective 16384 MiB and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+  Provisioning correction, linked `Main`, installed/copied `.build/infernix`, and emitted the
+  corrected operator-versus-harness postamble. This is compile/install evidence only.
+- **Retained-descriptor current-source aggregate lint — GREEN (2026-08-09):** exact
+  `./.build/infernix test lint` exited 0. It rebuilt the affected Provisioning graph; root
+  `haskell-style-check: ok` and isolated `cabal-format-check: ok` passed; Python reported
+  `Success: no issues found in 8 source files`, Black left all 8 unchanged, and all checks passed;
+  bounded final `build all --enable-tests` rebuilt and linked every declared component, including
+  Apple materializer, integration, and unit with the source guard. This is lint/compile closure.
+- **Retained-descriptor current-source unit — GREEN (2026-08-09):** on a quiet host with no
+  external claimant, exact `./.build/infernix test unit` exited 0. Compile-time fixtures passed 6
+  positive/92 negative; artifact transaction passed 48; Apple materializer passed 12; capped
+  observer and execution-plan passed; full Haskell printed `unit tests passed`, Cabal passed 1/1,
+  and crossed the new retained-descriptor source guard; web build/bundle completed with 0
+  warnings/errors and 83/83 tests passed.
+- **Retained-descriptor current-source docs/diff — GREEN (2026-08-09):** immediately after the
+  current-source build/lint/unit sequence, `./.build/infernix docs check` exited 0 with no output
+  and repo-wide `git diff --check` exited 0 with no output. Correction build/lint/unit/docs/diff
+  is GREEN.
+- **Full retained-descriptor materializer rerun — RED (2026-08-09):** exact
+  `./.build/infernix internal materialize-metal-engines` crossed the prior immediate stable-copy
+  authority refusal, ran about 20 seconds, and exited 251 with sole output
+  `infernix: out of memory`. It supplies no success/materialization/smoke claim.
+- **OOM diagnosis and bounded Mach-O correction build — GREEN (2026-08-09):** complete
+  Core ML temp (~1.3 GiB/28,589 files) but no Python-home/final manifest locates failure after
+  hydration/before Python-home copy in Mach-O discovery. Exact `libtorch_cpu.dylib` is 337911904
+  bytes, thin arm64 with 28 commands/3936 command bytes, needing 3968 bytes; old
+  `fdRead (fileSize + 1)` pinned it under main `-xr1024M`. `libllvmlite` is 129479904 bytes/2344
+  command bytes and 12 fat32 images require table/slice handling. Current source removes
+  `readExactExecutableBytes`, retains the nofollow fd, bounds thin reads to 4 MiB + 32, validates
+  fat table/unique arm64 range against the exact image, caps each `fdRead` at 64 KiB, and performs
+  final fd/path recheck; digest/logical accounting is unchanged. Tests measure 337911904 → 3968,
+  cover the 48-byte fat table/range and oversized/out-of-bounds cases, and pin the source guard.
+  Review found no High/Medium issue. Residue is complete llama/whisper plus a recoverable
+  unactivated Core ML temp and no live process/activity. Exact governed
+  `./bootstrap/apple-silicon.sh build` exited 0 after 65536 − 49152 = 16384 MiB and
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+  bounded reader, linked/installed `Main`, and copied `.build/infernix`. Compile/install only.
+- **Bounded Mach-O current-source aggregate lint — GREEN (2026-08-09):** exact
+  `./.build/infernix test lint` exited 0. Root Haskell style and isolated Cabal 3.16 formatting
+  passed; Python reported no issues in 8 files, Black was unchanged, and all checks passed; final
+  bounded build-all rebuilt the Provisioning-dependent graph and linked the 117-module
+  `infernix-unit` target. This is formatting/policy/compile closure only.
+- **Bounded Mach-O current-source closed unit — GREEN (2026-08-09):** exact
+  `./.build/infernix test unit` exited 0. Capability fixtures passed 6 positive/92 negative;
+  artifact transaction 48; Apple materializer 12 including bounded Mach-O fixtures/guards; capped
+  observer; execution-plan; main Haskell (`unit tests passed`, Cabal 1/1); and web 83/83 with 0
+  warnings/errors all passed. The loud real-GHC compiler-chain skip is the expected image condition.
+- **Bounded Mach-O current-source docs/diff — GREEN (2026-08-09):** immediately after current-source
+  build/lint/unit GREEN, `./.build/infernix docs check` exited 0 with no output and repo-wide
+  `git diff --check` exited 0 with no output. Correction build/lint/unit/docs/diff is GREEN.
+- **Bounded Mach-O full materializer rerun — RED (2026-08-09):** exact
+  `./.build/infernix internal materialize-metal-engines` ran about 30 seconds in the governed
+  session, produced no stdout, emitted sole stderr `infernix: out of memory`, and exited 251. The
+  runtime correction is insufficient; no materialization/smoke success is claimed. Exact diagnosis
+  places it before Python-home creation in candidate Core ML `resolvePackageClosureIdentity`: the
+  337911904-byte `libtorch_cpu.dylib` retained about 5,157 64 KiB chunks because pure `NOINLINE`
+  `SHA256.update` contexts were unforced.
+- **Strict-SHA correction and governed build — GREEN for compile/install (2026-08-09):** all seven
+  streaming loops now force `nextContext` before the next descriptor read (Provisioning 3, Artifact/Internal 1,
+  Artifact/Loader 1, Cluster/Subprocess 2); package-closure entry contexts are forced; installed
+  runtime metadata uses `List.foldl'`. Tests source-pin assignments/forced call shapes. Exhaustive
+  audit and independent review found no High/Medium issue; scoped diff is clean. Exact governed
+  Apple build exited 0 after 65536 − 49152 = 16384 MiB and
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; sdist, all 114 modules including the strict-loop owners,
+  `Main` link, install/copy, and corrected postamble completed. This is compile/install evidence
+  only. Residue is complete llama/whisper plus the incomplete Core ML temp, with no live
+  process/activity.
+- **Strict-SHA aggregate lint attempt — RED at formatting only (2026-08-09):** exact
+  `./.build/infernix test lint` exited 1 after recompiling Artifact/Loader, Artifact/Internal,
+  Cluster/Subprocess, Provisioning, and dependents under `-Werror`. Root style reported only
+  `haskell-style-check: Ormolu formatting differs:` for exactly
+  `src/Infernix/Engines/Artifact/Internal.hs`, `src/Infernix/Engines/Artifact/Loader.hs`, and
+  `src/Infernix/Engines/Provisioning.hs`. Fail-fast left the isolated Cabal formatter, Python,
+  final build-all, and later lint stages unrun. No semantic/runtime claim is made.
+- **Exact linked-Ormolu correction and governed build — GREEN for compile/install
+  (2026-08-09):** one governed
+  `./.build/infernix test lint` diagnostic intentionally exited 1 inside root style after
+  formatting exactly those three files and proving idempotence. HLint/readability, the isolated
+  formatter, Python, and build-all did not
+  run. The checker was restored byte-for-byte (SHA-256 `76d4b148…`; `cmp = 0`). Four sites
+  changed:
+  Artifact/Internal `hashDescriptorAtExactSize` 2+/2-, Artifact/Loader `digestLoaderDescriptor`
+  2+/2-, and Provisioning `digestPackageClosure` `directoryContext` plus
+  `copyProvisioningDescriptor` `nextContext` 4+/4- total. Only ``value\n  `seq` call`` became
+  ``value `seq`\n  call``; line/byte counts and whitespace-stripped bytes are unchanged, with zero
+  token-character change. Scoped diff is clean. Exact `./bootstrap/apple-silicon.sh build` then
+  exited 0 after stage 0 measured 65536 − 49152 = 16384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; sdist, all 114 modules including the formatter-stable
+  strict-SHA files, `Main` link, install/copy to `.build/infernix`, and corrected postamble
+  completed. This is compile/install evidence only.
+- **Formatter-stable strict-SHA aggregate lint — GREEN (2026-08-09):** exact
+  `./.build/infernix test lint` exited 0. Root `haskell-style-check: ok`, isolated Cabal 3.16
+  `cabal-format-check: ok`, Python `Success: no issues found in 8 source files`, Black's 8
+  unchanged files, and `All checks passed!` all passed. The final bounded all-component build
+  rebuilt the strict-SHA affected graph, linked 116-module `infernix-integration`, and finally
+  linked 117-module `infernix-unit`. The prior Ormolu RED is closed. This is
+  style/policy/compile closure only.
+- **Formatter-stable strict-SHA full closed unit — GREEN (2026-08-09):** on a quiet host with no
+  external claimant, exact `./.build/infernix test unit` exited 0. Compile-fail passed 6
+  positive/92 negative; artifact transaction passed 48; Apple materializer passed 12; capped
+  observer and execution-plan passed; main Haskell printed `unit tests passed`, Cabal passed 1/1,
+  and the strict-SHA production source guards were crossed. The expected loud no-real-GHC
+  compiler-chain skip remained. Web build/bundle completed with 0 warnings, 0 errors, and 83/83
+  tests passed.
+- **Formatter-stable strict-SHA pre-runtime docs/diff — GREEN (2026-08-09):** immediately after the
+  build/lint/unit sequence, exact `./.build/infernix docs check` exited 0 with no output, then
+  repo-wide `git diff --check` exited 0 with no output. The strict-SHA correction
+  build/lint/unit/docs/diff is GREEN.
+- **Strict-SHA real materializer rerun — RED at a later boundary (2026-08-09):** exact
+  `./.build/infernix internal materialize-metal-engines` ran about 2m10s with no prior output and
+  exited 1. Its exact IOException was
+  `user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+  with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and
+  proves Python home was copied, but supplies no materialization or smoke success. The strict-SHA
+  build/lint/unit/docs/diff GREEN remains valid.
+- **Root-aware relocation correction — governed build GREEN (2026-08-09):** exact diagnosis
+  identifies the rejected outside-bin CPython config helper
+  `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes with a retained-root
+  interpreter shebang. A blanket absolute policy was rejected because `cgi` legitimately contains
+  `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric; Provisioning now
+  represents retained-versus-sealed destination identity explicitly, uses looped probes bounded to
+  ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17 source guards pin
+  the behavior; independent review found no High or Medium issue. On the quiet shared host with no
+  external claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured
+  65536 MiB physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including
+  the Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+  `.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only.
+- **Current-source aggregate lint — RED on exact Ormolu scope (2026-08-09):** on the quiet host with
+  no external claimant, exact `./.build/infernix test lint` exited 1. The affected graph compiled
+  under `-Werror` through 114/114 and the style suite linked; `infernix-haskell-style` then rejected
+  Ormolu formatting only in exactly `src/Infernix/Cluster/Subprocess.hs` and
+  `src/Infernix/Engines/Provisioning.hs`. Fail-fast left HLint/readability, the isolated Cabal
+  formatter, Python, build-all, and later stages unrun. No semantic or runtime claim follows; the
+  root-aware build GREEN remains compile/install evidence only.
+- **Linked-Ormolu correction formatted-source build — GREEN (2026-08-09):** one governed
+  `./.build/infernix test lint` diagnostic exited 1. Its temporary callback ignored the invocation
+  argument, so during the earlier deliberately-unformatted fixture it formatted, reread, and
+  reapplied exactly Cluster/Subprocess and Provisioning idempotently; the intentional stop was
+  wrapped as a wrong diagnostic rather than a final inventory result. This is diagnostic only: no
+  HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage claim follows, and
+  there was no second run. The checker was restored byte-exact (SHA-256 `76d4b148…ad0`;
+  `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and Provisioning by 16
+  layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical, with zero
+  token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and guards
+  are clean. On the quiet host with no external claimant, exact governed
+  `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+  49152 MiB active Colima pledge as 16384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including
+  the formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+  `.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only.
+- **Formatter-stable root-aware aggregate lint — GREEN (2026-08-09):** on the quiet host with no
+  external claimant, exact `./.build/infernix test lint` exited 0. Root style compiled the affected
+  graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16 emitted
+  `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`; Black left
+  all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+  `build all --enable-tests` completed every declared component, including apple-materializer
+  46/46, the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile
+  evidence only, not unit-runtime or materializer evidence.
+- **Full closed current-source unit — GREEN (2026-08-09):** on the quiet host with no external
+  claimant, exact `./.build/infernix test unit` exited 0. Compile-time capabilities passed 6
+  positive/92 negative; artifact transaction passed 48; Apple materializer passed 12 including the
+  host-bound shebang case and root-aware guards; capped observer and execution-plan passed. Main
+  Haskell printed `unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image
+  skip remained. Web contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests
+  passed. The prior failure points were crossed.
+- **Current root-aware docs/diff — GREEN (2026-08-09):** immediately after current-source
+  build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then
+  repo-wide `git diff --check` exited 0 with no output. The current correction
+  build/lint/unit/docs/diff is GREEN.
+- **First current-source full materializer attempt — INVALIDATED (2026-08-09):** exact
+  `./.build/infernix internal materialize-metal-engines` ran ~1m52s silently and reached a
+  populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, before
+  an unrelated hostbootstrap Cabal/GHC claimant appeared. Ctrl-C went only to the owned CLI/session
+  and produced exit 1. Cleanup left no materializer process, activity, or candidate temp; only the
+  prior complete llama/whisper roots and owned locks remain. This is not RED or a source failure and
+  supplies no success/failure behavioral claim.
+- **Second current-source full materializer attempt — INVALIDATED (2026-08-09):** after plan Quiet
+  and two quiet observations, the full command started; an unrelated hostbootstrap
+  `cabal build all --ghc-options=-Werror` began ~6s later and was detected at ~29s materializer
+  elapsed. Ctrl-C again went only to the owned CLI/session and produced exit 1. Cleanup again left no
+  materializer process, activity, or candidate temp; only the prior complete llama/whisper roots and
+  owned locks remain. This is not RED or a source failure and supplies no behavioral claim. Current
+  build/lint/unit/docs/diff GREEN remains valid.
+- **Third current-source full materializer attempt — INVALIDATED (2026-08-09):** after consecutive
+  quiet observations, exact `./.build/infernix internal materialize-metal-engines` ran silently for
+  about 3m15s, crossing the prior 1m52s and 2m10s boundaries. Unrelated hostbootstrap owner PID
+  27014 started
+  `cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+  as PID 32175 with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+  `cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+  32953. The read-only monitor detected overlap; root sent Ctrl-C only to its owned materializer
+  PTY/session, which exited 1 silently after cleanup. Post-audit found no materializer or `infernix`
+  process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity and
+  executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots and
+  owned lock leaves remain. This is INVALIDATED, never RED, and supplies no behavioral or
+  source-failure claim. Current build/lint/unit/docs/diff GREEN remains valid.
+- **First fully uncontested current-source materializer run — RED (2026-08-09):** after a verified
+  303s claimant-free and pane-clear window, exact
+  `./.build/infernix internal materialize-metal-engines` ran silently for ~13m while the external
+  monitor stayed clean through settlement, then exited 1. Its exact sole diagnostic was
+  `infernix: Uncaught exception ghc-internal:GHC.Internal.IO.Exception.IOException:`, followed by
+  `user error (extract Audiveris JavaCPP natives into the sealed candidate: rejected: bounded
+  provisioning command has an invalid closed runtime-closure shape)` and HasCallStack `throwIO,
+  called at src/Infernix/Error.hs:87:41 ... Infernix.Error`. It crossed every prior OOM/helper
+  boundary and durably published complete `coreml-native` (mtime 14:13:45),
+  `ctranslate2-native` (14:18:11), `mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35)
+  roots with `engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli
+  roots, before failing at Audiveris extraction. No full-materialization or installed-smoke GREEN
+  is claimed, and cancellation/source isolation did not run. Post-settlement audit found no live
+  materializer, bounded child, or external claimant; no engine `.tmp` or `.previous`; empty
+  bounded-command activity and executable-snapshot inventories; and only complete roots plus owned
+  lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but the runtime gate is RED.
+- **Audiveris closed-runtime-shape correction — SOURCE-STABLE/unbuilt (2026-08-09):** exact
+  diagnosis found that `extractAudiverisJavaCppNatives` uniquely passes the bundled Java plus
+  `[ProvisioningArtifactRootClosure appRoot]` and no runtime libraries, while generic
+  `provisioningCommandUsesArtifactSnapshot` omitted `ExtractAudiverisJavaCppNatives`; fallback
+  therefore required an empty closure and deterministically rejected before argv, environment,
+  path validation, or spawn. The frozen correction touches only
+  `src/Infernix/Cluster/Subprocess.hs` and `test/unit/Spec.hs`: production shares the unchanged
+  exact role/cardinality predicate, renames the classifier to
+  `provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch requiring
+  exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure remains
+  mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+  conversion/revalidation is unchanged. Tests cover the positive plus missing/wrong/duplicate/lib
+  negatives, ordinary-command negative, and preserved Poetry/proto positives. Unique source guards
+  pin `[appIdentity] [] -> toKernelExecutableIdentity -> mutation-root compiler -> retained
+  expectation`. All 13 sibling calls have no analogue; two independent reviews are CLEAN with no
+  High/Medium issue; scoped diff/routing needles are green; and no residue/process remains. Runtime
+  remains RED; the correction is unbuilt.
+- **Audiveris correction governed Apple build — GREEN (2026-08-09):** on the quiet host with no
+  external claimant, exact `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured
+  65536 MiB physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+  `J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command produced
+  the sdist, compiled all 114 modules under GHC 9.12.4—including corrected Cluster/Subprocess as
+  module 66 and the Provisioning/Apple callers—linked `Main`, installed/copied
+  `.build/infernix`, and emitted the corrected operator/harness postamble. This is compile/install
+  evidence only; lint, unit, and runtime did not run. Runtime remains RED.
+- **Audiveris-correction aggregate lint attempt — INVALIDATED (2026-08-09):** after a verified 304s
+  claimant-free and pane-clear window, exact `./.build/infernix test lint` started. Before overlap,
+  the affected graph compiled under `-Werror`; root `haskell-style-check: ok`, isolated Cabal 3.16
+  `cabal-format-check: ok`, Python 8-source no-issues, Black 8 unchanged, and `All checks passed!`
+  were valid narrower PASS results; bounded build-all entered component compile/link and linked
+  apple-materializer. At 15:01:59, unrelated hostbootstrap owner PID 27014 launched
+  `cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID
+  86109 with Cabal child 86240 outside the owned lint PID 84807 ancestry. The ~10s overlap ended,
+  but evidence was invalid. Root sent Ctrl-C only to the owned lint PTY; it exited 1 while the
+  integration affected graph compiled, before unit link/build-all completion. Post-audit found no
+  owned lint/Cabal/GHC or external process. This attempt is INVALIDATED, never RED, and supplies no
+  source-defect or aggregate-GREEN claim. Rebuild GREEN remains valid; runtime remains RED.
+- **Pending remaining current-source gates:** once the claimant is genuinely settled, rerun the
+  whole aggregate lint, then full unit, docs/diff, then rerun the complete
+  `./.build/infernix internal materialize-metal-engines`. No later gate may run first; Audiveris
+  cancellation and installed-Python source isolation remain after a valid materializer GREEN, then
+  the Apple cohort and paired
+  `linux-cpu`/Wave Y. No bare host Cabal vector is a supported current validation instruction.
+
+### Remaining Work
+
+The specialized Darwin validator is GREEN on the current corrected-source Stage 1 identity. The
+first materialization attempt is RED at the stable-copy authorized-root check; its correction is
+current-source build/lint/unit/docs/diff GREEN. Its full corrected rerun crossed that refusal but
+exited 251 after about 20 seconds with sole output `infernix: out of memory`. The landed bounded
+Mach-O parser correction has no High/Medium review issue and governed compile/install is GREEN.
+The bounded-Mach-O pre-strict-SHA aggregate lint and full closed unit are GREEN; the latter crosses
+the bounded Mach-O fixtures/source guards. Docs/diff on that identity are also GREEN. The full runtime rerun still
+exited 251 OOM after about 30 seconds with no stdout. Exact diagnosis places it before Python-home
+creation in candidate Core ML `resolvePackageClosureIdentity`: unforced pure `NOINLINE`
+`SHA256.update` contexts retained about 5,157 64 KiB chunks while hashing the 337911904-byte
+`libtorch_cpu.dylib`. The landed strict-SHA source forces all seven streaming loops, package-closure
+entry contexts, and the installed-runtime metadata fold; its source guards, exhaustive audit,
+independent no-High/Medium review, and scoped diff are clean. Exact governed build exited 0 after
+the 65536 − 49152 = 16384 MiB observation and `J1 × H4096 + 2 × C1024 = 6144 MiB` selection; it
+completed the sdist, all 114 modules including the strict loops, `Main` link, install/copy, and
+corrected postamble. This is compile/install evidence only. Exact
+`./.build/infernix test lint` then exited 1 after `-Werror` recompilation because
+`infernix-haskell-style` failed only with `haskell-style-check: Ormolu formatting differs:` for
+exactly `src/Infernix/Engines/Artifact/Internal.hs`,
+`src/Infernix/Engines/Artifact/Loader.hs`, and `src/Infernix/Engines/Provisioning.hs`; fail-fast
+left all later lint stages unrun. No semantic/runtime claim follows. One governed
+`./.build/infernix test lint` linked-Ormolu diagnostic then intentionally exited 1 inside root
+style after formatting exactly those three files and proving idempotence; HLint/readability, the
+isolated formatter, Python, and build-all did not run. The checker was
+restored byte-for-byte (SHA-256 `76d4b148…`; `cmp = 0`). Four exact sites changed only from
+``value\n  `seq` call`` to ``value `seq`\n  call``: Artifact/Internal
+`hashDescriptorAtExactSize` 2+/2-, Artifact/Loader `digestLoaderDescriptor` 2+/2-, and Provisioning
+`digestPackageClosure` `directoryContext` plus `copyProvisioningDescriptor` `nextContext` 4+/4-
+total. Line/byte counts and whitespace-stripped bytes are unchanged, with zero token-character
+change; scoped diff is clean. Exact governed `./bootstrap/apple-silicon.sh build` then exited 0.
+Stage 0 measured 65536 − 49152 = 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it created the sdist, compiled all 114 modules including the
+formatter-stable Artifact/Internal, Artifact/Loader, and Provisioning strict-SHA files, linked
+`Main`, installed/copied `.build/infernix`, and emitted the corrected postamble. This is
+compile/install evidence only. Exact `./.build/infernix test lint` then exited 0. Root
+`haskell-style-check: ok`, isolated Cabal 3.16 `cabal-format-check: ok`, Python
+`Success: no issues found in 8 source files`, Black's 8 unchanged files, and
+`All checks passed!` all passed. The final bounded all-component build rebuilt the strict-SHA
+affected graph, linked 116-module `infernix-integration`, and finally linked 117-module
+`infernix-unit`. The prior Ormolu RED is closed. This is style/policy/compile closure only. On a
+quiet host with no external claimant, exact `./.build/infernix test unit` then exited 0.
+Compile-fail passed 6 positive/92 negative; artifact transaction passed 48; Apple materializer
+passed 12; capped observer and execution-plan passed; main Haskell printed `unit tests passed`,
+Cabal passed 1/1, and the strict-SHA production source guards were crossed. The expected loud
+no-real-GHC compiler-chain skip remained. Web build/bundle completed with 0 warnings, 0 errors, and
+83/83 tests passed. Immediately after the build/lint/unit sequence, exact
+`./.build/infernix docs check` exited 0 with no output, then repo-wide `git diff --check` exited 0
+with no output. The strict-SHA correction build/lint/unit/docs/diff is GREEN. Exact
+`./.build/infernix internal materialize-metal-engines` then ran about 2m10s with no prior output and
+exited 1. Its exact IOException was
+`user error (Apple engine candidate retained a forbidden source path: /Users/matthewnowak/infernix/.data/engines/coreml-native.tmp/python-home/lib/python3.11/config-3.11-darwin/python-config.py)`,
+with `HasCallStack` `throwIO` at `src/Infernix/Error.hs:87:41`. This crosses the prior OOM and proves
+Python home was copied, but supplies no materialization or smoke success. The prior strict-SHA
+build/lint/unit/docs/diff GREEN remains valid. Exact diagnosis identifies the rejected outside-bin
+CPython config helper `python-home/lib/python3.11/config-3.11-darwin/python-config.py`: 2,118 bytes
+with a retained-root interpreter shebang. A blanket absolute policy was rejected because `cgi`
+legitimately contains `/usr/local` and `/bin/sh`. The landed correction is root-aware and symmetric;
+Provisioning now represents retained-versus-sealed destination identity explicitly, uses looped
+probes bounded to ≤512 bytes, and keeps excluded-entry rechecks stable. Exact regressions and 17
+source guards pin the behavior; independent review found no High or Medium issue. This identity is
+SOURCE-STABLE. On the quiet shared host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+Cluster/Subprocess and Provisioning correction, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 1. The
+affected graph compiled under `-Werror` through 114/114 and the style suite linked;
+`infernix-haskell-style` then rejected Ormolu formatting only in exactly
+`src/Infernix/Cluster/Subprocess.hs` and `src/Infernix/Engines/Provisioning.hs`. Fail-fast left
+HLint/readability, the isolated Cabal formatter, Python, build-all, and later stages unrun. No
+semantic or runtime claim follows; the root-aware build GREEN remains compile/install evidence
+only. A subsequent governed `./.build/infernix test lint` diagnostic exited 1. Its temporary
+callback ignored the invocation argument, so during the earlier deliberately-unformatted fixture it
+formatted, reread, and reapplied exactly Cluster/Subprocess and Provisioning idempotently; the
+intentional stop was wrapped as a wrong diagnostic rather than a final inventory result. This is
+diagnostic only: no HLint/readability, isolated Cabal formatter, Python, build-all, or later-stage
+claim follows, and there was no second run. The checker was restored byte-exact (SHA-256
+`76d4b148…ad0`; `cmp = 0`). Ormolu changed Cluster/Subprocess by 13 layout lines/+25 bytes and
+Provisioning by 16 layout lines/+31 bytes; line counts and whitespace-stripped hashes are identical,
+with zero token/non-whitespace change. Only guard/`||` indentation moved; scoped diff, needles, and
+guards are clean. The formatted source is SOURCE-STABLE. On the quiet host with no external
+claimant, exact governed `./bootstrap/apple-silicon.sh build` exited 0. Stage 0 measured 65536 MiB
+physical minus the 49152 MiB active Colima pledge as 16384 MiB effective and selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB`; it produced the sdist, compiled all 114 modules including the
+formatted Cluster/Subprocess and Provisioning sources, linked `Main`, installed/copied
+`.build/infernix`, and emitted the corrected postamble. This is compile/install evidence only. On
+the quiet host with no external claimant, exact `./.build/infernix test lint` then exited 0. Root
+style compiled the affected graph and emitted `haskell-style-check: ok`; isolated Cabal 3.16
+emitted `cabal-format-check: ok`; Python emitted `Success: no issues found in 8 source files`;
+Black left all 8 unchanged; and the gate emitted `All checks passed!`. The final bounded
+`build all --enable-tests` completed every declared component, including apple-materializer 46/46,
+the 116/116 integration link, and the 117/117 unit link. This is style/policy/compile evidence only,
+not unit-runtime or materializer evidence. On the quiet host with no external claimant, exact full
+`./.build/infernix test unit` then exited 0. Compile-time capabilities passed 6 positive/92
+negative; artifact transaction passed 48; Apple materializer passed 12 including the host-bound
+shebang case and root-aware guards; capped observer and execution-plan passed. Main Haskell printed
+`unit tests passed`, Cabal passed 1/1, and the expected loud no-real-ghc image skip remained. Web
+contracts/build/bundle completed with 0 warnings, 0 errors, and 83/83 tests passed. The prior
+failure points were crossed and the full closed unit gate is GREEN. Immediately after current-source
+build/lint/unit GREEN, exact `./.build/infernix docs check` exited 0 with no output, then repo-wide
+`git diff --check` exited 0 with no output. The current root-aware correction
+build/lint/unit/docs/diff is GREEN. The first current-source full materializer attempt, exact
+`./.build/infernix internal materialize-metal-engines`, ran ~1m52s silently and had reached a
+populated `coreml-native.tmp` with `python-home`, crossing the prior OOM/helper boundary, when an
+unrelated hostbootstrap Cabal/GHC claimant appeared. We deliberately sent Ctrl-C only to the owned
+CLI/session; it exited 1. Cleanup left no materializer process, activity, or candidate temp; only
+the prior complete llama/whisper roots and owned locks remain. This attempt is INVALIDATED, not RED
+or a source failure, and supplies no success/failure behavioral claim. After plan Quiet and two
+quiet observations, the second full `./.build/infernix internal materialize-metal-engines` started.
+An unrelated hostbootstrap `cabal build all --ghc-options=-Werror` began ~6s later and was detected
+at ~29s materializer elapsed. Ctrl-C again went only to the owned CLI/session; it exited 1. Cleanup
+again left no materializer process, activity, or candidate temp; only the prior complete
+llama/whisper roots and owned locks remain. The second attempt is also INVALIDATED, not RED or a
+source failure, and supplies no behavioral claim. The third full current-source
+`./.build/infernix internal materialize-metal-engines` attempt began only after consecutive quiet
+observations and ran silently for about 3m15s, crossing the earlier 1m52s and 2m10s boundaries.
+During it, unrelated hostbootstrap owner PID 27014 started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a true pre-effect Harness refusal"`
+as PID 32175, with Cabal setup child 32719 and GHC 9.12.4 child 32721, then started
+`cabal test hostbootstrap-core-test --test-options=--pattern "a late Harness refusal"` as PID
+32953. The read-only monitor detected the overlap; root sent Ctrl-C only to its owned materializer
+PTY/session, which exited 1 silently after cleanup. The post-audit found no materializer or
+`infernix` process, no `.data/engines/*.tmp` or `.previous`, and empty bounded-command activity and
+executable-snapshot inventories; only the complete prior llama-cpp-cli/whisper-cpp-cli roots and
+owned lock leaves remain. This third attempt is INVALIDATED, never RED, and supplies no behavioral
+or source-failure claim. After a verified 303s claimant-free and pane-clear window, the first fully
+uncontested current-source `./.build/infernix internal materialize-metal-engines` run started; the
+external monitor stayed clean through settlement. It ran silently for ~13m and exited 1 with the
+exact sole diagnostic `infernix: Uncaught exception
+ghc-internal:GHC.Internal.IO.Exception.IOException:`, then `user error (extract Audiveris JavaCPP
+natives into the sealed candidate: rejected: bounded provisioning command has an invalid closed
+runtime-closure shape)`, with HasCallStack `throwIO, called at src/Infernix/Error.hs:87:41 ...
+Infernix.Error`. This is a genuine RED. It crossed every prior OOM/helper boundary and durably
+published complete `coreml-native` (mtime 14:13:45), `ctranslate2-native` (14:18:11),
+`mlx-native` (14:20:21), and `onnx-runtime-native` (14:22:35) roots with
+`engine-artifact.json`, alongside the prior complete llama-cpp-cli/whisper-cpp-cli roots, before
+failing at Audiveris extraction. This supplies no full-materialization or installed-smoke GREEN
+claim, and the later Audiveris cancellation/source-isolation gates did not run. Post-settlement
+audit found no live materializer, bounded child, or external claimant; no engine `.tmp` or
+`.previous`; empty bounded-command activity and executable-snapshot inventories; and only complete
+roots plus owned lock leaves. Current build/lint/unit/docs/diff GREEN remains valid, but the runtime
+gate is RED. Exact diagnosis found that `extractAudiverisJavaCppNatives` uniquely passes the exact
+bundled Java plus `[ProvisioningArtifactRootClosure appRoot]` and no runtime libraries, but generic
+`provisioningCommandUsesArtifactSnapshot` omitted `ExtractAudiverisJavaCppNatives`; its fallback
+therefore required an empty closure and deterministically rejected before argv, environment, path
+validation, or spawn. The frozen correction touches only `src/Infernix/Cluster/Subprocess.hs` and
+`test/unit/Spec.hs`. Production shares the unchanged exact role/cardinality predicate, renames the
+classifier to `provisioningCommandRequiresArtifactClosure`, and adds one explicit Extract branch
+requiring exactly one ArtifactRoot, zero home/path/project roles, and no libraries. The app closure
+remains mandatory; renderer and Provisioning invocation bytes are unchanged; retained mutation-root
+conversion and revalidation are unchanged. Tests cover the positive plus missing, wrong,
+duplicate, and library negatives; the ordinary-command negative; and preserved Poetry/proto
+positives. Unique source guards pin `[appIdentity] [] -> toKernelExecutableIdentity ->
+mutation-root compiler -> retained expectation`. All 13 sibling calls were audited with no
+analogue; two independent reviews were CLEAN with no High or Medium issue; scoped diff/routing
+needles are green; and no residue or process remains. The correction is SOURCE-STABLE and unbuilt;
+the runtime RED remains, while the recorded pre-correction build/lint/unit/docs/diff GREEN remains
+valid for its identity. On the quiet host with no external claimant, exact governed
+`./bootstrap/apple-silicon.sh build` then exited 0. Stage 0 measured 65536 MiB physical minus the
+49152 MiB active Colima pledge as 16384 MiB effective; authority selected
+`J1 × H4096 + 2 × C1024 = 6144 MiB` with the `GHCRTS` driver cap at 1024 MiB. The command produced
+the sdist, compiled all 114 modules under GHC 9.12.4—including corrected Cluster/Subprocess as
+module 66 and the Provisioning/Apple callers—linked `Main`, installed and copied
+`.build/infernix`, and emitted the corrected operator/harness postamble. This is compile/install
+evidence only: lint, unit, and runtime have not run on the correction. The runtime gate remains RED.
+After a verified 304s claimant-free and pane-clear window, exact `./.build/infernix test lint`
+started. Before overlap, the affected graph compiled under `-Werror`; root
+`haskell-style-check: ok` passed; isolated Cabal 3.16 `cabal-format-check: ok` passed; Python
+reported no issues in 8 source files, Black left all 8 unchanged, and `All checks passed!`; bounded
+build-all entered component compile/link and linked apple-materializer. At 15:01:59, unrelated
+hostbootstrap owner PID 27014 launched
+`cabal test hostbootstrap-core-test --ghc-options=-Werror --test-options=-p /indexed/` as PID 86109
+with Cabal child 86240, outside the owned lint PID 84807 ancestry. The overlap lasted ~10s and
+ended, but invalidated the aggregate evidence. Root sent Ctrl-C only to the owned lint PTY; it
+exited 1 while the integration affected graph was compiling, before the unit link or build-all
+completion. Post-audit found no owned lint/Cabal/GHC or external process. The narrower completed
+subgates above remain PASS, but the aggregate lint attempt is INVALIDATED, never RED, and supplies
+neither a source-defect nor aggregate-GREEN claim. The governed rebuild GREEN remains valid and the
+runtime gate remains RED. Once the claimant is genuinely settled, rerun the whole aggregate lint,
+then full unit, docs/diff, and the full materializer rerun. No later gate may run first; only after
+materializer GREEN may Audiveris cancellation and installed-Python source isolation precede
+ordinary Apple and paired `linux-cpu` Wave Y validation. Until those results exist, this sprint and
+Phase 1 remain `Active`.
 
 ## Documentation Requirements
 

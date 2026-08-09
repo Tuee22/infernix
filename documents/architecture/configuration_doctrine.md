@@ -22,11 +22,12 @@
   **machine contract** `./infernix-host.dhall` (this box's tool paths, filesystem, and `node`
   block). `infernix test init` writes the thin `./infernix.test.dhall`. There is
   **no hidden auto-generate-if-absent backstop** inside ordinary `infernix` commands. The Apple
-  stage-0 bootstrap wrapper is the sole convenience exception: `./bootstrap/apple-silicon.sh up`
-  explicitly invokes `./.build/infernix init --if-missing` before `cluster up`.
+  stage-0 bootstrap wrappers are the explicit convenience exceptions: `up` invokes
+  `./.build/infernix init --if-missing` before `cluster up`, while `test` invokes the
+  runtime-mode-specific `init --if-missing` before test initialization and `test all`.
 - **Everything fails fast when its config is missing**, naming the init to run
   (e.g. `runtime config missing at ./infernix.dhall; run \`infernix init\``), unless the operator
-  entered through that Apple bootstrap wrapper.
+  entered through one of those explicit Apple bootstrap wrappers.
 - **The test harness reserves the cluster slot before touching runtime config.** Under the lifecycle
   lock it publishes a process-group reservation with a verified owner birth identity, refuses an
   operator-owned cluster or second live harness, then backs up any existing `./infernix.dhall`.
@@ -65,10 +66,10 @@
 
 ## Why
 
-The codebase previously accumulated 87 distinct env var names across dozens of Haskell `lookupEnv`
-call sites, chart-template `env:` injections, and bootstrap-shell references — plus pervasive
-implicit reliance on `PATH` / `HOME` / `KUBECONFIG` / `DOCKER_HOST`. The configuration doctrine
-collapses that to one substrate (typed Dhall) and one tool-discovery surface (absolute paths in the
+Environment variables split one configuration fact across Haskell reads, chart-template `env:`
+injections, bootstrap-shell references, and implicit `PATH` / `HOME` / `KUBECONFIG` /
+`DOCKER_HOST` state. The configuration doctrine uses one substrate (typed Dhall) and one
+tool-discovery surface (absolute paths in the
 host manifest). The hidden-constructor `SubprocessEnv` owns its manifest-derived `PATH`, absolute
 `HOME` and `TMPDIR`, and repo-local Helm config/cache/data homes. A closed renderer, rather than a
 caller override, selects repository cwd and emits the only command-specific environment values:
@@ -84,19 +85,18 @@ restore a SIGKILL would bypass — so an externally-killed run cannot leave the 
 config replaced by the test config. The pre-takeover reservation is owner-atomic and rests on the
 all-Haskell lifecycle-lock and typed supervision boundary.
 
-One deliberately narrow migration exception remains: a `.harness-backup` created by a pre-v2
-harness may exist without any reservation record. Because that format recorded no owner identity,
+One deliberately narrow compatibility input is a `.harness-backup` without a reservation record.
+Because that format records no owner identity,
 no command-activity proof can be associated with it. Entry reconciliation handles that legacy shape
-only while holding the lifecycle lock; every current transaction publishes its current-format
-reservation
+only while holding the lifecycle lock; every transaction publishes its reservation
 before touching config. The compatibility path is tracked explicitly in
 [legacy-tracking-for-deletion.md](../../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md) and is not
 part of the v2 quiescence guarantee.
 
-A second source of drift was **hand-maintained `.dhall` schema files** committed alongside the
-Haskell renderers that generate them, plus `.dhall` *values* rendered by Helm templating from
-`chart/values.yaml`. Both are removed: the binary reflects each schema from its decoder type and
-renders every value, so there is exactly one source of truth per config (the Haskell type), no
+A second source of drift is **hand-maintained `.dhall` schema files** alongside the Haskell
+renderers, plus `.dhall` *values* rendered by Helm templating from `chart/values.yaml`. The binary
+instead reflects each schema from its decoder type and renders every value, so there is exactly one
+source of truth per config (the Haskell type), no
 committed schema to drift, and no Dhall inside Helm templates.
 
 ## Generated, never tracked
@@ -167,31 +167,30 @@ The runtime and host configs feed the closed execution language defined by
 [Typed Execution Plan](typed_execution_plan.md). The Haskell core uses indexed ADTs for
 resource/enforcer alternatives, and the generated wire carries the memory budget as a proper Dhall
 union — `< HostEnforced | SubstrateEnforced | DualEnforced >`, each arm carrying only its own payload
-record — so the retired text discriminator plus zero-filled unused fields is not a representable
+record — so a text discriminator plus zero-filled unused fields is not a representable
 shape. Drift is detectable rather than latent: the union's rendered type
 annotation is written once and selected by every arm, a unit assertion pins the rendered payload
-against the alternatives the reflected decoder expects, and a payload written by a pre-union
-generator now fails with a diagnostic that names the retired shape and tells the operator to
+against the alternatives the reflected decoder expects, and a payload written by a nonunion
+generator fails with a diagnostic that names the invalid shape and tells the operator to
 regenerate it with `infernix init` (or `infernix test init`) instead of surfacing a bare structural
 Dhall type error. Every
-enum-like field is now a Dhall union rather than `Text` refined after decode — `runtimeMode`,
+enum-like field is a Dhall union rather than `Text` refined after decode — `runtimeMode`,
 `daemonRole`, `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`, request-shape
 `fieldType`, engine-binding `adapterType`, and the `resource` and `source` fields inside the
 substrate limit record — every quantity is `Natural` rather than `Integer`, and the never-read
-`edgePort` placeholder is removed from the language rather than refined. The targeted migration
-diagnostic covers each retired text spelling, which matters most for `daemonRole`: its three retired
+`edgePort` placeholder is absent from the language. The targeted compatibility
+diagnostic covers each invalid text spelling, which matters most for `daemonRole`: its three legacy
 aliases (`frontend`, `cluster`, `host`) are values a union cannot express, so a stale payload
 carrying one has no other diagnosis. See
 [typed_execution_plan.md](typed_execution_plan.md) for the full field inventory and the two
 mechanical traps the round-trip caught.
 
-The new execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
+The execution-plan decode boundary produces opaque `RawRuntimeConfig`. Haskell compilation
 validates model placements, routes, engine bindings, daemon wiring, and admission accounting into
 `CompiledRuntimePlan`. Coordinators route only through compiled placements and `CompiledDaemon`
 capabilities. Package-owned live observations then verify the named OS enforcer and configured
 host/cgroup envelope before refining engine work into `RuntimePlan` / `ExecutableModel`; engine
-subscription and launch accept only those refined capabilities. The fresh complete Stage 1 must
-cover it again.
+subscription and launch accept only those refined capabilities.
 
 The same compiled plan owns messaging authority. There is no supported raw topic publisher;
 coordinator and engine consumers turn unavailable, empty-model, unknown-model, wrong-route, and
@@ -202,35 +201,46 @@ side effects. Compilation rejects topic reuse across coordinator-request, result
 model-bootstrap-request, model-bootstrap-ready, and engine-route families. Binary substrate
 materialization emits the generated Dhall bytes with explicit UTF-8 encoding.
 
-The command-policy side is also implemented in the generated host manifest:
+The generated host manifest also carries command policies:
 `retry` is `< Never | Bounded : { attempts : Natural, backoffMicros : Natural } >`,
 `failureClass` is `< Fatal | TransientThenFatal | IdempotentAbsence >`, and the
 `commandPolicies` record has exactly 36 fields covering Kind, kubectl, Helm, Docker, host probes and
 mutations, archive/curl work, GPU userspace synchronization, and image publication. The
 hidden-constructor `CommandPolicyPlan` refines that complete record, and each abstract
 `ClusterCommand` selects its policy exhaustively through `ClusterOperation`. The command substrate
-and every production caller route through that substrate. Phase 2 owns
-focused adversarial validation and fresh source review before freezing one source for the complete
-Stage 1 and cohort lanes. Raw runtime-config consumers are confined to hidden
+and every production caller routes through that substrate. Raw runtime-config consumers are confined to hidden
 configuration/presentation modules and cannot authorize routing or engine launch.
 
 ### Host manifest (`infernix-host.dhall`)
 
 Typed record describing the operator's host environment — absolute **tool paths** for every external
-command the project invokes (`docker`, `kubectl`, `helm`, `kind`, `cabal`, `ghc`, `ghcup`, `ormolu`,
-`hlint`, `npm`, `node`, `python3`, `poetry`, `protoc`, `git`, `tar`, `curl`, `apt-get`, `brew`,
+command the project invokes (`docker`, `kubectl`, `helm`, `kind`, `cabal`, `ghc`, `ghcup`, `npm`,
+`node`, `python3`, `poetry`, `git`, `tar`, `curl`, `apt-get`, `brew`,
 `sudo`, `systemctl`, `mkdir`, `chmod`, `ln`, `install`), **filesystem conventions** (`repoRoot`,
 `buildRoot`, `dataRoot`, `runtimeRoot`, `kubeconfigPath`, `secretsRoot`, `homeDirectory`), and the
 **host execution context / native architecture**. It also carries the generated 36-field
 `commandPolicies` record; test-only kernel probes are deliberately absent from operator
 configuration.
 
+Ormolu and HLint run as pinned libraries inside the root Haskell-style test component. The Cabal
+manifest printer runs through pinned Cabal 3.16 in a genuinely separate package under
+`test/cabal-format/`, because separate test suites in one package still share one solver universe.
+The formatter libraries are not host commands and have no
+`HostToolPaths` fields.
+
+`protoc` is deliberately absent from the host manifest. Ordinary Haskell builds consume the exact
+tracked `src/Proto/` snapshot, Python generation uses its venv's `grpc_tools.protoc` module, and the
+standalone pinned compiler exists only inside the Linux image-build regeneration gate.
+
 It carries one record that is **measured rather than declared**: `memory`
 (`physicalMemoryMib` / `effectiveMemoryMib`), observed from `/proc/meminfo` intersected with the
-cgroup maximum on Linux and from `hw.memsize` on Darwin. It is the input the bounded host build
-ceiling is derived from ([bounded_host_memory.md](bounded_host_memory.md)), and the observation
-fails closed: a manifest that could not be measured is not written, because a ceiling derived from
-an unmeasured host only looks derived from physical RAM.
+cgroup maximum on Linux. On Darwin, physical memory comes from `hw.memsize` and effective memory
+subtracts the conservatively observed aggregate active Colima pledge. The fixed-path Colima probe
+and parser are shared with the inference-memory partition; unavailable or malformed observation
+fails closed rather than becoming a zero pledge. This record is the input the bounded host build
+ceiling is derived from ([bounded_host_memory.md](bounded_host_memory.md)), and a manifest that could
+not be measured is not written, because a ceiling derived from an unmeasured host only looks derived
+from physical RAM.
 
 It additionally carries the **`node` block** — this machine's role, its member id, the pools it
 serves, and its model-cache quota — plus a pinned projection of the system contract. That makes it
@@ -246,7 +256,7 @@ process state — see
 
 ### Cluster config (`cluster.dhall`)
 
-Typed record of in-cluster wiring that previously lived in pod-spec `env:` blocks — Pulsar
+Typed record of in-cluster wiring that must not live in pod-spec `env:` blocks — Pulsar
 (HTTP/WS/service URLs, tenant, namespace), MinIO (endpoint, region, presign expiry, buckets),
 Keycloak (base URL, realm, client id, JWKS URL), demo backend (bind host, bridge mode, publication
 state path), engine (model cache root and quota), coordinator

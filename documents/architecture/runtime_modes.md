@@ -73,13 +73,12 @@ against the checked host partition; package-owned live observations then refine 
 into `ExecutableModel`. The supported daemon runs fresh engine subprocesses under a process-local
 serialization lock and an Apple physical-footprint watchdog. A configured over-capacity model must
 publish a clean typed `ModelMemoryLimitExceeded` result without launch, while smaller compiled
-placements keep serving. Phase 4 still owns encapsulating the serialization authority and the
-adversarial breach-and-survival proof. The fail-clean realness contract for host memory on
-`apple-silicon` was introduced by
+placements keep serving. The serialization authority remains inside the opaque engine capability,
+and the Apple watchdog's adversarial breach gate must leave the daemon alive with a typed failure.
 See the Per-Substrate Inference RAM Budget section below for the budget contract. Apple native engine artifacts resolve from `./.data/engines/<adapterId>/` and the
-supported materialization target is Tart-free: a typed engine-artifact manifest surface uses public
+materialization contract is Tart-free: a typed engine-artifact manifest surface uses public
 upstream MLX GPU execution and coremltools device observation without repository-owned native
-source. The former Tart and native bridge helper paths have been removed; the retained command name
+source. No Tart or native bridge helper path exists; the retained command name
 writes typed manifests without a VM dependency. The canonical homes are
 [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md),
 [../operations/apple_silicon_runbook.md](../operations/apple_silicon_runbook.md), and
@@ -109,8 +108,8 @@ sentinels. The shape names its enforcer:
 - `HostEnforcedBudget HostMemoryPartition` means the host itself owns the ceiling: admission draws
   from the partition's `inferenceCapacity` and the on-host capped-engine kernel enforces the admitted
   ceiling at runtime (the `apple-silicon` lane)
-- `SubstrateEnforcedBudget PodMemoryLimit` is the transitional wire record for substrate capacity.
-  On `linux-cpu` it supplies the configured outer pod envelope; refinement additionally requires the
+- `SubstrateEnforcedBudget PodMemoryLimit` carries substrate RAM capacity. On `linux-cpu` it
+  supplies the configured outer pod envelope; refinement additionally requires the
   live process-group RSS sampler and exact `memory.max`
 - `compileRuntimePlan` validates each model against the budget and mints
   `MemoryGrant resource` only inside `CompiledPlacement`; an over-capacity model remains in the
@@ -120,8 +119,8 @@ sentinels. The shape names its enforcer:
   `EnforcedGrant resource` inside `ExecutableModel`; public engine launch accepts only that whole
   executable capability
 
-This removes the old need for hardcoded floors such as `max 1024 ...` and the "enforced by nobody"
-arm: an over-pledged Apple host is rejected when the `HostMemoryPartition` smart constructor refuses
+There is no hardcoded capacity floor such as `max 1024 ...` and no "enforced by nobody" arm: an
+over-pledged Apple host is rejected when the `HostMemoryPartition` smart constructor refuses
 the oversubscription, and a model whose footprint exceeds the resolved `inferenceCapacity` fail-closes
 cleanly at admission. Validation may report capacity diagnostics, but it must not reject the entire
 daemon solely because one configured model exceeds the current budget. The smaller configured models
@@ -137,10 +136,8 @@ Budget sources are substrate-specific while admission and error construction sta
 - on `linux-cpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
   Kubernetes engine pod memory limit for the active cluster workload, with resource `PodRam`; this is
   the real cluster cap and must participate in runtime admission
-- on `linux-gpu`, the final executable placement needs independently indexed pod-RAM and GPU-VRAM
-  grants. The transitional single-budget wire cannot prove both, so current compilation fails closed
-  with `GpuDualResourceBudgetRequired`; Phase 6 owns NVIDIA enforcement and Phase 8 owns the final
-  generated union
+- on `linux-gpu`, an executable placement needs independently indexed pod-RAM and GPU-VRAM grants;
+  a plan that names only one resource fails closed with `GpuDualResourceBudgetRequired`
 
 Compilation, rather than an independently recomputed request-time check, is the shared pure admission
 boundary. When a footprint exceeds capacity, the compiled unavailable entry supplies the typed
@@ -148,15 +145,15 @@ failure. A fitting placement receives a resource-indexed grant and can launch on
 pairs it with a verified matching enforcer inside `ExecutableModel`. On
 `apple-silicon` a fixed, bounded `/usr/bin/top` plus `/usr/bin/footprint` observer measures the
 child process group's physical footprint without direct FFI or a caller-supplied command, and the
-watchdog SIGKILLs that group on a measured ceiling breach. That path must become a typed
-`status=failed ModelMemoryLimitExceeded`; Phase 4 still owns adversarial survival proof and the
-encapsulated single-flight authority needed to make aggregate concurrent overcommit
-unrepresentable. The browser renders `ModelMemoryLimitExceeded` as a helpful capacity error naming
+watchdog SIGKILLs that group on a measured ceiling breach. That path produces a typed
+`status=failed ModelMemoryLimitExceeded`, and the single-flight authority remains encapsulated so
+aggregate concurrent overcommit is unrepresentable. The browser renders
+`ModelMemoryLimitExceeded` as a helpful capacity error naming
 the model footprint and available memory in MiB.
 
-Linux CPU refinement now probes the process-group RSS sampler and exact larger cgroup envelope;
-Phase 4 owns its adversarial proof and the opaque serialization authority. CUDA OOM classification
-is not proof of an installed VRAM limit, so Linux GPU refinement remains fail-closed until Phase 6.
+Linux CPU refinement probes the process-group RSS sampler and exact larger cgroup envelope under the
+same opaque serialization authority. CUDA OOM classification is not proof of an installed VRAM
+limit, so Linux GPU refinement requires independent live NVIDIA accounting.
 Engine members do not become ready until the selected enforcer has been verified against the compiled
 execution plan.
 
@@ -196,12 +193,13 @@ The generated demo catalog is the source of truth for the active runtime mode.
 ## Service Placement
 
 Service placement is a separate concept from runtime mode. The supported
-target shape is the three-role daemon model codified in
+shape is the three-role daemon model codified in
 [daemon_topology.md](daemon_topology.md):
 
 - Apple host-native execution context means the supported `cluster up`, `cluster status`, and
 validation commands run through `./.build/infernix` on the host; it does not mean the supported
-clustered service daemons stay host-resident after reconcile - `cluster up` deploys the
+clustered service daemons stay host-resident after reconcile.
+- `cluster up` deploys the
 **coordinator** Deployment (`infernix-coordinator`) on every supported substrate. The **frontend**
 Deployment (`infernix-demo`) is gated by `demo_ui`. The **engine** role runs as an in-cluster
 `infernix-engine` Deployment on Linux substrates through Kubernetes engine pools; on `linux-gpu`,
@@ -209,10 +207,10 @@ Python-native framework work can use pool-specific or per-engine Deployments sel
 pool/model topics. Repo-owned `linux-gpu` lifecycle values may keep heavyweight per-engine
 deployments at zero replicas on the single-GPU lane and validation scales one at a time. Apple
 silicon runs eligible engine-pool members as on-host `infernix service` daemons. Host-native Apple
-generated Helm values use one local Harbor/Pulsar/coordinator/demo replica on the already selected
-native arm64 Docker daemon so the real Apple engine gate fits constrained Colima memory; Linux
-generated values retain the single-node platform defaults on every lane. This single-replica sizing
-bounds the control-plane Harbor/Pulsar/coordinator/demo services; the on-host `infernix service`
+generated Helm values use one local Harbor instance, one Pulsar instance, one coordinator process,
+and one demo process on the already selected native arm64 Docker daemon so the real Apple engine
+gate fits constrained Colima memory; Linux generated values use the single-node platform defaults
+on every lane. This single-instance sizing bounds the control-plane services; the on-host `infernix service`
 inference RAM is separately bounded by the typed resource-admission policy (see Per-Substrate
 Inference Memory Budget), so peak *inference* memory stays within its
 declared budget. Host memory as a whole has other claimants — including the host toolchain — and is
@@ -221,33 +219,39 @@ owned by [bounded host memory](bounded_host_memory.md). The chart ships
 on every substrate, and `finalPhaseDeployments` waits on `deployment/infernix-{coordinator,engine}`
 plus the Linux GPU per-engine Deployment set when rendered. The Apple lane's cluster coordinator
 publishes Apple-native work to derived pool/model topics consumed by eligible on-host engine
-members. - on `apple-silicon`, the clustered `infernix-demo` path runs from the
+members.
+- on `apple-silicon`, the clustered `infernix-demo` path runs from the
 `infernix-linux-cpu:local` image family while reading the cluster-role deployment mirror derived
-from the initialized `apple-silicon` runtime config - the direct `infernix service` command remains
+from the initialized `apple-silicon` runtime config.
+- the direct `infernix service` command is
 the Apple host engine-role entrypoint and consumes the generated engine-role metadata, pool/member
 assignments, result topic, and engine bindings from the active `.dhall`. Generated engine-role
 metadata is derived from the validated pool/member graph and serialized in the substrate file; raw
-batch-topic metadata is not part of the supported surface - `/api/publication` keeps
+batch-topic metadata is not part of the supported surface.
+- `/api/publication` keeps
 `apiUpstream.mode: cluster-demo` for the stable routed browser host, reports `daemonLocation:
 cluster-pod` for the in-cluster coordinator daemon on every substrate, reports
 `inferenceExecutorLocation: control-plane-host` on Apple, and distinguishes the inference lane with
 `inferenceDispatchMode: pulsar-bridge-to-host-daemon` on Apple versus
 `pulsar-bridge-to-cluster-daemon` on Linux (the latter terminates at the in-cluster engine
-Deployment) - cluster-resident daemons read the Pulsar WebSocket and admin transport from the
+Deployment).
+- cluster-resident daemons read the Pulsar WebSocket and admin transport from the
 mounted `ClusterConfig`; host-side tooling that runs outside a pod auto-discovers Pulsar's direct,
 un-gated proxy NodePort transport (the real `/admin/v2` and `/ws/v2` surfaces, not the
 Keycloak-JWT-gated `/pulsar/admin` Envoy edge) when no mounted manifest is present and the cluster
 exists — Apple host-native runs resolve it from the published cluster state on the loopback
 NodePort, and the Linux outer-container flows reach the same proxy NodePort on the control-plane
 node IPv4 over the joined `kind` network; unit-level harnesses can still exercise the repo-local
-topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent - direct
+topic spool under `./.data/runtime/pulsar/` when those endpoints are intentionally absent.
+- direct
 host runs and cluster-resident placements both launch the same process-isolated engine-worker
 contract; commands derive only from the engine binding carried by `ExecutableModel`, with no
-adapter-command override. Fitting models launch only through the refined executable capability -
-empty-model, unknown-model, wrong-route, and malformed coordinator/engine inputs also terminate as
+adapter-command override. Fitting models launch only through the refined executable capability.
+- empty-model, unknown-model, wrong-route, and malformed coordinator/engine inputs terminate as
 failed results before their file source is removed or Pulsar message acknowledged; no fallback
-engine route exists - switching runtime modes changes generated catalog content and engine bindings,
-not the service placement contract
+engine route exists.
+- switching runtime modes changes generated catalog content and engine bindings, not the service
+placement contract.
 
 ## Cross-References
 

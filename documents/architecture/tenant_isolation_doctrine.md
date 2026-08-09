@@ -43,8 +43,8 @@ The `users/<sub>/` prefix carries a trailing slash, so a user whose `sub` is a p
 ## Enforcement — single trust boundary
 
 - **Objects**: the webapp derives the key from `sub` server-side and rejects any out-of-scope key with
-  HTTP 403 before any MinIO operation (upload, download, and `DELETE`). The Sprint
-  7.26 `GET /api/objects/list` enumerates only the caller's `users/<sub>/` prefix, derived
+  HTTP 403 before any MinIO operation (upload, download, and `DELETE`).
+  `GET /api/objects/list` enumerates only the caller's `users/<sub>/` prefix, derived
   server-side — the caller never names a prefix. The browser reaches MinIO only through the webapp
   (see [object_access_doctrine.md](object_access_doctrine.md)). Engine-generated artifacts must use a
   Haskell-supplied generated-object target under the same user/context prefix; adapter-local or native

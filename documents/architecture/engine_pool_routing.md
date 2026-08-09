@@ -180,9 +180,9 @@ Kubernetes placement details stay in Kubernetes-native mechanisms: Deployment re
 DaemonSets where appropriate, node selectors, affinity, taints, tolerations, and resource requests.
 The routing graph does not depend on a specific pod surviving.
 
-## Hot Reload
+## Assignment Reload
 
-The implemented contract uses startup-time assignment: change the Dhall pool/member graph, restage
+The contract uses startup-time assignment: change the Dhall pool/member graph, restage
 or publish it, then restart or roll out affected daemon processes. Cache state is independent of
 assignment state. Removing a model from a member stops new work for that model after restart and
 makes the cache entry evictable; it does not immediately delete warm artifacts unless an explicit
@@ -191,17 +191,8 @@ the on-disk model-cache LRU (`python/adapters/model_cache.py`) only; there is no
 eviction concept, so this reclaims disk, not resident memory. A model either fits the active memory
 budget for that request or returns typed `ModelMemoryLimitExceeded`.
 
-A future hot-reload extension may use compacted Pulsar desired-state topics:
-
-| Topic | Key | Purpose |
-|---|---|---|
-| `persistent://infernix/control/engine-pool-assignments` | member id | desired pool/model assignment for one durable member |
-| `persistent://infernix/control/engine-pool-status` | member id | latest observed member state for diagnostics and future policy |
-
-Assignment records would be declarative desired state, not imperative commands. An engine member
-would converge toward the latest record by subscribing to newly assigned model topics, warming or
-materializing models, draining removed assignments, and marking removed model cache entries
-evictable. This hot-reload path is not implemented in the current sprint.
+Hot reload through Pulsar desired-state topics is outside the supported contract. Assignment changes
+take effect only after the affected daemon process restarts with the updated typed graph.
 
 ## Validation
 
@@ -219,8 +210,8 @@ The pool contract is valid only when:
 - pinned routes use `Exclusive` and reject duplicate member consumers
 - `demo_ui = false` still deploys the production coordinator and engine pools while omitting only
   the demo frontend, browser API, Keycloak, and demo-only routes
-- physical Apple multi-host distribution repeats the same scenario across separate hosts when
-  hardware exists, but is deferred outside the current single-host validation envelope
+- a physical Apple multi-host distribution claim requires the same scenario to pass across distinct
+  hosts; single-host logical-pool evidence cannot satisfy that gate
 
 ## Cross-References
 

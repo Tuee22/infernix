@@ -47,6 +47,7 @@ module Infernix.Cluster.Subprocess
     compileProvisioningCommand,
     compileProvisioningCommandWithExecutable,
     compileProvisioningCommandWithExecutableInMutationRoot,
+    provisioningRuntimeClosureShapeForTest,
     resolveProvisioningCommandExecutable,
     resolveProvisioningPoetry,
     resolveProvisioningPython,
@@ -71,6 +72,7 @@ module Infernix.Cluster.Subprocess
     NativeArtifactCommandOutcome (..),
     NativeArtifactOutputStream (..),
     runClosedInstalledRunnerSmoke,
+    runClosedInstalledPythonSourceIsolationSmoke,
     runClosedLinuxNativeArtifactSmoke,
     ProvisioningContractObservation (..),
     provisioningContractForTest,
@@ -88,6 +90,13 @@ module Infernix.Cluster.Subprocess
     sealedArtifactRuntimeEnvironmentForTest,
     renderedEnvironmentContractForTest,
     linuxSealedRunRenderedEnvironmentForTest,
+    darwinPythonSnapshotTargetEnvironmentForTest,
+    darwinPythonSnapshotClosureEnvironmentContractForTest,
+    sealedPackageClosureContentDisagreementForTest,
+    retainedPackageClosureExcludesFileForTest,
+    sealedPackageClosureExcludesFileForTest,
+    retainedPackageClosureExcludesLinkForTest,
+    sealedPackageClosureExcludesLinkForTest,
     supervisorTargetEnvironmentContractForTest,
     runBoundedCommand,
     dispatchInternalSubprocessMode,
@@ -955,7 +964,6 @@ searchPathForHost config =
           HostConfig.hostLlamaCli toolPaths,
           HostConfig.hostWhisperCli toolPaths,
           HostConfig.hostPoetry toolPaths,
-          HostConfig.hostProtoc toolPaths,
           HostConfig.hostGit toolPaths,
           HostConfig.hostTar toolPaths,
           HostConfig.hostCurl toolPaths
@@ -2365,6 +2373,206 @@ data ExecutableSnapshotExpectation = ExecutableSnapshotExpectation
   }
   deriving (Eq, Show)
 
+-- | Command-specific wrapper expectation for the Darwin cohort proof. The
+-- inner target is deliberately absent: the helper derives it from the closed
+-- Apple adapter catalog, so this cannot become a generic nested executable.
+data InstalledPythonSourceIsolationExpectation
+  = InstalledPythonSourceIsolationExpectation
+  { sourceIsolationExpectationAdapter :: !Provisioning.AppleAdapterId,
+    sourceIsolationExpectationAuditInjector ::
+      !ExecutableSnapshotExpectation,
+    sourceIsolationExpectationDirectories ::
+      ![PackageClosureSnapshotExpectation],
+    sourceIsolationExpectationFiles ::
+      ![RuntimeLibrarySnapshotExpectation],
+    sourceIsolationExpectationWritableProbe ::
+      !RuntimeLibrarySnapshotExpectation,
+    sourceIsolationExpectationReceiptDigest :: !Text.Text
+  }
+  deriving (Eq, Show)
+
+installedPythonSourceIsolationExpectation ::
+  Provisioning.AppleAdapterId ->
+  Provisioning.InstalledPythonSourceIsolationSpec ->
+  InstalledPythonSourceIsolationExpectation
+installedPythonSourceIsolationExpectation adapter spec =
+  InstalledPythonSourceIsolationExpectation
+    { sourceIsolationExpectationAdapter = adapter,
+      sourceIsolationExpectationAuditInjector =
+        executableSnapshotExpectation
+          (Provisioning.installedPythonSourceIsolationAuditInjectorIdentity spec),
+      sourceIsolationExpectationDirectories =
+        map
+          packageClosureSnapshotExpectation
+          (Provisioning.installedPythonSourceIsolationDirectories spec),
+      sourceIsolationExpectationFiles =
+        map
+          runtimeLibrarySnapshotExpectation
+          (Provisioning.installedPythonSourceIsolationFiles spec),
+      sourceIsolationExpectationWritableProbe =
+        runtimeLibrarySnapshotExpectation
+          (Provisioning.installedPythonSourceIsolationWritableProbeIdentity spec),
+      sourceIsolationExpectationReceiptDigest =
+        Provisioning.installedPythonSourceIsolationReceiptDigest spec
+    }
+
+sourceIsolationExpectationDirectoryPaths ::
+  InstalledPythonSourceIsolationExpectation ->
+  [FilePath]
+sourceIsolationExpectationDirectoryPaths =
+  map closureSnapshotRoot . sourceIsolationExpectationDirectories
+
+sourceIsolationExpectationFilePaths ::
+  InstalledPythonSourceIsolationExpectation ->
+  [FilePath]
+sourceIsolationExpectationFilePaths =
+  map runtimeLibrarySnapshotCanonicalPath . sourceIsolationExpectationFiles
+
+sourceIsolationExpectationSourcePaths ::
+  InstalledPythonSourceIsolationExpectation ->
+  [FilePath]
+sourceIsolationExpectationSourcePaths expectation =
+  sourceIsolationExpectationDirectoryPaths expectation
+    <> sourceIsolationExpectationFilePaths expectation
+
+sourceIsolationExpectationPackageIdentity ::
+  PackageClosureSnapshotExpectation ->
+  Provisioning.ProvisioningPackageClosureIdentity
+sourceIsolationExpectationPackageIdentity expectation =
+  Provisioning.ProvisioningPackageClosureIdentity
+    { Provisioning.provisioningPackageClosureRole =
+        case closureSnapshotRole expectation of
+          SnapshotPythonHome -> Provisioning.ProvisioningPythonHomeClosure
+          SnapshotPythonPath -> Provisioning.ProvisioningPythonPathClosure
+          SnapshotProjectSource -> Provisioning.ProvisioningProjectSourceClosure
+          SnapshotArtifactRoot -> Provisioning.ProvisioningArtifactRootClosure,
+      Provisioning.provisioningPackageClosureRoot = closureSnapshotRoot expectation,
+      Provisioning.provisioningPackageClosureDeviceId = closureSnapshotDeviceId expectation,
+      Provisioning.provisioningPackageClosureFileId = closureSnapshotFileId expectation,
+      Provisioning.provisioningPackageClosureMode = closureSnapshotMode expectation,
+      Provisioning.provisioningPackageClosureBytes = closureSnapshotBytes expectation,
+      Provisioning.provisioningPackageClosureFiles = closureSnapshotFiles expectation,
+      Provisioning.provisioningPackageClosureDigest = closureSnapshotDigest expectation
+    }
+
+sourceIsolationExpectationRuntimeIdentity ::
+  RuntimeLibrarySnapshotExpectation ->
+  Provisioning.ProvisioningRuntimeLibraryIdentity
+sourceIsolationExpectationRuntimeIdentity expectation =
+  Provisioning.ProvisioningRuntimeLibraryIdentity
+    { Provisioning.provisioningRuntimeLibraryLeafName =
+        runtimeLibrarySnapshotLeafName expectation,
+      Provisioning.provisioningRuntimeLibraryConfiguredPath =
+        runtimeLibrarySnapshotConfiguredPath expectation,
+      Provisioning.provisioningRuntimeLibraryCanonicalPath =
+        runtimeLibrarySnapshotCanonicalPath expectation,
+      Provisioning.provisioningRuntimeLibraryDeviceId =
+        runtimeLibrarySnapshotDeviceId expectation,
+      Provisioning.provisioningRuntimeLibraryFileId =
+        runtimeLibrarySnapshotFileId expectation,
+      Provisioning.provisioningRuntimeLibraryMode =
+        runtimeLibrarySnapshotMode expectation,
+      Provisioning.provisioningRuntimeLibrarySize =
+        runtimeLibrarySnapshotSize expectation,
+      Provisioning.provisioningRuntimeLibraryDigest =
+        runtimeLibrarySnapshotDigest expectation
+    }
+
+validateInstalledPythonSourceIsolationExpectation ::
+  InstalledPythonSourceIsolationExpectation ->
+  Either String ()
+validateInstalledPythonSourceIsolationExpectation expectation = do
+  unless
+    (isJust (Provisioning.applePythonAdapterForApple adapter))
+    (Left "source-isolation expectation requires a Python Apple adapter")
+  unless
+    ( length directories == 1
+        && length files <= maximumInstalledPythonSourceIsolationFiles
+        && length sourcePaths == length (List.nub (map normalise sourcePaths))
+        && directories == List.sortOn closureSnapshotRoot directories
+        && files == List.sortOn runtimeLibrarySnapshotCanonicalPath files
+        && writableProbe `elem` files
+    )
+    (Left "source-isolation expectation has an invalid bounded source cardinality")
+  unless
+    ( all validSourcePath sourcePaths
+        && all sourceDisjointFromSystemPlatformRoots sourcePaths
+        && all validDirectory directories
+        && all validFile files
+        && writableProbeWithinDirectory
+        && validAuditInjector auditInjector
+        && canonicalSourceIsolationDigest receiptDigest
+        && receiptDigest
+          == Provisioning.installedPythonSourceIsolationReceiptDigestFor
+            (map sourceIsolationExpectationPackageIdentity directories)
+            (map sourceIsolationExpectationRuntimeIdentity files)
+    )
+    (Left "source-isolation expectation has an invalid exact source identity")
+  where
+    adapter = sourceIsolationExpectationAdapter expectation
+    directories = sourceIsolationExpectationDirectories expectation
+    files = sourceIsolationExpectationFiles expectation
+    sourcePaths = sourceIsolationExpectationSourcePaths expectation
+    receiptDigest = sourceIsolationExpectationReceiptDigest expectation
+    auditInjector = sourceIsolationExpectationAuditInjector expectation
+    writableProbe = sourceIsolationExpectationWritableProbe expectation
+    writableProbeWithinDirectory =
+      case directories of
+        [directory] ->
+          pathWithinOwnedRoot
+            (closureSnapshotRoot directory)
+            (runtimeLibrarySnapshotCanonicalPath writableProbe)
+        _ -> False
+    validSourcePath path =
+      isAbsolute path
+        && normalise path == path
+        && '\NUL' `notElem` path
+        && length path <= 4096
+    sourceDisjointFromSystemPlatformRoots path =
+      all
+        ( \platformRoot ->
+            not
+              ( pathWithinOwnedRoot platformRoot path
+                  || pathWithinOwnedRoot path platformRoot
+              )
+        )
+        systemPlatformOwnedRoots
+    validDirectory directory =
+      closureSnapshotRole directory == SnapshotPythonHome
+        && closureSnapshotDeviceId directory >= 0
+        && closureSnapshotFileId directory > 0
+        && closureSnapshotMode directory > 0
+        && closureSnapshotBytes directory >= 0
+        && closureSnapshotBytes directory
+          <= maximumPackageClosureSnapshotBytes
+        && closureSnapshotFiles directory > 0
+        && closureSnapshotFiles directory <= maximumPackageClosureSnapshotFiles
+        && canonicalSourceIsolationDigest (closureSnapshotDigest directory)
+    validFile file =
+      normalise (runtimeLibrarySnapshotConfiguredPath file)
+        == normalise (runtimeLibrarySnapshotCanonicalPath file)
+        && safeRuntimeLibraryLeaf (runtimeLibrarySnapshotLeafName file)
+        && runtimeLibrarySnapshotDeviceId file >= 0
+        && runtimeLibrarySnapshotFileId file > 0
+        && runtimeLibrarySnapshotMode file > 0
+        && runtimeLibrarySnapshotSize file >= 0
+        && runtimeLibrarySnapshotSize file
+          <= maximumRuntimeLibrarySnapshotFileBytes
+        && canonicalSourceIsolationDigest (runtimeLibrarySnapshotDigest file)
+    validAuditInjector identity =
+      normalise (snapshotConfiguredPath identity)
+        == normalise Provisioning.installedPythonSourceIsolationAuditInjectorExecutable
+        && systemPlatformBinaryPath (snapshotCanonicalPath identity)
+        && snapshotDeviceId identity >= 0
+        && snapshotFileId identity > 0
+        && snapshotMode identity > 0
+        && snapshotSize identity > 0
+        && snapshotSize identity <= maximumExecutableSnapshotBytes
+        && canonicalSourceIsolationDigest (snapshotDigest identity)
+        && null (snapshotPackageClosures identity)
+        && null (snapshotRuntimeLibraries identity)
+        && isNothing (snapshotTestHook identity)
+
 executableSnapshotExpectation ::
   Provisioning.ProvisioningExecutableIdentity ->
   ExecutableSnapshotExpectation
@@ -2401,15 +2609,8 @@ packageClosureSnapshotExpectation ::
 packageClosureSnapshotExpectation identity =
   PackageClosureSnapshotExpectation
     { closureSnapshotRole =
-        case Provisioning.provisioningPackageClosureRole identity of
-          Provisioning.ProvisioningPythonHomeClosure ->
-            SnapshotPythonHome
-          Provisioning.ProvisioningPythonPathClosure ->
-            SnapshotPythonPath
-          Provisioning.ProvisioningProjectSourceClosure ->
-            SnapshotProjectSource
-          Provisioning.ProvisioningArtifactRootClosure ->
-            SnapshotArtifactRoot,
+        packageClosureSnapshotRoleForProvisioning
+          (Provisioning.provisioningPackageClosureRole identity),
       closureSnapshotRoot =
         Provisioning.provisioningPackageClosureRoot identity,
       closureSnapshotDeviceId =
@@ -2425,6 +2626,16 @@ packageClosureSnapshotExpectation identity =
       closureSnapshotDigest =
         Provisioning.provisioningPackageClosureDigest identity
     }
+
+packageClosureSnapshotRoleForProvisioning ::
+  Provisioning.ProvisioningPackageClosureRole ->
+  PackageClosureSnapshotRole
+packageClosureSnapshotRoleForProvisioning role =
+  case role of
+    Provisioning.ProvisioningPythonHomeClosure -> SnapshotPythonHome
+    Provisioning.ProvisioningPythonPathClosure -> SnapshotPythonPath
+    Provisioning.ProvisioningProjectSourceClosure -> SnapshotProjectSource
+    Provisioning.ProvisioningArtifactRootClosure -> SnapshotArtifactRoot
 
 runtimeLibrarySnapshotExpectation ::
   Provisioning.ProvisioningRuntimeLibraryIdentity ->
@@ -2474,7 +2685,9 @@ data BoundedCommand command = BoundedCommand
     boundedRetainedExecutableExpectation ::
       !(Maybe ExecutableSnapshotExpectation),
     boundedProvisioningMutationWorkingDirectory ::
-      !(Maybe ProvisioningMutationWorkingDirectory)
+      !(Maybe ProvisioningMutationWorkingDirectory),
+    boundedInstalledPythonSourceIsolationExpectation ::
+      !(Maybe InstalledPythonSourceIsolationExpectation)
   }
 
 boundedCommandOperation :: BoundedCommand ClusterCommand -> ClusterOperation
@@ -2675,62 +2888,15 @@ compileProvisioningCommandWithExecutable
         runtimeLibraries =
           Provisioning.provisioningExecutableRuntimeLibraries
             executableIdentity
-        homeClosureCount =
-          length
-            [ ()
-            | closure <- packageClosures,
-              Provisioning.provisioningPackageClosureRole closure
-                == Provisioning.ProvisioningPythonHomeClosure
-            ]
-        pathClosureCount =
-          length
-            [ ()
-            | closure <- packageClosures,
-              Provisioning.provisioningPackageClosureRole closure
-                == Provisioning.ProvisioningPythonPathClosure
-            ]
-        projectSourceClosureCount =
-          length
-            [ ()
-            | closure <- packageClosures,
-              Provisioning.provisioningPackageClosureRole closure
-                == Provisioning.ProvisioningProjectSourceClosure
-            ]
-        artifactClosureCount =
-          length
-            [ ()
-            | closure <- packageClosures,
-              Provisioning.provisioningPackageClosureRole closure
-                == Provisioning.ProvisioningArtifactRootClosure
-            ]
         validPackageClosures =
           validPackageClosureSnapshotAggregate
             (snapshotPackageClosures expectation)
             && validRuntimeLibrarySnapshotAggregate
               (snapshotRuntimeLibraries expectation)
-            && case command of
-              Provisioning.InstallPoetryProject {} ->
-                homeClosureCount == 1
-                  && pathClosureCount >= 1
-                  && projectSourceClosureCount == 0
-                  && artifactClosureCount == 0
-                  && not (null runtimeLibraries)
-              Provisioning.GeneratePythonProto {} ->
-                homeClosureCount == 1
-                  && pathClosureCount >= 1
-                  && projectSourceClosureCount == 1
-                  && artifactClosureCount == 0
-                  && not (null runtimeLibraries)
-              _
-                | provisioningCommandUsesArtifactSnapshot command ->
-                    artifactClosureCount == 1
-                      && homeClosureCount == 0
-                      && pathClosureCount == 0
-                      && projectSourceClosureCount == 0
-                      && null runtimeLibraries
-                | otherwise ->
-                    null packageClosures
-                      && null runtimeLibraries
+            && validProvisioningRuntimeClosureShape
+              command
+              (map Provisioning.provisioningPackageClosureRole packageClosures)
+              (not (null runtimeLibraries))
     unless
       validPackageClosures
       ( Left
@@ -2832,12 +2998,66 @@ compileProvisioningCommandWithExecutableInMutationRoot
               )
         }
 
-provisioningCommandUsesArtifactSnapshot ::
+-- | The exact-executable compiler's closed package/runtime shape. An artifact
+-- closure may become either a sealed snapshot or, when its executable is under
+-- the mutation root, a retained descriptor-backed expectation; both forms
+-- require the same single-role input here.
+validProvisioningRuntimeClosureShape ::
+  Provisioning.ProvisioningCommand ->
+  [Provisioning.ProvisioningPackageClosureRole] ->
+  Bool ->
+  Bool
+validProvisioningRuntimeClosureShape command closureRoles hasRuntimeLibraries =
+  case command of
+    Provisioning.InstallPoetryProject {} ->
+      homeClosureCount == 1
+        && pathClosureCount >= 1
+        && projectSourceClosureCount == 0
+        && artifactClosureCount == 0
+        && hasRuntimeLibraries
+    Provisioning.GeneratePythonProto {} ->
+      homeClosureCount == 1
+        && pathClosureCount >= 1
+        && projectSourceClosureCount == 1
+        && artifactClosureCount == 0
+        && hasRuntimeLibraries
+    _
+      | provisioningCommandRequiresArtifactClosure command ->
+          artifactClosureCount == 1
+            && homeClosureCount == 0
+            && pathClosureCount == 0
+            && projectSourceClosureCount == 0
+            && not hasRuntimeLibraries
+      | otherwise ->
+          null closureRoles
+            && not hasRuntimeLibraries
+  where
+    closureCount role = length (filter (== role) closureRoles)
+    homeClosureCount =
+      closureCount Provisioning.ProvisioningPythonHomeClosure
+    pathClosureCount =
+      closureCount Provisioning.ProvisioningPythonPathClosure
+    projectSourceClosureCount =
+      closureCount Provisioning.ProvisioningProjectSourceClosure
+    artifactClosureCount =
+      closureCount Provisioning.ProvisioningArtifactRootClosure
+
+provisioningRuntimeClosureShapeForTest ::
+  Provisioning.ProvisioningCommand ->
+  [Provisioning.ProvisioningPackageClosureRole] ->
+  Bool ->
+  Bool
+provisioningRuntimeClosureShapeForTest =
+  validProvisioningRuntimeClosureShape
+
+provisioningCommandRequiresArtifactClosure ::
   Provisioning.ProvisioningCommand ->
   Bool
-provisioningCommandUsesArtifactSnapshot command =
+provisioningCommandRequiresArtifactClosure command =
   case command of
+    Provisioning.ExtractAudiverisJavaCppNatives {} -> True
     Provisioning.SmokeInstalledRunner {} -> True
+    Provisioning.SmokeInstalledPythonRunnerSourceIsolated {} -> True
     Provisioning.SmokeLinuxNativeArtifact {} -> True
     _ -> False
 
@@ -2952,6 +3172,157 @@ runClosedInstalledRunnerSmoke
                               []
                               (Just targetRelativePath)
                           )
+                    }
+
+runClosedInstalledPythonSourceIsolationSmoke ::
+  Provisioning.AppleAdapterId ->
+  ArtifactGenerationLease ->
+  ProvisioningMutationRoot ->
+  Provisioning.InstalledPythonSourceIsolationSpec ->
+  SubprocessEnv ->
+  Timeout ->
+  IO (Either String NativeArtifactCommandOutcome)
+runClosedInstalledPythonSourceIsolationSmoke
+  adapter
+  generationLease
+  artifactRootAuthority
+  spec
+  environment
+  commandTimeout = do
+    case compileClosedInstalledPythonSourceIsolationSmoke of
+      Left failure -> pure (Left failure)
+      Right bounded -> do
+        preflight <- try @SomeException verifySourceIdentities
+        case preflight of
+          Left failure -> synchronousFailure "before launch" failure
+          Right () -> do
+            outcomeResult <- try @SomeException (runBoundedCommandExactCapture bounded)
+            postflight <- try @SomeException verifySourceIdentities
+            case (outcomeResult, postflight) of
+              (_, Left failure)
+                | isJust (fromException failure :: Maybe SomeAsyncException) ->
+                    throwIO failure
+              (Left failure, _)
+                | isJust (fromException failure :: Maybe SomeAsyncException) ->
+                    throwIO failure
+              (Left failure, _) -> synchronousFailure "while running" failure
+              (_, Left failure) -> synchronousFailure "after terminal" failure
+              (Right outcome, Right ()) -> pure (Right (validateMarker outcome))
+    where
+      artifactRoot = provisioningMutationRootPath artifactRootAuthority
+      command =
+        Provisioning.SmokeInstalledPythonRunnerSourceIsolated
+          adapter
+          artifactRoot
+          spec
+      targetRelativePath =
+        Provisioning.installedSmokeExecutableRelativePath adapter
+      expectation = installedPythonSourceIsolationExpectation adapter spec
+      verifySourceIdentities = do
+        verifyRetainedPlatformExecutable
+          ( executableSnapshotExpectation
+              (Provisioning.installedPythonSourceIsolationAuditInjectorIdentity spec)
+          )
+        mapM_
+          (verifyRetainedPackageClosure . packageClosureSnapshotExpectation)
+          (Provisioning.installedPythonSourceIsolationDirectories spec)
+        mapM_
+          (verifyRetainedRuntimeLibrary . runtimeLibrarySnapshotExpectation)
+          (Provisioning.installedPythonSourceIsolationFiles spec)
+        verifyWritableSourceIsolationProbe
+          ( runtimeLibrarySnapshotExpectation
+              (Provisioning.installedPythonSourceIsolationWritableProbeIdentity spec)
+          )
+      synchronousFailure stage failure =
+        case fromException failure :: Maybe SomeAsyncException of
+          Just _ -> throwIO failure
+          Nothing ->
+            pure
+              ( Left
+                  ( "installed Python source isolation identity failed "
+                      <> stage
+                      <> ": "
+                      <> displayException failure
+                  )
+              )
+      validateMarker outcome =
+        case outcome of
+          NativeArtifactCommandExited ExitSuccess _ stderrBytes ->
+            case TextEncoding.decodeUtf8' stderrBytes of
+              Left _ ->
+                NativeArtifactCommandKernelFailure
+                  "installed Python source-isolation stderr is not UTF-8"
+              Right stderrText ->
+                let expectedMarker =
+                      Text.pack (Provisioning.installedPythonSourceIsolationMarker spec)
+                    reportedMarkers =
+                      filter
+                        ("infernix-source-isolation-v1:" `Text.isPrefixOf`)
+                        (Text.lines stderrText)
+                 in if reportedMarkers == [expectedMarker]
+                      then outcome
+                      else
+                        NativeArtifactCommandKernelFailure
+                          "installed Python source-isolation marker is absent, duplicated, or invalid"
+          _ -> outcome
+      compileClosedInstalledPythonSourceIsolationSmoke = do
+        let (enginesRoot, leaseAdapterId, _generationFingerprint, _payloadDigest) =
+              artifactGenerationLeaseFields generationLease
+            expectedAdapterId = Text.pack (Provisioning.appleAdapterSlug adapter)
+        unless
+          ( enginesRoot == takeDirectory artifactRoot
+              && leaseAdapterId == expectedAdapterId
+          )
+          ( Left
+              "installed Python source-isolation generation lease does not match its exact artifact root and adapter"
+          )
+        unless
+          (safeProvisioningMutationRelativeExecutable targetRelativePath)
+          (Left "installed Python source-isolation target is not one closed relative executable")
+        case commandTimeout of
+          Timeout micros
+            | micros <= 0 ->
+                Left "installed Python source-isolation smoke requires a positive total deadline"
+            | otherwise -> do
+                validateProvisioningCommand command
+                rendered <- renderProvisioningCommand environment command
+                let sandboxIdentity =
+                      executableSnapshotExpectation
+                        (Provisioning.installedPythonSourceIsolationSandboxIdentity spec)
+                unless
+                  ( renderedExecutable rendered
+                      == Provisioning.installedPythonSourceIsolationSandboxExecutable
+                      && renderedWorkingDirectory rendered == Just artifactRoot
+                  )
+                  ( Left
+                      "installed Python source-isolation rendering disagrees with its fixed sandbox and retained root"
+                  )
+                bounded <-
+                  compileRenderedCommand
+                    command
+                    ( ClosedArtifactSmokeCommandIdentity
+                        (Provisioning.provisioningCommandOperation command)
+                    )
+                    (CommandPolicy (PositiveTimeout micros) NeverRetry FatalFailure)
+                    environment
+                    rendered
+                      { renderedWorkingDirectory = Nothing,
+                        renderedExecutableIdentity = Just sandboxIdentity
+                      }
+                pure
+                  bounded
+                    { boundedArtifactGenerationLeaseExpectation =
+                        Just
+                          (artifactGenerationLeaseExpectation "apple-silicon" "arm64" generationLease),
+                      boundedProvisioningMutationWorkingDirectory =
+                        Just
+                          ( ProvisioningMutationWorkingDirectory
+                              artifactRootAuthority
+                              []
+                              Nothing
+                          ),
+                      boundedInstalledPythonSourceIsolationExpectation =
+                        Just expectation
                     }
 
 -- | The Linux image-target smoke.
@@ -3474,6 +3845,107 @@ renderedEnvironmentContractForTest = validateRenderedEnvironment
 linuxSealedRunRenderedEnvironmentForTest :: [(String, String)]
 linuxSealedRunRenderedEnvironmentForTest = linuxSealedRunRenderedEnvironment
 
+-- | The exact Darwin target environment produced when a snapshotted Python
+-- tool runs with the fixed provisioning guard. The snapshot fragment precedes
+-- the helper base environment and the fixed renderer appends its guard after
+-- it, matching the supervisor's production composition.
+darwinPythonSnapshotTargetEnvironmentForTest ::
+  FilePath ->
+  [(String, String)] ->
+  [(String, String)]
+darwinPythonSnapshotTargetEnvironmentForTest snapshotRoot helperEnvironment =
+  renderPythonPackageClosureSnapshotEnvironment
+    PythonClosureNonLinux
+    snapshotRoot
+    (snapshotRoot </> "python-home")
+    [snapshotRoot </> "python-path"]
+    [snapshotRoot </> "project-source"]
+    True
+    <> helperEnvironment
+    <> fixedProvisioningRenderedEnvironment []
+
+-- | Re-run the exact closure-environment agreement check used after the
+-- anchor has materialized a Darwin Python snapshot. The plan must name the
+-- per-anchor root from which the renderer produced its loader paths; naming
+-- only the shared parent is deliberately insufficient.
+darwinPythonSnapshotClosureEnvironmentContractForTest ::
+  FilePath ->
+  FilePath ->
+  [FilePath] ->
+  [FilePath] ->
+  [(String, String)] ->
+  Either String ()
+darwinPythonSnapshotClosureEnvironmentContractForTest
+  snapshotRoot
+  pythonHome
+  pythonPaths
+  projectSources =
+    validateSealedTargetClosureEnvironment
+      ( renderPythonPackageClosureSnapshotEnvironment
+          PythonClosureNonLinux
+          snapshotRoot
+          pythonHome
+          pythonPaths
+          projectSources
+          True
+      )
+
+-- | Render the same bounded package-closure disagreement used by the
+-- supervisor, from package-internal identity evidence a focused test can
+-- construct. This exposes no validation or launch authority.
+sealedPackageClosureContentDisagreementForTest ::
+  Provisioning.ProvisioningPackageClosureIdentity ->
+  Bool ->
+  Bool ->
+  Integer ->
+  Integer ->
+  Text.Text ->
+  String
+sealedPackageClosureContentDisagreementForTest
+  identity =
+    renderSealedPackageClosureContentDisagreement
+      (packageClosureSnapshotExpectation identity)
+
+retainedPackageClosureExcludesFileForTest ::
+  Provisioning.ProvisioningPackageClosureRole ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+retainedPackageClosureExcludesFileForTest role =
+  packageClosureVerificationExcludesFile
+    RetainedPackageClosureSource
+    (packageClosureSnapshotRoleForProvisioning role)
+
+sealedPackageClosureExcludesFileForTest ::
+  Provisioning.ProvisioningPackageClosureRole ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+sealedPackageClosureExcludesFileForTest role =
+  packageClosureVerificationExcludesFile
+    SealedPackageClosureSnapshot
+    (packageClosureSnapshotRoleForProvisioning role)
+
+retainedPackageClosureExcludesLinkForTest ::
+  Provisioning.ProvisioningPackageClosureRole ->
+  FilePath ->
+  Bool
+retainedPackageClosureExcludesLinkForTest role =
+  packageClosureVerificationExcludesLink
+    RetainedPackageClosureSource
+    (packageClosureSnapshotRoleForProvisioning role)
+
+sealedPackageClosureExcludesLinkForTest ::
+  Provisioning.ProvisioningPackageClosureRole ->
+  FilePath ->
+  Bool
+sealedPackageClosureExcludesLinkForTest role =
+  packageClosureVerificationExcludesLink
+    SealedPackageClosureSnapshot
+    (packageClosureSnapshotRoleForProvisioning role)
+
 -- | The closed contract a supervised target's environment must satisfy, given
 -- the executable snapshot root and any install roots the command's own lease
 -- expectations authorize.
@@ -3567,7 +4039,8 @@ compileRenderedCommand command identity policy environment rendered
             boundedArtifactLeaseExpectation = Nothing,
             boundedArtifactGenerationLeaseExpectation = Nothing,
             boundedRetainedExecutableExpectation = Nothing,
-            boundedProvisioningMutationWorkingDirectory = Nothing
+            boundedProvisioningMutationWorkingDirectory = Nothing,
+            boundedInstalledPythonSourceIsolationExpectation = Nothing
           }
 
 renderProductionCommand ::
@@ -3619,11 +4092,8 @@ validateRenderedEnvironment :: [(String, String)] -> Either String ()
 validateRenderedEnvironment environment =
   case environment of
     [] -> Right ()
-    [("PYTHONDONTWRITEBYTECODE", "1")] -> Right ()
-    [ ("PYTHONNOUSERSITE", "1"),
-      ("PYTHONDONTWRITEBYTECODE", "1")
-      ] ->
-        Right ()
+    _
+      | environment == fixedProvisioningRenderedEnvironment [] -> Right ()
     [("KUBECONFIG", kubeconfigPath)] ->
       validateKubeconfigPath kubeconfigPath
     [("KUBECONFIG", kubeconfigPath), ("KUBERC", "off")] ->
@@ -3689,26 +4159,11 @@ splitSearchPathElements value =
 
 sealedArtifactRuntimeNameSets :: [[String]]
 sealedArtifactRuntimeNameSets =
-  map
-    List.sort
-    [ [ "DYLD_FRAMEWORK_PATH",
-        "DYLD_LIBRARY_PATH",
-        "DYLD_PRINT_LIBRARIES",
-        "GGML_BACKEND_PATH",
-        "PYTHONDONTWRITEBYTECODE"
-      ],
-      [ "DYLD_FRAMEWORK_PATH",
-        "DYLD_LIBRARY_PATH",
-        "DYLD_PRINT_LIBRARIES",
-        "PYTHONDONTWRITEBYTECODE",
-        "PYTHONHOME",
-        "PYTHONNOUSERSITE"
-      ],
-      [ "DYLD_PRINT_LIBRARIES",
-        "PYTHONDONTWRITEBYTECODE"
-      ],
-      linuxSealedRunRenderedNames
-    ]
+  List.nub
+    ( map
+        (List.sort . map fst)
+        sealedArtifactRenderedEnvironmentVocabulary
+    )
 
 validateKubeconfigPath :: FilePath -> Either String ()
 validateKubeconfigPath kubeconfigPath
@@ -3853,6 +4308,9 @@ validateProvisioningCommand command =
       validateProvisioningPath "Audiveris JavaCPP artifact root" artifactRoot
     Provisioning.SmokeInstalledRunner _ artifactRoot ->
       validateProvisioningPath "installed runner artifact root" artifactRoot
+    Provisioning.SmokeInstalledPythonRunnerSourceIsolated adapter artifactRoot spec -> do
+      validateProvisioningPath "source-isolated installed runner artifact root" artifactRoot
+      validateInstalledPythonSourceIsolationSpec adapter artifactRoot spec
     Provisioning.SmokeLinuxNativeArtifact identity architecture artifactRoot _ -> do
       validateProvisioningPath "Linux native artifact root" artifactRoot
       -- Reject an architecture the closed catalog has no entry for here, so a
@@ -4106,6 +4564,29 @@ renderProvisioningCommand environment command =
                 (Provisioning.installedSmokeExecutableRelativePath adapter)
             )
         )
+    Provisioning.SmokeInstalledPythonRunnerSourceIsolated adapter artifactRoot spec ->
+      -- Launching the platform sandbox strips every outer `DYLD_*` value.
+      -- The closed argument renderer therefore restores the exact relocated
+      -- Python roots and loader-audit flag through the authenticated
+      -- `/usr/bin/env` bridge after the sandbox has started.
+      pure
+        ( fixedProvisioningProcessWithEnvironment
+            Provisioning.installedPythonSourceIsolationSandboxExecutable
+            ( Provisioning.installedPythonSourceIsolationArguments
+                adapter
+                artifactRoot
+                spec
+            )
+            ""
+            ( "smoke installed Python runner with its source runtime denied for "
+                <> Provisioning.appleAdapterSlug adapter
+            )
+            artifactRoot
+            ( installedPythonSourceIsolationRuntimeEnvironment
+                artifactRoot
+                (Provisioning.installedSmokeExecutableRelativePath adapter)
+            )
+        )
     Provisioning.SmokeLinuxNativeArtifact identity architecture artifactRoot policy -> do
       -- The Linux counterpart of the installed smoke's `DYLD_PRINT_LIBRARIES`.
       -- Without it the sealed run emits no loader provenance, so the recorded
@@ -4153,6 +4634,188 @@ renderProvisioningCommand environment command =
             )
             artifactRoot
         )
+
+validateInstalledPythonSourceIsolationSpec ::
+  Provisioning.AppleAdapterId ->
+  FilePath ->
+  Provisioning.InstalledPythonSourceIsolationSpec ->
+  Either String ()
+validateInstalledPythonSourceIsolationSpec adapter artifactRoot spec = do
+  unless
+    (isJust (Provisioning.applePythonAdapterForApple adapter))
+    (Left "source-isolated installed smoke requires a Python Apple adapter")
+  unless
+    ( length directories == 1
+        && length files <= maximumInstalledPythonSourceIsolationFiles
+        && not (null sourcePaths)
+        && length sourcePaths == length (List.nub (map normalise sourcePaths))
+        && directories
+          == List.sortOn Provisioning.provisioningPackageClosureRoot directories
+        && files
+          == List.sortOn Provisioning.provisioningRuntimeLibraryCanonicalPath files
+        && writableProbe `elem` files
+    )
+    (Left "source-isolated installed smoke has an invalid bounded source cardinality")
+  unless
+    ( all validSourcePath sourcePaths
+        && all sourceDisjointFromArtifact sourcePaths
+        && all sourceDisjointFromSystemPlatformRoots sourcePaths
+        && writableProbeWithinDirectory
+    )
+    (Left "source-isolated installed smoke has an unsafe source path")
+  unless
+    ( all
+        ( (== Provisioning.ProvisioningPythonHomeClosure)
+            . Provisioning.provisioningPackageClosureRole
+        )
+        directories
+        && all validDirectoryIdentity directories
+        && all validFileIdentity files
+    )
+    (Left "source-isolated installed smoke has an invalid exact source identity")
+  unless
+    ( validPlatformIdentity
+        Provisioning.installedPythonSourceIsolationSandboxExecutable
+        sandboxIdentity
+        && validPlatformIdentity
+          Provisioning.installedPythonSourceIsolationAuditInjectorExecutable
+          auditInjectorIdentity
+        && canonicalSourceIsolationDigest receiptDigest
+        && receiptDigest
+          == Provisioning.installedPythonSourceIsolationReceiptDigestFor
+            directories
+            files
+        && renderedBytes > 0
+        && renderedBytes <= maximumInstalledPythonSourceIsolationRenderedBytes
+        && not (any (`List.isInfixOf` profile) sourcePaths)
+    )
+    (Left "source-isolated installed smoke has an invalid fixed wrapper contract")
+  where
+    directories = Provisioning.installedPythonSourceIsolationDirectories spec
+    files = Provisioning.installedPythonSourceIsolationFiles spec
+    sourcePaths =
+      map Provisioning.provisioningPackageClosureRoot directories
+        <> map Provisioning.provisioningRuntimeLibraryCanonicalPath files
+    sandboxIdentity =
+      Provisioning.installedPythonSourceIsolationSandboxIdentity spec
+    auditInjectorIdentity =
+      Provisioning.installedPythonSourceIsolationAuditInjectorIdentity spec
+    writableProbe =
+      Provisioning.installedPythonSourceIsolationWritableProbeIdentity spec
+    writableProbeWithinDirectory =
+      case directories of
+        [directory] ->
+          pathWithinOwnedRoot
+            (Provisioning.provisioningPackageClosureRoot directory)
+            (Provisioning.provisioningRuntimeLibraryCanonicalPath writableProbe)
+        _ -> False
+    receiptDigest =
+      Provisioning.installedPythonSourceIsolationReceiptDigest spec
+    profile = Provisioning.installedPythonSourceIsolationProfile spec
+    renderedBytes =
+      sum
+        ( map
+            length
+            ( Provisioning.installedPythonSourceIsolationArguments
+                adapter
+                artifactRoot
+                spec
+            )
+        )
+    validSourcePath path =
+      isAbsolute path
+        && normalise path == path
+        && '\NUL' `notElem` path
+        && length path <= 4096
+    sourceDisjointFromArtifact path =
+      not
+        ( pathWithinOwnedRoot path artifactRoot
+            || pathWithinOwnedRoot artifactRoot path
+        )
+    sourceDisjointFromSystemPlatformRoots path =
+      all
+        ( \platformRoot ->
+            not
+              ( pathWithinOwnedRoot platformRoot path
+                  || pathWithinOwnedRoot path platformRoot
+              )
+        )
+        systemPlatformOwnedRoots
+    validDirectoryIdentity identity =
+      Provisioning.provisioningPackageClosureDeviceId identity >= 0
+        && Provisioning.provisioningPackageClosureFileId identity > 0
+        && Provisioning.provisioningPackageClosureMode identity > 0
+        && Provisioning.provisioningPackageClosureBytes identity >= 0
+        && Provisioning.provisioningPackageClosureBytes identity
+          <= maximumPackageClosureSnapshotBytes
+        && Provisioning.provisioningPackageClosureFiles identity > 0
+        && Provisioning.provisioningPackageClosureFiles identity <= 100000
+        && canonicalSourceIsolationDigest
+          (Provisioning.provisioningPackageClosureDigest identity)
+    validFileIdentity identity =
+      let configured = Provisioning.provisioningRuntimeLibraryConfiguredPath identity
+          canonical = Provisioning.provisioningRuntimeLibraryCanonicalPath identity
+       in normalise configured == normalise canonical
+            && Provisioning.provisioningRuntimeLibraryDeviceId identity >= 0
+            && Provisioning.provisioningRuntimeLibraryFileId identity > 0
+            && Provisioning.provisioningRuntimeLibraryMode identity > 0
+            && Provisioning.provisioningRuntimeLibrarySize identity >= 0
+            && Provisioning.provisioningRuntimeLibrarySize identity
+              <= maximumRuntimeLibrarySnapshotFileBytes
+            && canonicalSourceIsolationDigest
+              (Provisioning.provisioningRuntimeLibraryDigest identity)
+    validPlatformIdentity expectedConfiguredPath identity =
+      normalise (Provisioning.provisioningExecutableConfiguredPath identity)
+        == normalise expectedConfiguredPath
+        && systemPlatformBinaryPath
+          (Provisioning.provisioningExecutableCanonicalPath identity)
+        && Provisioning.provisioningExecutableDeviceId identity >= 0
+        && Provisioning.provisioningExecutableFileId identity > 0
+        && Provisioning.provisioningExecutableMode identity > 0
+        && Provisioning.provisioningExecutableSize identity > 0
+        && Provisioning.provisioningExecutableSize identity
+          <= maximumExecutableSnapshotBytes
+        && canonicalSourceIsolationDigest
+          (Provisioning.provisioningExecutableDigest identity)
+        && null (Provisioning.provisioningExecutablePackageClosures identity)
+        && null (Provisioning.provisioningExecutableRuntimeLibraries identity)
+
+maximumInstalledPythonSourceIsolationFiles :: Int
+maximumInstalledPythonSourceIsolationFiles = 512
+
+maximumInstalledPythonSourceIsolationRenderedBytes :: Int
+maximumInstalledPythonSourceIsolationRenderedBytes = 256 * 1024
+
+canonicalSourceIsolationDigest :: Text.Text -> Bool
+canonicalSourceIsolationDigest digest =
+  case Text.stripPrefix "sha256:" digest of
+    Just suffix ->
+      Text.length suffix == 64
+        && Text.all (`Text.elem` "0123456789abcdef") suffix
+    Nothing -> False
+
+systemPlatformExecutableRoots :: [FilePath]
+systemPlatformExecutableRoots =
+  [ "/bin",
+    "/sbin",
+    "/usr/bin",
+    "/usr/sbin",
+    "/usr/libexec",
+    "/System"
+  ]
+
+systemDyldLibraryRoots :: [FilePath]
+systemDyldLibraryRoots =
+  [ "/usr/lib",
+    "/System/Library",
+    "/System/Cryptexes",
+    "/System/Volumes/Preboot/Cryptexes",
+    "/Library/Apple/System/Library"
+  ]
+
+systemPlatformOwnedRoots :: [FilePath]
+systemPlatformOwnedRoots =
+  List.nub (systemPlatformExecutableRoots <> systemDyldLibraryRoots)
 
 pythonVersionProbeScript :: Provisioning.ApplePythonAdapterId -> String
 pythonVersionProbeScript adapter =
@@ -4248,8 +4911,14 @@ fixedProvisioningProcessWithEnvironment
         renderedLabel = label,
         renderedWorkingDirectory = Just workingDirectory,
         renderedEnvironment =
-          provisioningFixedEnvironmentGuard : runtimeEnvironment
+          fixedProvisioningRenderedEnvironment runtimeEnvironment
       }
+
+fixedProvisioningRenderedEnvironment ::
+  [(String, String)] ->
+  [(String, String)]
+fixedProvisioningRenderedEnvironment runtimeEnvironment =
+  provisioningFixedEnvironmentGuard : runtimeEnvironment
 
 -- | The guard every fixed provisioning process carries. Named because the
 -- closed environment contracts must be written against the same value the
@@ -4261,7 +4930,7 @@ provisioningFixedEnvironmentGuard = ("PYTHONDONTWRITEBYTECODE", "1")
 -- | The loader audit a sealed @linux-native@ run carries, and the complete
 -- extra environment the renderer therefore produces for it.
 --
--- Both closed contracts below derive their Linux name set from
+-- Both closed contracts derive their Linux name set from
 -- 'linuxSealedRunRenderedEnvironment', and the renderer passes
 -- 'linuxSealedRunAuditEnvironment' to the wrapper that prepends the same guard,
 -- so the shape the renderer emits and the shapes the validators admit cannot
@@ -4273,11 +4942,7 @@ linuxSealedRunAuditEnvironment = [("LD_DEBUG", "libs")]
 
 linuxSealedRunRenderedEnvironment :: [(String, String)]
 linuxSealedRunRenderedEnvironment =
-  provisioningFixedEnvironmentGuard : linuxSealedRunAuditEnvironment
-
-linuxSealedRunRenderedNames :: [String]
-linuxSealedRunRenderedNames =
-  List.sort (map fst linuxSealedRunRenderedEnvironment)
+  fixedProvisioningRenderedEnvironment linuxSealedRunAuditEnvironment
 
 validateTestCommand :: TestCommand -> Either String ()
 validateTestCommand testCommand =
@@ -5361,6 +6026,9 @@ sealedRunLoaderAuditFor identity =
   case identity of
     ClosedArtifactSmokeCommandIdentity
       (Provisioning.InstalledRunnerSmokeOperation _) ->
+        Just DyldSealedRunAudit
+    ClosedArtifactSmokeCommandIdentity
+      (Provisioning.InstalledPythonSourceIsolationSmokeOperation _) ->
         Just DyldSealedRunAudit
     ClosedArtifactSmokeCommandIdentity
       (Provisioning.LinuxNativeArtifactSmokeOperation _ _) ->
@@ -7499,6 +8167,8 @@ data SupervisorPlan = SupervisorPlan
       !(Maybe ArtifactLeaseExpectation),
     supervisorPlanArtifactGenerationLeaseExpectation ::
       !(Maybe ArtifactGenerationLeaseExpectation),
+    supervisorPlanInstalledPythonSourceIsolationExpectation ::
+      !(Maybe InstalledPythonSourceIsolationExpectation),
     supervisorPlanForceControlFailure :: !Bool,
     supervisorPlanForceTargetSetupFailure :: !Bool,
     supervisorPlanAnchorPrePublicationDeathPath :: !(Maybe FilePath),
@@ -7976,10 +8646,49 @@ instance Aeson.FromJSON ArtifactGenerationLeaseExpectation where
         (const (pure expectation))
         (artifactGenerationLeaseFromExpectation expectation)
 
+instance Aeson.ToJSON InstalledPythonSourceIsolationExpectation where
+  toJSON expectation =
+    Aeson.object
+      [ "adapterId"
+          Aeson..= Provisioning.appleAdapterSlug
+            (sourceIsolationExpectationAdapter expectation),
+        "auditInjector"
+          Aeson..= sourceIsolationExpectationAuditInjector expectation,
+        "directories"
+          Aeson..= sourceIsolationExpectationDirectories expectation,
+        "files" Aeson..= sourceIsolationExpectationFiles expectation,
+        "writableProbe"
+          Aeson..= sourceIsolationExpectationWritableProbe expectation,
+        "receiptDigest"
+          Aeson..= sourceIsolationExpectationReceiptDigest expectation
+      ]
+
+instance Aeson.FromJSON InstalledPythonSourceIsolationExpectation where
+  parseJSON =
+    Aeson.withObject "InstalledPythonSourceIsolationExpectation" $ \value -> do
+      adapterSlug <- value Aeson..: "adapterId"
+      adapter <-
+        case [ candidate
+             | candidate <- [minBound .. maxBound],
+               Provisioning.appleAdapterSlug candidate == adapterSlug,
+               isJust (Provisioning.applePythonAdapterForApple candidate)
+             ] of
+          [candidate] -> pure candidate
+          _ -> fail "source-isolation expectation names no unique Python adapter"
+      expectation <-
+        InstalledPythonSourceIsolationExpectation adapter
+          <$> value Aeson..: "auditInjector"
+          <*> value Aeson..: "directories"
+          <*> value Aeson..: "files"
+          <*> value Aeson..: "writableProbe"
+          <*> value Aeson..: "receiptDigest"
+      either fail pure (validateInstalledPythonSourceIsolationExpectation expectation)
+      pure expectation
+
 instance Aeson.ToJSON SupervisorPlan where
   toJSON plan =
     Aeson.object
-      [ "version" Aeson..= (11 :: Int),
+      [ "version" Aeson..= (12 :: Int),
         "anchorProcessId"
           Aeson..= activityProcessId (supervisorPlanAnchorIdentity plan),
         "anchorProcessGroup"
@@ -8007,6 +8716,8 @@ instance Aeson.ToJSON SupervisorPlan where
           Aeson..= supervisorPlanArtifactLeaseExpectation plan,
         "artifactGenerationLeaseExpectation"
           Aeson..= supervisorPlanArtifactGenerationLeaseExpectation plan,
+        "installedPythonSourceIsolationExpectation"
+          Aeson..= supervisorPlanInstalledPythonSourceIsolationExpectation plan,
         "forceControlFailure" Aeson..= supervisorPlanForceControlFailure plan,
         "forceTargetSetupFailure"
           Aeson..= supervisorPlanForceTargetSetupFailure plan,
@@ -8032,7 +8743,7 @@ instance Aeson.FromJSON SupervisorPlan where
   parseJSON =
     Aeson.withObject "SupervisorPlan" $ \value -> do
       version <- value Aeson..: "version"
-      unless (version == (11 :: Int)) $
+      unless (version == (12 :: Int)) $
         fail "unsupported bounded-command supervisor-plan version"
       anchorIdentity <-
         parseActivityProcessIdentity
@@ -8061,6 +8772,8 @@ instance Aeson.FromJSON SupervisorPlan where
         value Aeson..: "artifactLeaseExpectation"
       artifactGenerationLeaseExpectationValue <-
         value Aeson..: "artifactGenerationLeaseExpectation"
+      installedPythonSourceIsolationExpectationValue <-
+        value Aeson..: "installedPythonSourceIsolationExpectation"
       forceControlFailure <- value Aeson..: "forceControlFailure"
       forceTargetSetupFailure <- value Aeson..: "forceTargetSetupFailure"
       anchorPrePublicationDeathPath <-
@@ -8088,6 +8801,7 @@ instance Aeson.FromJSON SupervisorPlan where
               && isNothing provisioningMutationWorkingDirectory
               && isNothing artifactLeaseExpectation
               && isNothing artifactGenerationLeaseExpectationValue
+              && isNothing installedPythonSourceIsolationExpectationValue
         )
         (fail "bounded-command internal self-exec authority has an invalid shape")
       unless (maybe True isAbsolute terminalObservationPath) $
@@ -8163,6 +8877,20 @@ instance Aeson.FromJSON SupervisorPlan where
             retainedExecutableExpectation
         )
         (fail "bounded-command retained executable expectation is invalid")
+      either
+        fail
+        pure
+        ( validateSupervisorInstalledPythonSourceIsolationShape
+            executable
+            executableSnapshot
+            retainedExecutableExpectation
+            arguments
+            workingDirectory
+            provisioningMutationWorkingDirectory
+            artifactLeaseExpectation
+            artifactGenerationLeaseExpectationValue
+            installedPythonSourceIsolationExpectationValue
+        )
       either fail pure (validateSupervisorHelperEnvironment helperEnvironment)
       either
         fail
@@ -8200,6 +8928,8 @@ instance Aeson.FromJSON SupervisorPlan where
               artifactLeaseExpectation,
             supervisorPlanArtifactGenerationLeaseExpectation =
               artifactGenerationLeaseExpectationValue,
+            supervisorPlanInstalledPythonSourceIsolationExpectation =
+              installedPythonSourceIsolationExpectationValue,
             supervisorPlanForceControlFailure = forceControlFailure,
             supervisorPlanForceTargetSetupFailure =
               forceTargetSetupFailure,
@@ -8238,6 +8968,167 @@ validateSupervisorHelperEnvironment environment = do
     (Left "bounded-command helper environment does not match the closed base environment")
   validateSupervisorBaseEnvironment environment
 
+validateSupervisorInstalledPythonSourceIsolationShape ::
+  FilePath ->
+  Maybe ExecutableSnapshotExpectation ->
+  Maybe ExecutableSnapshotExpectation ->
+  [String] ->
+  Maybe FilePath ->
+  Maybe ProvisioningMutationWorkingDirectoryWire ->
+  Maybe ArtifactLeaseExpectation ->
+  Maybe ArtifactGenerationLeaseExpectation ->
+  Maybe InstalledPythonSourceIsolationExpectation ->
+  Either String ()
+validateSupervisorInstalledPythonSourceIsolationShape
+  executable
+  executableSnapshot
+  retainedExecutableExpectation
+  arguments
+  workingDirectory
+  mutationWorkingDirectory
+  artifactLeaseExpectation
+  generationLeaseExpectation
+  maybeExpectation =
+    case maybeExpectation of
+      Nothing -> Right ()
+      Just expectation -> do
+        validateInstalledPythonSourceIsolationExpectation expectation
+        artifactRoot <-
+          case mutationWorkingDirectory of
+            Just
+              ( ProvisioningMutationWorkingDirectoryWire
+                  wireRoot
+                  []
+                  Nothing
+                ) ->
+                Right (mutationWireRootPath wireRoot)
+            _ ->
+              Left
+                "source-isolation wrapper lacks its exact retained artifact root"
+        let adapter = sourceIsolationExpectationAdapter expectation
+            sourcePaths = sourceIsolationExpectationSourcePaths expectation
+            expectedArguments =
+              Provisioning.installedPythonSourceIsolationArgumentsForPaths
+                adapter
+                artifactRoot
+                (sourceIsolationExpectationDirectoryPaths expectation)
+                (sourceIsolationExpectationFilePaths expectation)
+                ( runtimeLibrarySnapshotCanonicalPath
+                    (sourceIsolationExpectationWritableProbe expectation)
+                )
+                (sourceIsolationExpectationReceiptDigest expectation)
+        unless
+          ( normalise executable
+              == normalise Provisioning.installedPythonSourceIsolationSandboxExecutable
+              && isNothing workingDirectory
+              && isNothing retainedExecutableExpectation
+              && isNothing artifactLeaseExpectation
+              && arguments == expectedArguments
+              && all
+                ( \sourcePath ->
+                    not
+                      ( pathWithinOwnedRoot sourcePath artifactRoot
+                          || pathWithinOwnedRoot artifactRoot sourcePath
+                      )
+                )
+                sourcePaths
+          )
+          (Left "source-isolation wrapper disagrees with its closed command shape")
+        case executableSnapshot of
+          Just sandboxSnapshot ->
+            unless
+              ( normalise (snapshotConfiguredPath sandboxSnapshot)
+                  == normalise Provisioning.installedPythonSourceIsolationSandboxExecutable
+                  && systemPlatformBinaryPath
+                    (snapshotCanonicalPath sandboxSnapshot)
+                  && null (snapshotPackageClosures sandboxSnapshot)
+                  && null (snapshotRuntimeLibraries sandboxSnapshot)
+                  && isNothing (snapshotTestHook sandboxSnapshot)
+              )
+              (Left "source-isolation wrapper lacks the exact sandbox platform identity")
+          Nothing ->
+            Left "source-isolation wrapper lacks the exact sandbox platform identity"
+        case generationLeaseExpectation of
+          Just
+            ( ArtifactGenerationLeaseExpectation
+                _enginesRoot
+                adapterId
+                _generationFingerprint
+                _payloadDigest
+                substrate
+                architecture
+              ) ->
+              unless
+                ( adapterId == Text.pack (Provisioning.appleAdapterSlug adapter)
+                    && substrate == "apple-silicon"
+                    && architecture == "arm64"
+                )
+                (Left "source-isolation wrapper generation lease disagrees with its adapter")
+          Nothing ->
+            Left "source-isolation wrapper lacks generation custody"
+
+-- | Every extra-environment shape a production renderer can contribute to a
+-- supervised target. The supervisor derives its admissible name sets from
+-- these values; it does not restate the names produced by the command,
+-- provisioning, package-snapshot, or installed-artifact renderers.
+supervisorRenderedEnvironmentVocabulary :: [[(String, String)]]
+supervisorRenderedEnvironmentVocabulary =
+  List.nub
+    ( Command.renderedCommandEnvironmentVocabulary
+        <> [fixedProvisioningRenderedEnvironment []]
+        <> pythonSnapshotRenderedEnvironmentVocabulary
+        <> sealedArtifactRenderedEnvironmentVocabulary
+    )
+
+pythonSnapshotRenderedEnvironmentVocabulary :: [[(String, String)]]
+pythonSnapshotRenderedEnvironmentVocabulary =
+  [ renderPythonPackageClosureSnapshotEnvironment
+      platform
+      representativeSnapshotRoot
+      (representativeSnapshotRoot </> "python-home")
+      [representativeSnapshotRoot </> "python-path"]
+      [representativeSnapshotRoot </> "project-source"]
+      hasRuntimeLibraries
+      <> fixedProvisioningRenderedEnvironment []
+  | platform <- [PythonClosureLinux, PythonClosureNonLinux],
+    hasRuntimeLibraries <- [False, True]
+  ]
+  where
+    representativeSnapshotRoot =
+      "/infernix-renderer-vocabulary/executable-snapshot"
+
+sealedArtifactRenderedEnvironmentVocabulary :: [[(String, String)]]
+sealedArtifactRenderedEnvironmentVocabulary =
+  List.nub
+    ( linuxSealedRunRenderedEnvironment
+        : [ fixedProvisioningRenderedEnvironment
+              ( artifactSnapshotRuntimeEnvironment
+                  representativeArtifactRoot
+                  (Provisioning.installedSmokeExecutableRelativePath adapter)
+              )
+          | adapter <- [minBound .. maxBound]
+          ]
+          <> [ fixedProvisioningRenderedEnvironment
+                 ( installedPythonSourceIsolationRuntimeEnvironment
+                     representativeArtifactRoot
+                     (Provisioning.installedSmokeExecutableRelativePath adapter)
+                 )
+             | adapter <- [minBound .. maxBound],
+               isJust (Provisioning.applePythonAdapterForApple adapter)
+             ]
+    )
+  where
+    representativeArtifactRoot =
+      "/infernix-renderer-vocabulary/artifact"
+
+supervisorTargetEnvironmentNameSets :: [[String]]
+supervisorTargetEnvironmentNameSets =
+  List.nub
+    [ List.sort
+        (map fst renderedEnvironment <> supervisorBaseEnvironmentNames)
+    | renderedEnvironment <- supervisorRenderedEnvironmentVocabulary
+    ]
+
 -- | Validate the closed environment a supervised target may carry.
 --
 -- Runtime closure paths must stay inside a root this command already owns.
@@ -8258,96 +9149,8 @@ validateSupervisorTargetEnvironment
   targetEnvironment = do
     validateSupervisorEnvironmentSyntax "target" targetEnvironment
     let targetNames = List.sort (map fst targetEnvironment)
-        baseNames = List.sort supervisorBaseEnvironmentNames
-        pythonNoBytecodeNames =
-          List.sort ("PYTHONDONTWRITEBYTECODE" : supervisorBaseEnvironmentNames)
-        poetryModuleNames =
-          List.sort
-            ( "PYTHONNOUSERSITE"
-                : "PYTHONDONTWRITEBYTECODE"
-                : supervisorBaseEnvironmentNames
-            )
-        pythonLinuxSnapshotNames =
-          List.sort
-            ( [ "PYTHONHOME",
-                "PYTHONPATH",
-                "PYTHONDONTWRITEBYTECODE"
-              ]
-                <> supervisorBaseEnvironmentNames
-            )
-        poetrySnapshotNames =
-          List.sort
-            ( [ "PYTHONHOME",
-                "PYTHONPATH",
-                "DYLD_FRAMEWORK_PATH",
-                "PYTHONNOUSERSITE",
-                "PYTHONDONTWRITEBYTECODE"
-              ]
-                <> supervisorBaseEnvironmentNames
-            )
-        poetrySnapshotDyldNames =
-          List.sort
-            ( "DYLD_LIBRARY_PATH"
-                : [ "PYTHONHOME",
-                    "PYTHONPATH",
-                    "DYLD_FRAMEWORK_PATH",
-                    "PYTHONNOUSERSITE",
-                    "PYTHONDONTWRITEBYTECODE"
-                  ]
-                  <> supervisorBaseEnvironmentNames
-            )
-        appleNativeSnapshotNames =
-          List.sort
-            ( [ "DYLD_FRAMEWORK_PATH",
-                "DYLD_LIBRARY_PATH",
-                "DYLD_PRINT_LIBRARIES",
-                "GGML_BACKEND_PATH",
-                "PYTHONDONTWRITEBYTECODE"
-              ]
-                <> supervisorBaseEnvironmentNames
-            )
-        applePythonSnapshotNames =
-          List.sort
-            ( [ "DYLD_FRAMEWORK_PATH",
-                "DYLD_LIBRARY_PATH",
-                "DYLD_PRINT_LIBRARIES",
-                "PYTHONHOME",
-                "PYTHONNOUSERSITE",
-                "PYTHONDONTWRITEBYTECODE"
-              ]
-                <> supervisorBaseEnvironmentNames
-            )
-        appleJvmSnapshotNames =
-          List.sort
-            ( [ "DYLD_PRINT_LIBRARIES",
-                "PYTHONDONTWRITEBYTECODE"
-              ]
-                <> supervisorBaseEnvironmentNames
-            )
-        -- A Linux native artifact's sealed run needs only the loader audit and
-        -- the renderer's fixed guard: its runtime closure is bound by the
-        -- recorded ELF loader closure, not by a search-path variable.
-        -- @LD_LIBRARY_PATH@ is deliberately absent, for the same reason the
-        -- loader-closure producer never reads it.
-        linuxSealedRunNames =
-          List.sort (linuxSealedRunRenderedNames <> supervisorBaseEnvironmentNames)
-        kubeconfigNames = List.sort ("KUBECONFIG" : supervisorBaseEnvironmentNames)
-        kubercNames =
-          List.sort ("KUBECONFIG" : "KUBERC" : supervisorBaseEnvironmentNames)
     unless
-      ( targetNames == baseNames
-          || targetNames == pythonNoBytecodeNames
-          || targetNames == poetryModuleNames
-          || targetNames == pythonLinuxSnapshotNames
-          || targetNames == poetrySnapshotNames
-          || targetNames == poetrySnapshotDyldNames
-          || targetNames == appleNativeSnapshotNames
-          || targetNames == applePythonSnapshotNames
-          || targetNames == appleJvmSnapshotNames
-          || targetNames == linuxSealedRunNames
-          || targetNames == kubeconfigNames
-          || targetNames == kubercNames
-      )
+      (targetNames `elem` supervisorTargetEnvironmentNameSets)
       ( Left
           ( "bounded-command target environment does not match a closed rendered environment; names="
               <> show targetNames
@@ -10140,6 +10943,8 @@ runSupervisorProtocolSession command session deadline = do
               boundedArtifactLeaseExpectation command,
             supervisorPlanArtifactGenerationLeaseExpectation =
               boundedArtifactGenerationLeaseExpectation command,
+            supervisorPlanInstalledPythonSourceIsolationExpectation =
+              boundedInstalledPythonSourceIsolationExpectation command,
             supervisorPlanForceControlFailure =
               supervisorControlFailureRequested (boundedCommandIdentity command),
             supervisorPlanForceTargetSetupFailure =
@@ -11634,13 +12439,8 @@ classifyLoadedLibrary executableSnapshotRoot loadedPath
 systemDyldLibraryPath :: FilePath -> Bool
 systemDyldLibraryPath path =
   any
-    (`List.isPrefixOf` path)
-    [ "/usr/lib/",
-      "/System/Library/",
-      "/System/Cryptexes/",
-      "/System/Volumes/Preboot/Cryptexes/",
-      "/Library/Apple/System/Library/"
-    ]
+    (`pathWithinOwnedRoot` path)
+    systemDyldLibraryRoots
 
 sealedArtifactRootForPath ::
   FilePath ->
@@ -12913,6 +13713,12 @@ withExactExecutableSnapshot plan usePlan =
                         snapshotExecutable,
                       supervisorPlanExecutableSnapshot =
                         Just sealedExpectation,
+                      -- The loader environment is rendered from this exact
+                      -- per-anchor generation, not from its shared parent.
+                      -- Carrying the parent here makes the helper re-derive
+                      -- different Darwin framework/library paths.
+                      supervisorPlanExecutableSnapshotRoot =
+                        snapshotRoot,
                       supervisorPlanArguments =
                         snapshotArguments,
                       supervisorPlanEnvironment =
@@ -13708,14 +14514,8 @@ systemPlatformBinaryPath :: FilePath -> Bool
 systemPlatformBinaryPath path =
   isAbsolute path
     && any
-      (`List.isPrefixOf` normalise path)
-      [ "/bin/",
-        "/sbin/",
-        "/usr/bin/",
-        "/usr/sbin/",
-        "/usr/libexec/",
-        "/System/"
-      ]
+      (`pathWithinOwnedRoot` normalise path)
+      systemPlatformExecutableRoots
 
 materializeExactExecutableSnapshot ::
   FilePath ->
@@ -14281,6 +15081,16 @@ data SnapshotClosureState = SnapshotClosureState
     snapshotClosureContext :: !SHA256.Ctx
   }
 
+-- | Whether closure evidence still names the retained source tree or the
+-- sealed copy inside an anchor generation. A Python-home source identity was
+-- minted with host-bound launchers and the base site-packages link excluded;
+-- its sealed copy has already omitted those entries and must hash everything
+-- that remains so reinjection cannot be hidden by applying the exclusion a
+-- second time.
+data PackageClosureVerificationTarget
+  = RetainedPackageClosureSource
+  | SealedPackageClosureSnapshot
+
 listDirectoryBoundedFromDescriptor ::
   Fd ->
   Integer ->
@@ -14484,10 +15294,18 @@ copyPackageClosureEntry
                       excluded <-
                         excludedPythonHomeShebangSnapshotFile
                           excludeBaseSitePackages
+                          sourceRoot
                           relativePath
                           sourceDescriptor
                       if excluded
-                        then pure state
+                        then do
+                          recheckSnapshotPackageClosureFile
+                            sourceParentDescriptor
+                            entry
+                            sourcePath
+                            sourceDescriptor
+                            status
+                          pure state
                         else
                           copyPackageClosureFile
                             sourceParentDescriptor
@@ -14793,6 +15611,30 @@ reopenFileEntryStatus parentDescriptor entry =
       )
       (ignoreIOException (closeFd descriptor))
 
+-- | Tie a content-derived exclusion to the same retained file object before
+-- returning without copying or hashing it. No excluded branch may turn a
+-- probe-time race into an unobserved closure entry.
+recheckSnapshotPackageClosureFile ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  Fd ->
+  FileStatus ->
+  IO ()
+recheckSnapshotPackageClosureFile
+  parentDescriptor
+  entry
+  path
+  descriptor
+  openedStatus = do
+    finalStatus <- getFdStatus descriptor
+    reopenedStatus <- reopenFileEntryStatus parentDescriptor entry
+    unless
+      ( exactFileStatusMatches openedStatus finalStatus
+          && exactFileStatusMatches finalStatus reopenedStatus
+      )
+      (ioError (userError ("package closure excluded file changed: " <> path)))
+
 safeClosureLink :: FilePath -> FilePath -> FilePath -> Bool
 safeClosureLink sourceRoot sourcePath linkTarget =
   not (isAbsolute linkTarget)
@@ -14811,28 +15653,132 @@ excludedPythonBaseSitePackagesSnapshotLink relativePath =
       "python" `List.isPrefixOf` pythonDirectory
     _ -> False
 
-excludedPythonHomeShebangSnapshotFile :: Bool -> FilePath -> Fd -> IO Bool
-excludedPythonHomeShebangSnapshotFile excludeBaseSitePackages relativePath descriptor
-  | not excludeBaseSitePackages
-      || take 1 (splitPathComponents (normalise relativePath)) /= ["bin"] =
-      pure False
-  | otherwise = do
-      _ <- fdSeek descriptor AbsoluteSeek 0
-      leading <- readRegularFdPrefix 512 descriptor
-      _ <- fdSeek descriptor AbsoluteSeek 0
-      pure (snapshotShebangBindsHostInstallation leading)
+packageClosureVerificationExcludesPythonHomeHostBindings ::
+  PackageClosureVerificationTarget ->
+  PackageClosureSnapshotRole ->
+  Bool
+packageClosureVerificationExcludesPythonHomeHostBindings
+  verificationTarget
+  role =
+    case verificationTarget of
+      RetainedPackageClosureSource -> role == SnapshotPythonHome
+      SealedPackageClosureSnapshot -> False
+
+packageClosureVerificationExcludesFile ::
+  PackageClosureVerificationTarget ->
+  PackageClosureSnapshotRole ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+packageClosureVerificationExcludesFile verificationTarget role =
+  packageClosureFileExcluded
+    ( packageClosureVerificationExcludesPythonHomeHostBindings
+        verificationTarget
+        role
+    )
+
+packageClosureVerificationExcludesLink ::
+  PackageClosureVerificationTarget ->
+  PackageClosureSnapshotRole ->
+  FilePath ->
+  Bool
+packageClosureVerificationExcludesLink verificationTarget role =
+  packageClosureLinkExcluded
+    ( packageClosureVerificationExcludesPythonHomeHostBindings
+        verificationTarget
+        role
+    )
+
+-- Keep this identical to provisioning's retained-source rule. Console scripts
+-- below @bin@ retain the historical absolute-host-shebang exclusion. Outside
+-- @bin@, only an interpreter at the exact retained root's immediate
+-- @bin/python*@ path is excluded, so the generated config helper is omitted
+-- without deleting importable stdlib files carrying @/usr/local/bin/python@ or
+-- @/bin/sh@.
+packageClosureFileExcluded ::
+  Bool ->
+  FilePath ->
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+packageClosureFileExcluded
+  excludePythonHomeHostBindings
+  closureRoot
+  relativePath
+  leading =
+    excludePythonHomeHostBindings
+      && snapshotShebangBindsHostInstallation leading
+      && ( snapshotPythonHomeBinEntry relativePath
+             || snapshotShebangBindsExactPythonHome closureRoot leading
+         )
+
+packageClosureLinkExcluded :: Bool -> FilePath -> Bool
+packageClosureLinkExcluded excludePythonHomeHostBindings relativePath =
+  excludePythonHomeHostBindings
+    && excludedPythonBaseSitePackagesSnapshotLink relativePath
+
+excludedPythonHomeShebangSnapshotFile ::
+  Bool ->
+  FilePath ->
+  FilePath ->
+  Fd ->
+  IO Bool
+excludedPythonHomeShebangSnapshotFile
+  excludePythonHomeHostBindings
+  closureRoot
+  relativePath
+  descriptor
+    | not excludePythonHomeHostBindings = pure False
+    | otherwise = do
+        _ <- fdSeek descriptor AbsoluteSeek 0
+        leading <- readRegularFdPrefix 512 descriptor
+        _ <- fdSeek descriptor AbsoluteSeek 0
+        pure
+          ( packageClosureFileExcluded
+              excludePythonHomeHostBindings
+              closureRoot
+              relativePath
+              leading
+          )
 
 snapshotShebangBindsHostInstallation :: ByteString.ByteString -> Bool
 snapshotShebangBindsHostInstallation leading =
-  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+  case snapshotShebangInterpreterPath leading of
+    Just interpreterPath ->
+      isAbsolute interpreterPath
+        && normalise interpreterPath /= "/usr/bin/env"
     Nothing -> False
+
+snapshotShebangInterpreterPath :: ByteString.ByteString -> Maybe FilePath
+snapshotShebangInterpreterPath leading =
+  case ByteString.stripPrefix (ByteString.pack [0x23, 0x21]) leading of
+    Nothing -> Nothing
     Just afterMarker ->
       case ByteString8.words (ByteString8.takeWhile (/= '\n') afterMarker) of
-        interpreter : _ ->
-          let interpreterPath = ByteString8.unpack interpreter
-           in isAbsolute interpreterPath
-                && normalise interpreterPath /= "/usr/bin/env"
-        [] -> False
+        interpreter : _ -> Just (ByteString8.unpack interpreter)
+        [] -> Nothing
+
+snapshotPythonHomeBinEntry :: FilePath -> Bool
+snapshotPythonHomeBinEntry relativePath =
+  case splitPathComponents (normalise relativePath) of
+    "bin" : _ -> True
+    _ -> False
+
+snapshotShebangBindsExactPythonHome ::
+  FilePath ->
+  ByteString.ByteString ->
+  Bool
+snapshotShebangBindsExactPythonHome closureRoot leading =
+  case snapshotShebangInterpreterPath leading of
+    Just interpreterPath ->
+      isAbsolute interpreterPath
+        && '\NUL' `notElem` interpreterPath
+        && normalise interpreterPath == interpreterPath
+        && normalise (takeDirectory interpreterPath)
+          == normalise (closureRoot </> "bin")
+        && "python" `List.isPrefixOf` takeFileName interpreterPath
+    Nothing -> False
 
 splitPathComponents :: FilePath -> [FilePath]
 splitPathComponents path =
@@ -14974,12 +15920,11 @@ hashSnapshotDescriptor descriptor expectedBytes =
               let nextBytes =
                     observedBytes
                       + fromIntegral (ByteString.length chunk)
+                  nextContext = SHA256.update context chunk
               unless
                 (nextBytes <= expectedBytes)
                 (ioError (userError "snapshot descriptor grew beyond its exact byte bound"))
-              go
-                nextBytes
-                (SHA256.update context chunk)
+              nextContext `seq` go nextBytes nextContext
 
 updateSnapshotClosureDigest :: SHA256.Ctx -> String -> SHA256.Ctx
 updateSnapshotClosureDigest context =
@@ -14998,6 +15943,40 @@ exactPackageClosureRootStatusMatches expectation status =
       == closureSnapshotFileId expectation
     && fromIntegral (PosixFiles.fileMode status)
       == closureSnapshotMode expectation
+
+data PythonClosurePlatform
+  = PythonClosureLinux
+  | PythonClosureNonLinux
+
+renderPythonPackageClosureSnapshotEnvironment ::
+  PythonClosurePlatform ->
+  FilePath ->
+  FilePath ->
+  [FilePath] ->
+  [FilePath] ->
+  Bool ->
+  [(String, String)]
+renderPythonPackageClosureSnapshotEnvironment
+  platform
+  snapshotRoot
+  pythonHome
+  pythonPaths
+  projectSources
+  hasRuntimeLibraries =
+    [ ("PYTHONHOME", pythonHome),
+      ( "PYTHONPATH",
+        List.intercalate ":" (pythonPaths <> projectSources)
+      )
+    ]
+      <> case platform of
+        PythonClosureLinux -> []
+        PythonClosureNonLinux ->
+          ("DYLD_FRAMEWORK_PATH", snapshotRoot </> "python-framework")
+            : [ ( "DYLD_LIBRARY_PATH",
+                  snapshotRoot </> "dyld-libraries"
+                )
+              | hasRuntimeLibraries
+              ]
 
 packageClosureSnapshotEnvironment ::
   FilePath ->
@@ -15031,20 +16010,16 @@ packageClosureSnapshotEnvironment
         | null runtimeLibraries -> pure []
       ([pythonHome], pythonPaths@(_ : _), projectSources, []) ->
         pure
-          ( [ ("PYTHONHOME", pythonHome),
-              ( "PYTHONPATH",
-                List.intercalate ":" (pythonPaths <> projectSources)
+          ( renderPythonPackageClosureSnapshotEnvironment
+              ( if SystemInfo.os == "linux"
+                  then PythonClosureLinux
+                  else PythonClosureNonLinux
               )
-            ]
-              <> if SystemInfo.os == "linux"
-                then []
-                else
-                  ("DYLD_FRAMEWORK_PATH", snapshotRoot </> "python-framework")
-                    : [ ( "DYLD_LIBRARY_PATH",
-                          snapshotRoot </> "dyld-libraries"
-                        )
-                      | not (null runtimeLibraries)
-                      ]
+              snapshotRoot
+              pythonHome
+              pythonPaths
+              projectSources
+              (not (null runtimeLibraries))
           )
       ([], [], [], [artifactRoot])
         | null runtimeLibraries ->
@@ -15096,27 +16071,32 @@ artifactSnapshotRuntimeEnvironment artifactRoot relativeExecutable =
       | relativeComponents
           == splitPathComponents
             Provisioning.fixedVenvPythonRelativePath ->
-          [ ("PYTHONHOME", artifactRoot </> "python-home"),
-            ( "DYLD_FRAMEWORK_PATH",
-              artifactRoot </> "python-frameworks"
-            ),
-            ( "DYLD_LIBRARY_PATH",
-              List.intercalate
-                ":"
-                [ artifactRoot </> "native" </> "lib",
-                  artifactRoot </> "native" </> "libexec"
-                ]
-            ),
-            ("PYTHONNOUSERSITE", "1"),
-            ("DYLD_PRINT_LIBRARIES", "1")
+          [ ("PYTHONHOME", artifactRoot </> "python-home")
           ]
-    [ "Audiveris.app",
-      "Contents",
-      "MacOS",
-      "Audiveris"
-      ] ->
-        [("DYLD_PRINT_LIBRARIES", "1")]
+            <> take
+              2
+              (Provisioning.installedPythonDyldRuntimeEnvironment artifactRoot)
+            <> [("PYTHONNOUSERSITE", "1")]
+            <> drop
+              2
+              (Provisioning.installedPythonDyldRuntimeEnvironment artifactRoot)
+    relativeComponents
+      | relativeComponents
+          == splitPathComponents
+            ( Provisioning.installedSmokeExecutableRelativePath
+                Provisioning.JvmAdapter
+            ) ->
+          [("DYLD_PRINT_LIBRARIES", "1")]
     _ -> []
+
+installedPythonSourceIsolationRuntimeEnvironment ::
+  FilePath ->
+  FilePath ->
+  [(String, String)]
+installedPythonSourceIsolationRuntimeEnvironment artifactRoot relativeExecutable =
+  filter
+    (not . List.isPrefixOf "DYLD_" . fst)
+    (artifactSnapshotRuntimeEnvironment artifactRoot relativeExecutable)
 
 validateTargetExecutableSnapshot :: SupervisorPlan -> IO ()
 validateTargetExecutableSnapshot plan =
@@ -15172,13 +16152,34 @@ validateTargetExecutableSnapshot plan =
           expectation
           (snapshotPackageClosures expectation)
           (snapshotRuntimeLibraries expectation)
-      mapM_
-        ( \(name, value) ->
-            unless
-              (lookup name (supervisorPlanEnvironment plan) == Just value)
-              (ioError (userError ("sealed target closure environment disagreed for " <> name)))
+      either
+        (ioError . userError)
+        pure
+        ( validateSealedTargetClosureEnvironment
+            expectedEnvironment
+            (supervisorPlanEnvironment plan)
         )
-        expectedEnvironment
+
+validateSealedTargetClosureEnvironment ::
+  [(String, String)] ->
+  [(String, String)] ->
+  Either String ()
+validateSealedTargetClosureEnvironment expectedEnvironment environment =
+  mapM_
+    ( \(name, value) ->
+        unless
+          (lookup name environment == Just value)
+          ( Left
+              ( "sealed target closure environment disagreed for "
+                  <> name
+                  <> "; expected="
+                  <> show value
+                  <> "; observed="
+                  <> show (lookup name environment)
+              )
+          )
+    )
+    expectedEnvironment
 
 validateSealedArtifactOperands ::
   SupervisorPlan ->
@@ -15275,13 +16276,26 @@ verifySealedPackageClosure snapshotRoot expectation = do
   unless
     (pathWithinOwnedRoot snapshotRoot closureRoot)
     (ioError (userError "sealed package closure escaped its anchor snapshot"))
-  verifyRetainedPackageClosure expectation
+  verifyPackageClosure
+    SealedPackageClosureSnapshot
+    expectation
 
 verifyRetainedPackageClosure ::
   PackageClosureSnapshotExpectation ->
   IO ()
-verifyRetainedPackageClosure expectation = do
+verifyRetainedPackageClosure =
+  verifyPackageClosure RetainedPackageClosureSource
+
+verifyPackageClosure ::
+  PackageClosureVerificationTarget ->
+  PackageClosureSnapshotExpectation ->
+  IO ()
+verifyPackageClosure verificationTarget expectation = do
   let closureRoot = closureSnapshotRoot expectation
+      excludePythonHomeHostBindings =
+        packageClosureVerificationExcludesPythonHomeHostBindings
+          verificationTarget
+          (closureSnapshotRole expectation)
   rootStatus <- getSymbolicLinkStatus closureRoot
   unless
     (exactPackageClosureRootStatusMatches expectation rootStatus)
@@ -15306,6 +16320,7 @@ verifyRetainedPackageClosure expectation = do
             (ioError (userError "sealed package closure root changed before descriptor verification"))
           result <-
             digestSealedPackageClosureDirectory
+              excludePythonHomeHostBindings
               closureRoot
               closureRoot
               rootDescriptor
@@ -15332,24 +16347,77 @@ verifyRetainedPackageClosure expectation = do
       )
       (ignoreIOException (closeFd rootDescriptor))
   finalRootStatus <- getSymbolicLinkStatus closureRoot
-  let observedDigest =
+  let rootIdentityMatches =
+        exactPackageClosureRootStatusMatches
+          expectation
+          finalRootStatus
+      rootStableAfterClose =
+        exactFileStatusMatches rootStatus finalRootStatus
+      observedBytes = snapshotClosureBytesCopied observed
+      observedFiles = snapshotClosureFilesCopied observed
+      observedDigest =
         "sha256:"
           <> TextEncoding.decodeUtf8
             (Base16.encode (SHA256.finalize (snapshotClosureContext observed)))
   unless
-    ( exactPackageClosureRootStatusMatches
-        expectation
-        finalRootStatus
-        && exactFileStatusMatches rootStatus finalRootStatus
-        && snapshotClosureBytesCopied observed
-          == closureSnapshotBytes expectation
-        && snapshotClosureFilesCopied observed
-          == closureSnapshotFiles expectation
+    ( rootIdentityMatches
+        && rootStableAfterClose
+        && observedBytes == closureSnapshotBytes expectation
+        && observedFiles == closureSnapshotFiles expectation
         && observedDigest == closureSnapshotDigest expectation
     )
-    (ioError (userError "sealed package closure content disagreed"))
+    ( ioError
+        ( userError
+            ( renderSealedPackageClosureContentDisagreement
+                expectation
+                rootIdentityMatches
+                rootStableAfterClose
+                observedBytes
+                observedFiles
+                observedDigest
+            )
+        )
+    )
+
+renderSealedPackageClosureContentDisagreement ::
+  PackageClosureSnapshotExpectation ->
+  Bool ->
+  Bool ->
+  Integer ->
+  Integer ->
+  Text.Text ->
+  String
+renderSealedPackageClosureContentDisagreement
+  expectation
+  rootIdentityMatches
+  rootStableAfterClose
+  observedBytes
+  observedFiles
+  observedDigest =
+    "sealed package closure content disagreed"
+      <> "; role="
+      <> show (closureSnapshotRole expectation)
+      <> "; root="
+      <> show (closureSnapshotRoot expectation)
+      <> "; rootIdentityMatches="
+      <> show rootIdentityMatches
+      <> "; rootStableAfterClose="
+      <> show rootStableAfterClose
+      <> "; expectedBytes="
+      <> show (closureSnapshotBytes expectation)
+      <> "; observedBytes="
+      <> show observedBytes
+      <> "; expectedFiles="
+      <> show (closureSnapshotFiles expectation)
+      <> "; observedFiles="
+      <> show observedFiles
+      <> "; expectedDigest="
+      <> Text.unpack (closureSnapshotDigest expectation)
+      <> "; observedDigest="
+      <> Text.unpack observedDigest
 
 digestSealedPackageClosureDirectory ::
+  Bool ->
   FilePath ->
   FilePath ->
   Fd ->
@@ -15359,6 +16427,7 @@ digestSealedPackageClosureDirectory ::
   SnapshotClosureState ->
   IO SnapshotClosureState
 digestSealedPackageClosureDirectory
+  excludePythonHomeHostBindings
   closureRoot
   directoryPath
   directoryDescriptor
@@ -15388,6 +16457,7 @@ digestSealedPackageClosureDirectory
     observed <-
       foldM
         ( digestSealedPackageClosureEntry
+            excludePythonHomeHostBindings
             closureRoot
             directoryPath
             directoryDescriptor
@@ -15403,6 +16473,7 @@ digestSealedPackageClosureDirectory
     pure observed
 
 digestSealedPackageClosureEntry ::
+  Bool ->
   FilePath ->
   FilePath ->
   Fd ->
@@ -15412,6 +16483,7 @@ digestSealedPackageClosureEntry ::
   FilePath ->
   IO SnapshotClosureState
 digestSealedPackageClosureEntry
+  excludePythonHomeHostBindings
   closureRoot
   parentPath
   parentDescriptor
@@ -15451,6 +16523,7 @@ digestSealedPackageClosureEntry
                 (ioError (userError "sealed package closure exceeds its fixed entry bound"))
               observed <-
                 digestSealedPackageClosureDirectory
+                  excludePythonHomeHostBindings
                   closureRoot
                   path
                   directoryDescriptor
@@ -15494,64 +16567,35 @@ digestSealedPackageClosureEntry
                   unless
                     (isRegularFile status)
                     (ioError (userError ("sealed package entry is unsupported: " <> path)))
-                  let nextBytes =
-                        snapshotClosureBytesCopied state
-                          + fromIntegral (PosixFiles.fileSize status)
-                      nextFiles =
-                        snapshotClosureFilesCopied state + 1
-                      executableFlag =
-                        PosixFiles.fileMode status
-                          .&. ( PosixFiles.ownerExecuteMode
-                                  .|. PosixFiles.groupExecuteMode
-                                  .|. PosixFiles.otherExecuteMode
-                              )
-                          /= 0
-                  unless
-                    ( nextBytes <= maximumPackageClosureSnapshotBytes
-                        && nextFiles
-                          <= maximumPackageClosureSnapshotFiles
-                    )
-                    (ioError (userError "sealed package closure exceeds its fixed bound"))
-                  context <-
-                    hashSnapshotDescriptor
+                  excluded <-
+                    excludedPythonHomeShebangSnapshotFile
+                      excludePythonHomeHostBindings
+                      closureRoot
+                      relativePath
                       descriptor
-                      (fromIntegral (PosixFiles.fileSize status))
-                      SHA256.init
-                  finalStatus <- getFdStatus descriptor
-                  reopenedStatus <-
-                    reopenFileEntryStatus parentDescriptor entry
-                  unless
-                    ( exactFileStatusMatches status finalStatus
-                        && exactFileStatusMatches
-                          finalStatus
-                          reopenedStatus
-                    )
-                    (ioError (userError ("sealed package file changed: " <> path)))
-                  let digest =
-                        "sha256:"
-                          <> TextEncoding.decodeUtf8
-                            (Base16.encode (SHA256.finalize context))
-                  pure
-                    SnapshotClosureState
-                      { snapshotClosureBytesCopied = nextBytes,
-                        snapshotClosureFilesCopied = nextFiles,
-                        snapshotClosureContext =
-                          updateSnapshotClosureDigest
-                            (snapshotClosureContext state)
-                            ( (if executableFlag then "X" else "F")
-                                <> "\NUL"
-                                <> relativePath
-                                <> "\NUL"
-                                <> show (PosixFiles.fileSize status)
-                                <> "\NUL"
-                                <> Text.unpack digest
-                                <> "\NUL"
-                            )
-                      }
+                  if excluded
+                    then do
+                      recheckSnapshotPackageClosureFile
+                        parentDescriptor
+                        entry
+                        path
+                        descriptor
+                        status
+                      pure state
+                    else
+                      digestSealedPackageClosureFile
+                        parentDescriptor
+                        entry
+                        path
+                        descriptor
+                        relativePath
+                        status
+                        state
               )
               (ignoreIOException (closeFd descriptor))
           Left _ ->
             digestSealedPackageClosureLink
+              excludePythonHomeHostBindings
               closureRoot
               parentDescriptor
               parentPath
@@ -15559,7 +16603,77 @@ digestSealedPackageClosureEntry
               relativePath
               state
 
+digestSealedPackageClosureFile ::
+  Fd ->
+  FilePath ->
+  FilePath ->
+  Fd ->
+  FilePath ->
+  FileStatus ->
+  SnapshotClosureState ->
+  IO SnapshotClosureState
+digestSealedPackageClosureFile
+  parentDescriptor
+  entry
+  path
+  descriptor
+  relativePath
+  status
+  state = do
+    let nextBytes =
+          snapshotClosureBytesCopied state
+            + fromIntegral (PosixFiles.fileSize status)
+        nextFiles =
+          snapshotClosureFilesCopied state + 1
+        executableFlag =
+          PosixFiles.fileMode status
+            .&. ( PosixFiles.ownerExecuteMode
+                    .|. PosixFiles.groupExecuteMode
+                    .|. PosixFiles.otherExecuteMode
+                )
+            /= 0
+    unless
+      ( nextBytes <= maximumPackageClosureSnapshotBytes
+          && nextFiles <= maximumPackageClosureSnapshotFiles
+      )
+      (ioError (userError "sealed package closure exceeds its fixed bound"))
+    context <-
+      hashSnapshotDescriptor
+        descriptor
+        (fromIntegral (PosixFiles.fileSize status))
+        SHA256.init
+    finalStatus <- getFdStatus descriptor
+    reopenedStatus <-
+      reopenFileEntryStatus parentDescriptor entry
+    unless
+      ( exactFileStatusMatches status finalStatus
+          && exactFileStatusMatches finalStatus reopenedStatus
+      )
+      (ioError (userError ("sealed package file changed: " <> path)))
+    let digest =
+          "sha256:"
+            <> TextEncoding.decodeUtf8
+              (Base16.encode (SHA256.finalize context))
+    pure
+      SnapshotClosureState
+        { snapshotClosureBytesCopied = nextBytes,
+          snapshotClosureFilesCopied = nextFiles,
+          snapshotClosureContext =
+            updateSnapshotClosureDigest
+              (snapshotClosureContext state)
+              ( (if executableFlag then "X" else "F")
+                  <> "\NUL"
+                  <> relativePath
+                  <> "\NUL"
+                  <> show (PosixFiles.fileSize status)
+                  <> "\NUL"
+                  <> Text.unpack digest
+                  <> "\NUL"
+              )
+        }
+
 digestSealedPackageClosureLink ::
+  Bool ->
   FilePath ->
   Fd ->
   FilePath ->
@@ -15568,6 +16682,7 @@ digestSealedPackageClosureLink ::
   SnapshotClosureState ->
   IO SnapshotClosureState
 digestSealedPackageClosureLink
+  excludePythonHomeHostBindings
   closureRoot
   parentDescriptor
   parentPath
@@ -15591,12 +16706,6 @@ digestSealedPackageClosureLink
                   (TextEncoding.encodeUtf8 (Text.pack linkTarget))
               )
         nextFiles = snapshotClosureFilesCopied state + 1
-    unless
-      ( safeClosureLink closureRoot path linkTarget
-          && nextBytes <= maximumPackageClosureSnapshotBytes
-          && nextFiles <= maximumPackageClosureSnapshotFiles
-      )
-      (ioError (userError ("sealed package closure link is unsafe: " <> path)))
     finalStatus <- getSymbolicLinkStatus path
     finalTarget <- readSymbolicLink path
     finalParentStatus <- getFdStatus parentDescriptor
@@ -15610,20 +16719,31 @@ digestSealedPackageClosureLink
             finalParentPathStatus
       )
       (ioError (userError ("sealed package closure link changed: " <> path)))
-    pure
-      SnapshotClosureState
-        { snapshotClosureBytesCopied = nextBytes,
-          snapshotClosureFilesCopied = nextFiles,
-          snapshotClosureContext =
-            updateSnapshotClosureDigest
-              (snapshotClosureContext state)
-              ( "L\NUL"
-                  <> relativePath
-                  <> "\NUL"
-                  <> linkTarget
-                  <> "\NUL"
-              )
-        }
+    if packageClosureLinkExcluded
+      excludePythonHomeHostBindings
+      relativePath
+      then pure state
+      else do
+        unless
+          ( safeClosureLink closureRoot path linkTarget
+              && nextBytes <= maximumPackageClosureSnapshotBytes
+              && nextFiles <= maximumPackageClosureSnapshotFiles
+          )
+          (ioError (userError ("sealed package closure link is unsafe: " <> path)))
+        pure
+          SnapshotClosureState
+            { snapshotClosureBytesCopied = nextBytes,
+              snapshotClosureFilesCopied = nextFiles,
+              snapshotClosureContext =
+                updateSnapshotClosureDigest
+                  (snapshotClosureContext state)
+                  ( "L\NUL"
+                      <> relativePath
+                      <> "\NUL"
+                      <> linkTarget
+                      <> "\NUL"
+                  )
+            }
 
 -- | Whether a loaded path lies inside an owned root.
 --
@@ -15677,9 +16797,8 @@ copyExecutableDescriptor
                   (nextBytes <= expectedBytes)
                   (ioError (userError "snapshot source grew beyond its exact byte bound"))
                 writeFdFullyBlocking targetDescriptor chunk
-                go
-                  nextBytes
-                  (SHA256.update digestContext chunk)
+                let nextContext = SHA256.update digestContext chunk
+                nextContext `seq` go nextBytes nextContext
 
 exactExecutableStatusMatches ::
   ExecutableSnapshotExpectation ->
@@ -16049,6 +17168,7 @@ data RetainedProvisioningMutationWorkingDirectory
       ![Fd]
       !Fd
       !(Maybe RetainedProvisioningRelativeExecutable)
+      !(Maybe RetainedProvisioningRelativeExecutable)
       !(Maybe ExecutableSnapshotExpectation)
 
 data RetainedProvisioningRelativeExecutable
@@ -16104,12 +17224,35 @@ openRetainedProvisioningMutationWorkingDirectory plan =
                               (supervisorPlanRetainedExecutableExpectation plan)
                         )
                         relativeExecutable
+                    retainedNestedExecutable <-
+                      onExceptionPreservingPrimary
+                        ( mapM
+                            ( \expectation ->
+                                let nestedRelativeExecutable =
+                                      Provisioning.installedSmokeExecutableRelativePath
+                                        (sourceIsolationExpectationAdapter expectation)
+                                    configuredNestedExecutable =
+                                      mutationWireRootPath wireRoot
+                                        </> nestedRelativeExecutable
+                                 in openRetainedProvisioningRelativeExecutable
+                                      currentDescriptor
+                                      nestedRelativeExecutable
+                                      configuredNestedExecutable
+                                      Nothing
+                            )
+                            (supervisorPlanInstalledPythonSourceIsolationExpectation plan)
+                        )
+                        ( mapM_
+                            (ignoreIOException . closeRetainedProvisioningRelativeExecutable)
+                            retainedExecutable
+                        )
                     pure
                       ( RetainedProvisioningMutationWorkingDirectory
                           wire
                           descriptors
                           currentDescriptor
                           retainedExecutable
+                          retainedNestedExecutable
                           (supervisorPlanRetainedExecutableExpectation plan)
                       )
                   component : rest -> do
@@ -16172,12 +17315,16 @@ validateRetainedProvisioningMutationWorkingDirectory
       descriptors
       finalDescriptor
       retainedExecutable
+      retainedNestedExecutable
       retainedExecutableExpectation
     ) = do
     validate
     mapM_
       (validateRetainedProvisioningRelativeExecutable finalDescriptor)
       retainedExecutable
+    mapM_
+      (validateRetainedProvisioningRelativeExecutable finalDescriptor)
+      retainedNestedExecutable
     mapM_
       (validateRetainedExecutableExpectation finalDescriptor retainedExecutable)
       retainedExecutableExpectation
@@ -16488,7 +17635,7 @@ retainedProvisioningMutationWorkingDirectoryDescriptor ::
   RetainedProvisioningMutationWorkingDirectory ->
   Fd
 retainedProvisioningMutationWorkingDirectoryDescriptor
-  (RetainedProvisioningMutationWorkingDirectory _ _ finalDescriptor _ _) =
+  (RetainedProvisioningMutationWorkingDirectory _ _ finalDescriptor _ _ _) =
     finalDescriptor
 
 retainedProvisioningMutationRelativeExecutable ::
@@ -16505,6 +17652,7 @@ retainedProvisioningMutationRelativeExecutable
       _
       _
       _
+      _
     ) =
     relativeExecutable
 
@@ -16517,6 +17665,7 @@ closeRetainedProvisioningMutationWorkingDirectory
       descriptors
       _
       retainedExecutable
+      retainedNestedExecutable
       _
     ) =
     runCleanupsPreservingFailures
@@ -16528,6 +17677,14 @@ closeRetainedProvisioningMutationWorkingDirectory
               ]
           )
           retainedExecutable
+          <> maybe
+            []
+            ( \executable ->
+                [ ignoreIOException
+                    (closeRetainedProvisioningRelativeExecutable executable)
+                ]
+            )
+            retainedNestedExecutable
           <> map (ignoreIOException . closeFd) (reverse descriptors)
       )
 
@@ -16852,16 +18009,118 @@ validateRetainedArtifactTarget plan identity (substrate, architecture) artifactR
                          else Nothing
                      )
           _ -> False
-  unless
-    ( normalise (supervisorPlanExecutable plan)
-        == normalise expectedExecutable
-        && exactRetainedTarget
-    )
-    ( ioError
-        ( userError
-            "candidate artifact target disagrees with the closed direct-target catalog"
+  case supervisorPlanInstalledPythonSourceIsolationExpectation plan of
+    Nothing ->
+      unless
+        ( normalise (supervisorPlanExecutable plan)
+            == normalise expectedExecutable
+            && exactRetainedTarget
         )
+        ( ioError
+            ( userError
+                "candidate artifact target disagrees with the closed direct-target catalog"
+            )
+        )
+    Just expectation -> do
+      let adapter = sourceIsolationExpectationAdapter expectation
+          expectedNestedRelativeExecutable =
+            Provisioning.installedSmokeExecutableRelativePath adapter
+          expectedArguments =
+            Provisioning.installedPythonSourceIsolationArgumentsForPaths
+              adapter
+              artifactRoot
+              (sourceIsolationExpectationDirectoryPaths expectation)
+              (sourceIsolationExpectationFilePaths expectation)
+              ( runtimeLibrarySnapshotCanonicalPath
+                  (sourceIsolationExpectationWritableProbe expectation)
+              )
+              (sourceIsolationExpectationReceiptDigest expectation)
+          exactWrapperRoot =
+            case supervisorPlanProvisioningMutationWorkingDirectory plan of
+              Just
+                ( ProvisioningMutationWorkingDirectoryWire
+                    mutationWireRoot
+                    []
+                    Nothing
+                  ) ->
+                  normalise (mutationWireRootPath mutationWireRoot)
+                    == normalise artifactRoot
+              _ -> False
+      unless
+        ( ArtifactTarget.nativeArtifactTargetIsInstalled target
+            && Text.pack (Provisioning.appleAdapterSlug adapter)
+              == ArtifactIdentity.nativeArtifactAdapterId identity
+            && normalise expectedNestedRelativeExecutable
+              == normalise expectedRelativeExecutable
+            && normalise (supervisorPlanExecutable plan)
+              == normalise Provisioning.installedPythonSourceIsolationSandboxExecutable
+            && supervisorPlanArguments plan == expectedArguments
+            && exactWrapperRoot
+        )
+        ( ioError
+            ( userError
+                "source-isolated artifact target disagrees with the closed nested-target catalog"
+            )
+        )
+
+validateInstalledPythonSourceIsolationSources :: SupervisorPlan -> IO ()
+validateInstalledPythonSourceIsolationSources plan =
+  case supervisorPlanInstalledPythonSourceIsolationExpectation plan of
+    Nothing -> pure ()
+    Just expectation -> do
+      verifyRetainedPlatformExecutable
+        (sourceIsolationExpectationAuditInjector expectation)
+      mapM_
+        verifyRetainedPackageClosure
+        (sourceIsolationExpectationDirectories expectation)
+      mapM_
+        verifyRetainedRuntimeLibrary
+        (sourceIsolationExpectationFiles expectation)
+      verifyWritableSourceIsolationProbe
+        (sourceIsolationExpectationWritableProbe expectation)
+
+verifyRetainedPlatformExecutable ::
+  ExecutableSnapshotExpectation ->
+  IO ()
+verifyRetainedPlatformExecutable expectation = do
+  canonicalPath <- canonicalizePath (snapshotConfiguredPath expectation)
+  unless
+    ( normalise canonicalPath == normalise (snapshotCanonicalPath expectation)
+        && systemPlatformBinaryPath canonicalPath
     )
+    (ioError (userError "source-isolation platform executable canonical path changed"))
+  status <- getSymbolicLinkStatus canonicalPath
+  digest <- digestSealedSnapshotFile canonicalPath
+  unless
+    ( exactExecutableStatusMatches expectation status
+        && digest == snapshotDigest expectation
+        && null (snapshotPackageClosures expectation)
+        && null (snapshotRuntimeLibraries expectation)
+        && isNothing (snapshotTestHook expectation)
+    )
+    (ioError (userError "source-isolation platform executable identity changed"))
+
+verifyWritableSourceIsolationProbe ::
+  RuntimeLibrarySnapshotExpectation ->
+  IO ()
+verifyWritableSourceIsolationProbe expectation = do
+  verifyRetainedRuntimeLibrary expectation
+  descriptor <-
+    openFd
+      (runtimeLibrarySnapshotCanonicalPath expectation)
+      WriteOnly
+      defaultFileFlags
+        { nofollow = True,
+          cloexec = True
+        }
+  finallyPreservingPrimary
+    ( do
+        status <- getFdStatus descriptor
+        unless
+          (exactRuntimeLibraryStatusMatches expectation status)
+          (ioError (userError "source-isolation writable probe identity changed"))
+    )
+    (ignoreIOException (closeFd descriptor))
 
 superviseTarget :: IO ExitCode
 superviseTarget = mask $ \restore -> do
@@ -17107,6 +18366,7 @@ superviseTarget = mask $ \restore -> do
                   mapM_
                     validateRetainedProvisioningMutationWorkingDirectory
                     mutationWorkingDirectory
+                  validateInstalledPythonSourceIsolationSources plan
                   pure terminal
               )
               closeMutationWorkingDirectory
@@ -17906,6 +19166,7 @@ runSupervisorTargetChild
                 isJust (supervisorPlanSynchronousExceptionIdentityPath plan) ->
                   getExecutablePath
               | otherwise -> pure (supervisorPlanExecutable plan)
+        validateInstalledPythonSourceIsolationSources plan
         executeFile
           executable
           False

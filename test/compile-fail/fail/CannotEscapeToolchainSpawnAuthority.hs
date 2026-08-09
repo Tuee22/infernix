@@ -11,6 +11,7 @@ import Infernix.BuildMemory
 -- The region tag is universally quantified, so an authority cannot outlive the
 -- region whose ceiling it carries.
 escapeAuthority ::
+  FilePath ->
   BuildMemoryPlan ->
   (forall s. ToolchainSpawnAuthority s -> IO (ToolchainSpawnAuthority s)) ->
   IO (ToolchainSpawnAuthority ())

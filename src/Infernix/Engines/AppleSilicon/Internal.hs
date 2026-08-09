@@ -15,6 +15,7 @@ module Infernix.Engines.AppleSilicon.Internal
     metalEngineVersion,
     metalEngineRuntimeVersion,
     materializeMetalEngines,
+    materializeInstalledPythonSourceIsolationForTest,
     materializeAudiverisProductionPausedForTest,
     AppleMaterializerFixtureBoundary (..),
     appleMaterializerFixtureBoundaries,
@@ -43,14 +44,14 @@ module Infernix.Engines.AppleSilicon.Internal
 where
 
 import Control.Concurrent.MVar (MVar)
-import Control.Monad (unless, when)
+import Control.Monad (unless, void, when)
 import Data.Aeson qualified as Aeson
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (toLower)
 import Data.List (nubBy)
 import Data.List qualified as List
-import Data.Maybe (fromMaybe, isJust, isNothing)
+import Data.Maybe (fromMaybe, isJust, isNothing, mapMaybe)
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Infernix.Cluster.Subprocess qualified as Subprocess
@@ -71,7 +72,8 @@ import Infernix.Engines.Artifact.Target
 import Infernix.Engines.Provisioning qualified as Provisioning
 import Infernix.Models (engineBindingsForMode)
 import Infernix.Python
-  ( pythonProjectDirectory,
+  ( ensurePreparedPythonEngineEnvironments,
+    pythonProjectDirectory,
   )
 import Infernix.Types (EngineBinding (..), RuntimeMode (AppleSilicon))
 import System.FilePath
@@ -99,6 +101,7 @@ data AppleProvisioningDeadlines = AppleProvisioningDeadlines
 data AppleMaterializationHook
   = NoAppleMaterializationHook
   | PauseAfterAudiverisMount !(MVar ()) !(MVar ())
+  | RequireInstalledPythonSourceIsolation
 
 data AppleMaterializationPhase
   = AppleMaterializationStarted
@@ -139,6 +142,7 @@ runAudiverisMountHook hook =
     NoAppleMaterializationHook -> pure ()
     PauseAfterAudiverisMount entered resume ->
       Provisioning.pauseProvisioningSessionForTest entered resume
+    RequireInstalledPythonSourceIsolation -> pure ()
 
 appleProvisioningDeadlines :: IO AppleProvisioningDeadlines
 appleProvisioningDeadlines =
@@ -197,6 +201,11 @@ ensureAppleSiliconRuntimeReady paths = do
       mapM_
         (runAppleSetupRequest engineWriter)
         setupRequests
+  -- Phase 1 Sprint 1.23: framework environments are prepared only at
+  -- materialization/startup boundaries. This deliberately runs after the
+  -- shared Apple session releases its project lock; nesting another project
+  -- region would deadlock and request-time repair remains forbidden.
+  ensurePreparedPythonEngineEnvironments paths AppleSilicon
 
 ensureBoundedPoetryProjectReady ::
   Provisioning.ProjectWriter p s q ->
@@ -367,6 +376,57 @@ materializeMetalEngines paths = do
             deadlines
         )
         metalEngineBuildPlan
+  -- The explicit native-artifact materializer is also a supported Apple
+  -- cohort entrypoint. Prepare the Python-stdio engines after releasing the
+  -- native/shared Apple locks so it cannot leave half of the catalog absent.
+  ensurePreparedPythonEngineEnvironments paths AppleSilicon
+
+materializeInstalledPythonSourceIsolationForTest ::
+  Paths ->
+  IO [Provisioning.InstalledPythonSourceIsolationReport]
+materializeInstalledPythonSourceIsolationForTest paths = do
+  unless (os == "darwin") $
+    ioError (userError metalEngineLaneNotAppleMessage)
+  let projectDirectory = pythonProjectDirectory paths AppleSilicon
+      pythonArtifacts =
+        mapMaybe
+          ( \artifact ->
+              artifact
+                <$ Provisioning.pythonAdapterForApple
+                  (metalEngineProvisioningAdapter artifact)
+          )
+          metalEngineBuildPlan
+      pythonAdapterIds = map metalEngineAdapterId pythonArtifacts
+  unless
+    ( length pythonArtifacts == 4
+        && length (List.nub pythonAdapterIds) == 4
+    )
+    (ioError (userError "closed Apple artifact vocabulary does not contain exactly four Python adapters"))
+  environment <- Subprocess.clusterSubprocessEnv paths
+  deadlines <- appleProvisioningDeadlines
+  Provisioning.withAppleProvisioningSession
+    paths
+    projectDirectory
+    environment
+    $ \_projectWriter _generatedBindingsWriter cacheWriter writer grant -> do
+      retireLegacyAppleMetalRuntimeBridge writer paths
+      reports <-
+        mapM
+          ( materializeMetalEngineArtifactWith
+              cacheWriter
+              writer
+              RequireInstalledPythonSourceIsolation
+              paths
+              grant
+              deadlines
+          )
+          pythonArtifacts
+      mapM
+        ( maybe
+            (Provisioning.failProvisioningSession "Python source-isolation materializer produced no report")
+            pure
+        )
+        reports
 
 -- | Darwin-only evidence hook for the production Audiveris attach boundary.
 -- The selected artifact, command language, deadlines, environment, and lock
@@ -395,14 +455,16 @@ materializeAudiverisProductionPausedForTest paths entered resume = do
     environment
     $ \_projectWriter _generatedBindingsWriter cacheWriter writer grant -> do
       retireLegacyAppleMetalRuntimeBridge writer paths
-      materializeMetalEngineArtifactWith
-        cacheWriter
-        writer
-        (PauseAfterAudiverisMount entered resume)
-        paths
-        grant
-        deadlines
-        artifact
+      void
+        ( materializeMetalEngineArtifactWith
+            cacheWriter
+            writer
+            (PauseAfterAudiverisMount entered resume)
+            paths
+            grant
+            deadlines
+            artifact
+        )
 
 data AppleMaterializerFixtureBoundary
   = FixtureCandidatePrepared
@@ -648,11 +710,17 @@ materializeMetalEngineArtifact ::
   AppleProvisioningDeadlines ->
   MetalEngineArtifact ->
   Provisioning.ProvisioningSession s ()
-materializeMetalEngineArtifact cacheWriter writer =
-  materializeMetalEngineArtifactWith
-    cacheWriter
-    writer
-    NoAppleMaterializationHook
+materializeMetalEngineArtifact cacheWriter writer paths grant deadlines artifact =
+  void
+    ( materializeMetalEngineArtifactWith
+        cacheWriter
+        writer
+        NoAppleMaterializationHook
+        paths
+        grant
+        deadlines
+        artifact
+    )
 
 materializeMetalEngineArtifactWith ::
   Provisioning.DownloadCacheWriter d s q ->
@@ -662,7 +730,9 @@ materializeMetalEngineArtifactWith ::
   Provisioning.ProvisioningGrant s ->
   AppleProvisioningDeadlines ->
   MetalEngineArtifact ->
-  Provisioning.ProvisioningSession s ()
+  Provisioning.ProvisioningSession
+    s
+    (Maybe Provisioning.InstalledPythonSourceIsolationReport)
 materializeMetalEngineArtifactWith
   cacheWriter
   writer
@@ -700,7 +770,7 @@ materializeMetalEngineArtifactWith
               tempRoot
               artifact
               prepared
-          completed <-
+          (completed, report) <-
             completeMetalEngineCandidate
               cacheWriter
               writer
@@ -712,6 +782,7 @@ materializeMetalEngineArtifactWith
               artifact
               payloadWritten
           finishAppleMaterialization completed
+          pure report
       )
 
 prepareMetalEngineCandidate ::
@@ -787,7 +858,9 @@ completeMetalEngineCandidate ::
   AppleMaterializationSession s 'ApplePayloadWritten ->
   Provisioning.ProvisioningSession
     s
-    (AppleMaterializationSession s 'AppleMaterializationCompleted)
+    ( AppleMaterializationSession s 'AppleMaterializationCompleted,
+      Maybe Provisioning.InstalledPythonSourceIsolationReport
+    )
 completeMetalEngineCandidate
   cacheWriter
   writer
@@ -842,15 +915,35 @@ completeMetalEngineCandidate
                     (hydratedRuntimeVersion metadata)
                     (hydratedProvenance metadata)
                     smokeDigest
-    Provisioning.completeAppleCandidate
-      writer
-      grant
-      (deadlineArtifactSmoke deadlines)
-      (metalEngineProvisioningAdapter artifact)
-      installRoot
-      tempRoot
-      manifestBuilder
-    pure AppleMaterializationCompletedSession
+    report <-
+      case (hook, hydration) of
+        ( RequireInstalledPythonSourceIsolation,
+          PythonHydration pythonTarget runtimeClosure
+          ) ->
+            Just
+              <$> Provisioning.completeApplePythonCandidateWithSourceIsolation
+                writer
+                grant
+                (deadlineArtifactSmoke deadlines)
+                pythonTarget
+                runtimeClosure
+                installRoot
+                tempRoot
+                manifestBuilder
+        (RequireInstalledPythonSourceIsolation, _) ->
+          Provisioning.failProvisioningSession
+            "source-isolation completion requires a Python hydration witness"
+        _ -> do
+          Provisioning.completeAppleCandidate
+            writer
+            grant
+            (deadlineArtifactSmoke deadlines)
+            (metalEngineProvisioningAdapter artifact)
+            installRoot
+            tempRoot
+            manifestBuilder
+          pure Nothing
+    pure (AppleMaterializationCompletedSession, report)
 
 cleanupMetalEngineCandidate ::
   Provisioning.EngineWriter w s q ->

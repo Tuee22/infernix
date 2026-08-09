@@ -31,7 +31,7 @@ import Data.Text qualified as Text
 import Infernix.BuildMemory qualified as BuildMemory
 import Infernix.Config (Paths)
 import Infernix.Config qualified as Config
-import Infernix.DemoConfig.Colima (colimaPledgeMibFromJsonLines)
+import Infernix.DemoConfig.Colima (observeActiveColimaPledgeMib)
 import Infernix.EngineRouting (engineMemberRequestTopics)
 import Infernix.HostConfig (HostConfig)
 import Infernix.HostConfig qualified as HostConfig
@@ -427,26 +427,13 @@ appleHostPhysicalRamMib hostConfig = do
 -- stopped (MiB). Transitional, broken, and future statuses are counted
 -- conservatively. The fixed-path probe is observational only. A missing
 -- executable, failed command, or malformed response is not evidence that no VM
--- is running, so it fails closed.
+-- is running, so the shared producer fails closed. The inference materializer's
+-- separate conservative-capacity fallback policy remains at its outer boundary;
+-- this conversion never invents a zero pledge.
 appleColimaPledgeMib :: IO Int
 appleColimaPledgeMib = do
-  result <- try (HostTools.readHostToolFallback HostTools.HostColima ["list", "--json"] "")
-  case result :: Either SomeException (Maybe String) of
-    Left observationError ->
-      ioError
-        ( userError
-            ( "could not observe the running Colima memory pledge: "
-                <> show observationError
-            )
-        )
-    Right Nothing ->
-      ioError
-        (userError "could not observe the running Colima memory pledge: colima executable unavailable")
-    Right (Just output) ->
-      either
-        (ioError . userError)
-        pure
-        (colimaPledgeMibFromJsonLines output)
+  observed <- observeActiveColimaPledgeMib
+  either (ioError . userError) pure observed
 
 bytesPerMib :: Int
 bytesPerMib = 1048576

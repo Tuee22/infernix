@@ -17,6 +17,7 @@ module Infernix.Cluster.Command
     renderedCommandRequiredTools,
     renderedCommandUsesRepositoryWorkingDirectory,
     renderedCommandEnvironment,
+    renderedCommandEnvironmentVocabulary,
     renderedCommandArgv,
     renderedCommandStdin,
     renderedCommandLabel,
@@ -2170,7 +2171,7 @@ commandSpecRedactedWithRequiredTools tool requiredTools arguments input redacted
     { renderedCommandTool = tool,
       renderedCommandRequiredTools = tool : requiredTools,
       renderedCommandUsesRepositoryWorkingDirectory = False,
-      renderedCommandEnvironment = [],
+      renderedCommandEnvironment = defaultRenderedCommandEnvironment,
       renderedCommandArgv = arguments,
       renderedCommandStdin = input,
       renderedCommandLabel = redactedLabel
@@ -2187,7 +2188,7 @@ withKindScratchKubeconfig ::
 withKindScratchKubeconfig scratchKubeconfig spec =
   spec
     { renderedCommandEnvironment =
-        [("KUBECONFIG", unKindScratchKubeconfig scratchKubeconfig)]
+        kindScratchKubeconfigEnvironment scratchKubeconfig
     }
 
 withNvkindEnvironment ::
@@ -2197,10 +2198,38 @@ withNvkindEnvironment ::
 withNvkindEnvironment scratchKubeconfig spec =
   spec
     { renderedCommandEnvironment =
-        [ ("KUBECONFIG", unKindScratchKubeconfig scratchKubeconfig),
-          ("KUBERC", "off")
-        ]
+        nvkindEnvironment scratchKubeconfig
     }
+
+-- | The complete extra-environment vocabulary the command renderer can
+-- produce. Consumers derive admissible name sets from these renderer-owned
+-- values instead of maintaining a second list that can drift from them.
+renderedCommandEnvironmentVocabulary :: [[(String, String)]]
+renderedCommandEnvironmentVocabulary =
+  [ defaultRenderedCommandEnvironment,
+    kindScratchKubeconfigEnvironment representativeScratchKubeconfig,
+    nvkindEnvironment representativeScratchKubeconfig
+  ]
+  where
+    representativeScratchKubeconfig =
+      KindScratchKubeconfig "/infernix-renderer-vocabulary/kubeconfig"
+
+defaultRenderedCommandEnvironment :: [(String, String)]
+defaultRenderedCommandEnvironment = []
+
+kindScratchKubeconfigEnvironment ::
+  KindScratchKubeconfig ->
+  [(String, String)]
+kindScratchKubeconfigEnvironment scratchKubeconfig =
+  [("KUBECONFIG", unKindScratchKubeconfig scratchKubeconfig)]
+
+nvkindEnvironment ::
+  KindScratchKubeconfig ->
+  [(String, String)]
+nvkindEnvironment scratchKubeconfig =
+  [ ("KUBECONFIG", unKindScratchKubeconfig scratchKubeconfig),
+    ("KUBERC", "off")
+  ]
 
 unKindScratchKubeconfig :: KindScratchKubeconfig -> FilePath
 unKindScratchKubeconfig (KindScratchKubeconfig path) = path

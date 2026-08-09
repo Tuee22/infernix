@@ -138,10 +138,17 @@ Banned vocabulary, because each reports a schedule rather than a contract: `reop
 `as it exists today`, `remains Active`.
 
 Both halves are gates, not conventions. `infernix lint docs` rejects a `## Current Status` heading in
-any governed document, and rejects the vocabulary above through `forbiddenPhrases`. This file is the
-single allowlisted exception — the standard that defines a prohibition has to be able to spell it —
-which is the same carve-out the configuration-override check already uses for the documents whose
-subject is that prohibition.
+any governed document, including the root `README.md`, `AGENTS.md`, and `CLAUDE.md`; equivalent
+audit, implementation-state, repository-status, and validation-status headings are rejected too.
+The lint also rejects wave, sprint, date, and numbered-phase provenance, plus narrowly enumerated
+retired topology claims: repository-owned HA or leader election, within-role replicas,
+exactly-once delivery, coordinator-survivor recovery, pod/node failure injection, and Patroni
+replica reinitialization. Pulsar `Failover` remains valid when it names the broker's single-active
+subscription coordination. The vocabulary above is rejected through `forbiddenPhrases`. This file
+is the single allowlisted exception — the standard that defines a prohibition has to be able to
+spell it — which is the same carve-out the configuration-override check already uses for the
+documents whose subject is that prohibition. No architecture document receives a whole-file
+status exception.
 
 ## Source Of Truth
 

@@ -22,10 +22,11 @@
 |---------|-------|-------------------|------------------------------|---------------|
 | Control plane, cluster lifecycle, command registry, docs lint, and service runtime | Haskell | `src/Infernix/`, `app/`, `test/` | repo-local state under `./.build/` and `./.data/` | supported operator behavior and validation entrypoints stay Haskell-owned |
 | Browser-contract source | Haskell | `src/Infernix/Web/Contracts.hs` | `web/src/Generated/` | handwritten browser-facing types live in Haskell; frontend bindings are emitted output only |
-| Python engine adapters | Python | `python/pyproject.toml`, `python/adapters/` | `python/.venv/`, generated protobuf stubs under `tools/generated_proto/` | adapters are the only supported Python runtime surface and are launched only through `poetry run` |
+| Python engine adapters | Python source; Haskell materialization/launch control | `python/pyproject.toml`, `python/adapters/`, `python/engines/*/pyproject.toml` | `python/.venv/`, `python/engines/*/.venv/`, fixed framework markers, generated protobuf stubs under `tools/generated_proto/` | shared Poetry owns quality/protobuf work; Haskell prepares and verifies the canonical per-engine environment before launching its exact interpreter, with no request-time Poetry or fallback |
 | Kubernetes manifests and third-party chart wiring | Helm or YAML | `chart/templates/`, `chart/Chart.yaml`, `chart/values.yaml` | rendered manifests and generated values material | charts own deployment shape, but not application-domain control flow or repo workflow logic |
 | Generated frontend bundle | generated tool output | none | `web/dist/` | built browser assets stay derived and untracked |
-| Generated protobuf bindings | generated tool output | none | `tools/generated_proto/` | `.proto` files own the schema; generated bindings do not become handwritten source |
+| Haskell protobuf bindings | generated tool output, deliberately tracked | `proto/infernix/`, `proto/haskell-bindings.sha256` | exactly four modules below `src/Proto/` | `.proto` files own the schema; exact hashes and a pinned Linux byte-regeneration gate keep tracked output generated rather than handwritten |
+| Python protobuf bindings | generated tool output, untracked | `proto/infernix/` | `tools/generated_proto/` | the shared Poetry venv's fixed `grpc_tools.protoc` command owns these runtime helpers |
 
 ## Type Boundaries
 
@@ -50,18 +51,21 @@
 - Chart templates own Kubernetes object layout and third-party chart values, but do not become a
   second command or workflow registry.
 - Generated directories such as `web/src/Generated/`, `tools/generated_proto/`, and `web/dist/`
-  are rebuild targets, not review surfaces for handwritten logic.
+  are rebuild targets, not review surfaces for handwritten logic. The four files below `src/Proto/`
+  are likewise write-only generator output even though they are deliberately tracked: their
+  canonical inputs, exact inventory, and bytes are governed by `proto/haskell-bindings.sha256` and
+  the Linux regeneration gate, and handwritten style tools exclude only those exact paths.
 - Supported repo-owned shell is limited to the `bootstrap/*.sh` stage-0 host bootstrap surface;
   it may reconcile prerequisites, build or enter the supported launcher, and invoke the supported
   command surface, but it does not become a second lifecycle, Kind, Kubernetes manifest, image
   publication, validation, or teardown implementation.
 
-## Application Library Boundary (Phase 7)
+## Application Library Boundary
 
 The durable-context demo application splits its modules into three groups so the
-durable-context primitives are reusable by any future SPA-like application built on the
-inference platform. The shared library modules listed below are present in the worktree and
-exercised by the Phase 7 unit suite; the coordinator daemon's runtime entrypoints
+durable-context primitives are reusable by any SPA-like application built on the
+inference platform. The shared library modules listed below are exercised by the unit suite; the
+coordinator daemon's runtime entrypoints
 (`Infernix.Bootstrap.Models` Pulsar subscription, `Infernix.Bridge.Result` Failover
 consumer, `Infernix.Dispatch.SingleFlight` per-context dispatcher) carry their real
 Pulsar+MinIO wiring under the integration validation suite.
@@ -115,7 +119,7 @@ owns role orchestration and may wire coordinator and engine loops;
 `src/Infernix/Runtime/Pulsar.hs` owns shared Pulsar transport helpers
 and runtime loop implementations.
 
-The same style gate also enforces the Phase 7 shared-library boundary for
+The same style gate also enforces the shared-library boundary for
 the conversation primitives, dispatcher helpers, result bridge helper, and
 model-bootstrap helper: those modules cannot import demo application code,
 runtime orchestration, auth, object-presign, or WebSocket modules.
@@ -142,7 +146,8 @@ demo binding.
 
 - `infernix docs check` fails if this governed boundary document loses its required structure or
   drifts from the metadata contract enforced by `src/Infernix/Lint/Docs.hs`.
-- `infernix lint files` fails if generated-only artifacts return to tracked source paths.
+- `infernix lint files` fails if ungoverned generated-only artifacts return to tracked source paths;
+  `infernix lint proto` separately owns the exact four-file tracked Haskell binding exception.
 - `infernix test lint` runs the Haskell style gate that rejects forbidden frontend,
   coordinator, auth, object-presign, or WebSocket imports from the engine runtime modules.
 - `infernix test unit` covers the Haskell-to-Python protobuf-over-stdio worker handshake together

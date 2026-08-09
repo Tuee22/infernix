@@ -13,7 +13,7 @@
   only when the active generated config enables the demo UI. MinIO has no external gateway route.
 - When the demo UI is enabled, `SecurityPolicy/infernix-operator-routes-jwt` both **authenticates and
   admin-authorizes** direct browser access to the operator route family — `/harbor`, `/harbor/api`,
-  `/pulsar/admin`, and `/pulsar/ws` (Phase 9): it accepts the SPA's `infernix_operator_token` cookie or
+  `/pulsar/admin`, and `/pulsar/ws`: it accepts the SPA's `infernix_operator_token` cookie or
   a direct `Authorization: Bearer ...` header, then requires the `infernix-admin` realm role
   (`defaultAction: Deny`). A valid non-admin token is rejected with HTTP 403. See
   [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md).
@@ -28,10 +28,10 @@
   (`ClusterConfig.pulsar.adminUrl`) or its un-gated loopback NodePort directly (Pulsar-proxy `30080`,
   MinIO `30011`, `listenAddress: 127.0.0.1`), not through the gated edge routes — see
   [../tools/pulsar.md](../tools/pulsar.md). The loopback binding of every Kind data-plane + edge
-  port mapping (MinIO S3 `30011`, Pulsar proxy `30080`/`30650`, Envoy edge `30090`) is now ENFORCED
+  port mapping (MinIO S3 `30011`, Pulsar proxy `30080`/`30650`, Envoy edge `30090`) is enforced
   by `infernix lint chart` (a scanner over the `kind/cluster-*.yaml` files) plus a unit assertion
-  over the binary-generated Kind config. `/pulsar/ws` is now **inside** the operator policy
-  (Phase 9 added it to `targetRefs`), so the browser websocket surface is admin-gated at the edge while
+  over the binary-generated Kind config. `/pulsar/ws` is **inside** the operator policy's
+  `targetRefs`, so the browser websocket surface is admin-gated at the edge while
   the host worker's loopback data plane is unaffected.
 - Gateway owns the supported routed surface, and direct `infernix-demo` execution intentionally
   exposes only the demo-owned HTTP surface outside the intended HTTPRoute mapping.

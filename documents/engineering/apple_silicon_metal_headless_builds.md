@@ -17,9 +17,10 @@
   implementation remains inside the upstream MLX, coremltools, and engine packages.
 - Core ML and native runner artifacts are materialized through typed, content-addressed engine
   manifests under `./.data/engines/<adapterId>/`.
-- The former `tart` / `hostTart` / `AppleTart` implementation has been removed from the current
-  host-tool schema and prerequisite path. `infernix internal materialize-metal-engines` is the
-  retained helper name, but it now writes typed headless engine-artifact manifests.
+- No `tart` / `hostTart` / `AppleTart` implementation exists in the host-tool schema or prerequisite
+  path. `infernix internal materialize-metal-engines` is the retained helper name; it writes typed
+  headless engine-artifact manifests and then prepares
+  the canonical Apple Python-stdio environments outside the native/shared project lock.
 
 ## Materialization Architecture
 
@@ -62,6 +63,12 @@ The Apple build path separates execution from materialization:
     `.previous`, or otherwise unambiguous `.tmp` root and fails closed on ambiguous residue.
 11. Runtime inference consumes already materialized artifacts and never installs toolchains or
    starts virtualization on a request path.
+12. Python-stdio framework environments are a separate product from native artifact roots. The
+    shared Haskell facade derives `transformers`, `pytorch`, and `diffusers`, installs each
+    `apple-silicon` group under its project writer lock, recomputes the post-install project digest,
+    and publishes/reads back the fixed marker under `python/engines/<engine>/.venv/`. Apple runtime
+    startup and `materialize-metal-engines` invoke that producer only after the surrounding shared
+    or native session has released its lock; Worker and CappedEngine only observe the evidence.
 
 No repository-owned native bridge is permitted. Direct FFI, inline native source, generated native
 source, direct compiler scripts, and relocation into another implementation language are not
@@ -72,7 +79,7 @@ alternative implementations of this lane.
 | Prerequisite | Required for | Verification |
 |---|---|---|
 | Upstream MLX package and Metal runtime | MLX execution | Select `mx.gpu`, evaluate and synchronize a real operation, and verify its value. |
-| Upstream coremltools package and Core ML runtime | Core ML observation and execution | Require a nonempty `MLModel.get_available_compute_devices()` result; real catalog inference remains separate cohort evidence. |
+| Upstream coremltools package and Core ML runtime | Core ML observation and execution | Require a nonempty `MLModel.get_available_compute_devices()` result; device observation does not prove routed catalog inference, which has its own validation gate. |
 | Materialized engine package or binary | Adapter execution | Run the hidden catalog's direct target smoke from its final install root and revalidate the target observation. |
 
 The core runtime path does not require Tart, a repository bridge, full Xcode, the offline `metal`
@@ -101,7 +108,7 @@ Every materialized engine artifact should have a typed manifest with at least th
 | `targetContractFingerprint` | Fingerprint of the hidden direct-target catalog entry and invocation-prefix shape. |
 | `imageTargetEvidence` | Linux-only exact executable and immutable-closure identities and digests; Apple records `null` because the complete target closure is inside the payload digest. |
 
-The current materializer writes this manifest only after candidate hydration and authoritative
+The materializer writes this manifest only after candidate hydration and authoritative
 smoke. Executable paths and argv are never decoded from it. Python provenance is parsed from the
 exact frozen environment, the interpreter version is queried from the candidate venv, host tools
 derive their engine/runtime versions from real smoke output, and the copied
@@ -112,9 +119,6 @@ release image is observed. A mount is treated as live only when its kernel devic
 the parent candidate filesystem; the bounded detach operation runs in the primary-preserving
 release path.
 
-A post-correction Apple rerun is still required before claiming current materialization or
-full-suite proof.
-
 ## Storage Boundary
 
 - Harbor owns container images and heavyweight Linux runtime bases.
@@ -123,37 +127,33 @@ full-suite proof.
   separate artifact classes.
 - CUDA frameworks are image-owned or pre-materialized by controlled build lanes, never installed
   on a user request.
-- Apple host artifacts are local under `./.data/engines/<adapterId>/` and may later reuse MinIO
-  content-addressed payloads when the payload is portable enough to cache.
+- Apple host artifacts are local under `./.data/engines/<adapterId>/`.
 
 ## Validation
 
-The Apple headless materialization lane closes only when:
+Apple headless materialization validation requires:
 
 - the installed upstream MLX package executes, evaluates, and synchronizes a real GPU operation;
 - the installed upstream coremltools package observes at least one Core ML compute device, while
   routed Core ML model inference is validated separately;
 - materialized trees and repository scans contain no owned native source, embedded equivalent, or
   direct native-compiler path;
-- validation still passes when `tart` is absent or unusable;
-- validation still passes without an unlocked `login.keychain-db`;
+- validation passes when `tart` is absent or unusable;
+- validation passes without an unlocked `login.keychain-db`;
 - validation does not require `xcrun`, Clang, the offline `metal` compiler, or direct FFI;
 - a materialized engine artifact writes a manifest, passes its smoke command, and loads from
   `./.data/engines/<adapterId>/`;
 - request-time inference never invokes Tart, SwiftPM, Xcode, or package installation;
 - failed materialization leaves no partial final install root and is retryable.
 
-The focused `infernix-artifact-transaction`, full-materializer, and compile-boundary suites are
-covering the materialization surface. Their earlier inventories and results
-`appleArtifactProvisioningViolations` enforces that
-artifact modules cannot import `System.Process`, use raw spawn/wait primitives, delegate to the
-legacy unbounded Poetry helpers, or bypass the provisioning facade to call the bounded kernel
-directly.
+The focused `infernix-artifact-transaction`, full-materializer, and compile-boundary suites cover
+the materialization surface. `appleArtifactProvisioningViolations` enforces that artifact modules
+cannot import `System.Process`, use raw spawn/wait primitives, delegate to unbounded Poetry helpers,
+or bypass the provisioning facade to call the bounded kernel directly.
 
-The materialization surface is closed once the reviewed source identity passes those focused gates, the
-complete Stage 1 gate, and real Apple
-rematerialization, installed upstream smokes, runtime loading, and the selected cohort are green
-against that same source.
+One materialization attestation binds a reviewed source identity to the focused gates, the complete
+source gate, real Apple rematerialization, installed upstream smokes, runtime loading, and routed
+real-output validation against that same source.
 
 ## Cross-References
 

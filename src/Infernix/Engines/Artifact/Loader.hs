@@ -1321,10 +1321,12 @@ digestLoaderDescriptor descriptor context remaining
       chunk <- readLoaderChunk descriptor (min remaining loaderChunkBytes)
       when (ByteString.null chunk) $
         ioError (userError "loader file ended before its declared size")
-      digestLoaderDescriptor
-        descriptor
-        (SHA256.update context chunk)
-        (remaining - toInteger (ByteString.length chunk))
+      let nextContext = SHA256.update context chunk
+      nextContext `seq`
+        digestLoaderDescriptor
+          descriptor
+          nextContext
+          (remaining - toInteger (ByteString.length chunk))
 
 loaderChunkBytes :: Integer
 loaderChunkBytes = 1024 * 1024

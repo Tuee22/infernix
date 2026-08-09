@@ -17,7 +17,7 @@ import System.Posix.User
     homeDirectory,
   )
 import System.Process
-  ( CreateProcess (cwd),
+  ( CreateProcess (cwd, env),
     proc,
     readCreateProcessWithExitCode,
   )
@@ -32,16 +32,18 @@ data FailingFixture = FailingFixture
 main :: IO ()
 main = do
   repositoryRoot <- findRepositoryRoot
-  cabalExecutable <- findCabalExecutable
+  userHome <- currentUserHome
+  cabalExecutable <- findCabalExecutable userHome
+  let childEnvironment = fixtureChildEnvironment userHome cabalExecutable
   let projectFile = repositoryRoot </> "test" </> "compile-fail" </> "cabal.project"
       buildDirectory = repositoryRoot </> ".build" </> "compile-fail"
       logDirectory = buildDirectory </> "logs"
   createDirectoryIfMissing True logDirectory
   mapM_
-    (assertPassingFixture repositoryRoot cabalExecutable projectFile buildDirectory logDirectory)
+    (assertPassingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory)
     passingFixtures
   mapM_
-    (assertFailingFixture repositoryRoot cabalExecutable projectFile buildDirectory logDirectory)
+    (assertFailingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory)
     failingFixtures
   putStrLn
     ( "compile-time capability fixtures passed: "
@@ -106,6 +108,14 @@ failingFixtures =
       "fail-cannot-import-engine-provisioning-internal"
       "CannotImportEngineProvisioningInternal.hs"
       "Infernix.Engines.Provisioning.Internal",
+    hiddenModuleFixture
+      "fail-cannot-import-python"
+      "CannotImportPython.hs"
+      "Infernix.Python",
+    hiddenModuleFixture
+      "fail-cannot-import-raw-python-worker-launch"
+      "CannotImportRawPythonWorkerLaunch.hs"
+      "Infernix.Runtime.CappedEngine",
     hiddenModuleFixture
       "fail-cannot-import-capped-engine-internal"
       "CannotImportCappedEngineInternal.hs"
@@ -175,6 +185,14 @@ failingFixtures =
       "fail-cannot-substitute-toolchain-spawn-region"
       "CannotSubstituteToolchainSpawnRegion.hs"
       "ToolchainSpawnAuthority",
+    typeMismatchFixture
+      "fail-cannot-coerce-toolchain-spawn-authority"
+      "CannotCoerceToolchainSpawnAuthority.hs"
+      "ToolchainSpawnAuthority",
+    typeMismatchFixture
+      "fail-cannot-coerce-darwin-build-memory-validation-authority"
+      "CannotCoerceDarwinBuildMemoryValidationAuthority.hs"
+      "DarwinBuildMemoryValidationAuthority",
     typeMismatchFixture
       "fail-cannot-claim-unenforced-address-space"
       "CannotClaimUnenforcedAddressSpace.hs"
@@ -388,14 +406,15 @@ readDiagnostics =
 assertPassingFixture ::
   FilePath ->
   FilePath ->
+  [(String, String)] ->
   FilePath ->
   FilePath ->
   FilePath ->
   String ->
   IO ()
-assertPassingFixture repositoryRoot cabalExecutable projectFile buildDirectory logDirectory target = do
+assertPassingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory target = do
   (exitCode, diagnostic) <-
-    runFixtureBuild repositoryRoot cabalExecutable projectFile buildDirectory target
+    runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory target
   writeFile (logDirectory </> target <> ".log") diagnostic
   unless (exitCode == ExitSuccess) $
     failWithDiagnostic ("compile-pass fixture failed: " <> target) diagnostic
@@ -403,16 +422,18 @@ assertPassingFixture repositoryRoot cabalExecutable projectFile buildDirectory l
 assertFailingFixture ::
   FilePath ->
   FilePath ->
+  [(String, String)] ->
   FilePath ->
   FilePath ->
   FilePath ->
   FailingFixture ->
   IO ()
-assertFailingFixture repositoryRoot cabalExecutable projectFile buildDirectory logDirectory fixture = do
+assertFailingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory fixture = do
   (exitCode, diagnostic) <-
     runFixtureBuild
       repositoryRoot
       cabalExecutable
+      childEnvironment
       projectFile
       buildDirectory
       (fixtureTarget fixture)
@@ -459,28 +480,38 @@ removeAll needle haystack
 runFixtureBuild ::
   FilePath ->
   FilePath ->
+  [(String, String)] ->
   FilePath ->
   FilePath ->
   String ->
   IO (ExitCode, String)
-runFixtureBuild repositoryRoot cabalExecutable projectFile buildDirectory target = do
+runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory target = do
   let command =
         ( proc
             cabalExecutable
-            [ "build",
+            [ "+RTS",
+              "-M1024M",
+              "-RTS",
+              "build",
               "--project-file=" <> projectFile,
               "--builddir=" <> buildDirectory,
-              "infernix-compile-fixtures:exe:" <> target
+              "infernix-compile-fixtures:exe:" <> target,
+              "--jobs=1",
+              "--ghc-options=+RTS -M2048M -xr6144M -RTS"
             ]
         )
-          { cwd = Just repositoryRoot
+          { cwd = Just repositoryRoot,
+            env = Just childEnvironment
           }
   (exitCode, stdoutText, stderrText) <- readCreateProcessWithExitCode command ""
   pure (exitCode, stdoutText <> stderrText)
 
-findCabalExecutable :: IO FilePath
-findCabalExecutable = do
-  userHome <- homeDirectory <$> (getUserEntryForID =<< getEffectiveUserID)
+currentUserHome :: IO FilePath
+currentUserHome =
+  homeDirectory <$> (getUserEntryForID =<< getEffectiveUserID)
+
+findCabalExecutable :: FilePath -> IO FilePath
+findCabalExecutable userHome = do
   maybeExecutable <-
     firstExistingFile
       [ userHome </> ".ghcup" </> "bin" </> "cabal",
@@ -494,6 +525,35 @@ findCabalExecutable = do
       fail
         "compile-time capability fixtures require cabal at ~/.ghcup/bin/cabal, ~/.cabal/bin/cabal, or a supported fixed system path"
     Just executable -> canonicalizePath executable
+
+-- The nested fixture compiler is a separate serialized toolchain surface. Its
+-- environment and every memory-bearing operand are fixed here: one 2048 MiB
+-- compiler, plus the outer Cabal, runner, nested Cabal, and nested auxiliary at
+-- the 1024 MiB control cap. The 6144 MiB peak is inside the current outer
+-- 8192 MiB account without reading or extending the caller's environment.
+fixtureChildEnvironment :: FilePath -> FilePath -> [(String, String)]
+fixtureChildEnvironment userHome cabalExecutable =
+  [ ("HOME", userHome),
+    ( "PATH",
+      joinPathEntries
+        [ takeDirectory cabalExecutable,
+          userHome </> ".cabal" </> "bin",
+          "/opt/homebrew/bin",
+          "/usr/local/bin",
+          "/usr/bin",
+          "/bin"
+        ]
+    ),
+    ("GHCRTS", "-M1024M"),
+    ("LANG", "C.UTF-8"),
+    ("LC_ALL", "C.UTF-8")
+  ]
+
+joinPathEntries :: [FilePath] -> String
+joinPathEntries entries =
+  case entries of
+    [] -> ""
+    firstEntry : remaining -> foldl (\joined entry -> joined <> ":" <> entry) firstEntry remaining
 
 firstExistingFile :: [FilePath] -> IO (Maybe FilePath)
 firstExistingFile candidates =

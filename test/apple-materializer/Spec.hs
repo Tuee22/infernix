@@ -36,6 +36,7 @@ import Infernix.Config (Paths (..), discoverPaths)
 import Infernix.DescriptorSpace (establishBoundedDescriptorSpace)
 import Infernix.Engines.AppleSilicon.Internal qualified as AppleInternal
 import Infernix.Engines.Artifact qualified as Artifact
+import Infernix.Engines.Provisioning qualified as Provisioning
 import Infernix.HostConfig qualified as HostConfig
 import System.Directory
   ( createDirectory,
@@ -65,11 +66,13 @@ main = do
     [] -> runMachineIndependentTests
     ["--darwin-production-audiveris-cancellation"] ->
       runDarwinProductionCancellationTest
+    ["--darwin-installed-python-source-isolation"] ->
+      runDarwinInstalledPythonSourceIsolationTest
     _ ->
       fail
         ( "unsupported apple-materializer test arguments: "
             <> show arguments
-            <> "; use no arguments or exactly --darwin-production-audiveris-cancellation"
+            <> "; use no arguments, --darwin-production-audiveris-cancellation, or --darwin-installed-python-source-isolation"
         )
 
 runMachineIndependentTests :: IO ()
@@ -101,6 +104,44 @@ runDarwinProductionCancellationTest = do
   productionAudiverisCancellationRecoveryTest
   putStrLn
     "PASS: actual Darwin Audiveris materializer cancellation recovers its exact mount and preserves the prior root"
+
+runDarwinInstalledPythonSourceIsolationTest :: IO ()
+runDarwinInstalledPythonSourceIsolationTest = do
+  unless (os == "darwin") $
+    fail "the installed Python source-isolation proof requires a Darwin host"
+  paths <- discoverPaths
+  reports <- AppleInternal.materializeInstalledPythonSourceIsolationForTest paths
+  let adapters =
+        map
+          ( Provisioning.renderApplePythonAdapterId
+              . Provisioning.installedPythonSourceIsolationReportAdapter
+          )
+          reports
+      validReceipt receipt =
+        case Text.stripPrefix "sha256:" receipt of
+          Just digest ->
+            Text.length digest == 64
+              && Text.all (`Text.elem` "0123456789abcdef") digest
+          Nothing -> False
+  unless
+    ( length reports == 4
+        && length (List.nub adapters) == 4
+        && all
+          ( \report ->
+              Provisioning.installedPythonSourceIsolationReportDirectoryCount report == 1
+                && Provisioning.installedPythonSourceIsolationReportFileCount report >= 0
+                && validReceipt
+                  (Provisioning.installedPythonSourceIsolationReportReceiptDigest report)
+                && validReceipt
+                  (Provisioning.installedPythonSourceIsolationReportArtifactDigest report)
+          )
+          reports
+    )
+    (fail ("installed Python source-isolation reports are incomplete: " <> show reports))
+  putStrLn
+    ( "PASS: installed Apple Python artifacts ran with every exact source runtime denied for "
+        <> show adapters
+    )
 
 testCases :: [(String, IO ())]
 testCases =

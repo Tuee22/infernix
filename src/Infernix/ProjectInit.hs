@@ -18,7 +18,7 @@ import Control.Monad (when)
 import Data.Maybe (fromMaybe)
 import Infernix.Config
   ( Paths,
-    discoverPaths,
+    discoverPathsWithHostManifest,
     ensureRepoLayout,
     runtimeConfigPath,
     targetRuntimeModeForExecutionContext,
@@ -42,7 +42,10 @@ import System.Directory (doesFileExist)
 -- an existing config a no-op.
 runProjectInit :: Maybe RuntimeMode -> Maybe Bool -> Bool -> Bool -> IO ()
 runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
-  paths <- discoverPaths
+  -- This is deliberately independent of any existing host manifest. The
+  -- command is the migration boundary that replaces that manifest, so a stale
+  -- schema must not make @init --force@ unreachable.
+  paths <- discoverPathsWithHostManifest Nothing
   ensureRepoLayout paths
   let runtimeConfig = runtimeConfigPath paths
   runtimeConfigExists <- doesFileExist runtimeConfig
@@ -59,9 +62,9 @@ runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
           )
       runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
       let demoUiEnabled = fromMaybe True maybeDemoUi
-      -- Phase 4 Sprint 4.26 — write the host manifest first: the runtime
-      -- config's apple-silicon inference RAM budget is resolved from the host
-      -- manifest's sysctl/colima tool paths, so it must exist beforehand.
+      -- Write the host manifest first: the runtime config's apple-silicon
+      -- inference RAM budget uses its manifest-owned sysctl path plus the same
+      -- fixed-path Colima observation that measured effective build memory.
       writtenHost <- materializeHostManifestFile paths
       writtenSecrets <- materializeHostSecrets paths
       writtenRuntime <- materializeGeneratedDemoConfigFile paths runtimeMode demoUiEnabled
@@ -78,7 +81,10 @@ runProjectInit maybeRuntimeMode maybeDemoUi force ifMissing = do
 -- pre-existing runtime config.
 runTestInit :: Maybe RuntimeMode -> Maybe Bool -> IO ()
 runTestInit maybeRuntimeMode maybeDemoUi = do
-  paths <- discoverPaths
+  -- Test initialization is the test-config migration boundary. Like
+  -- @init --force@, it must remain reachable when an existing host manifest
+  -- belongs to an older schema, so path discovery cannot decode that file.
+  paths <- discoverPathsWithHostManifest Nothing
   ensureRepoLayout paths
   runtimeMode <- resolveInitRuntimeMode paths maybeRuntimeMode
   inferenceMemoryBudgetValue <- resolveInferenceMemoryBudget paths runtimeMode

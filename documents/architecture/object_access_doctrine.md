@@ -15,8 +15,8 @@
   over the cluster-internal endpoint. Engine-generated artifacts must land under the same
   `users/<sub>/contexts/<ctx>/generated/` layout before the browser fetches them.
 - The browser is **never** handed a presigned MinIO URL and **never** talks to MinIO directly. The
-  `/minio/s3` gateway route is removed; the webapp is the only externally routed gateway service for file
-  storage.
+  system exposes no `/minio/s3` gateway route; the webapp is the only externally routed gateway
+  service for file storage.
 - Per-user isolation (see [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)) is therefore
   enforced at one server-side choke point on every request, not delegated to a per-object presigned grant
   the browser holds.
@@ -47,14 +47,14 @@
 |---|---|---|
 | Webapp `/api/objects/{upload,download,list}` | the browser | external gateway — the only file surface |
 | MinIO S3 | webapp, coordinator, engine (server-side only) | cluster-internal `service.minio.endpoint` |
-| `/minio/s3` gateway route + `presignPublicEndpoint` | (removed) | — |
+| `/minio/s3` gateway route + `presignPublicEndpoint` | unsupported | no route |
 
 ## Validation
 
-- `infernix lint docs` keeps this doctrine's metadata and cross-references consistent. - Phase 7
-Integration and e2e prove the browser uploads/downloads only through the webapp and that
-a cross-user object key is rejected (HTTP 403); chart lint proves the rendered chart
-exposes no `/minio/s3` route.
+- `infernix lint docs` keeps this doctrine's metadata and cross-references consistent.
+- Integration and E2E prove the browser uploads/downloads only through the webapp and that a
+  cross-user object key is rejected (HTTP 403); chart lint proves the rendered chart exposes no
+  `/minio/s3` route.
 
 ## Cross-References
 

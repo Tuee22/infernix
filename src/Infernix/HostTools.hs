@@ -62,8 +62,6 @@ data HostTool
   | HostCabal
   | HostGhc
   | HostGhcup
-  | HostOrmolu
-  | HostHlint
   | HostNpm
   | HostNode
   | HostPython3
@@ -71,7 +69,6 @@ data HostTool
   | HostLlamaCli
   | HostWhisperCli
   | HostPoetry
-  | HostProtoc
   | HostGit
   | HostTar
   | HostCurl
@@ -110,8 +107,6 @@ hostToolName tool = case tool of
   HostCabal -> "cabal"
   HostGhc -> "ghc"
   HostGhcup -> "ghcup"
-  HostOrmolu -> "ormolu"
-  HostHlint -> "hlint"
   HostNpm -> "npm"
   HostNode -> "node"
   HostPython3 -> "python3"
@@ -119,7 +114,6 @@ hostToolName tool = case tool of
   HostLlamaCli -> "llama-cli"
   HostWhisperCli -> "whisper-cli"
   HostPoetry -> "poetry"
-  HostProtoc -> "protoc"
   HostGit -> "git"
   HostTar -> "tar"
   HostCurl -> "curl"
@@ -172,8 +166,6 @@ hostToolFallbackCandidates tool = case tool of
   HostCabal -> ["/root/.ghcup/bin/cabal", "/usr/local/bin/cabal", "/usr/bin/cabal"]
   HostGhc -> ["/root/.ghcup/bin/ghc", "/usr/local/bin/ghc", "/usr/bin/ghc"]
   HostGhcup -> ["/usr/local/bin/ghcup", "/usr/bin/ghcup"]
-  HostOrmolu -> []
-  HostHlint -> []
   HostNpm -> ["/opt/homebrew/bin/npm", "/usr/local/bin/npm", "/usr/bin/npm"]
   HostNode -> ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
   HostPython3 -> ["/opt/homebrew/bin/python3.12", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
@@ -181,7 +173,6 @@ hostToolFallbackCandidates tool = case tool of
   HostLlamaCli -> ["/opt/homebrew/bin/llama-cli"]
   HostWhisperCli -> ["/opt/homebrew/bin/whisper-cli"]
   HostPoetry -> ["/opt/homebrew/bin/poetry", "/opt/poetry/bin/poetry", "/usr/local/bin/poetry", "/usr/bin/poetry"]
-  HostProtoc -> ["/opt/homebrew/bin/protoc", "/usr/local/bin/protoc", "/usr/bin/protoc"]
   HostGit -> ["/opt/homebrew/bin/git", "/usr/bin/git"]
   HostTar -> ["/usr/bin/tar"]
   HostCurl -> ["/usr/bin/curl"]
@@ -222,8 +213,9 @@ hostToolFallbackPath tool =
 -- 'hostToolFallbackCandidates'), capturing stdout. Returns 'Nothing' when no
 -- candidate exists on the host. Unlike 'readHostTool', this never consults the
 -- manifest, so it fits tools that are intentionally not manifest-owned (e.g.
--- @colima@, read — never managed — by the inference-RAM budget resolver). The
--- resolved path is always absolute, so it does not depend on @\$PATH@.
+-- @colima@, read — never managed — by the shared build- and inference-memory
+-- observer). The resolved path is always absolute, so it does not depend on
+-- @\$PATH@.
 readHostToolFallback :: HostTool -> [String] -> String -> IO (Maybe String)
 readHostToolFallback tool args input = do
   maybePath <- firstExistingCandidate (hostToolFallbackCandidates tool)
@@ -294,8 +286,6 @@ pickToolPath tool paths = case tool of
   HostCabal -> hostCabal paths
   HostGhc -> hostGhc paths
   HostGhcup -> hostGhcup paths
-  HostOrmolu -> hostOrmolu paths
-  HostHlint -> hostHlint paths
   HostNpm -> hostNpm paths
   HostNode -> hostNode paths
   HostPython3 -> hostPython3 paths
@@ -303,7 +293,6 @@ pickToolPath tool paths = case tool of
   HostLlamaCli -> hostLlamaCli paths
   HostWhisperCli -> hostWhisperCli paths
   HostPoetry -> hostPoetry paths
-  HostProtoc -> hostProtoc paths
   HostGit -> hostGit paths
   HostTar -> hostTar paths
   HostCurl -> hostCurl paths
@@ -327,11 +316,11 @@ pickToolPath tool paths = case tool of
   HostSkopeo -> hostSkopeo paths
   HostHostname -> hostHostname paths
   HostSysctl -> hostSysctl paths
-  -- Phase 4 Sprint 4.26: colima is an Apple-only host-provisioning probe read
-  -- (never managed) by the inference-RAM budget resolver. It is deliberately
-  -- NOT a manifest-owned tool (the Linux launcher manifest carries no colima
-  -- field), so it has no 'HostToolPaths' entry and resolves through its fixed
-  -- fallback candidate instead.
+  -- Colima is an Apple-only host-provisioning probe read (never managed) by the
+  -- shared build- and inference-memory observer. It is deliberately NOT a
+  -- manifest-owned tool (the Linux launcher manifest carries no colima field),
+  -- so it has no 'HostToolPaths' entry and resolves through its fixed fallback
+  -- candidate instead.
   HostColima -> ""
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value

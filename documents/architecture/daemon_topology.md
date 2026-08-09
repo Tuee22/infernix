@@ -70,10 +70,9 @@ The per-app pod. Owns the user-facing surface:
   read/write itself over the cluster-internal endpoint, so the browser
   never holds a MinIO credential or presigned MinIO URL (see
   [object_access_doctrine.md](object_access_doctrine.md) and
-  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)). **Current
-  Status:** the present build proxies browser object bytes through the
-  Webapp role; the `/minio/s3` gateway route and browser-direct presigned
-  URL grants are removed
+  [tenant_isolation_doctrine.md](tenant_isolation_doctrine.md)). The
+  `/minio/s3` gateway route and browser-direct presigned URL grants are
+  outside the supported surface
 - SPA asset serving
 - Per-WS Pulsar `Reader` subscriptions on the user's conversation,
   contexts, and drafts topics; forwards events as typed
@@ -82,7 +81,7 @@ The per-app pod. Owns the user-facing surface:
 
 The Webapp role is stateless and free of business rules. It applies
 patches mechanically and translates between WS envelopes and Pulsar
-topics. A future SPA-style application reuses the entire shared
+topics. Any additional SPA-style application reuses the entire shared
 library and writes only its renderer plus the WS envelope variants it
 needs.
 
@@ -121,13 +120,12 @@ pool-router consumer:
 The coordinator never imports any application namespace; it never
 runs an inference engine; it owns no GPU or Metal resources; **it
 has no PVC** (Pulsar subscription cursors are broker-side durable).
-Pulsar Failover guarantees
-exactly one active subscriber per topic at a time, so multiple
-coordinator pods do not race.
-Each Failover subscription keeps a stable subscription name as the
-ownership key and uses a process-qualified consumer name for the member
-identity, so replica promotion is observable without changing the
-broker-side ownership boundary.
+Pulsar Failover guarantees exactly one active subscriber per topic at a
+time under a stable broker-side ownership key. The supported topology
+runs one coordinator process per machine; `Failover` is broker
+coordination, not standby-replica availability. A process-qualified
+consumer name distinguishes successive or fleet consumers without
+changing that ownership boundary.
 
 ### Engine (`infernix-engine`, pool members, and pinned members)
 
@@ -190,7 +188,7 @@ The Haskell style gate enforces this import boundary for
 orchestration and may wire coordinator and engine loops; `Infernix.Runtime.Pulsar`
 owns the shared Pulsar transport helpers and loop implementations.
 
-The style gate also enforces the Phase 7 shared-library boundary for the
+The style gate also enforces the shared-library boundary for the
 conversation primitives, dispatcher helpers, result bridge helper, and
 bootstrap helper so those modules cannot import demo, runtime, auth,
 object-presign, or WebSocket modules.
@@ -239,18 +237,6 @@ subscriptions across distinct host ids so broker-native permits distribute work.
 remain a concurrency/backpressure mechanism; memory capacity is checked by the executing machine's
 runtime admission policy immediately before launch and returns typed `ModelMemoryLimitExceeded`
 when the model does not fit. Exact-host routes use derived per-host topics with `Exclusive`.
-
-**Linux GPU per-engine images.** Framework-specific Linux GPU pools may still render as
-`infernix-engine-<engine>` Deployments whose image contains exactly one isolated framework venv.
-That split is an image and dependency-isolation boundary; pool membership and model routing are
-derived from the typed engine-pool graph.
-
-**Apple silicon symmetry.** On Apple substrates engine members are on-host `infernix service`
-daemons with stable host ids, not Kubernetes pods. Normal Apple model pools use `Shared`
-subscriptions across distinct host ids so broker-native permits distribute work. Broker permits
-remain a concurrency/backpressure mechanism; memory capacity is checked by the shared runtime
-admission policy immediately before launch and returns typed `ModelMemoryLimitExceeded` when the
-model does not fit. Exact-host routes use derived per-host topics with `Exclusive`.
 
 **No daemon has a PVC on any substrate.** The engine pod's
 `emptyDir` model cache is ephemeral per-pod storage capped by
@@ -315,11 +301,11 @@ Frontend pod (Pulsar Reader sub on conversation topic)
 
 Subscription primitives used at each hop:
 
-- **Reader** (frontend): cursor-based, no shared subscription state
-  across pods; any pod hosts any WS session.
+- **Reader** (frontend): cursor-based, with independent state per
+  connection; the one frontend process on a machine may host any WS session.
 - **Failover** (coordinator): exactly one active subscriber per topic
-  at a time; Pulsar promotes a surviving consumer on crash and
-  redelivers unacked messages.
+  at a time; after the owning coordinator process restarts and resubscribes,
+  Pulsar redelivers unacknowledged messages from the durable cursor.
 - **Shared** (engine pools): Pulsar distributes pool work to eligible members according to permits
   and receiver backlog. Messages are acknowledged only after materialization, inference, and result
   publication succeed.
@@ -419,10 +405,10 @@ readiness wait returns typed evidence for the state it gates rather than a bare 
 
 | Failure | What happens | What recovers |
 |---|---|---|
-| Frontend pod crash | WS connections drop | Client reconnects to any replica; new pod re-derives Readers from the JWT; state replays from Pulsar. Pending submits replay via `clientIdempotencyKey`; reducer dedup catches duplicates. The WS pod acks a client submit only after Pulsar confirms the publish, so "acked then crashed" implies "already on the log." |
-| Coordinator crash | The Failover subscription's active consumer is unreachable | Pulsar promotes the next eligible consumer when one exists, and redelivers unacked conversation events to the active dispatcher and unacked inference results to the active result-bridge; producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. With one coordinator per fleet, recovery is that consumer restarting and resuming from its durable cursor. |
+| Frontend process crash | WS connections drop | The frontend process restarts; clients reconnect, the process re-derives Readers from each JWT, and state replays from Pulsar. Pending submits replay via `clientIdempotencyKey`; reducer dedup catches duplicates. The frontend acknowledges a client submit only after Pulsar confirms the publish, so "acked then crashed" implies "already on the log." |
+| Coordinator process crash | The Failover subscription's active consumer is unreachable | The owning process restarts and resubscribes under the stable Failover name; Pulsar then redelivers unacknowledged conversation events to the dispatcher and unacknowledged inference results to the result bridge. Producer dedup on `inference.request.<mode>` and on the conversation topic prevents duplicate dispatch and duplicate writeback. `Failover` supplies broker coordination, not a standby coordinator. |
 | Engine member crash | Active engine member disappears | Pulsar redelivers the unacked pool-topic message to another eligible member when the route is a `Shared` pool. The receiving engine has a KV-cache miss on that request's `prefixHash` and rebuilds from the conversation log; producer dedup on `inference.result.<mode>` prevents a duplicate result if the original engine had partially published. |
-| Engine node drain | Engine members on that node go away | Remaining fleet machines continue to consume the shared pool topic; Apple host daemons stop granting permits or unsubscribe while draining. Pulsar redelivery and KV-cache rebuild are the same as the member-crash case for shared pools. A node a test harness drained is tracked as a `ClusterMutating` position and uncordoned on the next `cluster up` — see [Managed State Transitions](managed_state_transitions.md). |
+| Engine machine unavailable | Its engine member disappears | Pulsar redelivers an unacknowledged pool-topic message to another eligible fleet member when one exists for a `Shared` route; otherwise the message remains pending until an eligible member returns. The receiving engine rebuilds a missing KV cache from the conversation log. |
 | Engine model-memory admission failure | Plan refinement on the executing machine classifies a placed model above that machine's own resource capacity as `UnavailableModel` | The engine publishes a per-request `status=failed` result with typed `InferenceError.ModelMemoryLimitExceeded`, including `requiredMib` and `availableMib`, without launching an engine process; the coordinator forwards the request to its pool rather than vetoing it, because a machine that will not run the work has no verdict to give. Smaller admitted placements continue serving; a machine that admits none of its placements refuses to start. |
 | Invalid inference request | A coordinator or engine receives an empty model id, unknown model, wrong-route model, or malformed protobuf | Empty/unknown/wrong-route requests publish a terminal failed `InferenceResult`; malformed bytes publish a typed malformed failed result. File-spool sources are removed and Pulsar messages acknowledged only after terminal result persistence/publication. |
 | Pulsar broker / MinIO / IdP outage | A platform dependency is unavailable | Frontend caches JWKS with short TTL so brief IdP outages do not break existing sessions. The platform services are deployed single-node on the supported substrate, so an outage is an outage: recovery is restart, and durability comes from their own storage rather than from replication. |
@@ -480,10 +466,8 @@ Budget sources are:
 - `apple-silicon`: unified host RAM, computed as physical memory (`sysctl -n hw.memsize`) minus the
   read-only Colima pledge and host reserve
 - `linux-cpu`: the Kubernetes engine pod memory limit for the active workload
-- `linux-gpu`: the final executable placement requires independently indexed pod-RAM and GPU-VRAM
-  grants. The transitional wire cannot yet express and verify both, so current compilation fails
-  closed with `GpuDualResourceBudgetRequired`; Phase 6 owns NVIDIA enforcement and Phase 8 owns the
-  final proper-union wire.
+- `linux-gpu`: an executable placement requires independently indexed pod-RAM and GPU-VRAM grants;
+  either missing half fails closed with `GpuDualResourceBudgetRequired`
 
 Compilation mints a resource-indexed grant only for a fitting placement. Package-owned live
 observations pair it with the matching enforcer inside `ExecutableModel`; public engine launch
@@ -491,10 +475,9 @@ accepts that whole capability and derives its model, runtime, binding, and comma
 measured ceiling breach becomes typed `ModelMemoryLimitExceeded`, while sampler loss fails closed as
 enforcement unavailable.
 
-The supported daemon currently serializes inference through one process-local lock, but that lock is
-still supplied outside the opaque execution capability. Phase 4 must encapsulate the serialization
-authority and prove Apple/Linux CPU breach survival. Phase 6 adds independent NVIDIA process-group
-VRAM accounting and removes broad raw-spawn exemptions. Canonical home:
+The execution authority remains inside the opaque engine capability and serializes inference for
+that engine member. Package-owned observers enforce Apple/Linux CPU resident-memory ceilings and
+independent Linux GPU process-group RAM and VRAM ceilings. Canonical home:
 [bounded_inference_memory.md](bounded_inference_memory.md).
 
 ## Production Shape
@@ -525,11 +508,9 @@ The three-role contract is validated by:
   than of recovery
 - a production-shape test that deploys `demo_ui = false` and asserts the coordinator plus engine-pool
   workloads are present while demo-only workloads and routes are absent
-- a scheduling check that every deployed workload is fully scheduled, with no `Pending` replica in
-  the `platform` namespace. That is the observable proof the retired engine pod anti-affinity is
-  **gone** rather than merely unsatisfied: expressing one-engine-per-machine as a placement
-  constraint produced a `Pending` pod instead of preventing a second process, which is why the rule
-  now lives in the machine contract and in the host-local engine lock
+- a scheduling check that every deployed workload is fully scheduled, with no `Pending` workload in
+  the `platform` namespace. One-engine-per-machine is enforced by the machine contract and the
+  host-local engine lock, not by a placement constraint
 
 `infernix lint docs` enforces the metadata block and cross-link
 resolution of this doc.

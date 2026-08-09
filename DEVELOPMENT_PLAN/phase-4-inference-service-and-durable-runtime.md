@@ -1,6 +1,8 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Sprint 4.35 (native runner front-end correction and failure diagnosability) is
+**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
+**Blocked by**: Phase 0 Sprint 0.22
+**Suspended prior state**: Active — Sprint 4.35 (native runner front-end correction and failure diagnosability) is
 `Active` as of 2026-08-07, opened by a `linux-cpu` cohort failure found while executing Phase 3
 Sprint 3.16's gate: llama.cpp b9704 split `llama-cli` into an interactive chat front-end, so a
 *successful* Linux run published chat chrome as the model's answer — a realness-contract violation on
@@ -12,7 +14,9 @@ move closed code-side on 2026-08-07, which unblocks Phase 8 Sprints 8.10/8.11, a
 broker-side member claim remains — named in that sprint's `Remaining Work`, with its behavioural
 proof owned by the cohort wave. Sprint 4.32 (verified Apple/Linux CPU enforcers and executable-model routing)
 is in its exact-source Linux validation gate after the ordered Phase 1 and Phase 2
-machine-independent work closed. Selected Apple hardware validation remains open. Phase 2's
+machine-independent work closed. Sprint 4.36 is `Done` by supersession/re-home: Phase 1 Sprint 1.23
+owns and implements the per-engine Python producer, so strict Phase 1 validation has no forward
+dependency on this phase for that prerequisite. Selected Apple hardware validation remains open. Phase 2's
 `d578…` / `a0d1…` final review and source-matched Stage 1 are historical GREEN evidence from a
 freeze rejected by Apple attempt 4. Its follow-on fp16 Bark correction is implemented with focused
 Python/Haskell unit checks GREEN and passed renewed final review plus complete Stage 1 against
@@ -63,6 +67,9 @@ cohort on 2026-07-08, and Wave S closed the Linux lanes on 2026-07-09. The prior
 > make the runtime model honest and durable.
 
 ## Phase Status
+
+> **Execution-order pause:** Phase 4 is blocked by Phase 0 Sprint 0.22. The detailed state and
+> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > **Typed-execution-plan supersession (2026-07-25).** The memory paragraphs below record the
 > historical Sprints 4.27/4.30/4.31 increments and their evidence. Phase 1 Sprint 1.19 has replaced
@@ -2856,69 +2863,58 @@ counts in the message.
 
 ---
 
-## Sprint 4.36: Restore The Darwin Per-Engine Python Producer [Active]
+## Sprint 4.36: Restore The Darwin Per-Engine Python Producer [Done]
 
-**Status**: Active — opened 2026-08-08 by the
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Code-side open; no cohort evidence.
-**Implementation**: `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/CappedEngine/Internal.hs`,
-`src/Infernix/Python.hs`, `docker/Dockerfile`
-**Docs to update**: none — the target shape is already declared; this sprint makes the code match it
+**Status**: Done — superseded and re-homed on 2026-08-08. The complete producer/consumer correction is owned and
+implemented by [Phase 1 Sprint 1.23](phase-1-repository-and-control-plane-foundation.md), because
+strict numerical Phase 1 validation cannot depend on unfinished Phase 4 work. No Phase 4 code or
+cohort dependency remains for this item.
+**Implementation**: see Phase 1 Sprint 1.23
+**Docs to update**: see Phase 1 Sprint 1.23
 
 ### Objective
 
-Give the per-engine Python environment a producer on Darwin, and make the code that demands it the
-code that produces it.
+Historical objective: give the per-engine Python environment a producer on Darwin and collapse the
+code that produces and consumes its readiness evidence. Phase 1 Sprint 1.23 now owns that objective.
 
 ### Deliverables
 
-- **The missing producer.** `ensurePerEngineFrameworkVenvReady` (`Runtime/Worker.hs:274-301`) demands
-  `python/engines/<name>/.venv/bin/python` plus a `.infernix-framework-groups-*` marker whose body it
-  specifies at `:339-349`. On Darwin `perEngineFrameworkGroups` (`:303-321`) returns
-  `["apple-silicon"]` for transformers-python, pytorch-python and diffusers-python, making both
-  mandatory. The only producer in the repository is `docker/Dockerfile:370-387`, wrapped in
-  `if [ "${RUNTIME_MODE}" = "linux-cpu" ]`. The window that closed Sprint 4.32 deleted the in-process
-  repair branch and left `ensurePoetryProjectInstalledWithGroups` (`Python.hs:108`) exported with
-  **zero callers**. Verified on the development host: all four of
-  `python/engines/{diffusers,pytorch,transformers,vllm}` exist and none has a `.venv`.
-- **Blast radius, stated rather than implied**: 8 of the 16 models in the live `./infernix.dhall`
-  dispatch to `PythonStdio` on Apple and fail identically — `llm-smollm2-safetensors`,
-  `audio-demucs-htdemucs`, `audio-open-unmix`, `music-omnizart`, `audio-bark-small`,
-  `music-mt3-infer`, `music-mr-mt3`, and `image-sdxl-turbo`. None of the cheap gates reaches this:
-  the only unit coverage (`test/unit/Spec.hs:3058-3060`) asserts the `RuntimeMode -> Bool` table and
-  never exercises the filesystem precondition, so it surfaces first at live inference.
-- **One derivation, not three.** The interpreter path is re-derived independently at
-  `Runtime/CappedEngine/Internal.hs:499-506`, which hard-fails at `:480-491` with its own message, and
-  the marker body is hand-reimplemented a third time in shell in the Dockerfile. Relaxing only
-  `Worker.hs:290` moves the failure ~700 lines away rather than fixing it. The derivation collapses to
-  one place in this sprint, or `linux-cpu` inherits the drift being removed from Apple. Ledgered in
-  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
-- **Ordering note for whoever runs this**: `ensurePythonEngineSetupReady` (`:245-260`) checks
-  `bootstrap.json` *before* the venv check at `:260`, and that artifact **does** have a Darwin
-  producer (`infernix internal materialize-metal-engines`). So a clean host shows the bootstrap error
-  first; satisfying it then exposes this one, which `materialize-metal-engines` does not fix.
+- The audit found the Darwin producer absent, an orphaned installer export, and three independent
+  copies of the interpreter/marker derivation. Eight of the 16 then-live Apple catalog rows dispatched
+  to Python stdio and would fail after their separate `bootstrap.json` precondition was satisfied.
+- Phase 1 Sprint 1.23 implements one canonical binding-derived plan, one project-lock-aware
+  Provisioning producer with post-install project digest and marker readback, and one fail-closed
+  runtime observer. Apple startup, `internal materialize-metal-engines`, and `internal
+  materialize-substrate` all invoke it before inference; the Linux CPU Docker shell copy and the
+  orphaned installer are removed.
+- Focused `-Wall -Werror` compilation and the complete unit suite are GREEN. The live Apple plus
+  paired `linux-cpu` cohort stays open under Phase 1/Wave Y and is not claimed here.
 
 ### Validation
 
-Per-model live inference for the 8 affected models on Apple, plus the paired `linux-cpu` run proving
-the collapsed derivation did not regress the container producer.
+Validation ownership moved with the implementation to Phase 1 Sprint 1.23 and Wave Y.
 
 ### Remaining Work
 
-All of it. **Cohort gate**: [Wave Y](cohort-validation-waves.md).
-
-Two further Darwin residuals in this phase's surface, found in the same audit and not yet owned by a
-sprint of their own:
+None for the per-engine producer in Phase 4. Two further Darwin residuals found in the same audit
+remain Phase 4 concerns, but neither is an unconditional Phase 1 cohort prerequisite:
 
 - **Apple footprint sampler has no vanished-member tolerance.**
   `Runtime/CappedEngine/FixedObserver.hs:221-224` returns `Left` for the whole group when any single
   member's `footprint` call fails, and `CappedEngine/Internal.hs:1339` turns that into a terminal
   `EngineEnforcementUnavailable`. The Linux twin explicitly hardens the same race
-  (`Internal.hs:1750-1800`: skip, terminal-state check, bounded retry).
+  (`Internal.hs:1750-1800`: skip, terminal-state check, bounded retry). This is a probabilistic
+  watchdog residual rather than a deterministic materialization blocker; if it manifests in the
+  frozen Apple cohort it is a surfaced Phase 4 failure, not a reason to defer Phase 1 validation
+  without running it.
 - **Native model-cache hydration refuses zero-byte objects permanently.**
   `Runtime/Worker.hs:646-658` raises on an empty object, and the presence guard at `:634-636` treats a
   zero-byte file as absent, so every retry re-refuses. Reached only by
   `image-apple-stable-diffusion-coreml` and `llm-qwen15-mlx` on a cold cache — both Apple-only, both
-  in the live catalog.
+  in the live catalog. The currently selected upstream snapshots contain no legitimate zero-byte
+  payloads, and refusing an observed zero-byte cache entry is fail-closed; this is therefore not a
+  current Phase 1 cohort blocker. A future supported snapshot that intentionally contains an empty
+  object would need a typed size/digest manifest before this rule can be relaxed.
 
 ---
 

@@ -119,31 +119,31 @@ Kubernetes placement rules; Apple engine members are host daemons with
 stable host ids. **No daemon has a PVC** — the only durable state
 is in MinIO (binary blobs) and Pulsar (event streams). The engine
 pod uses an ephemeral `emptyDir` mount with hard `sizeLimit` for
-model-weight staging only. The supported per-pod placement, replica
-policy, pool ownership, and no-PVC posture are codified in
+model-weight staging only. The supported per-machine process policy,
+pool ownership, and no-PVC posture are codified in
 [daemon_topology.md](daemon_topology.md) and
 [engine_pool_routing.md](engine_pool_routing.md).
 
 ## Stateless Transport Coordination
 
-The application Service has `sessionAffinity: None`. Any WS connection
-lands on any replica. There is no sticky session, no client-IP affinity,
-no cookie affinity on the HTTPRoute.
+The application Service has `sessionAffinity: None`. One frontend process
+runs per machine and may serve any WS connection. There is no sticky
+session, no client-IP affinity, and no cookie affinity on the HTTPRoute.
 
-- On WS connect, the pod validates the JWT, extracts `userId`, and opens
+- On WS connect, the frontend process validates the JWT, extracts `userId`, and opens
   Pulsar **Reader** subscriptions (cursor-based, no shared subscription
-  state across pods) on the user's compacted contexts topic, the compacted
+  state across connections) on the user's compacted contexts topic, the compacted
   drafts topic, and each context's conversation topic as the user opens
   it.
 - Events the Reader yields are forwarded to the WS as typed
   `WsServerMessage`s carrying projected state snapshots and patches.
 - On WS receive, the pod publishes to the appropriate Pulsar topic.
-  Pulsar's broker fans the event out to every pod with a Reader on that
-  topic — other tabs, other pods, the dispatcher, the cluster daemon.
+  Pulsar's broker fans the event out to every Reader on that topic —
+  other tabs and the coordinator/engine consumers.
 - The per-context dispatcher uses a Pulsar named **Failover**
-  subscription on each conversation topic, so exactly one pod is the
-  active dispatcher per context at a time. Different concern, different
-  Pulsar primitive.
+  subscription on each conversation topic, so exactly one consumer is
+  the active dispatcher per context at a time. This is broker
+  coordination, not standby-replica availability.
 
 **No Redis, no NATS, no in-cluster session broker.** Pulsar is the
 inter-pod fan-out path because the platform already deeply depends on it,
@@ -324,11 +324,11 @@ rule:
 > matching `UserCancel`.
 
 That decision is a deterministic function of the log prefix.
-Implementation: a Pulsar named `Failover` subscription per conversation
-topic — exactly one pod is the active dispatcher per context at a time.
-On crash, Pulsar promotes a surviving pod automatically and redelivers
-unacked messages; the new dispatcher reaches the same decision because
-it folds the same log.
+The coordinator uses a Pulsar named `Failover` subscription per conversation
+topic, so exactly one consumer is the active dispatcher per context at a time.
+After a crash, the owning coordinator process restarts and resubscribes under
+the stable name; Pulsar redelivers unacknowledged messages, and the dispatcher
+reaches the same decision because it folds the same log.
 
 **Two prompts in a row.** Permitted. UI renders the second prompt as
 "queued" until the first completes. State is derived from the same fold.
@@ -366,10 +366,10 @@ This section names the platform-level recovery primitives.
 No application pod holds authoritative state. Recovery relies on three
 primitives:
 
-- **Pulsar named Failover subscriptions** on the dispatcher, the
-  result-to-conversation bridge, and the cluster daemon's inference
-  request consumer. Failover is automatic and unacked messages are
-  redelivered to the new active consumer.
+- **Pulsar named Failover subscriptions** on the dispatcher and the
+  result-to-conversation bridge. When the owning process restarts and
+  resubscribes under the stable name, unacknowledged messages are
+  redelivered from the durable cursor.
 - **Pulsar producer-side deduplication** (`enableProducerDeduplication =
   true`) on the conversation, inference-request, and inference-result
   topics. Named producers plus dedup sequence IDs derived from upstream
@@ -380,24 +380,27 @@ primitives:
 
 Failure modes:
 
-- **WS-hosting pod crash.** WS drops; client reconnects to any replica;
-  new pod re-derives Readers from the JWT; state replays from Pulsar.
+- **Frontend process crash.** WS drops; the process restarts, clients
+  reconnect, and the process re-derives Readers from each JWT; state replays from Pulsar.
   Pending submits replay via `clientIdempotencyKey` retry; reducer dedup
-  catches duplicates. The WS pod acks a client submit only after Pulsar
+  catches duplicates. The frontend acknowledges a client submit only after Pulsar
   confirms the publish, so "acked then crashed" implies "already on the
   log."
-- **Dispatcher pod crash.** Pulsar Failover redelivers unacked
-  `UserPrompt`; new dispatcher applies the same pure-fold rule; producer
+- **Dispatcher process crash.** The restarted dispatcher resubscribes under
+  its stable Failover name; Pulsar redelivers unacknowledged `UserPrompt`
+  messages, and the dispatcher applies the same pure-fold rule; producer
   dedup on `inference.request.<mode>` (keyed by `userPromptMessageId`)
   prevents duplicate dispatches.
-- **Result-to-conversation bridge crash.** Same Failover + producer-dedup
-  pattern on `inference.result.<mode>` → conversation topic writeback
+- **Result-to-conversation bridge process crash.** The same stable-name
+  resubscription plus producer-dedup pattern applies on
+  `inference.result.<mode>` → conversation topic writeback
   (dedup keyed by `(userPromptMessageId, kind = InferenceResult)`).
-- **Cluster daemon crash mid-inference.** Pulsar redelivers the unacked
-  inference request; new engine has KV-cache miss for the request's
-  `prefixHash`; rebuilds by folding the conversation log; runs inference;
-  producer dedup on the result topic prevents a duplicate result if the
-  original pod had partially published.
+- **Engine member crash mid-inference.** Pulsar redelivers the
+  unacknowledged inference request to another eligible `Shared` fleet
+  member when one exists; otherwise it remains pending until an eligible
+  member returns. A receiving engine with a KV-cache miss for the request's
+  `prefixHash` rebuilds by folding the conversation log, and producer dedup
+  prevents a duplicate observable result if the prior process partially published.
 - **Pulsar broker / MinIO / IdP outages.** The platform services run single-node, so an outage is
   an outage: recovery is restart, and durability comes from their own storage rather than from
   replication.
@@ -406,7 +409,7 @@ Failure modes:
 
 ## Validation
 
-The primitives are exercised by the Phase 7 validation surface
+The primitives are exercised by the validation surface
 ([../development/demo_app_test_plan.md](../development/demo_app_test_plan.md))
 through the first concrete binding. The primitives themselves are
 covered by:

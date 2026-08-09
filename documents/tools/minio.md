@@ -14,31 +14,20 @@
   the linux-gpu full-catalog eagerly-staged model set without hitting MinIO's low-free-space guard
   during later model rows. One instance per platform service is the supported topology; there is no
   within-role replication and instance loss is restore-from-backup, not automatic recovery
-- **the single-instance layout is not reachable by in-place upgrade.** A single instance uses a
-  plain backend directory (`minio server /data`); two or more use one
-  `http://infernix-minio-<ordinal>.infernix-minio-headless…/data` endpoint each, which is an
-  erasure-coded distributed set. The two on-disk layouts are not interchangeable, so a cluster
-  created under the retired four-node shape must be **torn down and rebuilt**:
-
-  ```bash
-  infernix cluster down
-  infernix cluster up
-  ```
-
-  Bucket contents do not survive that teardown. `infernix-models` is repopulated by the
-  coordinator's eager staging at startup, `infernix-engine-artifacts` by the next
-  materialization, and `infernix-demo-objects` — user uploads and generated artifacts — is
-  **lost**. Export anything in the demo bucket that matters before tearing down. This is a
-  reduction in what an in-place upgrade can do and is recorded as such rather than as a
-  transparent change
+- a single instance uses a plain backend directory (`minio server /data`). That layout is not
+  interchangeable with MinIO's multi-endpoint erasure-coded layout, and in-place conversion between
+  them is unsupported. Moving data from a distributed layout requires an explicit export, cluster
+  teardown/rebuild, and restore; the operator must export user-visible
+  `infernix-demo-objects` data before teardown. Rebuildable `infernix-models` and
+  `infernix-engine-artifacts` content is repopulated through eager staging and materialization
 - on a pristine cluster, MinIO may pull from public container repositories only when it is one of
   Harbor's required backend services before Harbor becomes pull-ready
-- the supported durable target shape uses **three MinIO buckets**:
+- the supported durable shape uses **three MinIO buckets**:
   - `infernix-models` — always-on (not demo-gated); platform model weights, tokenizers, and
     configs at `<modelId>/<filename>` plus a `<modelId>/.ready` sentinel object; populated
     eagerly at coordinator startup from the mounted substrate model set, gated by the
     `warm-model-cache` cluster-up barrier; the
-    `infernix/system/model.bootstrap.request` topic is now only the on-demand fallback for an
+    `infernix/system/model.bootstrap.request` topic is the on-demand fallback for an
     engine that hits an unstaged model; read by every engine pod (Linux) and the on-host engine
     daemon (Apple)
   - `infernix-engine-artifacts` — always-on (not demo-gated); immutable content-addressed engine
@@ -127,7 +116,7 @@ See [../architecture/demo_app_design.md](../architecture/demo_app_design.md) for
 storage contract and [../engineering/object_storage.md](../engineering/object_storage.md) for
 the presigned-URL contract.
 
-## Per-user STS scoping (Phase 9)
+## Per-user STS Scoping
 
 As an IAM-layer defense-in-depth behind the server-side `pathBelongsToUser` check, the
 `infernix-demo` object-proxy can exchange the shared root MinIO credential for a short-lived,
@@ -145,7 +134,7 @@ objects even at the IAM layer - the machinery is `Infernix.Objects.Sts` (`userSc
 `cluster.minio.stsPerUser : Bool` (**default `True`**); when `True` the object-proxy uses the scoped
 credential, otherwise it uses the shared root credential - this is a **second** boundary: the
 server-side `pathBelongsToUser` check on the verified `sub` remains the first-line gate, and STS
-ensures the shared root credential is no longer the sole isolation.
+ensures the shared root credential is not the sole isolation mechanism.
 
 See [../architecture/access_control_doctrine.md](../architecture/access_control_doctrine.md) and
 [../architecture/tenant_isolation_doctrine.md](../architecture/tenant_isolation_doctrine.md).
@@ -168,10 +157,7 @@ webapp's `/api/objects` endpoints rather than a browser console, with the webapp
 externally routed file surface (see
 [../architecture/object_access_doctrine.md](../architecture/object_access_doctrine.md)).
 There is no `/minio/s3` gateway route and no MinIO console; browser file access flows only through
-the webapp-mediated `/api/objects` path. If a future plan reintroduces the MinIO browser console, it
-will use a
-multi-arch upstream image at a known tag and the change will land in the chart together with a new
-supported route.
+the webapp-mediated `/api/objects` path.
 
 The substrate → container architecture mapping is owned by
 [../architecture/runtime_modes.md](../architecture/runtime_modes.md); Harbor publication
