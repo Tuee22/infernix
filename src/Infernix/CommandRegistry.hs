@@ -36,6 +36,7 @@ data Command
   | LintDocsCommand
   | LintProtoCommand
   | LintChartCommand
+  | LintPlanCommand
   | TestLintCommand
   | TestUnitCommand
   | TestIntegrationCommand
@@ -302,12 +303,13 @@ lintCommandFamily :: CommandFamily
 lintCommandFamily =
   CommandFamily
     { familyTopic = "lint",
-      familyOverview = "runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets",
+      familyOverview = "runs the focused Haskell-owned static checks for files, docs, `.proto`, chart assets, and development-plan standards",
       familyCommands =
         [ simpleCommand "lint files" "runs the tracked-file and generated-artifact hygiene checks" LintFilesCommand,
           simpleCommand "lint docs" "runs the governed-documentation and development-plan-shape validator (`runDocsLint`)" LintDocsCommand,
           simpleCommand "lint proto" "runs the protobuf contract validator" LintProtoCommand,
-          simpleCommand "lint chart" "runs the Helm and chart ownership validator" LintChartCommand
+          simpleCommand "lint chart" "runs the Helm and chart ownership validator" LintChartCommand,
+          simpleCommand "lint plan" "runs the development-plan standards scans for status vocabulary, dependency direction, accelerator scope, declarative language, and the removal ledger" LintPlanCommand
         ]
     }
 

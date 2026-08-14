@@ -168,13 +168,26 @@ COPY python/pyproject.toml /workspace/python/pyproject.toml
 # total). GHCRTS is scoped to each command so it cannot leak into image runtime;
 # the compiler heap/address flags and final jobs value override project/config
 # files at the child boundary.
+#
+# The two steps that build third-party packages deliberately do NOT export
+# GHCRTS. A `build-type: Custom` dependency compiles its own `Setup` program,
+# cabal links that program without `-rtsopts`, and an un-`rtsopts` binary does
+# not honour an inherited GHCRTS — it refuses to start
+# ("Most RTS options are disabled"). Measured: `entropy-0.4.1.11`, required by
+# `wai-websockets`, failed its configure step for exactly this reason. Dropping
+# the export here gives up no bound that ever applied, because the cap was fatal
+# rather than effective on those helpers; the driver cap (`cabal +RTS -M1024M`)
+# and the compiler cap (`--ghc-options=+RTS -M4096M -xr12288M`) are both still
+# passed on the command line, where they bind. This is why the plugin below is
+# linked `-rtsopts=ignore -with-rtsopts=-M1024M`: that is the one binary this
+# image later runs *with* GHCRTS set, so it must be built to admit it.
 RUN mkdir -p /workspace/.build /workspace/tools/generated_proto \
     && GHCRTS=-M1024M cabal +RTS -M1024M -RTS update \
-    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+    && cabal +RTS -M1024M -RTS \
          build all --only-dependencies \
          --jobs=1 \
          '--ghc-options=+RTS -M4096M -xr12288M -RTS' \
-    && GHCRTS=-M1024M cabal +RTS -M1024M -RTS \
+    && cabal +RTS -M1024M -RTS \
          install proto-lens-protoc-0.9.0.1 \
          --installdir=/opt/infernix/proto-tools \
          --install-method=copy \
@@ -266,6 +279,7 @@ RUN set -eu; \
     mkdir -p /opt/infernix/audiveris-javacpp-cache; \
     /opt/infernix/audiveris-jre/bin/java \
       -Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache \
+      -Dorg.bytedeco.javacpp.canCreateSymbolicLink=false \
       -cp '/opt/audiveris/lib/app/*' Audiveris -version; \
     python3 -m venv --copies /opt/infernix/native-python; \
     /opt/infernix/native-python/bin/python -m pip install --upgrade pip; \

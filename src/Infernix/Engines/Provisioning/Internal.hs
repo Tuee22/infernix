@@ -55,6 +55,7 @@ import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
 import Infernix.Engines.Artifact.Identity qualified as Identity
 import Infernix.Engines.Artifact.Recipe qualified as Recipe
+import Infernix.Engines.Artifact.Target qualified as Target
 import System.FilePath ((</>))
 
 -- | Exact executable evidence minted by the provisioning region and consumed
@@ -326,8 +327,7 @@ installedSmokeExecutableRelativePath adapter =
     OnnxRuntimeAdapter -> fixedVenvPythonRelativePath
     MlxAdapter -> fixedVenvPythonRelativePath
     CoreMlAdapter -> fixedVenvPythonRelativePath
-    JvmAdapter ->
-      "Audiveris.app/Contents/runtime/Contents/Home/bin/java"
+    JvmAdapter -> Target.audiverisAppleJvmRelativePath
 
 installedSmokeArguments ::
   AppleAdapterId ->
@@ -341,7 +341,13 @@ installedSmokeArguments adapter artifactRoot =
     OnnxRuntimeAdapter -> pythonArguments
     MlxAdapter -> pythonArguments
     CoreMlAdapter -> pythonArguments
-    JvmAdapter -> ["-version"]
+    -- `java -version` reports the JVM, on standard error, in three lines. The
+    -- smoke's parser wants Audiveris's own seven-field banner, because that is
+    -- the version the pinned checksum receipt binds. Reaching it means running
+    -- the same classpath and main class the inference target runs, so the smoke
+    -- proves the executed thing rather than the interpreter under it.
+    JvmAdapter ->
+      Target.audiverisAppleLeadingArguments artifactRoot <> ["-version"]
   where
     pythonArguments =
       [ "lib" </> "apple_native_runner.py",

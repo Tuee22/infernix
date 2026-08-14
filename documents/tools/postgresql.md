@@ -9,7 +9,7 @@
 
 - every in-cluster PostgreSQL dependency uses a Patroni cluster managed by the Percona Kubernetes operator
 - a service may use a dedicated PostgreSQL cluster, but it still uses that same operator-managed Patroni model rather than a chart-managed standalone PostgreSQL deployment
-- services or add-ons that can self-deploy PostgreSQL, such as Grafana or similar charted workloads, disable that embedded chart path and point at an operator-managed cluster instead
+- services or add-ons whose chart can self-deploy PostgreSQL disable that embedded chart path and point at an operator-managed cluster instead
 - Harbor's supported database path is the operator-managed `harbor-postgresql` cluster together
   with its PgBouncer deployment; there is no `infernix-harbor-database` StatefulSet
 - PostgreSQL claims explicitly use `storageClassName: infernix-manual`, which is backed by

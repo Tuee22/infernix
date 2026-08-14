@@ -1,103 +1,24 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Blocked — Phase 0 Sprint 0.22 is the earliest blocker.
-**Blocked by**: Phase 0 Sprint 0.22; afterward, Phase 1 Sprints 1.20–1.25
-**Suspended prior state**: Blocked — Sprints 2.14–2.16 retain landed implementation, but Phase 2 may not begin its
-current-source closure while Phase 1 Sprints 1.20–1.25 remain Active. The 2026-08-02 review,
-machine-independent gates, and paired `linux-cpu` run belong to an older source identity and are
-historical evidence only. After Phase 1 is `Done`, Phase 2 must perform its own settled-source review
+**Status**: Blocked — Phase 1 Sprints 1.20–1.25 remain Active.
+**Blocked by**: Phase 1 Sprints 1.20–1.25
+**Current state**: Sprints 2.1–2.13 retain their recorded closure. Sprints 2.14–2.16 retain landed
+implementation, but Phase 2 may not begin its current-source closure while Phase 1 Sprints
+1.20–1.25 remain Active. After Phase 1 is `Done`, Phase 2 must perform its own settled-source review
 and machine-independent gates before freezing one identity for Apple Silicon and then the paired
 `linux-cpu` cohort. No current Phase 2 gate or cohort has started.
 
-The now-superseded Apple attempt 5 passed style, Python, Haskell unit, and web 83/83; replayed
-retained state; built workload tag `sha256-12e0ab1c…cc1e`; registry-only verified that image; and
-was publishing registry-verified support images when the architectural interjection invalidated
-the freeze. Cancellation preserved the primary `user interrupt` but exposed the lifecycle C
-lock's same-process cleanup contention (`errno 35`). Supported dead-owner recovery staged every
-retained claim and observed Kind absent; the reservation was retired and the operator config
-restored. No attempt-5 result is closure evidence.
-
-Historical pre-correction context follows. The latest Apple attempt exposed that `audio-bark-small`'s 5120 MiB
-`ModelMemoryFootprint` under-estimated its real peak resident memory. The diagnosed correction is
-implemented: Bark now declares 8192 MiB, the strict integration rule still requires every admitted
-catalog placement to complete, the Playwright catalog-matrix runtime-ceiling escape hatch is
-removed, and exact Apple/Linux admission unit coverage proves 8192 <= 10240 MiB on Apple and
-8192 > 4096 MiB on `linux-cpu`. The final publication audit then found that the host Docker content
-cache could satisfy the old `PublishVerifyPull` and falsely mint `BlobServable` without proving
-Harbor could serve the remote bytes. That verifier is replaced by a bounded, authenticated,
-platform-selected `skopeo copy` from the Harbor API authority into a fresh empty `dir:` store under
-a birth-identity-owned mode-0700 directory; success reads the selected manifest, config, and every
-layer independently of Docker's shared store. Protected-auth and verification-directory cleanup
-preserves the primary failure, dead-owner auth directories remain reconciled, and unit coverage
-checks the closed command, credential redaction, and absolute destination path. The pre-correction
-final review was GREEN as run with no High/Medium findings, including Bark's exact 10240 MiB Apple
-ceiling assertion. The pre-correction complete Stage 1 gate was also GREEN as run against worktree digest
-`sha256:d57823179d2749a884dfa5b8258070ec2579023fc5b12bd14274c2a6b5f7a487` and installed binary
-`sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`.
-Apple behavioral attempt 4 rejects that freeze for closure: registry-only skopeo verification
-passed for the workload and every support image, cluster and route startup passed, all 16 models
-staged, and both 12288 MiB image rows were correctly unavailable against the 10240 MiB Apple
-budget. `audio-bark-small` was then admitted at required=available=8192 MiB and again breached the
-live `capped-engine-resident-ceiling`. Exhaustive cleanup staged every retained claim, deleted the
-harness cluster, and preserved the primary Bark diagnostic. The follow-on correction is
-implemented: Bark loads MPS/CUDA weights as fp16 while retaining fp32 on CPU, runs evaluation under
-`torch.inference_mode()`, and converts generated audio to CPU fp32 before WAV serialization.
-The renewed pre-correction final review was GREEN as run with no High/Medium findings; the sole Low observation is that the
-focused adapter regression is substring-golden coverage, with runtime behavior assigned to the
-pending live Apple MPS lane and later CUDA lane. The pre-correction complete source-matched Stage 1 gate was GREEN as run
-against worktree digest
-`sha256:eae424db7dec765ab89f3c73f4dbd1f282d5ee342e7bc1aa5c01e8ef6ac10228` and installed binary
-`sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`.
-Both results are superseded and nonreusable. The accepted 2026-07-27 Phase 0 correction identity,
-final review, and complete Stage 1 now exist; they do not close Phase 2. No post-correction Apple
-attempt or `linux-cpu` lane exists.
-The first Apple Silicon behavioral run remains rejected historical evidence: a partial deployment
-left retained PVCs without live pods, so pod-derived claim discovery could not name an owner during
-harness cleanup, and cleanup exceptions masked primary failure evidence. The then-current correction
-infers podless retained claims only when exactly one paused workload-capable worker can own them;
-preserves and exhausts synchronous and asynchronous cleanup across lifecycle, daemon, snapshot,
-credential, temporary-path, and descriptor boundaries; masks bounded parent/internal supervisor
-acquisition while leaving interruptible waits interruptible; retires an activity lease only after
-exact reap and command/supervisor-group absence proofs; and retains protocol, terminal-status,
-stdout, stderr, and cleanup diagnostics together. The rejected digest
-`sha256:c5a3d6103c93e7027e13ce6a0aaeb2f49d0ad30d09b5e35295970e81bd994c39`
-remains prior evidence only. The later rejected pre-evidence worktree digest is
-`sha256:63ab2dd3ff12d266db337464ec272335f3bd72acf7c0ab86a98291da7a4e746f`;
-the result-block edits recording it were evidence-only.
-The next then-current-source Apple attempt successfully reconciled the retained dead-owner state,
-staged every retained claim, and deleted the stale cluster through the production recovery path.
-It then passed the Haskell unit and web 83/83 layers before live integration failed in
-`DockerBuildOperation`: the Linux image's `cabal build all` reached 77/87 while compiling
-`Infernix.Runtime.Cache`, then reported `Cabal-7125` without an underlying compiler diagnostic.
-BuildKit records beginning `5v09...` and `gcy...` later exposed the deterministic failure:
-Linux `-Wunused-top-binds` under `-Werror` rejected the Darwin-only `continueIfRunning` helper in
-`Runtime/CappedEngine/Internal.hs`. The last visible `Runtime.Cache` line was parallel log drain,
-and the build records exonerated host, Docker, and VM resources. The correction CPP-guards the
-helper to Darwin, matching its only call site.
-The exhaustive finalizer again staged every retained claim, deleted the harness cluster, and
-preserved that primary diagnostic. This attempt rejects the prior executable-source freeze and
-Stage 1 evidence. The later Bark footprint/test correction invalidated the next green source
-identity as closure evidence, and the Harbor verification correction changed executable source
-again. Final combined-source review and the complete source-matched Stage 1 gate passed for the
-later `d578…` / `a0d1…` identity, but attempt 4 rejects that freeze too. The fp16 Bark runtime
-correction had renewed final review and a complete Stage 1 GREEN as run against `eae424…` /
-`a0d1…`; that evidence is superseded by the native-source correction. Phase 0's correction review
-and Stage 1 are green; Phase 2 remains blocked by Phase 1, after which its own closure and then
-Apple and `linux-cpu` remain ordered.
-The pre-correction collision-safe target-exec provenance, initially anchored then detached
-parent-death supervision, parent-side process-group termination, real monotonic readiness
-deadlines, stale-state mutation publication, claim-permission repair, and operator-kubectl
-mutation-bypass corrections are all included in that historical result. Phase 2 remains blocked by
-Phase 1; after it closes, Phase 2 remains open until one uninterrupted Apple Silicon
-`test all` and the source-matched `linux-cpu` build plus uninterrupted `test` both pass. The
-correction set also includes a global cross-runtime cluster
-inventory, lifecycle-region-indexed owner/runtime teardown authority, a harness
-reservation established before config takeover, writer-frozen transactional Apple snapshots,
-durable pre-workload retained-replay intent with proof-gated interrupted-create recovery,
-effect-adjacent authority and replay-intent revalidation for every Kind deletion, closed operand
+The landed correction set is a global cross-runtime cluster inventory, lifecycle-region-indexed
+owner/runtime teardown authority, a harness reservation established before config takeover,
+writer-frozen transactional Apple snapshots, durable pre-workload retained-replay intent with
+proof-gated interrupted-create recovery, effect-adjacent authority and replay-intent revalidation
+for every Kind deletion, collision-safe target-exec provenance, detached parent-death supervision,
+parent-side process-group termination, real monotonic readiness deadlines, stale-state mutation
+publication, claim-permission repair, operator-kubectl mutation-bypass refusal, closed operand
 validation at the subprocess compiler, single-deadline generated retries, observed post-failure
-absence, and stdin/protected-file credential transport. Sprints 2.1–2.13 retain their recorded
-closure.
+absence, and stdin/protected-file credential transport. Phase 2 remains open until Phase 1 closes,
+its own review and machine-independent gates pass, and one uninterrupted Apple Silicon `test all`
+plus the source-matched `linux-cpu` build and uninterrupted `test` both pass in that order.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -107,40 +28,12 @@ closure.
 
 ## Phase Status
 
-> **Execution-order pause:** Phase 2 is blocked first by Phase 0 Sprint 0.22, then by its recorded
-> Phase 1 prerequisite. The detailed state and evidence below are suspended intact.
-
 Sprints 2.1–2.13 are closed. Sprints 2.14–2.16 are blocked by the current Phase 1 closure. Their
 implementation remains landed, but no current Phase 2 review, machine-independent gate, or cohort
 may start until Phase 1 is `Done`; Phase 2 then runs those gates before Apple Silicon and the paired
-`linux-cpu` lane. The chronology below is retained as historical evidence only and does not alter
-that current ordering.
+`linux-cpu` lane. Fresh review and a complete Stage 1 precede the uninterrupted Apple `test all`;
+the source-matched `linux-cpu` build and uninterrupted `test` run only after Apple.
 
-The first Sprint 2.14–2.16 source identity passed a complete
-machine-independent gate on 2026-07-26, but the Apple Silicon behavioral lane then surfaced a
-podless retained-claim teardown case and cleanup exception masking, invalidating that identity
-before `linux-cpu` started. A later source identity passed the complete Apple-host Stage 1 gate, and
-its Apple retry proved production dead-owner recovery and exhaustive failure cleanup. BuildKit
-records then classified that retry's `Cabal-7125` as a deterministic Linux
-`-Wunused-top-binds`/`-Werror` defect in the unguarded Darwin-only `continueIfRunning` helper, not a
-resource failure; the visible `Runtime.Cache` line was parallel drain. The helper is now
-CPP-guarded to Darwin. The subsequent Bark correction recalibrates its footprint from 5120 to
-8192 MiB, retains strict integration completion for admitted placements, removes the Playwright
-runtime-ceiling tolerance, and adds exact Apple/Linux admission unit coverage. Final adversarial
-review then found that the cached Docker pull verifier could mint `BlobServable` without an
-independent Harbor read. The implemented registry-only verifier uses bounded authenticated
-platform-selected `skopeo copy` into a fresh birth-identity-owned mode-0700 directory store, with
-primary-preserving cleanup and dead-owner auth-directory reconciliation. Final combined-source
-review and the complete Stage 1 gate passed against `d578…` / `a0d1…`, but Apple attempt 4 rejected
-that freeze after Bark again breached its live resident ceiling at required=available=8192 MiB.
-Registry-only verification, cluster/routes, 16-model staging, correct unavailability of both
-12288>10240 MiB image rows, and exhaustive primary-preserving teardown all passed in that attempt.
-The implemented follow-on loads Bark in fp16 on MPS/CUDA and fp32 on CPU, runs generation under
-`torch.inference_mode()`, and serializes the result as CPU fp32 WAV data. Renewed final review has
-no High/Medium findings (the sole Low is the substring-golden regression scope), and complete
-Stage 1 was GREEN for `eae424…` / `a0d1…`, but the native-source correction supersedes it. Fresh
-review and complete Stage 1 precede another uninterrupted Apple `test all`; the source-matched
-`linux-cpu` build and uninterrupted `test` run only after Apple.
 The Kind bootstrap, manual PV doctrine, Harbor-first image flow,
 shared substrate publication path, Linux outer-container launcher contract, lifecycle progress
 surface, retained-state repair behavior, narrowed bootstrap responsibility boundary, and teardown
@@ -151,12 +44,8 @@ process environment in the shared cluster/process-monitor helpers, and routes kn
 through the `HostConfig`-backed HostTool resolver. The Apple setup path in
 `src/Infernix/Engines/AppleSilicon.hs` no longer inherits the parent environment; it invokes the
 Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
-environment. Wave A and Wave C retain historical evidence for that Sprint 2.13 source, but do not
-close the reopened Phase 2 correction. The implemented Bark footprint/test and registry-only
-Harbor-verification corrections passed final combined-source review and complete Stage 1 for the
-now-rejected `d578…` / `a0d1…` freeze. Apple attempt 4 reproduced Bark's live resident-ceiling
-breach at 8192 MiB. The fp16 accelerator-load correction passed source-matched final review and
-the complete Stage 1 against `eae424…` / `a0d1…`; the native-source correction supersedes both.
+environment. [Wave A](cohort-validation-waves.md) and [Wave C](cohort-validation-waves.md) retain
+historical evidence for that Sprint 2.13 source, but do not close the reopened Phase 2 correction.
 The obsolete C/Cabal boundary is removed. Current Phase 2 closure remains blocked by Phase 1; once
 unblocked it requires focused proof of the implemented all-Haskell replacement, renewed review,
 fresh machine-independent gates, and its ordered Apple/`linux-cpu` cohorts.
@@ -199,9 +88,9 @@ values overlay path, in-image `nvkind` path, shared substrate-publication filena
 responsibility boundary are implemented on the supported Kind substrate. `cluster up`, `cluster
 down`, and `cluster status` expose the active lifecycle action, phase, child-operation detail, and
 heartbeat during the monitored Docker build, Harbor publication, Harbor-backed Kind-worker
-preload, and Apple retained-state replay windows. Wave X (2026-07-24) proved the earlier Sprint 2.15
-typed-state scope, which extends this surface with the persisted `ClusterOwner` and a
-`ClusterMutating` (mutation-incomplete)
+preload, and Apple retained-state replay windows. [Wave X](cohort-validation-waves.md) proved the
+earlier Sprint 2.15 typed-state scope, which extends this surface with the persisted `ClusterOwner`
+and a `ClusterMutating` (mutation-incomplete)
 lifecycle position, so a killed test's cluster is reported dirty and reconciled on the next
 `cluster up` rather than read as a false `steady-state`. Bootstrap shells build or enter the active
 launcher only and then delegate lifecycle, validation, image preparation, and teardown to
@@ -214,19 +103,13 @@ readers do not observe truncated payloads, and retained-state Apple reruns autom
 reinitialize stopped Harbor PostgreSQL replicas from the current Patroni leader when timeline
 drift leaves replicas unready after promotion. Legacy lifecycle proof points are inventoried in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) rather than repeated in the
-current phase narrative. Wave A and Wave C remain historical evidence for the earlier storage,
-Helm, Harbor-first, retained-state, and lifecycle-progress source identity. Reopened Phase 2 has
-landed pre-correction implementation, including the Bark 8192 MiB recalibration and strict
-integration/Playwright catalog-matrix correction. The final audit's registry-only Harbor
-verification correction is also implemented with closed-command, redaction, and path coverage.
-The `d578…` / `a0d1…` final review and complete Stage 1 remain historical green evidence, but Apple
-attempt 4 rejected that freeze after Bark breached the 8192 MiB live ceiling. The fp16 Bark runtime
-correction passed renewed final review and complete Stage 1 against `eae424…` / `a0d1…` as
-historical GREEN-as-run evidence only. The no-native-source correction supersedes both identities.
-Phase 0's current correction final review and Stage 1 are green but do not close this phase. The
-all-Haskell lifecycle correction is implemented code-side; the bounded-subprocess replacement is
-also implemented, and the obsolete C/Cabal boundary is removed. Phase 2's ordered closure after
-Phase 1 and both Wave Y behavioral lanes remain before `Done`.
+current phase narrative. [Wave A](cohort-validation-waves.md) and
+[Wave C](cohort-validation-waves.md) remain historical evidence for the earlier storage, Helm,
+Harbor-first, retained-state, and lifecycle-progress source identity. Reopened Phase 2 carries
+landed implementation only: the registry-only Harbor verification correction is implemented with
+closed-command, redaction, and path coverage; the all-Haskell lifecycle correction and the
+bounded-subprocess replacement are implemented; and the obsolete C/Cabal boundary is removed.
+Phase 2's ordered closure after Phase 1 and both Wave Y behavioral lanes remain before `Done`.
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -569,27 +452,24 @@ distinguish real failure from ongoing first-run progress.
 
 - a cold `./bootstrap/apple-silicon.sh up` surfaces the image-build, Harbor-publication, and
   Harbor-backed final-image preload phases explicitly while it is still making forward progress
-- the recorded validation Apple lifecycle output had recorded the broad pre-Harbor support-image preload
-  phase as skipped and then verified or loaded Harbor-backed final image refs before rollout; that
-  output was produced on the legacy Apple Silicon hardware and no longer counts as a current
-  proof point
-- the recorded validation supported Apple lifecycle rerun had exercised the large Pulsar image
-  publication path through Harbor, retained-state replay, split-daemon inference, and final
-  teardown after the bounded Docker-push retry hardening; that rerun was also on the legacy
-  Apple Silicon hardware and no longer counts as a current proof point
+- the Apple lifecycle output records the broad pre-Harbor support-image preload phase as skipped and
+  then verifies or loads Harbor-backed final image refs before rollout
+- a supported Apple lifecycle rerun exercises the large Pulsar image publication path through
+  Harbor, retained-state replay, split-daemon inference, and final teardown under the bounded
+  Docker-push retry hardening
 - `./bootstrap/apple-silicon.sh down` surfaces the retained-state replay phase before Kind
   deletion when the Apple worker still owns durable cluster data
 - the supported status surface shows the in-progress lifecycle phase instead of only the last
   completed steady-state snapshot during monitored lifecycle work
 - `infernix lint docs` fails if the Apple or cluster runbooks or CLI references drift from the
   supported progress-surface and failure-classification contract
-- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
-  `linux-cpu` and `linux-gpu` gates.
+- Apple cohort lifecycle validation closed in [Wave A](cohort-validation-waves.md); CUDA Linux
+  cohort validation closed in [Wave C](cohort-validation-waves.md) with full `linux-cpu` and
+  `linux-gpu` gates
 
 ### Remaining Work
 
-None. Apple cohort lifecycle validation closed in [Wave A](cohort-validation-waves.md), and CUDA
-Linux cohort validation closed in [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -626,13 +506,13 @@ status reads remain reliable and retained Harbor PostgreSQL replicas recover wit
   freshly generated `infernix-harbor-db-user` secret during `bootstrap-harbor`
 - the supported Apple lifecycle reruns cleanly through `./bootstrap/apple-silicon.sh doctor`,
   `build`, `up`, `status`, `test`, and `down`
-- Apple cohort validation closed in Wave A; CUDA Linux validation closed in Wave C with full
-  `linux-cpu` and `linux-gpu` gates.
+- Apple cohort validation closed in [Wave A](cohort-validation-waves.md); CUDA Linux cohort
+  validation closed in [Wave C](cohort-validation-waves.md) with full `linux-cpu` and `linux-gpu`
+  gates
 
 ### Remaining Work
 
-None. Apple cohort validation closed in [Wave A](cohort-validation-waves.md), and CUDA Linux
-cohort validation closed in [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -679,14 +559,13 @@ Make bootstrap scripts narrow stage-0 launchers and move lifecycle responsibilit
   preload skip, and retained-state teardown; the end-to-end lifecycle, full `test` lane, and
   post-`down` idle status are exercised per cohort in
   [the cohort validation waves](cohort-validation-waves.md)
-- Apple cohort validation closed in [Wave A](cohort-validation-waves.md); CUDA Linux validation
-  closed in [Wave C](cohort-validation-waves.md).
+- Apple cohort bootstrap and Harbor-first lifecycle validation closed in
+  [Wave A](cohort-validation-waves.md); CUDA Linux cohort validation closed in
+  [Wave C](cohort-validation-waves.md)
 
 ### Remaining Work
 
-None. Apple cohort bootstrap + Harbor-first lifecycle validation closed in
-[Wave A](cohort-validation-waves.md), and CUDA Linux cohort validation closed in
-[Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -733,49 +612,32 @@ materialized in Phase 1 Sprint 1.11.
 
 - `cabal build all` clean, `infernix test lint` clean.
 - `grep -rEn '\bproc "(docker|kubectl|helm|kind)"' src/Infernix/Cluster.hs src/Infernix/Cluster/` returns zero matches.
-- the recorded validation (legacy hardware): `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` had
-  passed, then `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` had reached
-  `cluster up complete`, and `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` had reported
-  `lifecyclePhase: steady-state`. That proof point was produced on the legacy Linux/CUDA host
-  and no longer counts as current evidence; Wave C is likewise historical evidence for its frozen
-  source identity.
-- the recorded validation (legacy hardware): `src/Infernix/Engines/AppleSilicon.hs` stopped importing
-  `System.Environment.getEnvironment`; the setup invocation now passes `--install-root`
-  explicitly and uses an empty `env = Just []` process environment. `cabal build all`,
-  `cabal test infernix-unit`, and `cabal test infernix-haskell-style` had passed on the legacy
-  Linux host. Wave A later exercised `Engines/AppleSilicon.hs` on the new Apple Silicon host, but
-  remains historical evidence rather than closure of the reopened Phase 2 source.
+- under an empty host environment, `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh build` passes,
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh up` reaches `cluster up complete`, and
+  `env -i /usr/bin/bash ./bootstrap/linux-gpu.sh status` reports `lifecyclePhase: steady-state`
+- `src/Infernix/Engines/AppleSilicon.hs` does not import `System.Environment.getEnvironment`; the
+  setup invocation passes `--install-root` explicitly and uses an empty `env = Just []` process
+  environment
 
 ### Remaining Work
 
-Reopened Sprints 2.14–2.16 are tracked below.
+None.
 
 ---
 
 ## Reopened Work
 
-Sprints 2.1–2.13 are `Done`. The reopened Sprint 2.14–2.16 implementation remains landed. Its first
-Apple behavioral attempt rejected one 2026-07-26 identity; the later identity's Apple-host Stage 1
-result was rejected after its Apple retry exposed a deterministic Linux `-Werror` source defect.
-The Darwin-only helper is now CPP-guarded. The later watchdog result diagnosed Bark's 5120 MiB
-footprint as an under-estimate; the implemented correction raises it to 8192 MiB, retains strict
-integration completion for admitted catalog placements, removes the Playwright catalog-matrix
-runtime-ceiling escape hatch, and adds exact Apple/Linux admission unit tests. Final adversarial
-review then found that cached host Docker content could satisfy `PublishVerifyPull` without proving
-remote blob servability. The replacement performs a bounded authenticated platform-selected
-`skopeo copy` from Harbor's API authority into a fresh empty `dir:` store under a
-birth-identity-owned mode-0700 directory, reads the selected manifest/config/layers, and preserves
-primary failures while removing protected auth and verification paths; the existing dead-owner
-auth-directory reconciliation remains in force. Focused closed-command, credential-redaction, and
-absolute-path unit coverage is landed. The pre-correction final combined-source review and complete
-Stage 1 passed as run for `d578…` / `a0d1…`, but Apple attempt 4 rejected that closure freeze when Bark
-again breached the live resident ceiling at required=available=8192 MiB. Bark's follow-on runtime
-correction uses fp16 accelerator weights, fp32 CPU weights, inference mode, and fp32 WAV
-serialization. Renewed final review and complete Stage 1 were GREEN as run for `eae424…` /
-`a0d1…`; the no-native-source correction supersedes them. The obsolete C/Cabal boundary is
-removed. Phase 0's focused all-Haskell correction proof and Stage 1 are green; Phase 2 remains
-blocked by Phase 1, after which its own closure, Apple, and source-matched `linux-cpu` remain in that
-order.
+Sprints 2.1–2.13 are `Done`. The reopened Sprint 2.14–2.16 implementation remains landed and carries
+no closure evidence of its own. Harbor publication verification is registry-only: cached host Docker
+content could satisfy the former `PublishVerifyPull` without proving remote blob servability, so the
+verifier now runs a bounded authenticated platform-selected `skopeo copy` from Harbor's API
+authority into a fresh empty `dir:` store under a birth-identity-owned mode-0700 directory, reads
+the selected manifest, config, and every layer, and preserves primary failures while removing
+protected auth and verification paths; dead-owner auth-directory reconciliation remains in force,
+with focused closed-command, credential-redaction, and absolute-path unit coverage. The obsolete
+C/Cabal boundary is removed. Phase 2 remains blocked by Phase 1, after which its own closure, Apple,
+and the source-matched `linux-cpu` lane run in that order.
+
 Sprint 2.13 closed the env reads and HostTool routing:
 5 env reads retired in `Cluster.hs`, 1 `getEnvironment` read retired in `ProcessMonitor.hs`, the
 Apple setup `getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
@@ -783,226 +645,18 @@ Apple setup `getEnvironment` capture retired in `Engines/AppleSilicon.hs`,
 removed by Phase 1 Sprint 1.19), supporting unit-test fixture rewired, shared
 cluster command helpers resolve known tools through the staged host manifest, and
 `Cluster/PublishImages.hs` receives resolved `docker` + `skopeo` commands through
-`HarborPublishOptions`. Apple cohort validation closed in Wave A, and CUDA Linux cohort
-validation closed in Wave C.
+`HarborPublishOptions`. Apple cohort validation closed in
+[Wave A](cohort-validation-waves.md), and CUDA Linux cohort validation closed in
+[Wave C](cohort-validation-waves.md).
 
-### Superseded Pre-Correction Phase 2 Stage 1 Evidence
-
-**GREEN AS RUN 2026-07-26; SUPERSEDED AND NONREUSABLE** against base revision
-`6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`, pre-evidence tracked-plus-untracked worktree digest
-`sha256:eae424db7dec765ab89f3c73f4dbd1f282d5ee342e7bc1aa5c01e8ef6ac10228`, and installed Apple
-binary digest
-`sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`.
-The subsequent evidence-only plan edits did not change that historical executable-source identity.
-The no-native-source correction does change executable source and invalidates this evidence for
-all current and future closure claims.
-
-The pre-correction renewed final review was GREEN as run with no High/Medium findings. Its sole Low observation is that the
-focused Bark adapter regression is a substring-golden source assertion; the pending live Apple MPS
-lane and later CUDA lane own the behavioral proof. The protected skopeo auth scratch root was empty
-after validation. The complete gate passed:
-
-- `cabal build all test:infernix-integration`
-- `cabal test infernix-unit`
-- `cabal test infernix-execution-plan-internal`
-- `cabal test infernix-compile-fail` with 4 positive and 33 negative fixtures
-- `cabal test infernix-haskell-style`
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- installed `./.build/infernix lint files`, `lint docs`, `lint chart`, and `lint proto`
-- installed `./.build/infernix docs check`
-- `poetry --directory python run check-code`
-- `npm --prefix web run test:unit` with 83/83 tests passing
-- `git diff --check`
-
-Sprints 2.14–2.16 are blocked by Phase 1. The obsolete C/Cabal boundary is removed, and Phase 0's
-focused adversarial correction proof and complete Stage 1 are green. After Phase 1 closes, Phase 2
-still requires its own ordered closure, one uninterrupted Apple Silicon `test all`, then the
-source-matched `linux-cpu` build and uninterrupted `test`.
-
-### Latest Rejected Phase 2 Stage 1 Evidence
-
-**GREEN AS RUN, REJECTED FOR CLOSURE 2026-07-26** against base revision
-`6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`, pre-evidence tracked-plus-untracked worktree digest
-`sha256:d57823179d2749a884dfa5b8258070ec2579023fc5b12bd14274c2a6b5f7a487`, and installed Apple
-binary digest
-`sha256:a0d1b9fbaa8335363759e4ec5479852b63bcfcf57973f989649ffa00d9c70c7c`.
-The subsequent result-block and mirror edits are evidence-only and do not change this historical
-executable identity.
-
-Final combined-source review was GREEN with no High/Medium findings after the exact Bark
-10240 MiB Apple-ceiling test and the registry-only Harbor skopeo correction. The protected skopeo
-auth scratch root was empty after validation. The complete gate passed:
-
-- `cabal build all test:infernix-integration`
-- `cabal test infernix-unit`
-- `cabal test infernix-execution-plan-internal`
-- `cabal test infernix-compile-fail` with 4 positive and 33 negative fixtures
-- `cabal test infernix-haskell-style`
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- installed `./.build/infernix lint files`, `lint docs`, `lint chart`, and `lint proto`
-- installed `./.build/infernix docs check`
-- `poetry --directory python run check-code`
-- `npm --prefix web run test:unit` with 83/83 tests passing
-- `git diff --check`
-
-Apple behavioral attempt 4 rejected this source freeze after Bark again breached the live
-`capped-engine-resident-ceiling` at required=available=8192 MiB. The exact attempt is recorded
-below. The follow-on Bark runtime correction changed executable source; its `eae424…` / `a0d1…`
-review and Stage 1 are themselves superseded historical GREEN-as-run evidence. Sprints 2.14–2.16
-remain blocked by Phase 1. The obsolete C/Cabal boundary is removed, and the Phase 0 correction gate
-is green. Once unblocked, Phase 2's own closure remains before Apple Silicon and then `linux-cpu`.
-
-### Superseded Phase 2 Stage 1 Evidence
-
-**GREEN AS RUN 2026-07-26; SUPERSEDED AND NONREUSABLE** against base revision
-`6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`, pre-evidence tracked-plus-untracked worktree digest
-`sha256:c4090b07c3b566b01d81fa8ce71153f1f61b725d09163e00536db7e7036e4a97`, and installed Apple
-binary digest
-`sha256:e8bcfc41172e8b1bc6dc86c5c072cf7b45fb1af49825d0281d9e11d51a3dd90f`.
-The subsequent plan result-block edits are evidence-only and do not change this executable identity.
-
-The complete gate passed:
-
-- `cabal build all test:infernix-integration`
-- `cabal test infernix-unit`
-- `cabal test infernix-execution-plan-internal`
-- `cabal test infernix-compile-fail` with 4 positive and 33 negative fixtures
-- `cabal test infernix-haskell-style`
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- installed `./.build/infernix lint files`, `lint docs`, `lint chart`, and `lint proto`
-- installed `./.build/infernix docs check`
-- `poetry --directory python run check-code`
-- `npm --prefix web run test:unit` with 83/83 tests passing
-- `git diff --check`
-
-This gate passed exactly as recorded, but the later Apple watchdog result exposed Bark's
-under-estimated footprint and invalidates this identity for closure. The 8192 MiB recalibration,
-strict admitted-placement integration rule, Playwright runtime-ceiling escape-hatch removal, and
-exact Apple/Linux admission tests are implemented. The later registry-only Harbor verifier also
-changes executable source after the final audit proved a cached Docker pull was not independent
-servability evidence. The later `d578…` / `a0d1…` block superseded this identity, and Apple attempt
-4 then rejected that later freeze. Sprints 2.14–2.16 are blocked by Phase 1; the obsolete C/Cabal
-boundary is removed and the Phase 0 correction gate is green. Their remaining work is Phase 2's
-ordered closure and behavioral validation.
-
-### Rejected Phase 2 Stage 1 Evidence
-
-**REJECTED 2026-07-26** after initially passing against base revision
-`6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`, pre-evidence tracked-plus-untracked worktree digest
-`sha256:63ab2dd3ff12d266db337464ec272335f3bd72acf7c0ab86a98291da7a4e746f`, and installed Apple
-binary digest
-`sha256:6cea3f49f3dbc35d6359a9902484301518cd0ca025933468956eae1bac7a6982`.
-The subsequent plan result-block edits that recorded those values were evidence-only. The later
-CPP correction changes executable source, so this digest and binary are historical evidence only.
-
-The complete gate passed:
-
-- `cabal build all test:infernix-integration`
-- `cabal test infernix-unit`
-- `cabal test infernix-execution-plan-internal`
-- `cabal test infernix-compile-fail` with 4 positive and 33 negative fixtures
-- `cabal test infernix-haskell-style`
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-- installed `./.build/infernix lint files`, `lint docs`, `lint chart`, and `lint proto`
-- installed `./.build/infernix docs check`
-- `npm --prefix web run test:unit` with 83/83 tests passing
-- `poetry --directory python run check-code`
-- `git diff --check`
-
-None of these pre-correction gates closes current source. The later `d578…` / `a0d1…` gate also became
-historical when Apple attempt 4 rejected its freeze. The fp16 Bark runtime correction is
-implemented, and renewed final review plus complete Stage 1 were GREEN as run for `eae424…` /
-`a0d1…`; the no-native-source correction supersedes them. Sprints 2.14–2.16 are blocked by Phase 1;
-the obsolete C/Cabal boundary is removed and the Phase 0 correction gate is green. Phase 2's own
-closure remains before Apple, with `linux-cpu` ordered after Apple.
-
-### Rejected Pre-Correction Phase 2 Apple Behavioral Attempts
-
-**FAILED 2026-07-26; behavioral gate remains pending.** The then-current-source
-`./.build/infernix test all` first recovered the dead-owner reservation and dirty
-`freeze-retained-state` lifecycle through the production path: every retained claim was staged and
-the stale cluster was deleted. The aggregate then passed Haskell unit and web unit 83/83 before
-live integration entered `DockerBuildOperation`. The Linux image's `cabal build all` reached 77/87
-at `Infernix.Runtime.Cache`, then Cabal returned `Cabal-7125` without the underlying compiler
-diagnostic in the aggregate output. BuildKit records beginning `5v09...` and `gcy...` exposed the
-real deterministic failure: Linux `-Wunused-top-binds` under `-Werror` rejected
-`continueIfRunning` in `Runtime/CappedEngine/Internal.hs`; `Runtime.Cache` was only the last
-parallel-drain line, and the records exonerated resource pressure. Exhaustive harness cleanup
-staged every retained claim from the failed partial cluster, deleted that cluster, and preserved
-the primary `DockerBuildOperation` diagnostic rather than masking it. The correction CPP-guards
-the Darwin-only helper. The recovery and cleanup evidence stands, but that executable-source freeze
-and Stage 1 evidence are rejected. The later identity also passed Stage 1 before the Bark footprint
-correction rejected its freeze; `d578…` / `a0d1…` records the next green review and gate, which
-Apple attempt 4 also rejected for closure.
-
-### Phase 2 Apple Behavioral Attempt 3
-
-**FAILED 2026-07-26; source freeze rejected.** Stage 1 remained green, the Linux image compiled and
-built as workload image
-`sha256:503a3be849a0dd4692edcbe3096d3f1ebc9962e45b8f0dff91d7226349d3abeb`, Harbor publication and
-verification passed, all 16 models staged, and route/platform startup passed. The matrix correctly
-admission-rejected both image rows requiring 12288 MiB against 10240 MiB available. It then admitted
-`audio-bark-small` with required and available both 5120 MiB, but the live capped-engine
-physical-footprint watchdog returned typed `ModelMemoryLimitExceeded` while integration expected
-completion. Exhaustive cleanup staged every retained claim, deleted the harness cluster, and
-preserved the primary failure. The diagnosis is implemented: Bark now declares 8192 MiB, the
-integration matrix still requires every admitted placement to complete, the Playwright
-catalog-matrix runtime-ceiling escape hatch is removed, and exact unit tests prove Apple admission
-at 8192 <= 10240 MiB and `linux-cpu` rejection at 8192 > 4096 MiB. Final adversarial review then
-found that cached Docker content could make the old verify pull succeed without reading Harbor.
-The implemented replacement runs bounded authenticated platform-selected `skopeo copy` from
-Harbor's API authority to a fresh empty directory transport, with protected primary-preserving
-cleanup and focused command/redaction/path coverage. That final review and complete Stage 1 rerun
-later passed under the rejected evidence block above; no `linux-cpu` lane started.
-
-### Latest Phase 2 Apple Behavioral Attempt 4
-
-**FAILED 2026-07-26; source freeze rejected.** The `d578…` / `a0d1…` source-matched Stage 1
-identity remained green as run. Registry-only skopeo verification independently passed for the
-workload image and every support image. Cluster and route startup passed, all 16 models staged, and
-the matrix correctly retained both 12288 MiB image rows as unavailable against 10240 MiB of Apple
-capacity. It then admitted `audio-bark-small` at required=available=8192 MiB, but the live
-capped-engine watchdog again returned typed `ModelMemoryLimitExceeded` from
-`capped-engine-resident-ceiling` while the strict admitted-placement contract required completion.
-Exhaustive cleanup staged every retained claim, deleted the harness cluster, and preserved that
-primary diagnostic. This rejects `d578…` / `a0d1…` for closure while preserving its final-review,
-Stage 1, registry-read, startup, staging, admission, and teardown evidence. The runtime diagnosis
-identified Bark's default fp32 accelerator load as avoidable resident pressure. The implemented
-correction passes `torch.float16` when loading Bark on MPS/CUDA, retains `torch.float32` on CPU,
-sets evaluation mode, runs generation inside `torch.inference_mode()`, and converts the generated
-audio to CPU fp32 before WAV serialization. Focused validation is GREEN:
-
-- `poetry --directory python run check-code`
-- `cabal test infernix-unit --test-show-details=direct`
-
-Implementation: `python/adapters/pytorch_python.py`, with the source-contract regression in
-`test/unit/Spec.hs`.
-
-This correction changes executable source. Final review and a new complete source-matched Stage 1
-gate later passed as the now-superseded `eae424…` / `a0d1…` evidence. The no-native-source
-correction invalidates it for reuse. No `linux-cpu` lane started.
-
-### Interrupted Phase 2 Apple Behavioral Attempt 5
-
-**INTERRUPTED 2026-07-26; no closure evidence.** Against the now-superseded pre-correction freeze,
-style, Python, Haskell unit, and web 83/83 passed; retained state replayed; workload tag
-`sha256-12e0ab1c2288a8629b8e9949977c6b784d188da2d79ae01475bd5fdb8c66cc1e` built and passed
-registry-only verification; and support-image publication was verifying through the registry when
-the architectural interjection invalidated the run. Cancellation preserved the primary
-`user interrupt` but the C lifecycle lock reported same-process cleanup contention (`errno 35`).
-Supported recovery staged all retained claims and observed Kind absent; the harness reservation
-was retired and operator `infernix.dhall` restored. This attempt supplies diagnostics only: it is
-not a post-correction Apple run and supplies none of the accepted Phase 0 review/Stage 1 or cohort
-evidence.
-
-Wave V closed the earlier Sprint 2.14 scope on 2026-07-20. It does not close the 2026-07-25
+[Wave V](cohort-validation-waves.md) closed the earlier Sprint 2.14 scope. It does not close the
 writer-frozen snapshot and atomic persistence correction.
 
 Sprint 2.15 (Cluster Ownership and Mutation-Position) is the model half of the Cluster-Ownership &
-Mutation-Position reopen (2026-07-23). The doctrine + governance landed first (Phase 0 Sprint 0.16,
+Mutation-Position reopen. The doctrine + governance landed first (Phase 0 Sprint 0.16,
 `Done`), and its enforcing code — the `ClusterOwner` field, the `ClusterMutating` lifecycle position,
 its fail-closed persistence, and reconcile-on-next-`cluster up` — closed under
-[Wave X](cohort-validation-waves.md) (2026-07-24). The 2026-07-25 correction preserves those terms
+[Wave X](cohort-validation-waves.md). The later correction preserves those terms
 and adds global cross-runtime inventory, owner/runtime-indexed teardown authority under one
 lifecycle lock, a process-group reservation before config takeover, and crash-recoverable config
 ownership. Phase 6 Sprint 6.43 is the harness half. The superseded ownerless
@@ -1014,46 +668,19 @@ ownership. Phase 6 Sprint 6.43 is the harness half. The superseded ownerless
 ## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Blocked]
 
 **Status**: Blocked — implementation remains landed, but current Phase 2 validation cannot begin
-until Phase 1 Sprints 1.20–1.25 are `Done`. The earlier Apple Silicon behavioral lane surfaced a retained PVC with no live pod
-during cleanup, invalidating the prior code-side freeze. The sole-paused-worker inference
-correction and exhaustive preserving cleanup are implemented. The Bark 8192 MiB footprint and
-strict catalog-matrix validation correction is also implemented. The later registry-only Harbor
-verification correction invalidated the prior Stage 1 identity; final review and complete
-corrected-source Stage 1 then passed against `d578…` / `a0d1…`, but Apple attempt 4 rejected that
-freeze after Bark again breached the live ceiling at 8192 MiB. The fp16 Bark runtime correction is
-implemented, and renewed final review plus complete Stage 1 were GREEN as run for `eae424…` /
-`a0d1…`. The no-native-source correction supersedes every such pre-correction result; the
-all-Haskell lifecycle implementation and nested-custody self-exec anchor/supervisor/pin
-implementation are present, and the obsolete C/Cabal boundary is removed. Phase 0's focused
-correction proof and Stage 1 are green; Phase 2's own closure and both behavioral lanes remain open.
-The raw
+until Phase 1 Sprints 1.20–1.25 are `Done`. The all-Haskell lifecycle implementation and the
+nested-custody self-exec anchor/supervisor/pin implementation are present, and the obsolete C/Cabal
+boundary is removed. The raw
 live-container scrub is gone. `WriterQuiesced` is minted under the lifecycle lock, shared
 runtime-root cleanup requires an all-runtime absence witness, and Apple/non-bind teardown pauses
 every workload-capable Kind worker, rechecks the PVC/node binding map, stages and atomically swaps
 one complete snapshot, and holds the frozen-source lease through Kind deletion.
-**Implementation status**: source review and a complete machine-independent gate passed on
-2026-07-26 after the 2026-07-25 observed-absence and effect-adjacent deletion-authorization
-changes, but that evidence was invalidated for closure by the subsequent Apple teardown correction.
-The superseded corrected source passed final combined-source review and the complete
-machine-independent Stage 1 gate recorded above, but the later Linux `-Werror` defect invalidated
-that executable identity. The CPP-corrected source passed its complete gate, but the subsequent
-Bark and Harbor corrections invalidated that identity. The later `d578…` / `a0d1…` evidence block
-passed and was rejected by Apple attempt 4. The subsequent fp16 Bark correction changes executable
-source; its renewed final review and complete Stage 1 are historical GREEN-as-run evidence only,
-not a current identity. Prior
-gates closed
-2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
-`cabal test infernix-unit` (typed `ClusterLifecycle` aeson round-trip, unknown-version fail-closed,
-and the Apple host-worker state round-trip through the new codec all pass), and
-`cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
-The later phase-wide Bark adapter correction changes Python source;
-`poetry --directory python run check-code` and
-`cabal test infernix-unit --test-show-details=direct` are GREEN for that focused delta.
-**Prior cohort evidence**: [Wave V](cohort-validation-waves.md) closed the earlier 2026-07-16
-scope.
-**Current cohort gate**: none. Phase 0's focused adversarial correction suites, final review, and
-complete Stage 1 are green. After Phase 1 closes, pass Phase 2's own ordered closure before freezing
-a new identity for Apple Silicon and then `linux-cpu`.
+**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
+machine-independent gate exists for it, and every earlier gate belongs to a superseded executable
+identity.
+**Prior cohort evidence**: [Wave V](cohort-validation-waves.md) closed the earlier scope.
+**Current cohort gate**: none. After Phase 1 closes, pass Phase 2's own ordered closure before
+freezing a new identity for Apple Silicon and then `linux-cpu`.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Phase 1 Sprints 1.20–1.25 current-source closure
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -1073,14 +700,53 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Deliverables
 
-- a typed `ClusterLifecycle` closed sum replaces `clusterPresent::Bool` +
-  `lifecyclePhase::String`, with each phase consumed and resumable rather than a free-form string
-- lifecycle persistence moves to a fail-closed versioned aeson codec, retiring the `Show`/`Read`
-  serialization path so an unrecognized or malformed on-disk version fails closed
-- retained-state teardown is lease-gated: Apple/non-bind copy-back completes transactionally before
-  cluster deletion; the post-delete scrub then consumes a `WriterQuiesced` lease while the
-  cross-process lifecycle lock prevents another writer from starting
+- a typed `ClusterLifecycle` closed sum in `src/Infernix/Types.hs`
+  (`ClusterAbsent` / `ClusterProvisioning` / `ClusterActivating` / `ClusterReady` /
+  `ClusterTearingDown`) carrying a consumed, resumable `LifecyclePhase` tagged by a closed
+  `LifecycleTransition` replaces `clusterPresent::Bool` + `lifecyclePhase::String`, with
+  `clusterPresent` and `lifecycleProgress` retained as backward-compatible projection functions so
+  readers are unchanged (the vestigial `LifecycleProgress` type and the projection accessors are
+  retired by [Sprint 7.29](phase-7-demo-app-durable-context.md))
+- fail-closed versioned aeson persistence: `writeClusterStateFile` / `readClusterStateFile` plus a
+  `VersionedClusterState` version gate in `src/Infernix/Storage.hs` retire the `Show`/`Read`
+  serialization path (`writeStateFile` / `readStateFileMaybe` removed); `loadClusterState`
+  (`src/Infernix/Cluster.hs`) and `loadWorkerClusterState` (`src/Infernix/Runtime/Worker.hs`) both
+  read through it, and an unknown on-disk version fails closed with `ClusterStateDecodeFailure`
+- retained-state teardown is lease-gated: `WriterQuiesced` (built on the Sprint 1.16
+  `Infernix.Evidence.Lease` kernel) witnesses that the Kind cluster is deleted before the
+  retained-state scrub runs; `scrubRetainedStateUnderLease` requires the lease, so the teardown
+  scrub against a live writer is not a constructible term, and `clusterDown` runs the
+  quiesce → scrub → settle ordering
 - the raw destructive teardown primitive is reachable only through the lease-consuming transition
+- every cluster mutation is serialized by a kernel-released nonblocking file-description lock: the
+  internal Haskell lock module uses the public `filelock` nonblocking exclusive API and keeps the
+  token inside the rank-2 `Lease s ClusterMutationLocked` region, with no C/FFI/Cabal boundary.
+  `WriterQuiesced` can be minted only while that lock is held and cluster absence is rechecked
+- Apple/non-bind copy-back stages all retained claims into a fresh `.incoming` tree, refuses cluster
+  deletion when any retained claim is missing or cannot be copied, and atomically swaps the complete
+  tree while preserving and recovering `.previous` across interruption; a completion marker
+  distinguishes a fully staged initial `.incoming` tree from a partial copy, and absent-cluster
+  bring-up reconciles both swap residues inside the freshly rechecked `WriterQuiesced` lease before
+  any scrub, claim preparation, or replay
+- the unique replay intent is persisted before first Kind creation and retained through every worker
+  copy and claim-preparation command, so a restart with a live pre-workload cluster resumes instead
+  of treating partial replay as an idempotent bring-up; a live non-bind cluster without that exact
+  owner/runtime-indexed intent fails closed, while an unreadable kubeconfig permits delete/recreate
+  only after the private recovery proof revalidates the exact pending intent and teardown authority
+  under the lifecycle lock. The shared deletion boundary rechecks both again immediately before the
+  effect, and a terminal non-zero Kind delete is accepted only after the readiness probe observes
+  that the intended absence was established
+- a partial rollout can leave a retained PVC with no live pod, so after the workers are paused and
+  the raw binding map is proved unchanged, the freeze completes a missing retained-claim binding
+  only when exactly one paused workload-capable worker exists; explicit non-worker bindings and
+  every multi-worker missing-binding case fail closed, rebuildable Patroni claims remain excluded,
+  and the inferred source must still pass the same complete `docker cp` before snapshot promotion or
+  Kind deletion
+- Pulsar repair deletions stay inside the same `WriterQuiesced` region, and ambiguous pause failures
+  probe and thaw both the current worker and every worker paused earlier in the acquisition
+- rebuildable Harbor and Keycloak Patroni roots are removed only from the post-delete detached local
+  retained copy under `WriterQuiesced`, never from the live writer, and the raw-destructive lint has
+  no `Cluster.hs` exemption
 
 ### Validation
 
@@ -1090,6 +756,17 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
   automatic kernel release after normal exit, exception, and owner death
 - compile-fail coverage rejects lock-token escape/reuse and raw lock access outside the internal
   lock kernel
+- the source-review regression in `test/unit/Spec.hs` drives the exported
+  `releaseHarnessClusterSlotAt` boundary through absolute fake Kind/Docker tools and injects an
+  applied-then-cancelled pause behind a deterministic barrier, an applied-then-failed pause, and
+  partial `docker cp` failures, asserting that every possibly paused worker thaws, Kind deletion
+  remains unreachable, the committed retained tree stays byte-identical, an incomplete unmarked
+  `.incoming` is never promoted, and the next attempt removes that partial tree before copying
+- the Apple/non-bind integration cohort writes a unique live MinIO canary, proves the detached host
+  mirror is unchanged while Kind owns the writer, kills the first recreate while an exact
+  replay-phase `docker cp` activity lease is live, then requires the canary to survive the resumed
+  bring-up while rebuildable Harbor storage is absent from the post-delete detached snapshot and
+  freshly provisioned after replay
 - `infernix lint files` rejects the governed native-source extensions, Cabal native-source fields
   and native-token CPP definitions, and embedded native source/compiler relocation;
   `infernix lint docs` stays clean, and `poetry run check-code` passes for any Python change
@@ -1097,79 +774,9 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Remaining Work
 
-Authoritative current remainder (2026-08-09): wait for Phase 1 Sprints 1.20–1.25 to become `Done`.
-Then run Phase 2's settled-source review and machine-independent gates before freezing one current
-identity for Apple Silicon and the paired `linux-cpu` lane. The historical chronology below is not
-a current work list.
-
-- the previously closed 2026-07-16 scope remains landed:
-  - the typed `ClusterLifecycle` closed sum in `src/Infernix/Types.hs`
-    (`ClusterAbsent` / `ClusterProvisioning` / `ClusterActivating` / `ClusterReady` /
-    `ClusterTearingDown`) carrying a consumed, resumable `LifecyclePhase` tagged by a closed
-    `LifecycleTransition`; it replaces the `clusterPresent::Bool` field, with `clusterPresent` and
-    `lifecycleProgress` retained as backward-compatible projection functions so readers are unchanged
-    (the vestigial `LifecycleProgress` type and the projection accessors are retired by
-    [Sprint 7.29](phase-7-demo-app-durable-context.md))
-  - fail-closed versioned aeson persistence: `writeClusterStateFile` / `readClusterStateFile` plus a
-    `VersionedClusterState` version gate in `src/Infernix/Storage.hs` retire the `Show`/`Read`
-    serialization path (`writeStateFile` / `readStateFileMaybe` removed); `loadClusterState`
-    (`src/Infernix/Cluster.hs`) and `loadWorkerClusterState` (`src/Infernix/Runtime/Worker.hs`) both
-    read through it, and an unknown on-disk version fails closed with `ClusterStateDecodeFailure`
-  - lease-gated teardown: `WriterQuiesced` (built on the Sprint 1.16 `Infernix.Evidence.Lease`
-    kernel) witnesses that the Kind cluster is deleted before the retained-state scrub runs;
-    `scrubRetainedStateUnderLease` requires the lease, so the teardown scrub against a live writer is
-    not a constructible term, and `clusterDown` runs the quiesce → scrub → settle ordering
-- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-  and `infernix lint docs`
-- the apple-silicon plus linux-cpu cohort full-suite sign-off for the prior scope closed under
-  [Wave V](cohort-validation-waves.md) (2026-07-20)
-- reopened 2026-07-25: validate that claim replay copies retained state without mutating the live
-  writer, that rebuildable Harbor registry paths are removed only from the local retained copy
-  through the post-delete `WriterQuiesced` lease, and that the raw-destructive lint has no
-  `Cluster.hs` exemption
-- implemented before the correction: every cluster mutation was serialized by a kernel-released,
-  nonblocking file-description lock; attempt 5 exposed its same-process contention defect. The
-  lifecycle C/FFI/Cabal boundary is now removed code-side and the internal Haskell lock module uses
-  the public `filelock` nonblocking exclusive API while keeping the token in the existing rank-2
-  `Lease s ClusterMutationLocked` region. Same-process/cross-process contention and automatic
-  release on normal exit, exception, and owner death passed focused adversarial proof in Phase 0's
-  2026-07-27 correction gate. `WriterQuiesced` can
-  be minted only while that lock is held and cluster absence is
-  rechecked; Apple/non-bind copy-back stages all retained claims into a fresh `.incoming` tree,
-  refuses cluster deletion when any retained claim is missing or cannot be copied, and atomically
-  swaps the complete tree while preserving/recovering `.previous` across interruption; a completion
-  marker distinguishes a fully staged initial `.incoming` tree from a partial copy, and absent-cluster
-  bring-up reconciles both swap residues inside the freshly rechecked `WriterQuiesced` lease before
-  any scrub, claim preparation, or replay; the unique replay intent is persisted before first Kind
-  creation and retained through every worker copy and claim-preparation command, so a restart with a
-  live pre-workload cluster resumes instead of treating partial replay as an idempotent bring-up;
-  a live non-bind cluster without that exact owner/runtime-indexed intent fails closed, while an
-  unreadable kubeconfig permits delete/recreate only after the private recovery proof revalidates
-  the exact pending intent and teardown authority under the lifecycle lock; the shared deletion
-  boundary rechecks both again immediately before the effect, and a terminal non-zero Kind delete
-  is accepted only after the readiness probe observes that the intended absence was established;
-  Pulsar repair deletions now remain inside the same
-  `WriterQuiesced` region; ambiguous pause failures probe and thaw both the current worker and every
-  worker paused earlier in the acquisition; the source-review regression in `test/unit/Spec.hs`
-  drives the exported `releaseHarnessClusterSlotAt` boundary through absolute fake Kind/Docker tools
-  and injects an applied-then-cancelled pause behind a deterministic barrier, an
-  applied-then-failed pause, and partial `docker cp` failures, with assertions that every possibly
-  paused worker thaws, Kind deletion remains unreachable, the committed retained tree stays
-  byte-identical, an incomplete unmarked `.incoming` is never promoted, and the next attempt removes
-  that partial tree before copying; the first Apple behavioral attempt then surfaced that a partial
-  Helm/build failure can leave a retained PVC without a live pod, so the pod-derived binding map has
-  no entry even though the sole Apple worker remains the only possible data owner. After the workers
-  are paused and the raw binding map is proved unchanged, the freeze now completes a missing
-  retained-claim binding only when exactly one paused worker exists. Explicit non-worker bindings
-  and every multi-worker missing-binding case still fail closed, rebuildable Patroni claims remain
-  excluded, and the inferred source still must pass the same complete `docker cp` before snapshot
-  promotion or Kind deletion; the Apple/non-bind integration cohort
-  writes a unique live MinIO canary, proves the detached host mirror is unchanged while Kind owns the
-  writer, kills the first recreate while an exact replay-phase `docker cp` activity lease is live,
-  then requires the canary to survive the resumed bring-up while rebuildable Harbor storage is
-  absent from the post-delete detached snapshot and freshly provisioned after replay
-- remaining before `Done`: after Phase 1 closes, pass Phase 2's own ordered closure, then complete
-  both cohort lanes against the source identity frozen by that phase gate
+Wait for Phase 1 Sprints 1.20–1.25 to become `Done`. Then run Phase 2's settled-source review and
+machine-independent gates before freezing one current identity for Apple Silicon and the paired
+`linux-cpu` lane, and complete both cohort lanes against that frozen identity.
 
 ---
 
@@ -1179,17 +786,11 @@ a current work list.
 until Phase 1 Sprints 1.20–1.25 are `Done` and Sprint 2.14's ordered current-source closure is
 available. The owner/effect-adjacent correction, stale-state mutation-helper fix,
 independent region fixtures, and preserving/exhaustive synchronous and asynchronous cleanup are
-implemented. The Bark 8192 MiB footprint and strict catalog-matrix validation correction is also
-implemented. The registry-only Harbor verification correction is also implemented after the final
-audit invalidated the cached Docker pull witness. Final review and complete corrected-source Stage
-1 passed for `d578…` / `a0d1…`, but Apple attempt 4 rejected that freeze after Bark again breached
-the live ceiling at 8192 MiB. The fp16 Bark runtime correction is implemented with focused checks
-GREEN; renewed final review plus complete Stage 1 were GREEN as run for `eae424…` / `a0d1…`, but
-the no-native-source correction supersedes them. The lifecycle C/FFI/Cabal boundary is removed
-code-side. The all-Haskell bounded-subprocess correction is implemented after rejection of the
-forked candidate's descriptor-inheritance window. Its nested exact-identity custody-handshake
-redesign is present, and the obsolete subprocess C file/Cabal declaration is removed. Phase 0's
-focused adversarial correction proof and Stage 1 are green. Phase 2's own closure after Phase 1,
+implemented, as is the registry-only Harbor verification correction. The lifecycle C/FFI/Cabal
+boundary is removed code-side. The all-Haskell bounded-subprocess correction is implemented after
+rejection of the forked candidate's descriptor-inheritance window; its nested exact-identity
+custody-handshake redesign is present, and the obsolete subprocess C file/Cabal declaration is
+removed. Phase 2's own closure after Phase 1,
 Apple Silicon, and `linux-cpu` remain in that order. Every create,
 teardown, recovery delete, cleanup, and operator-kubectl authorization is made under the
 cross-process lifecycle lock against the global three-runtime Kind inventory. The private
@@ -1242,17 +843,9 @@ live inventory, owner, and reservation before publishing `ClusterMutating`. Its 
 that fresh state, and `ClusterReady` is restored from it only after the dirty marker, inventory, and
 reservation are revalidated; stale, absent, already-dirty, or unauthorized owner cases leave the
 persisted record unchanged.
-**Implementation status**: the exact pre-cohort source passed source review and the complete
-machine-independent gate on 2026-07-26 after the 2026-07-25 correction and final effect-adjacent
-deletion audit. The subsequent retained-claim and cleanup-exception corrections invalidated that
-phase-wide source identity. The superseded corrected source then passed final combined-source
-review and the complete machine-independent Stage 1 gate recorded above. The later Linux `-Werror`
-correction invalidated that executable identity; the subsequent Bark and Harbor corrections
-invalidated its successor. The later `d578…` / `a0d1…` evidence block passed and was rejected by
-Apple attempt 4. The subsequent fp16 Bark correction changes executable source; its focused Python
-and Haskell unit checks were subsumed by the now-superseded review and Stage 1 GREEN-as-run for
-`eae424…` / `a0d1…`. The landed
-typed-state foundation (2026-07-23) is in
+**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
+machine-independent gate exists for it. The landed
+typed-state foundation is in
 `src/Infernix/Types.hs`: `ClusterOwner`
 (`OperatorOwned | HarnessOwned`, text JSON, fail-closed decode) plus a `clusterOwner` field on
 `ClusterState` decoded with `.:? "clusterOwner" .!= OperatorOwned` (a pre-migration document without the
@@ -1270,23 +863,16 @@ equality with the freshly reread still-pending replay lifecycle before deletion.
 regression changes the observed global inventory between the earlier authorization and that
 boundary; another replaces the reservation record after earlier authorization; a focused closed
 intent-check regression replaces the retained-replay lifecycle with a different value that remains
-pending. Their assertions require refusal before delete and retention of the harness fence; the
-superseded source-matched gate passed on 2026-07-26.
+pending. Their assertions require refusal before delete and retention of the harness fence.
 Four independent negative compile fixtures prove that authority coercion, lease coercion, authority
 escape, and cross-lifecycle-region reuse each fail on their own rather than being masked by an
 earlier compiler error. `cluster status`
 renders the owner and a `ClusterMutating` as an in-progress (dirty) phase never `steady-state`, and
 `reconcileInterruptedClusterMutation` uncordons drained nodes and clears the marker on the next
-`cluster up` (the following chart re-apply scales over-scaled deployments back). Gate set (GREEN
-2026-07-23): `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (owner round-trip,
-pre-migration `OperatorOwned` default, `ClusterMutating` renders dirty, seizure fail-closed matrix),
-`cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, `infernix docs check`, the
-web unit suite, and `poetry run check-code`.
+`cluster up` (the following chart re-apply scales over-scaled deployments back).
 **Prior cohort evidence**: [Wave X](cohort-validation-waves.md) proved the earlier typed
-owner/mutation-position and config-recovery scope. It does not prove the 2026-07-25 owner-atomic
-correction.
-**Current cohort gate**: none. Phase 0's focused lock/subprocess adversarial tests, final review, and
-complete correction Stage 1 are green. After Phase 1 closes, Phase 2 must pass its own ordered
+owner/mutation-position and config-recovery scope. It does not prove the owner-atomic correction.
+**Current cohort gate**: none. After Phase 1 closes, Phase 2 must pass its own ordered
 closure before a new source identity is frozen for Apple Silicon and then `linux-cpu`.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`
 **Blocked by**: Phase 1 Sprints 1.20–1.25 current-source closure; Sprint 2.14 (typed
@@ -1331,7 +917,7 @@ operator or harness cannot invalidate the proof between check and use. See the d
   the apple-silicon and linux-cpu lanes
 - `infernix lint docs` stays clean
 - `infernix test all` on apple-silicon plus linux-cpu proves the behavioral contract; Wave X covers
-  only the earlier typed-state scope, so the 2026-07-25 correction requires a new Wave Y run
+  only the earlier typed-state scope, so the owner-atomic correction requires a new Wave Y run
 - a competing-process ownership matrix proves that an operator and harness cannot take over or tear
   down each other's actually-present cluster between seizure, bring-up, action, and cleanup
 - a runtime race replaces the persisted harness reservation after initial authorization and proves
@@ -1352,37 +938,22 @@ and the paired `linux-cpu` cohort run. Earlier green results remain historical o
 **Status**: Blocked — implementation remains landed, but current Phase 2 validation cannot begin
 until Phase 1 Sprints 1.20–1.25 are `Done` and Sprints 2.14–2.15 reach their ordered current-source
 closure. Command-kernel exec provenance, supervision, forced cleanup, real readiness
-deadlines, and the claim-permission postcondition are implemented. The Bark 8192 MiB footprint and
-strict catalog-matrix validation correction is also implemented. The final publication audit's
-registry-only `BlobServable` correction is implemented with focused unit coverage. Final review and
-complete corrected-source Stage 1 passed for `d578…` / `a0d1…`, but Apple attempt 4 rejected that
-freeze after Bark again breached the live ceiling at 8192 MiB. The fp16 Bark runtime correction is
-implemented; renewed final review plus complete Stage 1 were GREEN as run for `eae424…` /
-`a0d1…`. The no-native-source correction supersedes that evidence. The all-Haskell self-exec
-anchor/supervisor/pin topology is implemented and compiles. The current 5-positive/50-negative
-compile fixture inventory passed in Phase 0's 2026-07-27 correction gate. The subprocess C shim, FFI spawn
-boundary, numbered-FD topology, obsolete C file, and Cabal `c-sources:` entry are removed. The
-review-required prewrite recovery and protocol-bound corrections are implemented. Phase 0's
-focused runtime tests and correction review/Stage 1 are green; Phase 2's own closure after Phase 1,
-Apple, and `linux-cpu` remain in that order.
-**Implementation status**: The exact pre-cohort source passed source review and the complete
-machine-independent gate on 2026-07-26 after the 2026-07-25 adversarial findings. The subsequent
-retained-claim and cleanup-exception corrections invalidated that phase-wide source identity. The
-superseded corrected source passed final combined-source review and the complete machine-independent
-Stage 1 gate recorded above. The Linux `-Werror` correction changed executable source; the
-corrected-source complete gate passed, but the subsequent Bark and Harbor corrections invalidated
-that identity. The later `d578…` / `a0d1…` evidence block passed and was rejected by Apple attempt
-4. The subsequent fp16 Bark correction changes executable source; renewed final review and the
-complete Stage 1 were GREEN as run for `eae424…` / `a0d1…` and are superseded and nonreusable.
-The forked target-group candidate described below was rejected by the current adversarial review;
-it is retained here only as the implementation context being replaced and supplies no evidence.
+deadlines, and the claim-permission postcondition are implemented, as is the final publication
+audit's registry-only `BlobServable` correction with focused unit coverage. The all-Haskell
+self-exec anchor/supervisor/pin topology is implemented and compiles. The subprocess C shim, FFI
+spawn boundary, numbered-FD topology, obsolete C file, and Cabal `c-sources:` entry are removed.
+The review-required prewrite recovery and protocol-bound corrections are implemented. Phase 2's own
+closure after Phase 1, Apple, and `linux-cpu` remain in that order.
+**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
+machine-independent gate exists for it. The forked target-group candidate is rejected for its
+descriptor-inheritance window and supplies no evidence.
 `Infernix.Cluster.Command` and
 `Infernix.Cluster.Subprocess` are library-internal `other-modules`, so external callers cannot compose
 the destructive builders, compiler, and runner around the lifecycle evidence boundary. The unit
 suite compiles those source modules directly as home modules to retain kernel coverage, while the
 integration suite receives only a non-destructive quiescence check through exposed
 `Infernix.Cluster`. Negative fixtures prove that external imports of either internal module fail;
-the focused compile-time fixture set contained 5 positive and 50 negative fixtures when this was recorded; the tree now carries 6 positive and 79 negative. The production
+the compile-time fixture set carries 6 positive and 79 negative fixtures. The production
 compiler accepts only the closed `ClusterCommand` vocabulary, validates every caller operand before
 rendering, selects the generated policy exhaustively, and runs one total deadline across
 acquisition, attempts, and backoff. The pre-correction kernel implemented
@@ -1402,8 +973,7 @@ is post-durability and post-retained-pin acknowledgement; a private inner gate r
 the supervisor-owned target PID and containing pin group are observed. A bounded version-4
 distinct-boot incoming-intent filename, paired with the bounded version-3 common-boot encoding,
 preserves those helper identities even before a payload write.
-Post-correction compile fixtures, focused runtime proof, final correction review, and the complete
-Phase 0 Stage 1 are green. Phase 2's own ordered closure and cohort proof do not yet exist.
+Phase 2's own ordered closure and cohort proof do not yet exist.
 The finite
 claim-directory chmod missing-path repair loop and the Kind/nvkind host-port reselection loops remain
 higher-level workflows because they repair state or change generated command operands; every

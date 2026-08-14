@@ -89,8 +89,9 @@
 | `infernix lint docs` | run the governed documentation validator directly |
 | `infernix lint proto` | validate schema/package/symbol shape plus the exact two-schema/four-module Haskell binding snapshot inventory and hashes, without invoking a generator |
 | `infernix lint chart` | validate Helm chart ownership and route-registry alignment |
+| `infernix lint plan` | validate the development plan's status vocabulary, remaining-work agreement, forward-only dependency edges, single-accelerator validation gates, declarative language, removal-ledger exclusivity, and single current-state table |
 | `infernix docs check` | validate the governed docs suite, metadata, required doctrine structure, generated sections, phase-plan shape, and monitoring-stance alignment |
-| `infernix test lint` | run repo hygiene, chart, docs, proto, Haskell style, build, and Python quality checks |
+| `infernix test lint` | run repo hygiene, chart, docs, proto, plan-standards, Haskell style, build, and Python quality checks |
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
 | `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is bounded by substrate-specific resource admission, classifying an over-budget model as typed `ModelMemoryLimitExceeded` (see Lifecycle Failure Classification) |
 | `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
@@ -98,13 +99,14 @@
 
 ## Validation Obligations
 
-- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, and `infernix lint chart`
-  provide the focused validation entrypoints for repository hygiene, governed docs, protobuf
-  schemas, and chart ownership when a narrower check is the supported tool for the task at hand.
+- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`, and
+  `infernix lint plan` provide the focused validation entrypoints for repository hygiene, governed
+  docs, protobuf schemas, chart ownership, and development-plan standards when a narrower check is
+  the supported tool for the task at hand.
 - `infernix docs check` proves that the governed docs and the development plan still match the
   supported contract, including the required structure for broad doctrine docs.
-- `infernix test lint` proves repo-owned static quality, the Haskell style gate, the Haskell build
-  warning policy, and the shared Python adapter quality gate.
+- `infernix test lint` proves repo-owned static quality, the development-plan standards scans, the
+  Haskell style gate, the Haskell build warning policy, and the shared Python adapter quality gate.
 - `infernix test unit` proves the typed control-plane and browser-contract logic that should not
   require a live cluster, and keeps the Node-based PureScript runner on maintained
   `purescript-spec` entrypoints.

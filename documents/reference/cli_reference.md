@@ -38,6 +38,7 @@
 - `infernix lint docs` - runs the governed-documentation and development-plan-shape validator (`runDocsLint`)
 - `infernix lint proto` - runs the protobuf contract validator
 - `infernix lint chart` - runs the Helm and chart ownership validator
+- `infernix lint plan` - runs the development-plan standards scans for status vocabulary, dependency direction, accelerator scope, declarative language, and the removal ledger
 
 ### `test`
 
@@ -116,7 +117,7 @@
 - on the Linux outer-container routed browser path, the forwarded Playwright executor joins the
   private Docker `kind` network, targets the Kind control-plane container DNS name, and probes the
   shared edge on port `30090` instead of looping back through `127.0.0.1`
-- `infernix lint files|docs|proto|chart` run the canonical Haskell-implemented static checks
+- `infernix lint files|docs|proto|chart|plan` run the canonical Haskell-implemented static checks
   (`src/Infernix/Lint/*`); `infernix test lint` runs them together with the strict Haskell
   warning gate, the `ormolu` and `hlint` Haskell-style target, the Cabal 3.16 manifest-format target,
   and the active substrate's Python adapter quality gate via `poetry run check-code` when adapters are present;

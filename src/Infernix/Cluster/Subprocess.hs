@@ -164,7 +164,11 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.Char (isDigit, isHexDigit, isSpace, toLower)
-import Data.IORef (IORef, atomicModifyIORef', newIORef)
+import Data.IORef
+  ( IORef,
+    atomicModifyIORef',
+    newIORef,
+  )
 import Data.List qualified as List
 import Data.Maybe (catMaybes, fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 import Data.Text qualified as Text
@@ -2324,6 +2328,8 @@ data PackageClosureSnapshotRole
 data ExactExecutableSnapshotTestPoint
   = MutateBeforeAnchorSnapshot
   | MutateAfterAnchorSnapshot
+  | BeforeAnchorSnapshotRetirement
+  | BeforeOwnerlessSnapshotRecoveryRecheck
   deriving (Eq, Show)
 
 data ExecutableSnapshotTestHook = ExecutableSnapshotTestHook
@@ -4523,23 +4529,17 @@ renderProvisioningCommand environment command =
             workingDirectory
         )
     Provisioning.ExtractAudiverisJavaCppNatives artifactRoot ->
+      -- This is the run that creates the cache the installed smoke and every
+      -- later inference then load from, so it reads the same executable and
+      -- leading arguments they do rather than restating them. A producer that
+      -- populated the cache under a different JavaCPP configuration than its
+      -- consumers would write a payload the first consumer rewrites.
       pure
         ( fixedProvisioningProcess
-            ( artifactRoot
-                </> "Audiveris.app"
-                </> "Contents"
-                </> "runtime"
-                </> "Contents"
-                </> "Home"
-                </> "bin"
-                </> "java"
+            (artifactRoot </> ArtifactTarget.audiverisAppleJvmRelativePath)
+            ( ArtifactTarget.audiverisAppleLeadingArguments artifactRoot
+                <> ["-version"]
             )
-            [ "-Dorg.bytedeco.javacpp.cachedir=" <> (artifactRoot </> "javacpp-cache"),
-              "-cp",
-              artifactRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
-              "Audiveris",
-              "-version"
-            ]
             ""
             "extract Audiveris JavaCPP natives"
             artifactRoot
@@ -8205,6 +8205,20 @@ data CaptureEvidence
   | CaptureFailed !String
   deriving (Eq, Show)
 
+-- | The anchor keeps terminal evidence private until every anchor-owned
+-- resource has retired.  In particular, an exact executable generation must
+-- be durably absent before the parent can observe 'AnchorTerminal' and begin
+-- its normal one-second anchor reap.
+data AnchorCompletion
+  = AnchorCompletedWithoutTerminal !ExitCode
+  | AnchorCompletedWithTerminal
+      !ExitCode
+      !TargetTerminal
+      !InputEvidence
+      !CaptureEvidence
+      !CaptureEvidence
+  deriving (Eq, Show)
+
 data SupervisorRequest
   = SupervisorConfigure !SupervisorPlan
   | SupervisorDetach
@@ -8430,12 +8444,20 @@ instance Aeson.ToJSON ExactExecutableSnapshotTestPoint where
       case testPoint of
         MutateBeforeAnchorSnapshot -> "before-anchor-snapshot"
         MutateAfterAnchorSnapshot -> "after-anchor-snapshot"
+        BeforeAnchorSnapshotRetirement ->
+          "before-anchor-snapshot-retirement"
+        BeforeOwnerlessSnapshotRecoveryRecheck ->
+          "before-ownerless-snapshot-recovery-recheck"
 
 instance Aeson.FromJSON ExactExecutableSnapshotTestPoint where
   parseJSON =
     Aeson.withText "ExactExecutableSnapshotTestPoint" $ \case
       "before-anchor-snapshot" -> pure MutateBeforeAnchorSnapshot
       "after-anchor-snapshot" -> pure MutateAfterAnchorSnapshot
+      "before-anchor-snapshot-retirement" ->
+        pure BeforeAnchorSnapshotRetirement
+      "before-ownerless-snapshot-recovery-recheck" ->
+        pure BeforeOwnerlessSnapshotRecoveryRecheck
       _ -> fail "unknown exact executable snapshot test point"
 
 instance Aeson.ToJSON ExecutableSnapshotTestHook where
@@ -13374,9 +13396,28 @@ superviseFromAnchor :: IO ExitCode
 superviseFromAnchor = do
   plan <- Protocol.readAnchorConfiguration stdin
   validateAnchorSelfIdentity (supervisorPlanAnchorIdentity plan)
-  withExactExecutableSnapshot plan supervisePreparedFromAnchor
+  completion <-
+    withExactExecutableSnapshot plan supervisePreparedFromAnchor
+  case completion of
+    AnchorCompletedWithoutTerminal exitCode -> pure exitCode
+    AnchorCompletedWithTerminal
+      supervisorExit
+      terminal
+      inputEvidence
+      stdoutEvidence
+      stderrEvidence -> do
+        writeJsonFrameHandle
+          stdout
+          ( AnchorTerminal
+              supervisorExit
+              terminal
+              inputEvidence
+              stdoutEvidence
+              stderrEvidence
+          )
+        pure ExitSuccess
 
-supervisePreparedFromAnchor :: SupervisorPlan -> IO ExitCode
+supervisePreparedFromAnchor :: SupervisorPlan -> IO AnchorCompletion
 supervisePreparedFromAnchor plan = mask $ \restore -> do
   supervisor <-
     spawnSelfExecHelperWithGroup
@@ -13409,6 +13450,153 @@ supervisePreparedFromAnchor plan = mask $ \restore -> do
           (trackedHelperIdentity (spawnedHelperTracked supervisor))
       anchorGroup =
         activityProcessGroup (supervisorPlanAnchorIdentity plan)
+      completeWithoutTerminal = do
+        void cleanupSupervisor
+        pure (AnchorCompletedWithoutTerminal ExitSuccess)
+      continueAfterPinBorn provisionalPin = do
+        unless
+          ( provisionalProcessGroup provisionalPin == anchorGroup
+              && provisionalProcessId provisionalPin /= anchorGroup
+              && provisionalProcessId provisionalPin
+                /= provisionalProcessId provisionalSupervisor
+          )
+          (ioError (userError "bounded-command provisional pin escaped anchor custody"))
+        modifyMVar_
+          pinProvisionalState
+          (const (pure (Just provisionalPin)))
+        writeJsonFrameHandle
+          stdout
+          (AnchorPinBorn provisionalPin)
+        Protocol.readAnchorPinCustodyAck stdin
+        writeJsonFrameHandle
+          (spawnedHelperInput supervisor)
+          SupervisorAcknowledgePin
+        writeJsonFrameHandle
+          (spawnedHelperInput supervisor)
+          SupervisorDetach
+        detachedEvent <-
+          awaitAnchorSupervisorEvent supervisor
+        case detachedEvent of
+          Nothing -> completeWithoutTerminal
+          Just (SupervisorDetached detachedSupervisor) ->
+            continueAfterSupervisorDetached
+              provisionalPin
+              detachedSupervisor
+          Just unexpected ->
+            ioError
+              ( userError
+                  ( "bounded-command supervisor skipped its custody transition: "
+                      <> show unexpected
+                  )
+              )
+      continueAfterSupervisorDetached provisionalPin detachedSupervisor = do
+        validateCustodyTransition
+          "supervisor"
+          provisionalSupervisor
+          detachedSupervisor
+        modifyMVar_
+          supervisorFinalState
+          (const (pure (Just detachedSupervisor)))
+        preparedEvent <-
+          awaitAnchorSupervisorEvent supervisor
+        case preparedEvent of
+          Nothing -> completeWithoutTerminal
+          Just (SupervisorPrepared targetGroupLeaderIdentity) ->
+            continueAfterSupervisorPrepared
+              provisionalPin
+              detachedSupervisor
+              targetGroupLeaderIdentity
+          Just unexpected ->
+            ioError
+              ( userError
+                  ( "bounded-command supervisor sent an unexpected pre-prepare event: "
+                      <> show unexpected
+                  )
+              )
+      continueAfterSupervisorPrepared
+        provisionalPin
+        detachedSupervisor
+        targetGroupLeaderIdentity = do
+          validateCustodyTransition
+            "target-group pin"
+            provisionalPin
+            targetGroupLeaderIdentity
+          modifyMVar_
+            targetGroupLeaderState
+            (const (pure (Just targetGroupLeaderIdentity)))
+          writeJsonFrameHandle
+            stdout
+            ( AnchorSupervisorReady
+                detachedSupervisor
+                targetGroupLeaderIdentity
+            )
+          gateRequest <-
+            try @IOException (Protocol.readAnchorStartGate stdin)
+          case gateRequest of
+            Left _ -> completeWithoutTerminal
+            Right () -> do
+              writeJsonFrameHandle
+                (spawnedHelperInput supervisor)
+                SupervisorOpenTargetGate
+              wake <- newEmptyMVar
+              void
+                ( forkIO
+                    ( try @IOException
+                        ( readJsonFrameHandle
+                            "supervisor event"
+                            (spawnedHelperOutput supervisor)
+                        )
+                        >>= putMVar wake . AnchorSupervisorEvent
+                    )
+                )
+              void
+                ( forkIO
+                    ( try @IOException
+                        (Protocol.readAnchorStartGate stdin)
+                        >>= putMVar wake . AnchorParentRequest
+                    )
+                )
+              observedWake <- takeMVar wake
+              case observedWake of
+                AnchorParentRequest _ -> completeWithoutTerminal
+                AnchorSupervisorEvent (Left failure) ->
+                  ioError
+                    ( userError
+                        ( "bounded-command supervisor protocol failed: "
+                            <> displayException failure
+                        )
+                    )
+                AnchorSupervisorEvent (Right (SupervisorPrepared {})) ->
+                  ioError
+                    (userError "bounded-command supervisor sent duplicate prepared event")
+                AnchorSupervisorEvent (Right (SupervisorDetached {})) ->
+                  ioError
+                    (userError "bounded-command supervisor sent duplicate detach event")
+                AnchorSupervisorEvent (Right (SupervisorPinBorn {})) ->
+                  ioError
+                    (userError "bounded-command supervisor sent duplicate pin-custody event")
+                AnchorSupervisorEvent
+                  ( Right
+                      ( SupervisorTerminal
+                          terminal
+                          inputEvidence
+                          stdoutEvidence
+                          stderrEvidence
+                        )
+                    ) -> do
+                    (supervisorExit, _) <- cleanupSupervisor
+                    let reportedSupervisorExit =
+                          applySupervisorExitEvidenceFixture
+                            (supervisorPlanProtocolEvidenceCase plan)
+                            supervisorExit
+                    pure
+                      ( AnchorCompletedWithTerminal
+                          reportedSupervisorExit
+                          terminal
+                          inputEvidence
+                          stdoutEvidence
+                          stderrEvidence
+                      )
   unless
     ( provisionalProcessGroup provisionalSupervisor == anchorGroup
         && provisionalProcessId provisionalSupervisor /= anchorGroup
@@ -13432,163 +13620,17 @@ supervisePreparedFromAnchor plan = mask $ \restore -> do
           (SupervisorConfigure plan)
         pinBornEvent <-
           awaitAnchorSupervisorEvent supervisor
-        provisionalPin <-
-          case pinBornEvent of
-            Nothing -> do
-              void cleanupSupervisor
-              exitImmediately ExitSuccess
-            Just (SupervisorPinBorn identity) -> pure identity
-            Just unexpected ->
-              ioError
-                ( userError
-                    ( "bounded-command supervisor skipped provisional pin custody: "
-                        <> show unexpected
-                    )
-                )
-        unless
-          ( provisionalProcessGroup provisionalPin == anchorGroup
-              && provisionalProcessId provisionalPin /= anchorGroup
-              && provisionalProcessId provisionalPin
-                /= provisionalProcessId provisionalSupervisor
-          )
-          (ioError (userError "bounded-command provisional pin escaped anchor custody"))
-        modifyMVar_
-          pinProvisionalState
-          (const (pure (Just provisionalPin)))
-        writeJsonFrameHandle
-          stdout
-          (AnchorPinBorn provisionalPin)
-        Protocol.readAnchorPinCustodyAck stdin
-        writeJsonFrameHandle
-          (spawnedHelperInput supervisor)
-          SupervisorAcknowledgePin
-        writeJsonFrameHandle
-          (spawnedHelperInput supervisor)
-          SupervisorDetach
-        detachedEvent <-
-          awaitAnchorSupervisorEvent supervisor
-        detachedSupervisor <-
-          case detachedEvent of
-            Nothing -> do
-              void cleanupSupervisor
-              exitImmediately ExitSuccess
-            Just (SupervisorDetached identity) -> pure identity
-            Just unexpected ->
-              ioError
-                ( userError
-                    ( "bounded-command supervisor skipped its custody transition: "
-                        <> show unexpected
-                    )
-                )
-        validateCustodyTransition
-          "supervisor"
-          provisionalSupervisor
-          detachedSupervisor
-        modifyMVar_
-          supervisorFinalState
-          (const (pure (Just detachedSupervisor)))
-        preparedEvent <-
-          awaitAnchorSupervisorEvent supervisor
-        targetGroupLeaderIdentity <-
-          case preparedEvent of
-            Nothing -> do
-              void cleanupSupervisor
-              exitImmediately ExitSuccess
-            Just (SupervisorPrepared groupLeader) ->
-              pure groupLeader
-            Just unexpected ->
-              ioError
-                ( userError
-                    ( "bounded-command supervisor sent an unexpected pre-prepare event: "
-                        <> show unexpected
-                    )
-                )
-        validateCustodyTransition
-          "target-group pin"
-          provisionalPin
-          targetGroupLeaderIdentity
-        modifyMVar_
-          targetGroupLeaderState
-          (const (pure (Just targetGroupLeaderIdentity)))
-        writeJsonFrameHandle
-          stdout
-          ( AnchorSupervisorReady
-              detachedSupervisor
-              targetGroupLeaderIdentity
-          )
-        gateRequest <-
-          try @IOException (Protocol.readAnchorStartGate stdin)
-        case gateRequest of
-          Left _ -> do
-            void cleanupSupervisor
-            pure ExitSuccess
-          Right () -> do
-            writeJsonFrameHandle
-              (spawnedHelperInput supervisor)
-              SupervisorOpenTargetGate
-            wake <- newEmptyMVar
-            void
-              ( forkIO
-                  ( try @IOException
-                      ( readJsonFrameHandle
-                          "supervisor event"
-                          (spawnedHelperOutput supervisor)
-                      )
-                      >>= putMVar wake . AnchorSupervisorEvent
+        case pinBornEvent of
+          Nothing -> completeWithoutTerminal
+          Just (SupervisorPinBorn provisionalPin) ->
+            continueAfterPinBorn provisionalPin
+          Just unexpected ->
+            ioError
+              ( userError
+                  ( "bounded-command supervisor skipped provisional pin custody: "
+                      <> show unexpected
                   )
               )
-            void
-              ( forkIO
-                  ( try @IOException
-                      (Protocol.readAnchorStartGate stdin)
-                      >>= putMVar wake . AnchorParentRequest
-                  )
-              )
-            observedWake <- takeMVar wake
-            case observedWake of
-              AnchorParentRequest _ -> do
-                void cleanupSupervisor
-                pure ExitSuccess
-              AnchorSupervisorEvent (Left failure) -> do
-                ioError
-                  ( userError
-                      ( "bounded-command supervisor protocol failed: "
-                          <> displayException failure
-                      )
-                  )
-              AnchorSupervisorEvent (Right (SupervisorPrepared {})) ->
-                ioError
-                  (userError "bounded-command supervisor sent duplicate prepared event")
-              AnchorSupervisorEvent (Right (SupervisorDetached {})) ->
-                ioError
-                  (userError "bounded-command supervisor sent duplicate detach event")
-              AnchorSupervisorEvent (Right (SupervisorPinBorn {})) ->
-                ioError
-                  (userError "bounded-command supervisor sent duplicate pin-custody event")
-              AnchorSupervisorEvent
-                ( Right
-                    ( SupervisorTerminal
-                        terminal
-                        inputEvidence
-                        stdoutEvidence
-                        stderrEvidence
-                      )
-                  ) -> do
-                  (supervisorExit, _) <- cleanupSupervisor
-                  let reportedSupervisorExit =
-                        applySupervisorExitEvidenceFixture
-                          (supervisorPlanProtocolEvidenceCase plan)
-                          supervisorExit
-                  writeJsonFrameHandle
-                    stdout
-                    ( AnchorTerminal
-                        reportedSupervisorExit
-                        terminal
-                        inputEvidence
-                        stdoutEvidence
-                        stderrEvidence
-                    )
-                  pure ExitSuccess
     )
     (void cleanupSupervisor)
 
@@ -13613,15 +13655,25 @@ withExactExecutableSnapshot plan usePlan =
           )
           (ioError (userError "bounded-command package/runtime closure aggregate is invalid"))
         prepareExecutableSnapshotParent snapshotParent
-        recoverDeadExecutableSnapshots snapshotParent
+        recoverDeadExecutableSnapshotsWithHook
+          ( \_ ->
+              runExactExecutableSnapshotTestHook
+                BeforeOwnerlessSnapshotRecoveryRecheck
+                expectation
+          )
+          snapshotParent
         snapshotRoot <-
           createAnchorExecutableSnapshotRoot
             snapshotParent
             anchorIdentity
         let cleanup =
-              removeAnchorExecutableSnapshotRoot
-                snapshotRoot
-                anchorIdentity
+              do
+                runExactExecutableSnapshotTestHook
+                  BeforeAnchorSnapshotRetirement
+                  expectation
+                removeAnchorExecutableSnapshotRoot
+                  snapshotRoot
+                  anchorIdentity
         ( snapshotExecutable,
           sealedExpectation,
           snapshotEnvironment,
@@ -13781,19 +13833,32 @@ createAnchorExecutableSnapshotRoot snapshotParent anchorIdentity = do
           </> executableSnapshotOwnerName anchorIdentity
   createDirectory snapshotRoot
   setFileMode snapshotRoot ownerModes
-  synchroniseDirectory snapshotParent
   writeExecutableSnapshotOwner snapshotRoot anchorIdentity
+  -- Publish the durable owner record before the parent directory can make the
+  -- generation itself durable.  Recovery may observe a transient ownerless
+  -- root after a crash, but the on-disk ordering never advertises such a root
+  -- as a completed generation.
+  synchroniseDirectory snapshotParent
   pure snapshotRoot
 
 executableSnapshotOwnerName :: ActivityProcessIdentity -> FilePath
 executableSnapshotOwnerName identity =
+  executableSnapshotOwnerNameFromFields
+    (activityProcessId identity)
+    (activityProcessBirthIdentity identity)
+
+executableSnapshotOwnerNameFromFields ::
+  Integer ->
+  ProcessBirthIdentity ->
+  FilePath
+executableSnapshotOwnerNameFromFields processId birthIdentity =
   ".anchor-"
-    <> show (activityProcessId identity)
+    <> show processId
     <> "-"
     <> ByteString8.unpack
       ( Base16.encode
           ( ByteString8.pack
-              (renderProcessBirthIdentity (activityProcessBirthIdentity identity))
+              (renderProcessBirthIdentity birthIdentity)
           )
       )
 
@@ -13803,7 +13868,7 @@ writeExecutableSnapshotOwner ::
   IO ()
 writeExecutableSnapshotOwner snapshotRoot identity =
   mask $ \restore -> do
-    let ownerPath = snapshotRoot </> "owner.identity"
+    let ownerPath = snapshotRoot </> executableSnapshotOwnerFileName
         contents =
           ByteString8.pack
             ( show (activityProcessId identity)
@@ -13827,20 +13892,33 @@ writeExecutableSnapshotOwner snapshotRoot identity =
     finallyPreservingPrimary
       ( restore $ do
           writeFdFullyBlocking descriptor contents
+          PosixFiles.setFdMode descriptor ownerReadMode
           fileSynchronise descriptor
       )
       (ignoreIOException (closeFd descriptor))
-    setFileMode ownerPath ownerReadMode
     synchroniseDirectory snapshotRoot
+
+executableSnapshotOwnerFileName :: FilePath
+executableSnapshotOwnerFileName = "owner.identity"
 
 -- | Sweep abandoned snapshot roots whose owner is provably dead.
 --
 -- The owning helper retires its own snapshot in its own cleanup, so this sweep
--- races that teardown by construction. An entry — or its owner record — that
--- disappears under the sweep is being retired by its rightful owner and is not
--- a fault: the sweep skips it and leaves the owner's own retirement to report.
+-- races that teardown by construction. A whole generation that disappears is
+-- being retired by its rightful owner and is not a fault.  A missing owner
+-- record is different: only a stable, empty, exact-name generation whose exact
+-- process identity is dead is recoverable.  Every nonempty or unstable
+-- ownerless generation is retained and refused loudly.
 recoverDeadExecutableSnapshots :: FilePath -> IO ()
-recoverDeadExecutableSnapshots snapshotParent =
+recoverDeadExecutableSnapshots =
+  recoverDeadExecutableSnapshotsWithHook
+    (const (pure ()))
+
+recoverDeadExecutableSnapshotsWithHook ::
+  (FilePath -> IO ()) ->
+  FilePath ->
+  IO ()
+recoverDeadExecutableSnapshotsWithHook ownerlessRecoveryHook snapshotParent =
   mask $ \restore -> do
     listedParentStatus <- getSymbolicLinkStatus snapshotParent
     parentDescriptor <-
@@ -13867,7 +13945,12 @@ recoverDeadExecutableSnapshots snapshotParent =
             listDirectoryBoundedFromDescriptor
               parentDescriptor
               maximumExecutableSnapshotRecoveryGenerations
-          mapM_ (recoverEntryIgnoringConcurrentRetirement parentDescriptor) entries
+          mapM_
+            ( recoverEntryIgnoringConcurrentRetirement
+                openedParentStatus
+                parentDescriptor
+            )
+            entries
           finalParentStatus <- getFdStatus parentDescriptor
           finalParentPathStatus <- getSymbolicLinkStatus snapshotParent
           unless
@@ -13880,16 +13963,24 @@ recoverDeadExecutableSnapshots snapshotParent =
       )
       (ignoreIOException (closeFd parentDescriptor))
   where
-    recoverEntryIgnoringConcurrentRetirement parentDescriptor entry = do
-      observed <-
-        try @IOException (recoverEntry parentDescriptor entry)
-      case observed of
-        Right () -> pure ()
-        Left failure
-          | isDoesNotExistError failure -> pure ()
-          | otherwise -> ioError failure
+    recoverEntryIgnoringConcurrentRetirement
+      expectedParentStatus
+      parentDescriptor
+      entry = do
+        observed <-
+          try @IOException
+            (recoverEntry expectedParentStatus parentDescriptor entry)
+        case observed of
+          Right () -> pure ()
+          Left failure
+            -- Another descriptor-anchored recovery, or the exact live owner,
+            -- may retire the whole root after it was listed.  Missing-owner
+            -- errors are consumed inside 'recoverEntry' and therefore cannot be
+            -- mistaken for this whole-generation race.
+            | isDoesNotExistError failure -> pure ()
+            | otherwise -> ioError failure
 
-    recoverEntry parentDescriptor entry =
+    recoverEntry expectedParentStatus parentDescriptor entry =
       case parseExecutableSnapshotOwnerName entry of
         Nothing ->
           ioError
@@ -13899,56 +13990,447 @@ recoverDeadExecutableSnapshots snapshotParent =
                 )
             )
         Just (processId, birthIdentity) -> do
+          unless
+            ( entry
+                == executableSnapshotOwnerNameFromFields
+                  processId
+                  birthIdentity
+            )
+            ( ioError
+                ( userError
+                    ( "noncanonical entry in bounded-command executable snapshot root: "
+                        <> (snapshotParent </> entry)
+                    )
+                )
+            )
           let snapshotRoot = snapshotParent </> entry
-          rootDescriptor <-
-            openFdAt
+          openedRoot <-
+            try @IOException
+              ( openFdAt
+                  (Just parentDescriptor)
+                  entry
+                  ReadOnly
+                  defaultFileFlags
+                    { nofollow = True,
+                      directory = True,
+                      cloexec = True
+                    }
+              )
+          case openedRoot of
+            Left failure
+              | isDoesNotExistError failure -> pure ()
+              | otherwise ->
+                  ioError
+                    ( userError
+                        ( "bounded-command executable snapshot entry is not a stable real directory: "
+                            <> snapshotRoot
+                            <> ": "
+                            <> displayException failure
+                        )
+                    )
+            Right rootDescriptor ->
+              finallyPreservingPrimary
+                ( do
+                    observedRootStatus <- getFdStatus rootDescriptor
+                    rootPathStatus <- getSymbolicLinkStatus snapshotRoot
+                    unless
+                      ( isDirectory observedRootStatus
+                          && not (isSymbolicLink rootPathStatus)
+                          && sameFileObjectStatus
+                            observedRootStatus
+                            rootPathStatus
+                      )
+                      ( ioError
+                          ( userError
+                              ( "bounded-command executable snapshot entry is not a stable real directory: "
+                                  <> snapshotRoot
+                              )
+                          )
+                      )
+                    currentIdentity <-
+                      readProcessBirthIdentity processId
+                    if currentIdentity == Just birthIdentity
+                      then
+                        -- A live exact owner can legitimately be between
+                        -- creating and completing its owner record.  Its name
+                        -- plus kernel birth identity is sufficient to leave
+                        -- the same retained root alone; decoding a partial
+                        -- record here would turn honest publication into a
+                        -- recovery failure.
+                        requireStableOwnerlessExecutableSnapshotObject
+                          "while skipping its live exact owner"
+                          snapshotParent
+                          expectedParentStatus
+                          parentDescriptor
+                          snapshotRoot
+                          observedRootStatus
+                          rootDescriptor
+                      else do
+                        requireStableOwnerlessExecutableSnapshot
+                          "before dead-owner decoding"
+                          snapshotParent
+                          expectedParentStatus
+                          parentDescriptor
+                          snapshotRoot
+                          observedRootStatus
+                          rootDescriptor
+                        ownerResult <-
+                          try @IOException
+                            ( readExecutableSnapshotOwnerAt
+                                snapshotRoot
+                                rootDescriptor
+                            )
+                        case ownerResult of
+                          Right ownerIdentity -> do
+                            unless
+                              ( activityProcessId ownerIdentity == processId
+                                  && activityProcessBirthIdentity ownerIdentity
+                                    == birthIdentity
+                                  && executableSnapshotOwnerName ownerIdentity
+                                    == entry
+                              )
+                              ( ioError
+                                  ( userError
+                                      "bounded-command executable snapshot owner name and record disagree"
+                                  )
+                              )
+                            removeRecoveredExecutableSnapshot
+                              snapshotRoot
+                              ownerIdentity
+                              observedRootStatus
+                          Left failure
+                            | isDoesNotExistError failure ->
+                                recoverOwnerlessExecutableSnapshot
+                                  ownerlessRecoveryHook
+                                  snapshotParent
+                                  expectedParentStatus
+                                  parentDescriptor
+                                  snapshotRoot
+                                  observedRootStatus
+                                  rootDescriptor
+                                  processId
+                                  birthIdentity
+                            | otherwise -> ioError failure
+                )
+                (ignoreIOException (closeFd rootDescriptor))
+
+recoverOwnerlessExecutableSnapshot ::
+  (FilePath -> IO ()) ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  Integer ->
+  ProcessBirthIdentity ->
+  IO ()
+recoverOwnerlessExecutableSnapshot
+  ownerlessRecoveryHook
+  snapshotParent
+  expectedParentStatus
+  parentDescriptor
+  snapshotRoot
+  expectedRootStatus
+  rootDescriptor
+  processId
+  birthIdentity = do
+    currentIdentity <- readProcessBirthIdentity processId
+    if currentIdentity == Just birthIdentity
+      then
+        requireStableOwnerlessExecutableSnapshotObject
+          "while skipping its live exact owner"
+          snapshotParent
+          expectedParentStatus
+          parentDescriptor
+          snapshotRoot
+          expectedRootStatus
+          rootDescriptor
+      else do
+        ownerlessRootStatus <- getFdStatus rootDescriptor
+        unless
+          (fileMode ownerlessRootStatus .&. 0o7777 == ownerModes)
+          ( ioError
+              ( userError
+                  ( "bounded-command ownerless executable snapshot is not 0700; refusing recovery: "
+                      <> snapshotRoot
+                  )
+              )
+          )
+        entries <-
+          listExecutableSnapshotRootEntriesFromParent
+            snapshotRoot
+            parentDescriptor
+            expectedRootStatus
+            maximumExecutableSnapshotRecoveryEntries
+        unless
+          (null entries)
+          ( ioError
+              ( userError
+                  ( "bounded-command ownerless executable snapshot is nonempty; refusing recovery: "
+                      <> snapshotRoot
+                  )
+              )
+          )
+        ownerlessRecoveryHook snapshotRoot
+        requireExecutableSnapshotOwnerAbsentAt
+          snapshotRoot
+          rootDescriptor
+        recheckedEntries <-
+          listExecutableSnapshotRootEntriesFromParent
+            snapshotRoot
+            parentDescriptor
+            expectedRootStatus
+            maximumExecutableSnapshotRecoveryEntries
+        unless
+          (null recheckedEntries)
+          ( ioError
+              ( userError
+                  ( "bounded-command ownerless executable snapshot changed from empty; refusing recovery: "
+                      <> snapshotRoot
+                  )
+              )
+          )
+        requireStableOwnerlessExecutableSnapshot
+          "before recovery"
+          snapshotParent
+          expectedParentStatus
+          parentDescriptor
+          snapshotRoot
+          expectedRootStatus
+          rootDescriptor
+        finalIdentity <- readProcessBirthIdentity processId
+        when
+          (finalIdentity == Just birthIdentity)
+          ( ioError
+              ( userError
+                  "bounded-command ownerless executable snapshot owner became live during recovery"
+              )
+          )
+        removeDirectory snapshotRoot
+        requireStableExecutableSnapshotParent
+          "after ownerless recovery"
+          snapshotParent
+          expectedParentStatus
+          parentDescriptor
+        fileSynchronise parentDescriptor
+        requireStableExecutableSnapshotParent
+          "after ownerless recovery sync"
+          snapshotParent
+          expectedParentStatus
+          parentDescriptor
+
+requireExecutableSnapshotOwnerAbsentAt ::
+  FilePath ->
+  Fd ->
+  IO ()
+requireExecutableSnapshotOwnerAbsentAt snapshotRoot rootDescriptor = do
+  let ownerPath = snapshotRoot </> executableSnapshotOwnerFileName
+  ownerResult <-
+    try @IOException
+      ( openFdAt
+          (Just rootDescriptor)
+          executableSnapshotOwnerFileName
+          ReadOnly
+          defaultFileFlags
+            { nofollow = True,
+              nonBlock = True,
+              cloexec = True
+            }
+      )
+  case ownerResult of
+    Right ownerDescriptor -> do
+      ignoreIOException (closeFd ownerDescriptor)
+      ioError
+        ( userError
+            ( "bounded-command ownerless executable snapshot acquired an owner record: "
+                <> ownerPath
+            )
+        )
+    Left failure
+      | isDoesNotExistError failure -> pure ()
+      | otherwise ->
+          ioError
+            ( userError
+                ( "bounded-command executable snapshot owner absence could not be proved: "
+                    <> ownerPath
+                    <> ": "
+                    <> displayException failure
+                )
+            )
+
+-- | Take one census through a newly opened directory description.  'dup'
+-- would share the retained directory's seek offset, making a second census
+-- start at EOF and therefore prove nothing.
+listExecutableSnapshotRootEntriesFromParent ::
+  FilePath ->
+  Fd ->
+  FileStatus ->
+  Integer ->
+  IO [FilePath]
+listExecutableSnapshotRootEntriesFromParent
+  snapshotRoot
+  parentDescriptor
+  expectedRootStatus
+  maximumEntries =
+    mask $ \restore -> do
+      openedDescriptor <-
+        try @IOException
+          ( openFdAt
               (Just parentDescriptor)
-              entry
+              (takeFileName snapshotRoot)
               ReadOnly
               defaultFileFlags
                 { nofollow = True,
                   directory = True,
                   cloexec = True
                 }
-          (ownerIdentity, observedRootStatus) <-
-            finallyPreservingPrimary
-              ( do
-                  status <- getFdStatus rootDescriptor
-                  pathStatus <- getSymbolicLinkStatus snapshotRoot
-                  unless
-                    ( isDirectory status
-                        && not (isSymbolicLink pathStatus)
-                        && exactFileStatusMatches status pathStatus
-                    )
-                    ( ioError
-                        ( userError
-                            ( "bounded-command executable snapshot entry is not a stable real directory: "
-                                <> snapshotRoot
-                            )
-                        )
-                    )
-                  owner <-
-                    readExecutableSnapshotOwnerAt
-                      snapshotRoot
-                      rootDescriptor
-                  pure (owner, status)
+          )
+      descriptor <-
+        case openedDescriptor of
+          Right value -> pure value
+          Left failure
+            | isDoesNotExistError failure -> ioError failure
+            | otherwise ->
+                ioError
+                  ( userError
+                      ( "bounded-command snapshot root changed before census: "
+                          <> displayException failure
+                      )
+                  )
+      finallyPreservingPrimary
+        ( restore $ do
+            openedStatus <- getFdStatus descriptor
+            openedPathStatus <- getSymbolicLinkStatus snapshotRoot
+            unless
+              ( isDirectory openedStatus
+                  && not (isSymbolicLink openedPathStatus)
+                  && sameFileObjectStatus expectedRootStatus openedStatus
+                  && exactFileStatusMatches openedStatus openedPathStatus
               )
-              (ignoreIOException (closeFd rootDescriptor))
-          unless
-            ( activityProcessId ownerIdentity == processId
-                && activityProcessBirthIdentity ownerIdentity
-                  == birthIdentity
-                && executableSnapshotOwnerName ownerIdentity == entry
+              (ioError (userError "bounded-command snapshot root changed before census"))
+            entries <-
+              listDirectoryBoundedFromDescriptor
+                descriptor
+                maximumEntries
+            finalStatus <- getFdStatus descriptor
+            finalPathStatus <- getSymbolicLinkStatus snapshotRoot
+            unless
+              ( exactFileStatusMatches openedStatus finalStatus
+                  && exactFileStatusMatches finalStatus finalPathStatus
+              )
+              (ioError (userError "bounded-command snapshot root changed during census"))
+            pure entries
+        )
+        (ignoreIOException (closeFd descriptor))
+
+requireStableOwnerlessExecutableSnapshot ::
+  String ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  IO ()
+requireStableOwnerlessExecutableSnapshot
+  phase
+  snapshotParent
+  expectedParentStatus
+  parentDescriptor
+  snapshotRoot
+  expectedRootStatus
+  rootDescriptor = do
+    requireStableExecutableSnapshotParent
+      phase
+      snapshotParent
+      expectedParentStatus
+      parentDescriptor
+    rootStatus <- getFdStatus rootDescriptor
+    rootPathStatus <- getSymbolicLinkStatus snapshotRoot
+    unless
+      ( isDirectory rootStatus
+          && not (isSymbolicLink rootPathStatus)
+          && exactFileStatusMatches expectedRootStatus rootStatus
+          && exactFileStatusMatches rootStatus rootPathStatus
+      )
+      ( ioError
+          ( userError
+              ( "bounded-command ownerless executable snapshot changed "
+                  <> phase
+                  <> ": "
+                  <> snapshotRoot
+              )
+          )
+      )
+
+-- | An exact live owner may be between @mkdir@ and durable owner publication.
+-- That honest transition changes directory metadata, so the live-owner skip
+-- proves only that the retained descriptor and exact path still name the same
+-- real directory object.  Dead-owner deletion uses the stricter metadata
+-- check above.
+requireStableOwnerlessExecutableSnapshotObject ::
+  String ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  IO ()
+requireStableOwnerlessExecutableSnapshotObject
+  phase
+  snapshotParent
+  expectedParentStatus
+  parentDescriptor
+  snapshotRoot
+  expectedRootStatus
+  rootDescriptor = do
+    requireStableExecutableSnapshotParent
+      phase
+      snapshotParent
+      expectedParentStatus
+      parentDescriptor
+    rootStatus <- getFdStatus rootDescriptor
+    rootPathStatus <- getSymbolicLinkStatus snapshotRoot
+    unless
+      ( isDirectory rootStatus
+          && not (isSymbolicLink rootPathStatus)
+          && sameFileObjectStatus expectedRootStatus rootStatus
+          && sameFileObjectStatus rootStatus rootPathStatus
+      )
+      ( ioError
+          ( userError
+              ( "bounded-command ownerless executable snapshot object changed "
+                  <> phase
+                  <> ": "
+                  <> snapshotRoot
+              )
+          )
+      )
+
+requireStableExecutableSnapshotParent ::
+  String ->
+  FilePath ->
+  FileStatus ->
+  Fd ->
+  IO ()
+requireStableExecutableSnapshotParent phase snapshotParent expectedStatus descriptor = do
+  descriptorStatus <- getFdStatus descriptor
+  pathStatus <- getSymbolicLinkStatus snapshotParent
+  unless
+    ( isDirectory descriptorStatus
+        && not (isSymbolicLink pathStatus)
+        && sameFileObjectStatus expectedStatus descriptorStatus
+        && sameFileObjectStatus descriptorStatus pathStatus
+    )
+    ( ioError
+        ( userError
+            ( "bounded-command executable snapshot parent changed "
+                <> phase
             )
-            (ioError (userError "bounded-command executable snapshot owner name and record disagree"))
-          currentIdentity <- readProcessBirthIdentity processId
-          unless
-            (currentIdentity == Just birthIdentity)
-            ( removeRecoveredExecutableSnapshot
-                snapshotRoot
-                ownerIdentity
-                observedRootStatus
-            )
+        )
+    )
 
 parseExecutableSnapshotOwnerName ::
   FilePath ->
@@ -14059,10 +14541,12 @@ removeRecoveredExecutableSnapshot snapshotRoot expectedOwner expectedRootStatus 
                   (ioError (userError "bounded-command snapshot cleanup owner changed"))
                 PosixFiles.setFdMode rootDescriptor ownerModes
                 _ <-
-                  removeExecutableSnapshotDirectoryEntries
+                  removeExecutableSnapshotRootEntries
+                    parentDescriptor
                     snapshotRoot
                     rootDescriptor
-                    0
+                    rootStatus
+                    expectedOwner
                     ExecutableSnapshotRecoveryBudget
                       { executableSnapshotRecoveryEntries = 0,
                         executableSnapshotRecoveryBytes = 0
@@ -14081,11 +14565,160 @@ removeRecoveredExecutableSnapshot snapshotRoot expectedOwner expectedRootStatus 
                 unless
                   (sameFileObjectStatus parentStatus finalParentStatus)
                   (ioError (userError "bounded-command snapshot parent changed during cleanup"))
-                synchroniseDirectory snapshotParent
+                fileSynchronise parentDescriptor
+                syncedParentStatus <- getFdStatus parentDescriptor
+                syncedParentPathStatus <- getSymbolicLinkStatus snapshotParent
+                unless
+                  ( sameFileObjectStatus parentStatus syncedParentStatus
+                      && sameFileObjectStatus
+                        syncedParentStatus
+                        syncedParentPathStatus
+                  )
+                  (ioError (userError "bounded-command snapshot parent changed after cleanup sync"))
             )
             (ignoreIOException (closeFd rootDescriptor))
       )
       (ignoreIOException (closeFd parentDescriptor))
+
+-- | Retire a generation's payload while keeping the durable owner record as
+-- the last directory entry.  A crash before that unlink leaves an ordinary
+-- owned generation; a crash after it leaves the one recoverable ownerless
+-- shape: an exact-name, empty root whose exact owner is dead.
+removeExecutableSnapshotRootEntries ::
+  Fd ->
+  FilePath ->
+  Fd ->
+  FileStatus ->
+  ActivityProcessIdentity ->
+  ExecutableSnapshotRecoveryBudget ->
+  IO ExecutableSnapshotRecoveryBudget
+removeExecutableSnapshotRootEntries
+  parentDescriptor
+  snapshotRoot
+  rootDescriptor
+  expectedRootStatus
+  expectedOwner
+  budget = do
+    entries <-
+      listExecutableSnapshotRootEntriesFromParent
+        snapshotRoot
+        parentDescriptor
+        expectedRootStatus
+        ( maximumExecutableSnapshotRecoveryEntries
+            - executableSnapshotRecoveryEntries budget
+        )
+    unless
+      (executableSnapshotOwnerFileName `elem` entries)
+      (ioError (userError "bounded-command snapshot cleanup owner record is absent"))
+    ownerIdentity <-
+      readExecutableSnapshotOwnerAt snapshotRoot rootDescriptor
+    unless
+      ( ownerIdentity == expectedOwner
+          && executableSnapshotOwnerName ownerIdentity
+            == takeFileName snapshotRoot
+      )
+      (ioError (userError "bounded-command snapshot cleanup owner changed"))
+    payloadBudget <-
+      foldM
+        (removeExecutableSnapshotEntry snapshotRoot rootDescriptor 0)
+        budget
+        (filter (/= executableSnapshotOwnerFileName) entries)
+    remainingEntries <-
+      listExecutableSnapshotRootEntriesFromParent
+        snapshotRoot
+        parentDescriptor
+        expectedRootStatus
+        ( maximumExecutableSnapshotRecoveryEntries
+            - executableSnapshotRecoveryEntries payloadBudget
+        )
+    unless
+      (remainingEntries == [executableSnapshotOwnerFileName])
+      ( ioError
+          ( userError
+              "bounded-command snapshot cleanup did not isolate its exact owner record"
+          )
+      )
+    retainedOwner <-
+      readExecutableSnapshotOwnerAt snapshotRoot rootDescriptor
+    unless
+      ( retainedOwner == expectedOwner
+          && executableSnapshotOwnerName retainedOwner
+            == takeFileName snapshotRoot
+      )
+      (ioError (userError "bounded-command snapshot cleanup retained owner changed"))
+    -- Persist the payload-free/owner-present state before publishing the
+    -- ownerless-empty retirement state.
+    fileSynchronise rootDescriptor
+    retiredBudget <-
+      removeExecutableSnapshotOwnerRecord
+        snapshotRoot
+        rootDescriptor
+        payloadBudget
+    fileSynchronise rootDescriptor
+    finalEntries <-
+      listExecutableSnapshotRootEntriesFromParent
+        snapshotRoot
+        parentDescriptor
+        expectedRootStatus
+        ( maximumExecutableSnapshotRecoveryEntries
+            - executableSnapshotRecoveryEntries retiredBudget
+        )
+    unless
+      (null finalEntries)
+      (ioError (userError "bounded-command snapshot cleanup root is not empty"))
+    pure retiredBudget
+
+removeExecutableSnapshotOwnerRecord ::
+  FilePath ->
+  Fd ->
+  ExecutableSnapshotRecoveryBudget ->
+  IO ExecutableSnapshotRecoveryBudget
+removeExecutableSnapshotOwnerRecord snapshotRoot rootDescriptor budget = do
+  let ownerPath = snapshotRoot </> executableSnapshotOwnerFileName
+      countedBudget =
+        budget
+          { executableSnapshotRecoveryEntries =
+              executableSnapshotRecoveryEntries budget + 1
+          }
+  requireExecutableSnapshotRecoveryBudget countedBudget
+  ownerDescriptor <-
+    openFdAt
+      (Just rootDescriptor)
+      executableSnapshotOwnerFileName
+      ReadOnly
+      defaultFileFlags
+        { nofollow = True,
+          nonBlock = True,
+          cloexec = True
+        }
+  finallyPreservingPrimary
+    ( do
+        status <- getFdStatus ownerDescriptor
+        pathStatus <- getSymbolicLinkStatus ownerPath
+        unless
+          ( isRegularFile status
+              && exactFileStatusMatches status pathStatus
+              && PosixFiles.fileSize status <= 4096
+          )
+          (ioError (userError "bounded-command snapshot cleanup owner is invalid"))
+        let retiredBudget =
+              countedBudget
+                { executableSnapshotRecoveryBytes =
+                    executableSnapshotRecoveryBytes countedBudget
+                      + fromIntegral (PosixFiles.fileSize status)
+                }
+        requireExecutableSnapshotRecoveryBudget retiredBudget
+        finalStatus <- getFdStatus ownerDescriptor
+        finalPathStatus <- getSymbolicLinkStatus ownerPath
+        unless
+          ( exactFileStatusMatches status finalStatus
+              && exactFileStatusMatches finalStatus finalPathStatus
+          )
+          (ioError (userError "bounded-command snapshot cleanup owner changed before unlink"))
+        removeFile ownerPath
+        pure retiredBudget
+    )
+    (ignoreIOException (closeFd ownerDescriptor))
 
 removeExecutableSnapshotDirectoryEntries ::
   FilePath ->
@@ -14385,11 +15018,11 @@ readExecutableSnapshotOwnerAt ::
   Fd ->
   IO ActivityProcessIdentity
 readExecutableSnapshotOwnerAt snapshotRoot rootDescriptor = do
-  let ownerPath = snapshotRoot </> "owner.identity"
+  let ownerPath = snapshotRoot </> executableSnapshotOwnerFileName
   descriptor <-
     openFdAt
       (Just rootDescriptor)
-      "owner.identity"
+      executableSnapshotOwnerFileName
       ReadOnly
       defaultFileFlags
         { nofollow = True,

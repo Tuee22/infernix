@@ -94,6 +94,7 @@ import Infernix.HostTools qualified as HostTools
 import Infernix.Lint.Chart (runChartLint)
 import Infernix.Lint.Docs (runDocsLint)
 import Infernix.Lint.Files (runFilesLint)
+import Infernix.Lint.Plan (runPlanLint)
 import Infernix.Lint.Proto (runProtoLint)
 import Infernix.Models (expectedDaemonLocationForRuntime, expectedInferenceDispatchModeForRuntime, expectedInferenceExecutorLocationForRuntime)
 import Infernix.ProjectInit (runProjectInit, runTestInit)
@@ -228,6 +229,7 @@ dispatch command =
     LintDocsCommand -> runDocsLint
     LintProtoCommand -> runProtoLint
     LintChartCommand -> runChartLint
+    LintPlanCommand -> runPlanLint
     TestLintCommand -> runLint Nothing
     TestUnitCommand -> do
       ensureWebDependencies
@@ -389,6 +391,12 @@ runLint maybeRuntimeMode =
     runChartLint
     runProtoLint
     runDocsLint
+    -- Phase 0 Sprint 0.24: the development-plan standards are enforced by the
+    -- aggregate gate rather than by a maintenance pass someone remembers to
+    -- perform. The scans stayed outside `runLint` only while they measured the
+    -- Section C and Section D backlog that preceded them; with the corpus at
+    -- zero, leaving them out is what would let the backlog silently return.
+    runPlanLint
     runPythonQualityIfPresent maybeRuntimeMode
     runToolchainCommand authority maybeRuntimeMode ToolchainBuildAll
 
@@ -1808,13 +1816,24 @@ runToolchainCommand authority _maybeRuntimeMode invocation = do
             invocation
             resolvedCommand
         onExceptionPreservingPrimary
-          ( do
-              BuildMemory.applyToolchainChildVictimRank
-                authority
-                (ownedToolchainProcessGroup spawned)
-              waitForToolchainProcessLeader
-                (BuildMemory.toolchainInvocationLabel authority invocation)
-                (ownedToolchainProcessHandle spawned)
+          -- Phase 1 Sprint 1.21 isolates this child in a fresh process group so
+          -- exceptional cleanup can signal an owned group without signalling the
+          -- harness. That isolation also removed the child from the identity a
+          -- held harness reservation authorizes by, which silently refused the
+          -- cluster-owned suites' own `internal materialize-substrate` writes and
+          -- cluster mutations. Delegating this exact group for the child's
+          -- lifetime restores that authority without giving up the isolation.
+          ( withDelegatedHarnessChildGroup
+              paths
+              (fromIntegral (ownedToolchainProcessGroup spawned))
+              ( do
+                  BuildMemory.applyToolchainChildVictimRank
+                    authority
+                    (ownedToolchainProcessGroup spawned)
+                  waitForToolchainProcessLeader
+                    (BuildMemory.toolchainInvocationLabel authority invocation)
+                    (ownedToolchainProcessHandle spawned)
+              )
           )
           (cleanupOwnedToolchainProcess authority invocation spawned)
   case exitCode of

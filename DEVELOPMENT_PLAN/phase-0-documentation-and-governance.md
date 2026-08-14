@@ -1,34 +1,15 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Active — Sprint 0.22 formatter-stable source has governed Apple rebuild GREEN for
-compile/install only, and the docs-only monitoring-stance correction has whole aggregate lint GREEN
-for style/policy/compile. Full unit is genuinely RED before test suites at bounded Python project
-provisioning. Diagnose the owned-kernel failure and residue next. Independent final review remains
-CLEAN with no High or Medium finding.
-Strict numerical execution pauses every code-writing phase until its remaining validation closes.
-**Suspended prior state**: Done — Sprint 0.21 re-closed this phase on 2026-08-08 after the bounded-host-memory
-doctrine named the co-resident VM pledge and the then-missing Darwin toolchain intersection. The
-current implementation now routes both toolchain and inference accounting through one fixed-path,
-conservative Colima observation and subtracts the active pledge from Darwin effective memory.
-Sprint 0.20 reopened and re-closed this phase for the per-machine
-fleet doctrine on 2026-08-05. Sprint 0.19 reopened and re-closed it for the bounded-host-memory
-doctrine and its governance surface on 2026-08-04. Sprint 0.18 closed the
-no-repo-owned-native-source doctrine, governed workflow mirror, and correction evidence reset on
-2026-07-27; Sprint 0.17 and Sprints 0.1-0.16 retain their recorded narrower closure.
+**Status**: Done. This phase owns the governed `documents/` suite, the standards that keep the plan
+and those documents aligned, and the enforcement that makes both mechanical. Sprint 0.24 landed
+`infernix lint plan`, which implements the Section C, D, I, J, and Q scans the standards had
+declared only in prose, drove the corpus to zero against them, and wired the scans into `runLint`.
+Every sprint in this phase is closed on the machine-independent gate set; the phase is
+machine-independent throughout and carries no accelerator cohort.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
 > docs aligned, and the documentation-first baseline that all later implementation phases depend on.
-
-> **Correction evidence reset (2026-07-26).** Every affected Phase 0/1/2/4 source/binary digest,
-> final review, Stage 1, and current-cohort statement below that predates the
-> no-repo-owned-native-source correction is historical GREEN-as-run evidence only, superseded and
-> nonreusable for the correction. This includes Apple bridge/materialization, lifecycle/subprocess,
-> and Apple footprint-sampler evidence. A fresh final review and complete machine-independent
-> correction Stage 1 passed on 2026-07-27 for the exact identity recorded under Sprint 0.18.
-> Correction-dependent Apple and `linux-cpu` evidence remains open. The interrupted
-> Apple attempt 5 partial gates, replay/build/registry observations, `user interrupt`, lifecycle
-> contention diagnostic (`errno 35`), and supported recovery are diagnostic history, not closure.
 
 ## Documentation-First Gate
 
@@ -36,188 +17,32 @@ Phase 0 closes the documentation bootstrap only. Later phases still own follow-o
 work whenever the implementation direction changes, but they do so on top of the governed suite and
 lint rules established here.
 
-> **Fleet-doctrine completion reopen (2026-08-09).** A read-only audit found that Sprint 0.20 did
-> not complete its governed-document reconciliation and that the docs lint misses semantic
-> implementation-status prose. [Sprint 0.22](#sprint-022-complete-fleet-doctrine-reconciliation-and-enforce-status-free-governed-docs-active)
-> is therefore the only executable sprint. It removes stale mandatory/local-HA, replication,
-> leader-election, exactly-once, surviving-coordinator, deleted Patroni-repair, and retired
-> pod/node-failure-injection prose; makes the timeless contract one process per role per machine,
-> at-least-once with an effectively-once observable outcome, and single-instance platform recovery;
-> removes implementation status from governed docs; and adds semantic negative docs-lint tests.
-> This is machine-independent governance work with no accelerator cohort. Under the strict
-> numerical-order rule, Phases 1-9 are blocked until Sprint 0.22 closes; their exact prior states and
-> evidence remain recorded as suspended context rather than being erased.
-
-> **Per-machine fleet reopen (2026-08-05).** The supported architecture is a fleet: multiple
-> machines, each running exactly one engine process, all consuming the same `Shared` pool topic, each
-> with its own model cache and its own machine contract naming the pools it serves. Three governance
-> gaps forced the reopen. The delivery contract was **at-least-once and never said so** — it was
-> implied by two sentences about acknowledgement ordering, while three plan documents and four
-> governed docs claimed exactly-once. One-engine-per-machine was enforced by Kubernetes anti-affinity
-> rather than stated as the correctness rule it is, and the rule was **waived outright on Apple** so a
-> single integration assertion could pass. And the standards mandated a topology the doctrine
-> retires: replicas >= 2, required anti-affinity, PodDisruptionBudgets, and "the mandatory local HA
-> topology is the only supported cluster target". Phase 0 reopens under
-> [Sprint 0.20](#sprint-020-per-machine-fleet-doctrine-done) to state the doctrine, correct the
-> standards, rename both HA-named phase documents, and harden two docs-lint checks that made that
-> rename silently green. This is machine-independent (Axis-1 only) and **re-closes in the same
-> change**, as Sprints 0.11, 0.13-0.15 and 0.19 did. The implementation is owned by Sprints 3.16,
-> 4.34, 6.47, 8.10 and 8.11.
-
-> **Bounded-host-memory reopen (2026-08-04).** A host-side `cabal build` from this checkout reached
-> 109.46 GiB resident on a 124.94 GiB development host and wedged it for five and a half hours. The
-> kernel destroyed 111 Kubernetes pod processes and never selected the build: `oom_badness` is
-> per-process and the build ran at `oom_score_adj` 0 against pods at 996-1000. The forensic finding
-> that forces a governance reopen is not the incident but its cause — the toolchain is a first-class
-> claimant on host RAM that appears in no partition, no budget, and no type, so it could not exceed
-> a limit it never had. The same review found `bounded_inference_memory.md` asserting in its purpose
-> block that a host out-of-memory kill is structurally unrepresentable while stating the opposite
-> later in the same file. Phase 0 reopens under [Sprint 0.19](#sprint-019-bounded-host-memory-doctrine-done)
-> to author the capacity-ledger doctrine, register it, narrow every over-claiming statement in the
-> governed suite to what is actually proven, and mirror the new non-negotiable rule. This is
-> machine-independent (Axis-1 only: `infernix lint docs` / `docs check` / `cabal build all`); it has
-> no accelerator gate and blocks no accelerator phase, and it **re-closes in the same change** that
-> authors the doctrine, exactly as Sprints 0.11 and 0.13-0.15 did. The implementation it governs is
-> owned by Phase 1 Sprint 1.21 and Phase 6 Sprint 6.46.
-
-> **Realness reopen (governed-doc reconciliation).** The realness-by-construction program (Phases
-> 1/4/6) changed the model bindings and replaced the "real-output proof remains a substrate
-> cohort gate" softener with a code-enforced realness invariant. Phase 0 reopened under Sprint 0.11
-> to reconcile the governed docs — the README matrix + Coverage Closure Rules
-> (in lockstep with `Models.hs` and `model_catalog.md`), `model_catalog.md` / `testing_strategy.md` /
-> `python_policy.md`, a new realness doctrine home, and the forbidden-phrase purge — and to review
-> `README.md` / `AGENTS.md` / `CLAUDE.md` together, then **re-closed**. This was machine-independent
-> (Axis-1 only: `infernix lint docs` / `docs check`); it had no accelerator gate and blocked no
-> accelerator phase.
-
-> **Bounded-command application / bounded-HTTP reopen (2026-07-19).** The 2026-07-18
-> single-accelerator cohort run surfaced a Harbor `docker pull` verify hang and a rate-limited
-> (403 + `Retry-After`) upstream model download that the Sprint 1.16/3.14/4.28 managed-state kernels
-> shipped but did not yet guard at those sites. Phase 0 reopens under
-> [Sprint 0.14](#sprint-014-bounded-commandbounded-http-doctrine-documentation-done) to record the
-> governance surface of the follow-on: extend `managed_state_transitions.md` (The law / Enforcement /
-> Current Status) with the bounded-HTTP download-outcome kernel, the `BlobServable` witness, and the
-> two new capability-gating lints; update the three-way `README.md` / `AGENTS.md` / `CLAUDE.md`
-> non-negotiable mirror plus `assistant_workflow.md`; and enter the superseded surfaces into the
-> deletion ledger. This is machine-independent (Axis-1 only: `infernix lint docs` / `docs check`),
-> code-side closed 2026-07-19, and closed by [Wave V](cohort-validation-waves.md) (2026-07-20) —
-> apple-silicon plus linux-cpu full-suite `test all` green.
-> The original closure remains historical. The 2026-07-26 Phase 2 final audit found that a cached
-> Docker pull could falsely mint `BlobServable`; the current implementation instead requires bounded
-> authenticated platform-selected skopeo copy from Harbor into a fresh protected `dir:` store, with
-> primary-preserving cleanup and command/redaction/path coverage. Phase 2's `d578…` / `a0d1…`
-> final review and Stage 1 were GREEN as run, and Apple attempt 4 proved registry-only verification for the
-> workload and all support images. The attempt rejected the wider freeze on Bark's 8192 MiB live
-> ceiling breach. The fp16 Bark correction is implemented with focused checks GREEN; its renewed
-> review and Stage 1 were also GREEN as run before the no-native-source correction superseded them.
-> The all-Haskell lifecycle replacement and nested-custody self-exec anchor/supervisor/pin
-> implementation are present, and the obsolete C/Cabal boundary is removed. Focused adversarial
-> proof, final review, and the complete correction Stage 1 passed on 2026-07-27. Phase-owned work and
-> behavioral cohorts remain ordered after Phase 0.
+Governance reopens this phase whenever a doctrine defect is found rather than an implementation
+gap, and each reopen is a numbered sprint that re-closes on the machine-independent gates. Those
+reopens are machine-independent: they carry no accelerator cohort and block no accelerator phase.
 
 ## Current Repo Assessment
 
-Phase 0 is Active for formatter-stable, SOURCE-STABLE, build-GREEN Sprint 0.22. The governed prose
-reconciliation, semantic docs lint, and focused fixtures are landed; static zero scans, the body
-mirror, scoped diff check, and independent review are clean, with no High or Medium finding. No Sprint 0.22 governed
-unit, docs, or runtime gate has run. After 5m54s claimant-free readiness following the end of
-the external Cabal owner, the overlap monitor pinned owned PID 53817 and observed zero external
-claimants through settlement and its final scan. Exact `./bootstrap/apple-silicon.sh build` exited
-0: 65536 MiB physical minus the 49152 MiB active Colima pledge yielded 16384 MiB effective;
-`J1*H4096 + 2*C1024 = 6144 MiB`, with the `GHCRTS` driver at 1024 MiB; the sdist, all 114 GHC
-9.12.4 library modules including new `Infernix.Lint.Docs` as module 63, `Main` link,
-install/copy to `.build/infernix`, and corrected operator/harness postamble completed. This is
-compile/install evidence only. After a clean monitored readiness window from 17:15:56 to 17:21:18
-(5m22s), the monitor pinned owned PID 63879 and observed zero external claimant through settlement
-and final scan. Exact `./.build/infernix test lint` exited 1: the library rebuilt
-`Infernix.Lint.Docs` as module 63 and the CLI as module 114; `test/haskell-style/Spec.hs` compiled
-and linked; and the test started. Its sole diagnostic was
-`haskell-style-check: Ormolu formatting differs:` followed by exactly
-`src/Infernix/Lint/Docs.hs`; Cabal reported 0/1 with `Error: [Cabal-7125]`. Fail-fast left
-HLint/readability, the isolated Cabal formatter, Python/Black, build-all, unit, and docs unrun. This
-is a genuine aggregate-lint RED with no semantic or runtime claim; the governed build GREEN remains
-compile/install evidence. After a clean monitored readiness window of 17:27:50–17:33:15 = 5m25s,
-the monitor pinned owned PID 68221 and found zero external claimant through its final scan. One
-exact `./.build/infernix test lint` invocation exited 1 intentionally after
-`user error (governed Ormolu apply completed idempotently for src/Infernix/Lint/Docs.hs)`. Only the
-Haskell-style component compiled, linked, and ran; the intentional stop occurred before
-HLint/readability, the isolated Cabal formatter, Python, build-all, or any later gate. The target
-changed from prehash `fb929508...e4bd7` to formatted `396cac91...ce68`: linked Ormolu
-canonicalized the equivalent `zipWith3 (,,)` to `zip3` and adjusted only multiline
-pattern/comprehension layout; a second apply was exact. The temporary checker was restored
-byte-for-byte at SHA-256 `880a2763...f37`, and scoped diff check is clean. This is diagnostic and
-formatter-correction evidence only. Independent formatter-delta review is CLEAN with no High or
-Medium finding: `zip3` is semantically identical here, tuple bindings and `where` scope are
-preserved, and fixture wiring and controls remain coherent. The formatted source is SOURCE-STABLE
-and its exact governed Apple rebuild is GREEN. The prerequisite window 17:39:56–17:45:11 was
-claimant-free for 5m15s. The monitor pinned owned bootstrap PID 73643 from its start around 17:45:29
-through settlement at 17:48:18–17:48:24 and found zero external claimant through post-settlement
-and the independent final scan at 17:49:10. Exact `./bootstrap/apple-silicon.sh build` exited 0:
-65536 - 49152 = 16384 MiB effective; `J1*H4096 + 2*C1024 = 6144 MiB`; `GHCRTS` driver 1024 MiB;
-sdist; all 114 GHC 9.12.4 library modules including formatted `Infernix.Lint.Docs` module 63;
-`Main` link, install/copy to `.build/infernix`, and corrected postamble. This is compile/install
-evidence only. The next prerequisite window, 17:53:05–17:58:18, was claimant-free for 5m13s. The
-monitor owned PID 84529 from about 17:58:30 through 18:00:34, observed settlement by 18:00:39, and
-found zero external claimant through the final scan at 18:01:30. Exact
-`./.build/infernix test lint` exited 1. Haskell style rebuilt `Infernix.Lint.Docs` module 63 and
-`test/haskell-style`, then emitted `haskell-style-check: ok` and passed. The isolated Cabal 3.16
-formatter emitted `cabal-format-check: ok` and passed; its fixture warning was expected. The exact
-docs-policy failure was `user error (documents/README.md must declare the monitoring stance with
-the sentence: Monitoring is not a supported first-class surface.)`, with the call stack at
-`Docs.hs:1206:9`. Fail-fast left Python/Black, build-all, and every later stage unrun. This is a
-genuine aggregate-lint RED and supplies no semantic or runtime GREEN. The exact cause was
-`documents/README.md` expressing the doctrine with comma form `surface, and`,
-so the validator's required standalone sentence was absent. The only landed change is in
-`documents/README.md`: `Monitoring is not a supported first-class surface. The governed docs suite
-has no canonical` followed by the existing path line. The validator and all Haskell are unchanged.
-The exact sentence is now present in all five `monitoringStancePaths`; there is no `monitoring.md`
-or dormant monitoring stack, and scoped document diff check is clean. Independent final review is
-CLEAN with no High or Medium finding and explicitly finds no rebuild warranted. At that checkpoint,
-the docs-only correction was SOURCE-STABLE and unvalidated; the formatter-stable build GREEN
-remained valid.
-After the 18:08:43–18:13:59 prerequisite was claimant-free for 5m16s, the monitor owned PID 92170
-from about 18:14:09 through 18:21:27, observed settlement by 18:21:32, and found zero external
-claimant through the final scan at 18:22:35. Exact `./.build/infernix test lint` exited 0. Haskell
-style emitted `haskell-style-check: ok` and passed; isolated Cabal 3.16 emitted
-`cabal-format-check: ok` and passed with its expected fixture warning. Python checking succeeded for
-8 source files, Black left all 8 unchanged, and the gate emitted `All checks passed!`. Final bounded
-build-all completed every declared component, linking integration 116/116 and unit 117/117. This is
-style/policy/compile evidence only, not unit runtime, docs, or runtime evidence. The prior
-monitoring-stance RED is closed.
-The 18:25:06–18:30:40 prerequisite was claimant-free for 5m34s. The monitor owned PID 1752 from
-about 18:30:50 through 18:31:25, observed settlement by 18:31:33, and found zero external claimant
-through the final scan at 18:32:42. Exact `./.build/infernix test unit` exited 1 before any test
-suite with `bounded Python project provisioning failed` for project
-`/Users/matthewnowak/infernix/python`. The kernel failure was `anchor terminal disagreed with anchor
-exit ExitFailure (-9); input InputCompleted; stdout CaptureCompleted "Installing dependencies from
-lock file\n\nNo dependencies to install or update\n\nInstalling the current project: infernix-adapters
-(0.1.0)\n"; stderr CaptureCompleted ""`, with call stack `Python.hs:215:13`. Aggregate lint GREEN
-remains valid. This is a genuine unit RED and supplies no unit or runtime GREEN.
-Before that sprint opened, Phase 0 was closed around the governed
-`documents/` suite. Sprint 0.18's no-native-source rule, lint
-implementation, native-boundary deletion record, evidence reset, canonical root-document posture,
-focused adversarial proof, final review, and source-matched machine-independent gate are complete.
-The governed docs, root docs, and development plan
-describe the same explicit-init runtime-config mechanics and the Phase 6 Apple split-executor
-product shape.
-The repository and README matrix still point at `apple-silicon` as the Apple-native
-inference lane, and the plan now records the clarified contract explicitly: `infernix init` creates
+Every sprint in this phase is closed on its machine-independent gates. The governed `documents/`
+suite, the documentation standards, the docs validator, and the
+plan-standards validator are in place. `infernix lint docs` and `infernix docs check` are the
+governed validation entrypoints for documentation change; `infernix lint plan` is the mechanical
+half of the plan standards, reports zero against the corpus, and runs inside the aggregate
+`infernix test lint` gate.
+
+The governed docs, the root documents, and the development plan describe the same explicit-init
+runtime-config mechanics and the Apple split-executor product shape. `infernix init` creates
 repo-root `./infernix.dhall` plus `./infernix-host.dhall`, `infernix test init` creates the harness
 input, ordinary config-dependent commands fail fast rather than auto-materializing missing config,
 and the routed Apple path is clustered service orchestration plus host-native inference execution:
-cluster daemons remain present, and Apple inference batches move
-through Pulsar into same-binary host daemons.
-`infernix lint docs` and `infernix docs check` remain the governed validation entrypoints for
-that closure.
+cluster daemons remain present, and Apple inference batches move through Pulsar into same-binary
+host daemons. The repository and README matrix name `apple-silicon` as the Apple-native inference
+lane.
 
-That prior closure evidence remains valid for its recorded scope because the governance baseline,
-canonical topic ownership, and docs-lint contract are in place. Sprint 0.22's stale fleet/status
-reconciliation is SOURCE-STABLE and landed; only its ordered validation remains before Phase 0 can
-close again. The governed runbooks, testing docs, CLI references, and plan describe
-the supported first-run convergence windows in `cluster up` and `cluster down`, name the
-long-running Docker build, Harbor publication, Harbor-backed final-image preload, and Apple
-teardown data-sync phases explicitly, and use inactivity-aware language instead of treating
-wall-clock duration alone as product failure.
+The governed runbooks, testing docs, CLI references, and plan describe the supported first-run
+convergence windows in `cluster up` and `cluster down`, name the long-running Docker build, Harbor
+publication, Harbor-backed final-image preload, and Apple teardown data-sync phases explicitly, and
+use inactivity-aware language instead of treating elapsed duration alone as product failure.
 
 ## Sprint 0.1: `documents/` Suite Scaffold [Done]
 
@@ -318,11 +143,18 @@ Make documentation drift mechanically visible and keep the plan aligned with the
 - the repo-local docs validator exists
 - documentation standards, the docs index, and the development plan are cross-linked
 - documentation changes can be checked through a canonical repo-local validation path
+- the validator compares each marker-delimited generated section against the Haskell renderer that
+  owns it, so a registry change that is not transcribed into the governed reference is a drift
+  failure rather than a silent divergence
 
 ### Validation
 
 - the docs validator runs on the supported path
 - governed docs and the plan cross-reference one another
+- the generated CLI-reference section byte-matches the command-registry renderer. The supported
+  Linux lane validates the baked source snapshot rather than a working tree, so a section that
+  drifts from the renderer cannot be repaired in place for that lane — the byte-match is a
+  precondition of the lane's documentation gate, not a formatting preference
 
 ### Remaining Work
 
@@ -526,12 +358,13 @@ distinct from the pre-existing substrate schema implemented in Phase 6 Sprint 6.
   declarative — no code changes).
 - The seven cleanup rows in `legacy-tracking-for-deletion.md` each name a specific later
   sprint as the owning sprint (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17).
+- the seven cleanup sprints are implemented; the Apple cohort closed under
+  [Wave A](cohort-validation-waves.md) and the CUDA Linux cohort under
+  [Wave C](cohort-validation-waves.md), with both `linux-cpu` and `linux-gpu` passing.
 
 ### Remaining Work
 
-None. The seven cleanup sprints (1.11, 2.13, 3.10, 4.13, 5.9, 6.28, 7.17)
-implemented, the Apple cohort closed in Wave A, and the CUDA Linux cohort closed in Wave C with
-`linux-cpu` passing on the recorded cohort validation and `linux-gpu` passing on the recorded cohort validation.
+None.
 
 ---
 
@@ -608,8 +441,9 @@ None.
 ## Sprint 0.11: Realness Doctrine and Matrix Reconciliation [Done]
 
 **Status**: Done
-**Code-side closure**: Complete (machine-independent; validated 2026-06-23 on the rebuilt `linux-cpu` image by `infernix lint docs` + `infernix docs check`) — recorded the realness-by-construction program in the
-governed docs: update the README "Comprehensive Model / Format / Engine Matrix" + Coverage Closure Rules
+**Code-side closure**: Complete (machine-independent; validated on the rebuilt `linux-cpu` image
+by `infernix lint docs` + `infernix docs check`) — recorded the realness-by-construction program
+in the governed docs: update the README "Comprehensive Model / Format / Engine Matrix" + Coverage Closure Rules
 (the latter from "real-output proof remains a substrate cohort gate" to the realness invariant) in
 lockstep with `Models.hs` and `model_catalog.md` so the `infernix lint docs` matrix↔catalog parity holds;
 rewrite `model_catalog.md`, `testing_strategy.md`, and `python_policy.md` to the realness invariant; add
@@ -637,20 +471,21 @@ with the generated catalog and lint.
 
 - `infernix lint docs` + `infernix docs check` pass (metadata, links, README route block,
   matrix↔catalog parity, forbidden phrases purged)
+- the matrix↔catalog lockstep (`Models.hs` + README + `model_catalog.md`), the
+  `testing_strategy.md` / `python_policy.md` rewrites, the `realness_contract.md` doctrine home, and
+  the `forbiddenPhrases` additions (`real-output proof remains`, `Wave I still owns replacing`) are
+  all landed and validated
 
 ### Remaining Work
 
-None. The matrix↔catalog lockstep (`Models.hs` + README + `model_catalog.md`), the
-`testing_strategy.md` / `python_policy.md` rewrites, the `realness_contract.md` doctrine home, and the
-`forbiddenPhrases` additions (`real-output proof remains`, `Wave I still owns replacing`) all landed
-and validated 2026-06-23.
+None.
 
 ---
 
 ## Sprint 0.12: Realness Lint Enforcement Infrastructure [Done]
 
 **Status**: Done
-**Code-side closure**: Complete (machine-independent; validated 2026-06-23 on the rebuilt `linux-cpu`
+**Code-side closure**: Complete (machine-independent; validated on the rebuilt `linux-cpu`
 image by `infernix test lint` + `poetry run check-code`) — the realness-by-construction invariant
 ([../documents/architecture/realness_contract.md](../documents/architecture/realness_contract.md)) is
 mechanically enforced by two machine-independent lints owned here as governance: the Python
@@ -690,16 +525,16 @@ None.
 ## Sprint 0.13: Managed-State-Transition Doctrine and Escape-Token Lint [Done]
 
 **Status**: Done — the Managed-State-Transition Doctrine doc and the `unsafeCoerce` /
-`unsafePerformIO` escape-token lint were code-side closed (machine-independent gates) 2026-07-16,
-and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
-[Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+`unsafePerformIO` escape-token lint are code-side closed on the machine-independent gates, and the
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
+[Wave V](cohort-validation-waves.md).
+**Code-side closure**: `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new escape-token check is
 clean on the tree and was verified to fail on a reintroduced `unsafeCoerce` / `unsafePerformIO` in
-an evidence module), `infernix lint docs`, and `infernix docs check` all green on the apple-silicon
+an evidence module), `infernix lint docs`, and `infernix docs check` all pass on the apple-silicon
 lane. No native/Python change in this sprint, so `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
-linux-cpu full-suite `test all` green.
+**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus
+linux-cpu full-suite `test all` clean.
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/HaskellStyle.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing engineering/reference docs
 
@@ -728,38 +563,36 @@ generalizes the results-side realness contract to state transitions and is canon
 
 ### Validation
 
-- code-side closed 2026-07-16 (apple-silicon lane): `cabal build all` (`-Wall -Werror`),
+- on the apple-silicon lane: `cabal build all` (`-Wall -Werror`),
   `cabal test infernix-unit`, and `cabal test infernix-haskell-style` all pass. The new
   `escapeTokenViolations` check in `src/Infernix/Lint/HaskellStyle.hs` is clean on the tree and was
   verified to fail with the doctrine diagnostic on a reintroduced `unsafeCoerce` / `unsafePerformIO`
   token injected into an evidence-kernel module (reverted after the negative-test confirmation)
 - `infernix lint docs` and `infernix docs check` pass, confirming the doctrine doc's metadata,
-  links, and `requiredDocs` registration (the doc was authored and registered in
-  `src/Infernix/Lint/Docs.hs` `requiredDocs` and `documents/README.md` on 2026-07-15; the
-  escape-token lint is the code delta that lands this sprint)
+  links, and `requiredDocs` registration; the escape-token lint is the code delta that lands this
+  sprint
 - `poetry run check-code` is not applicable — no native/Python surface changed
 - the linux-cpu lane rerun of the code-side gates closed under [Wave V](cohort-validation-waves.md)
 
 ### Remaining Work
 
-- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
-  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
+None.
 
 ---
 
 ## Sprint 0.14: Bounded-Command/Bounded-HTTP Doctrine Documentation [Done]
 
 **Status**: Done — the `managed_state_transitions.md` bounded-command/bounded-HTTP governance
-extension and the three-way non-negotiable mirror were code-side closed (machine-independent gates)
-2026-07-19, and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
-[Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-19 — this is a docs-and-governance sprint, so the applicable
-machine-independent gates are `infernix lint docs` and `infernix docs check`, both green on the
+extension and the three-way non-negotiable mirror are code-side closed on the machine-independent
+gates, and the single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
+[Wave V](cohort-validation-waves.md).
+**Code-side closure**: this is a docs-and-governance sprint, so the applicable
+machine-independent gates are `infernix lint docs` and `infernix docs check`, both passing on the
 apple-silicon lane; `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit`, and
 `cabal test infernix-haskell-style` are unaffected by the Markdown-only change. No Python/native
 change, so `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
-linux-cpu full-suite `test all` green.
+**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus
+linux-cpu full-suite `test all` clean.
 **Implementation**: `documents/architecture/managed_state_transitions.md`, `README.md`, `AGENTS.md`,
 `CLAUDE.md`, `documents/development/assistant_workflow.md`, `documents/tools/harbor.md`,
 `documents/engineering/model_lifecycle.md`, `documents/engineering/object_storage.md`,
@@ -774,9 +607,10 @@ and the phase's existing engineering/reference docs
 
 This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — record the
 governance surface of the follow-on that applies the Sprint 1.16/3.14/4.28 managed-state kernels at
-the two flake sites the 2026-07-18 cohort run surfaced (the Harbor `docker pull` verify hang and the
-rate-limited upstream model download). Governance is current-state and honest: the doctrine doc, the
-non-negotiable mirror, and the deletion ledger record what the code does now (bounded publish exec,
+the two flake sites a single-accelerator cohort run surfaced (the Harbor `docker pull` verify hang
+and the rate-limited upstream model download). Governance is current-state and honest: the doctrine
+doc, the non-negotiable mirror, and the deletion ledger record what the code does now
+(bounded publish exec,
 `BlobServable` evidence, the classified download outcome, the integrity-witnessed sentinel, and the
 two new capability-gating lints), while the deferred readiness-wait migration and ProcessMonitor
 retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrine is canonical at
@@ -787,8 +621,8 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 - `documents/architecture/managed_state_transitions.md` extended: the bounded-HTTP download-outcome
   kernel added to `## The law` beside the `SubprocessEnv` / `CommandOutcome` bullet, `BlobServable`
   added to the readiness-returns-evidence paragraph, the two new lints (`unboundedExecViolations`,
-  `unboundedHttpViolations`) reflected in the TL;DR and `## Enforcement`, and the 2026-07-19
-  sprint→phase mapping in `## Current Status`
+  `unboundedHttpViolations`) reflected in the TL;DR and `## Enforcement`, and the sprint-to-phase
+  mapping in `## Current Status`
 - the three-way non-negotiable mirror updated: the `evidence-gated state transitions` bullet extended
   with the raw-unbounded-spawn / `runBoundedCommand` clause (enforced by `unboundedExecViolations`)
   and a new peer hard-stop for raw unbounded upstream-model-download HTTP (enforced by
@@ -810,8 +644,7 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 
 ### Remaining Work
 
-- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
-  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
+None.
 
 ---
 
@@ -819,13 +652,12 @@ retirement (Sprint 6.41) are tracked as remaining, not claimed done. The doctrin
 
 **Status**: Done — the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc, its
 docs-lint registration, and the three-way non-negotiable mirror are doc-only and machine-independent;
-closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the apple-silicon lane
-(2026-07-21). Wave W later closed the original Phase 4 Sprints 4.30/4.31 plus Phase 6 Sprint 6.42
-scope. The 2026-07-25 audit superseded that first unindexed admission API: the governed doctrine and
-mirrors now describe Phase 1's indexed compile/refine/executable boundary. Phase 1 passed its
-complete source-matched gate on 2026-07-25; the remaining enforcement work is owned by Phase 4
-Sprint 4.32 and Phase 6 Sprint 6.44.
-**Code-side closure**: closed 2026-07-21 — this is a docs-and-governance sprint, so the applicable
+closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the apple-silicon
+lane. The enforcing Phase 4 Sprints 4.30/4.31 and Phase 6 Sprint 6.42 scope is closed under
+[Wave W](cohort-validation-waves.md). A later audit superseded that first unindexed admission API:
+the governed doctrine and mirrors describe Phase 1's indexed compile/refine/executable boundary, and
+the enforcement work that follows from it belongs to Phase 4 Sprint 4.32 and Phase 6 Sprint 6.44.
+**Code-side closure**: this is a docs-and-governance sprint, so the applicable
 machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the new
 doctrine doc's metadata, links, broad-doctrine-doc structure, and `requiredDocs` / `DocumentStructureRule`
 registration validate), plus `cabal build all` (`-Wall -Werror`, unaffected by the Markdown-only
@@ -879,39 +711,28 @@ as `Planned` Phase 4/6 work. The doctrine is canonical at
 - `cabal build all` (`-Wall -Werror`) is unaffected by the Markdown-only change; `poetry run check-code`
   is not applicable — no native/Python surface changed
 
+The enforcing code — the `MemoryGrant`-gated capped-engine kernel, the checked
+`HostMemoryPartition`, the required `ModelMemoryFootprint`, the budget-enforcer split, and the
+`unboundedEngineSpawnViolations` lint — belongs to Phase 4 Sprints 4.30/4.31 and Phase 6 Sprint
+6.42, whose behavioral sign-off closed under [Wave W](cohort-validation-waves.md).
+
 ### Remaining Work
 
-None. The doc and governance surface are landed and machine-independent-closed. The enforcing code — the
-`MemoryGrant`-gated capped-engine kernel, the checked `HostMemoryPartition`, the required
-`ModelMemoryFootprint`, the budget-enforcer split, and the `unboundedEngineSpawnViolations` lint — is
-code-side closed 2026-07-21 (Phase 4 Sprints 4.30/4.31 + Phase 6 Sprint 6.42), with the behavioral
-[Wave W](cohort-validation-waves.md) sign-off pending, tracked there.
+None.
 
 ---
 
 ## Sprint 0.16: Cluster-Ownership Doctrine and Non-Negotiable Mirror [Done]
 
 **Status**: Done — the Cluster-Ownership & Mutation-Position doctrine (extending the existing
-`managed_state_transitions.md`), the three-way non-negotiable mirror, the new `documentation_standards.md`
-Update Rule, and the operator / test-harness / persistence doc reconciliation are doc-only and
-machine-independent; closed on `infernix lint docs` + `infernix docs check` + `cabal build all` on the
-apple-silicon lane (2026-07-23). [Wave X](cohort-validation-waves.md) historically closes the
-2026-07-23 enforcing-code scope in Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43. It does not close the
-2026-07-25 owner-atomic reservation/teardown correction. Phase 2's first 2026-07-26 Stage 1 and
-Apple attempt were rejected for closure. The later Apple retry proved production dead-owner
-recovery and exhaustive cleanup, but BuildKit diagnosed its Linux-image failure as deterministic
-`-Wunused-top-binds`/`-Werror` at unguarded Darwin-only `continueIfRunning`, not resource pressure.
-The later Apple result diagnosed Bark's 5120 MiB footprint under-estimate. Its 8192 MiB
-recalibration, strict admitted-placement integration rule, Playwright catalog-matrix
-runtime-ceiling escape-hatch removal, and exact Apple/Linux admission unit tests are implemented.
-The registry-only Harbor verification correction is also implemented after the final audit.
-Final review and corrected-source Stage 1 passed for `d578…` / `a0d1…`, but Apple attempt 4
-rejected that freeze after Bark breached the live ceiling at 8192 MiB. The fp16 Bark correction
-passed renewed final review and complete Stage 1 against `eae424…` / `a0d1…` as historical
-GREEN-as-run evidence. The no-native-source correction supersedes it. The lifecycle replacement is
-present, as is the bounded-subprocess replacement, and the obsolete C/Cabal boundary is removed.
-Phase 0's post-correction proof passed on 2026-07-27; both Wave Y lanes remain open.
-**Code-side closure**: closed 2026-07-23 — this is a docs-and-governance sprint, so the applicable
+`managed_state_transitions.md`), the three-way non-negotiable mirror, the new
+`documentation_standards.md` Update Rule, and the operator / test-harness / persistence doc
+reconciliation are doc-only and machine-independent; closed on `infernix lint docs` +
+`infernix docs check` + `cabal build all` on the apple-silicon lane. The enforcing code in Phase 2
+Sprint 2.15 and Phase 6 Sprint 6.43 is closed under [Wave X](cohort-validation-waves.md); the later
+owner-atomic reservation/teardown correction is outside that scope and is tracked with the phases
+that own it.
+**Code-side closure**: this is a docs-and-governance sprint, so the applicable
 machine-independent gates are `infernix lint docs` and `infernix docs check` (both green: the extended
 doctrine doc's links and structure, the new `documentation_standards.md` Update Rule, and the reconciled
 operator / test-harness / persistence docs validate), plus `cabal build all` (`-Wall -Werror`, unaffected
@@ -968,76 +789,9 @@ canonical at
 
 ### Remaining Work
 
-None for this doc-and-governance sprint. The surface is landed and machine-independent-closed.
-[Wave X](cohort-validation-waves.md) (2026-07-24, apple-silicon plus linux-cpu) historically closes
-the 2026-07-23 enforcing-code scope: the `ClusterOwner` field, `ClusterMutating` position,
-fail-closed persistence, reconcile, evidence-gated seizure, chaos-mutation transitions, and
-crash-safe config swap. It does not close the 2026-07-25 owner-atomic reservation/teardown
-correction. Phase 2's first 2026-07-26 Stage 1 and Apple attempt were rejected for closure. The
-later Apple retry proved recovery/cleanup but exposed deterministic Linux `-Werror`; the CPP
-correction invalidated that source identity. The later Bark footprint/test and registry-only
-Harbor verification corrections passed final review and corrected-source Stage 1 for
-`d578…` / `a0d1…`, but Apple attempt 4 rejected that freeze on Bark's 8192 MiB live-ceiling
-breach. The fp16 Bark correction is implemented with focused checks GREEN; renewed full validation
-was GREEN as run before the no-native-source correction superseded it. The lifecycle replacement is
-present, as is the bounded-subprocess replacement, and the obsolete C/Cabal boundary is removed.
-Focused correction proof and fresh review/Stage 1 passed on 2026-07-27; both Wave Y lanes remain
-open.
+None.
 
 ---
-
-## Remaining Work
-
-Current Phase 0 remaining work is Sprint 0.22. The earlier closure record below remains historical
-evidence for its narrower sprint scopes and does not override the active Sprint 0.22 gate.
-
-Sprint 0.13 (Managed-State-Transition Doctrine and Escape-Token Lint) is Done — code-side closed
-2026-07-16 (doctrine doc + `requiredDocs`/`documents/README.md` registration authored 2026-07-15;
-the `unsafeCoerce` / `unsafePerformIO` escape-token lint landed and negative-tested 2026-07-16), and
-its apple-silicon plus linux-cpu full-suite cohort sign-off closed by
-[Wave V](cohort-validation-waves.md) (2026-07-20).
-
-Sprint 0.14 (Bounded-Command/Bounded-HTTP Doctrine Documentation) is Done — code-side closed
-2026-07-19 (the `managed_state_transitions.md` extension, the three-way non-negotiable mirror, and the
-`legacy-tracking-for-deletion.md` ledger rows landed; `infernix lint docs` / `docs check` green), and
-its apple-silicon plus linux-cpu full-suite cohort sign-off closed by
-[Wave V](cohort-validation-waves.md) (2026-07-20).
-
-Sprint 0.15 (Bounded-Inference-Memory Doctrine and Non-Negotiable Mirror) is Done — closed 2026-07-21
-on `infernix lint docs` + `infernix docs check` + `cabal build all`. It is doc-only and
-machine-independent: the `bounded_inference_memory.md` memory-safety-by-construction doctrine doc, its
-`requiredDocs` + `DocumentStructureRule` registration in `src/Infernix/Lint/Docs.hs` + `documents/README.md`
-index, and the new non-negotiable rule in the three-way `README.md` / `AGENTS.md` / `CLAUDE.md` mirror
-plus `assistant_workflow.md` all landed. It has no cohort gate — the enforcing code is `Planned` Phase 4
-(Sprints 4.30/4.31) and Phase 6 (Sprint 6.42) work, whose single-accelerator (apple-silicon) plus
-`linux-cpu` sign-off is [Wave W](cohort-validation-waves.md), tracked there.
-
-Sprint 0.16 (Cluster-Ownership Doctrine and Non-Negotiable Mirror) is Done — closed 2026-07-23 on
-`infernix lint docs` + `infernix docs check` + `cabal build all`. It is doc-only and machine-independent:
-the Cluster-Ownership & Mutation-Position doctrine extends the already-registered
-`managed_state_transitions.md` (no new required doc), the new non-negotiable rule landed in the three-way
-`README.md` / `AGENTS.md` / `CLAUDE.md` mirror plus `assistant_workflow.md`, the missing cluster-lifecycle
-Update Rule landed in `documentation_standards.md`, and the operator / test-harness / persistence docs were
-reconciled to the doctrine. It has no cohort gate — the enforcing code is code-side closed (2026-07-23)
-for the original Phase 2 Sprint 2.15 and Phase 6 Sprint 6.43 scope, whose single-accelerator
-(apple-silicon) plus `linux-cpu` sign-off is historical [Wave X](cohort-validation-waves.md)
-evidence. Wave X does not close the 2026-07-25 owner-atomic reservation/teardown correction. Phase
-2's first 2026-07-26 Stage 1 and Apple attempt were rejected for closure. The later Apple retry
-proved recovery/cleanup but exposed deterministic Linux `-Werror`; the CPP correction invalidates
-that source identity. The later Bark footprint/test and registry-only Harbor verification
-corrections passed final review and corrected-source Stage 1 for `d578…` / `a0d1…`, but attempt 4
-rejected that freeze on Bark's 8192 MiB live-ceiling breach. The fp16 Bark correction is
-implemented with focused checks GREEN; its pre-correction full validation is historical
-GREEN-as-run only. The lifecycle replacement and nested-custody self-exec
-anchor/supervisor/pin implementation are present, and the obsolete C/Cabal boundary is removed.
-Focused runtime proof and fresh review/Stage 1 passed on 2026-07-27; both Wave Y lanes remain open.
-
-Phase 0 was reopened (Sprints 0.11–0.12) for the realness governed-doc reconciliation and the
-machine-independent realness lint enforcement, and is **re-closed** (validated 2026-06-23 by
-`infernix lint docs` + `infernix docs check` + `infernix test lint`). Sprints 0.1-0.12 are Done.
-The work was machine-independent and gated nothing on hardware; the doc reconciliation landed in
-lockstep with the reopened Phase 4 catalog changes (matrix↔catalog parity), and the lint mechanism's
-per-runner scope is extended by the reopened Phases 1 (Apple) and 4 (Linux) as each de-stubs.
 
 ## Sprint 0.17: Typed Execution Plan Doctrine [Done]
 
@@ -1063,23 +817,21 @@ capabilities, and routing or process launch cannot consume raw configuration.
 - `infernix lint docs` and `infernix docs check`
 - phase maintenance scans report zero backward dependency edges and zero dual-accelerator gates
 - `AGENTS.md` and `CLAUDE.md` keep identical non-negotiable mirrors
+- the doctrine is registered in `requiredDocs` with its required structure, and the gates run in
+  the supported `linux-cpu` container context. No enforcing code belongs to this sprint
 
 ### Remaining Work
 
-None. Closed 2026-07-25 in the supported `linux-cpu` container context: `infernix lint docs` and
-`infernix docs check` pass after registering the doctrine in `requiredDocs` with its required
-structure; the deterministic plan scans report zero backward dependency edges and zero Validation
-gates invoking both accelerator lanes; and the `AGENTS.md` / `CLAUDE.md` non-negotiable blocks are
-byte-identical. No enforcing code belongs to this sprint.
+None.
 
 ---
 
 ## Sprint 0.18: No-Repo-Owned Native Source Doctrine [Done]
 
-**Status**: Done — the rule, file-lint implementation, affected doctrine/workflow/plan truth,
-all-Haskell correction, focused adversarial proof, final review, and complete source-matched
-machine-independent correction gate passed on 2026-07-27. No pre-correction review, Stage 1, or
-cohort result was reused.
+**Status**: Done — the rule, the file-lint implementation, the affected doctrine/workflow/plan
+truth, the all-Haskell correction, the focused adversarial proof, the final review, and the
+complete source-matched machine-independent correction gate all passed. No pre-correction review,
+Stage 1, or cohort result was reused.
 **Implementation**: governed documentation, root workflow mirrors, native-source lint policy, and
 the Phase 2 evidence reset
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`,
@@ -1100,9 +852,9 @@ language, deadline, provenance, output-bound, or cleanup contracts.
   declarations; Cabal native-token CPP definitions; and embedded native source, writers, or
   compiler invocations in another implementation language, with unit and negative coverage
 - Phase 2 and Wave Y status that treats every pre-correction source/binary digest, review, Stage 1,
-  and cohort assertion as historical GREEN-as-run evidence only
+  and cohort assertion as superseded and nonreusable for the correction
 - deletion-ledger records for the removed lifecycle and subprocess C/FFI/Cabal boundaries, kept
-  separate from the focused runtime and aggregate validation evidence that closed on 2026-07-27
+  separate from the focused runtime and aggregate validation evidence that closed the correction
 
 ### Validation
 
@@ -1111,43 +863,27 @@ language, deadline, provenance, output-bound, or cleanup contracts.
 - the complete source-matched machine-independent correction gate after the all-Haskell
   implementation and focused adversarial suites pass
 
-Closure evidence (2026-07-27):
-
-- base revision: `6bad4af7ea3cca1c8d22f1ec968b4d95dd13a59d`
-- pre-evidence tracked-plus-untracked worktree digest:
-  `sha256:93a9c053bbe5d41feaba3c10fae8f55c9c42e2c566ebcacbc187747f6b87a4d9`
-- installed Apple binary digest:
-  `sha256:da62304fdec82bb5e2c1a8d3d0c3fc0fe66a9aa7c77c3d1023de8572a8095fcf`
-- final adversarial reviews found no High or Medium findings
-- focused lifecycle-lock and bounded-subprocess adversarial tests and
-  `cabal test infernix-unit` passed
-- `cabal build all` and the integration compile preflight passed
-- `cabal test infernix-execution-plan-internal`, `cabal test infernix-compile-fail` with the
-  5-positive/50-negative fixture inventory, `cabal test infernix-capped-engine-observer`, and
-  `cabal test infernix-haskell-style` passed
-- `cabal install --installdir=./.build --install-method=copy --overwrite-policy=always all:exes`
-  passed
-- the installed binary passed `lint files`, `lint docs`, `lint chart`, `lint proto`, and
-  `docs check`
-- Python `poetry --directory python run check-code`, the canonical web contract/build/unit gates
-  with 83/83 unit tests, and `git diff --check` passed
-- recomputing the tracked-plus-untracked digest after all gates produced the same
-  `sha256:93a9c053bbe5d41feaba3c10fae8f55c9c42e2c566ebcacbc187747f6b87a4d9`
-- subsequent evidence-only development-plan edits record that result without changing executable
-  source
+The correction gate is complete rather than partial: the focused lifecycle-lock and
+bounded-subprocess adversarial suites, `cabal test infernix-unit`, `cabal build all` with the
+integration compile preflight, `cabal test infernix-execution-plan-internal`,
+`cabal test infernix-compile-fail`, `cabal test infernix-capped-engine-observer`,
+`cabal test infernix-haskell-style`, the install to `./.build`, the installed binary's `lint files`
+/ `lint docs` / `lint chart` / `lint proto` / `docs check`, Python
+`poetry --directory python run check-code`, the canonical web contract/build/unit gates, and
+`git diff --check` all pass on one worktree identity whose digest is unchanged before and after the
+gates. The final adversarial reviews found no High or Medium finding.
 
 ### Remaining Work
 
-None. Phase 1 Sprint 1.20 is now Active. Phase 2 remains blocked by Phase 1 and retains its own
-ordered phase review, validation, Apple, and `linux-cpu` closure requirements.
+None.
 
 ---
 
 ## Sprint 0.19: Bounded Host Memory Doctrine [Done]
 
 **Status**: Done — the capacity-ledger doctrine, its lint registration, the governed-suite scope
-corrections, and the three-way non-negotiable mirror landed on 2026-08-04. Machine-independent
-(Axis-1 only); no accelerator gate.
+corrections, and the three-way non-negotiable mirror are landed. Machine-independent (Axis-1 only);
+no accelerator gate.
 **Implementation**: `documents/architecture/bounded_host_memory.md`, `src/Infernix/Lint/Docs.hs`,
 `documents/README.md`, `documents/documentation_standards.md`, the root-document mirror
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
@@ -1210,22 +946,24 @@ for inference, and for everything the repository does not start there is no enfo
   unrepresentable; the surviving honest statements in `typed_execution_plan.md` and `README.md` are
   preserved rather than rewritten
 
+The doctrine this sprint establishes is implemented by Phase 1 Sprint 1.21 (the build-memory
+kernel, the bounded runtime reservation, and the generated ceiling) and Phase 6 Sprint 6.46 (the
+toolchain spawn boundary, its lint, and the per-lane mechanism resolver). The deferred ledger rows
+— the partition's missing build term, the unchecked sum of cluster pod limits against node
+allocatable, and the uncapped nested builds — are named in the doctrine's `Current Status` so they
+are not mistaken for closed.
+
 ### Remaining Work
 
-None in this sprint. The doctrine it establishes is implemented by Phase 1 Sprint 1.21 (the
-build-memory kernel, the bounded runtime reservation, and the generated ceiling) and Phase 6
-Sprint 6.46 (the toolchain spawn boundary, its lint, and the per-lane mechanism resolver). The
-deferred ledger rows — the partition's missing build term, the unchecked sum of cluster pod limits
-against node allocatable, and the uncapped nested builds — are named in the doctrine's
-`Current Status` so they are not mistaken for closed.
+None.
 
 ---
 
 ## Sprint 0.20: Per-Machine Fleet Doctrine [Done]
 
 **Status**: Done — the fleet doctrine, the delivery-semantics contract, the config-split doctrine,
-the standards corrections, the phase renames, and the two docs-lint hardening fixes landed on
-2026-08-05. Machine-independent (Axis-1 only); no accelerator gate.
+the standards corrections, the phase renames, and the two docs-lint hardening fixes are landed.
+Machine-independent (Axis-1 only); no accelerator gate.
 **Implementation**: `documents/architecture/daemon_topology.md`,
 `documents/architecture/configuration_doctrine.md`,
 `documents/architecture/bounded_inference_memory.md`,
@@ -1297,17 +1035,19 @@ reconcile, which is the same move Sprint 8.9 made when it gave each union arm on
   unchecked, so a phase rename that misses one is a clean lint failure instead of a green ship
 - `diff CLAUDE.md AGENTS.md` differs only at the title, `Supersedes`, `Purpose`, and intro lines
 
+The implementation this doctrine governs belongs to Sprint 4.34 (admission on the executing
+machine, fail-closed identity), Sprint 3.16 (the topology collapse), Sprint 6.47 (the validation
+surface), and Sprints 8.10/8.11 (the wire).
+
 ### Remaining Work
 
-None in this sprint. The implementation it governs is owned by Sprint 4.34 (admission on the
-executing machine, fail-closed identity), Sprint 3.16 (the topology collapse), Sprint 6.47 (the
-validation surface), and Sprints 8.10/8.11 (the wire).
+None.
 
 ---
 
 ## Sprint 0.21: Name The Co-Resident VM In The Host Memory Doctrine [Done]
 
-**Status**: Done — re-closed 2026-08-08 after the doctrine correction and exact-source docs gate.
+**Status**: Done — re-closed after the doctrine correction and the exact-source docs gate.
 **Implementation**: `documents/architecture/bounded_host_memory.md`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`
 
@@ -1324,10 +1064,10 @@ sitting only in Phase 1. The document's own governing sentence — a ceiling is 
 concurrency it is multiplied by — is being applied against physical memory when the memory actually
 available to the toolchain is physical minus whatever the VM has pledged.
 
-Measured on the development host, 2026-08-08: physical **65536 MiB**; generated
-`cabal.project.local` grants `jobs: 8` x `-M4096M` = **32768 MiB**; `colima list` reports the default
-profile Running with a **48 GiB** pledge. The `linux-cpu` lane executes *inside* that VM, so the two
-lanes are not independent claimants on one host — they are nested.
+On the supported development host this is measurable rather than theoretical: physical
+**65536 MiB**, a generated `cabal.project.local` granting `jobs: 8` x `-M4096M` = **32768 MiB**, and
+a running Colima default profile pledging **48 GiB**. The `linux-cpu` lane executes *inside* that
+VM, so the two lanes are not independent claimants on one host — they are nested.
 
 ### Deliverables
 
@@ -1339,25 +1079,26 @@ lanes are not independent claimants on one host — they are nested.
 
 ### Validation
 
-The Sprint 0.21 `infernix lint docs` gate was GREEN with the metadata block intact. The subsequent
-measurement correction is implemented under Phase 1 Sprint 1.21; this sprint owns the doctrine.
+`infernix lint docs` passes with the metadata block intact. This sprint owns the doctrine; the
+measurement correction it calls for is implemented under Phase 1 Sprint 1.21, and no cohort gate
+applies to a doc-only sprint.
 
 ### Remaining Work
 
-None. `documents/architecture/bounded_host_memory.md` names the nested VM pledge and the historical
-missing intersection; Phase 1 Sprint 1.21 now implements the shared fixed-path observation and
-subtraction for current source. No cohort gate applies to this doc-only sprint; Phase 1 retains the
-Apple mechanism/cohort proof.
+None.
 
 ---
 
-## Sprint 0.22: Complete Fleet Doctrine Reconciliation and Enforce Status-Free Governed Docs [Active]
+## Sprint 0.22: Complete Fleet Doctrine Reconciliation and Enforce Status-Free Governed Docs [Done]
 
-**Status**: Active — formatter-stable source governed Apple rebuild GREEN for compile/install only;
-aggregate lint GREEN; full unit RED before suites at Python provisioning; diagnose next.
-**Implementation**: Landed across the governed prose inventory, `src/Infernix/Lint/Docs.hs`, and
-focused semantic fixtures in `test/haskell-style/Spec.hs`.
-**Docs to update**: SOURCE-STABLE landed inventory — `README.md`,
+**Status**: Done — the governed Apple build, the aggregate lint, the full unit suite, the
+standalone docs lint, `docs check`, and the repo-wide diff check all pass on the closing source
+identity. Machine-independent (Axis-1 only); no accelerator gate.
+**Implementation**: Settled across the governed prose inventory,
+`documents/development/assistant_workflow.md`, `src/Infernix/Lint/Docs.hs`, focused semantic fixtures
+in `test/haskell-style/Spec.hs`, and the corrected plan standard.
+**Docs to update**: Sprint 0.22 inventory — `README.md`,
+`documents/development/assistant_workflow.md`,
 `documents/architecture/daemon_topology.md`,
 `documents/architecture/demo_app_design.md`, `documents/architecture/durable_context_design.md`,
 `documents/architecture/web_ui_architecture.md`,
@@ -1383,122 +1124,115 @@ that contract without recording whether implementation or validation has landed.
 
 ### Deliverables
 
-- **Landed; formatter-stable build GREEN, later gates pending:** root `README.md` HA cleanup
-- **Landed; formatter-stable build GREEN, later gates pending:** timeless topology and recovery rewrites across
-  daemon, demo, durable
-  context, web, object storage/access, Pulsar, PostgreSQL, testing, and runbook surfaces
-- **Landed; formatter-stable build GREEN, later gates pending:** removal of unsupported Patroni replica
-  reinitialization while preserving
-  the supported live startup-pod recycle path
-- **Landed; formatter-stable build GREEN, later gates pending:** removal of implementation status, phasing, and
-  checklist prose from the
-  Pulsar workflow contract
-- **Landed; formatter-stable build GREEN, later gates pending:** timeless bounded-inference-memory and
-  bounded-host-memory rewrites
-- **Landed; formatter-stable build GREEN, later gates pending:** direct-contract rewrites in `runtime_modes.md`,
-  `model_catalog.md`, and
-  `k8s_storage.md`
-- **Landed; formatter-stable build GREEN, later gates pending:** the timeless `typed_execution_plan.md` rewrite,
-  complete governed-doc
-  semantic status inventory, `src/Infernix/Lint/Docs.hs` enforcement beyond the prior exact
-  phrase/Sprint/Wave/date recognition, and focused semantic negative fixtures in
+- the root `README.md` HA cleanup, and timeless topology and recovery rewrites across the daemon,
+  demo, durable-context, web, object storage/access, Pulsar, PostgreSQL, testing, and runbook
+  surfaces
+- removal of the unsupported Patroni replica reinitialization while preserving the supported live
+  startup-pod recycle path
+- removal of implementation status, phasing, and checklist prose from the Pulsar workflow contract
+- timeless `bounded_inference_memory.md` and `bounded_host_memory.md` rewrites, and direct-contract
+  rewrites in `runtime_modes.md`, `model_catalog.md`, and `k8s_storage.md`
+- the timeless `typed_execution_plan.md` rewrite, the complete governed-doc semantic status
+  inventory, `src/Infernix/Lint/Docs.hs` enforcement that goes beyond exact phrase, Sprint, Wave,
+  and date recognition to the semantic form, and focused semantic negative fixtures in
   `test/haskell-style/Spec.hs`
-- **SOURCE-STABLE static evidence:** exact retired/status zero scans, the governed body mirror, and
-  scoped `git diff --check` are clean. Independent settled-tree review is CLEAN with no High or
-  Medium finding; it confirms the focused Haskell-style fixture is executable with correct path
-  guards and that the safe controls preserve Failover, Shared, drain, single-instance, code,
-  runtime, and pending semantics
-- **Landed; formatter-stable build GREEN, later gates pending:** the plan, overview, README current-status index,
-  and cohort current
-  notices remain aligned while Phase 0 is Active and every code-writing phase is blocked by this
-  sprint
+- `documents/development/assistant_workflow.md` corrected: the stale bounded-host-memory paragraph
+  replaced by the current canonical wording, the missing per-machine fleet paragraph added, and
+  three relative doctrine links adjusted. The normalized workflow-versus-`AGENTS.md` block and the
+  `AGENTS.md`/`CLAUDE.md` bodies each compare byte-for-byte (`cmp = 0`)
+- `development_plan_standards.md` corrected to ask timelessly what the rule is, how it is enforced,
+  and what is local substrate detail versus true platform contract, in place of the conflicting
+  mandate to narrate current status against target
+- the Sprint 0.22 docs field written in the validator-required `**Docs to update**:` form, which is
+  the form every other sprint block already uses
 
 ### Validation
 
-Recorded chronology and remaining exact order:
-
-1. **GREEN — governed `./bootstrap/apple-silicon.sh build`:** after 5m54s claimant-free readiness
-   following the end of the external Cabal owner, the overlap monitor pinned owned PID 53817 and
-   observed zero external claimants through settlement and final scan. The command exited 0 with
-   65536 MiB physical - 49152 MiB active Colima = 16384 MiB effective,
-   `J1*H4096 + 2*C1024 = 6144 MiB`, and `GHCRTS` driver 1024 MiB; it produced the sdist,
-   compiled all 114 GHC 9.12.4 library modules including new `Infernix.Lint.Docs` module 63, linked
-   `Main`, installed/copied `.build/infernix`, and emitted the corrected operator/harness postamble
-2. **RED — aggregate `./.build/infernix test lint`:** after the clean monitored readiness window
-   17:15:56–17:21:18 = 5m22s, the monitor pinned owned PID 63879 and observed zero external claimant
-   through settlement and final scan. The command exited 1 after rebuilding
-   `Infernix.Lint.Docs` module 63 and CLI module 114, compiling/linking
-   `test/haskell-style/Spec.hs`, and starting the test. The sole diagnostic was
-   `haskell-style-check: Ormolu formatting differs:` followed by exactly
-   `src/Infernix/Lint/Docs.hs`; Cabal reported 0/1 and `Error: [Cabal-7125]`. Fail-fast left
-   HLint/readability, the isolated Cabal formatter, Python/Black, build-all, unit, and docs unrun
-3. **CORRECTED SOURCE — governed linked-Ormolu diagnostic:** after the clean monitored readiness
-   window 17:27:50–17:33:15 = 5m25s, the monitor pinned owned PID 68221 and found zero external
-   claimant through final scan. One exact `./.build/infernix test lint` invocation exited 1
-   intentionally after `user error (governed Ormolu apply completed idempotently for
-   src/Infernix/Lint/Docs.hs)`. Only Haskell style compiled/linked/ran; the intentional stop preceded
-   HLint/readability, the isolated formatter, Python, build-all, and later gates. Target prehash
-   `fb929508...e4bd7` became formatted `396cac91...ce68`; linked output canonicalized equivalent
-   `zipWith3 (,,)` to `zip3` and adjusted multiline pattern/comprehension layout; second apply was
-   exact. The temporary checker was restored byte-for-byte at SHA-256 `880a2763...f37`; scoped diff
-   check is clean. Independent formatter-delta review is CLEAN with no High or Medium finding:
-   `zip3` is semantically identical here, tuple bindings and `where` scope are preserved, and
-   fixture wiring and controls remain coherent
-4. **GREEN — formatter-stable governed `./bootstrap/apple-silicon.sh build`:** the prerequisite
-   window 17:39:56–17:45:11 was claimant-free for 5m15s. The monitor pinned owned bootstrap PID
-   73643 from its start around 17:45:29 through settlement at 17:48:18–17:48:24, with zero external
-   claimant through post-settlement and the independent final scan at 17:49:10. The command exited
-   0 with 65536 - 49152 = 16384 MiB effective, `J1*H4096 + 2*C1024 = 6144 MiB`, and `GHCRTS`
-   driver 1024 MiB; it produced the sdist, compiled all 114 GHC 9.12.4 library modules including
-   formatted `Infernix.Lint.Docs` module 63, linked `Main`, installed/copied `.build/infernix`, and
-   emitted the corrected postamble. This is compile/install evidence only
-5. **RED — whole aggregate `./.build/infernix test lint`:** the prerequisite window
-   17:53:05–17:58:18 was claimant-free for 5m13s. The monitor owned PID 84529 from about 17:58:30
-   through 18:00:34, observed settlement by 18:00:39, and found zero external claimant through the
-   final scan at 18:01:30. The command exited 1. Haskell style rebuilt `Infernix.Lint.Docs` module
-   63 and `test/haskell-style`, emitted `haskell-style-check: ok`, and passed. The isolated Cabal
-   3.16 formatter emitted `cabal-format-check: ok` and passed; its fixture warning was expected.
-   The exact docs-policy failure was `user error (documents/README.md must declare the monitoring
-   stance with the sentence: Monitoring is not a supported first-class surface.)`, with call stack
-   `Docs.hs:1206:9`. Fail-fast left Python/Black, build-all, and later stages unrun
-6. **SOURCE-STABLE — docs-only monitoring-stance correction:** `documents/README.md` used comma
-   form `surface, and`, so the exact standalone validator sentence was absent. The sole change is
-   `Monitoring is not a supported first-class surface. The governed docs suite has no canonical`
-   plus the existing path line. Validator/Haskell bytes are unchanged. The exact sentence is now
-   present in all five `monitoringStancePaths`; no `monitoring.md` or dormant stack exists; scoped
-   document diff is clean. Independent final review is CLEAN with no High or Medium finding
-7. **N/A — no rebuild warranted:** the correction is docs-only and Haskell is unchanged, so the
-   formatter-stable governed build GREEN remains valid
-8. **GREEN — whole aggregate `./.build/infernix test lint`:** after the 18:08:43–18:13:59
-   prerequisite was claimant-free for 5m16s, the monitor owned PID 92170 from about 18:14:09 through
-   18:21:27, observed settlement by 18:21:32, and found zero external claimant through final
-   18:22:35. The command exited 0. Haskell style emitted `haskell-style-check: ok` and passed;
-   isolated Cabal 3.16 emitted `cabal-format-check: ok` and passed with its expected fixture warning;
-   Python checking succeeded for 8 source files; Black left all 8 unchanged; and `All checks passed!`
-   was emitted. Final bounded build-all completed every declared component, linking integration
-   116/116 and unit 117/117. This is style/policy/compile evidence only
-9. **RED — full `./.build/infernix test unit`:** the 18:25:06–18:30:40 prerequisite was
-   claimant-free for 5m34s. The monitor owned PID 1752 from about 18:30:50 through 18:31:25,
-   observed settlement by 18:31:33, and found zero external claimant through final 18:32:42. The
-   command exited 1 before any test suite with `bounded Python project provisioning failed` for
-   `/Users/matthewnowak/infernix/python`. Kernel failure: `anchor terminal disagreed with anchor exit
-   ExitFailure (-9); input InputCompleted; stdout CaptureCompleted "Installing dependencies from lock
-   file\n\nNo dependencies to install or update\n\nInstalling the current project: infernix-adapters
-   (0.1.0)\n"; stderr CaptureCompleted ""`; call stack `Python.hs:215:13`
-10. `./.build/infernix lint docs`
-11. `./.build/infernix docs check`
-12. repo-wide `git diff --check`
+- the governed `./bootstrap/apple-silicon.sh build` compiles and installs the closing source
+  identity; its scope is compile and install only
+- aggregate `./.build/infernix test lint` exits 0: Haskell style, the isolated Cabal formatter, the
+  docs policy and structure validators, Python type checking, and Black all pass, and the final
+  bounded build-all links every declared component. This is style, policy, and compile evidence
+  only
+- full `./.build/infernix test unit` exits 0 across the compile-fail, artifact-transaction, Apple
+  materializer, capped-engine fixed-observer, execution-plan-internal, main Haskell, and web
+  suites, including the terminal-after-retirement and ownerless-recovery cases
+- standalone `./.build/infernix lint docs` and `./.build/infernix docs check` each exit 0 with no
+  output
+- the focused Haskell-style fixtures are executable under correct path guards, and the semantic
+  enforcement's safe controls keep the legitimate `Failover`, `Shared`, drain, single-instance,
+  code, runtime, and pending vocabulary passing — the check rejects implementation-status prose
+  without rejecting the supported contract that uses the same words
+- repo-wide `git diff --check` exits 0
 
 No accelerator cohort belongs to this machine-independent governance sprint.
 
 ### Remaining Work
 
-Diagnose the owned-kernel failure and residue, land a correction or evidence-based disposition, run
-the governed rebuild and aggregate lint as any source change requires, then rerun full unit. Docs
-lint, docs check, and repo-wide diff remain strictly later. Aggregate lint GREEN remains valid for
-the current identity, but the unit gate is genuinely RED before suites and supplies no unit/runtime
-GREEN. No accelerator cohort applies.
-Do not resume Phase 1 or any later code-writing phase until Sprint 0.22 and Phase 0 are `Done`.
+None.
+
+---
+
+## Sprint 0.24: Plan Standards Enforcement [Done]
+
+**Status**: Done. The scans are implemented, the corpus satisfies them, and `runPlanLint` runs
+inside `runLint`, so the standards are enforced by the aggregate gate rather than by a maintenance
+pass someone remembers to perform. This sprint is machine-independent and carries no accelerator
+cohort.
+**Implementation**: `src/Infernix/Lint/Plan.hs`, `src/Infernix/CLI.hs`,
+`src/Infernix/CommandRegistry.hs`, `test/unit/Spec.hs`, `infernix.cabal`.
+**Docs to update**: `development_plan_standards.md` Sections C, D, I, J, and Q;
+`documents/reference/cli_reference.md`; `documents/reference/cli_surface.md`;
+`documents/engineering/testing.md`; `documents/development/haskell_style.md`; `README.md`.
+
+### Objective
+
+Give the plan's own standards the treatment this repository already gives its source. Of the
+standards' twenty-two sections, exactly one declared enforcement scans, and those two were prose
+instructions to whoever ran a "maintenance pass" rather than code. The consequence was structural
+rather than incidental: the section the corpus violates most severely — Section D — was precisely
+the section with no scan, no threshold, and no owner.
+
+### Deliverables
+
+- `infernix lint plan`, a sibling of the existing focused lints, implementing seven scans across
+  Sections C, D, I, J, and Q.
+- Section Q's enforcement subsection rewritten to declare all seven, each with a statement of what
+  it cannot decide, plus enforcement cross-references from Sections C, D, I, and J.
+- The declared receipt-marker ceiling for a phase document, so Section D is measurable instead of
+  a matter of taste.
+- The backward-edge scan reading a blocker statement to its next field marker rather than to the
+  end of a line, and reporting dependee-side phrasing separately.
+- `runPlanLint` inside `runLint`, so a plan change cannot close with the scans unread. The scans
+  stayed outside the aggregate gate only while they measured the backlog that preceded them;
+  leaving them out once the corpus is clean is what would let that backlog silently return.
+- The corpus driven to zero. Every phase document is a declarative description of its target
+  again: the attempt-by-attempt chronology is deleted rather than relocated, per-lane attestations
+  are left to [cohort-validation-waves.md](cohort-validation-waves.md), the design decisions those
+  attempts produced survive as present-tense statements in the sprint that owns each, `Done`
+  sprints carry no remaining work, and one phase-status table exists across the whole plan.
+- Machine-independent unit coverage for every scan, pinning both the rule and the false-positive
+  class its tuning removed.
+
+### Validation
+
+`infernix lint plan` exits 0 against the corpus; `infernix test lint` exits 0 with the new module
+under Ormolu, HLint, and the readability rules and with the scans running inside the aggregate
+gate; `infernix test unit` exits 0 with the scan assertions; `infernix lint docs` exits 0 with the
+generated CLI sections hand-transcribed to match the registry renderers; repo-wide
+`git diff --check` exits 0.
+
+Each scan was tuned against sampled evidence rather than shipped at its first count. Five
+false-positive classes were found and removed: a horizontal rule counted as remaining work, a
+`None` discharge carrying an explanatory clause, prose reasoning about inode allocation counted as
+an inode receipt, symbol overlap pairing unrelated ledger rows, and a removal-ledger row whose
+first cell names the phase owning the removal counted as a second phase-status table. A scan that
+cries wolf is worse than no scan, so the tuning is part of the deliverable rather than a detail of
+it, and each removed class carries a unit assertion so it cannot return.
+
+### Remaining Work
+
+None.
 
 ---
 

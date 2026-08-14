@@ -65,6 +65,10 @@ Rules:
 - `Active` requires a `Remaining Work` section.
 - `Blocked` requires a `Blocked by` line.
 - `Planned` must not hide unmet blockers.
+- The four values above are the whole vocabulary. A sprint whose implementation is complete and
+  whose accelerator cohort is pending is `Active` with a named `Cohort gate` residual, not a fifth
+  status; `infernix lint plan` (Section Q scans 3 and 4) rejects any other value and checks that
+  each status carries the obligations its row states.
 - If Phase 0 is still open, later code-writing phases use `Blocked`, not `Planned`.
 - A later phase may remain `Done` while an earlier phase is still `Active` or `Blocked` only when
   the earlier open item is a clearly named external dependency or supported-lane validation
@@ -87,6 +91,13 @@ Plan documents describe the intended supported architecture in present-tense dec
 - Say what the system uses, owns, validates, and exposes.
 - Do not turn phase docs into migration diaries.
 - Cleanup history belongs in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+- Per-lane attestations belong in [cohort-validation-waves.md](cohort-validation-waves.md). A
+  superseded attempt that changed a decision is recorded as the decision, in one sentence, in the
+  sprint that owns it; the chronology of the attempt itself is deleted rather than relocated,
+  because once the status it justified is superseded the chronology has no reader.
+- Enforced as a proxy by `infernix lint plan` (Section Q scan 5): no process identifier, no
+  wall-clock time, no inode number, and a capped number of receipt-bearing lines per phase
+  document.
 
 ### E. One Canonical Folder Model
 
@@ -181,12 +192,12 @@ Historical Phase 0 bootstrap rule preserved for ordered-plan readability:
 - When a phase creates or materially rewrites a broad engineering document, the owning sprint or
   phase calls out the intended document structure when it matters to closure criteria:
   - add a `TL;DR` or `Executive Summary` when the topic is broad
-  - include an explicit `Current status` note when implemented behavior and target direction appear
-    in the same document
+  - state the durable supported contract directly, without implementation-status or
+    current-versus-target narration
   - include a `Validation` section when the document defines a contract that tests or lint must
     prove
-  - answer these questions directly: what is the rule, what is current versus target, how is it
-    validated, and what is local substrate detail versus true platform contract
+  - answer these questions directly when relevant: what is the rule, how is it enforced, and what
+    is local substrate detail versus the true platform contract
 - When lifecycle or validation doctrine changes how operators distinguish slow convergence from
   real failure, the owning sprint or phase explicitly updates the Apple or cluster runbooks, the
   testing doctrine docs, and any CLI or status references that describe the supported operator
@@ -199,7 +210,13 @@ ledger for obsolete paths, duplicate guidance, and stale compatibility surfaces.
 
 - If an obsolete or duplicate surface still exists, it must appear in the ledger.
 - Each item names its location, why it is slated for removal, and the owning phase or sprint.
-- When cleanup lands, move the item from pending to completed.
+- When cleanup lands, move the item from pending to completed. A row that stays pending while its
+  own text records the surface as removed is the failure this rule exists to prevent, and a row
+  present in both tables leaves the reader unable to tell which claim is current.
+- Enforced by `infernix lint plan` (Section Q scan 6). The scan compares the two tables against
+  each other, not against the tree: it rejects a pending row whose own text records the surface as
+  removed, and a pending row that shares its owning sprint and at least three named symbols with a
+  completed row. Whether the completion claim matches the source is not decided here.
 
 ### J. README and Documents Harmony
 
@@ -214,6 +231,9 @@ implementation.
   currently works.
 - `00-overview.md`, all phase files, and `system-components.md` use the same phase names and
   current-state claims. Current-state claims live here, not in `documents/`.
+- One phase-status table exists across the whole plan, in `README.md`. Every other document links
+  to it rather than restating it, and `infernix lint plan` (Section Q scan 7) rejects a second
+  copy: duplicated status tables diverge, and a reader has no way to tell which copy is current.
 - `README.md`, `AGENTS.md`, and `CLAUDE.md` are governed root documents. When a sprint owns
   root-document governance, it explicitly states which file is canonical for a topic and which
   files are orientation or automation entry documents only.
@@ -728,16 +748,52 @@ Rules:
 
 #### Q. Enforcement
 
-The maintenance pass runs two deterministic scans over `phase-*.md`; the plan must
-report each at zero before a plan change closes:
+`infernix lint plan` is the implementation of these scans and of the mechanical
+half of Sections C, D, I, and J. It is the binary, not a maintenance pass someone
+remembers to perform: a rule that is only prose is a rule that decays, and the
+section this plan violated most severely was for a long time the one section with
+no scan at all. The plan must report the scans at zero before a plan change
+closes, and `infernix test lint` runs them alongside the other focused lints so
+that obligation is enforced rather than remembered.
 
-1. **Zero backward edges** — every `N'.M` / `Phase N'` named in a `Blocked by` line
-   satisfies `N' <= N`.
+The scans, and what each one can and cannot decide:
+
+1. **Zero backward edges** — every `N'.M` / `Phase N'` named in a `Blocked by`
+   statement satisfies `N' <= N`. The statement is read to the next bold field
+   marker rather than to the end of the line, because a blocker wraps. A backward
+   edge phrased from the dependee's side ("ordered before Sprint `N.M` can reach
+   `Done`") is reported separately: the forward-edge form cannot see it.
 2. **No dual-accelerator validation gate** — no single `Validation` gate names both
    an `apple-silicon` lane (`--apple-silicon` / `apple-silicon.sh`) and a
    `linux-gpu` lane (`linux-gpu.sh`); a `linux-cpu`-aggregation phase's `Validation`
    names only `linux-cpu` invocations plus "merge committed per-lane attestation"
-   steps.
+   steps. Per-lane attestation narration legitimately mentions both substrates, so
+   only a shared invocation is a violation.
+3. **Status vocabulary** — a sprint's bracketed status is one of the four values in
+   Section C. A fifth value has no defined obligations, so no scan can check it.
+4. **Remaining-work agreement** — `Done` carries no remaining work, `Active`
+   carries some, and `Blocked` names a blocker. A `Remaining Work` body reading
+   `None` plus a clause recording where closure happened is discharged; one naming
+   a residual is not, because Section C keeps a sprint with a pending cohort gate
+   at `Active`.
+5. **Declarative language** — a phase document carries no process identifier, no
+   wall-clock time, and no inode number, and no more than **40** receipt-bearing
+   lines. Section D is not decidable, so this is a proxy: it bans the artefacts
+   only an execution log contains and caps the residual. A document above the
+   ceiling has become the attestation ledger instead of referencing it.
+6. **Removal-ledger exclusivity** — no item is both pending and complete, and no
+   pending row declares its own surface already removed. Two rows are the same
+   item when they share their owning sprint and at least three named symbols;
+   symbol overlap alone is not evidence.
+7. **One current-state table** — the phase-status table appears once. Duplicated
+   status tables do not merely repeat, they diverge, and a reader cannot tell
+   which copy is current. The header is identified by its cells — a first column
+   of exactly `Phase` and some column naming status — because a removal-ledger
+   row that opens with the phase owning the removal is Section I working, not a
+   second status table.
+
+What a clean report does not establish: that the plan is well written, that a
+recorded status is true, or that a cited receipt describes a run that happened.
 
 `poetry run check-code` stays in the machine-independent gate set only because adapters never
 declare or top-level-import substrate-specific inference wheels; the lazy-import invariant that

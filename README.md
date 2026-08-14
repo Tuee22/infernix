@@ -24,7 +24,7 @@ This repository serves two aligned purposes:
   Silicon or Metal, Ubuntu 24.04 CPU on native amd64 or arm64 Linux, and Ubuntu 24.04 NVIDIA CUDA
   containers
 - provide a local Kind cluster, running the single-instance platform-service topology, as the
-  testing and demo ground for the control plane, including Harbor, MinIO, Pulsar, Prometheus, Grafana, and
+  testing and demo ground for the control plane, including Harbor, MinIO, Pulsar, and
   per-service Patroni PostgreSQL clusters where durable PostgreSQL state is required; the demo UI
   is served by the `infernix` Webapp role in the `infernix-demo` workload when the active `.dhall`
   config enables it
@@ -46,9 +46,7 @@ This repository serves two aligned purposes:
 - one Kind and Helm workflow for the testing and demo ground
 - one single-node local platform topology: Harbor, MinIO, Pulsar, and per-service
   operator-managed PostgreSQL on Kind
-- one Prometheus metrics plane that every other platform, control-plane, and inference service
-  syncs with, plus one Grafana visualization surface that can use its own PostgreSQL backend under
-  the same PostgreSQL rules
+- no metrics or dashboard plane. Monitoring is not a supported first-class surface.
 - one local Harbor registry as the image source for every non-Harbor pod
 - one manual persistent-storage doctrine rooted at `./.data/`
 - one PureScript demo UI built with spago, tested with `purescript-spec`, with frontend contracts
@@ -192,7 +190,7 @@ classes.
 The supported local platform is built around:
 
 - one Kind cluster used as the single-instance testing and demo ground for Harbor, MinIO, Pulsar, the Envoy
-  Gateway controller, Prometheus, Grafana, per-service operator-managed PostgreSQL clusters, the
+  Gateway controller, per-service operator-managed PostgreSQL clusters, the
   production `infernix-coordinator` workload, substrate-specific engine pool workloads, and (when
   the demo UI is enabled) the optional `infernix-demo` workload per the supported three-role daemon
   model in
@@ -205,11 +203,6 @@ The supported local platform is built around:
 - one manual storage class backed by repo-owned PVs under `./.data/`
 - each service that requires durable PostgreSQL storage deploys its own Patroni PostgreSQL cluster
   managed by the Percona Kubernetes operator; chart-embedded PostgreSQL paths stay disabled
-- one first-class Prometheus deployment receives metrics from the other platform, control-plane,
-  and inference services, and one first-class Grafana deployment reads from Prometheus for
-  dashboards and operational visibility
-- Grafana may use its own durable PostgreSQL backend, but that backend follows the same
-  per-service Patroni and Percona-operator rules as every other PostgreSQL dependency
 - one local Harbor registry used by every non-Harbor cluster pod after Harbor bootstrap completes
 - one OCI image per Linux substrate carrying `infernix` plus the engine toolchain and the demo UI
   build toolchain; chart workload args select the role through `infernix service --role
@@ -245,7 +238,7 @@ workspace render only after the SPA holds a Keycloak JWT. The routed Keycloak lo
 registration forms use the repo-owned `infernix` theme mounted from the chart, while the stock
 Keycloak image remains unchanged. When the demo surface is enabled, the app shell exposes an
 operator console ribbon for Harbor and Pulsar Admin **only to admins**: the cluster-wide
-operator consoles and monitoring are gated to the `infernix-admin` Keycloak realm role, while ordinary
+operator consoles are gated to the `infernix-admin` Keycloak realm role, while ordinary
 and self-registered users see only their own data (chat, artifacts, files, and a personal dashboard).
 Envoy Gateway both validates the Keycloak JWT and admin-authorizes the `infernix-admin` realm role on
 `/harbor`, `/harbor/api`, `/pulsar/admin`, and `/pulsar/ws` — through a cookie written by the SPA or a
@@ -756,7 +749,8 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix cache evict [--model MODEL_ID]`
 - `infernix cache rebuild [--model MODEL_ID]`
 - `infernix kubectl ...` (allowlisted read-only diagnostics)
-- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`
+- `infernix lint files`, `infernix lint docs`, `infernix lint proto`, `infernix lint chart`,
+  `infernix lint plan`
 - `infernix test lint`
 - `infernix test unit`
 - `infernix test integration`
@@ -775,6 +769,7 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix internal dhall-schema host|cluster|secrets|substrate`
 - `infernix internal demo-config {load,validate}`
 - `infernix internal pulsar-roundtrip DEMO_CONFIG_PATH MODEL_ID INPUT_TEXT`
+- `infernix internal playwright prepare-engine MODEL_ID`
 
 The demo UI HTTP host is the Webapp role:
 
@@ -828,9 +823,6 @@ lifecycle surface.
   application-plane service, MinIO, and Pulsar surface, plus a dedicated operator-managed PostgreSQL
   cluster for each service that requires durable PostgreSQL storage. The operator is the deployment
   and lifecycle mechanism, not a high-availability one: instance loss is restore-from-backup
-- every other platform, control-plane, and inference service with metrics syncs with Prometheus;
-  Grafana reads from Prometheus and may use its own dedicated PostgreSQL backend under the same
-  Patroni and Percona-operator rules
 - services that can self-deploy PostgreSQL disable that embedded database path and target a
   dedicated operator-managed cluster instead
 - repo-owned Helm values declare no pod anti-affinity or equivalent hard scheduling constraints

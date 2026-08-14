@@ -163,7 +163,7 @@
   transaction, and provisioning modules. Only the hidden provisioning facade may interpret its
   closed commands through the bounded subprocess kernel
 - `infernix test lint` runs both in-process formatter checks together with the repo-owned files,
-  chart, proto, docs, Python, and build-warning checks
+  chart, proto, docs, plan-standards, Python, and build-warning checks
 
 ## Validation
 

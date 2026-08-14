@@ -46,6 +46,7 @@ module Infernix.Cluster
     ClusterOwnershipRefusalReason (..),
     authorizeHarnessReservationAccess,
     authorizeRuntimeConfigWriteAccess,
+    withDelegatedHarnessChildGroup,
     uncordonResultsProveReady,
     withPersistedClusterMutation,
     ClusterOwnershipRefusal (..),
@@ -182,7 +183,24 @@ data HarnessReservation = HarnessReservation
   { harnessReservationOwnerPid :: Integer,
     harnessReservationProcessGroup :: Integer,
     harnessReservationOwnerBirthIdentity :: Maybe ProcessBirthIdentity,
-    harnessReservationConfigTransaction :: HarnessConfigTransaction
+    harnessReservationConfigTransaction :: HarnessConfigTransaction,
+    -- | The process group of the one toolchain child the reservation owner is
+    -- currently running, when that child was placed in a group of its own.
+    --
+    -- Phase 1 Sprint 1.21 gives every bounded toolchain child a fresh process
+    -- group so exceptional cleanup can signal an owned group without signalling
+    -- the harness itself. That made process-group equality stop meaning \"this
+    -- is the harness's own work\": the cluster-owned suites run *inside* such a
+    -- child, and their @internal materialize-substrate@ writes and cluster
+    -- mutations were refused by the reservation their own parent minted.
+    -- Registering the child's group keeps both properties — the child stays
+    -- separately killable, and it is still recognisably the harness.
+    --
+    -- This is authority delegated for one child's lifetime, not a second owner:
+    -- only the owner registers it, it is cleared when that child is reaped, and
+    -- every authorization still requires the owner itself to be verified alive,
+    -- so a registration that outlives a crashed harness authorizes nothing.
+    harnessReservationAuthorizedChildGroup :: Maybe Integer
   }
   deriving (Eq, Show)
 
@@ -1984,11 +2002,14 @@ requireReservationAccess paths requestedOwner = do
           maybePresentReservation
       let maybeReservationProcessGroup =
             harnessReservationProcessGroup <$> maybePresentReservation
+          maybeAuthorizedChildGroup =
+            maybePresentReservation >>= harnessReservationAuthorizedChildGroup
       case authorizeHarnessReservationAccess
         requestedOwner
         currentProcessGroup
         (ownerStatus == HarnessReservationOwnerVerifiedAlive)
-        maybeReservationProcessGroup of
+        maybeReservationProcessGroup
+        maybeAuthorizedChildGroup of
         Left refusal ->
           ioError
             ( userError
@@ -2006,36 +2027,78 @@ requireReservationAccess paths requestedOwner = do
                     "harness reservation authorization produced no evidence"
                 )
 
+-- | Whether a caller's process group is the live harness itself or the one
+-- toolchain child it has delegated authority to.
+--
+-- Both arms require the owner to be verified alive, so a reservation left by a
+-- dead harness authorizes nobody through either group.
+harnessReservationGroupAuthorized ::
+  Integer ->
+  Bool ->
+  Integer ->
+  Maybe Integer ->
+  Bool
+harnessReservationGroupAuthorized
+  currentProcessGroup
+  ownerAlive
+  reservationProcessGroup
+  maybeAuthorizedChildGroup =
+    ownerAlive
+      && ( currentProcessGroup == reservationProcessGroup
+             || maybeAuthorizedChildGroup == Just currentProcessGroup
+         )
+
 authorizeHarnessReservationAccess ::
   ClusterOwner ->
   Integer ->
   Bool ->
   Maybe Integer ->
+  Maybe Integer ->
   Either String ()
-authorizeHarnessReservationAccess requestedOwner currentProcessGroup ownerAlive maybeReservationProcessGroup =
-  case (requestedOwner, maybeReservationProcessGroup) of
-    (OperatorOwned, Nothing) -> Right ()
-    (OperatorOwned, Just _) ->
-      Left "refusing operator cluster mutation: the test harness owns the cluster slot"
-    (HarnessOwned, Nothing) ->
-      Left "refusing harness cluster mutation without a live cluster-slot reservation"
-    (HarnessOwned, Just reservationProcessGroup)
-      | ownerAlive && currentProcessGroup == reservationProcessGroup -> Right ()
-      | otherwise ->
-          Left "refusing harness cluster mutation outside the live reservation process group"
+authorizeHarnessReservationAccess
+  requestedOwner
+  currentProcessGroup
+  ownerAlive
+  maybeReservationProcessGroup
+  maybeAuthorizedChildGroup =
+    case (requestedOwner, maybeReservationProcessGroup) of
+      (OperatorOwned, Nothing) -> Right ()
+      (OperatorOwned, Just _) ->
+        Left "refusing operator cluster mutation: the test harness owns the cluster slot"
+      (HarnessOwned, Nothing) ->
+        Left "refusing harness cluster mutation without a live cluster-slot reservation"
+      (HarnessOwned, Just reservationProcessGroup)
+        | harnessReservationGroupAuthorized
+            currentProcessGroup
+            ownerAlive
+            reservationProcessGroup
+            maybeAuthorizedChildGroup ->
+            Right ()
+        | otherwise ->
+            Left "refusing harness cluster mutation outside the live reservation process group"
 
 authorizeRuntimeConfigWriteAccess ::
   Integer ->
   Bool ->
   Maybe Integer ->
+  Maybe Integer ->
   Either String ()
-authorizeRuntimeConfigWriteAccess currentProcessGroup ownerAlive maybeReservationProcessGroup =
-  case maybeReservationProcessGroup of
-    Nothing -> Right ()
-    Just reservationProcessGroup
-      | ownerAlive && currentProcessGroup == reservationProcessGroup -> Right ()
-      | otherwise ->
-          Left "refusing runtime-config write outside the live harness reservation process group"
+authorizeRuntimeConfigWriteAccess
+  currentProcessGroup
+  ownerAlive
+  maybeReservationProcessGroup
+  maybeAuthorizedChildGroup =
+    case maybeReservationProcessGroup of
+      Nothing -> Right ()
+      Just reservationProcessGroup
+        | harnessReservationGroupAuthorized
+            currentProcessGroup
+            ownerAlive
+            reservationProcessGroup
+            maybeAuthorizedChildGroup ->
+            Right ()
+        | otherwise ->
+            Left "refusing runtime-config write outside the live harness reservation process group"
 
 withRuntimeConfigWriteAccess :: IO a -> IO a
 withRuntimeConfigWriteAccess action = do
@@ -2056,7 +2119,8 @@ withRuntimeConfigWriteAccessAt paths action = do
     case authorizeRuntimeConfigWriteAccess
       currentProcessGroup
       (ownerStatus == HarnessReservationOwnerVerifiedAlive)
-      (harnessReservationProcessGroup <$> maybeReservation) of
+      (harnessReservationProcessGroup <$> maybeReservation)
+      (maybeReservation >>= harnessReservationAuthorizedChildGroup) of
       Right () -> action
       Left refusal ->
         ioError
@@ -2113,18 +2177,31 @@ parseHarnessReservation reservationContents = do
           else Nothing
       _ -> Nothing
   configTransaction <- uniqueField "config-transaction" >>= parseConfigTransaction
+  authorizedChildGroup <-
+    uniqueField "authorized-child-group" >>= parseAuthorizedChildGroup
   if validProcessIdentifier ownerPid
     && processGroup == ownerPid
+    && all validProcessIdentifier authorizedChildGroup
+    && authorizedChildGroup /= Just processGroup
     then
       pure
         HarnessReservation
           { harnessReservationOwnerPid = ownerPid,
             harnessReservationProcessGroup = processGroup,
             harnessReservationOwnerBirthIdentity = ownerBirthIdentity,
-            harnessReservationConfigTransaction = configTransaction
+            harnessReservationConfigTransaction = configTransaction,
+            harnessReservationAuthorizedChildGroup = authorizedChildGroup
           }
     else Nothing
   where
+    -- A delegated group is spelled explicitly in both directions. An absent
+    -- field is a malformed reservation rather than \"no child\", because the
+    -- writer always renders one and a reservation missing a field it should
+    -- carry is exactly the state this parser exists to refuse.
+    parseAuthorizedChildGroup value =
+      case value of
+        "none" -> Just Nothing
+        _ -> Just <$> readMaybe value
     uniqueField fieldName =
       case [ fieldValue
            | lineValue <- lines reservationContents,
@@ -2172,6 +2249,11 @@ renderHarnessReservation reservation =
       [ "owner=harness",
         "pid=" <> show (harnessReservationOwnerPid reservation),
         "process-group=" <> show (harnessReservationProcessGroup reservation),
+        "authorized-child-group="
+          <> maybe
+            "none"
+            show
+            (harnessReservationAuthorizedChildGroup reservation),
         "config-transaction="
           <> renderConfigTransaction (harnessReservationConfigTransaction reservation)
       ]
@@ -2526,10 +2608,45 @@ createHarnessReservation paths = do
           { harnessReservationOwnerPid = fromIntegral ownerPid,
             harnessReservationProcessGroup = fromIntegral ownerProcessGroup,
             harnessReservationOwnerBirthIdentity = Just ownerBirthIdentity,
-            harnessReservationConfigTransaction = HarnessConfigUntouched
+            harnessReservationConfigTransaction = HarnessConfigUntouched,
+            harnessReservationAuthorizedChildGroup = Nothing
           }
   writeHarnessReservation paths reservation
   pure (HarnessReservationAccess reservation)
+
+-- | Delegate reservation authority to one freshly spawned toolchain child for
+-- the duration of that child, then withdraw it.
+--
+-- The owner is the only writer here, and the delegation is a single slot rather
+-- than a set: the harness runs its cluster-owned suites one at a time, and a set
+-- would make \"which child is live\" a question the reservation cannot answer
+-- after a crash. Withdrawal restores exactly 'Nothing' rather than reasserting a
+-- remembered value, so a nested delegation cannot leave a dead group authorized.
+--
+-- A caller that holds no reservation (an operator running the same suite) is a
+-- no-op rather than an error: the delegation exists only to widen an authority
+-- that is already held.
+withDelegatedHarnessChildGroup :: Paths -> Integer -> IO a -> IO a
+withDelegatedHarnessChildGroup paths childProcessGroup action =
+  bracketPreservingPrimary
+    (updateDelegation (Just childProcessGroup))
+    (const (updateDelegation Nothing))
+    (const action)
+  where
+    updateDelegation delegation =
+      withClusterLifecycleLock paths $ \_ -> do
+        maybeReservation <- readHarnessReservation paths
+        currentProcessGroup <- fromIntegral <$> getProcessGroupID
+        case maybeReservation of
+          Just reservation
+            | harnessReservationProcessGroup reservation == currentProcessGroup,
+              delegation /= Just currentProcessGroup ->
+                writeHarnessReservation
+                  paths
+                  reservation
+                    { harnessReservationAuthorizedChildGroup = delegation
+                    }
+          _ -> pure ()
 
 -- | The operator's @infernix cluster down@ command. It refuses a live
 -- 'HarnessOwned' cluster (and a live cluster with unknown ownership).

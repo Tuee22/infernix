@@ -1,26 +1,23 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
-**Blocked by**: Phase 0 Sprint 0.22
-**Suspended prior state**: Active. Sprint 8.9 and Sprint 8.10 are both validation-only, sharing the `linux-gpu` plus
-`linux-cpu` rebuild. Sprint 8.10 (delete the derivable wire fields) is code-side closed on
-2026-08-07: Phase 4 Sprint 4.34's admission move discharged its blocker, and the reflected substrate
-schema went from 110 lines to 54 with every retired field absent rather than merely rejected.
-Sprint 8.11 remains `Blocked`, on a different and substantive blocker than the one it carried:
-executing 8.10 established that the machine contract it specifies — "the existing host manifest plus
-a `node` block" — has no home on the Linux lanes, where a pod's only host manifest is the one baked
-identically into every image, and where nothing yet makes two machines different members. That is a
-design decision needing a cluster lane, recorded in the sprint rather than guessed at in code.
-Sprint 8.9 (proper-union generated execution-plan schema
-migration) is code-side closed on 2026-08-02: the budget wire carries the third `DualEnforced` union
-arm Phase 6 Sprint 6.44's dual RAM/VRAM capability needed, the renderer emits one shared union type
-whose agreement with the reflected decoder is now asserted, a retired flat payload fails with a
-targeted migration diagnostic naming the regenerating command, and the dead `legacyDhall` decoder
-residue is removed. Its behavioral evidence is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus
-`linux-cpu` wave rather than a wave of its own, per its own validation rule. The remaining
-generated-wire text enums, `Integer`-vs-`Natural` quantities, the zero-filled `edgePort`, the
-still-flat Aeson encoding, and the coordinator/webapp readiness-refinement question are named
-explicitly as follow-on work in the sprint section. Sprints 8.1–8.8 retain their recorded closure
+**Status**: Blocked — strict numerical execution waits for Phase 7.
+**Blocked by**: Phase 7
+**Implementation state behind the blocker**: Active. Sprint 8.9 and Sprint 8.10 are both
+validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.10 (delete the derivable
+wire fields) is code-side closed: Phase 4 Sprint 4.34's admission move discharged its blocker, and
+the reflected substrate schema went from 110 lines to 54 with every retired field absent rather than
+merely rejected. Sprint 8.11 remains `Blocked`, on a different and substantive blocker than the one
+it carried: executing 8.10 established that the machine contract it specifies — "the existing host
+manifest plus a `node` block" — has no home on the Linux lanes, where a pod's only host manifest is
+the one baked identically into every image, and where nothing yet makes two machines different
+members. That is a design decision needing a cluster lane, recorded in the sprint rather than guessed
+at in code. Sprint 8.9 (proper-union generated execution-plan schema migration) is code-side closed:
+the budget wire carries the third `DualEnforced` union arm Phase 6 Sprint 6.44's dual RAM/VRAM
+capability needed, the renderer emits one shared union type whose agreement with the reflected
+decoder is asserted, a retired flat payload fails with a targeted migration diagnostic naming the
+regenerating command, and the dead `legacyDhall` decoder residue is removed. Its behavioral evidence
+is consumed from the Phase 6 Sprint 6.44 `linux-gpu` plus `linux-cpu` wave rather than a wave of its
+own, per its own validation rule. Sprints 8.1–8.8 are closed.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/host_tools_manifest.md](../documents/engineering/host_tools_manifest.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Adopt the `~/hostbootstrap` Dhall doctrine — no version-controlled `.dhall`, the
@@ -31,9 +28,6 @@ explicitly as follow-on work in the sprint section. Sprints 8.1–8.8 retain the
 > coordinator model-cache staging driven by the mounted `infernix.dhall`.
 
 ## Phase Status
-
-> **Execution-order pause:** Phase 8 is blocked by Phase 0 Sprint 0.22. The detailed state and
-> evidence below are suspended intact and resume only after Phase 0 is `Done`.
 
 > Phase 8 reconciles the configuration substrate to the doctrine in
 > [configuration_doctrine.md](../documents/architecture/configuration_doctrine.md). It supersedes the
@@ -149,8 +143,8 @@ None.
 ## Sprint 8.4: Binary-Generated ConfigMap + Secret Bodies [Done]
 
 **Status**: Done
-**Code-side closure**: `cabal build all`, `infernix test unit` (new `defaultClusterConfig` decode + `renderHelmValues` body/manifest assertions), `infernix test lint`/`lint chart`/`lint files`/`lint docs`/`lint proto`, `docs check` all pass (machine-independent, 2026-07-03).
-**Cohort gate**: the in-pod decode of the binary-rendered `cluster.dhall` / `InfernixSecrets.dhall` is covered by the same `linux-cpu` plus selected `linux-gpu` full-suite that closes Phase 8 (Wave O successor).
+**Code-side closure**: `cabal build all`, `infernix test unit` (`defaultClusterConfig` decode + `renderHelmValues` body/manifest assertions), `infernix test lint`/`lint chart`/`lint files`/`lint docs`/`lint proto`, `docs check` all pass (machine-independent).
+**Cohort gate**: the in-pod decode of the binary-rendered `cluster.dhall` / `InfernixSecrets.dhall` is covered by the `linux-cpu` plus `linux-gpu` full-suite that closes Phase 8, under [cohort-validation-waves.md](cohort-validation-waves.md) Wave P.
 **Implementation**: `src/Infernix/ClusterConfig.hs` (`defaultClusterConfig` + default wirings), `src/Infernix/Cluster.hs` (`renderHelmValues` `clusterConfig.body` / `clusterSecrets.manifest`, `resolvedKeycloakWiring`), `chart/templates/configmap-cluster-config.yaml`, `chart/templates/secret-cluster-secrets.yaml`, `src/Infernix/Lint/Chart.hs`
 **Docs to update**: `documents/engineering/cluster_config_manifest.md`, `documents/architecture/configuration_doctrine.md`
 
@@ -188,21 +182,19 @@ Move all remaining Dhall generation out of Helm into the binary; Helm becomes a 
 
 ### Remaining Work
 
-None (code-side); cohort full-suite decode-in-pod tracked with the Phase 8 cohort gate.
+None.
 
 ## Sprint 8.5: Coordinator Eager Model-Cache Staging [Done]
 
-**Status**: Done — cohort gate closed 2026-07-04 (see [cohort-validation-waves.md](cohort-validation-waves.md) Wave P). The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright **9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB `video-wan21-t2v` row that previously timed out cold now completes (gpu 18.2 m, cpu 16.5 m) because the coordinator's eager sweep begins staging at cluster-up. gpu image `sha256:3a356ef2…`, cpu image `sha256:81fab869…`.
+**Status**: Done — cohort gate closed under [cohort-validation-waves.md](cohort-validation-waves.md) Wave P. The `linux-gpu` and `linux-cpu` full-suite `infernix test all` both passed with routed Playwright **9/9**, including the browser per-model smoke matrix exercising every catalog model — the 27 GB `video-wan21-t2v` row that previously timed out cold completes because the coordinator's eager sweep begins staging at cluster-up.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs` (`sweepEagerModelCache`, `waitForEagerModelCacheReady`), `src/Infernix/Runtime/Daemon.hs` (`startCoordinatorLoops`), `src/Infernix/Cluster.hs` (`warmModelCache` + `warm-model-cache` lifecycle phase, `resolveWarmModelCacheMinioHost` via `kindControlPlaneIpv4`), `src/Infernix/DemoConfig.hs` (`materializeEmptyModelsDemoConfigFile`), `src/Infernix/CommandRegistry.hs` (`--empty-models`), `src/Infernix/Models.hs` (demo-only-generator doc), `docker/Dockerfile`
 **Docs to update**: `documents/engineering/model_lifecycle.md`, `documents/architecture/daemon_topology.md`
 
-> **Known residual (non-blocking):** the coordinator's forked eager sweep is the mechanism that
-> delivers the outcome (Wan staged in time → 9/9 on both lanes). The `warm-model-cache` `cluster up`
-> barrier is wired in and best-effort, but its host-side MinIO poll from the Linux launcher currently
-> reports `0/16` (a presigned-HEAD reachability/signing detail against the node-port endpoint at
-> `<kindControlPlaneIpv4>:30011`), so it logs a warning and proceeds rather than truly blocking. This
-> did not affect the 9/9 result. Making the barrier's poll observe the sentinels (so it deterministically
-> blocks) is a follow-up; the eager sweep + lazy fallback already guarantee correctness.
+> **Barrier scope.** The coordinator's forked eager sweep is the mechanism that delivers the outcome;
+> the `warm-model-cache` `cluster up` barrier is a best-effort wrapper over it, and the eager sweep
+> plus the lazy fallback guarantee correctness on their own. Making that barrier's host-side MinIO
+> poll actually observe the `.ready` sentinels is owned by Sprint 8.7 (typed readiness evidence) and
+> Sprint 8.8 (tri-state observation), not by this sprint.
 
 > **Apple-silicon cohort note.** This sprint's cohort gate was Wave P (`linux-gpu` + `linux-cpu`)
 > only; no apple-silicon full-suite ran for Phase 8. The eager-stage-**all** behavior is still a disk
@@ -224,9 +216,8 @@ inference races a cold cache.
 - the eager coordinator sweep stages the mounted model set at startup; a `warm-model-cache` `cluster
   up` lifecycle phase (`warmModelCache` → `waitForEagerModelCacheReady`) wraps a best-effort host-side
   MinIO poll of the `.ready` sentinels at the host-reachable node-port endpoint per control-plane
-  context. That poll is non-observing today (reports `0/16` and warns-and-proceeds rather than truly
-  blocking); the eager sweep still stages the weights, and making the poll observe the sentinels so it
-  deterministically blocks is the tracked follow-on
+  context. The barrier warns and proceeds rather than truly blocking; the eager sweep stages the
+  weights regardless, and making the poll observe the sentinels is Sprint 8.7 and Sprint 8.8 work
 - the model set is the mounted `infernix.dhall` (the source of truth); `src/Infernix/Models.hs`
   `matrixRows`/`catalogForMode` is documented as a **demo-only** generator of that list, not a core
   dependency
@@ -240,15 +231,14 @@ inference races a cold cache.
 
 - code-side: `infernix test unit` (registry `--empty-models` parse, empty-vs-full model rendering),
   `infernix lint chart`, `cabal build all`
-- cohort (closed 2026-07-04, Wave P): the `linux-gpu` **and** `linux-cpu` full-suite `infernix test all`
-  both passed with routed Playwright **9/9**; the per-model browser matrix (spec 945) exercises every
-  catalog model and the 27 GB `video-wan21-t2v` row completes (gpu 18.2 m, cpu 16.5 m) because the
+- cohort (closed under [Wave P](cohort-validation-waves.md)): the `linux-gpu` **and** `linux-cpu`
+  full-suite `infernix test all` both passed with routed Playwright **9/9**; the per-model browser
+  matrix exercises every catalog model and the 27 GB `video-wan21-t2v` row completes because the
   eager sweep starts staging at cluster-up
 
 ### Remaining Work
 
-None (code-side and cohort closed). The best-effort `warm-model-cache` barrier's host-side poll
-observability is the documented non-blocking residual above.
+None.
 
 ## Sprint 8.6: Test-Harness Config Lifecycle [Done]
 
@@ -294,13 +284,13 @@ None (code-side); exercised end-to-end by the Phase 8 cohort full-suite.
 
 **Status**: Done — the warm-model-cache barrier returns typed readiness evidence and the config-side
 state files persist fail-closed; code-side closure (machine-independent gates) plus the
-single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed by
-[Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+single-accelerator (apple-silicon) plus linux-cpu full-suite sign-off closed under
+[Wave V](cohort-validation-waves.md).
+**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (typed warm-cache outcome consumption and the port-file fail-closed
-assertions pass), `cabal test infernix-haskell-style`, and `infernix lint docs` all green on the
+assertions pass), `cabal test infernix-haskell-style`, and `infernix lint docs` all pass on the
 apple-silicon lane. No native/Python change, so `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus linux-cpu full-suite `test all` green.
+**Cohort gate**: closed under [Wave V](cohort-validation-waves.md) — apple-silicon plus linux-cpu full-suite `test all` clean.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -318,13 +308,19 @@ to this phase's `warm-model-cache` barrier and config-side persisted state.
 
 ### Deliverables
 
-- the `warm-model-cache` barrier's readiness wait in `src/Infernix/Runtime/Pulsar.hs` returns typed
-  readiness evidence `E(S)` for the cache-ready state, generalizing the existing progress-based poll
-  rather than returning a bare boolean
-- `src/Infernix/Cluster.hs` consumes that typed evidence at the `warm-model-cache` lifecycle phase so
-  the barrier's transition is gated on evidence of the observed sentinels
+- the `warm-model-cache` barrier's readiness wait in `src/Infernix/Runtime/Pulsar.hs`
+  (`waitForEagerModelCacheReady`) returns a typed `WarmModelCacheOutcome` rather than a bare boolean:
+  `WarmModelCacheAllStaged` carries an opaque `WarmModelCacheReady` witness minted only when every
+  configured model's `.ready` sentinel was observed, and `WarmModelCacheStillPending` carries the
+  still-unstaged ids, generalizing the previous bare pending list
+- `src/Infernix/Cluster.hs` (`runWarmModelCacheBarrier`) consumes that typed evidence at the
+  `warm-model-cache` lifecycle phase: the "all staged" declaration is gated on the
+  `WarmModelCacheAllStaged` witness, and a pending outcome logs the non-blocking warning
 - the config-side state files adopt fail-closed versioned persistence — an unknown or unversioned
-  on-disk state fails closed rather than being silently reinterpreted
+  on-disk state fails closed rather than being silently reinterpreted. `readPortFileMaybe`
+  (`src/Infernix/Storage.hs`) treats absent/blank as `Nothing` but a present-but-undecodable file as
+  a loud error rather than a silent `Nothing` that would re-choose a port; the authoritative
+  config-side cluster-state file uses the Sprint 2.14 fail-closed versioned aeson codec
 
 ### Validation
 
@@ -336,57 +332,29 @@ to this phase's `warm-model-cache` barrier and config-side persisted state.
 
 ### Remaining Work
 
-- code-side closed 2026-07-16. Landed this sprint:
-  - `waitForEagerModelCacheReady` (`src/Infernix/Runtime/Pulsar.hs`) returns a typed
-    `WarmModelCacheOutcome` — `WarmModelCacheAllStaged` carries an opaque `WarmModelCacheReady`
-    witness minted only when every configured model's `.ready` sentinel was observed, while
-    `WarmModelCacheStillPending` carries the still-unstaged ids — generalizing the previous bare
-    pending list
-  - `src/Infernix/Cluster.hs` (`runWarmModelCacheBarrier`) consumes the typed evidence: the
-    "all staged" declaration is gated on the `WarmModelCacheAllStaged` witness, and a pending outcome
-    logs the non-blocking warning
-  - the config-side port state files (`readPortFileMaybe` in `src/Infernix/Storage.hs`) read
-    fail-closed — absent/blank is `Nothing`, but a present-but-undecodable file is a loud error rather
-    than a silent `Nothing` that would re-choose a port; the authoritative config-side cluster-state
-    file already uses the Sprint 2.14 fail-closed versioned aeson codec
-- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-  and `infernix lint docs`
-- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20) —
-  apple-silicon plus linux-cpu full-suite `test all` green; no remaining work exists
+None.
 
 ---
 
 ## Sprint 8.8: Fault-vs-Absence in the Warm-Model-Cache Barrier [Done]
 
-**Status**: Done — the warm-model-cache observation surface is now three-valued end to end (Haskell
+**Status**: Done — the warm-model-cache observation surface is three-valued end to end (Haskell
 sentinel probe + Python cache revalidation), so a transport fault can no longer masquerade as a
-definitive absence and stall the retained-second-`cluster up` barrier; code-side closed 2026-07-22 on
-the machine-independent gate set, and the single-accelerator (apple-silicon) plus `linux-cpu`
-behavioral cohort sign-off closed under [Wave W](cohort-validation-waves.md) on 2026-07-24 with no
-remaining work.
+definitive absence and stall the retained-second-`cluster up` barrier; code-side closed on the
+machine-independent gate set, and the single-accelerator (apple-silicon) plus `linux-cpu` behavioral
+cohort sign-off closed under [Wave W](cohort-validation-waves.md) with no remaining work.
 **Supersession note**: this sprint supersedes Sprint 8.7's `IO Bool` sentinel observation
 (`sentinelReady = try @SomeException (minioObjectExists ...) >>= either (const (pure False)) pure`,
 coercing any transport fault into the same `False` as a genuine 404) and the Python
 `_mt3_pytorch_objects_are_valid :: … -> bool` fail-open revalidation (an `except Exception: return
 False` that deleted a valid retained `.ready` sentinel on a fallible read). Sprint 8.7's typed
 `WarmModelCacheOutcome` witness stands; this sprint fixes the observation feeding it.
-**Code-side closure**: complete (2026-07-22). Landed: (a) `SentinelObservation = SentinelPresent |
-SentinelAbsent | SentinelUnobservable Text` with a pure, exported `classifyHeadOutcome :: Either
-SomeException Int -> SentinelObservation` (only a genuine 404 mints `SentinelAbsent`; a transport
-exception, a `5xx` "server not ready", or a `403` "IAM not ready" are `SentinelUnobservable`) and
-`observeMinioObject` in `src/Infernix/Runtime/Pulsar.hs`; (b) a `SentinelCensus` and the barrier probe
-rewritten onto Sprint 1.18's `awaitReadinessObservable` — a census with any unobservable sentinel
-yields a kernel `Readiness.Unobservable` poll (retried within budget), never a fabricated `Progress`
-count, so a present-but-momentarily-faulting cache is observed present on a later poll instead of
-stalling at "11/16"; (c) the Python `CacheValidity = VALID | CORRUPT | UNVERIFIABLE` verdict in
-`python/adapters/model_bootstrap.py` — `_delete_model_prefix` is reachable only through the `CORRUPT`
-arm (a deterministic HEAD-size mismatch), so a fallible MinIO read is `UNVERIFIABLE` and the retained
-sentinel is kept. The barrier stays non-fatal. Gate set (GREEN 2026-07-22): `cabal build all`
+**Code-side closure**: complete on the machine-independent gate set — `cabal build all`
 (`-Wall -Werror`), `cabal test infernix-unit` (`classifyHeadOutcome` table + `tallyCensus` partition +
 the kernel transient-fault/persistent-unobservable cases), `cabal test infernix-haskell-style`,
 `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code`.
-**Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the behavioral proof
-that a retained second `cluster up` warms the cache without the "11/16" stall. Closed 2026-07-24.
+**Cohort gate**: apple-silicon + linux-cpu, closed under [Wave W](cohort-validation-waves.md) — the
+behavioral proof that a retained second `cluster up` warms the cache without the "11/16" stall.
 **Implementation**: `src/Infernix/Runtime/Pulsar.hs`, `python/adapters/model_bootstrap.py`,
 `test/unit/Spec.hs`
 **Blocked by**: Sprint 1.18, Sprint 8.7
@@ -405,41 +373,46 @@ so a fault can never masquerade as absence. This consumes the Sprint 1.18 observ
 
 ### Deliverables
 
-- `SentinelObservation` tri-state + pure exported `classifyHeadOutcome` + `observeMinioObject`
-- `SentinelCensus` + a barrier probe on `awaitReadinessObservable` that reports `Unobservable` (retry)
-  when any sentinel is unobservable, `Ready` only when every sentinel is present, and an honest
-  `Progress` count only over a fully-observed census with genuine absences
-- Python `CacheValidity = VALID | CORRUPT | UNVERIFIABLE`; `_delete_model_prefix` gated on `CORRUPT`
+- `SentinelObservation = SentinelPresent | SentinelAbsent | SentinelUnobservable Text` in
+  `src/Infernix/Runtime/Pulsar.hs`, with a pure exported
+  `classifyHeadOutcome :: Either SomeException Int -> SentinelObservation` — only a genuine 404 mints
+  `SentinelAbsent`; a transport exception, a `5xx` "server not ready", and a `403` "IAM not ready" are
+  `SentinelUnobservable` — plus `observeMinioObject`
+- `SentinelCensus` + a barrier probe on Sprint 1.18's `awaitReadinessObservable` that reports
+  `Unobservable` (retried within budget) when any sentinel is unobservable, `Ready` only when every
+  sentinel is present, and an honest `Progress` count only over a fully-observed census with genuine
+  absences, so a present-but-momentarily-faulting cache is observed present on a later poll. The
+  barrier stays non-fatal
+- Python `CacheValidity = VALID | CORRUPT | UNVERIFIABLE` in
+  `python/adapters/model_bootstrap.py`; `_delete_model_prefix` is reachable only through the `CORRUPT`
+  arm (a deterministic HEAD-size mismatch), so a fallible MinIO read is `UNVERIFIABLE` and the
+  retained sentinel is kept
 - unit coverage for the classifier table, the census partition, and (with Sprint 1.18) the kernel
   retry/give-up behavior
+- the superseded `IO Bool` sentinel probe, the `sentinelReady` error-to-`False` coercion, and the
+  Python fail-open delete are recorded in
+  [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
 
 ### Validation
 
 - `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `infernix lint files/docs/proto/chart`, `infernix docs check`, and `poetry run check-code` — all
-  green on the apple-silicon lane (2026-07-22)
+  clean on the apple-silicon lane
 - `infernix test all` on apple-silicon plus `linux-cpu` proves a retained second `cluster up` warms the
-  cache without the "11/16" stall — closed under [Wave W](cohort-validation-waves.md)
+  cache without the "11/16" stall — closed under [Wave W](cohort-validation-waves.md), paired with
+  [Sprint 1.18](phase-1-repository-and-control-plane-foundation.md)
 
 ### Remaining Work
 
-None. The implementation is complete (code-side closed 2026-07-22): the tri-state Haskell probe +
-census, the observable-poll barrier, and the Python `CacheValidity` gate are landed with unit coverage.
-The apple-silicon plus `linux-cpu` behavioral cohort sign-off closed under
-[Wave W](cohort-validation-waves.md) on 2026-07-24, paired with
-[Sprint 1.18](phase-1-repository-and-control-plane-foundation.md); no remaining work exists. The
-superseded `IO Bool` sentinel probe, the `sentinelReady` error-to-`False` coercion, and the Python
-fail-open delete are recorded in
-[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
+None.
 
-## Sprint 8.9: Generated Proper-Union Execution Plan [Active — Validation Only]
+## Sprint 8.9: Generated Proper-Union Execution Plan [Active]
 
-**Status**: Active — **code-side closed on 2026-08-03**. The 2026-08-02 pass closed the budget
-union; this pass closed the five items it named as explicit follow-on work, so the whole generated
-execution-plan language is now union-typed. Behavioral evidence is consumed from the Phase 6 Sprint
-6.44 cohort, per this sprint's own validation rule that it must not create a dual-accelerator gate
-of its own.
-**Code-side closure**: Complete. The machine-independent gate set is GREEN
+**Status**: Active — **code-side closed**. The whole generated execution-plan language is
+union-typed: the budget union landed first, and the five items it named as explicit follow-on work
+are closed. Behavioral evidence is consumed from the Phase 6 Sprint 6.44 cohort, per this sprint's
+own validation rule that it must not create a dual-accelerator gate of its own.
+**Code-side closure**: complete. The machine-independent gate set passes
 (`cabal build all --enable-tests`, `infernix-unit`, `infernix-execution-plan-internal`,
 `infernix-capped-engine-observer`, `infernix-compile-fail`, `infernix-haskell-style`, and
 `lint files|chart|proto|docs` plus `docs check`).
@@ -505,16 +478,15 @@ entry point for the whole generated substrate language.
 
 ### Validation
 
-- zero tracked `.dhall` remains true — **GREEN** (`lint files` passes; the generated
-  `./infernix.dhall`, `./infernix-host.dhall`, and secrets manifest used for the style gate were
-  removed after the run)
-- generated host, test, baked-image, and mounted-cluster payloads round-trip every applicable
-  union — **GREEN**: the unit suite round-trips the host-enforced and substrate-enforced arms through
-  the real decode boundary and compiles a full `linux-gpu` catalog under the dual arm
-- legacy flat payloads fail with a targeted migration diagnostic — **GREEN**
-- machine-independent gates pass — **GREEN**
+- zero tracked `.dhall` remains true — `lint files` passes; the generated `./infernix.dhall`,
+  `./infernix-host.dhall`, and secrets manifest used for the style gate are removed after the run
+- generated host, test, baked-image, and mounted-cluster payloads round-trip every applicable union:
+  the unit suite round-trips the host-enforced and substrate-enforced arms through the real decode
+  boundary and compiles a full `linux-gpu` catalog under the dual arm
+- legacy flat payloads fail with a targeted migration diagnostic
+- machine-independent gates pass
 
-### Landed implementation (items 1-5, 2026-08-03)
+### Landed implementation: the generated wire language
 
 **1. Every enum-like wire field is a Dhall union.** `runtimeMode` (four wire positions),
 `daemonRole` (two), `pulsarConnectionMode`, engine-pool `subscription`, model `runtimeLane`,
@@ -608,14 +580,14 @@ retired flat encoding when one is supplied.
 
 ---
 
-## Sprint 8.10: Delete The Derivable Wire Fields [Active — Validation Only]
+## Sprint 8.10: Delete The Derivable Wire Fields [Active]
 
-**Status**: Active — Validation Only. Code-side closed on 2026-08-07, once Phase 4 Sprint 4.34's
-admission move landed and the reduced contract could be built on the corrected shape rather than on
-the defect. The blocker it carried is discharged: the substrate limit's `resource` / `source` and the
-partition's headroom term are the budget's own shape, and deleting them while the coordinator still
-admitted from a plan-global budget would have hidden the veto instead of removing it.
-**Code-side closure**: GREEN on the machine-independent gate set — `cabal build all --enable-tests`
+**Status**: Active. Code-side closed, once Phase 4 Sprint 4.34's admission move landed and the
+reduced contract could be built on the corrected shape rather than on the defect. The blocker it
+carried is discharged: the substrate limit's `resource` / `source` and the partition's headroom term
+are the budget's own shape, and deleting them while the coordinator still admitted from a plan-global
+budget would have hidden the veto instead of removing it.
+**Code-side closure**: clean on the machine-independent gate set — `cabal build all --enable-tests`
 under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`
 (6 positive / 87 negative), `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
 `infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
@@ -700,7 +672,7 @@ None code-side. The cohort rebuild is the residual named above.
 
 ## Sprint 8.11: System And Machine Contracts [Blocked]
 
-**Status**: Blocked — its Sprint 8.10 dependency is discharged (code-side closed 2026-08-07), and
+**Status**: Blocked — its Sprint 8.10 dependency is discharged (code-side closed), and
 execution then surfaced a substantive gap in this sprint's own design that has to be resolved before
 it can be built. **The machine contract has no home on the Linux lanes.** The sprint specifies it as
 "the existing host manifest plus a `node` block", and on `apple-silicon` that works — the engine is

@@ -128,23 +128,49 @@ this canonical list.
   Canonical:
   [../architecture/bounded_inference_memory.md](../architecture/bounded_inference_memory.md) and
   [../architecture/typed_execution_plan.md](../architecture/typed_execution_plan.md)
-- bounded host memory: every host toolchain process runs under a declared ceiling derived from
-  measured physical RAM, and a ceiling is inseparable from the concurrency it is multiplied by — a
-  per-process cap under `jobs: $ncpus` bounds the host at `jobs × cap`, not at `cap`. Inference is
-  one claimant on host RAM; the toolchain is another, and an uncapped `cabal build` exhausted a
-  124.94 GiB development host. The compiler runtime reserves 1024.65 GiB of address
-  space by default, so the built executable declares a bounded reservation before any memory limit
-  is installable. The mechanism is resolved per lane and fails closed when unavailable: a cgroup
-  scope bounds the aggregate on Linux, while Darwin has neither cgroups nor an enforced
-  address-space limit and gets a runtime heap cap plus bounded concurrency only. One opaque
-  authority serializes its own package-owned child lifecycles; it is not a host-global or
-  crash-surviving lease. Governed workflows must serialize independent CLI images, checkouts, and
-  stage-0 bootstrap builds because the toolchain account does not fund their overlap. Normal
-  completion trusts/reaps Cabal's scheduler leader, while exceptional cleanup owns its group; no
-  normal descendant-absence or hard-kill-survival proof is claimed. This does **not** make a host
-  out-of-memory condition impossible; the doctrine names what it does not bound.
-  Canonical:
+- bounded host memory: every Haskell toolchain image runs under an authority-derived heap ceiling,
+  and a ceiling is inseparable from the complete claimant arithmetic it participates in. The normal
+  compiler phase is `jobs × compilerHeap + (jobs + 1) × controlHeap`: one fixed control/helper slot
+  per compiler worker plus the live Cabal driver. Native compiler helpers occupy those declared
+  slots; on Darwin that reserve is arithmetic and sampled evidence, not a kernel-enforced native
+  heap bound.
+  Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
+  exhausted a 124.94 GiB development host while the kernel, which selects per process
+  and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
+  The compiler runtime reserves 1024.65 GiB of address space by default, so the built executable
+  declares a bounded reservation before any memory limit is installable at all. The mechanism is
+  resolved per lane and fails closed when unavailable: an existing cgroup maximum bounds the
+  aggregate on the Linux container lane, while Darwin has neither cgroups nor an enforced
+  address-space limit and gets Haskell heap caps, bounded concurrency, claimant arithmetic, and an
+  opt-in sampled process-group proof. The shipped operator CLI and its fixed observer tools are not
+  toolchain claimants; they remain in the host reserve and outside the sampled Cabal group. One
+  opaque authority serializes its own package-owned child lifecycles, but this is not a host-global
+  or crash-surviving lease: independent CLI images, checkouts, and stage-0 bootstraps are unsupported
+  concurrent toolchain claimants, the 50% account does not fund their overlap, and governed
+  workflows must serialize them. Normal completion trusts and reaps the Cabal scheduler leader;
+  only exceptional cleanup signals its still-owned process group, so no normal descendant-absence
+  or hard-kill-survival proof is claimed. This does **not** make a host out-of-memory condition
+  impossible — native-helper growth beyond its measured
+  slot, page cache, kernel slab, the OOM-protected container runtime, and every process infernix did
+  not start remain outside the enforced bound — and the doctrine names what it does not bound rather
+  than overstating the guarantee. Canonical doctrine:
   [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md)
+- per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**
+  engine process, all consuming the same Pulsar `Shared` pool topic, each with its own model cache
+  and its own machine contract naming the pools it serves. One engine per machine is a correctness
+  rule, not a scheduling preference — two engines on one box hold two KV caches and two copies of
+  every loaded weight, and each independently admits work against the machine's whole observed
+  capacity. Member identity fails closed: a daemon that cannot establish which member it is refuses
+  to start rather than adopting a default. Memory admission happens on the machine that will
+  execute, never on the coordinator, and capacity is **observed, never declared**. Delivery is
+  **at-least-once with an effectively-once observable outcome**: acknowledgement follows the terminal
+  result, so a machine lost mid-inference costs a redelivery and duplicate compute rather than an
+  unanswered request — redelivery is the only recovery path the pipeline has, and no change may
+  acknowledge before the terminal event. There is no within-role replication and no repo-owned HA
+  topology; `Failover` as a Pulsar *subscription type* survives because it is how Pulsar provides the
+  coordination this relies on. Canonical doctrine:
+  [../architecture/daemon_topology.md](../architecture/daemon_topology.md) and
+  [../architecture/configuration_doctrine.md](../architecture/configuration_doctrine.md)
 - `close_fds` is only bounded because the descriptor space is: `Infernix.DescriptorSpace` lowers the
   soft `RLIMIT_NOFILE` to a 16384 ceiling as the first action of every process image, before the
   internal self-exec dispatch and before any descriptor is opened, because the forked child closes
@@ -168,9 +194,19 @@ this canonical list.
   `./bootstrap/linux-gpu.sh`, or
   `docker compose run --rm infernix infernix <command>`; the bootstrap does not manage Kind or
   images directly
-- never use cross-architecture emulation for development or validation. `linux-cpu` validation
-  belongs on native Linux amd64 or native Linux arm64; Apple Silicon must not run an emulated
-  amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
+- never use cross-architecture emulation for development or validation. Apple Silicon must not run
+  an emulated amd64 Linux lane, create or switch Docker contexts, or create a Colima VM
+- on Apple Silicon, the `linux-cpu` and `linux-gpu` outer-container lanes run through the operator's
+  already-running native arm64 Docker daemon, the Colima Linux VM. Docker schedules the launcher
+  container on that VM's native `linux/arm64` kernel, which is real Linux rather than emulation, so
+  exercising those lanes from an Apple host through the launcher image and the documented
+  `docker compose` reference commands is supported. Keep using the existing daemon: do not create or
+  switch contexts and do not provision a new VM. `./bootstrap/linux-cpu.sh` runs directly on Apple
+  Silicon; on macOS it resolves the Homebrew Docker CLI and drives the lane through the existing
+  Colima daemon without installing an engine, creating or switching a context, or provisioning a VM.
+  `./bootstrap/linux-gpu.sh` targets native Ubuntu 24.04 Linux hosts with the NVIDIA driver
+  prerequisites; from an Apple host, exercise the GPU container lane through the `docker compose`
+  reference path against that same daemon
 - keep governed documents prescriptive and record implementation status, sequencing, and validation
   receipts only in `DEVELOPMENT_PLAN/`
 

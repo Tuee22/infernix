@@ -29,10 +29,13 @@
   precisely which host out-of-memory conditions that does and does not make unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
   target "memory-safety by construction" invariant for the inference row of that ledger, and
-  and names the per-substrate enforcement surfaces the execution plan requires
+  names the per-substrate enforcement surfaces the execution plan requires
 - [architecture/typed_execution_plan.md](architecture/typed_execution_plan.md) defines the closed
   generated-Dhall execution language, raw-to-compiled plan boundary, live enforcer refinement, and
   capability-gated command, provisioning, routing, and inference surfaces
+- [architecture/configuration_doctrine.md](architecture/configuration_doctrine.md) defines the
+  typed `.dhall` configuration substrate — the binary as sole generator, the schemas reflected from
+  the decoder types, and the operator-facing initialization surface that creates them
 - [architecture/web_ui_architecture.md](architecture/web_ui_architecture.md) describes the
   PureScript demo UI topology and the Webapp role cluster layout
 - [architecture/durable_context_design.md](architecture/durable_context_design.md) defines the

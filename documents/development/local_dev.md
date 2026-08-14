@@ -205,9 +205,13 @@ vectors internally; callers cannot supply a Cabal target or arbitrary test optio
 - Apple-specific claims use the Apple host-native bootstrap and direct `./.build/infernix` commands.
 - Linux/CUDA, chart, and outer-container claims use the `linux-gpu` bootstrap and
   `docker compose run --rm infernix infernix ...` reference path.
-- `linux-cpu` is a portable CPU-only lane for native Linux amd64 and native Linux arm64. It is not
-  exercised through Apple Silicon emulation and does not replace CUDA Linux for GPU-sensitive
-  claims.
+- `linux-cpu` is a portable CPU-only lane for native Linux amd64 and native Linux arm64. On an
+  Apple Silicon host it runs through the operator's already-running native arm64 Docker daemon, the
+  Colima Linux VM, so the launcher container is scheduled on that VM's native `linux/arm64` kernel
+  rather than under emulation; `./bootstrap/linux-cpu.sh` resolves the Homebrew Docker CLI and
+  drives the lane through the existing daemon without creating or switching a context or
+  provisioning a VM. It is never exercised through cross-architecture emulation and does not
+  replace CUDA Linux for GPU-sensitive claims.
 - Full cross-hardware evidence requires the Apple Silicon and CUDA Linux full-suite gates against
   the same source fingerprint.
 

@@ -1062,14 +1062,14 @@ provisioningKernelOwnershipViolations ::
   [String]
 provisioningKernelOwnershipViolations sourceFile numberedLines
   | not (isProductionHaskellSource sourceFile) = []
-  | sourceFile `elem` provisioningKernelOwners = []
   | otherwise =
       [ sourceFile
           <> ":"
           <> show lineNumber
           <> ": forbidden generic provisioning kernel access; "
           <> "only the bounded subprocess kernel, indexed provisioning facade, and hidden activation interpreter may construct mutations or compile commands"
-      | (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
+      | sourceFile `notElem` provisioningKernelOwners,
+        (lineNumber, codeLine) <- sanitizeNativeBoundarySource numberedLines,
         token <- provisioningKernelTokens,
         containsToken token codeLine
       ]
@@ -1085,9 +1085,11 @@ provisioningKernelTokens :: [String]
 provisioningKernelTokens =
   [ "observeProvisioningMutationRoot",
     "provisioningCreateDirectoryLeaf",
+    "provisioningCreateSymbolicLinkLeaf",
     "provisioningRemoveTreeLeaf",
     "provisioningRenameSiblingDirectory",
     "provisioningRenameSiblingRegularFile",
+    "provisioningReplaceSiblingRegularFile",
     "runProvisioningFilesystemMutation",
     "compileProvisioningCommand",
     "compileProvisioningCommandWithExecutable",

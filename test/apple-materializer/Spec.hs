@@ -46,11 +46,13 @@ import System.Directory
     getTemporaryDirectory,
     removeFile,
     removePathForcibly,
+    renameDirectory,
   )
 import System.Environment (getArgs)
 import System.Exit (exitFailure)
-import System.FilePath ((</>))
+import System.FilePath (makeRelative, (</>))
 import System.Info (os)
+import System.Posix.Files qualified as Posix
 import System.Posix.Process (getProcessID)
 import System.Timeout qualified as Timeout
 
@@ -156,8 +158,96 @@ testCases =
     ("Mach-O production hard bounds reject every excess dimension", machOClosureBoundsTest),
     ("Mach-O install-name ascent is admitted only inside its package closure", machOInstallNameAscentTest),
     ("only a host-bound shebang leaves the Python home closure", shebangHostBindingTest),
-    ("the Mach-O fat magic does not admit a Java class file", machOFatMagicCollisionTest)
+    ("the Mach-O fat magic does not admit a Java class file", machOFatMagicCollisionTest),
+    ("a symlink-free JavaCPP cache survives publication and still refuses an absolute link", javaCppCacheRelocationInvarianceTest)
   ]
+
+-- | The Audiveris invocation declines JavaCPP symbolic-link creation, so its
+-- cache is a plain tree of extracted regular files.
+--
+-- That is what makes the sealed payload relocation-invariant, and it is why this
+-- artifact carries no repair pass. JavaCPP's only fixed point is an absolute
+-- self-referential link naming its configured cache directory, and it
+-- re-establishes that fixed point on every load — rewriting a relative target,
+-- replacing a regular file, and re-creating an absent link. Its spelling names
+-- whichever root the payload currently occupies, so no single spelling could
+-- satisfy both the candidate smoke and the smoke that runs after the candidate
+-- is renamed onto its final root. Declining the link removes the conflict rather
+-- than choosing a side: the digest the transaction fixes before the smoke is
+-- still observed after it and after publication.
+--
+-- The second half of this case matters as much as the first. Nothing normalizes
+-- an absolute payload link any more, so the strict-relative payload policy is the
+-- only thing between a stray absolute target and a published artifact.
+javaCppCacheRelocationInvarianceTest :: IO ()
+javaCppCacheRelocationInvarianceTest =
+  withMaterializerFixture "javacpp-cache-relocation" $ \paths _ -> do
+    let enginesRoot = dataRoot paths </> "engines"
+        candidateRoot = enginesRoot </> "candidate.tmp"
+        finalRoot = enginesRoot </> "candidate"
+        cacheRoot = candidateRoot </> "javacpp-cache"
+        leptonicaDirectory =
+          cacheRoot
+            </> "leptonica-1.85.0-1.5.12-macosx-arm64.jar"
+            </> "org"
+            </> "bytedeco"
+            </> "leptonica"
+            </> "macosx-arm64"
+        tesseractDirectory =
+          cacheRoot
+            </> "tesseract-5.5.1-1.5.12-macosx-arm64.jar"
+            </> "org"
+            </> "bytedeco"
+            </> "tesseract"
+            </> "macosx-arm64"
+        leptonicaPayload = leptonicaDirectory </> "libleptonica.6.dylib"
+        tesseractPayload = tesseractDirectory </> "libtesseract.5.5.dylib"
+        leptonicaBytes = "real-leptonica-payload\n"
+        tesseractBytes = "real-tesseract-payload\n"
+    createDirectoryIfMissing True leptonicaDirectory
+    createDirectoryIfMissing True tesseractDirectory
+    ByteString.writeFile leptonicaPayload leptonicaBytes
+    ByteString.writeFile tesseractPayload tesseractBytes
+    payloadStatus <- Posix.getFileStatus leptonicaPayload
+    candidateDigest <- Artifact.digestEngineArtifactPayload candidateRoot
+    renameDirectory candidateRoot finalRoot
+    let publishedPayload = finalRoot </> makeRelative candidateRoot leptonicaPayload
+    finalDigest <- Artifact.digestEngineArtifactPayload finalRoot
+    publishedBytes <- ByteString.readFile publishedPayload
+    publishedStatus <- Posix.getFileStatus publishedPayload
+    assertEqual
+      "a symlink-free JavaCPP cache digests identically across publication"
+      candidateDigest
+      finalDigest
+    assertEqual
+      "the published payload still resolves to its original bytes"
+      leptonicaBytes
+      publishedBytes
+    assertSameFileObject
+      "publication leaves the payload the same regular-file object"
+      payloadStatus
+      publishedStatus
+    let strayLinkPath = finalRoot </> "javacpp-cache" </> "stray.dylib"
+    Posix.createSymbolicLink publishedPayload strayLinkPath
+    strayOutcome <-
+      try @SomeException (Artifact.digestEngineArtifactPayload finalRoot)
+    removeFile strayLinkPath
+    unless
+      (isLeft strayOutcome)
+      (fail "an absolute payload symlink must still be refused after normalization is gone")
+    restoredDigest <- Artifact.digestEngineArtifactPayload finalRoot
+    assertEqual
+      "refusing the stray link leaves the published payload unchanged"
+      finalDigest
+      restoredDigest
+
+assertSameFileObject :: String -> Posix.FileStatus -> Posix.FileStatus -> IO ()
+assertSameFileObject label expected observed =
+  unless
+    ( Posix.deviceID expected == Posix.deviceID observed
+        && Posix.fileID expected == Posix.fileID observed
+    )
+    (fail (label <> ": file identity changed"))
 
 syntheticBoundaryFailureTest :: IO ()
 syntheticBoundaryFailureTest =
@@ -530,6 +620,22 @@ validAppleRuntimeSmokeFixtures =
             <> "- OCR Engine:   Tesseract OCR 5.5.1\n"
         ),
       "5.10.2"
+    ),
+    -- Verbatim from the pinned DMG's own launcher, terminating blank line
+    -- included. Audiveris ends its banner with `\n\n`; a fixture that ends in
+    -- one newline would have accepted a parser that rejects the real tool.
+    ( "jvm-native",
+      ByteStringChar8.pack
+        ( "Audiveris\n"
+            <> "- Version:      5.10.2\n"
+            <> "- Commit:       1b7cf44088c68f4168801822a613751d1bb1b584\n"
+            <> "- OS:           Mac OS X 26.5\n"
+            <> "- Architecture: aarch64\n"
+            <> "- Java VM:      OpenJDK 64-Bit Server VM (build 25.0.2+10-LTS, mixed mode)\n"
+            <> "- OCR Engine:   Tesseract OCR, version 5.5.1\n"
+            <> "\n"
+        ),
+      "5.10.2"
     )
   ]
 
@@ -593,6 +699,27 @@ invalidAppleRuntimeSmokeFixtures =
             <> "- Architecture: aarch64\n"
             <> "- Java VM:      OpenJDK 64-Bit Server VM 21.0.7\n"
             <> "- OCR Engine:   Tesseract OCR 5.5.1\n"
+        )
+    ),
+    ( "Audiveris admits exactly one terminating blank line and no more",
+      "jvm-native",
+      ByteStringChar8.pack
+        ( "Audiveris\n"
+            <> "- Version:      5.10.2\n"
+            <> "- Commit:       8fbdc39\n"
+            <> "- OS:           Mac OS X 15.5\n"
+            <> "- Architecture: aarch64\n"
+            <> "- Java VM:      OpenJDK 64-Bit Server VM 21.0.7\n"
+            <> "- OCR Engine:   Tesseract OCR 5.5.1\n"
+            <> "\n\n"
+        )
+    ),
+    ( "a blank terminator is an Audiveris allowance, not a shared one",
+      "llama-cpp-cli",
+      ByteStringChar8.pack
+        ( "version: 9870 (2d973636e)\n"
+            <> "built with AppleClang 21.0.0.21000099 for Darwin arm64\n"
+            <> "\n"
         )
     ),
     ( "Audiveris rejects an empty exact field",

@@ -586,21 +586,23 @@ assertProvisioningKernelOwnership = do
   let rawKernelUses =
         [ (1, "Subprocess.observeProvisioningMutationRoot root"),
           (2, "Subprocess.provisioningCreateDirectoryLeaf root parents leaf"),
-          (3, "Subprocess.provisioningRemoveTreeLeaf root parents leaf"),
-          (4, "Subprocess.provisioningRenameSiblingDirectory root parents source destination"),
-          (5, "Subprocess.provisioningRenameSiblingRegularFile root parents source destination"),
-          (6, "Subprocess.runProvisioningFilesystemMutation environment timeout mutation"),
-          (7, "Subprocess.compileProvisioningCommand command environment timeout"),
-          (8, "Subprocess.compileProvisioningCommandWithExecutable command executable environment timeout"),
-          (9, "Subprocess.compileProvisioningCommandWithExecutableInMutationRoot command root executable environment timeout"),
-          (10, "Subprocess.resolveProvisioningCommandExecutable command environment")
+          (3, "Subprocess.provisioningCreateSymbolicLinkLeaf root parents leaf target"),
+          (4, "Subprocess.provisioningRemoveTreeLeaf root parents leaf"),
+          (5, "Subprocess.provisioningRenameSiblingDirectory root parents source destination"),
+          (6, "Subprocess.provisioningRenameSiblingRegularFile root parents source destination"),
+          (7, "Subprocess.provisioningReplaceSiblingRegularFile root parents source destination"),
+          (8, "Subprocess.runProvisioningFilesystemMutation environment timeout mutation"),
+          (9, "Subprocess.compileProvisioningCommand command environment timeout"),
+          (10, "Subprocess.compileProvisioningCommandWithExecutable command executable environment timeout"),
+          (11, "Subprocess.compileProvisioningCommandWithExecutableInMutationRoot command root executable environment timeout"),
+          (12, "Subprocess.resolveProvisioningCommandExecutable command environment")
         ]
       nonOwner = "src/Infernix/Runtime/Worker.hs"
       owners =
         [ "src/Infernix/Cluster/Subprocess.hs",
-          "src/Infernix/Engines/Artifact/Activation.hs",
           "src/Infernix/Engines/Provisioning.hs"
         ]
+      activationOwner = "src/Infernix/Engines/Artifact/Activation.hs"
   mapM_
     ( \rawUse ->
         when
@@ -625,6 +627,14 @@ assertProvisioningKernelOwnership = do
           (fail ("provisioning kernel ownership lint rejected " <> owner))
     )
     owners
+  unless
+    ( null
+        ( provisioningKernelOwnershipViolations
+            activationOwner
+            rawKernelUses
+        )
+    )
+    (fail "provisioning kernel ownership lint rejected the activation interpreter's generic operations")
   unless
     ( null
         ( provisioningKernelOwnershipViolations

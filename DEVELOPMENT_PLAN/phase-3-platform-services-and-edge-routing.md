@@ -1,14 +1,14 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
-**Blocked by**: Phase 0 Sprint 0.22
-**Suspended prior state**: Active — Sprint 3.16 is code-side closed as of the 2026-08-07 generated-overlay
-correction and owns only its `linux-cpu` lifecycle cohort gate. Executing that gate found the
-sprint's headline deliverable unmet: the chart defaults were 1 but the generated Helm overlay still
-deployed the retired replicated counts, so a `linux-cpu` cluster ran two engine pods on one worker.
-The overlay is corrected and the rule is now pinned by a negative-tested unit guard against the text
-that deploys; see [Sprint 3.16](#sprint-316-single-node-platform-topology-active). The
-Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen (Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md) (2026-07-20); Sprints 3.1-3.13 reopened and re-closed as recorded below
+**Status**: Blocked — strict numerical execution waits for Phase 2.
+**Blocked by**: Phase 2
+**Implementation state behind the blocker**: Active — Sprint 3.16 is code-side closed and owns only
+its `linux-cpu` lifecycle cohort gate. Single-node topology is enforced against the text that
+actually deploys: chart defaults of 1 are not sufficient, because a generated Helm overlay can
+reassert a replicated count, so the rule is pinned by a negative-tested unit guard on the generated
+overlay; see [Sprint 3.16](#sprint-316-single-node-platform-topology-active). The Bounded-Command
+Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen
+(Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the mandatory local single-instance Harbor, MinIO, operator-managed
@@ -18,44 +18,38 @@ Bounded-Command Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-
 
 ## Phase Status
 
-> **Execution-order pause:** Phase 3 is blocked by Phase 0 Sprint 0.22. The detailed state and
-> evidence below are suspended intact and resume only after Phase 0 is `Done`.
+> **Bounded-command application / bounded-HTTP — closed by [Wave V](cohort-validation-waves.md).**
+> Every Harbor docker/skopeo exec runs through `Infernix.Cluster.Subprocess.runBoundedCommand` under
+> a named `Timeout` budget, because the publish/verify site was the one place a bounded-command
+> kernel had shipped without being applied and an unbounded Harbor `docker pull` verify could hang
+> `publish-harbor-images` indefinitely. Blob-servability is evidence-minted: the opaque
+> `BlobServable` witness comes from a real bounded pull, `harborTagExists` is demoted to the
+> non-terminal `harborTagMetadataPresent` and `registryReady` to the weaker `registryApiReachable`,
+> so a retained-state push-skip against an unrehydrated MinIO backing is no longer a terminal
+> "done". See [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-done).
 
-> **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md) (2026-07-20).**
-> The 2026-07-18 single-accelerator cohort run surfaced a Harbor `docker pull` verify hang during
-> `publish-harbor-images` (the retained-state second `cluster up` of the Postgres lifecycle-rebinding
-> step) that the Sprint 1.16/3.14 kernels shipped but did not yet guard at the publish/verify site.
-> This phase reopened under
-> [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-done) to route every
-> Harbor docker/skopeo exec through `Infernix.Cluster.Subprocess.runBoundedCommand` under named
-> `Timeout` budgets (killing the ~23-min hang) and to mint blob-servability evidence: the opaque
-> `BlobServable` witness from a real bounded pull, `harborTagExists` demoted to the non-terminal
-> `harborTagMetadataPresent` and `registryReady` to the weaker `registryApiReachable`, so a
-> retained-state push-skip against an unrehydrated MinIO backing is no longer a terminal "done".
-> Code-side closed 2026-07-19 on the machine-independent gate set (apple-silicon); the
-> single-accelerator (apple-silicon) plus `linux-cpu` cohort full-suite sign-off closed under
-> [Wave V](cohort-validation-waves.md) on 2026-07-20.
-
-Phase 3 closes around the mandatory HA service set, the shared routed edge, and the
-Haskell-owned route registry implemented in this worktree. Sprints 3.1-3.12 are `Done` after
+Phase 3 closes around the mandatory platform service set, the shared routed edge, and the
+Haskell-owned route registry implemented in this worktree. Sprint 3.16 collapses that service set
+to one instance per role, so the replicated shapes Sprints 3.1, 3.3, and 3.4 originally delivered
+are retired rather than current: those sprints stay `Done` for what they landed, and each names its
+supersession where it claimed the retired shape. Sprints 3.1-3.12 are `Done` after
 Apple cohort validation in Waves A/A.2, CUDA Linux cohort validation in Wave C, and native arm64
-`linux-cpu` validation in Wave F. Sprint 3.12 closed on the recorded validation through the already selected
-native arm64 Docker daemon on this Apple Silicon machine: Docker reported `server=linux/arm64`,
-the Linux runtime probe reported `aarch64` / `arm64`, and the full Linux CPU outer-container
-validation suite passed without cross-architecture emulation, Docker-context switching, or VM
-creation. The clarified Apple daemon-role model is
-implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
+`linux-cpu` validation in Wave F. Sprint 3.12 is validated on the native arm64 Docker daemon
+already selected on this Apple Silicon machine — Docker reports `server=linux/arm64` and the Linux
+runtime probe reports `aarch64` / `arm64` — so the Linux CPU outer-container suite runs without
+cross-architecture emulation, Docker-context switching, or VM creation. The Apple daemon-role model
+is implemented in Phase 6 Sprint 6.25 and separates cluster daemon location from host inference
 executor location in publication metadata.
 
-Phase 3 reopened and re-closed for Sprint 3.13, which de-exposes the `/minio/s3` external gateway
-route so the `infernix-demo` webapp becomes the **sole** externally routed file-storage service: the
-browser reaches MinIO only through the webapp object-proxy (Phase 7 Sprint 7.25), never through a
-gateway route or a presigned MinIO URL. This realizes the
+Sprint 3.13 de-exposes the `/minio/s3` external gateway route so the `infernix-demo` webapp is the
+**sole** externally routed file-storage service: the browser reaches MinIO only through the webapp
+object-proxy (Phase 7 Sprint 7.25), never through a gateway route or a presigned MinIO URL. This
+realizes the
 [../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
-Sprints 3.1–3.13 are `Done`; Sprint 3.13 is code-side closed (2026-06-24, machine-independent gates
-green) and cohort-closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 with the selected
-`linux-gpu` accelerator plus `linux-cpu` full-suite evidence. The route-inventory prose below now
-reflects the de-exposed surface (no `/minio/s3` route, no `presignPublicEndpoint`).
+Sprints 3.1–3.13 are `Done`; Sprint 3.13 is cohort-closed by
+[Wave M](cohort-validation-waves.md) with the selected `linux-gpu` accelerator plus `linux-cpu`
+full-suite evidence. The route-inventory prose below reflects the de-exposed surface (no
+`/minio/s3` route, no `presignPublicEndpoint`).
 
 ## Single-Instance Reconcile Surface
 
@@ -99,8 +93,8 @@ when used intentionally outside the routed cluster path, so Harbor, MinIO, and P
 on the intended HTTPRoute mapping.
 Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode with typed
 host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to `amd64` and
-native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. Wave F validated the native
-arm64 publication path through the selected native arm64 Docker daemon on the recorded validation.
+native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. [Wave F](cohort-validation-waves.md)
+validated the native arm64 publication path through the selected native arm64 Docker daemon.
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -115,7 +109,8 @@ reserved cluster object-store path.
 
 ### Deliverables
 
-- MinIO always deploys as a four-node distributed cluster with manual PV backing
+- MinIO deploys with manual PV backing on the supported single-node topology; the four-node
+  distributed deliverable this sprint landed is retired by Sprint 3.16
 - repo-owned values suppress hard pod anti-affinity that would block local Kind scheduling
 - MinIO has no external gateway route and no console route (Sprint 3.13); the browser reaches it
   only server-side through the cookie-authenticated webapp `/api/objects` proxy
@@ -128,7 +123,8 @@ reserved cluster object-store path.
 
 ### Validation
 
-- `infernix cluster up` creates a healthy four-node distributed MinIO deployment
+- `infernix cluster up` creates a healthy MinIO deployment; the four-node distributed shape this
+  sprint validated is retired by Sprint 3.16
 - MinIO PVCs bind via `infernix-manual`
 - MinIO exposes no browser-facing edge route (Sprint 3.13); the webapp `/api/objects` proxy is its
   only external surface
@@ -181,9 +177,16 @@ Provide the durable event transport for inference requests, results, and service
 
 ### Deliverables
 
-- Pulsar deploys through the Helm chart with HA settings where the chart exposes them
+- Pulsar deploys through the Helm chart on the supported single-node topology; the HA component and
+  quorum settings this sprint landed are retired by Sprint 3.16
 - durable Pulsar components use manual PVs under `./.data/`
 - the edge exposes browser- and host-consumable Pulsar HTTP or WebSocket surfaces
+- the proxy's effective idle bound is `httpServerIdleTimeout`, not
+  `webSocketSessionIdleTimeoutMillis`: Pulsar 4.0.9 does not project the WebSocket key into
+  `proxy.conf`, so setting it leaves the proxy at its default and expires a consumer session while
+  inference still retains the message. The chart default and the binary-generated local override
+  both set `httpServerIdleTimeout` to 7,200,000 ms — above the 4,200-second result deadline — and
+  lint plus rendered-values guards hold it there
 - inference-request, result, and coordination payloads are defined by repo-owned `.proto` schemas
 
 ### Validation
@@ -191,6 +194,9 @@ Provide the durable event transport for inference requests, results, and service
 - `infernix cluster up` produces a healthy Pulsar deployment
 - Pulsar PVCs bind through `infernix-manual`
 - routed Pulsar admin and WebSocket surfaces respond on the shared edge port
+- the running proxy's `/pulsar/conf/proxy.conf` carries `httpServerIdleTimeout=7200000`, and the
+  chart lint plus the rendered-values guard fail if the effective key is renamed or lowered below
+  the result deadline
 
 ### Remaining Work
 
@@ -219,7 +225,8 @@ supersedes the replica outcome; the current Harbor service is single-instance.
 
 ### Validation
 
-- `infernix cluster up` produces a healthy Harbor release with the expected HA shape
+- `infernix cluster up` produces a healthy Harbor release in the supported single-instance shape;
+  the replicated shape this sprint validated is retired by Sprint 3.16
 - routed Harbor access works on the shared edge port
 - deleting a single Harbor application pod does not permanently break access or image pulls
 
@@ -450,13 +457,8 @@ favor of substrate `.dhall` fields plus a Dhall-driven Playwright fixture file.
 - `cabal build all` clean, `infernix test lint` clean.
 - `docker images` shows no `infernix-playwright:local` image after a fresh
   `./bootstrap/linux-gpu.sh build`.
-- the recorded validation (legacy hardware): clean-env `linux-gpu` compose-run `infernix test e2e` had
-  passed via the in-container Playwright path (`1 passed`). That proof point was on the legacy
-  Linux/CUDA host and no longer counts as current evidence.
-- the recorded validation (legacy hardware): Apple host-native E2E runner code landed; `cabal build all`,
-  `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `node --check` for
-  `web/playwright.config.js` and `web/playwright/inference.spec.js` had passed. Those are
-  retried trivially on the new host but the historical pass is no longer cited as current proof.
+- `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and `node --check` for
+  `web/playwright.config.js` and `web/playwright/inference.spec.js` pass.
 - Apple host-native Playwright validation closed in Waves A.1/A.2, and Linux in-container
   Playwright validation closed in Wave C.
 
@@ -535,80 +537,52 @@ workers dialed `localhost` literally.
     empty placeholder).
   - `waitForHarborRegistryResult` passes `-m 30` to `curl`.
   - `app/Main.hs` enables `LineBuffering` for `stdout` + `stderr`.
+- **Retained-state Patroni scrub.** Operator-managed Patroni claims are excluded from host
+  retention: `isPatroniManagedClaim` filters `harbor-postgresql-*` and `keycloak-postgresql-*` out
+  of `syncClaimDirectoriesFromOwningNodes`, so a partial `/pgdata/pg18` tree is never copied back to
+  the host on `cluster down`, and `scrubStalePatroniDirectories` removes any pre-existing tree from
+  `<kindRuntimeRoot>/platform/infernix/` during the next `cluster up` `prepare-kind-cluster` phase.
+  Copying a retained partial tree into a fresh Kind worker crashes `postgres-startup` with an
+  initialization error, so the retention filter is a correctness rule, not an optimization.
+- **No competing in-cluster Apple engine.** `repoEngineReplicaCount` maps
+  `FinalPhase + AppleSilicon` to `0`, so the Apple substrate runs its engine on the host only.
 
 ### Validation
 
-- `cabal build all`, `cabal test infernix-haskell-style`, and
-  `cabal test infernix-unit` all exit zero on the new Apple Silicon host
-  (the recorded validation).
-- `infernix lint files|chart|docs|proto` all exit zero.
+- `cabal build all`, `cabal test infernix-haskell-style`, `cabal test infernix-unit`, and
+  `infernix lint files|chart|docs|proto` all exit zero.
 - `rg -n 'bitnamilegacy' chart/ src/` returns matches only inside the
   retirement comments documenting what was removed; no active code refs.
 - `rg -n '"--platform","linux/amd64"' src/Infernix/Cluster/` returns zero
-  matches; all `--platform` flags now read from
+  matches; all `--platform` flags read from
   `harborTargetArchitecture` or `clusterWorkloadArchitecture`.
-- the recorded validation Apple cohort lifecycle proof point (`./.build/infernix`
-  on the new Apple Silicon host):
-  - `chooseHarborPort` selected `30003` when an unrelated host process
-    held `127.0.0.1:30002` — proof that the bind-test + increment loop
-    fires correctly.
-  - Substrate-aware publication ran every upstream image through
-    `docker pull --platform linux/arm64` and `skopeo` paths with
-    `--override-arch=arm64` (verified in the streamed phase output).
-    All 11 platform images (`infernix-linux-cpu`, `apachepulsar/pulsar-all`,
-    `busybox`, `envoyproxy/gateway`, `minio/mc`, `minio/minio`,
-    `percona/percona-distribution-postgresql`,
-    `percona/percona-pgbackrest`, `percona/percona-pgbouncer`,
-    `percona/percona-postgresql-operator`, `quay.io/keycloak/keycloak`)
-    published as native arm64 through Harbor at `localhost:30003`.
-  - Kind workers pulled and ran every Harbor-mirrored image natively;
-    the previous `Fatal glibc error: CPU does not support x86-64-v3`
-    Percona operator crash is gone — the operator runs as
-    `linux/arm64` and reports `Running 1/1`.
-  - The hand-authored MinIO StatefulSet (`chart/templates/minio/`)
-    reached `Running 4/4` and the `infernix-minio-provisioning` Job
-    completed (`mc mb --ignore-existing local/harbor-registry
+- Apple cohort lifecycle proof points (`./.build/infernix` on Apple Silicon):
+  - `chooseHarborPort` steps past an occupied `127.0.0.1:30002` to the next free host port, proving
+    the bind-test + increment loop fires.
+  - Substrate-aware publication runs every upstream image through `docker pull --platform
+    linux/arm64` and `skopeo --override-arch=arm64`; the full platform image set
+    (`infernix-linux-cpu`, `apachepulsar/pulsar-all`, `busybox`, `envoyproxy/gateway`, `minio/mc`,
+    `minio/minio`, `percona/percona-distribution-postgresql`, `percona/percona-pgbackrest`,
+    `percona/percona-pgbouncer`, `percona/percona-postgresql-operator`, `quay.io/keycloak/keycloak`)
+    publishes as native arm64 through Harbor.
+  - Kind workers pull and run every Harbor-mirrored image natively; the Percona operator runs as
+    `linux/arm64` rather than failing with `Fatal glibc error: CPU does not support x86-64-v3`.
+  - The hand-authored MinIO StatefulSet (`chart/templates/minio/`) reaches ready and the
+    `infernix-minio-provisioning` Job completes (`mc mb --ignore-existing local/harbor-registry
     local/infernix-models local/infernix-engine-artifacts local/infernix-demo-objects`) without
     bitnami chart wrapper interference.
-  - Containerd `config_path = "/etc/containerd/certs.d"` patch
-    honored — Kind workers resolved `localhost:30003/library/*` via
-    the rendered registry-hosts mapping.
-  - **Full lifecycle:** `cluster up` reached
-    `lifecyclePhase: steady-state` with `kubernetesPodCount: 76` and
-    `storageHealth: 26 chart-owned claim roots prepared`;
-    `cluster down` completed; final `cluster status` reported
-    `clusterPresent: False`, `lifecycleStatus: idle`,
-    `lifecyclePhase: cluster-absent`.
-
-- **`infernix test all` Apple cohort residual.** The recorded-validation
-  Apple `cluster up → status → cluster down → status` cycle above is
-  the validated platform proof point. The full `test all` integration
-  layer additionally exercises a clean-state cluster down + cluster
-  up replay; that pattern surfaced a retained-state Keycloak Patroni
-  corruption issue (the previous instance's partial `/pgdata/pg18`
-  tree, when copied back from the retained host directory into a
-  fresh Kind worker, causes `postgres-startup` to crash with an
-  initialization error). The supported fix landed on the recorded validation in
-  `src/Infernix/Cluster.hs`: `isPatroniManagedClaim` filters operator-
-  managed Patroni claims (`harbor-postgresql-*`,
-  `keycloak-postgresql-*`) out of `syncClaimDirectoriesFromOwningNodes`
-  so retained Patroni trees are no longer copied back to the host on
-  `cluster down`, and `scrubStalePatroniDirectories` defensively removes
-  any pre-existing trees from `<kindRuntimeRoot>/platform/infernix/`
-  on the next `cluster up`'s `prepare-kind-cluster` phase. Apple
-  cohort revalidation closed in Wave A after the integration replay
-  scenario exercised the retained-state fix.
-- **GPU cohort full-suite validation closed on the native Linux/CUDA
-  host:** the Apple cohort full-suite rerun passed on the recorded validation, the
-  native `linux-cpu` full-suite rerun passed on the recorded validation, and the
-  matching `linux-gpu` full-suite rerun passed on the recorded validation.
+  - The containerd `config_path = "/etc/containerd/certs.d"` patch is honored — Kind workers resolve
+    `localhost:<harborPort>/library/*` through the rendered registry-hosts mapping.
+  - The full lifecycle runs `cluster up` to `lifecyclePhase: steady-state`, then `cluster down` to
+    `clusterPresent: False`, `lifecycleStatus: idle`, `lifecyclePhase: cluster-absent`.
+- Apple cohort full-suite validation, including the clean-state cluster down + cluster up replay
+  that exercises the retained-state Patroni scrub, closed in
+  [Waves A/A.2](cohort-validation-waves.md); the matching `linux-cpu` and `linux-gpu` full-suite
+  reruns closed in [Wave C](cohort-validation-waves.md).
 
 ### Remaining Work
 
-None. Apple cohort validation closed in Waves A/A.2, including the
-`repoEngineReplicaCount FinalPhase + AppleSilicon -> 0` follow-on that
-removed the competing in-cluster Apple engine. CUDA Linux full-suite
-revalidation closed in Wave C.
+None.
 
 ---
 
@@ -641,47 +615,25 @@ cross-architecture `buildx`, or any non-native compatibility lane.
 
 - `cabal test infernix-unit` proves the `LinuxCpu` architecture selector returns `amd64` and
   `arm64` for native Linux fixtures
-- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host; the recorded validation run passed
-  Haskell style, Python quality, Haskell unit, PureScript build, 71/71 web unit tests, full
-  integration, and routed Playwright E2E (7/7) against launcher image digest
-  `sha256:dc0c003e7cc2f2e359a474fa5ddb522c8715d271e322534db7798f260e9747fa`, while Harbor
-  publication and warmup-image hydration emitted `docker pull --platform linux/amd64` and
+- `./bootstrap/linux-cpu.sh test` passes on a native amd64 Linux host, with Harbor publication and
+  warmup-image hydration emitting `docker pull --platform linux/amd64` and
   `skopeo --override-arch=amd64`
-- Wave F native `linux/arm64` `linux-cpu` validation passes through an already selected native
-  arm64 Docker daemon, without cross-architecture emulation or Docker-context changes
 - `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` has no unsupported hardcode after the
   selector lands
 - `infernix lint docs` passes through the active execution context
-- the recorded validation Apple local gate: `cabal test infernix-unit` passed the LinuxCpu amd64/arm64
-  selector assertions, and `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test`
-  returned no matches.
-- the recorded validation ordered follow-up from a Linux x86_64 host confirmed the amd64
-  `linux-cpu` lane remained healthy but did not exercise the native arm64 publication path:
-  `./bootstrap/linux-cpu.sh doctor` passed, the mounted-source Linux CPU
-  `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
-  `cabal test infernix-integration` gates passed, and
-  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
-- the recorded validation Apple Silicon follow-up on this host confirmed the local selector and documentation
-  gates remain healthy:
-  `./bootstrap/apple-silicon.sh build` produced `./.build/infernix` and
-  `./.build/infernix-demo`, `/opt/homebrew/bin/cabal test infernix-unit` passed, and
-  `rg -n '"amd64".*LinuxCpu|LinuxCpu.*"amd64"' src test` returned no matches.
-  `./.build/infernix lint docs` passed after the documentation-status update.
-- the recorded validation Wave F closure validated the native arm64 Linux CPU publication path through the
-  already selected native arm64 Docker daemon on this Apple Silicon machine. Docker reported
-  `client=darwin/arm64` and `server=linux/arm64`; a Linux runtime probe reported
-  `uname -m = aarch64` and `dpkg --print-architecture = arm64`. The rebuilt
-  `infernix-linux-cpu:local` image reported `os=linux arch=arm64` and digest
-  `sha256:aae535e31b79b403a3878063371dfc6fd1160baf60a7ce69232c459baebd83e9`.
+- [Wave F](cohort-validation-waves.md) validates the native `linux/arm64` `linux-cpu` publication
+  path through the already selected native arm64 Docker daemon, without cross-architecture
+  emulation or Docker-context changes: Docker reports `client=darwin/arm64` / `server=linux/arm64`,
+  the Linux runtime probe reports `uname -m = aarch64` and `dpkg --print-architecture = arm64`, and
+  the rebuilt `infernix-linux-cpu:local` image reports `os=linux arch=arm64`. The reference
   `docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all`
-  passed Haskell style, Python quality, Haskell unit/property, PureScript build and 71/71 web unit
-  tests, full `infernix-integration`, and routed Playwright E2E `7 passed (1.7m)`. The run emitted
-  native `docker pull --platform linux/arm64` publication, Harbor-backed final-image preload
-  before final Helm wait, and clean cluster teardown. Integration covered Harbor recovery, MinIO
-  durability, routed Pulsar recovery, PostgreSQL failover and lifecycle rebinding, Linux engine
-  anti-affinity, frontend pod replacement, coordinator failover, engine pod replacement, engine
-  node drain, model-bootstrap failover/deduplication, and multi-user durable prompt throughput
-  (`users=3 contextsPerUser=2 promptsPerContext=2 totalPrompts=12 p95Seconds=71.37436628341675`).
+  invocation passes Haskell style, Python quality, Haskell unit/property, PureScript build and web
+  unit tests, full `infernix-integration`, and routed Playwright E2E, emitting native
+  `docker pull --platform linux/arm64` publication, Harbor-backed final-image preload before the
+  final Helm wait, and clean cluster teardown. Integration covers Harbor recovery, MinIO durability,
+  routed Pulsar recovery, PostgreSQL failover and lifecycle rebinding, Linux engine anti-affinity,
+  frontend pod replacement, coordinator failover, engine pod replacement, engine node drain,
+  model-bootstrap failover/deduplication, and multi-user durable prompt throughput.
 
 ### Remaining Work
 
@@ -692,7 +644,7 @@ None.
 ## Sprint 3.13: MinIO Gateway De-Exposure [Done]
 
 **Status**: Done
-**Code-side closure**: Done (2026-06-24, machine-independent). The `infernix-minio-s3` `RouteSpec`
+**Code-side closure**: The `infernix-minio-s3` `RouteSpec`
 is removed from `src/Infernix/Routes.hs` (so the rendered `chart/templates/httproutes.yaml`
 `.Values.routes` loop and its generated registry comment carry no `/minio/s3`), the
 `infernix-minio-s3` SecurityPolicy target is dropped from
@@ -702,13 +654,11 @@ cluster config (the `ClusterConfig` decoder type — Phase 8 keeps the schema re
 file, `ClusterConfig.hs`, `chart/templates/configmap-cluster-config.yaml`, `chart/values.yaml`, and the
 `Cluster.hs` Helm-values renderer). The route registry, generated route summaries (README,
 `edge_routing.md`, `web_portal_surface.md`, `tools/minio.md`, `cluster_bootstrap_runbook.md`), and
-rendered chart expose no `/minio/s3` route and no `presignPublicEndpoint`. Gates green:
-`cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-`infernix lint files/chart/docs/proto`, and `infernix docs check` all exit zero on the host
-toolchain. Implemented jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) (the
-webapp object-proxy) because the `presignPublicEndpoint` field's only consumer was the presigned-URL
-grant handler that 7.25 replaces.
-**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) on 2026-06-29 — `linux-cpu` plus the
+rendered chart expose no `/minio/s3` route and no `presignPublicEndpoint`. Implemented jointly with
+[Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) (the webapp object-proxy) because the
+`presignPublicEndpoint` field's only consumer was the presigned-URL grant handler that 7.25
+replaces.
+**Cohort gate**: Closed by [Wave M](cohort-validation-waves.md) — `linux-cpu` plus the
 chosen `linux-gpu` accelerator.
 **Implementation**: `chart/templates/httproutes.yaml`, `chart/templates/securitypolicy-operator-routes.yaml`, `src/Infernix/ClusterConfig.hs` (`ClusterConfig` decoder type; no tracked `.dhall`)
 **Docs to update**: `documents/engineering/edge_routing.md`, `documents/architecture/object_access_doctrine.md`, `documents/reference/web_portal_surface.md`
@@ -730,19 +680,17 @@ per the [../documents/architecture/object_access_doctrine.md](../documents/archi
 ### Validation
 
 - `infernix lint chart` plus `infernix lint docs` confirm the rendered chart and generated route
-  summaries name no `/minio/s3` route and no `presignPublicEndpoint` — both pass (2026-06-24).
+  summaries name no `/minio/s3` route and no `presignPublicEndpoint`.
   `rg -n 'minio-s3|presignPublicEndpoint' src chart dhall` returns only retirement comments and
   legacy-tracking references.
-- [Wave M](cohort-validation-waves.md) closed the `linux-cpu` plus chosen `linux-gpu` full suite:
-  the paired `linux-cpu` gate passed on 2026-06-29, and `./bootstrap/linux-gpu.sh test` passed on
-  2026-06-29 with full integration, routed Playwright `9/9`, and the browser per-model matrix
-  (`28.5m`) proving the routed surface exposes the webapp as the only external file gateway and the
-  browser never reaches MinIO directly.
+- [Wave M](cohort-validation-waves.md) closes the `linux-cpu` plus chosen `linux-gpu` full suite:
+  the paired `linux-cpu` gate and the `linux-gpu` lane both pass with full integration, routed
+  Playwright, and the browser per-model matrix, proving the routed surface exposes the webapp as the
+  only external file gateway and the browser never reaches MinIO directly.
 
 ### Remaining Work
 
-None. Delivered jointly with [Phase 7 Sprint 7.25](phase-7-demo-app-durable-context.md) and closed
-by [Wave M](cohort-validation-waves.md).
+None.
 
 ### Documentation Requirements
 
@@ -759,14 +707,14 @@ by [Wave M](cohort-validation-waves.md).
 
 **Status**: Done — the Managed-State-Transition readiness kernel plus typed subprocess-env seam:
 code-side closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus
-linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+linux-cpu full-suite sign-off closed by [Wave V](cohort-validation-waves.md).
+**Code-side closure**: `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit` (the migrated Harbor readiness wait plus the
 `clusterSubprocessEnvWithSearchPath` HOME/TMPDIR + caller-PATH assertions pass), and
-`cabal test infernix-haskell-style` all green on the apple-silicon lane; `infernix lint docs` clean.
+`cabal test infernix-haskell-style` all pass on the apple-silicon lane; `infernix lint docs` clean.
 No Python/native change, so `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
-linux-cpu full-suite `test all` green.
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
+linux-cpu full-suite `test all` clean.
 **Implementation**: `src/Infernix/Cluster.hs`
 **Blocked by**: Sprint 1.16
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -785,14 +733,22 @@ doctrine to this phase's cluster-lifecycle surface.
 
 ### Deliverables
 
-- generalize `HarborBootstrapOutcome` into a shared Readiness kernel: a wait primitive that takes a
-  required deadline and returns typed evidence of readiness rather than a boolean
-- migrate existing readiness waits in `src/Infernix/Cluster.hs` onto that kernel so each wait carries
-  its own typed evidence value
-- route the subprocess base-env seam `clusterSubprocessBaseEnvFor` through the typed `SubprocessEnv`
-  so subprocess environments are constructed as typed values, not ad-hoc maps
-- keep the change fail-closed: a wait that cannot produce evidence surfaces a typed failure instead
-  of a defaulted success
+- `HarborBootstrapOutcome` is generalized into the shared `Infernix.Evidence.Readiness` kernel: a
+  wait primitive that takes a required deadline and returns typed evidence of readiness rather than
+  a boolean
+- readiness waits in `src/Infernix/Cluster.hs` run on that kernel, each carrying its own typed
+  evidence value. `waitForHarborRegistryOrDirty` calls `awaitReadiness` with a required `Deadline`
+  (the explicit ~120s bound that replaced a bare recursion counter) and projects the typed
+  `HarborBootstrapOutcome` out of the kernel's `Readiness` value via `foldReadiness`, so readiness is
+  evidence a real probe minted
+- the subprocess base-env seam is routed through the typed
+  `Infernix.Cluster.Subprocess.SubprocessEnv`: `clusterSubprocessEnvWithSearchPath`
+  (caller-supplied cluster PATH, required `HOME`/`TMPDIR` from the host manifest) backs
+  `clusterSubprocessBaseEnvIO`, which `runCommandWithInput` and `tryCommand` consume; the ad-hoc
+  `[(String, String)]` base env is retired
+- the change is fail-closed: a wait that cannot produce evidence surfaces a typed failure instead of
+  a defaulted success, and the env seam fails closed when the host manifest is absent instead of
+  falling back to an ambient minimal environment
 
 ### Validation
 
@@ -805,22 +761,7 @@ doctrine to this phase's cluster-lifecycle surface.
 
 ### Remaining Work
 
-- code-side closed 2026-07-16. Landed this sprint:
-  - `waitForHarborRegistryOrDirty` (`src/Infernix/Cluster.hs`) is migrated onto the shared
-    `Infernix.Evidence.Readiness` kernel: `awaitReadiness` takes a required `Deadline` (the explicit
-    ~120s bound that was a bare recursion counter) and returns the typed `HarborBootstrapOutcome`
-    projected from the kernel's `Readiness` value via `foldReadiness`, so readiness is evidence a real
-    probe minted rather than a boolean
-  - the subprocess base-env seam is routed through the typed
-    `Infernix.Cluster.Subprocess.SubprocessEnv`: the new `clusterSubprocessEnvWithSearchPath` builder
-    (caller-supplied cluster PATH, required `HOME`/`TMPDIR` from the host manifest) backs
-    `clusterSubprocessBaseEnvIO`, which `runCommandWithInput` and `tryCommand` consume; the ad-hoc
-    `[(String, String)]` base env is retired and the seam now fails closed when the host manifest is
-    absent instead of falling back to an ambient minimal environment
-- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-  and `infernix lint docs`
-- the apple-silicon plus linux-cpu full-suite cohort sign-off closed under
-  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
+None.
 
 ---
 
@@ -828,22 +769,20 @@ doctrine to this phase's cluster-lifecycle surface.
 
 **Status**: Done — the bounded Harbor publish exec plus opaque `BlobServable` witness: code-side
 closure (machine-independent gates) plus the single-accelerator (apple-silicon) plus linux-cpu
-full-suite sign-off closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+full-suite sign-off closed by [Wave V](cohort-validation-waves.md).
+**Code-side closure**: `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`,
-and `infernix docs check` all green on the apple-silicon lane. No Python/native change in this sprint,
+and `infernix docs check` all pass on the apple-silicon lane. No Python/native change in this sprint,
 so `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
-linux-cpu full-suite `test all` green.
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
+linux-cpu full-suite `test all` clean.
 **Current implementation note**: Wave V remains closure evidence for this sprint's original scope.
-The 2026-07-26 Phase 2 Sprint 2.16 final audit tightened the sole `BlobServable` minter after proving
+The Phase 2 Sprint 2.16 final audit tightened the sole `BlobServable` minter after proving
 that a cached host Docker pull could succeed without independently reading Harbor. Current source
 uses a bounded authenticated platform-selected skopeo copy from the Harbor API authority into a
 fresh birth-identity-owned mode-0700 `dir:` store, forcing reads of the selected manifest, config,
 and layers; protected cleanup preserves the primary failure, dead-owner auth directories reconcile,
-and focused command/redaction/path unit coverage is landed. Phase 2 final review and Stage 1 are
-historical GREEN-as-run evidence only and are superseded by the no-repo-owned-native-source
-correction. Phase 0's accepted correction review and complete Stage 1 passed on 2026-07-27. This
+and focused command/redaction/path unit coverage is landed. This
 sprint remains `Done` for its recorded Wave V scope; Phase 2 remains blocked by Phase 1 and has no
 post-correction Apple or `linux-cpu` evidence.
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Command.hs`
@@ -855,12 +794,18 @@ post-correction Apple or `linux-cpu` evidence.
 
 This sprint is the Bounded-Command Application & Bounded-HTTP reopen work for this phase — apply the
 Sprint 1.16 bounded-command kernel and the Sprint 3.14 readiness kernel at the Harbor publish/verify
-site the 2026-07-18 cohort run hung on. Two representable-invalid states are made unbuildable:
+site a cohort run hung on. Two representable-invalid states are made unbuildable:
 (1) an unbounded `docker pull` verify that never returns, and (2) tag metadata read from the Harbor
 API being trusted as blob-servability on a retained-state second `cluster up` against an unrehydrated
 ~40 GB MinIO backing. It applies the
 [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md)
 doctrine — evidence, not hope — to the publication surface.
+
+Scope is the publish exec and the flake site. The general readiness-wait migration onto
+`awaitReadiness` for the remaining Harbor/cluster waits (`waitForRegistry`,
+`loginHarborWithRetries`, `pushImageWithRetries`, and peers) and the `ProcessMonitor.hs` retirement
+are the broader hardening owned by
+[Phase 6 Sprint 6.41](phase-6-validation-and-e2e-hardening.md).
 
 ### Deliverables
 
@@ -886,19 +831,14 @@ doctrine — evidence, not hope — to the publication surface.
   `infernix lint files/docs/proto/chart`, and `infernix docs check` are exercised on both the
   apple-silicon and linux-cpu lanes
 - the end-to-end proof is the retained-state second `cluster up` of the Postgres lifecycle-rebinding
-  integration step: with the bounded exec plus `BlobServable` witness it must pull a servable blob or
-  fail bounded, never hang — this rides the pending cohort full-suite
+  integration step: with the bounded exec plus `BlobServable` witness it pulls a servable blob or
+  fails bounded, never hangs
+- the apple-silicon plus linux-cpu full-suite validation of the bounded publish plus `BlobServable`
+  witness closed under [Wave V](cohort-validation-waves.md)
 
 ### Remaining Work
 
-- the general readiness-wait migration onto `awaitReadiness` for the remaining Harbor/cluster waits
-  (`waitForRegistry`, `loginHarborWithRetries`, `pushImageWithRetries`, and peers) and the
-  `ProcessMonitor.hs` retirement are the broader hardening tracked by
-  [Sprint 6.41](phase-6-validation-and-e2e-hardening.md); this sprint bounds the publish exec and
-  mints blob-servability evidence at the flake site
-- the cohort full-suite sign-off closed under [Wave V](cohort-validation-waves.md) (2026-07-20):
-  apple-silicon plus linux-cpu full-suite validation of the bounded publish plus `BlobServable`
-  witness passed; no remaining work exists
+None.
 
 ---
 
@@ -913,20 +853,16 @@ closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
 the Managed-State-Transition Doctrine reopen work, and
 [Sprint 3.15](#sprint-315-harbor-blob-servable-evidence--bounded-publish-done), the Bounded-Command
 Application & Bounded-HTTP reopen work that bounds the Harbor publish exec and mints `BlobServable`
-evidence, are both closed by [Wave V](cohort-validation-waves.md) (2026-07-20) with apple-silicon plus
-linux-cpu full-suite `test all` green; no remaining work exists.
+evidence, are both closed by [Wave V](cohort-validation-waves.md) with apple-silicon plus
+linux-cpu full-suite `test all` clean.
 
 ---
 
 ## Sprint 3.16: Single-Node Platform Topology [Active]
 
-**Status**: Active — code-side closed as of the 2026-08-07 generated-overlay correction; the cohort
-lifecycle run is the only item left. The sprint was previously recorded as code-side closed while
-one deliverable was unmet: executing its cohort gate found that the generated Helm overlay still
-deployed the retired replicated counts regardless of the chart defaults this sprint set. See the
-first `Deliverables` bullet.
+**Status**: Active — code-side closed; the cohort lifecycle run is the only item left.
 **Code-side closure**: the chart, the generated overlay, Kind topology, repair-path deletion, and
-the inverted scheduling case are implemented and GREEN on the machine-independent gate set
+the inverted scheduling case are implemented and clean on the machine-independent gate set
 (`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
 `infernix lint files|chart|proto|docs`).
 **Cohort gate**: `linux-cpu` — a full lifecycle on the one-worker topology, sharing the wave with
@@ -958,36 +894,28 @@ All landed.
   and Keycloak anti-affinity, and all five PodDisruptionBudgets are deleted; the second `linux-cpu`
   Kind worker is removed **in `renderKindConfig` as well as in `kind/cluster-linux-cpu.yaml`**.
 
-  The Kind half is the same correction and the same shape, landed the same day. A Kind cluster is
-  created from `writeGeneratedKindConfig` → `renderKindConfig` → `kindWorkerCount`, and
-  `kindWorkerCount LinuxCpu` still returned 2, so the tracked `kind/cluster-linux-cpu.yaml` this
-  sprint edited down to one worker is a reference document that deploys nothing. The lane ran a
-  two-worker cluster. `kindWorkerCount` is now `_ -> 1` for every mode, pinned by a unit assertion
-  over real `renderKindConfig` output for all three modes and negative-tested against the retired
-  `LinuxCpu -> 2`.
+  **The generated artifact is the authority, not the tracked reference file.** A Kind cluster is
+  created from `writeGeneratedKindConfig` → `renderKindConfig` → `kindWorkerCount`, so editing
+  `kind/cluster-linux-cpu.yaml` down to one worker deploys nothing on its own; `kindWorkerCount` is
+  `_ -> 1` for every mode, pinned by a unit assertion over real `renderKindConfig` output for all
+  three modes and negative-tested against the retired `LinuxCpu -> 2`. The same holds on the Helm
+  side: `renderHelmValues` in `src/Infernix/Cluster.hs` supersedes `chart/values.yaml` on every
+  phase render, so `repoWorkloadReplicaCount`, `repoCoordinatorReplicaCount`, and
+  `repoEngineReplicaCount (FinalPhase, LinuxCpu)` are the values that decide the deployed topology
+  and are 1. A replicated count left in the overlay puts **two engine pods on one worker**, both
+  resolving the single compiled member `linux-cpu-engine` through the adoption arm in
+  `requireCompiledDaemon` — two KV caches and two copies of every loaded weight, which is the exact
+  correctness rule this sprint exists to enforce.
 
-  The overlay half is a correction landed on 2026-08-07, and it is recorded rather than folded in
-  silently, because the original deliverable was **claimed and not met**. `chart/values.yaml` was set
-  to 1 for all three roles, but `renderHelmValues` in `src/Infernix/Cluster.hs` supersedes the base
-  values on every phase render, and it still emitted `repoWorkloadReplicaCount` 2,
-  `repoCoordinatorReplicaCount` 2, and `repoEngineReplicaCount (FinalPhase, LinuxCpu)` 2 — the
-  retired replicated topology, on exactly the lanes this sprint's cohort gate runs on. The base
-  default was dead text there, and the `linux-cpu` engine value named "the two-worker CPU validation
-  lane" in its own comment: a lane this sprint had already deleted. A `linux-cpu` cluster brought up
-  from this plan ran **two engine pods on one worker**, both resolving the single compiled member
-  `linux-cpu-engine` through the adoption arm in `requireCompiledDaemon` — two KV caches and two
-  copies of every loaded weight, which is the exact correctness rule the sprint exists to enforce.
-
-  **Why the sprint's own gates could not catch it, which is the more useful half.** The replacement
-  integration case `validateNoPendingWorkloadReplicas` asserts that no pod in `platform` is
-  `Pending`; with the anti-affinity deleted, a second engine pod schedules onto the one worker
-  without complaint, so a green cohort run and an unmet deliverable are indistinguishable from
-  there. And the unit suite asserted the *base values file text* — the only `replicaCount: 1`
-  assertion in it pinned Pulsar autorecovery — never the generated overlay that supersedes it. The
-  guard added with the fix is therefore stated against the text that deploys, as a property over
-  every emitted count (`overReplicatedRoles`, `test/unit/Spec.hs`): one process per role per machine
-  is cluster-wide, so a count above one is a defect wherever it appears. It was negative-tested by
-  reintroducing `(FinalPhase, LinuxCpu) -> 2` alone, which fails it by name.
+  **The topology guard is stated against the text that deploys**, because neither a chart-defaults
+  assertion nor the cohort gate detects an over-replicated overlay: the integration case
+  `validateNoPendingWorkloadReplicas` asserts only that no pod in `platform` is `Pending`, and with
+  the anti-affinity deleted a second engine pod schedules onto the one worker without complaint, so
+  a passing cohort run and an unmet deliverable are indistinguishable from there. The guard is a
+  property over every count the overlay emits (`overReplicatedRoles`, `test/unit/Spec.hs`): one
+  process per role per machine is cluster-wide, so a count above one is a defect wherever it
+  appears. It is negative-tested by reintroducing `(FinalPhase, LinuxCpu) -> 2` alone, which fails
+  it by name.
 - **platform services to single-node**: Pulsar zookeeper / bookkeeper / broker / proxy /
   autorecovery are 1, and the managed-ledger ensemble, write, and ack quorums are 1 in the base
   chart rather than only in the Apple override; both Patroni instances and their pgBouncer proxies
@@ -1046,10 +974,9 @@ in its own comment rather than implying wider coverage.
 
 ### Validation
 
-- `infernix lint chart` and `infernix lint files|proto|docs` plus `infernix docs check` are GREEN.
+- `infernix lint chart` and `infernix lint files|proto|docs` plus `infernix docs check` pass.
 - `cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, and
-  `infernix-haskell-style` are GREEN on this source, including the corrected base-chart
-  autorecovery assertion.
+  `infernix-haskell-style` pass on this source, including the base-chart autorecovery assertion.
 - **The generated overlay's replica counts are pinned, and the pin was negative-tested.**
   `overReplicatedRoles` reads every `replicaCount:` the overlay emits for `linux-cpu` FinalPhase,
   `linux-gpu` FinalPhase, and a pre-final phase, and requires none above 1. A companion assertion

@@ -239,12 +239,24 @@ import Infernix.Lint.Files
     nativeSourcePathViolations,
   )
 import Infernix.Lint.HaskellStyle (unboundedDescriptorSpawnViolations, unboundedEngineSpawnViolations, unboundedToolchainSpawnViolations, unsafeNativeBoundaryViolations)
+import Infernix.Lint.Plan
+  ( SprintBlock,
+    backwardEdgeViolations,
+    dualAcceleratorGateViolations,
+    ledgerDoubleListingViolations,
+    parseSprintBlocks,
+    phaseStatusTableViolations,
+    receiptMarkerViolations,
+    remainingWorkViolations,
+    sprintBackwardEdgeViolations,
+    statusVocabularyViolations,
+  )
 import Infernix.Models
 import Infernix.Objects.Layout qualified as ObjLayout
 import Infernix.Objects.Presigned qualified as ObjPresigned
 import Infernix.Objects.Sts qualified as ObjSts
 import Infernix.ProcessIdentity
-  ( ProcessBirthIdentity,
+  ( ProcessBirthIdentity (..),
     dropInheritedProcessIdentity,
     parseProcessBirthIdentity,
     readProcessBirthIdentity,
@@ -326,7 +338,7 @@ import ProcessIdentitySpec qualified
 import System.Directory
 import System.Environment (getArgs, getExecutablePath)
 import System.Exit (ExitCode (..), exitFailure, exitSuccess)
-import System.FilePath (takeDirectory, (<.>), (</>))
+import System.FilePath (makeRelative, takeDirectory, (<.>), (</>))
 import System.IO qualified
 import System.IO.Error (catchIOError, isDoesNotExistError, isPermissionError)
 import System.Info qualified
@@ -2439,6 +2451,23 @@ main = do
   assert
     ("hostArchitecture =" `isInfixOf` linuxDockerfileContents)
     "Linux launcher image bakes hostArchitecture into the outer-container host manifest"
+  -- The image build populates the JavaCPP cache that the deployed Linux target
+  -- then loads from, so it is a second producer of the same invocation. It has
+  -- to agree with the consumer on the whole property set, not just the cache
+  -- directory: a cache extracted with symbolic links enabled is one the first
+  -- consumer rewrites, which is precisely the drift this binding exists to stop.
+  assert
+    ( all
+        (`isInfixOf` unwords (words linuxDockerfileContents))
+        [ ArtifactTarget.audiverisLinuxImageJvmPath,
+          "-Dorg.bytedeco.javacpp.cachedir="
+            <> ArtifactTarget.audiverisLinuxImageJavaCppCacheDirectory,
+          ArtifactTarget.audiverisJavaCppSymbolicLinkArgument,
+          "'" <> ArtifactTarget.audiverisLinuxImageApplicationClasspath <> "'",
+          "Audiveris -version"
+        ]
+    )
+    "Sprint 1.20: the Linux image pre-extraction runs the same JVM, cache directory, classpath, and symlink-free JavaCPP configuration the deployed target reads"
   bakedLinuxHostManifest <-
     expectRight
       "extract the Linux launcher image host manifest"
@@ -2473,9 +2502,24 @@ main = do
         && "31c5e9e3c7bf013cf41fb97765ee255c140024a6b175b6cc9b64beddd7c23ba7" `isInfixOf` linuxDockerfileContents
         && "protoc-${PROTOC_VERSION}-linux-${protoc_asset_arch}.zip" `isInfixOf` linuxDockerfileContents
         && not ("proto-lens-protoc" `isInfixOf` cabalManifestContents)
-        && "GHCRTS=-M1024M cabal +RTS -M1024M -RTS \\\n         install proto-lens-protoc-0.9.0.1" `isInfixOf` linuxDockerfileContents
+        && "cabal +RTS -M1024M -RTS \\\n         install proto-lens-protoc-0.9.0.1" `isInfixOf` linuxDockerfileContents
         && "-rtsopts=ignore -with-rtsopts=-M1024M" `isInfixOf` linuxDockerfileContents
         && "GHCRTS=-M1024M /opt/infernix/proto-tools/protoc" `isInfixOf` linuxDockerfileContents
+        -- Sprint 1.24: the plugin is linked to admit GHCRTS because the protoc
+        -- run above is the one place this image executes it with GHCRTS set.
+        -- The steps that *build* third-party packages must not export it: a
+        -- `build-type: Custom` dependency's `Setup` program is linked without
+        -- `-rtsopts` and refuses to start under an inherited GHCRTS rather than
+        -- honouring it, which is how `entropy-0.4.1.11` failed this gate. The
+        -- driver and compiler caps stay on the command line, where they bind.
+        && not
+          ( "GHCRTS=-M1024M cabal +RTS -M1024M -RTS \\\n         build all --only-dependencies"
+              `isInfixOf` linuxDockerfileContents
+          )
+        && not
+          ( "GHCRTS=-M1024M cabal +RTS -M1024M -RTS \\\n         install proto-lens-protoc"
+              `isInfixOf` linuxDockerfileContents
+          )
         && "--plugin=protoc-gen-haskell=/opt/infernix/proto-tools/proto-lens-protoc" `isInfixOf` linuxDockerfileContents
         && "--haskell_out=\"${generated_root}\"" `isInfixOf` linuxDockerfileContents
         && "find . ! -type d -print" `isInfixOf` linuxDockerfileContents
@@ -4076,6 +4120,8 @@ main = do
       runElfLoaderClosureAssertions
       runElfSealedRunAuditAssertions (repoRoot paths)
       runArtifactGenerationIdentityAssertions
+      runAudiverisJavaCppArgumentAssertions
+      runPlanStandardsScanAssertions
       runNativeArtifactArgumentAssertions
       runClosureBoundAssertions
       runWriterEffectParentSwapAssertions
@@ -6204,6 +6250,93 @@ main = do
               executed
           _ -> False
     )
+  let retirementLabel = "bounded-snapshot-retirement"
+      retirementExecutablePath =
+        subprocessRoot </> (retirementLabel <> "-executable.sh")
+      retirementReadyPath =
+        subprocessRoot </> (retirementLabel <> ".ready")
+      retirementReleaseFifo =
+        subprocessRoot </> (retirementLabel <> ".release")
+  mapM_
+    removeTestPathIfPresent
+    [ retirementExecutablePath,
+      retirementReadyPath,
+      retirementReleaseFifo
+    ]
+  writeFile
+    retirementExecutablePath
+    "#!/bin/sh\nprintf 'retirement-complete\\n'\n"
+  setFileMode retirementExecutablePath 0o700
+  createNamedPipe retirementReleaseFifo 0o600
+  retirementCommand <-
+    expectRight
+      "compile terminal-after-snapshot-retirement command"
+      =<< Subprocess.compileExactExecutableSnapshotTestCommand
+        Subprocess.BeforeAnchorSnapshotRetirement
+        (Subprocess.Timeout 10000000)
+        retirementExecutablePath
+        retirementReadyPath
+        retirementReleaseFifo
+        subprocessEnv
+  retirementResult <- MVar.newEmptyMVar
+  _ <-
+    forkIO
+      ( try @SomeException
+          (Subprocess.runBoundedCommand retirementCommand)
+          >>= MVar.putMVar retirementResult
+      )
+  retirementReady <-
+    maybe
+      (fail "snapshot retirement gate did not become ready")
+      pure
+      =<< waitForFileContents 100 retirementReadyPath
+  assert
+    (not (null retirementReady))
+    "snapshot retirement gate published empty evidence"
+  heldRetirementEntries <- listDirectory executableSnapshotRoot
+  -- The parent's old normal-terminal path waited only about 1.01 seconds
+  -- before SIGKILLing the still-retiring anchor.  Holding this private gate
+  -- beyond that bound proves terminal evidence has not yet escaped.
+  earlyRetirementResult <-
+    timeout 1250000 (MVar.takeMVar retirementResult)
+  retainedRetirementEntries <- listDirectory executableSnapshotRoot
+  assert
+    ( isNothing earlyRetirementResult
+        && not (null heldRetirementEntries)
+        && not (null retainedRetirementEntries)
+    )
+    ( "bounded command returned before its snapshot retired; observed "
+        <> show
+          ( earlyRetirementResult,
+            heldRetirementEntries,
+            retainedRetirementEntries
+          )
+    )
+  retirementReleased <-
+    timeout
+      1000000
+      (writeNamedPipePayloadNonblocking retirementReleaseFifo "release\n")
+  completedRetirementResult <-
+    timeout 5000000 (MVar.takeMVar retirementResult)
+  let retirementCompletedSuccessfully =
+        case completedRetirementResult of
+          Just
+            (Right (Subprocess.CommandSucceeded "retirement-complete\n")) ->
+              True
+          _ -> False
+  finalRetirementEntries <- listDirectory executableSnapshotRoot
+  removeTestPathIfPresent retirementReleaseFifo
+  assert
+    ( isJust retirementReleased
+        && retirementCompletedSuccessfully
+        && null finalRetirementEntries
+    )
+    ( "terminal-after-snapshot-retirement result disagreed; observed "
+        <> show
+          ( completedRetirementResult,
+            finalRetirementEntries
+          )
+    )
   let runExecutableSnapshotInterruptionTest
         label
         commandTimeout
@@ -6303,6 +6436,273 @@ main = do
           isJust (fromException failure :: Maybe SomeAsyncException)
         _ -> False
     )
+  let recoveryExecutablePath =
+        subprocessRoot </> "bounded-snapshot-recovery-executable.sh"
+      snapshotOwnerEntryWithProcessText processIdText birthIdentity =
+        ".anchor-"
+          <> processIdText
+          <> "-"
+          <> ByteString8.unpack
+            ( Base16.encode
+                ( ByteString8.pack
+                    (renderProcessBirthIdentity birthIdentity)
+                )
+            )
+      snapshotOwnerEntry processId =
+        snapshotOwnerEntryWithProcessText (show processId)
+      kernelRecoveryFailureContains expected observed =
+        case observed of
+          Just (Right (Subprocess.CommandFailedKernel failure)) ->
+            expected `isInfixOf` failure
+          _ -> False
+      recoverySucceeded observed =
+        case observed of
+          Just
+            (Right (Subprocess.CommandSucceeded "snapshot-recovery\n")) ->
+              True
+          _ -> False
+      runSnapshotRecoveryCase
+        label
+        fixtureEntry
+        prepareFixture
+        expectsRecoveryGate
+        mutateAtRecoveryGate
+        expectedObservation = do
+          let fixturePath = executableSnapshotRoot </> fixtureEntry
+              readyPath = subprocessRoot </> (label <> ".ready")
+              releaseFifo = subprocessRoot </> (label <> ".release")
+              payloadPath = fixturePath </> "payload"
+              ownerRecordPath = fixturePath </> "owner.identity"
+          removeTestPathIfPresent executableSnapshotRoot
+          createDirectoryIfMissing True executableSnapshotRoot
+          setFileMode executableSnapshotRoot 0o700
+          prepareFixture fixturePath
+          mapM_
+            removeTestPathIfPresent
+            [readyPath, releaseFifo]
+          createNamedPipe releaseFifo 0o600
+          compiled <-
+            expectRight
+              ("compile " <> label <> " snapshot recovery command")
+              =<< Subprocess.compileExactExecutableSnapshotTestCommand
+                Subprocess.BeforeOwnerlessSnapshotRecoveryRecheck
+                (Subprocess.Timeout 10000000)
+                recoveryExecutablePath
+                readyPath
+                releaseFifo
+                subprocessEnv
+          result <- MVar.newEmptyMVar
+          _ <-
+            forkIO
+              ( try @SomeException
+                  (Subprocess.runBoundedCommand compiled)
+                  >>= MVar.putMVar result
+              )
+          when expectsRecoveryGate $ do
+            ready <-
+              maybe
+                (fail (label <> " ownerless recovery gate did not become ready"))
+                pure
+                =<< waitForFileContents 100 readyPath
+            assert
+              (not (null ready))
+              (label <> " ownerless recovery gate published empty evidence")
+            mutateAtRecoveryGate fixturePath
+            released <-
+              timeout
+                1000000
+                (writeNamedPipePayloadNonblocking releaseFifo "release\n")
+            assert
+              (isJust released)
+              (label <> " ownerless recovery gate did not release")
+          observed <- timeout 10000000 (MVar.takeMVar result)
+          readyPublished <- doesFileExist readyPath
+          snapshotEntries <- sort <$> listDirectory executableSnapshotRoot
+          payloadRetained <- doesFileExist payloadPath
+          ownerRecordRetained <- doesFileExist ownerRecordPath
+          removeTestPathIfPresent executableSnapshotRoot
+          mapM_
+            removeTestPathIfPresent
+            [readyPath, releaseFifo]
+          assert
+            ( expectedObservation
+                observed
+                readyPublished
+                snapshotEntries
+                payloadRetained
+                ownerRecordRetained
+            )
+            ( label
+                <> " snapshot recovery result disagreed; observed "
+                <> show
+                  ( observed,
+                    readyPublished,
+                    snapshotEntries,
+                    payloadRetained,
+                    ownerRecordRetained
+                  )
+            )
+  removeTestPathIfPresent recoveryExecutablePath
+  writeFile
+    recoveryExecutablePath
+    "#!/bin/sh\nprintf 'snapshot-recovery\\n'\n"
+  setFileMode recoveryExecutablePath 0o700
+  currentRecoveryProcessId <-
+    (fromIntegral <$> getProcessID) :: IO Integer
+  currentRecoveryBirthIdentity <- registerCurrentProcessIdentity
+  let currentRecoveryStart =
+        processBirthStartTime currentRecoveryBirthIdentity
+      deadRecoveryStart =
+        if currentRecoveryStart == maxBound
+          then currentRecoveryStart - 1
+          else currentRecoveryStart + 1
+      deadRecoveryBirthIdentity =
+        currentRecoveryBirthIdentity
+          { processBirthStartTime = deadRecoveryStart
+          }
+      deadRecoveryEntry =
+        snapshotOwnerEntry
+          currentRecoveryProcessId
+          deadRecoveryBirthIdentity
+      liveRecoveryEntry =
+        snapshotOwnerEntry
+          currentRecoveryProcessId
+          currentRecoveryBirthIdentity
+      prepareEmptyDirectory fixturePath = do
+        createDirectory fixturePath
+        setFileMode fixturePath 0o700
+      noRecoveryMutation _ = pure ()
+  runSnapshotRecoveryCase
+    "bounded-ownerless-dead-empty"
+    deadRecoveryEntry
+    prepareEmptyDirectory
+    True
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        recoverySucceeded observed
+          && readyPublished
+          && null entries
+          && not payloadRetained
+    )
+  runSnapshotRecoveryCase
+    "bounded-ownerless-dead-nonempty"
+    deadRecoveryEntry
+    ( \fixturePath -> do
+        prepareEmptyDirectory fixturePath
+        writeFile (fixturePath </> "payload") "retained\n"
+    )
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        kernelRecoveryFailureContains
+          "ownerless executable snapshot is nonempty; refusing recovery"
+          observed
+          && not readyPublished
+          && entries == [deadRecoveryEntry]
+          && payloadRetained
+    )
+  runSnapshotRecoveryCase
+    "bounded-ownerless-live-empty"
+    liveRecoveryEntry
+    prepareEmptyDirectory
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        recoverySucceeded observed
+          && not readyPublished
+          && entries == [liveRecoveryEntry]
+          && not payloadRetained
+    )
+  runSnapshotRecoveryCase
+    "bounded-ownerless-live-partial-owner"
+    liveRecoveryEntry
+    ( \fixturePath -> do
+        prepareEmptyDirectory fixturePath
+        let ownerRecordPath = fixturePath </> "owner.identity"
+        writeFile ownerRecordPath "partial\n"
+        setFileMode ownerRecordPath 0o600
+    )
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained ownerRecordRetained ->
+        recoverySucceeded observed
+          && not readyPublished
+          && entries == [liveRecoveryEntry]
+          && not payloadRetained
+          && ownerRecordRetained
+    )
+  let malformedRecoveryEntry = "malformed-ownerless-generation"
+  runSnapshotRecoveryCase
+    "bounded-ownerless-malformed"
+    malformedRecoveryEntry
+    prepareEmptyDirectory
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        kernelRecoveryFailureContains
+          "unexpected entry in bounded-command executable snapshot root"
+          observed
+          && not readyPublished
+          && entries == [malformedRecoveryEntry]
+          && not payloadRetained
+    )
+  let noncanonicalRecoveryEntry =
+        snapshotOwnerEntryWithProcessText
+          ("0" <> show currentRecoveryProcessId)
+          deadRecoveryBirthIdentity
+  runSnapshotRecoveryCase
+    "bounded-ownerless-noncanonical"
+    noncanonicalRecoveryEntry
+    prepareEmptyDirectory
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        kernelRecoveryFailureContains
+          "noncanonical entry in bounded-command executable snapshot root"
+          observed
+          && not readyPublished
+          && entries == [noncanonicalRecoveryEntry]
+          && not payloadRetained
+    )
+  runSnapshotRecoveryCase
+    "bounded-ownerless-nondirectory"
+    deadRecoveryEntry
+    (`writeFile` "retained\n")
+    False
+    noRecoveryMutation
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        kernelRecoveryFailureContains
+          "executable snapshot entry is not a stable real directory"
+          observed
+          && not readyPublished
+          && entries == [deadRecoveryEntry]
+          && not payloadRetained
+    )
+  let unstableRetainedDescriptorPath =
+        subprocessRoot </> "bounded-ownerless-unstable-retained-root"
+  removeTestPathIfPresent unstableRetainedDescriptorPath
+  runSnapshotRecoveryCase
+    "bounded-ownerless-unstable"
+    deadRecoveryEntry
+    prepareEmptyDirectory
+    True
+    ( \fixturePath -> do
+        renameDirectory
+          fixturePath
+          unstableRetainedDescriptorPath
+        writeFile fixturePath "replacement\n"
+        removeDirectory unstableRetainedDescriptorPath
+    )
+    ( \observed readyPublished entries payloadRetained _ownerRecordRetained ->
+        kernelRecoveryFailureContains
+          "snapshot root changed before census"
+          observed
+          && readyPublished
+          && entries == [deadRecoveryEntry]
+          && not payloadRetained
+    )
+  removeTestPathIfPresent unstableRetainedDescriptorPath
+  removeTestPathIfPresent recoveryExecutablePath
   let durableFileSyncPath =
         subprocessRoot </> "bounded-durable-file-sync.ready"
       durableDirectorySyncPath =
@@ -11507,24 +11907,44 @@ main = do
     "checkout identity compares host roots after normalization, so a trailing or doubled separator is not a different checkout"
   assert
     ( isRight
-        (authorizeHarnessReservationAccess OperatorOwned 100 True Nothing)
+        (authorizeHarnessReservationAccess OperatorOwned 100 True Nothing Nothing)
         && isLeft
-          (authorizeHarnessReservationAccess OperatorOwned 100 True (Just 100))
+          (authorizeHarnessReservationAccess OperatorOwned 100 True (Just 100) Nothing)
         && isLeft
-          (authorizeHarnessReservationAccess HarnessOwned 100 False (Just 100))
+          (authorizeHarnessReservationAccess HarnessOwned 100 False (Just 100) Nothing)
         && isLeft
-          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 101))
+          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 101) Nothing)
         && isRight
-          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 100))
+          (authorizeHarnessReservationAccess HarnessOwned 100 True (Just 100) Nothing)
     )
     "harness mutation authority requires a live reservation in the caller's exact process group and fences operators"
   assert
-    ( isRight (authorizeRuntimeConfigWriteAccess 100 False Nothing)
-        && isRight (authorizeRuntimeConfigWriteAccess 100 True (Just 100))
-        && isLeft (authorizeRuntimeConfigWriteAccess 100 True (Just 101))
-        && isLeft (authorizeRuntimeConfigWriteAccess 100 False (Just 100))
+    ( isRight (authorizeRuntimeConfigWriteAccess 100 False Nothing Nothing)
+        && isRight (authorizeRuntimeConfigWriteAccess 100 True (Just 100) Nothing)
+        && isLeft (authorizeRuntimeConfigWriteAccess 100 True (Just 101) Nothing)
+        && isLeft (authorizeRuntimeConfigWriteAccess 100 False (Just 100) Nothing)
     )
     "runtime-config writers are fenced while another live harness process group owns the config transaction"
+  -- Phase 1 Sprint 1.21 — the cluster-owned suites run inside a bounded
+  -- toolchain child that is deliberately placed in a fresh process group, so
+  -- process-group equality alone stopped recognising the harness's own work and
+  -- refused the suites' `internal materialize-substrate` writes and cluster
+  -- mutations. A delegated child group restores that authority for exactly one
+  -- child; the owner-alive requirement still gates both arms, so a delegation
+  -- outliving a crashed harness authorizes nothing.
+  assert
+    ( isRight (authorizeRuntimeConfigWriteAccess 101 True (Just 100) (Just 101))
+        && isRight
+          (authorizeHarnessReservationAccess HarnessOwned 101 True (Just 100) (Just 101))
+        && isLeft (authorizeRuntimeConfigWriteAccess 102 True (Just 100) (Just 101))
+        && isLeft
+          (authorizeHarnessReservationAccess HarnessOwned 102 True (Just 100) (Just 101))
+        && isLeft (authorizeRuntimeConfigWriteAccess 101 False (Just 100) (Just 101))
+        && isLeft
+          (authorizeHarnessReservationAccess HarnessOwned 101 False (Just 100) (Just 101))
+        && isRight (authorizeRuntimeConfigWriteAccess 100 True (Just 100) (Just 101))
+    )
+    "Sprint 1.21: a delegated toolchain child group carries harness authority only while the owner is verified alive, and only for that exact group"
   -- Sprint 6.43: a leftover .harness-backup (from a prior killed run) is
   -- reconciled on entry — the operator config is restored and the backup consumed.
   let legacyRecoveryPaths =
@@ -13018,6 +13438,28 @@ runSealedArtifactEnvironmentRegressionAssertions repoRootPath = do
   assert
     (isNothing (lookup "DYLD_PRINT_LIBRARIES" retiredAudiverisLauncherEnvironment))
     "the retired Audiveris launcher cannot authorize loader provenance"
+  -- The Audiveris invocation has drifted between its producer and its consumer
+  -- twice. The invariant that stops a third is not that the paths match but
+  -- that the whole invocation does: the smoke exists to prove that the thing
+  -- inference runs works, so running the same binary without the classpath that
+  -- reaches `Audiveris` would report on the bare JVM instead. `java -version`
+  -- is exactly that mistake, and it answers on standard error in three lines
+  -- rather than the seven-field banner the pinned receipt is bound to.
+  assert
+    ( ProvisioningInternal.installedSmokeExecutableRelativePath
+        ProvisioningInternal.JvmAdapter
+        == ArtifactTarget.audiverisAppleJvmRelativePath
+        && ProvisioningInternal.installedSmokeArguments
+          ProvisioningInternal.JvmAdapter
+          artifactRoot
+          == ArtifactTarget.audiverisAppleLeadingArguments artifactRoot
+            <> ["-version"]
+        && ProvisioningInternal.installedSmokeArguments
+          ProvisioningInternal.JvmAdapter
+          artifactRoot
+          /= ["-version"]
+    )
+    "the Audiveris installed smoke runs the inference target's own executable and classpath, not the bare JVM"
   assert
     ( installedPythonSmokeArguments
         == [ "lib" </> "apple_native_runner.py",
@@ -17677,6 +18119,7 @@ assertHostConfig repoRootPath testRoot = do
     ( jvmExecutable == "/opt/infernix/audiveris-jre/bin/java"
         && jvmPrefix
           == [ "-Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache",
+               "-Dorg.bytedeco.javacpp.canCreateSymbolicLink=false",
                "-cp",
                "/opt/audiveris/lib/app/*",
                "Audiveris"
@@ -17695,12 +18138,13 @@ assertHostConfig repoRootPath testRoot = do
           </> "java"
         && appleJvmPrefix
           == [ "-Dorg.bytedeco.javacpp.cachedir=" <> (appleJvmRoot </> "javacpp-cache"),
+               "-Dorg.bytedeco.javacpp.canCreateSymbolicLink=false",
                "-cp",
                appleJvmRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
                "Audiveris"
              ]
     )
-    "Sprint 1.20: Apple Audiveris uses its bundled JVM and candidate-local JavaCPP cache"
+    "Sprint 1.20: Apple Audiveris uses its bundled JVM and its own symlink-free JavaCPP cache"
   assert
     ( all
         (Text.isPrefixOf "sha256:" . ArtifactTarget.nativeArtifactTargetFingerprint)
@@ -20120,3 +20564,279 @@ canonicalTestDigest filler = "sha256:" <> Text.replicate 64 (Text.singleton fill
 isCanonicalSha256Text :: Text.Text -> Bool
 isCanonicalSha256Text value =
   Text.isPrefixOf "sha256:" value && Text.length value == 71
+
+-- | The Audiveris invocation declines JavaCPP symbolic-link creation.
+--
+-- JavaCPP owns one cross-jar alias inside its configured cache and re-establishes
+-- it on every load: it rewrites a relative target to the absolute cache path,
+-- deletes a regular file and replaces it with that link, re-creates the link when
+-- absent, and — when it cannot write the cache at all — does not fail but escapes
+-- to the operator's @~\/.javacpp\/cache@ and loads from there. Its one fixed point
+-- therefore names whichever root the payload currently occupies, and this artifact
+-- is smoked once at the candidate root and again after it is renamed onto its
+-- final root, so no single spelling satisfies both.
+--
+-- Declining the alias removes the conflict instead of choosing a side: dyld never
+-- traverses it, because every library loads from its own extracted jar directory.
+-- The flag has to reach every producer, not just the shared consumer helper — the
+-- two runs that actually create the caches are the Apple pre-extraction command
+-- and the Linux image build, and a cache populated under a different JavaCPP
+-- configuration than its consumer is a payload the first consumer rewrites.
+runAudiverisJavaCppArgumentAssertions :: IO ()
+runAudiverisJavaCppArgumentAssertions = do
+  let appleRoot = "/work/.data/engines/jvm-native"
+      appleArguments = ArtifactTarget.audiverisAppleLeadingArguments appleRoot
+      linuxArguments = ArtifactTarget.audiverisLinuxImageLeadingArguments
+      cacheRoot = appleRoot </> "javacpp-cache"
+      linkPath =
+        cacheRoot
+          </> "tesseract-5.5.1-1.5.12-macosx-arm64.jar"
+          </> "org"
+          </> "bytedeco"
+          </> "tesseract"
+          </> "macosx-arm64"
+          </> "libleptonica.6.dylib"
+  assert
+    ( appleArguments
+        == [ "-Dorg.bytedeco.javacpp.cachedir=" <> cacheRoot,
+             ArtifactTarget.audiverisJavaCppSymbolicLinkArgument,
+             "-cp",
+             appleRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
+             "Audiveris"
+           ]
+        && linuxArguments
+          == [ "-Dorg.bytedeco.javacpp.cachedir="
+                 <> ArtifactTarget.audiverisLinuxImageJavaCppCacheDirectory,
+               ArtifactTarget.audiverisJavaCppSymbolicLinkArgument,
+               "-cp",
+               ArtifactTarget.audiverisLinuxImageApplicationClasspath,
+               "Audiveris"
+             ]
+    )
+    "Sprint 1.20: both Audiveris lanes render the same closed property set and decline JavaCPP symbolic-link creation"
+  assert
+    ( ArtifactTarget.audiverisJavaCppSymbolicLinkArgument
+        == "-Dorg.bytedeco.javacpp.canCreateSymbolicLink=false"
+    )
+    "Sprint 1.20: the JavaCPP symbolic-link property is the exact upstream spelling"
+  assert
+    ( not
+        ( Provisioning.validRelativeClosureLinkForTest
+            (makeRelative cacheRoot linkPath)
+            (cacheRoot </> "leptonica" </> "libleptonica.6.dylib")
+        )
+    )
+    "Sprint 1.20: the generic package-closure policy still refuses an absolute cache link now that nothing normalizes one"
+
+-- | Phase 0 Sprint 0.24 — the development-plan standards scans.
+--
+-- Every scan in @Infernix.Lint.Plan@ is a proxy for a rule rather than the rule
+-- itself, so the negative cases below are the point of this block rather than an
+-- afterthought: each pairs a rule with the false-positive class its tuning
+-- removed. A scan that cries wolf is worse than no scan, and the corpus is large
+-- enough that a single spurious class would have buried the real backlog.
+runPlanStandardsScanAssertions :: IO ()
+runPlanStandardsScanAssertions = do
+  assert
+    ( not (null (statusVocabularyViolations (planSprintBlocks "1.1" "Active — Validation Only" ["- the paired lane run is open"])))
+        && null (statusVocabularyViolations (planSprintBlocks "1.1" "Active" ["- the paired lane run is open"]))
+    )
+    "plan status scan rejects a fifth status value and accepts the Section C vocabulary"
+  assert
+    ( null (remainingWorkViolations (planSprintBlocks "1.1" "Done" ["None."]))
+        && null (remainingWorkViolations (planSprintBlocks "1.1" "Done" []))
+        && null
+          ( remainingWorkViolations
+              (planSprintBlocks "1.1" "Done" ["None. Closed under [Wave V](cohort-validation-waves.md)."])
+          )
+    )
+    "plan remaining-work scan discharges Done on a bare None, an empty body, and a None that records where closure happened"
+  assert
+    ( not
+        ( null
+            ( remainingWorkViolations
+                (planSprintBlocks "1.1" "Done" ["None code-side. The cohort rebuild is the residual."])
+            )
+        )
+        && not (null (remainingWorkViolations (planSprintBlocks "1.1" "Active" ["None."])))
+    )
+    "plan remaining-work scan rejects a Done sprint naming a residual and an Active sprint with nothing open"
+  assert
+    ( not (null (remainingWorkViolations (planSprintBlocks "2.14" "Blocked" ["- wait for the ordered closure"])))
+        && null
+          ( remainingWorkViolations
+              (planBlockedSprintBlocks "2.14" "Sprint 1.20" ["- wait for the ordered closure"])
+          )
+    )
+    "plan remaining-work scan requires a Blocked sprint to name its blocker"
+  assert
+    ( not (null (sprintBackwardEdgeViolations (planBlockedSprintBlocks "6.43" "Sprint 6.45" ["- wait"])))
+        && null (sprintBackwardEdgeViolations (planBlockedSprintBlocks "6.43" "Sprint 6.42" ["- wait"]))
+    )
+    "plan forward-edge scan rejects a blocker naming a higher-numbered sibling sprint inside one phase"
+  assert
+    ( not
+        ( null
+            ( sprintBackwardEdgeViolations
+                (planSprintBlocks "6.43" "Active" ["- this sprint cannot reach `Done` before Sprint 6.45 lands"])
+            )
+        )
+        && null
+          ( sprintBackwardEdgeViolations
+              (planSprintBlocks "6.43" "Active" ["- Sprint 6.45 carries the three findings", "- the paired lane run cannot close yet"])
+          )
+    )
+    "plan forward-edge scan reads a closure dependency out of Remaining Work only when the phrase and the sprint share a line"
+  assert
+    ( not (null (backwardEdgeViolations [(planPhaseDocumentPath 2, planBlockerDocument ["**Blocked by**: Phase 4"])]))
+        && null (backwardEdgeViolations [(planPhaseDocumentPath 2, planBlockerDocument ["**Blocked by**: Phase 1"])])
+        && not
+          ( null
+              ( backwardEdgeViolations
+                  [ ( planPhaseDocumentPath 2,
+                      planBlockerDocument ["**Blocked by**: the ordered closure of", "Phase 4 and its paired lane"]
+                    )
+                  ]
+              )
+          )
+    )
+    "plan backward-edge scan reads a blocker statement across its wrap to the next field marker"
+  assert
+    ( not
+        ( null
+            ( backwardEdgeViolations
+                [(planPhaseDocumentPath 6, planBlockerDocument ["**Blocked by**: nothing; ordered before Sprint 6.43 can reach `Done`"])]
+            )
+        )
+    )
+    "plan backward-edge scan reports a dependency phrased from the dependee's side"
+  assert
+    ( not
+        ( null
+            ( dualAcceleratorGateViolations
+                [(planPhaseDocumentPath 6, planValidationDocument ["- `./bootstrap/apple-silicon.sh test`", "- `./bootstrap/linux-gpu.sh test`"])]
+            )
+        )
+        && null
+          ( dualAcceleratorGateViolations
+              [(planPhaseDocumentPath 6, planValidationDocument ["- `./bootstrap/apple-silicon.sh test`", "- the paired `linux-cpu` lane"])]
+          )
+    )
+    "plan accelerator scan rejects one Validation gate spanning both accelerators and accepts one accelerator plus linux-cpu"
+  assert
+    ( not (null (receiptMarkerViolations [(planPhaseDocumentPath 1, "the run completed under owned PID 54839\n")]))
+        && not (null (receiptMarkerViolations [(planPhaseDocumentPath 1, "readiness stayed clean through 03:02:07\n")]))
+        && not (null (receiptMarkerViolations [(planPhaseDocumentPath 1, "quarantine retained at inode 210255552\n")]))
+    )
+    "plan declarative scan bans the process identifier, wall-clock time, and inode number a run log carries"
+  assert
+    ( null
+        ( receiptMarkerViolations
+            [(planPhaseDocumentPath 1, "the transaction is ordered so inode allocation cannot precede the fsync\n")]
+        )
+    )
+    "plan declarative scan admits prose reasoning about inode allocation, which is prescriptive rather than a receipt"
+  assert
+    ( not (null (receiptMarkerViolations [(planPhaseDocumentPath 1, planReceiptDenseDocument 41)]))
+        && null (receiptMarkerViolations [(planPhaseDocumentPath 1, planReceiptDenseDocument 40)])
+    )
+    "plan declarative scan caps receipt-bearing lines per phase document at the declared ceiling"
+  assert
+    ( not (null (ledgerDoubleListingViolations [(planLedgerDocumentPath, planLedgerDocument "Sprint 1.20" "Sprint 1.20")]))
+        && null (ledgerDoubleListingViolations [(planLedgerDocumentPath, planLedgerDocument "Sprint 1.20" "Sprint 1.21")])
+    )
+    "plan ledger scan pairs two rows only when they share their owning sprint, because symbol overlap alone is not evidence"
+  assert
+    ( not
+        ( null
+            ( phaseStatusTableViolations
+                [ (planPhaseDocumentPath 1, planStatusTableDocument),
+                  (planLedgerDocumentPath, planStatusTableDocument)
+                ]
+            )
+        )
+        && null
+          ( phaseStatusTableViolations
+              [ (planPhaseDocumentPath 1, planStatusTableDocument),
+                (planLedgerDocumentPath, "| Phase 3 Sprint 3.10 host-native status residual | Closed | Sprint 3.10 |\n")
+              ]
+          )
+    )
+    "plan status-table scan reads the header's cells, so a removal-ledger row owned by a phase is not a second status table"
+
+planPhaseDocumentPath :: Int -> FilePath
+planPhaseDocumentPath phase = "DEVELOPMENT_PLAN/phase-" <> show phase <> "-fixture.md"
+
+planLedgerDocumentPath :: FilePath
+planLedgerDocumentPath = "DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md"
+
+-- | One sprint block in the Section G shape, with the given Remaining Work body.
+planSprintDocument :: String -> String -> [String] -> String
+planSprintDocument identifier status remainingWork =
+  unlines
+    ( [ "## Sprint " <> identifier <> ": Fixture [" <> status <> "]",
+        "",
+        "**Status**: " <> status,
+        "",
+        "### Remaining Work",
+        ""
+      ]
+        <> remainingWork
+        <> ["", "---"]
+    )
+
+planSprintBlocks :: String -> String -> [String] -> [SprintBlock]
+planSprintBlocks identifier status remainingWork =
+  parseSprintBlocks (planPhaseDocumentPath 1) (planSprintDocument identifier status remainingWork)
+
+planBlockedSprintBlocks :: String -> String -> [String] -> [SprintBlock]
+planBlockedSprintBlocks identifier blocker remainingWork =
+  parseSprintBlocks
+    (planPhaseDocumentPath 1)
+    ( unlines
+        ( [ "## Sprint " <> identifier <> ": Fixture [Blocked]",
+            "",
+            "**Status**: Blocked",
+            "**Blocked by**: " <> blocker,
+            "",
+            "### Remaining Work",
+            ""
+          ]
+            <> remainingWork
+            <> ["", "---"]
+        )
+    )
+
+planBlockerDocument :: [String] -> String
+planBlockerDocument statementLines = unlines (statementLines <> ["", "**Docs to update**: none"])
+
+planValidationDocument :: [String] -> String
+planValidationDocument gateLines = unlines (["### Validation", ""] <> gateLines <> ["", "### Remaining Work"])
+
+planReceiptDenseDocument :: Int -> String
+planReceiptDenseDocument markerLines =
+  unlines (replicate markerLines "closed under the recorded 2026-07-20 attestation")
+
+planLedgerDocument :: String -> String -> String
+planLedgerDocument pendingOwner completedOwner =
+  unlines
+    [ "## Pending Removal",
+      "",
+      "| Location | Reason | Owner |",
+      "|---|---|---|",
+      "| `validateRenderedEnvironment` plus `poetrySnapshotNames` and `poetrySnapshotDyldNames` | pending | " <> pendingOwner <> " |",
+      "",
+      "## Completed",
+      "",
+      "| Location | Outcome | Owner |",
+      "|---|---|---|",
+      "| `validateRenderedEnvironment` plus `poetrySnapshotNames` and `poetrySnapshotDyldNames` | replaced | " <> completedOwner <> " |"
+    ]
+
+planStatusTableDocument :: String
+planStatusTableDocument =
+  unlines
+    [ "| Phase | Current status | Current gate |",
+      "|-------|----------------|--------------|",
+      "| 0 | Done | none |"
+    ]

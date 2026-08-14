@@ -1,69 +1,51 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Blocked — strict numerical execution pauses until Phase 0 Sprint 0.22 closes.
-**Blocked by**: Phase 0 Sprint 0.22
-**Suspended prior state**: Active. Sprint 6.49's code-side correction is present: the closed toolchain vocabulary
-now includes `CappedEngineObserverSuite`, and `infernix test unit` selects it. Its aggregate
-current-source and Apple/paired-Linux evidence remains open. The validation-only text that follows
-describes the position before that finding and is retained for its recorded scope.
-Sprint 6.46 (toolchain spawn boundary and capability-gating
-lint) is `Done` as of 2026-08-06 for its original scope; Phase 1 Sprint 1.21 owns the
-validation-pending same-authority single-flight/normal lifecycle follow-on. Sprint 6.47 (retiring
-the chaos and HA validation surface) is
-code-side closed and holds only the `linux-cpu` lifecycle run it shares with Phase 3 Sprint 3.16.
-Sprint 6.48 (making the command-shim root reclaimable rather than sealed) is code-side closed and
-holds only its gate rerun. The former Darwin address-space-limit defect is corrected in current
-Phase 1 source; the current Phase 1 aggregate gate is still pending.
-Sprint 6.44 (verified NVIDIA enforcement and raw-spawn
-exemption reduction) is **code-side closed on 2026-08-02** and is no longer blocked: Phase 4 Sprint
-4.32's code-side closure landed the shared resource-indexed execution boundary it consumes. The
-`linux-gpu` lane compiles an execution plan for the first time — a device-using model now carries two
-independently indexed grants and two live watchdogs — and the NVIDIA per-process-group VRAM observer
-is a fixed bounded public-tool kernel whose namespace-local attribution was measured on real hardware
-rather than assumed. Sprint 6.43 remains reopened for the owner-atomic harness teardown correction
-found while executing Phase 2 in numerical order; its implementation is landed and its final
-cross-phase review is recorded below. Wave X remains valid for the narrower
-ownership/state representation it exercised, but it did not prove that the ownership decision and
-destructive teardown share one lifecycle lease. The owner-atomic implementation is landed with
-Phase 2 Sprint 2.15. Phase 2's fp16 Bark correction is also implemented with focused checks GREEN,
-and its renewed final review plus complete Stage 1 passed against `eae424…` / `a0d1…` as
-historical GREEN-as-run evidence only. The no-repo-owned-native-source correction supersedes every
-pre-correction Phase 2 source/binary digest, review, Stage 1, and cohort assertion. There is no
-reusable pre-correction evidence. Phase 0's current correction review and complete Stage 1 are
-green; Apple and `linux-cpu` evidence remain open. The lifecycle
-replacement and accepted nested supervisor/pin custody-handshake redesign are present, and the
-obsolete C/Cabal boundary is removed. Phase 6's own ordered review, machine-independent, and Wave Y
-behavioral gates remain.
-Phase 6 behavioral sign-off
-here starts only after Phase 2 and Phase 4 close. The
-memory-safety-by-construction
-reopen (2026-07-21) — Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) on the
-Phase 4 Sprint 4.30 capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md)
-(2026-07-24) with apple-silicon plus linux-cpu behavioral sign-off (code-side closed 2026-07-21 on the
-machine-independent gate set). The apple-silicon behavioral lane ran the per-model integration suite
-with zero host OOM (13 real completions, 2 pre-admission typed-rejections, 1 live watchdog
-resident-ceiling breach) and routed Playwright passed 16/16 (the browser matrix rendering all three
-capacity rejections), and the `linux-cpu` clean `test all` passed integration and Playwright 16/16 —
-see [Wave W](cohort-validation-waves.md) (frozen workload image
-`sha256-bcf88c23fda211a4b5f3701c1c1c66ab223462f40d709be795e8f7b2d44ccee0`). Two Playwright cohort fixes
-landed here (the budget-schema migration in `expectedModelMemoryLimitExceeded` and the browser matrix's
-then-temporary runtime-ceiling-breach tolerance); Phase 2 later removed that tolerance after
-recalibrating Bark to 8192 MiB. The earlier lifecycle-rebinding warm-cache flake that once blocked
-the clean run was diagnosed as a representable invalid state (a fault-vs-absence collapse in the
-readiness observation) and **fixed by construction** in the Observable-Readiness reopen (Phase 1 Sprint
-1.18 + Phase 8 Sprint 8.8, code-side closed 2026-07-22). Prior Done — the
-Bounded-Command Application & Bounded-HTTP reopen (Sprint 6.40 `unboundedExec`/
-`unboundedHttp` lint rules; Sprint 6.41 ProcessMonitor retirement + shared retryCommandOutput
-primitive + eager-cache barrier + the full twelve-wait individual bounded-wait migration onto
-`awaitReadiness`/`budgetDeadline` + the `threadDelayViolations` lint gate) and the prior
-Managed-State-Transition Doctrine reopen (Sprint 6.39) are all code-side closed (machine-independent,
-adversarially reviewed) and their single-accelerator (apple-silicon) plus linux-cpu full-suite
-sign-off is closed by [Wave V](cohort-validation-waves.md) (2026-07-20). Sprint 6.38 is closed for
-typed resource memory-admission validation across
-Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM. Wave T closed on 2026-07-12 with
-`linux-cpu` plus the selected `linux-gpu` accelerator. Sprints 6.36 and 6.37 remain closed for their
-original evidence from Waves R/S, and the prior Wave O MT3 reopen (Sprint 6.35) is closed by Wave P
-(2026-07-04).
+**Status**: Blocked — strict numerical execution waits for Phase 5.
+**Blocked by**: Phase 5
+**Implementation state behind the blocker**: Active. Sprint 6.49's code-side correction is present:
+the closed toolchain vocabulary includes `CappedEngineObserverSuite` and `infernix test unit`
+selects it; its aggregate current-source and Apple/paired-Linux evidence remains open. Sprint 6.46
+(toolchain spawn boundary and capability-gating lint) is `Done` for its original scope; Phase 1
+Sprint 1.21 owns the validation-pending same-authority single-flight/normal lifecycle follow-on.
+Sprint 6.47 (retiring the chaos and HA validation surface) is code-side closed and holds only the
+`linux-cpu` lifecycle run it shares with Phase 3 Sprint 3.16. Sprint 6.48 (making the command-shim
+root reclaimable rather than sealed) is code-side closed and holds only its gate rerun. The former
+Darwin address-space-limit defect is corrected in current Phase 1 source; the Phase 1 aggregate gate
+is still pending. Sprint 6.44 (verified NVIDIA enforcement and raw-spawn exemption reduction) is
+code-side closed and no longer blocked: Phase 4 Sprint 4.32's code-side closure landed the shared
+resource-indexed execution boundary it consumes. The `linux-gpu` lane compiles an execution plan — a
+device-using model carries two independently indexed grants and two live watchdogs — and the NVIDIA
+per-process-group VRAM observer is a fixed bounded public-tool kernel whose namespace-local
+attribution was measured on real hardware rather than assumed. Sprint 6.43 remains reopened for the
+owner-atomic harness teardown correction found while executing Phase 2 in numerical order; its
+implementation is landed with Phase 2 Sprint 2.15. Wave X remains valid for the narrower
+ownership/state representation it exercised, but it did not prove that the ownership decision and the
+destructive teardown share one lifecycle lease. The no-repo-owned-native-source correction supersedes
+every pre-correction Phase 2 source/binary digest, review, Stage 1, and cohort assertion; there is no
+reusable pre-correction evidence. Phase 0's current correction review and complete Stage 1 pass, and
+Apple plus `linux-cpu` evidence remains open. The lifecycle replacement and the accepted nested
+supervisor/pin custody-handshake redesign are present, and the obsolete C/Cabal boundary is removed.
+Phase 6's own ordered review, machine-independent, and Wave Y behavioral gates remain, and Phase 6
+behavioral sign-off starts only after Phase 2 and Phase 4 close. The memory-safety-by-construction
+reopen — Sprint 6.42 (`unboundedEngineSpawnViolations` capability-gating lint) on the Phase 4 Sprint
+4.30 capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md) with apple-silicon
+plus `linux-cpu` behavioral sign-off. Two Playwright cohort fixes landed here: the budget-schema
+migration in `expectedModelMemoryLimitExceeded`, and the browser matrix's then-temporary
+runtime-ceiling-breach tolerance, which Phase 2 removed after recalibrating Bark to 8192 MiB. The
+earlier lifecycle-rebinding warm-cache flake that once blocked the clean run was diagnosed as a
+representable invalid state — a fault-vs-absence collapse in the readiness observation — and **fixed
+by construction** in the Observable-Readiness reopen (Phase 1 Sprint 1.18 + Phase 8 Sprint 8.8). The
+Bounded-Command Application and Bounded-HTTP reopen (Sprint 6.40 `unboundedExec`/`unboundedHttp` lint
+rules; Sprint 6.41 ProcessMonitor retirement, the shared `retryCommandOutput` primitive, the
+eager-cache barrier, the full twelve-wait individual bounded-wait migration onto
+`awaitReadiness`/`budgetDeadline`, and the `threadDelayViolations` lint gate) and the
+Managed-State-Transition Doctrine reopen (Sprint 6.39) are code-side closed (machine-independent,
+adversarially reviewed), and their single-accelerator (apple-silicon) plus `linux-cpu` full-suite
+sign-off is closed by [Wave V](cohort-validation-waves.md). Sprint 6.38 is closed for typed resource
+memory-admission validation across Apple unified host RAM, Linux CPU pod RAM, and Linux GPU VRAM
+under Wave T (`linux-cpu` plus the selected `linux-gpu` accelerator). Sprints 6.36 and 6.37 remain
+closed for their original evidence from Waves R/S, and the Wave O MT3 reopen (Sprint 6.35) is closed
+by [Wave P](cohort-validation-waves.md).
 Note: the routed Playwright suite grew from **9** specs to **15** when the Phase 9
 auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` and later waves record
 `15/15`.
@@ -77,186 +59,160 @@ auth/RBAC/dashboard/lifecycle specs landed, so pre-Phase-9 waves record `9/9` an
 > route-aware docs, and the CLI surface mechanically aligned with implementation.
 
 ## Phase Status
+> **Cluster-ownership and mutation-position.** Because `ClusterState` had no owner and
+> `ClusterLifecycle` had no mutating position, a test-mutated cluster (a drained node, an over-scaled
+> deployment) read as a clean `steady-state`, and `runClusterOwnedValidation`'s unconditional
+> `clusterDown` over the shared operator cluster identity let even a clean run destroy an operator's
+> cluster. [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-blocked)
+> owns the harness half — the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the
+> chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup
+> reconcile — and [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model
+> half. The doctrine and governance landed in Phase 0 Sprint 0.16. Wave X closed only the typed
+> owner/mutation-position/config scope; a later execution audit found that
+> `runClusterOwnedValidation` released the lifecycle lease between owner authorization and its
+> eventual teardown, so Sprint 6.43 stays open until owner-specific teardown is enforced under the
+> lifecycle lock and the Phase 6 behavioral cohort is rerun. Canonical doctrine:
+> [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
 
-> **Execution-order pause:** Phase 6 is blocked by Phase 0 Sprint 0.22. The detailed state and
-> evidence below are suspended intact and resume only after Phase 0 is `Done`.
+> **Memory-safety by construction.** The doctrine (Phase 0 Sprint 0.15) makes an over-budget
+> inference engine a clean typed `ModelMemoryLimitExceeded` rather than a host OOM, gated by a
+> `MemoryGrant` and a capped-engine kernel (Phase 4 Sprints 4.30/4.31).
+> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-done) adds the
+> `unboundedEngineSpawnViolations` capability-gating lint to `src/Infernix/Lint/HaskellStyle.hs`: raw
+> `readCreateProcessWithExitCode` / `createProcess` engine spawn is a build error outside the Phase 4
+> Sprint 4.30 grant-gated capped-engine kernel, mirroring the `unboundedExecViolations` (Sprint 6.40)
+> per-rule exemption pattern. The rule is wired into `checkSourceReadability`, reuses the
+> bounded-command exemption set (`Infernix.Runtime.CappedEngine` is the sole legitimate engine-spawn
+> surface), and is negative-tested in the unit suite. Single-accelerator (apple-silicon) plus
+> `linux-cpu` behavioral sign-off is closed under [Wave W](cohort-validation-waves.md).
 
-> **Cluster-Ownership & Mutation-Position reopen (2026-07-23).** An externally-killed `infernix test all`
-> exposed a DSL smell: because `ClusterState` had no owner and `ClusterLifecycle` had no mutating
-> position, a test-mutated cluster (a drained node, an over-scaled deployment) read as a clean
-> `steady-state`, and `runClusterOwnedValidation`'s unconditional `clusterDown` over the shared operator
-> cluster identity let even a clean run destroy an operator's cluster. This phase reopens under
-> [Sprint 6.43](#sprint-643-cluster-ownership-harness-seizure-and-crash-safe-config-blocked) — the harness
-> half — for the evidence-gated seizure (fail closed on an `OperatorOwned` cluster), the chaos-mutation
-> `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup reconcile;
-> [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half. The doctrine
-> + governance landed (Phase 0 Sprint 0.16, `Done`). Wave X historically closed only the 2026-07-23
-> typed owner/mutation-position/config scope, but the 2026-07-25 execution audit found that
-> `runClusterOwnedValidation` released the
-> lifecycle lease between owner authorization and its eventual teardown. Sprint 6.43 is therefore
-> reopened until owner-specific teardown is enforced under the lifecycle lock and the Phase 6
-> behavioral cohort is rerun. Canonical
-> doctrine: [../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md).
-
-> **Memory-safety-by-construction reopen (2026-07-21).** The memory-safety-by-construction doctrine
-> (Phase 0 Sprint 0.15) makes an over-budget inference engine a clean typed `ModelMemoryLimitExceeded`
-> rather than a host OOM, gated by a `MemoryGrant` and a capped-engine kernel (Phase 4 Sprints
-> 4.30/4.31). This phase reopens under
-> [Sprint 6.42](#sprint-642-unbounded-engine-spawn-capability-gating-lint-done) to add the
-> `unboundedEngineSpawnViolations` capability-gating lint to `src/Infernix/Lint/HaskellStyle.hs` — raw
-> `readCreateProcessWithExitCode` / `createProcess` engine spawn becomes a build error outside the
-> Phase 4 Sprint 4.30 grant-gated capped-engine kernel, mirroring the existing `unboundedExecViolations`
-> (Sprint 6.40) per-rule exemption pattern. Sprint 6.42 is **code-side closed** (2026-07-21): the rule is
-> wired into `checkSourceReadability`, reuses the bounded-command exemption set (the capped-engine kernel
-> `Infernix.Runtime.CappedEngine` is the sole legitimate engine-spawn surface), and is negative-tested in
-> `cabal test infernix-unit`. Single-accelerator (apple-silicon) plus `linux-cpu` behavioral sign-off
-> closed under [Wave W](cohort-validation-waves.md) (2026-07-24).
-
-> **Bounded-command application / bounded-HTTP reopen — closed by [Wave V](cohort-validation-waves.md)
-> (2026-07-20).** The 2026-07-18
-> single-accelerator cohort run surfaced two flakes the Sprint 1.16/3.14/4.28 kernels shipped but did
-> not yet guard — a Harbor `docker pull` verify hang and a rate-limited upstream model download —
+> **Bounded-command application and bounded HTTP — closed by [Wave V](cohort-validation-waves.md).**
+> A single-accelerator cohort run surfaced two flakes the Sprint 1.16/3.14/4.28 kernels shipped but
+> did not yet guard — a Harbor `docker pull` verify hang and a rate-limited upstream model download —
 > together with the missing enforcement that let raw unbounded exec and raw upstream HTTP reach those
-> sites. This phase reopened under
-> [Sprint 6.40](#sprint-640-unbounded-exechttp-capability-gating-lints-done) to add the
-> `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lint rules to
-> `src/Infernix/Lint/HaskellStyle.hs` (raw process spawn and raw `withResponse` become build errors
-> outside their bounded wrappers), and under
-> [Sprint 6.41](#sprint-641-processmonitor-retirement--readiness-wait-kernel-migration-done) for
-> the deferred hardening — migrating the hand-rolled readiness waits onto `awaitReadiness`,
-> retiring `src/Infernix/ProcessMonitor.hs`, and adding a `threadDelay`-outside-kernel lint gate.
-> Sprint 6.40 (the two capability-gating lint rules) and Sprint 6.41 (the `ProcessMonitor` retirement,
-> the shared `retryCommandOutput` primitive, the eager-model-cache barrier, the full twelve-wait
-> individual bounded-wait migration onto `awaitReadiness`/`budgetDeadline`, and the
-> `threadDelayViolations` lint gate) are code-side closed (machine-independent, adversarially reviewed),
-> and their single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off is closed by
-> [Wave V](cohort-validation-waves.md) (2026-07-20).
+> sites. [Sprint 6.40](#sprint-640-unbounded-exechttp-capability-gating-lints-done) adds the
+> `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lint rules (raw process
+> spawn and raw `withResponse` are build errors outside their bounded wrappers), and
+> [Sprint 6.41](#sprint-641-processmonitor-retirement--readiness-wait-kernel-migration-done) owns the
+> deferred hardening: migrating the hand-rolled readiness waits onto `awaitReadiness`, retiring
+> `src/Infernix/ProcessMonitor.hs`, and adding a `threadDelay`-outside-kernel lint gate. Both are
+> code-side closed and their single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort
+> sign-off is closed by [Wave V](cohort-validation-waves.md).
 
-> **Realness reopen (fail-closed real-only validation).** The audit behind the Phase 4 realness
-> reopen also established that this phase's suites accept fabricated results: `assertResultFamilyContract`
-> checks shape/extension only and never fetches an artifact (the "deeper byte/dimension checks on cohort
-> hardware" comment is unimplemented), the per-row inputs are degenerate (silence WAV, 1×1 PNG), the OMR
-> row is fed `musicXmlBuffer()` instead of a score image, and `validateServiceRuntimeLoop` /
-> `assertCompletedResultPayload` assert neither completion nor shape. Phase 6 therefore **reopened**
-> Sprint 6.33 to strengthen the HA / chaos / service-loop assertions so they fail closed on a
+> **Fail-closed real-only validation.** The audit behind the Phase 4 realness reopen established that
+> this phase's suites once accepted fabricated results: `assertResultFamilyContract` checked
+> shape/extension only and never fetched an artifact, the per-row inputs were degenerate (silence
+> WAV, 1×1 PNG), the OMR row was fed `musicXmlBuffer()` instead of a score image, and
+> `validateServiceRuntimeLoop` / `assertCompletedResultPayload` asserted neither completion nor
+> shape. Sprint 6.33 owns the strengthened HA / chaos / service-loop assertions that fail closed on a
 > non-real or incomplete result. The machine-independent realness lint that mechanically forbids
-> fabrication is owned by Phase 0 (governance, Sprint 0.12); the real per-family fixtures, the OMR
-> input-type fix, and the fail-closed per-row int/e2e are owned by Phase 4 (Sprint 4.23); this phase
-> builds on both rather than re-owning them. Realness is guaranteed by the engine code (reopened Phase 4
-> / Phase 1); the tests trust the result and fail loudly on `status=failed`. The Linux gate is [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`);
-> the same DRY suite re-runs on `apple-silicon` under [Wave L](cohort-validation-waves.md) (reopened
-> Phase 1), which closed on 2026-06-29.
+> fabrication is owned by Phase 0 (Sprint 0.12); the real per-family fixtures, the OMR input-type
+> fix, and the fail-closed per-row integration/e2e are owned by Phase 4 (Sprint 4.23); this phase
+> builds on both rather than re-owning them. Realness is guaranteed by the engine code; the tests
+> trust the result and fail loudly on `status=failed`. The Linux gate is
+> [Wave K](cohort-validation-waves.md) (`linux-gpu` + `linux-cpu`) and the same DRY suite re-runs on
+> `apple-silicon` under [Wave L](cohort-validation-waves.md).
 
-> **Common-shape reopen (single-accelerator phasing).** Phase 6 reopens to adopt the
-> **single-accelerator-per-phase** rule (see [README.md](README.md) → Common-Shape
-> Reopen and [development_plan_standards.md](development_plan_standards.md) §Q): each
-> accelerator-bearing phase validates **one** of `apple-silicon` or `linux-gpu` plus
-> `linux-cpu`, never both, and cross-accelerator coverage is a `linux-cpu`-only
-> aggregation phase. The prior "two-axis / batch-both-cohorts" framing and
-> `cohort-validation-waves.md` are repurposed into per-accelerator attestation
-> ledgers, recorded in
+> **Single-accelerator phasing.** Phase 6 follows the **single-accelerator-per-phase** rule (see
+> [README.md](README.md) → Common-Shape Reopen and
+> [development_plan_standards.md](development_plan_standards.md) §Q): each accelerator-bearing phase
+> validates **one** of `apple-silicon` or `linux-gpu` plus `linux-cpu`, never both, and
+> cross-accelerator coverage is a `linux-cpu`-only aggregation phase. The prior "two-axis /
+> batch-both-cohorts" framing is repurposed into the per-accelerator attestation ledgers in
+> [cohort-validation-waves.md](cohort-validation-waves.md), recorded in
 > [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
-> **Audit follow-on reopen (lint coverage and no-env closure).** Phase 6 reopened Sprint 6.34 after
-> the June 2026 audit found that docs lint did not include several authoritative docs or Phase 7 plan
-> docs, and that pre-manifest / lint-owning code carried env/PATH exceptions:
-> `Setup.hs` reads `PATH` / `INFERNIX_BUILD_ROOT` and calls `setEnv`, `bootstrap/common.sh` accepts
-> inherited `BOOTSTRAP_*` command overrides, `src/Infernix/Lint/HaskellStyle.hs` invokes bare `cabal`,
-> and `web/scripts/install-purescript.mjs` invokes bare `mktemp` / `tar`. The target doctrine remains
-> no env vars and no ambient `PATH`; Sprint 6.34 closed its then-current scope by confining Setup to a
-> deterministic `PATH` shim. Phase 1 Sprint 1.24 superseded that residual on 2026-08-09: `Setup.hs`,
-> Custom build type, and the proto-lens setup bootstrap are deleted, so no Setup environment
-> exception remains. Bootstrap command constants no longer inherit `BOOTSTRAP_*` or `PATH`, the
-> PureScript compiler installer uses Node tar/gzip handling, and docs lint covers the authoritative
-> configuration/tool/realness docs plus Phase 7.
+> **Lint coverage and no-env closure.** Sprint 6.34 answers the audit finding that docs lint did not
+> include several authoritative docs or Phase 7 plan docs, and that pre-manifest / lint-owning code
+> carried env/PATH exceptions: `Setup.hs` read `PATH` / `INFERNIX_BUILD_ROOT` and called `setEnv`,
+> `bootstrap/common.sh` accepted inherited `BOOTSTRAP_*` command overrides,
+> `src/Infernix/Lint/HaskellStyle.hs` invoked bare `cabal`, and `web/scripts/install-purescript.mjs`
+> invoked bare `mktemp` / `tar`. The target doctrine is no env vars and no ambient `PATH`; Sprint
+> 6.34 closed its scope by confining Setup to a deterministic `PATH` shim, and Phase 1 Sprint 1.24
+> superseded that residual by deleting `Setup.hs`, the Custom build type, and the proto-lens setup
+> bootstrap, so no Setup environment exception remains. Bootstrap command constants no longer inherit
+> `BOOTSTRAP_*` or `PATH`, the PureScript compiler installer uses Node tar/gzip handling, and docs
+> lint covers the authoritative configuration/tool/realness docs plus Phase 7.
 
-> **MT3 catalog-validation reopen (closed).** Phase 6 reopened Sprint 6.35 after the 2026-06-30
-> catalog replacement added `music-mt3-infer` and `music-mr-mt3` to the generated substrate
-> catalogs. The integration and routed Playwright suites enumerate the active catalog, so the
-> code-side coverage surface covers the new rows. The post-replacement full-suite evidence closed
-> under [Wave O](cohort-validation-waves.md) and was proven by [Wave P](cohort-validation-waves.md)
-> (2026-07-04): both `linux-gpu` and `linux-cpu` full `infernix test all` are GREEN with routed
-> Playwright 9/9 over the expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8
-> eager model-cache staging.
+> **MT3 catalog validation (closed).** Sprint 6.35 covers the catalog replacement that added
+> `music-mt3-infer` and `music-mr-mt3` to the generated substrate catalogs. The integration and
+> routed Playwright suites enumerate the active catalog, so the code-side coverage surface covers the
+> new rows. The post-replacement full-suite evidence closed under
+> [Wave O](cohort-validation-waves.md) and was proven by [Wave P](cohort-validation-waves.md): both
+> `linux-gpu` and `linux-cpu` full `infernix test all` pass with routed Playwright clean over the
+> expanded catalog, including the 27 GB `video-wan21-t2v` row after Phase 8 eager model-cache
+> staging.
 
-> **Historical resource-admission validation increment (2026-07-09).** Sprint 6.38 validated the doctrine added by
-> Phase 4 Sprint 4.27 and Phase 5 Sprint 5.11. The code-side suite now proves that one over-budget
-> model does not fail daemon startup, Apple zero/negative computed budgets remain enforced without
-> hardcoded floors, Linux CPU uses the cluster engine pod memory limit, Linux GPU uses GPU VRAM, and
-> classifiers identify capacity failures by `InferenceError.ModelMemoryLimitExceeded` plus explicit
-> MiB fields. Wave T's `linux-cpu` and selected `linux-gpu` live integration/e2e evidence now proves
-> smaller models kept running in the same daemon session. That evidence predates and does not close
-> the current Sprint 6.44 dual RAM/VRAM enforcement construction.
+> **Resource-admission validation increment.** Sprint 6.38 validates the doctrine added by Phase 4
+> Sprint 4.27 and Phase 5 Sprint 5.11: one over-budget model does not fail daemon startup, Apple
+> zero/negative computed budgets remain enforced without hardcoded floors, Linux CPU uses the cluster
+> engine pod memory limit, Linux GPU uses GPU VRAM, and classifiers identify capacity failures by
+> `InferenceError.ModelMemoryLimitExceeded` plus explicit MiB fields. Wave T's `linux-cpu` and
+> selected `linux-gpu` live integration/e2e evidence proves smaller models kept running in the same
+> daemon session. That evidence predates and does not close the current Sprint 6.44 dual RAM/VRAM
+> enforcement construction.
 
-Phase 6 is `Blocked`: Sprint 6.43's 2026-07-25 owner-atomic reservation/teardown correction remains
-under cross-phase implementation and source review. Its behavioral validation is ordered after
-Phase 2 closes under Wave Y and Phase 4 closes. Wave X remains historical closure only for the
-2026-07-23 typed
+Phase 6 is `Blocked`: Sprint 6.43's owner-atomic reservation/teardown correction remains under
+cross-phase implementation and source review, and its behavioral validation is ordered after Phase 2
+closes under Wave Y and Phase 4 closes. Wave X remains historical closure only for the narrower typed
 owner/mutation/config scope. Sprint 6.38's selected `linux-gpu` Wave T cohort residual is closed.
-Wave Q Sprint 6.36 (real-output and matrix validation hardening, opened 2026-07-06) and Sprint 6.37
-(apple-silicon memory-bounded validation lane) remain closed for their original scope; the prior
-Wave O MT3 reopen (Sprint 6.35) is closed, proven by Wave P (2026-07-04). The phase otherwise closes
-around the validation entrypoints, routed coverage, governed-root-document
-metadata closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap
-lifecycle fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split,
-and real Dhall substrate codec implemented in the current worktree. The validation entrypoints,
-routed coverage, HA hardening, governed-doc closure, and CLI-registry closure are `Done` after
-Apple cohort validation in Waves A/A.1/A.2/A.3, CUDA Linux cohort validation in Wave C, and the
-2026-06-20 selected `linux-gpu` plus `linux-cpu` closure in Waves I and J for the then-active
-catalogs. The
-inference-coverage sprints were upgraded from the metadata-echo
-assertion to the per-family result contract plus cohort hardware proof: the reopened Sprints 6.2,
-6.3, and 6.6 assert the typed per-family result surface for every active-substrate row, and the
-union across the three substrate catalogs covers every README matrix row as a mechanically checked
-invariant. The
-code-side closure for that coverage upgrade is complete and validated on the present CUDA Linux
-host (x86_64 + RTX 5090). The assertion and harness code for these sprints —
-the `ResultFamily` dispatch in the integration suite, the per-family Playwright assertions plus
-per-family web-UI artifact rendering, and the `allMatrixRowIds` coverage invariant — are written and
-proven by the machine-independent gate set that ran on this host (`cabal test infernix-unit`,
-`cabal build test:infernix-integration`, `infernix lint docs`, `infernix lint files`). The web unit
-suite (`spago`/Node 22) could not run on this bare host (host Node 18; Node 22 makes spago segfault
-— an environmental toolchain limit), so its gate is exercised in the supported Linux container lane
-(Node 22) / cohort batch. The real-engine integration and routed E2E assertions closed on
-2026-06-20 through the Stage 2 single-accelerator gate for `linux-gpu` plus `linux-cpu`,
-re-validated in [Wave I](cohort-validation-waves.md), never a per-sprint machine switch (see
-[development_plan_standards.md](development_plan_standards.md) Section Q). Apple Wave L
-real-engine reruns have passed the full integration layer and the focused routed Playwright gate
-(`9 passed (21.1m)`), and the paired `linux-cpu` Wave L gate closed on 2026-06-29 as recorded in
-[Wave L](cohort-validation-waves.md). The current CUDA Linux image strict-smokes the
-runtime-backed Linux native payload layer. The final CUDA Linux closure passed full
-`./bootstrap/linux-gpu.sh test` and full rebuilt-image `./bootstrap/linux-cpu.sh test`, including
-integration HA checks and routed Playwright per-model matrices.
-The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented split topology: cluster daemons
-always run, Apple cluster daemons own request-topic consumption and derived pool-topic handoff,
-Apple inference work moves through Pulsar to same-binary host daemons, and publication distinguishes
-cluster daemon location from inference executor location. Sprint 6.26 closes the lifecycle-warning
-cleanup: warning classification is documented, buildx support inside the Linux substrate image is
-implemented, the PureScript compiler bypasses the npm installer, Spago's `glob@11` transitive
-dependency is overridden to `glob@13`, and Poetry installs through an image-local virtual
-environment. The Linux substrate suppresses npm update notices and leaves GHCup shell-profile
-adjustment disabled; the upstream GHCup no-update message is treated as an idempotent installer
-no-op, and the upstream PATH advice is accepted because the Dockerfile owns `PATH` and the
-pinned toolchain succeeds. Current CUDA Linux validation closed in Wave C on the native
-Linux/CUDA host.
-Sprint 6.27 closes the staged-substrate format cleanup: `infernix.dhall` is a typed
-Dhall record decoded in-process by the `dhall` Haskell library, the schema is reflected from the
-substrate decoder type, generated files no longer carry banner-prefixed JSON, and
-`cabal.project` records the supported wildcard `allow-newer` posture against the project
-`ghc-9.12.4` toolchain.
+Sprint 6.36 (real-output and matrix validation hardening) and Sprint 6.37 (apple-silicon
+memory-bounded validation lane) remain closed for their original scope under Waves Q/R/S, and the
+Wave O MT3 reopen (Sprint 6.35) is closed under [Wave P](cohort-validation-waves.md). The phase
+otherwise closes around the validation entrypoints, routed coverage, governed-root-document metadata
+closure, structured CLI-registry closure, route-hardening cleanup, supported bootstrap lifecycle
+fixes, false-negative doctrine, Harbor publication retry closure, daemon-role split, and the real
+Dhall substrate codec. The validation entrypoints, routed coverage, HA hardening, governed-doc
+closure, and CLI-registry closure are `Done` under Waves A/A.1/A.2/A.3 (Apple), Wave C (CUDA Linux),
+and the selected `linux-gpu` plus `linux-cpu` closure in Waves I and J for the then-active catalogs.
 
-The worktree carries the formatter-toolchain closure superseding the historical Phase 6 bootstrap:
-root-package `infernix-haskell-style` links pinned Ormolu/HLint, while the genuinely separate
-package under `test/cabal-format/` links Cabal 3.16; the closed aggregate lint command runs both
-in-process without a formatter subprocess. The Linux substrate image installs a single
-`ghc-9.12.4` toolchain. The supported Linux outer-container launcher keeps its build
-root and chart archive cache in the image overlay, hydrates MinIO through the supported direct
-tarball path instead of Docker Hub-backed OCI metadata, and repairs the known stale retained
-Pulsar or ZooKeeper epoch mismatch by resetting only the Pulsar claim roots and retrying once.
-Sprint 6.32 reopens validation for the engine-pool routing target: unit gates now reject illegal
-pool graphs and service-consumer subscription states, while Apple integration now proves
+The inference-coverage sprints were upgraded from the metadata-echo assertion to the per-family
+result contract plus cohort hardware proof: the reopened Sprints 6.2, 6.3, and 6.6 assert the typed
+per-family result surface for every active-substrate row, and the union across the three substrate
+catalogs covers every README matrix row as a mechanically checked invariant. The `ResultFamily`
+dispatch in the integration suite, the per-family Playwright assertions plus per-family web-UI
+artifact rendering, and the `allMatrixRowIds` coverage invariant are proven by the
+machine-independent gate set (`infernix test unit`, the integration-suite build, `infernix lint
+docs`, `infernix lint files`). The web unit suite (`spago`/Node 22) is exercised in the supported
+Linux container lane rather than on a bare host, because a host Node 18 cannot run it and Node 22
+makes spago segfault there — an environmental toolchain limit. The real-engine integration and
+routed E2E assertions closed through the Stage 2 single-accelerator gate for `linux-gpu` plus
+`linux-cpu`, re-validated in [Wave I](cohort-validation-waves.md), never a per-sprint machine switch
+(see [development_plan_standards.md](development_plan_standards.md) Section Q). The Apple Wave L
+real-engine reruns passed the full integration layer and the focused routed Playwright gate, and the
+paired `linux-cpu` Wave L gate is closed as recorded in [Wave L](cohort-validation-waves.md). The
+CUDA Linux image strict-smokes the runtime-backed Linux native payload layer, and the CUDA Linux
+closure passed full `./bootstrap/linux-gpu.sh test` and full rebuilt-image
+`./bootstrap/linux-cpu.sh test`, including integration HA checks and routed Playwright per-model
+matrices.
+
+The supported test story is substrate-specific in code. Sprint 6.25 closes around the implemented
+split topology: cluster daemons always run, Apple cluster daemons own request-topic consumption and
+derived pool-topic handoff, Apple inference work moves through Pulsar to same-binary host daemons,
+and publication distinguishes cluster daemon location from inference executor location. Sprint 6.26
+closes the lifecycle-warning cleanup: warning classification is documented, buildx support inside the
+Linux substrate image is implemented, the PureScript compiler bypasses the npm installer, Spago's
+`glob@11` transitive dependency is overridden to `glob@13`, and Poetry installs through an
+image-local virtual environment. The Linux substrate suppresses npm update notices and leaves GHCup
+shell-profile adjustment disabled; the upstream GHCup no-update message is treated as an idempotent
+installer no-op, and the upstream PATH advice is accepted because the Dockerfile owns `PATH` and the
+pinned toolchain succeeds. CUDA Linux validation is closed in Wave C on the native Linux/CUDA host.
+Sprint 6.27 closes the staged-substrate format cleanup: `infernix.dhall` is a typed Dhall record
+decoded in-process by the `dhall` Haskell library, the schema is reflected from the substrate decoder
+type, generated files no longer carry banner-prefixed JSON, and `cabal.project` records the supported
+wildcard `allow-newer` posture against the project `ghc-9.12.4` toolchain.
+
+The formatter-toolchain closure supersedes the historical Phase 6 bootstrap: root-package
+`infernix-haskell-style` links pinned Ormolu/HLint, while the genuinely separate package under
+`test/cabal-format/` links Cabal 3.16, and the closed aggregate lint command runs both in-process
+without a formatter subprocess. The Linux substrate image installs a single `ghc-9.12.4` toolchain.
+The supported Linux outer-container launcher keeps its build root and chart archive cache in the
+image overlay, hydrates MinIO through the supported direct tarball path instead of Docker Hub-backed
+OCI metadata, and repairs the known stale retained Pulsar or ZooKeeper epoch mismatch by resetting
+only the Pulsar claim roots and retrying once. Sprint 6.32 owns the engine-pool routing target: unit
+gates reject illegal pool graphs and service-consumer subscription states, Apple integration proves
 broker-native backpressure on `Shared` pools, `Exclusive` pinned routes, and production-shape
-coordinator presence when `demo_ui = false`. Linux CPU and Linux GPU/CUDA validation now prove the
+coordinator presence when `demo_ui = false`, and Linux CPU and Linux GPU/CUDA validation prove the
 pool-routing and backpressure gates required by Wave J.
 
 ## Current Repo Assessment
@@ -385,7 +341,7 @@ None.
 
 **Status**: Done
 **Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — `validateCatalogModelInference` (`test/integration/Spec.hs`) is upgraded from the model-id + runtime-mode echo to a per-family real-output result contract dispatched on `ResultFamily` (via `resultFamilyForDescriptor`): text families (LLM, speech) assert a non-empty inline continuation and no object ref; every artifact family asserts an `infernix-demo-objects/` object reference whose key extension matches the family's artifact type (`.zip` source-separation, `.mid`/`.midi` audio-to-MIDI, `.mid`/`.midi`/`.musicxml`/`.xml` music transcription, `.png` image, `.mp4` video, `.wav` audio generation, `.musicxml`/`.xml` OMR) — shape/type, never golden strings. One DRY substrate-aware suite that reads the active `.dhall` and traverses the README rows; no per-substrate suites. Proven machine-independent by `cabal build test:infernix-integration` (compiles/typechecks) and `cabal test infernix-unit`, which pass on the recorded CUDA Linux host; the assertions themselves pass only when real engines run (Section P: results name the single substrate they exercised)
-**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — `linux-gpu` plus `linux-cpu` run the per-family real-output integration suite against their own catalog columns. The selected-lane gate passed on 2026-06-20: full `./bootstrap/linux-gpu.sh test` passed style, unit, web unit, integration, and routed Playwright against the CUDA catalog, and rebuilt-image `./bootstrap/linux-cpu.sh test` passed the matching CPU lane. Current Apple integration evidence also passes cluster-up, route probes, mounted Apple substrate loading, coordinator `serviceRuntimeMode: apple-silicon`, derived Apple pool-topic routing, host engine processing, pinned Apple host-engine `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared` coexistence, Apple production `demo_ui = false` assertions, and edge-port conflict rediscovery.
+**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — `linux-gpu` plus `linux-cpu` run the per-family real-output integration suite against their own catalog columns. The selected-lane gate passed: full `./bootstrap/linux-gpu.sh test` passed style, unit, web unit, integration, and routed Playwright against the CUDA catalog, and rebuilt-image `./bootstrap/linux-cpu.sh test` passed the matching CPU lane. Current Apple integration evidence also passes cluster-up, route probes, mounted Apple substrate loading, coordinator `serviceRuntimeMode: apple-silicon`, derived Apple pool-topic routing, host engine processing, pinned Apple host-engine `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared` coexistence, Apple production `demo_ui = false` assertions, and edge-port conflict rediscovery.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Worker.hs`, `test/integration/Spec.hs`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -413,9 +369,7 @@ MinIO, Pulsar, and operator-managed PostgreSQL substrate.
 
 ### Remaining Work
 
-None. The per-family integration contract and the selected `linux-gpu` plus `linux-cpu` full-suite
-gates are closed on current source. Earlier CUDA Linux failure notes are preserved in
-[cohort-validation-waves.md](cohort-validation-waves.md) as historical diagnostics.
+None.
 
 ---
 
@@ -423,7 +377,7 @@ gates are closed on current source. Earlier CUDA Linux failure notes are preserv
 
 **Status**: Done
 **Code-side closure**: Complete on the recorded CUDA Linux host (x86_64 + RTX 5090) — the routed Playwright suite (`web/playwright/inference.spec.js`) per-model smoke matrix now asserts the per-family rendered result for every demo-visible row (text bubble vs image/audio/video/download), staying substrate-agnostic via a JS classifier `expectedResultRenderKind` (keys on model family + matrix-row metadata, never substrate id or engine binding). The web UI renders artifact results per-family: `web/src/Infernix/Web/Chat.purs` renders `inferenceResultArtifacts` as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the object-key extension. The PureScript + Playwright code is written and `infernix lint files` passes on the recorded CUDA Linux host. NOTE: the web unit suite (`spago`) requires Node 22 and cannot run on this bare host (host has Node 18; Node 22 makes spago segfault — an environmental toolchain limit), so 6.3's web-unit gate is exercised in the supported Linux **container** lane (Node 22) / cohort batch
-**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — `linux-gpu` plus `linux-cpu` run the routed Playwright suite against their own catalog column. Full routed Linux real-output and browser evidence closed on 2026-06-20 with `./bootstrap/linux-gpu.sh test` (`9 passed`, including the 16-row GPU browser matrix) plus rebuilt-image `./bootstrap/linux-cpu.sh test` (`9 passed`, including the CPU browser matrix). Current Apple focused e2e passes 9/9 after the browser matrix uploads object fixtures for object-input model families, asserts generated artifact refs without requiring presigned media visibility, and allows a real cold Hugging Face snapshot through the 900-second bootstrap-ready envelope; the subsequent full Apple aggregate also passed lint, unit, integration, and 9/9 routed Playwright.
+**Cohort gate**: Closed [Wave I](cohort-validation-waves.md) — `linux-gpu` plus `linux-cpu` run the routed Playwright suite against their own catalog column. Full routed Linux real-output and browser evidence closed with `./bootstrap/linux-gpu.sh test` (`9 passed`, including the 16-row GPU browser matrix) plus rebuilt-image `./bootstrap/linux-cpu.sh test` (`9 passed`, including the CPU browser matrix). Current Apple focused e2e passes 9/9 after the browser matrix uploads object fixtures for object-input model families, asserts generated artifact refs without requiring presigned media visibility, and allows a real cold Hugging Face snapshot through the 900-second bootstrap-ready envelope; the subsequent full Apple aggregate also passed lint, unit, integration, and 9/9 routed Playwright.
 **Implementation**: `src/Infernix/CLI.hs`, `web/playwright/inference.spec.js`, `web/src/Infernix/Web/Chat.purs`, `web/src/Infernix/Web/Router.purs`, `web/src/Main.purs`, `web/src/index.html`, `web/test/Main.purs`, `web/test/run_playwright_matrix.mjs`, `web/package.json`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/reference/web_portal_surface.md`
 
@@ -450,12 +404,22 @@ browser surface through the shared edge.
   `/workspace/.data/runtime/playwright-fixture.json` inside the Linux launcher; Playwright exposes
   it as the `infernixFixture` option fixture)
 - supported Playwright invocations use `npm --prefix web exec -- playwright ...`
+- the browser helper drives cluster state through a closed, harness-authorized package command
+  vocabulary rather than the operator-facing `infernix kubectl`. It exposes only package-owned
+  model-engine preparation and fixed demo-pod replacement actions; the Haskell side requires the
+  harness reservation and persisted harness ownership, derives every deployment name and replica
+  count from the generated runtime mode and catalog rather than accepting caller-supplied targets,
+  and routes scale, list, delete, and wait through the closed cluster command language. The rendered
+  scale argv carries the mandatory ambient-suppressing `--kuberc=/dev/null`, so the helper cannot
+  inherit an operator's ambient client configuration
 - E2E covers publication details, model selection, manual inference submission, and result rendering
 
 ### Validation
 
 - `infernix test e2e` hits the routed path rather than bypassing the edge
 - the routed Playwright suite fails if any active-substrate catalog entry is skipped
+- focused regressions cover the closed helper's registry parsing, its exact ambient-suppressed scale
+  argv, and its rejection of a negative replica count
 - Linux routed E2E runs entirely inside the active `infernix-linux-<mode>:local` launcher image
   via `docker compose run --rm infernix infernix test e2e`, which invokes
   `npm --prefix web exec -- playwright test ...` against the routed cluster on Docker's private
@@ -464,25 +428,22 @@ browser surface through the shared edge.
 - Apple host-native routed E2E runs host `npm exec` Playwright fed by the same typed
   `.data/runtime/playwright-fixture.json` against the published localhost edge port, and is covered
   by Apple cohort validation batches
+- the routed Playwright suite (`web/playwright/inference.spec.js`) asserts the per-family rendered
+  result for every demo-visible row (inline text bubble, audio player, image, video, MIDI or
+  MusicXML download) while staying substrate-agnostic via the JS classifier
+  `expectedResultRenderKind`, which keys on model family plus matrix-row metadata and never on
+  substrate id or engine binding; `infernix-demo` chooses the engine binding from the active
+  `.dhall` and the browser does not branch on substrate id or engine family. The web UI renders
+  artifact results per-family in `web/src/Infernix/Web/Chat.purs` (`inferenceResultArtifacts`
+  rendered as `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on
+  the object-key extension)
+- asserting the real rendered output needs a deployed cluster, so each cohort runs the routed suite
+  against its own catalog column (Apple Metal with headless materialization; CUDA
+  `linux-cpu`/`linux-gpu`) under [Wave I](cohort-validation-waves.md)
 
 ### Remaining Work
 
-- **Code (machine-independent — validated on the recorded CUDA Linux host): DONE.** The routed
-  Playwright suite (`web/playwright/inference.spec.js`) now asserts the per-family rendered result
-  for every demo-visible row (inline text bubble, audio player, image, video, MIDI or MusicXML
-  download) while staying substrate-agnostic via the JS classifier `expectedResultRenderKind` (keys
-  on model family + matrix-row metadata, never substrate id or engine binding); `infernix-demo`
-  chooses the engine binding from the active `.dhall` and the browser does not branch on substrate
-  id or engine family. The web UI renders artifact results per-family in
-  `web/src/Infernix/Web/Chat.purs` (`inferenceResultArtifacts` rendered as
-  `<img>`/`<audio>`/`<video>`/download `<a>` with `data-result-artifact-kind` keyed on the
-  object-key extension). Proven by `infernix lint files`, which passes on the present CUDA Linux
-  host. The web unit suite (`spago`, Node 22) cannot run on this bare host (host Node 18; Node 22
-  makes spago segfault — an environmental toolchain limit), so its gate is exercised in the
-  supported Linux container lane (Node 22) / cohort batch.
-- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** asserting the real rendered
-  output needs a deployed cluster; each cohort runs the routed suite against its own catalog column
-  (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`).
+None.
 
 ---
 
@@ -549,15 +510,15 @@ Verify the same product contract across Apple host-native and Linux outer-contai
 - validation closes when supported `infernix test ...` reruns leave behind no residual cluster
   state because each phase is bracketed by `cluster down` even when the test action fails partway
   through
+- the cluster-lifecycle contract (`cluster up` / `status` / `down`) is validated on both execution
+  contexts, apple-silicon included, and the full per-model apple-silicon environment-matrix run is
+  proven under [Wave R](cohort-validation-waves.md) with zero OS OOM-kill: Sprint 4.26 admission
+  control makes an over-budget model fail clean (`status=failed`) instead of OS-OOM-killing the
+  daemon. That proof is owned by Sprint 6.37, paired with Phase 4 Sprint 4.26
 
 ### Remaining Work
 
-None for the cluster-lifecycle contract (`cluster up`/`status`/`down` validated on both execution
-contexts, apple-silicon included). The **full per-model apple-silicon environment-matrix run** is now
-**green**: Sprint 4.26 admission control makes an over-budget model fail clean (`status=failed`)
-instead of OS-OOM-killing the daemon, and [Wave R](cohort-validation-waves.md) (2026-07-08) proved
-the full 16-model Apple `test integration` with zero OS OOM-kill (owned by Sprint 6.37, paired with
-Phase 4 Sprint 4.26).
+None.
 
 ---
 
@@ -591,19 +552,18 @@ hard-coded lane lists.
 - changing the built substrate changes the exercised catalog and engine assertions automatically
 - integration fails if any generated catalog entry is skipped
 - routed E2E fails if any demo-visible generated catalog entry is skipped once Sprint 6.3 closes
+- `allMatrixRowIds` is exported from `src/Infernix/Models.hs`, `test/unit/Spec.hs` asserts that the
+  union of `catalogForMode` across `apple-silicon`, `linux-cpu`, and `linux-gpu` equals the full set
+  of README matrix rows, and the README-to-matrix coverage check in `src/Infernix/Lint/Docs.hs`
+  (`validateReadmeMatrixCoverage`) asserts under `infernix lint docs` that every catalog
+  `referenceModel` appears in `README.md`
+- requiring a per-family assertion for every active-substrate catalog entry rides Sprints 6.2/6.3;
+  each cohort runs it against its own catalog column (Apple Metal with headless materialization;
+  CUDA `linux-cpu`/`linux-gpu`) under [Wave I](cohort-validation-waves.md)
 
 ### Remaining Work
 
-- **Code (machine-independent — validated on the recorded CUDA Linux host): DONE.** `allMatrixRowIds`
-  is exported from `src/Infernix/Models.hs`; `test/unit/Spec.hs` asserts that the union of
-  `catalogForMode` across `apple-silicon`, `linux-cpu`, and `linux-gpu` equals the full set of
-  README matrix rows; and a README-to-matrix coverage check (`src/Infernix/Lint/Docs.hs`
-  `validateReadmeMatrixCoverage`) was added under `infernix lint docs` asserting every catalog
-  `referenceModel` appears in README.md. Proven by `cabal test infernix-unit` and
-  `infernix lint docs`, which pass on the recorded CUDA Linux host.
-- **Cohort gate ([Wave I](cohort-validation-waves.md), Stage 2):** requiring a per-family assertion
-  for every active-substrate catalog entry rides Sprints 6.2/6.3; each cohort runs it against its
-  own catalog column (Apple Metal with headless materialization; CUDA `linux-cpu`/`linux-gpu`).
+None.
 
 ---
 
@@ -1183,7 +1143,7 @@ None.
 ## Sprint 6.20: Haskell Style Toolchain Compatibility Closure [Done]
 
 **Status**: Done
-**Superseded runtime topology (2026-08-09):** Phase 1 Sprint 1.25 retires this sprint's runtime
+**Superseded runtime topology:** Phase 1 Sprint 1.25 retires this sprint's runtime
 formatter install and executable bootstrap. The objective, deliverables, and validation below are
 historical evidence for the topology that closed Sprint 6.20, not the current style-gate design.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `docker/Dockerfile`, `documents/development/haskell_style.md`, `documents/reference/cli_reference.md`, `documents/engineering/testing.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/system-components.md`
@@ -1270,9 +1230,9 @@ None.
 ## Sprint 6.22: Apple Bootstrap Lifecycle Closure [Done]
 
 **Status**: Done
-**Superseded protobuf prerequisite (2026-08-09):** the same-process `ghc`/`cabal` activation result
+**Superseded protobuf prerequisite:** the same-process `ghc`/`cabal` activation result
 remains, but Phase 1 Sprint 1.24 deleted Custom Setup and the Apple Homebrew `protoc` prerequisite.
-The `protoc` bullets below are retained only as evidence of the 2026-06-25 source this sprint ran.
+The `protoc` bullets below are retained only as evidence of the source this sprint ran against.
 **Implementation**: `bootstrap/apple-silicon.sh`, `bootstrap/common.sh`, `src/Infernix/CLI.hs`, `src/Infernix/HostPrereqs.hs`, `src/Infernix/Python.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/Workflow.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`, `docker/Dockerfile`, `test/unit/Spec.hs`
 **Docs to update**: `README.md`, `AGENTS.md`, `CLAUDE.md`, `DEVELOPMENT_PLAN/README.md`, `DEVELOPMENT_PLAN/00-overview.md`, `DEVELOPMENT_PLAN/system-components.md`, `documents/development/assistant_workflow.md`, `documents/development/local_dev.md`, `documents/development/python_policy.md`, `documents/development/testing_strategy.md`, `documents/engineering/docker_policy.md`, `documents/engineering/portability.md`, `documents/operations/apple_silicon_runbook.md`, `documents/operations/cluster_bootstrap_runbook.md`
 
@@ -1435,8 +1395,7 @@ otherwise depend on a transient target tag that no longer exists locally.
 
 ### Remaining Work
 
-None. Apple cohort validation closed in [Wave A](cohort-validation-waves.md), and CUDA Linux
-cohort validation closed in [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -1505,8 +1464,7 @@ same-binary host daemon fed by Pulsar batches.
 
 ### Remaining Work
 
-None. Apple cohort split-topology validation closed in [Wave A/A.2](cohort-validation-waves.md),
-and CUDA Linux cohort validation closed in [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -1610,7 +1568,7 @@ None.
 ## Sprint 6.28: Test Fixture and Lint Gate Retirement [Done]
 
 **Status**: Done
-**Superseded Setup exception (2026-08-09):** Phase 1 Sprint 1.24 deletes `Setup.hs` and its
+**Superseded Setup exception:** Phase 1 Sprint 1.24 deletes `Setup.hs` and its
 proto-lens bootstrap entirely. The Setup-specific allowlist and validation commands below describe
 the historical source of this completed sprint, not the current lint surface.
 **Implementation**: `test/unit/Spec.hs`, `test/integration/Spec.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `src/Infernix/Lint/Docs.hs`, `src/Infernix/Lint/Chart.hs`
@@ -1627,11 +1585,11 @@ PATH-resolved invocation regressions.
   typed fixtures or in-process fixtures. Every `getEnvironment` whole-env capture is removed from
   test code.
 - `src/Infernix/Lint/HaskellStyle.hs` rejects `lookupEnv`, `getEnv`, `getEnvironment`, `setEnv`,
-  and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the 2026-06-06
+  and `unsetEnv` outside the remaining explicitly named non-test exceptions. After the
   CLI/Files/Workflow no-env cleanup, the `envFunctionExemptedFiles` list contains only `Setup.hs`
   and the lint module itself (`src/Infernix/Lint/HaskellStyle.hs`); the `src/Infernix/Python.hs`
   and `src/Infernix/CLI.hs` rows are both gone (CLI.hs no longer performs env IO), and the closed
-  CLI/Files/Workflow exemptions are recorded as Removed (2026-06-06) in
+  CLI/Files/Workflow exemptions are recorded as Removed in
   [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 - `src/Infernix/Lint/HaskellStyle.hs` rejects any `proc "<bare-name>"` matching a known external
   tool; the non-test exemption list (`bareNameProcExemptedFiles`) now contains only
@@ -1675,9 +1633,7 @@ PATH-resolved invocation regressions.
 
 ### Remaining Work
 
-None. Apple cohort lint/unit/integration validation closed in
-[Wave A](cohort-validation-waves.md), and CUDA Linux cohort lint/unit/integration/`test all`
-validation closed in [Wave C](cohort-validation-waves.md).
+None.
 
 ---
 
@@ -1719,7 +1675,7 @@ None.
 ## Sprint 6.30: Single-Toolchain GHC 9.12.4 Closure [Done]
 
 **Status**: Done
-**Superseded formatter bootstrap (2026-08-09):** the one-project-compiler result remains current,
+**Superseded formatter bootstrap:** the one-project-compiler result remains current,
 but Phase 1 Sprint 1.25 deletes the runtime `cabal install` and formatter executables described
 below. Separate in-process package solver worlds now own Ormolu/HLint and Cabal-format so their incompatible
 Cabal-syntax worlds do not share one solver plan.
@@ -1821,8 +1777,7 @@ instead of the legacy Tart helper.
 
 ### Remaining Work
 
-None. Wave I evidence is recorded for the selected `linux-gpu` plus `linux-cpu` gates, and the
-Apple materialization/e2e/all evidence is recorded as supporting host evidence.
+None.
 
 ---
 
@@ -1842,10 +1797,10 @@ and mounted live-source `cabal test infernix-unit`, `cabal test infernix-haskell
 and `cabal run exe:infernix -- test lint`. Current source also adds the real Pulsar
 single-host logical `Shared` backlog harness in `test/integration/Spec.hs` and compile-validates it
 on the present Linux outer-container lane with a mounted-source linux-gpu Compose launcher run of
-`cabal build test:infernix-integration`; the 2026-06-16 Apple integration rerun executes it against
+`cabal build test:infernix-integration`; the Apple integration rerun executes it against
 the live Apple Pulsar lane. The same current-source mounted linux-gpu validation also passes
 `infernix test lint`, `infernix test unit`, focused `infernix lint files/docs/proto/chart`,
-`infernix docs check`, and `git diff --check`. The 2026-06-16 rebuilt-image Linux CPU integration
+`infernix docs check`, and `git diff --check`. The rebuilt-image Linux CPU integration
 pass exercises the Kubernetes validation side: engine-pool placement across two workers,
 unique-topic `Shared` backlog/backpressure, pod replacement, node drain, anti-affinity, lifecycle
 rebinding, production `demo_ui = false` publication, and pool-topic exactly-once accounting.
@@ -1853,7 +1808,7 @@ rebinding, production `demo_ui = false` publication, and pool-topic exactly-once
 pinned `Exclusive` duplicate-consumer rejection, same-machine Apple `Shared` subscription
 coexistence, Apple single-host logical `Shared` backlog/backpressure, and Apple production
 `demo_ui = false` coordinator-plus-engine-pool assertions, plus Linux CPU pool placement and
-backpressure. Linux GPU/CUDA pool placement and full cohort validation closed on 2026-06-20 via full
+backpressure. Linux GPU/CUDA pool placement and full cohort validation closed via full
 `./bootstrap/linux-gpu.sh test` paired with rebuilt-image `./bootstrap/linux-cpu.sh test`; physical
 Apple multi-host routing is hardware-deferred proof while no second Apple host is available.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Substrate.hs` (substrate decoder type = reflected schema; no tracked `.dhall`), `src/Infernix/DemoConfig.hs`, `src/Infernix/Models.hs`, `src/Infernix/Runtime/Pulsar.hs`, `src/Infernix/Runtime/Daemon.hs`, `test/unit/Spec.hs`, `test/integration/Spec.hs`, `documents/architecture/engine_pool_routing.md`, `documents/architecture/daemon_topology.md`
@@ -1890,24 +1845,20 @@ guessing.
 
 ### Remaining Work
 
-None. Unit validation rejects invalid routing graphs and subscription states, and proves derived
-topic/member selection for all three substrates. Wave J closed Linux GPU pool-placement and full
-cohort validation on 2026-06-20, paired with rebuilt-image `linux-cpu` validation. Physical Apple
-multi-host routing is tracked as hardware-deferred proof, not as a blocker for the current
-single-host logical backpressure gate.
+None.
 
 ---
 
 ## Sprint 6.33: Fail-Closed HA and Service-Loop Assertions [Done]
 
 **Status**: Done
-**Code-side closure**: Complete and validated 2026-06-24 (code-side: the rebuilt `linux-cpu` image compiles
+**Code-side closure**: Complete and validated (code-side: the rebuilt `linux-cpu` image compiles
 `test:infernix-integration`, with `infernix lint docs` / `test unit` / `test lint` green). Built on the
 realness enforcement established by Phase 0 (the `infernix-haskell-style` realness check + the
 `check-code` AST guard) and the real Linux engines + real per-family fixtures + fail-closed per-row
 int/e2e owned by Phase 4, it strengthened the then-current HA / chaos / service-loop suites so they
 asserted a real, completed result instead of tolerating a status-only pass. At this sprint's
-2026-06-24 closure, the Apple per-model run still OS-OOM-killed the daemon before results existed;
+closure, the Apple per-model run still OS-OOM-killed the daemon before results existed;
 that historical residual was owned by Sprint 6.37 / Phase 4 Sprint 4.26:
 `validateServiceRuntimeLoop`
 (`test/integration/Spec.hs`) now uploads the per-family input fixture and asserts completion + per-family
@@ -1944,15 +1895,15 @@ None.
 ## Sprint 6.34: Docs-Lint Coverage and No-Env/No-PATH Enforcement Closure [Done]
 
 **Status**: Done
-**Superseded Setup exception (2026-08-09):** Phase 1 Sprint 1.24 removes `Setup.hs`, Custom Setup,
+**Superseded Setup exception:** Phase 1 Sprint 1.24 removes `Setup.hs`, Custom Setup,
 and build-time proto-lens generation. The Setup confinement below is historical validation evidence;
 the current package has no Setup exception.
-**Superseded style-process resolution (2026-08-09):** Phase 1 Sprint 1.25 removes formatter
+**Superseded style-process resolution:** Phase 1 Sprint 1.25 removes formatter
 bootstrap, Ormolu/HLint host-tool paths, the temporary manifest, and the nested Cabal formatter.
 The current root style component and solver-isolated Cabal-format package invoke pinned libraries
 in-process; the resolution account below is
 historical validation evidence.
-**Code-side closure**: Complete 2026-06-29. `src/Infernix/Lint/Docs.hs` now includes the authoritative
+**Code-side closure**: Complete. `src/Infernix/Lint/Docs.hs` now includes the authoritative
 configuration, no-env, host-tool, cluster-config, realness, Apple materialization, Keycloak, and Phase 7
 plan docs in the governed lint set. At that closure point, `src/Infernix/Lint/HaskellStyle.hs` resolved formatter bootstrap and
 `cabal format` through `HostConfig.toolPaths.cabal` or fixed `HostTools` candidates instead of bare
@@ -2013,7 +1964,7 @@ None.
 
 ## Sprint 6.35: Expanded MT3 Catalog Integration and E2E Gate [Done]
 
-**Status**: Done — proven by Wave P (2026-07-04)
+**Status**: Done — proven by Wave P
 **Code-side closure**: Complete. The integration suite and routed Playwright suite traverse the
 generated active catalog, and unit/docs lint see the expanded README/catalog matrix with
 `music-mt3-infer` and `music-mr-mt3`. The PyTorch engine carries the resulting MT3 compatibility
@@ -2023,8 +1974,8 @@ contract: `transformers` bounded to `>=4.46,<4.50` across the CPU/CUDA/Apple gro
 `infernix lint docs`, Linux-image `cabal test infernix-unit`, and
 `poetry --directory python run check-code`. The per-attempt image-digest failure→fix chronology
 lives in [cohort-validation-waves.md](cohort-validation-waves.md).
-**Cohort gate**: Closed [Wave O](cohort-validation-waves.md) → [Wave P](cohort-validation-waves.md)
-(2026-07-04). Both `linux-gpu` and `linux-cpu` full `infernix test all` are GREEN with routed
+**Cohort gate**: Closed [Wave O](cohort-validation-waves.md) → [Wave P](cohort-validation-waves.md).
+Both `linux-gpu` and `linux-cpu` full `infernix test all` pass with routed
 Playwright `9/9` over the expanded catalog (real MIDI for both MT3 rows), including the 27 GB
 `video-wan21-t2v` row once Phase 8 eager model-cache staging pre-staged the Wan weights. Apple uses
 the catalog-supported PyTorch CPU binding.
@@ -2051,29 +2002,27 @@ before the validation phase returns to `Done`.
 - Code-side gates: Linux-image `infernix lint docs`, Linux-image `cabal test infernix-unit`, and
   `poetry --directory python run check-code` pass.
 - Cohort gate: rebuilt `./bootstrap/linux-cpu.sh test` and `./bootstrap/linux-gpu.sh test` over the
-  expanded catalogs are GREEN (Wave O → Wave P), with routed Playwright `9/9` and real MIDI for both
+  expanded catalogs pass (Wave O → Wave P), with routed Playwright `9/9` and real MIDI for both
   MT3 rows. The historical per-attempt failure→fix diagnostics are recorded in
   [cohort-validation-waves.md](cohort-validation-waves.md).
 
 ### Remaining Work
 
-Both MT3 rows are proven: `linux-cpu` full-suite GREEN (`9/9`, 2026-07-02) and the clean `linux-gpu`
-`9/9` closed by **Wave P** (2026-07-04) once Phase 8 eager model-cache staging pre-staged the
-CUDA-only `video-wan21-t2v` weights. No remaining work — this sprint is closed.
+None.
 
 ---
 
 ## Sprint 6.36: Real-Output and Matrix Validation Hardening [Done]
 
 **Status**: Done — code-side hardening landed and machine-independent-validated; Wave R proved the Apple routed per-model matrix, and Wave S proved the same substrate-agnostic browser assertions on rebuilt `linux-cpu` and `linux-gpu` full-suite lanes.
-**Code-side closure**: Complete for the machine-independent-verifiable pieces (2026-07-08). Integration already asserts real, non-empty inline text for the text families and fetches every artifact row with a byte+magic-byte probe (`assertResultFamilyContract` + `assertResultObjectRefFetchable`, from Sprints 4.23/6.33). New this sprint: `Chat.purs` marks a result body with `data-inline-output="present"|"absent"` so a fabricated or empty result rendered behind the `"No inline output."` placeholder can no longer pass a real-output check; the routed browser matrix now requires `data-inline-output="present"` and rejects the placeholder for text families (defeating the fallback); and a catalog-completeness guard asserts the model-picker option set equals the published demo-config catalog (the matrix rows minus the active-mode residuals). Verified by the web unit suite (`71/71`), `node --check` on the Playwright spec, and `cabal build all` (integration compiles).
-**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md). Apple routed Playwright was GREEN for this sprint on 2026-07-08 (`test e2e` ran the per-model browser matrix with the catalog-completeness guard + `data-inline-output` real-text assertion across all 16 apple models). Wave S then closed the rebuilt Linux lanes on 2026-07-09: `./bootstrap/linux-cpu.sh test` passed routed Playwright `15/15`, and `./bootstrap/linux-gpu.sh test` passed routed Playwright `15/15` with the browser per-model matrix completing every catalog row in 18.5 minutes.
+**Code-side closure**: Complete for the machine-independent-verifiable pieces. Integration already asserts real, non-empty inline text for the text families and fetches every artifact row with a byte+magic-byte probe (`assertResultFamilyContract` + `assertResultObjectRefFetchable`, from Sprints 4.23/6.33). New this sprint: `Chat.purs` marks a result body with `data-inline-output="present"|"absent"` so a fabricated or empty result rendered behind the `"No inline output."` placeholder can no longer pass a real-output check; the routed browser matrix now requires `data-inline-output="present"` and rejects the placeholder for text families (defeating the fallback); and a catalog-completeness guard asserts the model-picker option set equals the published demo-config catalog (the matrix rows minus the active-mode residuals). Verified by the web unit suite (`71/71`), `node --check` on the Playwright spec, and `cabal build all` (integration compiles).
+**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md). Apple routed Playwright passed for this sprint (`test e2e` ran the per-model browser matrix with the catalog-completeness guard + `data-inline-output` real-text assertion across all 16 apple models). Wave S then closed the rebuilt Linux lanes: `./bootstrap/linux-cpu.sh test` passed routed Playwright `15/15`, and `./bootstrap/linux-gpu.sh test` passed routed Playwright `15/15` with the browser per-model matrix completing every catalog row in 18.5 minutes.
 **Implementation**: `web/src/Infernix/Web/Chat.purs`, `web/playwright/inference.spec.js`, `test/integration/Spec.hs`
 **Docs to update**: `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`
 
 ### Objective
 
-Close the "proves less than it appears" gaps the 2026-07-06 review found in the fail-closed matrix
+Close the "proves less than it appears" gaps a review found in the fail-closed matrix
 suites, so a shrunken catalog or an empty text result cannot pass.
 
 ### Deliverables
@@ -2093,16 +2042,14 @@ suites, so a shrunken catalog or an empty text result cannot pass.
 ### Validation
 
 - Code-side: the web unit suite (`71/71`) compiles the `Chat.purs` change, `node --check` accepts the
-  Playwright spec, and the integration suite compiles — all green (2026-07-08).
+  Playwright spec, and the integration suite compiles — all green.
 - Cohort: [Wave R](cohort-validation-waves.md) routed Playwright on Apple, and [Wave S](cohort-validation-waves.md) routed Playwright on rebuilt `linux-cpu` + `linux-gpu`.
+- Out of scope here: RBAC, admin-versus-user, lifecycle, and dashboard e2e coverage is owned by
+  [Phase 9 Sprint 9.8](phase-9-access-control-and-monitoring.md).
 
 ### Remaining Work
 
-None. The Apple routed per-model matrix (catalog-completeness guard + `data-inline-output` real-text
-assertion) is **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08), and rebuilt `linux-cpu` /
-`linux-gpu` routed Playwright is **GREEN** ([Wave S](cohort-validation-waves.md), 2026-07-09).
-RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
-[Phase 9 Sprint 9.8](phase-9-access-control-and-monitoring.md).
+None.
 
 ---
 
@@ -2110,12 +2057,12 @@ RBAC / admin-vs-user / lifecycle / dashboard e2e is owned by
 
 **Status**: Done — unblocked by Phase 4 Sprint 4.26 for the original Apple-only classifier; the
 memory-exhaustion classification is in the integration lane, the **Apple integration never-OOM proof
-is GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08: full 16-model per-model
+is proven** ([Wave R](cohort-validation-waves.md): full 16-model per-model
 `test integration` all `status=completed`, zero OS OOM-kill), and Wave S revalidated the Linux full
 suites for that scope. Sprint 6.38 supersedes this with typed resource-admission validation across
 Apple, Linux CPU, and Linux GPU.
-**Code-side closure**: Complete for the classification (2026-07-08). Phase 4 Sprint 4.26's admission control landed, so an over-budget apple-silicon model now publishes a clean `status=failed` instead of OS-OOM-killing the daemon. The integration lane adds `classifyAppleMemoryBoundedResult`: an over-budget model is a clean per-row `AppleMemoryBoundedFailClosed` (its message names the inference RAM budget), distinguishable from a fabricated pass (`status /= completed`) and a real engine failure; a genuinely missing result is named as the OS-OOM-kill / stall symptom. Rows that fit the budget must still complete and honor the per-family real-output contract, so behavior is unchanged on hosts where the whole catalog fits. Verified by `cabal build all` (the integration suite compiles) and `cabal test infernix-haskell-style`.
-**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **GREEN (2026-07-08)**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **GREEN (2026-07-09)** for the original fail-closed result-handling scope; Linux CPU pod-memory and Linux GPU VRAM admission are reopened in Sprint 6.38.
+**Code-side closure**: Complete for the classification. Phase 4 Sprint 4.26's admission control landed, so an over-budget apple-silicon model now publishes a clean `status=failed` instead of OS-OOM-killing the daemon. The integration lane adds `classifyAppleMemoryBoundedResult`: an over-budget model is a clean per-row `AppleMemoryBoundedFailClosed` (its message names the inference RAM budget), distinguishable from a fabricated pass (`status /= completed`) and a real engine failure; a genuinely missing result is named as the OS-OOM-kill / stall symptom. Rows that fit the budget must still complete and honor the per-family real-output contract, so behavior is unchanged on hosts where the whole catalog fits. Verified by `cabal build all` (the integration suite compiles) and `cabal test infernix-haskell-style`.
+**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **proven**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **proven** for the original fail-closed result-handling scope; Linux CPU pod-memory and Linux GPU VRAM admission are reopened in Sprint 6.38.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -2137,21 +2084,17 @@ per-model browser matrix either complete or fail-closed per row with **zero** OS
 
 ### Validation
 
-- Code-side: the integration suite compiles with the classification and the style gate is green
-  (2026-07-08).
+- Code-side: the integration suite compiles with the classification and the style gate is clean.
 - Cohort (apple-silicon, paired with Phase 4 Sprint 4.26): the full 16-model `test integration` is
-  **GREEN ([Wave R](cohort-validation-waves.md), 2026-07-08)** — all `status=completed`, zero OS
+  **proven ([Wave R](cohort-validation-waves.md))** — all `status=completed`, zero OS
   OOM-kill.
-- Linux full suites: **GREEN ([Wave S](cohort-validation-waves.md), 2026-07-09)** — rebuilt
+- Linux full suites: **proven ([Wave S](cohort-validation-waves.md))** — rebuilt
   `linux-cpu` and `linux-gpu` full `./bootstrap/* test` lanes passed integration and routed
   Playwright.
 
 ### Remaining Work
 
-None. The apple-silicon full per-model `test integration` never-OOM proof and the routed per-model
-Playwright matrix are **GREEN** ([Wave R](cohort-validation-waves.md), 2026-07-08), and the
-`linux-cpu`/`linux-gpu` full suites are **GREEN** ([Wave S](cohort-validation-waves.md), 2026-07-09).
-Code-side (the classification) is complete.
+None.
 
 ---
 
@@ -2160,211 +2103,37 @@ Code-side (the classification) is complete.
 **Status**: Done — code-side complete and Wave T full live integration/e2e validation is closed on
 `linux-cpu` plus the selected `linux-gpu` accelerator.
 **Historical-scope note**: this sprint validates the pre-audit resource-admission API only. The
-Phase 1 compiler/refiner supersedes that path, and Phase 6 Sprint 6.44 owns the current
-independently indexed Linux GPU RAM/VRAM enforcer and its new cohort evidence.
-**Code-side closure**: Complete on 2026-07-09 in the Linux outer-container lane. Unit coverage now
-exercises pure admission decisions for enforced, enforced-zero, and explicit unenforced budgets;
-config validation accepts mixed-size catalogs; protobuf/storage/result-bridge roundtrips preserve
-typed `ModelMemoryLimitExceeded`; and `test/integration/Spec.hs` classifies per-row capacity
-failures by constructor and MiB quantities instead of parsing text. Routed Playwright now records the
-browser-facing half of the same contract by accepting only typed `ModelMemoryLimitExceeded` failures
-for rows whose catalog footprint exceeds the active demo-config budget, while preserving
-fail-closed behavior for any other failed result; the web unit suite also covers the live-discovered
-append-before-snapshot race where a fast failed result arrives before the active conversation
-snapshot, and the reducer now preserves already-seen append messages when a stale same-context
-snapshot arrives afterward. The stale-snapshot merge is validated on rebuilt Linux CPU image
-`sha256:05e0aadf5ea0feb98f25e82ab196f23893be0441e59f5e91f9fec346bfa6d8c0` by
-`./bootstrap/linux-cpu.sh build` and
-`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix
-test unit` (Haskell unit plus web `75/75`). Earlier gates also passed
-`docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix
-test lint`, `infernix lint files|docs|proto|chart`, `infernix docs check`, and a source-bound
-`cabal build test:infernix-integration` compile preflight.
-**Latest Wave T evidence**: The 2026-07-10 `./bootstrap/linux-cpu.sh test` rerun on
-`sha256:05e0aadf5ea0feb98f25e82ab196f23893be0441e59f5e91f9fec346bfa6d8c0` passed Haskell style,
-Python `check-code`, Haskell unit, web `75/75`, and the full live integration lane, including typed
-`ModelMemoryLimitExceeded` classifications for the Linux CPU over-budget rows and smaller-model
-continuity through the HA/chaos tail. The routed browser gate remained open in this attempt because Playwright ended
-`14/16`: the pre-existing artifact preview grant timing spec failed, and the matrix row with the
-typed terminal over-budget payload still did not render a visible capacity message.
-**Current fix**: The browser reducer now ignores conversation snapshots whose context does not match
-the active context, and the routed artifact helper waits for bounded text/JSON preview readiness
-after the download grant. Focused mounted-source PureScript validation passes `76/76`; a rebuilt
-`linux-cpu` image
-`sha256:c01a9a070ca842b973543301dcbaaa039811492f707fdc20c804aa30bd5f40ee` passes
-`./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web `76/76`. Its full
-`./bootstrap/linux-cpu.sh test` rerun passed style/static/unit, web `76/76`, and the full live
-integration lane including typed CPU admission and smaller-model continuity; routed Playwright ended
-`15/16` on the remaining capacity-message render race. Current source fixes the stale-displayed-context
-append path and focused mounted-source PureScript validation passes `77/77`; rebuilt image
-`sha256:84e3915260e5fd7684b817bf520e9eaca4f40946665d86ae2afb5276b1eedfcb` now contains this fix and
-passed the `./bootstrap/linux-cpu.sh build` CLI-help smoke plus rebuilt-image `infernix test unit`
-with web `77/77`. The full-suite rerun then passed style/static/unit, typed CPU admission,
-smaller-model continuity, HA/chaos, throughput, platform recovery, lifecycle rebinding, and
-anti-affinity, but failed in a later lifecycle cluster-up after a one-shot retained Pulsar claim-root
-reset was exhausted. Rebuilt image
-`sha256:0bf82aba452b2bee8f5de6c4ee136c7d72537ac0dbd4377ee52ee3718d77c0aa` contains the bounded
-retained Pulsar bootstrap repair-loop fix and passed `./bootstrap/linux-cpu.sh build` plus the
-CLI-help smoke and rebuilt-image `infernix test unit` with web `77/77`. Its full-suite rerun passed
-the front gates and full live integration, including typed CPU admission, smaller-model continuity,
-HA/chaos, throughput (`totalPrompts = 12`, `p95Seconds = 82.15346002578735`), platform recovery,
-lifecycle rebinding, anti-affinity, and the `demo_ui = false` lifecycle; repeated retained-data
-cluster-ups no longer hit the prior dirty Pulsar metadata failure. Routed Playwright reached
-`15/16` and failed only the matrix visible capacity-message assertion after receiving the typed
-terminal `ModelMemoryLimitExceeded` payload. Current source adds a same-rendered-context reducer
-guard for transient `activeContextId` staleness plus a raw Haskell-wire decode regression; focused
-mounted-source PureScript validation passes `79/79`. Rebuilt image
-`sha256:4e2e2a9f642ecc15635df849539b82a847d350db19e161cf6517d56a29ea6b62`
-contains that fix and passed `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and
-rebuilt-image `infernix test unit` with web `79/79`. Its full-suite rerun passed Haskell style,
-Python `check-code`, Haskell unit, web `79/79`, and full live integration, including typed CPU
-admission, smaller-model continuity, throughput (`totalPrompts = 12`,
-`p95Seconds = 65.4941475391388`), platform recovery, lifecycle rebinding, anti-affinity, and the
-`demo_ui = false` lifecycle; routed Playwright reached `15/16` and failed only the visible
-capacity-message matrix assertion. Current source now pins submitted prompts into the active
-conversation before fast terminal results. Rebuilt image
-`sha256:1374398c498e4fd38e27991c2fe5cc5d4b1b9c19c1f9ace01b23e0722f3ff306`
-passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
-`infernix test unit` with web `80/80`. The full-suite rerun on that rebuilt image passed Haskell
-style, Python `check-code`, Haskell unit, web `80/80`, and full live integration, including typed
-CPU admission, smaller-model continuity, platform recovery, lifecycle rebinding, anti-affinity, and
-the `demo_ui = false` lifecycle; routed Playwright reached `15/16` and failed only the visible
-capacity-message DOM assertion after receiving the typed terminal payload. Current source now keeps
-a per-context browser conversation cache and focused mounted-source PureScript validation passes
-`81/81`. Rebuilt Linux CPU image
-`sha256:5ccdac2c89b435c1452f63c7fc5df41ca07893bfabc581134aef95db0468ace9` contains that fix and
-passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image `infernix test
-unit` with web `81/81`. Its full rerun passed the front gates and progressed through the live
-Linux CPU integration lane up to PostgreSQL lifecycle rebinding, then hung in the second
-`cluster up` warm-cache path with an idle MinIO NodePort connection. Current source adds bounded
-MinIO warm-cache/model-bootstrap HTTP calls in `Infernix.Runtime.Pulsar` (`HEAD` sentinel probes
-15s, write responses 300s), and focused mounted-source Haskell validation passes
-`cabal test infernix-unit`. Rebuilt Linux CPU image
-`sha256:f0276a2efcae1fa7b2d33a7bb7a0e442b9d4c2be5687515c439f9cb75bf909ec` contains the timeout fix
-and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
-`infernix test unit` with web `81/81`. Its full `linux-cpu` rerun failed before runtime validation
-on a Haskell style import-order diff in `Infernix.Runtime.Pulsar`; current source applies the
-style-only reorder, and focused mounted-source validation passes `cabal test infernix-haskell-style`.
-Rebuilt Linux CPU image
-`sha256:5d423bd3d988103e6777fcfa80b92da07684263af056f7e6c9395e4802176cec` contains that style fix
-and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
-`infernix test unit` with web `81/81`. Its full rerun passed the front gates and advanced through
-typed CPU admission, HA/recovery, model-bootstrap deduplication, throughput (`totalPrompts = 12`,
-`p95Seconds = 65.50490140914917`), Harbor/MinIO/Pulsar recovery, and PostgreSQL failover before
-stalling in the lifecycle-rebinding second `cluster up` while republishing Harbor images; diagnostics
-showed the integration process sleeping with a direct `[docker] <defunct>` child. Current source
-replaces the monitored subprocess waiter in `Infernix.ProcessMonitor` with a blocking reaper plus
-heartbeat loop; focused mounted-source validation passes `cabal test infernix-haskell-style` and
-`cabal test infernix-unit`. Rebuilt Linux CPU image
-`sha256:ab2f12cd81a094ffc267eacfb637ae055c8b3c8cd31e364dfc2f54cbcdf21597` contains the monitor fix
-and passes `./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web
-`81/81`. Its full `linux-cpu` rerun validated the monitor fix by advancing past the previous
-lifecycle-rebinding publish stall and through typed CPU admission plus HA replacement/drain, then
-failed in the model-bootstrap failover/deduplication integration step after timing out on the ready
-topic for `integration-bootstrap-chaos-1783761854482798`. Current source carries the
-bootstrap-failover remediation, and focused mounted-source `cabal test infernix-haskell-style` plus
-`cabal test infernix-unit` pass. Rebuilt Linux CPU image
-`sha256:534f631468380d9e59df713e4e8c78b976e17b17e0c64eb09be4eff8d6f41388` contains the remediation
-and passes `./bootstrap/linux-cpu.sh build` plus rebuilt-image `infernix test unit` with web
-`81/81`. Its full `linux-cpu` rerun passed the front gates, full live integration, the previous
-model-bootstrap failover/deduplication gate, PostgreSQL lifecycle rebinding, anti-affinity, and the
-`demo_ui = false` lifecycle. Routed Playwright passed `15/16`, including Sprint 9.9
-auth/RBAC/account-switching and artifact coverage, then failed only the browser matrix visible
-capacity-result assertion after receiving the typed terminal `ModelMemoryLimitExceeded` payload.
-Current source projects the rendered chat pane from the active context id plus the per-context
-conversation cache so a stored terminal result for the selected context cannot be hidden behind a
-stale `activeConversation` pane. Focused mounted-source PureScript validation passes `82/82`, and
-`node --check web/playwright/inference.spec.js` passes. Rebuilt Linux CPU image
-`sha256:e09f824b06b489a574288dbafcf1c8cc5920ae0bcb1a96cea91306a6cd57221c` contains that
-render-projection fix and passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and
-rebuilt-image `infernix test unit` (Haskell unit plus web `82/82`). Its full `linux-cpu` rerun
-passed Haskell style, Python `check-code`, Haskell unit, web `82/82`, and full live integration,
-including typed CPU admission, throughput (`totalPrompts = 12`,
-`p95Seconds = 86.15112495422363`), lifecycle rebinding, anti-affinity, and the `demo_ui = false`
-lifecycle. Routed Playwright reached `15/16` and failed only the `audio-demucs-htdemucs` visible
-capacity-result assertion after proving the target context was active. Current source hardens stale
-WebSocket generation handling and subscription readiness. Focused mounted-source validation passes
-Haskell style/unit for `src/Infernix/Demo/WebSocket.hs`, web unit `82/82`, and
-`node --check web/playwright/inference.spec.js`. Rebuilt Linux CPU image
-`sha256:3161a3846bbc42a97febb186f5fbe063ca0a407cdab5bc888a798e170ef23e3d` contains this fix and
-passes `./bootstrap/linux-cpu.sh build` plus the CLI-help smoke and rebuilt-image
-`infernix test unit` (Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front
-gates and full live integration, including typed CPU admission, model-bootstrap
-failover/deduplication, throughput (`totalPrompts = 12`, `p95Seconds = 65.46250057220459`),
-lifecycle rebinding, anti-affinity, and `demo_ui = false`; routed Playwright reached `15/16` and
-failed only the `audio-demucs-htdemucs` visible capacity-result assertion after observing and
-validating the typed terminal payload. Current source gives browser-facing Pulsar readers unique
-per-stream names and tags Playwright-observed WebSocket frames by browser socket generation, so the
-matrix waits for live-generation snapshots and terminal patches instead of accepting frames from
-superseded sockets. `node --check web/playwright/inference.spec.js` passes for that helper change.
-Mounted-source Haskell validation also passes `cabal test infernix-haskell-style infernix-unit` with
-`src/Infernix/Runtime/Pulsar.hs` mounted into the Linux CPU launcher image, and `git diff --check`
-is clean for the touched files. Rebuilt Linux CPU image
-`sha256:eeb58064f9eca14c008b9c976380c5c7745a4c6079a5bd8885b3935c864532a5`
-(`20070858505` bytes, created `2026-07-11T14:49:26.455414736-04:00`) contains this fix and passes
-`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
-(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
-integration, proving typed Linux CPU admission, smaller-model continuity, lifecycle rebinding,
-throughput (`totalPrompts = 12`, `p95Seconds = 65.51375341415405`), anti-affinity, and
-`demo_ui = false`. Routed Playwright reached `14/16` and failed on the artifact download-button
-replacement race plus the remaining `audio-demucs-htdemucs` visible capacity-result DOM assertion
-after typed terminal-payload validation. Current source fixes the routed browser harness by waiting
-for upload-record echo before artifact downloads, retrying against a re-resolved artifact card until
-the webapp-proxy download grant is ready, and waiting for the exact typed capacity text with a
-resubscription fallback. `node --check web/playwright/inference.spec.js` and `git diff --check` pass
-for the touched files. Rebuilt Linux CPU image
-`sha256:d49b4799375df7a0e5726d16717ab6dc4e09fc8baa685969484099027f81c4c8`
-(`20070886873` bytes, created `2026-07-11T17:27:02.378037428-04:00`) contains the fix and passes
-`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
-(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
-integration, proving typed Linux CPU admission, smaller-model continuity, lifecycle rebinding,
-throughput (`totalPrompts = 12`, `p95Seconds = 69.06893110275269`), anti-affinity, and
-`demo_ui = false`. Routed Playwright reached `15/16`: artifact upload/preview/download coverage
-passed, but the remaining matrix assertion still failed to render the `audio-demucs-htdemucs`
-capacity result after resubscription. The next Wave T gate is the capacity-result render fix and a
-clean full `linux-cpu` rerun. Current source now waits for the matching server prompt patch and
-requires terminal results to reference that prompt message id; focused
-`node --check web/playwright/inference.spec.js` and `git diff --check` pass for that follow-up.
-Rebuilt Linux CPU image
-`sha256:30d597efe4284a74c606860d7a0ef6d4fd5123076de11ad0c8e3da476925190e`
-(`20070997197` bytes, created `2026-07-11T20:08:36.089424841-04:00`) contains the fix and passes
-`./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image `infernix test unit`
-(Haskell unit plus web `82/82`). Its full `linux-cpu` rerun passed the front gates and full live
-integration (`totalPrompts = 12`, `p95Seconds = 65.60747718811035`) with the known
-`music-omnizart` warm-cache HTTP 403 warning, then routed Playwright reached `15/16`: Sprint 9.9
-auth/RBAC/logout switching and artifact coverage were green, but the matrix still failed the
-`audio-demucs-htdemucs` visible capacity-result assertion after resubscription. Current source
-strengthens that fallback to require a new-socket conversation snapshot or patch containing the
-matching typed capacity result before asserting the DOM; `node --check web/playwright/inference.spec.js`
-and `git diff --check` pass. Rebuilt Linux CPU image
-`sha256:681420399273889da1e64ce6e43576ffe8a06ad87114b8e069903ab79d3d92f9`
-(`20070973633` bytes, created `2026-07-11T22:49:09.072629435-04:00`) contains that
-fallback and passes `./bootstrap/linux-cpu.sh build`, the CLI-help smoke, and rebuilt-image
-`infernix test unit` (Haskell unit plus web `82/82`). The next validation gate is a clean full
-`linux-cpu` rerun on this image, then the selected `linux-gpu` accelerator gate. The full rerun on
-that image passed the front gates and live integration (`totalPrompts = 12`, `p95Seconds =
-70.42682695388794`) with the known `music-omnizart` warm-cache warning, then routed Playwright
-reached `15/16`: Sprint 9.9 auth/RBAC/logout switching and artifact coverage were green, but the
-matrix still failed the `audio-demucs-htdemucs` visible capacity-result assertion even after a
-result-bearing resubscription attempt.
+Phase 1 compiler/refiner supersedes that path, and Sprint 6.44 owns the current independently
+indexed Linux GPU RAM/VRAM enforcer and its own cohort evidence.
+**Code-side closure**: Complete in the Linux outer-container lane. Unit coverage exercises pure
+admission decisions for enforced, enforced-zero, and explicit unenforced budgets; config validation
+accepts mixed-size catalogs; protobuf/storage/result-bridge roundtrips preserve typed
+`ModelMemoryLimitExceeded`; and `test/integration/Spec.hs` classifies per-row capacity failures by
+constructor and MiB quantities instead of parsing text. Routed Playwright records the browser-facing
+half of the same contract by accepting only typed `ModelMemoryLimitExceeded` failures for rows whose
+catalog footprint exceeds the active demo-config budget, while preserving fail-closed behavior for
+any other failed result.
 
-Rebuilt Linux CPU image
-`sha256:c911771090115baa928d6bf43f14ef804cfcdc8706bc96ab3fe6b62f48a19a6f`
-(`20088000300` bytes, created `2026-07-12T02:30:27.200982353-04:00`) contains the explicit tagged
-`InferenceError` WebSocket contract fix and passes `./bootstrap/linux-cpu.sh build`, the CLI-help
-smoke, rebuilt-image `infernix test unit` (Haskell unit plus web `83/83`), and rebuilt-image
-`infernix test e2e`. The E2E run completed live integration with typed Linux CPU admission,
-smaller-model continuity, HA/chaos, lifecycle, and throughput coverage, then passed routed
-Playwright `16/16` in 3.6 minutes, including the per-model browser matrix in 2.5 minutes.
-Selected accelerator closure followed on rebuilt `linux-gpu` image
-`sha256:0b238faa40e6edea9907408f426d25c2a1ec9810e17fcc65b770f51fbb34b896`; `./bootstrap/linux-gpu.sh test`
-passed Haskell style, Python checks, Haskell unit, web `83/83`, full live integration,
-HA/recovery, and routed Playwright `16/16` in 17.1 minutes. The integration run classified
-over-budget rows as typed `ModelMemoryLimitExceeded` with GPU VRAM budget source
-(`availableMib = 4096`) while smaller rows continued, and the browser matrix verified the routed
-capacity-message path.
+Closing the browser half required a sequence of corrections, each recorded as a decision because
+each is still load-bearing. The demo reducer ignores conversation snapshots whose context does not
+match the active context, and preserves already-seen append messages when a stale same-context
+snapshot arrives afterwards. The rendered chat pane is projected from the active context id plus a
+per-context conversation cache, so a stored terminal result cannot be hidden behind a stale
+`activeConversation` pane, and submitted prompts are pinned into the active conversation before fast
+terminal results. Browser-facing Pulsar readers take unique per-stream names and Playwright-observed
+WebSocket frames are tagged by browser socket generation, so the matrix waits for live-generation
+snapshots and terminal patches rather than accepting frames from superseded sockets. The WebSocket
+carries an explicitly tagged `InferenceError` contract, which is what makes the typed capacity
+result render at all. The routed harness waits for the upload-record echo before artifact downloads
+and retries against a re-resolved artifact card until the webapp-proxy download grant is ready. Two
+lane-level fixes landed alongside them: bounded MinIO warm-cache and model-bootstrap HTTP calls in
+`Infernix.Runtime.Pulsar`, and a bounded repair loop for the retained Pulsar claim-root reset, so
+repeated retained-data cluster-ups no longer fail on dirty Pulsar metadata.
 **Cohort gate**: Closed [Wave T](cohort-validation-waves.md) — full live `linux-cpu` and selected
-`linux-gpu` integration/e2e evidence is recorded for typed resource admission.
+`linux-gpu` integration/e2e evidence is recorded for typed resource admission. The integration run
+classifies over-budget rows as typed `ModelMemoryLimitExceeded` naming the GPU VRAM budget source
+while smaller rows keep running in the same daemon session, and the browser matrix verifies the
+routed capacity-message path.
 **Implementation**: `test/unit/`, `test/integration/Spec.hs`, `web/test/`, `web/playwright/`,
 `src/Infernix/Lint/Docs.hs`, `src/Infernix/ProcessMonitor.hs`, and substrate-specific validation
 helpers that inspect generated runtime config and live daemon results.
@@ -2408,13 +2177,13 @@ None.
 **Status**: Done — the capability-gating lint rules (`rawDestructiveViolations`,
 `emptySubprocessEnvViolations`) and routed-Playwright managed-transition coverage are code-side closed
 (machine-independent gates), and the single-accelerator (apple-silicon) plus linux-cpu full-suite
-sign-off is closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-16 — `cabal build all` (`-Wall -Werror`, clean),
+sign-off is closed by [Wave V](cohort-validation-waves.md).
+**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (the new capability-gating rules are
 clean on the tree and were negative-tested: an injected `rm -rf` and `env = Just []` both fail),
 `infernix lint docs`, and `node --check web/playwright/inference.spec.js` all green on the
 apple-silicon lane. No Python surface changed, so `poetry run check-code` is not applicable.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
 linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`, `web/playwright/inference.spec.js`
 **Blocked by**: Sprint 1.16, 5.12
@@ -2442,6 +2211,15 @@ assume a raw primitive succeeded. Reference the doctrine at
 - the coverage asserts on the typed evidence returned by each managed transition, so a non-evidence
   readiness path fails closed
 
+Concretely: `rawDestructiveViolations` rejects raw `rm -rf` / `rm -fr` and `docker exec ... rm`
+outside the cluster-lifecycle module, which is grandfathered for its container-scoped retained-state
+scrub, and `emptySubprocessEnvViolations` rejects `env = Just []`, requiring a typed
+`Infernix.Cluster.Subprocess.SubprocessEnv` that always carries `HOME`/`TMPDIR`. Both are
+negative-tested — an injected `rm -rf` and an `env = Just []` each fail — and are clean on the tree.
+On the browser side, `waitForTerminalConversationPatchAfter` awaits the real terminal result
+evidence (the Sprint 5.12 readiness path, with no rollout proxy) and asserts the typed
+terminal-evidence shape: a decoded result carrying one of the two typed terminal statuses.
+
 ### Validation
 
 - `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`, and
@@ -2453,22 +2231,7 @@ assume a raw primitive succeeded. Reference the doctrine at
 
 ### Remaining Work
 
-- code-side closed 2026-07-16. Landed this sprint:
-  - capability-gating lint rules in `src/Infernix/Lint/HaskellStyle.hs`: `rawDestructiveViolations`
-    rejects raw `rm -rf` / `rm -fr` and `docker exec ... rm` outside the cluster-lifecycle module
-    (grandfathered for its container-scoped retained-state scrub), and `emptySubprocessEnvViolations`
-    rejects `env = Just []`, requiring a typed `Infernix.Cluster.Subprocess.SubprocessEnv` (which
-    always carries `HOME`/`TMPDIR`). Both were negative-tested (an injected `rm -rf` and
-    `env = Just []` each fail) and are clean on the current tree
-  - routed-Playwright managed-transition coverage in `web/playwright/inference.spec.js`:
-    `waitForTerminalConversationPatchAfter` awaits the real terminal result evidence (the Sprint 5.12
-    readiness path, no rollout proxy) and now explicitly asserts the typed terminal-evidence shape
-    (a decoded result with one of the two typed terminal statuses), so a non-evidence readiness path
-    fails closed
-- validated with `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
-  `infernix lint docs`, and `node --check web/playwright/inference.spec.js`
-- the apple-silicon plus linux-cpu full-suite cohort sign-off closed under
-  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
+None.
 
 ---
 
@@ -2476,14 +2239,14 @@ assume a raw primitive succeeded. Reference the doctrine at
 
 **Status**: Done — the `unboundedExecViolations` and `unboundedHttpViolations` capability-gating lint
 rules are code-side closed (machine-independent gates), and the single-accelerator (apple-silicon)
-plus linux-cpu full-suite sign-off is closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+plus linux-cpu full-suite sign-off is closed by [Wave V](cohort-validation-waves.md).
+**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (both new rules negative-tested: an
 injected raw `createProcess` in a guarded file fails `unboundedExecViolations`, and an injected raw
 `withResponse` in the download surface fails `unboundedHttpViolations`), `infernix lint files/docs/proto/chart`,
 and `infernix docs check` all green on the apple-silicon lane. No Python surface changed, so
 `poetry run check-code` does not apply.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
 linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
 **Blocked by**: Sprint 1.16, 1.17, 6.39
@@ -2522,8 +2285,7 @@ doctrine's line-based enforcement layer to the process-spawn and upstream-HTTP s
 
 ### Remaining Work
 
-- the apple-silicon plus linux-cpu full-suite cohort sign-off of the two lint rules closed under
-  [Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists
+None.
 
 ---
 
@@ -2533,15 +2295,15 @@ doctrine's line-based enforcement layer to the process-spawn and upstream-HTTP s
 eager-model-cache barrier, the full twelve-wait individual bounded-wait migration onto
 `awaitReadiness`/`budgetDeadline`, and the `threadDelayViolations` lint gate are code-side closed
 (machine-independent, adversarially reviewed), and the single-accelerator (apple-silicon) plus
-linux-cpu full-suite sign-off is closed by [Wave V](cohort-validation-waves.md) on 2026-07-20.
-**Code-side closure**: closed 2026-07-19 — `cabal build all` (`-Wall -Werror`, clean),
+linux-cpu full-suite sign-off is closed by [Wave V](cohort-validation-waves.md).
+**Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style` (ormolu + hlint + the new
 `threadDelayViolations` readability rule + cabal-format), `infernix lint files/docs/proto/chart`,
 `infernix docs check`, and `poetry run check-code` all green on the apple-silicon lane. The migration
 was adversarially reviewed (two behavior-divergence findings both resolved: `waitForHarborPostgresPodsReady`
 now skips its destructive repair on the final poll exactly as the original did, and `budgetDeadline` is
 exact for all `attempts >= 0`)
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) (2026-07-20) — apple-silicon plus
+**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
 linux-cpu full-suite `test all` green.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Runtime/Pulsar.hs`,
 `src/Infernix/Lint/HaskellStyle.hs`, `infernix.cabal` (`src/Infernix/ProcessMonitor.hs` deleted)
@@ -2562,7 +2324,7 @@ readiness-returns-evidence kernel across the cluster surface.
 
 ### Deliverables
 
-Landed 2026-07-19 (code-side closed, machine-independent gates green, adversarially reviewed):
+Landed (code-side closed, machine-independent gates green, adversarially reviewed):
 
 - retired `src/Infernix/ProcessMonitor.hs` entirely: its sole importer (`Cluster.hs`) now runs the ten
   monitored lifecycle commands (docker build/pull/tag/cp, crictl pull, save|import stream) through new
@@ -2600,7 +2362,7 @@ Landed 2026-07-19 (code-side closed, machine-independent gates green, adversaria
 
 ### Validation
 
-- fully code-side closed 2026-07-19 on the apple-silicon machine-independent gate set:
+- fully code-side closed on the apple-silicon machine-independent gate set:
   `cabal build all` (`-Wall -Werror`, clean), `cabal test infernix-unit` (PASS), `cabal test
   infernix-haskell-style` (PASS — ormolu + hlint + the new `threadDelayViolations` readability rule +
   cabal-format), `infernix lint files/docs/proto/chart` and `infernix docs check` (all `EXIT=0`), and
@@ -2608,13 +2370,11 @@ Landed 2026-07-19 (code-side closed, machine-independent gates green, adversaria
   both surfaced behavior-divergence findings were resolved (`waitForHarborPostgresPodsReady` final-poll
   repair skip; `budgetDeadline` exact for `attempts <= 1`)
 - the single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off closed under
-  [Wave V](cohort-validation-waves.md) (2026-07-20)
+  [Wave V](cohort-validation-waves.md)
 
 ### Remaining Work
 
-Code-side closed 2026-07-19 (all deliverables above landed and machine-independent-validated), and the
-single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off closed under
-[Wave V](cohort-validation-waves.md) (2026-07-20). No remaining work exists.
+None.
 
 ---
 
@@ -2622,10 +2382,10 @@ single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off c
 
 **Status**: Done — the `unboundedEngineSpawnViolations` capability-gating lint keeps new engine-spawn
 call sites off the raw process primitives and on the Phase 4 Sprint 4.30 grant-gated capped-engine
-kernel; code-side closed 2026-07-21 on the machine-independent gate set, and the single-accelerator
+kernel; code-side closed on the machine-independent gate set, and the single-accelerator
 (apple-silicon) plus `linux-cpu` behavioral cohort sign-off closed under
-[Wave W](cohort-validation-waves.md) on 2026-07-24 with no remaining work.
-**Code-side closure**: complete (2026-07-21). Added the `unboundedEngineSpawnViolations` sub-rule to
+[Wave W](cohort-validation-waves.md) with no remaining work.
+**Code-side closure**: complete. Added the `unboundedEngineSpawnViolations` sub-rule to
 `src/Infernix/Lint/HaskellStyle.hs` (wired into `checkSourceReadability`), mirroring the existing
 `unboundedExecViolations` / `threadDelayViolations` per-rule exemption pattern (Sprint 6.40/6.41): raw
 `readCreateProcessWithExitCode` / `createProcess` / `waitForProcess` on the engine-spawn surface in
@@ -2634,13 +2394,13 @@ production `src/Infernix/` is a style-gate error outside the Sprint 4.30 capped-
 the bounded-command exemption set so both gates shrink in lockstep), so a new engine subprocess that does
 not consume a `MemoryGrant` fails the style gate. The kernel is added to `unboundedExecExemptedFiles`
 (the legitimate raw engine-spawn surface) and `threadDelayExemptedFiles` (the watchdog poll). Gate set
-(GREEN 2026-07-21): `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (the new rule
+(all passing): `cabal build all` (`-Wall -Werror`), `cabal test infernix-unit` (the new rule
 negative-tested — fires on an injected raw `createProcess` in a guarded file, exempts the kernel, passes
 a clean line), `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
 `infernix docs check`.
 **Cohort gate**: apple-silicon + linux-cpu, [Wave W](cohort-validation-waves.md) — the lint travels
 with the Phase 4 Sprint 4.30/4.31 behavioral proof (no host OOM; over-capacity rows cleanly
-typed-rejected as `ModelMemoryLimitExceeded`). Closed 2026-07-24.
+typed-rejected as `ModelMemoryLimitExceeded`). Closed.
 **Implementation**: `src/Infernix/Lint/HaskellStyle.hs`
 **Blocked by**: Sprint 4.30, 6.40
 **Docs to update**: `documents/architecture/bounded_inference_memory.md`,
@@ -2665,7 +2425,7 @@ doctrine's line-based enforcement layer to the engine-spawn surface, exactly as 
 
 ### Validation
 
-Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
+Gates (closed under [Wave W](cohort-validation-waves.md)):
 
 - `cabal build all`, `cabal test infernix-unit`, `cabal test infernix-haskell-style`,
   `infernix lint files/docs/proto/chart`, and `infernix docs check` on both the apple-silicon and
@@ -2677,44 +2437,38 @@ Gates (closed under [Wave W](cohort-validation-waves.md), 2026-07-24):
 
 ### Remaining Work
 
-None. The implementation is complete (code-side closed 2026-07-21): the `unboundedEngineSpawnViolations`
-sub-rule, its `checkSourceReadability` wiring, and the negative test are landed, built on the Phase 4
-Sprint 4.30 capped-engine kernel as the single exempted engine-spawn path. The apple-silicon plus
-linux-cpu behavioral cohort sign-off closed under [Wave W](cohort-validation-waves.md) on 2026-07-24
-(shared with Phase 4 Sprints 4.30/4.31); no remaining work exists.
+None.
 
 ---
 
 ## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Blocked]
 
-**Status**: Blocked by active Phase 1, then Phases 2 and 4 in numerical order. The doctrine + governance
-landed first (Phase 0 Sprint 0.16, `Done`), and Wave X remains valid for the typed
-owner/mutation-position and crash-safe config scope. The 2026-07-25
-execution audit found a remaining TOCTOU: harness seizure authorized teardown while holding the
-lifecycle lock, then released that lock before the `finally` cleanup invoked the generic
-`clusterDown`. An operator could acquire the shared cluster slot in that interval and then be torn
-down by the harness. The correction makes teardown owner-specific and rechecks ownership while
-holding the same cross-process lifecycle lock; Phase 6 behavioral validation remains open. It is the
-harness half of the Cluster-Ownership & Mutation-Position reopen;
-[Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the model half that lands the
-`ClusterOwner` / `ClusterMutating` types this sprint consumes.
-**Implementation status**: Landed; final cross-phase review and ordered gates remain. The
-2026-07-23 scope landed
-`seizeHarnessClusterSlot`, `HarnessOwned` cluster bring-up, reservation-aware interrupted-config
-reconcile, and `withPersistedClusterMutation`; its machine-independent gates passed on 2026-07-23.
-The 2026-07-25 correction adds owner-specific `clusterDown` / `clusterDownHarness` paths, performs
-owner observation, authorization, and destructive teardown under the same lifecycle lock, publishes
-the harness reservation before config takeover, and makes `runClusterOwnedValidation` cleanup use the
-harness-only release path. The chaos-mutation bracket now treats its caller state as an optimistic
-token: under that same lock it requires an exact freshly reread `ClusterReady` state, live runtime
-inventory, owner, and reservation before publishing `ClusterMutating`, passes only the fresh state
-to the body, and revalidates the dirty marker and live evidence before restoring `ClusterReady`.
-The owner-atomic implementation is complete. Its current machine-independent and behavioral
+**Status**: Blocked by active Phase 1, then Phases 2 and 4 in numerical order. The doctrine and
+governance landed first (Phase 0 Sprint 0.16, `Done`), and Wave X remains valid for the typed
+owner/mutation-position and crash-safe config scope. An execution audit found a remaining TOCTOU:
+harness seizure authorized teardown while holding the lifecycle lock, then released that lock before
+the `finally` cleanup invoked the generic `clusterDown`. An operator could acquire the shared cluster
+slot in that interval and then be torn down by the harness. The correction makes teardown
+owner-specific and rechecks ownership while holding the same cross-process lifecycle lock; Phase 6
+behavioral validation remains open. This is the harness half of the cluster-ownership and
+mutation-position work; [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md) is the
+model half that lands the `ClusterOwner` / `ClusterMutating` types this sprint consumes.
+**Implementation status**: Landed; final cross-phase review and ordered gates remain. The original
+scope landed `seizeHarnessClusterSlot`, `HarnessOwned` cluster bring-up, reservation-aware
+interrupted-config reconcile, and `withPersistedClusterMutation`, and its machine-independent gates
+passed. The owner-atomic correction adds owner-specific `clusterDown` / `clusterDownHarness` paths,
+performs owner observation, authorization, and destructive teardown under the same lifecycle lock,
+publishes the harness reservation before config takeover, and makes `runClusterOwnedValidation`
+cleanup use the harness-only release path. The chaos-mutation bracket treats its caller state as an
+optimistic token: under that same lock it requires an exact freshly reread `ClusterReady` state, live
+runtime inventory, owner, and reservation before publishing `ClusterMutating`, passes only the fresh
+state to the body, and revalidates the dirty marker and live evidence before restoring
+`ClusterReady`. The owner-atomic implementation is complete; its machine-independent and behavioral
 validation remain ordered after Phase 2 and Phase 4.
-**Historical cohort evidence**: [Wave X](cohort-validation-waves.md) (2026-07-24,
-apple-silicon plus linux-cpu) closes only the 2026-07-23 proof that `infernix test all` fails closed
-on a running operator cluster, a killed run leaves a mutation-incomplete cluster for the next
-`cluster up`, and a leftover `.harness-backup` is restored on the next `test`.
+**Historical cohort evidence**: [Wave X](cohort-validation-waves.md) (apple-silicon plus
+`linux-cpu`) closes only the original proof that `infernix test all` fails closed on a running
+operator cluster, that a killed run leaves a mutation-incomplete cluster for the next `cluster up`,
+and that a leftover `.harness-backup` is restored on the next `test`.
 **Current cohort gate**: pending. Phase 6 owner-atomic validation is ordered after Phase 2 closes
 under Wave Y and Phase 4 closes.
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`,
@@ -2736,10 +2490,17 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
 
 ### Deliverables
 
-- evidence-gated seizure: `runClusterOwnedValidation` reads the persisted state and **fails closed loud**
-  when a present cluster is `OperatorOwned` ("an operator cluster is up at `<identity>`; `infernix cluster
-  down` it before running tests"), tearing down only a `HarnessOwned` cluster; the harness brings up its
-  cluster as `HarnessOwned`
+- evidence-gated seizure, scoped to one checkout: `runClusterOwnedValidation` reads the persisted
+  state and **fails closed loud** when a present cluster is `OperatorOwned` ("an operator cluster is
+  up at `<identity>`; `infernix cluster down` it before running tests"), tearing down only a
+  `HarnessOwned` cluster; the harness brings up its cluster as `HarnessOwned`. The established
+  property is narrower than a type-level guarantee: the refusal is a checked value comparison that
+  raises under the held lifecycle lock, because `ClusterTeardownAuthority` type-indexes its lock
+  region alone and an authority minted against an `OperatorOwned` cluster still typechecks. The fence
+  is also repo-local, since the lifecycle lock, the harness reservation, and the persisted state all
+  live in one checkout while the Kind cluster slot is machine-global, so a process rooted at a
+  different checkout neither observes nor honours it. Sprint 6.45 owns the machine-scoped cluster-slot
+  correction and the owner-indexed teardown authority that close both gaps
 - chaos-mutation `ClusterMutating` transitions: each mutation in `test/integration/Spec.hs` (node drain,
   deployment over-scale, cordon) persists `ClusterMutating <phase>` before the `kubectl` mutation and
   restores `ClusterReady` only from a fresh exact live ready-state match after revalidating the
@@ -2756,11 +2517,11 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   `withTestHarnessConfig` restores the operator config from a planted leftover `.harness-backup`), and
   `cabal test infernix-haskell-style`, on both the apple-silicon and linux-cpu lanes
 - `infernix lint docs` stays clean
-- [Wave X](cohort-validation-waves.md) remains historical apple-silicon plus linux-cpu evidence for
-  the 2026-07-23 behavioral contract; after Phases 2 and 4 close, rerun `infernix test all` on
-  apple-silicon plus linux-cpu for the 2026-07-25 owner-atomic correction
+- [Wave X](cohort-validation-waves.md) remains historical apple-silicon plus `linux-cpu` evidence
+  for the original behavioral contract; after Phases 2 and 4 close, rerun `infernix test all` on
+  apple-silicon plus `linux-cpu` for the owner-atomic correction
 
-### Final cross-phase review (2026-08-02)
+### Final cross-phase review
 
 The review ran four independent adversarial lenses — cross-process lock atomicity, crash/kill safety,
 type-level ownership evidence, and harness-seizure fail-closed behaviour — over `Cluster.hs`,
@@ -2785,7 +2546,7 @@ path aborts every subsequent command without reconciling.
   to zero — the exact false steady-state the doctrine forbids. The rotation is now bracketed, loading
   a fresh state and running under the `linux-gpu-engine-deployment-rotation` marker.
 
-**Confirmed and carried into a new sprint** (see [Sprint 6.45](#sprint-645-machine-scoped-cluster-slot-ownership-and-type-indexed-teardown-owner-planned)):
+**Confirmed and carried into a later sprint in this phase, which records them as its own scope:**
 
 - *(High)* the Kind cluster name is machine-global while the lifecycle lock, reservation, and
   persisted state are repo-local;
@@ -2800,51 +2561,42 @@ path aborts every subsequent command without reconciling.
 
 ### Remaining Work
 
-- Sprint 6.45 owns the three carried findings. Sprint 6.43 cannot reach `Done` before it, because two
-  of them contradict this sprint's own stated deliverable.
+- the three findings the final cross-phase review carried out of this sprint's scope are open, and
+  are owned by a later sprint in this phase that records them as its own deliverables; two of them
+  contradict a deliverable this sprint states, so this sprint stays `Blocked` while they are open
 - after Phase 2 closes under Wave Y and Phase 4 closes, rerun the machine-independent gates and the
-  Phase 6 apple-silicon plus linux-cpu behavioral cohort; record the new evidence without rewriting
-  Wave X's narrower historical claim
+  Phase 6 apple-silicon plus `linux-cpu` behavioral cohort; record the new evidence without
+  rewriting Wave X's narrower historical claim
 
 ---
 
 ## Remaining Work
 
-Sprint 6.39 (capability-gating lint plus managed-transition coverage), Sprint 6.40
-(Unbounded-Exec/HTTP Capability-Gating Lints — the `unboundedExecViolations` and
-`unboundedHttpViolations` lint rules), and Sprint 6.41 (ProcessMonitor Retirement & Readiness-Wait
-Kernel Migration — the `ProcessMonitor` retirement, the shared `retryCommandOutput` primitive bounding
-its six consumers, the eager-model-cache barrier, the full twelve-wait individual bounded-wait
-migration onto `awaitReadiness`/`budgetDeadline`, and the `threadDelayViolations` lint gate) are
-code-side closed (machine-independent, adversarially reviewed) and their single-accelerator
-(apple-silicon) plus linux-cpu full-suite cohort sign-off is closed by
-[Wave V](cohort-validation-waves.md) (2026-07-20); no remaining work exists for these reopen sprints.
-Sprint 6.38 is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU
-by Wave T's `linux-cpu` plus selected `linux-gpu` evidence. The MT3 catalog-validation reopen (Sprint
-6.35) is **closed** — proven by [Wave P](cohort-validation-waves.md) (2026-07-04). **Sprint 6.36**
-(real-output + matrix validation hardening) and **Sprint 6.37**
-(apple-silicon memory-bounded validation lane) are closed by [Wave R](cohort-validation-waves.md)
-and [Wave S](cohort-validation-waves.md) for their original scopes.
-**Sprint 6.42** (Unbounded-Engine-Spawn Capability-Gating Lint) — the enforcement half of the
-memory-safety-by-construction reopen (2026-07-21), the `unboundedEngineSpawnViolations` lint that keeps
-new engine-spawn call sites off the raw process primitives and on the Phase 4 Sprint 4.30 grant-gated
-capped-engine kernel — is closed under [Wave W](cohort-validation-waves.md) (2026-07-24) with
-apple-silicon plus `linux-cpu` behavioral sign-off (code-side closed 2026-07-21 on the
-machine-independent gate set, negative-tested).
-**Sprint 6.43** (Cluster-Ownership Harness Seizure and Crash-Safe Config) — Wave X (2026-07-24)
-historically closes only the 2026-07-23 evidence-gated cluster seizure, chaos-mutation
-`ClusterMutating` transitions, and crash-safe `withTestHarnessConfig` backup reconcile on
-apple-silicon plus `linux-cpu`. The 2026-07-25 owner-atomic reservation/teardown implementation is
-landed with [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md). Phase 0's
-correction review and Stage 1 are green; Phase 6's own final review and
+Sprints 6.39, 6.40, and 6.41 are code-side closed (machine-independent, adversarially reviewed) and
+their single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off is closed by
+[Wave V](cohort-validation-waves.md); no remaining work exists for those reopen sprints. Sprint 6.38
+is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU by Wave T's
+`linux-cpu` plus selected `linux-gpu` evidence. Sprint 6.35 is closed, proven by
+[Wave P](cohort-validation-waves.md). Sprint 6.36 (real-output and matrix validation hardening) and
+Sprint 6.37 (apple-silicon memory-bounded validation lane) are closed by
+[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md) for their original
+scopes. Sprint 6.42 — the enforcement half of the memory-safety-by-construction reopen, the
+`unboundedEngineSpawnViolations` lint that keeps new engine-spawn call sites off the raw process
+primitives and on the Phase 4 Sprint 4.30 grant-gated capped-engine kernel — is closed under
+[Wave W](cohort-validation-waves.md) with apple-silicon plus `linux-cpu` behavioral sign-off. For
+Sprint 6.43, Wave X historically closes only the original evidence-gated cluster seizure, the
+chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup
+reconcile on apple-silicon plus `linux-cpu`; the owner-atomic reservation/teardown implementation is
+landed with [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md), Phase 0's
+correction review and Stage 1 pass, and Phase 6's own final review plus its
 machine-independent/behavioral gates remain, ordered after Phase 2 closes under Wave Y and Phase 4
 closes.
 
-## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active — Validation Only]
+## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active]
 
-**Status**: Active — code-side closed on 2026-08-02. The `linux-gpu` behavioral cohort is the only
+**Status**: Active — code-side closed. The `linux-gpu` behavioral cohort is the only
 remaining gate, and it is runnable on the current host for the first time (CUDA Linux, RTX 5090).
-**Code-side closure**: Complete. The complete machine-independent gate set is GREEN:
+**Code-side closure**: Complete. The complete machine-independent gate set passes:
 `cabal build all --enable-tests` (`-Wall -Werror`), `infernix-unit`,
 `infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
 (6 positive / 81 negative), `infernix-haskell-style` (`haskell-style-check: ok`, including the
@@ -2852,7 +2604,7 @@ realness rules), and `lint files|chart|proto|docs` plus `docs check`.
 **Cohort gate**: selected `linux-gpu` plus `linux-cpu`, new typed-execution-plan wave — pending, and
 now the sprint's **only** remaining item. Its three prior code-side residuals — the adversarial CUDA
 breach fixture, the `close_fds` descriptor stall, and the raw-spawn exemption decision — are all
-closed on 2026-08-03 and are recorded in their own sections below.
+closed and are recorded in their own sections below.
 **Blocked by**: nothing. Phase 4 Sprint 4.32's code-side closure landed the shared resource-indexed
 execution boundary this sprint consumes.
 **Implementation**: `src/Infernix/DescriptorSpace.hs` (new — the bounded descriptor space the
@@ -2946,107 +2698,36 @@ the provisioning facade's fifteen named steps funnel through three private dispa
 `runClosedInstalledRunnerSmoke` / `runClosedLinuxNativeArtifactSmoke` kernels. There is no raw spawn
 anywhere in the provisioning path.
 
-### First cohort attempt found a real defect in this sprint (2026-08-03)
+### Engine pod envelope arithmetic
 
-The first `./bootstrap/linux-gpu.sh test` run failed, and the failure was **caused by this sprint**,
-not by the environment. It is recorded in full because it is the single most valuable thing the
-cohort produced and because three plausible explanations were wrong before the right one was found by
-measurement.
+`linuxGpuEngineInferenceRamBudgetMib` is derived as `linuxGpuEnginePodMemoryLimitMib -
+linuxOuterEnvelopeHeadroomMib`, so the child budget and the pod limit cannot be written down
+independently. `podRefinementErrors` requires the observed outer envelope to equal
+`childBudget + linuxOuterEnvelopeHeadroomMib` exactly, and the GPU engine pod is deliberately
+provisioned at 16 GiB — framework host RAM for CUDA contexts and model loading — where the CPU
+engine pod gets 5 GiB. Reusing the `linux-cpu` child budget on that lane produced
+`OuterEnvelopeTooLarge`: refinement fails, no `ExecutableModel` is minted, the engine never writes
+its subscription-ready sentinel, and its pod sits `Running` / `ready=false` with no log output at
+all — a shape that reads as an infrastructure problem rather than a configuration defect. The
+durable correction is the guard that was missing: the unit suite asserts, for **both** lanes, that
+the child budget plus the headroom equals the engine pod memory limit exactly, and ties the
+pod-limit constant to the literal the generated Helm values emit. The guard is negative-tested by
+restoring the old budget. This class of drift is invisible to a lane that compiles no execution plan
+at all, which is why it survived until `linux-gpu` compiled one.
 
-The run cleared every gate — clean in-image build, `haskell-style-check: ok`, `infernix-unit` PASS,
-Kind cluster, Harbor publication of all images including the three GPU engine images, preload,
-Keycloak/PostgreSQL — then `infernix-engine` timed out at `0 of 1 updated replicas are available` and
-the harness tore the cluster down cleanly.
+The cohort consumes the **baked image source** — `compose.yaml` bind-mounts only `./.data` while
+`/workspace` is image content — so any source change requires an exact-source image rebuild before
+its cohort counts.
 
-Three hypotheses were checked and refuted before the cause was found:
+### The descriptor-space correction
 
-1. *The GPU is not schedulable* — refuted. The log shows `nvkind hit its known configmap persistence
-   bug (exit 255)` with a fallback to repo-owned node setup, which looked like the culprit, and a
-   first check found no `nvidia.com/gpu` capacity. That check was taken **one second** after the
-   device-plugin daemonset was created and was simply premature: the plugin comes up and the worker
-   advertises `nvidia.com/gpu=1`.
-2. *The node label is missing* — refuted. The worker carries `infernix.runtime/gpu=true`.
-3. *Four engine Deployments contend for one GPU* — refuted. The generated lifecycle values already
-   set `infernix-engine` to 1 replica and every per-engine deployment to 0 at final phase precisely
-   so the single device is not oversubscribed.
-
-The actual cause was arithmetic, and was confirmed by reading the live pod rather than by inference:
-the engine pod's cgroup `memory.max` is `17179869184` bytes = **16384 MiB**, while
-`podRefinementErrors` requires the observed outer envelope to equal
-`childBudget + linuxOuterEnvelopeHeadroomMib` **exactly**. This sprint reused the `linux-cpu` child
-budget of 4096 MiB, so every GPU placement produced `OuterEnvelopeTooLarge 5120 16384`, refinement
-failed, no `ExecutableModel` was ever minted, the engine never wrote its subscription-ready sentinel,
-and the readiness probe never passed. The pod was `Running`, `ready=false`, `restarts=0`, with **no
-log output at all** — a shape that looks nothing like a crash and is easy to misread as an
-infrastructure problem.
-
-This defect was invisible to every machine-independent gate for a structural reason worth stating:
-before this sprint `linux-gpu` compiled no execution plan at all, so the pod-RAM envelope equality
-had never once executed on that lane. The GPU engine pod is deliberately provisioned at 16 GiB
-(framework host RAM for CUDA contexts and model loading) where the CPU engine pod gets 5 GiB.
-
-**The fix, and the more important fix.** `linuxGpuEngineInferenceRamBudgetMib` is now *derived* as
-`linuxGpuEnginePodMemoryLimitMib - linuxOuterEnvelopeHeadroomMib`, so the budget and the pod limit
-cannot be written down independently. The durable correction is the guard that was missing: the unit
-suite asserted the `linux-cpu` envelope relationship but had no `linux-gpu` counterpart. It now
-asserts, for **both** lanes, that the child budget plus the headroom equals the engine pod memory
-limit exactly, and ties the pod-limit constant to the literal the generated Helm values emit. The
-guard was negative-tested by restoring the 4096 MiB budget: the unit suite fails with
-`linux-gpu child-execution budget plus the daemon/watchdog headroom equals the engine pod memory
-limit exactly, as runtime refinement requires`. A multi-hour cohort is no longer required to catch
-this class of drift.
-
-Consequence for evidence: the failed run also proved that the cohort consumes the **baked image
-source**, because `compose.yaml` bind-mounts only `./.data` while `/workspace` is image content. Any
-source change — including this fix — requires an exact-source image rebuild before its cohort counts.
-
-### Root cause of the second cohort failure: `close_fds` against the containerd fd limit (2026-08-03)
-
-Cohort attempts 4 and 5 failed with `infernix-engine` crash-looping on
-`NvidiaSamplerUnavailable` for all five admitted GPU placements. The instrumentation added above
-(`probeNvidiaVramSampler` carrying its reason) turned a multi-hour hypothesis cycle into a single
-run, and the reason was:
-
-> NVIDIA device observation failed: fixed /usr/bin/nvidia-smi device-memory observer exceeded its
-> total monotonic deadline — stdout: (empty) stderr: (empty)
-
-Empty captured streams mean the child produced nothing at all in 5 seconds, while the same command
-run by hand in the same pod returns `32607` in 26-28 ms at a host load of 3.66. The child was
-therefore stalling **before `exec`**, not running slowly.
-
-The measured environmental difference is the fd limit:
-
-| Context | `RLIMIT_NOFILE` |
-|---|---|
-| engine pod (containerd) | 1073741816 |
-| launcher container (docker) | 1024 |
-
-`System.Process` with `close_fds = True` closes every descriptor from 3 up to that limit before
-`exec`. A direct measurement with the same library on this host gives 0 ms at rlimit 1024 and
-**133 ms at rlimit 524288** — about 0.25 µs per descriptor. Extrapolated to the pod's 1,073,741,816
-descriptors that is roughly **4.5 minutes per spawn**, against a 5-second observer deadline. Every
-observation stalls, refinement fails, the engine never becomes ready.
-
-This also explains why no earlier gate caught it. The unit suite's live NVIDIA assertions pass in the
-launcher container, whose limit is 1024, and pass on the development host directly; only a
-containerd pod carries the billion-descriptor limit.
-
-**The finding is not confined to this sprint.** `close_fds = True` is set in three kernels:
-`FixedObserver.hs` (the observer spawn), `Runtime/CappedEngine/Internal.hs` (the capped-engine
-engine launch), and `Cluster/Subprocess.hs` (the bounded-command self-exec anchor). If the
-measurement generalizes, every subprocess those kernels start inside a containerd pod pays the same
-pre-`exec` cost. That has **not** been verified: `linux-cpu` cohorts do pass with real per-model
-inference, so either they pay this cost and are simply slow, or something differs between those call
-sites that has not been identified. Establishing which is the first task of the follow-on, because
-the answer determines whether this is a Sprint 6.44 bug or a platform-wide one.
-
-### The descriptor-space correction (2026-08-03)
-
-The open question above is now **answered by measurement rather than inference, and the answer is
-that the defect is platform-wide, not confined to this sprint.**
-
-Three measurements were taken with the same public `System.Process` API and the same flags the
-kernels use. The first two replace the previous extrapolation:
+`close_fds = True` is set in three kernels: `FixedObserver.hs` (the observer spawn),
+`Runtime/CappedEngine/Internal.hs` (the capped-engine engine launch), and `Cluster/Subprocess.hs`
+(the bounded-command self-exec anchor). `close_fds` is one of the configurations `posix_spawn`
+cannot express, so the spawn always falls back to fork/exec, and the forked child closes every
+descriptor from 3 up to `sysconf(_SC_OPEN_MAX)` — the soft `RLIMIT_NOFILE` the process **inherits**
+rather than chooses. The cost is linear in that limit. Measured with the same public
+`System.Process` API and the same flags the kernels use:
 
 | soft `RLIMIT_NOFILE` | `close_fds = True` | `close_fds = False` |
 |---|---|---|
@@ -3055,75 +2736,63 @@ kernels use. The first two replace the previous extrapolation:
 | 16384 | 4.9 ms | 0.6 ms |
 | 65536 | 17.5 ms | 0.6 ms |
 | 524288 | 130 ms | 0.5 ms |
-| **1073741816 (a pod's limit)** | **313 s** | **0.8 ms** |
+| **1073741816 (a containerd pod's limit)** | **313 s** | **0.8 ms** |
 
-The last row was taken inside a container started with the pod's own
-`--ulimit nofile=1073741816`, so it is a measurement of the real limit rather than a linear
-extrapolation from 524288 (the extrapolation predicted ~4.5 min; the measured figure is 5 min 13 s).
-The entire cost is the pre-`exec` descriptor walk: at every limit, the same spawn with
-`close_fds = False` is under a millisecond.
+The entire cost is the pre-`exec` descriptor walk: at every limit the same spawn with
+`close_fds = False` is under a millisecond. This is a platform-wide defect rather than one confined
+to this sprint — inside a containerd pod every observation stalls, refinement fails, and the engine
+never becomes ready, with two empty captured streams that read as a hang instead of as a bound being
+exceeded.
 
-Reading the `process-1.6.26.1` source settles the mechanism and the remedy together. `close_fds` is
-one of the configurations `posix_spawn` cannot express (`do_spawn_posix` returns `-2` for it), so the
-spawn always falls back to fork/exec, and in the forked child `do_spawn_fork` runs
-`for (int i = 3; i < get_max_fd(); i++) close(i);` where `get_max_fd()` is `sysconf(_SC_OPEN_MAX)` —
-the soft `RLIMIT_NOFILE`. The loop is linear in a limit the process **inherits** rather than chooses.
-
-**So the fix is to bound the resource, not to weaken the isolation.** The previously-obvious change —
-dropping `close_fds` — was correctly rejected. `Infernix.DescriptorSpace` (new) lowers the soft limit
-to a 16384 ceiling as the first action of a process image, before the internal self-exec dispatch and
-before anything opens a descriptor. Because a process cannot open a descriptor numbered at or above
-its own soft limit, no descriptor above the bound can ever exist afterwards, so the child's walk over
-`3 .. bound` still closes the **entire** descriptor space: `close_fds` keeps its exact meaning and
-only its cost becomes bounded. The bound is inherited across `fork` and `exec`, so the anchor,
-supervisor, pin, target, and engine children are bounded by their parent without doing anything
-themselves. The limit is only ever lowered, so a host that already imposes a tighter one keeps it,
-and the hard limit is written back unchanged, so establishing the bound needs no privilege.
-
-16384 was chosen from the table: it costs 4.9 ms, which the observer's 50 ms sampling cadence absorbs
-alongside a ~27 ms `nvidia-smi` query, while the next round value up (65536, 17.5 ms) does not leave
-that cadence enough room. Nothing this platform runs comes within two orders of magnitude of 16384
-open descriptors.
+The fix bounds the resource rather than weakening the isolation; dropping `close_fds` was rejected.
+`Infernix.DescriptorSpace` lowers the soft limit to a 16384 ceiling as the first action of a process
+image, before the internal self-exec dispatch and before anything opens a descriptor. Because a
+process cannot open a descriptor numbered at or above its own soft limit, no descriptor above the
+bound can ever exist afterwards, so the child's walk over `3 .. bound` still closes the **entire**
+descriptor space: `close_fds` keeps its exact meaning and only its cost becomes bounded. The bound
+is inherited across `fork` and `exec`, so the anchor, supervisor, pin, target, and engine children
+are bounded by their parent without doing anything themselves. The limit is only ever lowered, so a
+host that already imposes a tighter one keeps it, and the hard limit is written back unchanged, so
+establishing the bound needs no privilege. 16384 is chosen from the table above: it costs 4.9 ms,
+which the observer's 50 ms sampling cadence absorbs alongside a ~27 ms `nvidia-smi` query, while the
+next round value up (65536, 17.5 ms) does not leave that cadence enough room. Nothing this platform
+runs comes within two orders of magnitude of 16384 open descriptors.
 
 Three guards, because a startup call that a later change silently drops would reintroduce a
 five-minute stall that reads as a hang:
 
-1. `requireBoundedDescriptorSpace` is called by all three kernels immediately before `createProcess`.
-   An unbounded process image is now a **named refusal** identifying the spawning kernel, not a
-   timeout with two empty captured streams.
-2. A new `unboundedDescriptorSpawnViolations` lint rule makes a `close_fds` spawn surface that never
-   observes the bound a build error. It is file-scoped like its sibling rules, so it does not catch a
-   second unguarded spawn added to a file that already observes the bound; that limitation is stated
-   rather than papered over.
+1. `requireBoundedDescriptorSpace` is called by all three kernels immediately before
+   `createProcess`. An unbounded process image is a **named refusal** identifying the spawning
+   kernel, not a timeout with two empty captured streams.
+2. The `unboundedDescriptorSpawnViolations` lint rule makes a `close_fds` spawn surface that never
+   observes the bound a build error. It is file-scoped like its sibling rules, so it does not catch
+   a second unguarded spawn added to a file that already observes the bound; that limitation is
+   stated rather than papered over.
 3. Unit assertions pin that the bound holds in the test image, that an unbounded space is refused by
    name, that re-establishing lowers to the ceiling, and that a tighter host-imposed limit is
    preserved rather than widened.
 
-**Evidence.** `cabal build all --enable-tests` under `-Wall -Werror`, `infernix-haskell-style`
-(`haskell-style-check: ok`, including the new rule over the whole tree), and `infernix-unit` are
-GREEN. End to end: the `infernix-capped-engine-observer` suite — eight self-exec kernel tests that
-each spawn through `close_fds = True` — completes in **3.7 s inside a container at the pod's real
-`RLIMIT_NOFILE` of 1073741816**, against 3.2 s on the host. That is the same limit at which a single
-spawn previously cost 313 s.
-
-One caveat on that container run, recorded so it is not rediscovered: the suite must not be started
-as PID 1. A container init has different signal and reaping semantics, and the observer's
-group-termination fixtures depend on ordinary signal defaults, so the suite hangs as PID 1 at *any*
-fd limit and in any image. `docker run --init` is what makes the measurement above meaningful; the
+The `infernix-capped-engine-observer` suite — eight self-exec kernel tests that each spawn through
+`close_fds = True` — completes in 3.7 s inside a container at a containerd pod's real
+`RLIMIT_NOFILE` of 1073741816, against 3.2 s on the host: the same limit at which a single spawn
+previously cost 313 s. One caveat on that measurement, recorded so it is not rediscovered: the suite
+must not be started as a container's init process, whose signal and reaping semantics differ from
+the ordinary defaults the observer's group-termination fixtures depend on, so it hangs there at
+*any* fd limit and in any image. `docker run --init` is what makes the measurement meaningful; the
 cohort is unaffected because it enters through the launcher entrypoint.
 
 ### Validation
 
-- negative tests reject RAM/VRAM enforcer substitution and unenforced GPU placements — **GREEN**:
-  two new compile-fail fixtures (`fail-vram-enforcer-pod-grant`, `fail-pod-enforcer-vram-grant`) join
+- negative tests reject RAM/VRAM enforcer substitution and unenforced GPU placements — **passing**:
+  two compile-fail fixtures (`fail-vram-enforcer-pod-grant`, `fail-pod-enforcer-vram-grant`) join
   the existing `fail-vram-enforcer-host-grant` and `fail-host-enforcer-pod-grant`, so every
   cross-resource substitution among the three indices is a type error; the unit suite rejects a
-  single-resource `linux-gpu` budget, a dual budget with swapped resources on each half, and asserts
-  that a placement's enforced resource set is `[PodRam, GpuVram]` exactly when the model uses the
-  device
-- adversarial CUDA allocation breaches the declared ceiling, yields typed terminal failure, and
-  leaves the GPU worker and subsequent smaller inference healthy — **NOW COVERED (2026-08-03) and
-  GREEN against the real RTX 5090.** `runNvidiaVramBreachAssertions` in `test/unit/Spec.hs` launches a
+  single-resource `linux-gpu` budget, rejects a dual budget with swapped resources on each half, and
+  asserts that a placement's enforced resource set is `[PodRam, GpuVram]` exactly when the model
+  uses the device
+- an adversarial CUDA allocation breaches the declared ceiling, yields a typed terminal failure, and
+  leaves the GPU worker and subsequent smaller inference healthy — covered and passing against the
+  real RTX 5090. `runNvidiaVramBreachAssertions` in `test/unit/Spec.hs` launches a
   process-group-leading child that holds a real device allocation made through `libcuda.so.1`
   driver-API calls under `ctypes` — no compiler, no repo-owned native source — and drives the
   existing `nvidiaWatchdogOutcomeForTest` seam exactly as Phase 4 Sprint 4.32's
@@ -3131,110 +2800,71 @@ cohort is unaffected because it enters through the launcher entrypoint.
   `EngineExceededCeiling`, the group is reaped non-successfully, and a subsequent smaller allocation
   completes cleanly under the same enforcer.
 
-  The ceilings were chosen from measurement, not assumption: a CUDA context is itself a real device
-  allocation of **496 MiB** on this host before any `cuMemAlloc`, so a naive small ceiling would have
-  been breached by context overhead alone and would have proved nothing about the allocation. The
-  breach case allocates 3072 MiB against a 1024 MiB ceiling (observed 3568 MiB attributed to the
-  pid), and the clean case allocates 64 MiB against a 3072 MiB ceiling (~560 MiB). Both outcomes are
-  clear of the context floor in both directions.
+  The ceilings are chosen from measurement rather than assumption: a CUDA context is itself a real
+  device allocation of **496 MiB** on this class of host before any `cuMemAlloc`, so a naive small
+  ceiling would be breached by context overhead alone and would prove nothing about the allocation.
+  The breach case allocates 3072 MiB against a 1024 MiB ceiling and the clean case allocates 64 MiB
+  against a 3072 MiB ceiling, so both outcomes are clear of the context floor in both directions.
+  The assertion is negative-tested by reducing the breach allocation to 64 MiB, and it skips loudly
+  and by name when `/usr/bin/nvidia-smi` or the pinned interpreter is absent, or when the fixture
+  cannot reach its allocation gate — never silently.
 
-  The assertion was **negative-tested**, as the envelope guard above was: reducing the breach
-  allocation to 64 MiB makes the suite fail with
-  `a live CUDA allocation past the declared ceiling returns the typed ceiling outcome and reaps the
-  grouped engine non-successfully; observed Nothing and ExitSuccess`. It is therefore live rather
-  than vacuous. It skips loudly and by name when `/usr/bin/nvidia-smi` or the pinned interpreter is
-  absent, or when the fixture cannot reach its allocation gate — never silently.
+  Two scope properties bound what the suite proves, and are recorded rather than left implied.
+  `test/integration/Spec.hs` has **no runtime ceiling-breach case at all**:
+  `validateCatalogModelInference` classifies every row into exactly two outcomes — a model the
+  compiler marked unavailable publishes a typed `ModelMemoryLimitExceeded`, and every other model
+  must publish `completed` — and a *runtime* breach of an admitted ceiling is neither. And the unit
+  suite's live NVIDIA assertions reach the device inside the cohort only because the host Docker
+  daemon sets `"default-runtime": "nvidia"`, injecting the driver into every container without a
+  `--gpus` flag or a compose device reservation; on a host whose default runtime is `runc` the outer
+  container has no device and those assertions skip loudly instead. The suite is honest either way,
+  but that coverage is host-configuration-dependent and must not be recorded as unconditional.
 
-  The pre-existing analysis of why nothing covered this is retained below, because it is what
-  identified the seam that closed it:
-  - `test/integration/Spec.hs` has **no runtime ceiling-breach case at all**.
-    `validateCatalogModelInference` classifies every row into exactly two outcomes — a model the
-    compiler marked unavailable publishes a typed `ModelMemoryLimitExceeded`, and every other model
-    must publish `completed`. A *runtime* breach of an admitted ceiling is neither, so nothing in the
-    suite would observe one.
-  - The unit suite **can** reach the device inside the cohort, contrary to an earlier reading of this
-    sprint. `/usr/bin/nvidia-smi` and `libcuda.so.1` are both present in the launcher image, and the
-    Sprint 6.44 live NVIDIA assertions **ran and passed** inside the `linux-gpu` cohort — the
-    `skipping the live NVIDIA VRAM watchdog assertions` line does not appear in its log. That is a
-    property of the **host Docker daemon**, not of `compose.yaml`: this development host sets
-    `"default-runtime": "nvidia"` in `/etc/docker/daemon.json`, so every container gets the driver
-    injected without a `--gpus` flag or a compose device reservation. On a host whose default runtime
-    is `runc`, the outer container would have no device and those assertions would skip loudly
-    instead. The suite is honest either way, but its coverage is host-configuration-dependent and
-    must not be recorded as unconditional.
-  - So the gap is not "the cohort cannot reach a GPU"; it is that **no fixture allocates device
-    memory past a ceiling**. The Phase 4 Sprint 4.32 precedent for the Linux CPU breach —
-    `runLinuxWatchdogBreachAssertions` driving `linuxWatchdogOutcomeForTest` against a live self-exec
-    child — transfers directly: `nvidiaWatchdogOutcomeForTest` already exists and takes the same
-    shape. What is missing is a child that makes a real CUDA allocation, which needs no compiler and
-    no repo-owned native source: `libcuda.so.1` driver-API calls through `ctypes` from the image's
-    Python are sufficient (`cuInit`, `cuDeviceGet`, `cuCtxCreate_v2`, `cuMemAlloc_v2`), and were
-    verified to produce a device allocation that `nvidia-smi --query-compute-apps` attributes to the
-    allocating pid.
-
-  What *is* GREEN, and ran against the real RTX 5090 both on the development host and inside the
-  `linux-gpu` cohort: the fixed observer's parsers and every rejection they encode, the
-  group-attribution arithmetic and its overflow rejections, a live no-CUDA-context sample that
-  completes without a fabricated breach or an enforcement failure, a positive device envelope, and an
-  available startup probe.
+  What passes against the real RTX 5090, both on the development host and inside the `linux-gpu`
+  cohort: the fixed observer's parsers and every rejection they encode, the group-attribution
+  arithmetic and its overflow rejections, a live no-CUDA-context sample that completes without a
+  fabricated breach or an enforcement failure, a positive device envelope, and an available startup
+  probe.
 
   Note when reading cohort output: 13 of the 16 `linux-gpu` catalog rows are device-using and 3 are
-  shared-lane, so both new compile arms are exercised. After the envelope correction the two limits
-  are no longer equal — pod RAM is 15360 MiB and VRAM is 4096 MiB — which makes the typed rejections
-  more informative than they would have been: a device-using row between those two figures (the
+  shared-lane, so both compile arms are exercised. After the envelope correction the two limits are
+  no longer equal — pod RAM is 15360 MiB and VRAM is 4096 MiB — which makes the typed rejections
+  more informative than they would otherwise be: a device-using row between those two figures (the
   6 GiB music/MLX rows, the 8 GiB Bark and Demucs rows, the 12 GiB image rows) is rejected against
   `gpu-vram`, naming the resource an operator would actually have to enlarge. Only the 28 GiB video
   row exceeds the RAM limit as well, and because the pod grant is admitted first it reports
   `pod-ram`; that is a real limit genuinely exceeded, not a sign that VRAM admission is unwired.
   Ordering the dual admission VRAM-first for `requiresGpu` models would make even that row name the
   device, and remains a small follow-on.
-
-- import-boundary and lint scans report zero non-kernel raw process access — **GREEN, and the
-  residual is now a settled scope decision rather than a backlog.** `infernix-haskell-style` passes
-  with the tightened token set, and the exemption set is down from twelve rows to **seven**: four
-  kernels plus three surfaces whose exemption is a recorded decision. See the exemption resolution
-  below.
-- selected `linux-gpu` plus `linux-cpu` full-suite gate passes against one frozen state — **pending**
+- import-boundary and lint scans report zero non-kernel raw process access, and the residual is a
+  settled scope decision rather than a backlog. `infernix-haskell-style` passes with the tightened
+  token set, and the exemption set is down from twelve rows to **seven**: four kernels plus three
+  surfaces whose exemption is a recorded decision, resolved under Remaining Work below.
+- selected `linux-gpu` plus `linux-cpu` full-suite gate against one frozen state — **pending**
 
 ### Remaining Work
 
 1. **The `linux-gpu` behavioral cohort** (`./bootstrap/linux-gpu.sh test`) plus the paired
    `linux-cpu` cohort against one frozen state. This is the sprint's only blocking residual and is
-   runnable on the current CUDA host. It has not been attempted since the descriptor-space
-   correction; because the cohort consumes the **baked image source**, it needs an exact-source image
-   rebuild first. The two prior blockers it failed on are now closed by construction and guarded —
-   the GPU envelope arithmetic by a both-lane unit assertion, and the `close_fds` descriptor walk by
-   the bound, the three kernel observations, and the new lint rule.
-2. ~~**A fixture that allocates device memory past a ceiling.**~~ **CLOSED (2026-08-03)** — see the
-   Validation section above. `runNvidiaVramBreachAssertions` drives a real `libcuda.so.1` allocation
-   through `nvidiaWatchdogOutcomeForTest`, is GREEN against the RTX 5090, and was negative-tested. It
-   is a source change, so it needs its own frozen state and is part of the item-1 rebuild.
-   The original analysis is retained for the record:
-   (`runLinuxWatchdogBreachAssertions`) both already exist; what is missing is a child that holds a
-   real CUDA allocation. Driver-API calls through `ctypes` on `libcuda.so.1` from the image's Python
-   need no compiler and add no repo-owned native source, and were verified to produce an allocation
-   that `nvidia-smi --query-compute-apps` attributes to the allocating pid in the same PID namespace.
-   The assertion must mirror the Linux CPU case: a breach returns typed `EngineExceededCeiling`, the
-   group is reaped non-successfully, and a subsequent smaller allocation completes cleanly. It must
-   skip loudly — never vacuously — when the device is absent, because outer-container GPU access
-   depends on the host daemon's default runtime rather than on `compose.yaml`. **Until this exists,
-   Sprint 6.44 cannot reach `Done` on any cohort result**, and because it is a source change it needs
-   its own frozen state and a follow-up cohort.
-3. ~~**Five raw-spawn exemptions remain**~~ **CLOSED (2026-08-03): nine rows → seven, and the
-   doctrine decision is made rather than deferred.** Two rows were deleted by migration and three are
-   now recorded decisions. The decision is that the bounded-command kernel's closed operand catalog
-   is the right tool wherever the operand vocabulary *is* closed, and that two situations genuinely
-   fall outside it — an operator's own passthrough invocation, and a spawn that must run *before* the
-   host manifest exists. Neither is a licence to be unbounded, so every retained non-daemon surface
-   gained a required deadline.
+   runnable on the current CUDA host. Because the cohort consumes the **baked image source**, it
+   needs an exact-source image rebuild first. The two blockers earlier cohort attempts failed on are
+   closed by construction and guarded — the GPU envelope arithmetic by a both-lane unit assertion,
+   and the `close_fds` descriptor walk by the descriptor-space bound, the three kernel observations,
+   and the `unboundedDescriptorSpawnViolations` lint rule.
+2. **The raw-spawn exemption set is a settled decision rather than a backlog**: nine rows became
+   seven. Two rows were deleted by migration and three are recorded decisions. The decision is that
+   the bounded-command kernel's closed operand catalog is the right tool wherever the operand
+   vocabulary *is* closed, and that two situations genuinely fall outside it — an operator's own
+   passthrough invocation, and a spawn that must run *before* the host manifest exists. Neither is a
+   licence to be unbounded, so every retained non-daemon surface carries a required deadline.
 
-   Two findings changed the shape of this work relative to the sprint's description:
+   Two findings changed the shape of this work relative to the sprint's original description:
 
    - **`HostTools.hs` was not "the generic host-tool runner" — three of its five raw spawns were
      dead.** `runHostTool`, `runHostToolWithCwd`, and `readHostToolWithExitCode` had zero callers
      anywhere in the repo and are deleted. Its two live invocations, `sysctl -n hw.memsize` and
-     `colima list --json`, both carry *fixed* argv. So the module is not a generic passthrough at
-     all; it is the pre-manifest fixed host probe surface, and its exemption is now recorded as such.
+     `colima list --json`, both carry *fixed* argv. The module is therefore not a generic passthrough
+     at all; it is the pre-manifest fixed host probe surface, and its exemption is recorded as such.
    - **`Workflow.hs`'s `runWorkflowCommand` was generic only on paper.** Its sole caller passed a
      renderer-owned literal argv, so the genericity was an artifact rather than a requirement and was
      removed with the migration rather than preserved.
@@ -3245,7 +2875,7 @@ cohort is unaffected because it enters through the launcher entrypoint.
    `WebDependencyInstallOperation`, the latter indexed by a closed two-constructor toolchain over the
    only two argv shapes the old runner ever received). All three reuse an existing policy-plan field
    rather than adding one, so the generated host-manifest schema is unchanged and an operator's
-   already-generated `./infernix-host.dhall` keeps decoding — the same constraint Sprint 6.44's
+   already-generated `./infernix-host.dhall` keeps decoding — the same constraint this sprint's
    `PoetryModelSnapshotBootstrap` respected.
 
    Retained as scope decisions, each with a required deadline where a deadline is the right shape:
@@ -3255,12 +2885,12 @@ cohort is unaffected because it enters through the launcher entrypoint.
      `runCommandWithCwdAndEnvRemovingWithPaths` is an operator passthrough that must stream to the
      operator's terminal and exit with the child's code — bounding an operator's own `cabal test`
      invocation would be wrong. The one CLI capture that is *not* a passthrough
-     (`captureCliHostTool`, the demo-UI `curl`) gained a 120 s deadline.
+     (`captureCliHostTool`, the demo-UI `curl`) carries a 120 s deadline.
    - `src/Infernix/HostPrereqs.hs` — the objection here is **ordering, not operands**: all three
      spawns already have fixed executables and fixed argv, but they run before any host manifest or
      Docker context exists, because reconciling those is precisely their job, and
-     `clusterSubprocessEnv` fails closed without a manifest. Deadlines added (120 s for the two
-     Docker probes, 45 min for `brew install`, which is a genuine long reconciliation).
+     `clusterSubprocessEnv` fails closed without a manifest. Deadlines are declared: 120 s for the
+     two Docker probes, 45 min for `brew install`, which is a genuine long reconciliation.
    - `src/Infernix/HostTools.hs` — the pre-manifest fixed host probes, 120 s each, matching the
      `hostProbe` deadline the generated manifest gives every closed `HostProbeOperation` so the
      pre-manifest and post-manifest probes agree on one number.
@@ -3273,8 +2903,7 @@ cohort is unaffected because it enters through the launcher entrypoint.
    scratch repository, staging a `.c` file and deleting it from the working tree still produced the
    forbidden-native-source violation, which can only come from `git ls-files -z` output flowing
    through the bounded command, because the working-tree walk cannot see a deleted file.
-
-4. **`unboundedEngineSpawnExemptedFiles` — resolved as "cannot be narrowed by a smaller list", not
+3. **`unboundedEngineSpawnExemptedFiles` — resolved as "cannot be narrowed by a smaller list", not
    narrowed.** The redundant `cappedEngineKernelFile :` cons is removed (that file was already a
    member, so it produced a duplicate rather than a wider set), and the two sets now coincide *by
    construction*. The reason is stated plainly in the Haddock instead of being carried as a backlog
@@ -3287,23 +2916,23 @@ cohort is unaffected because it enters through the launcher entrypoint.
 
 ---
 
-## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Active — Validation Only]
+## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Active]
 
-**Status**: Active — opened 2026-08-02 by Sprint 6.43's final cross-phase review, which confirmed
-three findings the sprint's own deliverables claim are already closed. **All four deliverables are
-code-side closed on 2026-08-03**: deliverables 3 and 4 (the type-indexed teardown owner and its
-compile-fail fixture) landed first, and deliverables 1 and 2 (the cross-checkout guard) landed as
-on-resource checkout identity — see [Landed implementation (deliverables 1 and 2,
-2026-08-03)](#landed-implementation-deliverables-1-and-2-2026-08-03) below. The cohort is the only
-remaining item.
-**Code-side closure**: Complete. The machine-independent gate set is GREEN on this source:
+**Status**: Active — this sprint owns the three findings carried out of Sprint 6.43's final
+cross-phase review, which confirmed them against deliverables that sprint claims are already closed:
+the machine-global cluster slot, the unpromoted teardown owner, and the teardown compile-fail
+fixtures that exercise only the region parameter. **All four deliverables are code-side closed**:
+deliverables 3 and 4 (the type-indexed teardown owner and its compile-fail fixture) landed first,
+and deliverables 1 and 2 (the cross-checkout guard) landed as on-resource checkout identity. The
+cohort is the only remaining item.
+**Code-side closure**: Complete. The machine-independent gate set passes on this source:
 `cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`,
 `infernix-execution-plan-internal`, `infernix-capped-engine-observer`, `infernix-compile-fail`
 (6 positive / 82 negative), `infernix-haskell-style` (`haskell-style-check: ok`), and
 `lint files|chart|proto|docs` plus `docs check`
 **Cohort gate**: selected accelerator plus `linux-cpu`
-**Blocked by**: nothing — dependencies are satisfied; this is ordered after Sprint 6.43's landed
-implementation and before Sprint 6.43 can reach `Done`
+**Blocked by**: nothing — dependencies are satisfied. This sprint is ordered after Sprint 6.43's
+landed implementation.
 **Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/LifecycleLock.hs`,
 `src/Infernix/CLI.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
@@ -3345,7 +2974,7 @@ consumer accepts either. The refusal is an `ioError` reached from a value compar
 teardown compile-fail fixtures exercise only the region parameter, so the compile-fail suite cannot
 detect regression of the property it is cited for.
 
-### Design analysis (2026-08-03) — the two named options are both unsound as written
+### Design analysis — the two named options are both unsound as written
 
 Before implementing, both options this sprint offered were checked against the two execution
 contexts the platform actually supports. **Neither works on its own**, and the reason is worth
@@ -3416,7 +3045,7 @@ recorded here as insufficient rather than implemented as a partial fix.
   tears down only its own
 - machine-independent gates plus the selected accelerator and `linux-cpu` cohorts
 
-### Landed implementation (deliverables 3 and 4, 2026-08-03)
+### Landed implementation — deliverables 3 and 4
 
 `ClusterOwner` is promoted and `ClusterTeardownAuthority (owner :: ClusterOwner) s` is indexed by it
 with `type role ... nominal nominal`; `PreWorkloadKindRecovery` and `KindDeleteAuthorization` carry
@@ -3453,7 +3082,7 @@ is now a type error and the compile-fail suite detects its regression. Deciding 
 cluster is still a runtime evidence check under the held lease, and a teardown of a genuinely
 `OperatorOwned` cluster is refused by a checked `ioError`, not by GHC.
 
-### Landed implementation (deliverables 1 and 2, 2026-08-03)
+### Landed implementation — deliverables 1 and 2
 
 The guard now covers the resource it protects. The identity is recorded **on the cluster**, and
 `authorizeClusterOwnership` — still the sole decision function, still pure — consumes it alongside
@@ -3535,7 +3164,7 @@ closed.
 ## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Done]
 
 **Status**: Done — the boundary, the lint, the fixtures, the mechanism resolver, and the victim rank
-are implemented and GREEN on the machine-independent gate set. There is no accelerator-specific
+are implemented and clean on the machine-independent gate set. There is no accelerator-specific
 behaviour here, so there is no cohort gate.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`,
 `src/Infernix/CLI.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
@@ -3577,8 +3206,8 @@ All landed.
 - **Five negative-compilation fixtures in current source** — a forged authority, an escaped
   authority, an authority substituted across region tags, and nominal-coercion refusals for both
   the spawn authority and Darwin refinement. The suite is now 6 positive / 92 negative. The two
-  coercion fixtures belong to Phase 1's validation-pending follow-on, not the historical Sprint 6.46
-  GREEN evidence.
+  coercion fixtures belong to Phase 1's validation-pending follow-on rather than to this sprint's
+  own evidence.
 - **The per-lane mechanism resolver.** `resolveBuildMemoryMechanism` returns
   `CgroupAggregateMechanism` when a finite cgroup v2 maximum is in force (the outer-container lane's
   own limit, and a Linux host-native lane inside a limited slice), `LinuxProcessCeilingMechanism`
@@ -3588,8 +3217,8 @@ All landed.
   repository performs.
 - **The child victim rank**, platform-indexed so Darwin is an explicit rather than a silent no-op.
   800 puts a build above every ordinary process and below the cluster pods at 996-1000 — the
-  ranking the 2026-08-03 incident inverted, when the compiler ran at 0 and the kernel destroyed 111
-  pod processes without ever selecting it.
+  ranking the uncapped-build host exhaustion inverted, when the compiler ran at 0 and the kernel
+  destroyed 111 pod processes without ever selecting it.
 
 Two decisions inside are worth stating rather than leaving implicit.
 
@@ -3607,16 +3236,22 @@ two can disagree: the manifest records what the machine looked like when `infern
 and the Linux launcher image bakes an unmeasured manifest while the container it runs in carries its
 own cgroup maximum. `resolveLiveBuildMemoryPlan` measures the machine that will run the build.
 
+**What this boundary does not cover.** The nested builds that produce the setup helper, the
+formatter tools, and the compile-fail fixtures each carry their own job count and sit outside this
+boundary. The committed ceiling in `cabal.project` and `test/compile-fail/cabal.project` covers the
+fixture builds; the setup helper's own compilation is not covered, and that gap is named in the
+doctrine's `What this does not bound` as deferred.
+
 ### Validation
 
-- `cabal test infernix-haskell-style` runs the new lint and is GREEN. Its behaviour is pinned by
+- `cabal test infernix-haskell-style` runs the new lint and passes. Its behaviour is pinned by
   five unit assertions covering the positive case, the cleared case, the comment case, the
   spawn-free case, and the owning module's exemption — asserted against the real
   `src/Infernix/CLI.hs` path so the rule is exercised exactly as the gate applies it.
 - `cabal test infernix-compile-fail` accepts the 6 positive fixtures and rejects all 85 negatives,
   including the three new ones.
 - `cabal build all --enable-tests` under `-Wall -Werror` and `infernix lint files|docs|chart|proto`
-  are GREEN.
+  pass.
 - The boundary is proven live rather than only compiled: `infernix test lint` ran
   `cabal test infernix-haskell-style` through `runToolchainCommand` — resolving the plan from a live
   measurement, holding the ceiling across the fork, and raising the child's victim rank — and the
@@ -3624,10 +3259,7 @@ own cgroup maximum. `resolveLiveBuildMemoryPlan` measures the machine that will 
 
 ### Remaining Work
 
-The nested builds that produce the setup helper, the formatter tools, and the compile-fail fixtures
-each carry their own job count and are not covered by this boundary; the committed ceiling in
-`cabal.project` and `test/compile-fail/cabal.project` covers the fixture builds, but the setup
-helper's own compilation is not. Named in the doctrine's `What this does not bound` as deferred.
+None.
 
 ---
 
@@ -3666,7 +3298,7 @@ and say plainly that this reduces what a green run proves.
   integration exemplar and that the unit suite retains the bracket's own crash/reconcile assertions
   independently of any cluster, so Sprint 6.43's doctrine survives the removal of its examples.
 - **`documents/development/chaos_testing.md` is retired** and deregistered, with every inbound link
-  removed; `infernix lint docs` is GREEN, which is the check that would fail on either half alone.
+  removed; `infernix lint docs` is clean, which is the check that would fail on either half alone.
 - **The exactly-once claims are narrowed to the effect layer rather than deleted.**
   `Dispatch/SingleFlight`'s "guarantees exactly-once dispatch across crashed dispatcher replicas"
   becomes producer dedup collapsing a redelivered dispatch at the effect, and the namespace
@@ -3682,10 +3314,10 @@ described where the block sat rather than what each case tested.
 
 ### Validation
 
-- `infernix lint docs` and `infernix docs check` are GREEN with the retired document deregistered
+- `infernix lint docs` and `infernix docs check` pass with the retired document deregistered
   and all inbound links removed.
 - `cabal build all --enable-tests` under `-Wall -Werror`, `cabal test infernix-unit`,
-  `cabal test infernix-haskell-style`, and `infernix lint files|chart|proto` are GREEN. The
+  `cabal test infernix-haskell-style`, and `infernix lint files|chart|proto` pass. The
   registry assertion now pins that `internal playwright replace-demo-pods` **fails** to parse.
 - The suite contains no assertion that a second replica exists.
 - **Cohort gate (pending):** a full `linux-cpu` integration run on the collapsed topology, shared
@@ -3751,8 +3383,8 @@ scratch roots — none removable by `git clean` or `rm -rf`.
 
 The library did not compile on Darwin at all, which blocked every gate on an Apple host.
 `CappedEngine/Internal.hs` exported `missingResidentRecheckForTest` and `parseResidentBytesForTest`
-unconditionally while defining both inside its `#if !defined(darwin_HOST_OS)` block; introduced
-2026-08-02 in `7fff1c0`. Rather than guard the exports and their test cases — which would need `CPP`
+unconditionally while defining both inside its `#if !defined(darwin_HOST_OS)` block. Rather than
+guard the exports and their test cases — which would need `CPP`
 in `test/unit/Spec.hs`, where the C preprocessor rejects the comment-open sequence that occurs
 inside ordinary Haskell comments there — the pure `/proc` text parsers were hoisted out of the
 Linux-only block. They have no platform dependency, so this **restores** the coverage on Darwin
@@ -3793,7 +3425,7 @@ current-source execution on Apple and the paired Linux lane remains.
 
 ### Objective
 
-The 2026-08-08 audit found that `test-suite infernix-capped-engine-observer` was compiled and run by
+An audit found that `test-suite infernix-capped-engine-observer` was compiled and run by
 no gate. At that point `ToolchainTestSuite` admitted only `HaskellStyleSuite`, `UnitSuite`, and
 `IntegrationSuite`, while the build-all vector did not enable tests. Its 449 lines — the
 cleanup, timeout, stopped-group, descendant-group and output-bounds machinery for the Apple observer,

@@ -188,11 +188,12 @@ status exception.
   Harbor publication, validation, and teardown behavior must be described as binary-owned
 - no governed doc may reference project-prefixed env names or shell path overrides as a supported
   operator override; the supported configuration substrate is the typed `.dhall` files named in
-  [architecture/configuration_doctrine.md](architecture/configuration_doctrine.md). Mentions in
+  [architecture/configuration_doctrine.md](architecture/configuration_doctrine.md). No governed
+  document is exempt, and the validator carries no allowlist: a document that must quote a
+  third-party upstream environment contract reintroduces a narrow, occupied exemption in the
+  validator rather than inheriting a standing one. Mentions in
   [DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md](../DEVELOPMENT_PLAN/legacy-tracking-for-deletion.md)
-  and the documented third-party-upstream exception in
-  [tools/keycloak.md](tools/keycloak.md) (Keycloak's own `KC_DB_*` upstream contract) are the only
-  permitted occurrences.
+  sit outside the governed suite the validator scans.
 - the Linux launcher image selector is a narrow Compose invocation detail documented in
   [engineering/docker_policy.md](engineering/docker_policy.md), not an operator configuration
   override. It may be named when explaining direct Linux GPU reference commands.

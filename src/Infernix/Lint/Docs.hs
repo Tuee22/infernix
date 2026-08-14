@@ -441,7 +441,8 @@ monitoringUnsupportedStatement = "Monitoring is not a supported first-class surf
 
 monitoringStancePaths :: [FilePath]
 monitoringStancePaths =
-  [ "documents/README.md",
+  [ "README.md",
+    "documents/README.md",
     "DEVELOPMENT_PLAN/README.md",
     "DEVELOPMENT_PLAN/00-overview.md",
     "DEVELOPMENT_PLAN/system-components.md",
@@ -596,11 +597,11 @@ validateDhallSchemaDrift _paths =
 -- | Documents permitted to contain a forbidden phrase, because naming it is
 -- their subject.
 --
--- Mirrors 'configurationOverrideReferenceAllowedPaths': the standard that
--- defines the banned status vocabulary has to be able to spell it, and the
--- ledger that records a retired surface has to be able to name what was
--- retired. Keep this list to documents whose purpose is the prohibition
--- itself.
+-- The standard that defines the banned status vocabulary has to be able to
+-- spell it, and the ledger that records a retired surface has to be able to
+-- name what was retired. Keep this list to documents whose purpose is the
+-- prohibition itself; an exemption whose occupant has gone is deleted rather
+-- than retained, because an empty carve-out still reads as a live one.
 forbiddenPhraseAllowedPaths :: [FilePath]
 forbiddenPhraseAllowedPaths =
   ["documents/documentation_standards.md"]
@@ -922,35 +923,32 @@ pathScopedRetiredPhrases relativePath =
       ["one Pulsar replica per role"]
     _ -> []
 
+-- | No governed document is exempt. An earlier allowlist carried four paths so
+-- that a third-party upstream contract could be quoted verbatim; the quoted
+-- contract is gone and every one of those four documents now matches zero
+-- tokens, so the carve-out permitted nothing while still reading as a live
+-- exemption. A doc that genuinely needs to name an upstream environment
+-- contract reintroduces a narrow, occupied exemption rather than inheriting an
+-- empty one.
 validateForbiddenConfigurationOverrideReferences :: FilePath -> String -> IO ()
-validateForbiddenConfigurationOverrideReferences relativePath contents
-  | relativePath `elem` configurationOverrideReferenceAllowedPaths = pure ()
-  | otherwise =
-      case violations of
-        [] -> pure ()
-        _ ->
-          ioError
-            ( userError
-                ( "forbidden env/PATH override reference found in "
-                    <> relativePath
-                    <> ":\n"
-                    <> intercalate "\n" violations
-                )
+validateForbiddenConfigurationOverrideReferences relativePath contents =
+  case violations of
+    [] -> pure ()
+    _ ->
+      ioError
+        ( userError
+            ( "forbidden env/PATH override reference found in "
+                <> relativePath
+                <> ":\n"
+                <> intercalate "\n" violations
             )
+        )
   where
     violations =
       [ show lineNumber <> ": " <> lineValue
       | (lineNumber, lineValue) <- zip [1 :: Int ..] (lines contents),
         any (`isInfixOf` lineValue) forbiddenConfigurationOverrideTokens
       ]
-
-configurationOverrideReferenceAllowedPaths :: [FilePath]
-configurationOverrideReferenceAllowedPaths =
-  [ "documents/architecture/configuration_doctrine.md",
-    "documents/development/no_env_vars.md",
-    "documents/engineering/host_tools_manifest.md",
-    "documents/tools/keycloak.md"
-  ]
 
 forbiddenConfigurationOverrideTokens :: [String]
 forbiddenConfigurationOverrideTokens =

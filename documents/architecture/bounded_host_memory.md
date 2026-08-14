@@ -78,9 +78,13 @@ A repository that bounds every subprocess it supervises must also bound the buil
 that repository. Every compiler spawn consumes the toolchain plan in addition to the ordinary
 deadline, capture, and descriptor-space bounds. The measurement that settles the scale: the
 Glasgow Haskell Compiler reserves **1024.65 GiB** of virtual address
-space at startup, and a single compiler process in this checkout reached **109.46 GiB resident** on
-a **124.94 GiB** host. The reservation is not the hazard — the resident set is — but the two are
-routinely confused.
+space at startup, and an uncapped host-side `cabal build` of this checkout reached
+**109.46 GiB resident** on a **124.94 GiB** host. That figure is the whole concurrent build tree
+rather than one compiler image, and the distinction is load-bearing: under the bounded plan a clean
+build peaks at **1328 MiB** in its largest single compiler process and **1798 MiB** summed across
+every concurrent compiler and driver, and the per-process heap floor is a measured multiple of that
+single-process peak rather than of the aggregate. The reservation is not the hazard — the resident
+set is — but the two are routinely confused.
 
 The doctrine answer is to bound the resource, not to abandon the build. The compiler runtime accepts
 an explicit reservation size, which reduces that 1024.65 GiB to **1.15 GiB at identical resident

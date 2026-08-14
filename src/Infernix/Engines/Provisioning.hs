@@ -83,6 +83,7 @@ module Infernix.Engines.Provisioning
     planMachOMetadataReadsForTest,
     machOInstallNameTargetForTest,
     pythonHomeClosureFileExcludedForTest,
+    validRelativeClosureLinkForTest,
     shebangBindsHostInstallationForTest,
     supportedMachOMagicForTest,
     resolveMachOPathsFixtureForTest,
@@ -4553,6 +4554,9 @@ validRelativeClosureLink relativePath linkTarget =
       ".." : _ -> False
       _ -> True
 
+validRelativeClosureLinkForTest :: FilePath -> FilePath -> Bool
+validRelativeClosureLinkForTest = validRelativeClosureLink
+
 excludedPythonBaseSitePackagesLink :: FilePath -> Bool
 excludedPythonBaseSitePackagesLink relativePath =
   case splitDirectories (normalise relativePath) of
@@ -6100,7 +6104,8 @@ parseAppleRuntimeVersion adapter rawOutput = do
       (Left . ("Apple runtime smoke output is not UTF-8: " <>) . show)
       Right
       (TextEncoding.decodeUtf8' rawOutput)
-  outputLines <- exactRuntimeOutputLines output
+  outputLines <-
+    exactRuntimeOutputLines (withoutAudiverisBannerTerminator adapter output)
   version <-
     case adapter of
       Internal.LlamaCppCliAdapter ->
@@ -6321,6 +6326,25 @@ parseAudiverisRuntimeVersion outputLines =
         pure version
     _ ->
       Left "Audiveris smoke must emit exactly seven version fields"
+
+-- | Drop the one blank line Audiveris prints after its version banner.
+--
+-- The shared rule is that a smoke emits no empty line at all, because an empty
+-- line is how junk gets carried past a field parser. Audiveris nonetheless
+-- terminates @-version@ with @\\n\\n@. That is a fact about the upstream tool,
+-- not a reason to relax the rule for the other six targets, so exactly one
+-- trailing blank line is removed for exactly that adapter before the strict
+-- check runs. A second blank line, a blank line anywhere else, and a blank
+-- terminator on any other adapter all still fail closed.
+withoutAudiverisBannerTerminator ::
+  Internal.AppleAdapterId ->
+  Text ->
+  Text
+withoutAudiverisBannerTerminator adapter output =
+  case adapter of
+    Internal.JvmAdapter
+      | "\n\n" `Text.isSuffixOf` output -> Text.dropEnd 1 output
+    _ -> output
 
 exactRuntimeOutputLines :: Text -> Either String [Text]
 exactRuntimeOutputLines output = do

@@ -20,6 +20,13 @@ module Infernix.Engines.Artifact.Target
     nativeArtifactTargetArchitecture,
     nativeArtifactTargetFingerprint,
     nativeArtifactTargetEvidenceFingerprint,
+    audiverisAppleJvmRelativePath,
+    audiverisAppleLeadingArguments,
+    audiverisJavaCppSymbolicLinkArgument,
+    audiverisLinuxImageJvmPath,
+    audiverisLinuxImageJavaCppCacheDirectory,
+    audiverisLinuxImageApplicationClasspath,
+    audiverisLinuxImageLeadingArguments,
   )
 where
 
@@ -395,7 +402,7 @@ nativeArtifactTarget identity substrate architecture =
     ("apple-silicon", "arm64", "jvm-native") ->
       appleTarget
         identity
-        (InstalledTarget "Audiveris.app/Contents/runtime/Contents/Home/bin/java")
+        (InstalledTarget audiverisAppleJvmRelativePath)
         NoTargetArgumentPrefix
     ("linux-native", laneArchitecture, "llama-cpp-cli")
       | supportedLinuxArchitecture laneArchitecture ->
@@ -443,11 +450,11 @@ nativeArtifactTarget identity substrate architecture =
           linuxTarget
             identity
             laneArchitecture
-            (ImageTarget "/opt/infernix/audiveris-jre/bin/java")
+            (ImageTarget audiverisLinuxImageJvmPath)
             NoTargetArgumentPrefix
             [ ImageClosureRoot "/opt/infernix/audiveris-jre",
               ImageClosureRoot "/opt/audiveris/lib/app",
-              ImageClosureRoot "/opt/infernix/audiveris-javacpp-cache"
+              ImageClosureRoot audiverisLinuxImageJavaCppCacheDirectory
             ]
     _ ->
       Left
@@ -479,6 +486,87 @@ nativeArtifactTarget identity substrate architecture =
             targetArgumentPrefix = argumentPrefix,
             targetClosureRoots = closures
           }
+
+-- | The bundled JVM the Apple @jvm-native@ artifact executes, and the leading
+-- arguments that turn it into Audiveris.
+--
+-- Both the inference target and the installed smoke run this pair. Keeping them
+-- one definition is not tidiness: the smoke exists to prove that the thing
+-- inference runs works, so a smoke that executed a different binary — or the
+-- same binary without the classpath that reaches @Audiveris@ — would report on
+-- something the request path never touches. The path has already drifted
+-- between producer and consumer twice.
+audiverisAppleJvmRelativePath :: FilePath
+audiverisAppleJvmRelativePath =
+  "Audiveris.app/Contents/runtime/Contents/Home/bin/java"
+
+-- | The JavaCPP property that keeps an Audiveris payload relocation-invariant.
+--
+-- JavaCPP owns one cross-jar link inside its configured cache and re-establishes
+-- it on every load: a relative target is rewritten to the absolute cache path, a
+-- real file is deleted and replaced by that link, an absent link is re-created,
+-- and a cache it cannot write is not an error but an escape to
+-- @~\/.javacpp\/cache@. Its only fixed point is the absolute self-referential
+-- link, and that spelling names whichever root the payload currently occupies —
+-- so no single spelling can satisfy both the candidate smoke and the smoke that
+-- runs after the candidate is renamed onto its final root.
+--
+-- Measured on Audiveris 5.10.2 with JavaCPP 1.5.12: with link creation disabled
+-- the cache contains no symlink at all, every dylib still loads from the sealed
+-- cache, the real Tesseract engine still reports its version, and the payload is
+-- byte-identical across repeated runs and across the activation rename. The link
+-- was never on the load path — dyld resolves each library from its own extracted
+-- jar directory — so declining to create it costs nothing and is what makes the
+-- sealed payload path-independent, rather than any repair applied afterwards.
+audiverisJavaCppSymbolicLinkArgument :: String
+audiverisJavaCppSymbolicLinkArgument =
+  "-Dorg.bytedeco.javacpp.canCreateSymbolicLink=false"
+
+-- | The leading arguments that turn a bundled JVM into Audiveris, for one cache
+-- directory and one application classpath.
+--
+-- Both lanes and every producer render through here. The cache directory and the
+-- classpath differ between an installed Apple artifact and the Linux image, but
+-- the property set must not: a producer that populates a cache with a different
+-- JavaCPP configuration than the consumer that loads from it writes a payload the
+-- consumer then rewrites.
+audiverisLeadingArguments :: FilePath -> FilePath -> [String]
+audiverisLeadingArguments javaCppCacheDirectory applicationClasspath =
+  [ "-Dorg.bytedeco.javacpp.cachedir=" <> javaCppCacheDirectory,
+    audiverisJavaCppSymbolicLinkArgument,
+    "-cp",
+    applicationClasspath,
+    "Audiveris"
+  ]
+
+-- | The classpath and main class that make the bundled JVM run Audiveris.
+audiverisAppleLeadingArguments :: FilePath -> [String]
+audiverisAppleLeadingArguments installRoot =
+  audiverisLeadingArguments
+    (installRoot </> "javacpp-cache")
+    (installRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*")
+
+-- | The Linux image's fixed Audiveris JVM, cache directory, and classpath.
+--
+-- These are baked absolute image paths rather than artifact-relative ones, and
+-- the image build itself has to run the same invocation to populate the cache, so
+-- they are named here and asserted against @docker\/Dockerfile@ instead of being
+-- spelled a second time in the image recipe.
+audiverisLinuxImageJvmPath :: FilePath
+audiverisLinuxImageJvmPath = "/opt/infernix/audiveris-jre/bin/java"
+
+audiverisLinuxImageJavaCppCacheDirectory :: FilePath
+audiverisLinuxImageJavaCppCacheDirectory =
+  "/opt/infernix/audiveris-javacpp-cache"
+
+audiverisLinuxImageApplicationClasspath :: FilePath
+audiverisLinuxImageApplicationClasspath = "/opt/audiveris/lib/app/*"
+
+audiverisLinuxImageLeadingArguments :: [String]
+audiverisLinuxImageLeadingArguments =
+  audiverisLeadingArguments
+    audiverisLinuxImageJavaCppCacheDirectory
+    audiverisLinuxImageApplicationClasspath
 
 supportedLinuxArchitecture :: Text -> Bool
 supportedLinuxArchitecture architecture =
@@ -517,17 +605,9 @@ nativeArtifactTargetLeadingArguments installRoot engineName target =
     NoTargetArgumentPrefix ->
       case (targetSubstrate target, targetAdapterId target) of
         ("apple-silicon", "jvm-native") ->
-          [ "-Dorg.bytedeco.javacpp.cachedir=" <> (installRoot </> "javacpp-cache"),
-            "-cp",
-            installRoot </> "Audiveris.app" </> "Contents" </> "app" </> "*",
-            "Audiveris"
-          ]
+          audiverisAppleLeadingArguments installRoot
         ("linux-native", "jvm-native") ->
-          [ "-Dorg.bytedeco.javacpp.cachedir=/opt/infernix/audiveris-javacpp-cache",
-            "-cp",
-            "/opt/audiveris/lib/app/*",
-            "Audiveris"
-          ]
+          audiverisLinuxImageLeadingArguments
         _ -> []
     InstalledPythonRunnerPrefix ->
       pythonRunnerArguments

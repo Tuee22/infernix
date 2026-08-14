@@ -27,7 +27,7 @@ creates the separate `./infernix.test.dhall` consumed by the test harness.
 - `cluster` - reconciles or reports cluster state, lifecycle progress, generated substrate publication, and routed surfaces
 - `cache` - inspects or reconciles manifest-backed derived cache state for the active substrate
 - `kubectl` - proxies read-only Kubernetes diagnostics through the repo-local kubeconfig
-- `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, and chart assets
+- `lint` - runs the focused Haskell-owned static checks for files, docs, `.proto`, chart assets, and development-plan standards
 - `test` - runs the aggregate validation entrypoints for lint, unit, integration, routed E2E, and the full suite
 - `docs` - validates the governed documentation suite and the development-plan shape
 - `internal` - runs build-time helpers for contract generation, chart discovery, substrate materialization, demo-config inspection, and Pulsar round-trip validation
