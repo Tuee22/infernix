@@ -24,8 +24,9 @@
   typed evidence that the state's transition completed, so races and flakes (unmanaged state
   transitions) are structurally unrepresentable
 - [architecture/bounded_host_memory.md](architecture/bounded_host_memory.md) defines the
-  host-memory capacity ledger and the declared-ceiling invariant — every memory-consuming process
-  this repository starts runs under a ceiling derived from measured physical RAM — and states
+  host-memory capacity ledger and the admitted-ceiling invariant — the governed toolchain runs under
+  a ceiling derived from observed host memory and admitted against observed availability plus an
+  empty foreign-claimant census — and states
   precisely which host out-of-memory conditions that does and does not make unrepresentable
 - [architecture/bounded_inference_memory.md](architecture/bounded_inference_memory.md) defines the
   target "memory-safety by construction" invariant for the inference row of that ledger, and
@@ -172,9 +173,11 @@
   discipline — the "evidence, not hope" invariant that every state-acting operation consumes typed
   evidence — generalizing the results-side `documents/architecture/realness_contract.md`.
 - `documents/architecture/bounded_host_memory.md` owns the host-memory capacity ledger — the
-  declared-ceiling invariant that every memory-consuming process this repository starts runs under
-  a ceiling derived from measured physical RAM, that a ceiling is inseparable from the concurrency
-  it is multiplied by, and that the enforcement mechanism is resolved per lane rather than assumed.
+  admitted-ceiling invariant that the governed toolchain runs under a ceiling derived from observed
+  host memory, that a ceiling is inseparable from the concurrency
+  it is multiplied by, that the account is admitted against observed availability and a
+  foreign-claimant census rather than against declared capacity alone, and that the enforcement
+  mechanism is resolved per lane rather than assumed.
   It is also the canonical home for the scope statement naming what is *not* bounded, so no other
   document asserts that a host out-of-memory condition is impossible.
 - `documents/architecture/bounded_inference_memory.md` owns the inference row of that ledger —

@@ -279,11 +279,15 @@ build_launcher() {
   ensure_build_prerequisites
   require_stage0_build_memory
   home_dir="$(bootstrap::effective_home)"
+  # No build-only GHCRTS here. The environment form does not cap an RTS image
+  # linked without runtime options — it makes that image refuse to start — so a
+  # third-party setup program would fail rather than be bounded. The caps that
+  # bind are the ones on this invocation: the leading +RTS segment for the Cabal
+  # driver and the ordered --ghc-options segment for the compiler images.
   bootstrap::run \
     "${BOOTSTRAP_ENV}" \
     "HOME=${home_dir}" \
     "PATH=$(apple_launcher_path)" \
-    "GHCRTS=-M1024M" \
     "${APPLE_CABAL_BIN}" \
     +RTS -M1024M -RTS \
     install \

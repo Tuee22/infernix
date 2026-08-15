@@ -2,6 +2,7 @@
 
 module Infernix.Runtime.Enforcer.Internal
   ( parseFiniteMib,
+    readCgroupMemoryAvailableMib,
     readCgroupMemoryLimitMib,
   )
 where
@@ -40,6 +41,70 @@ readCgroupMemoryLimitMib = do
     Just relativePath ->
       firstFiniteLimit
         ["/sys/fs/cgroup" </> relativePath </> "memory.max"]
+
+-- | The headroom remaining inside the cgroup v2 memory maximum in force, in
+-- MiB.
+--
+-- Phase 1 Sprint 1.21 admission needs what the slice has /left/, not what it
+-- was granted: inside the Linux launcher container @\/proc\/meminfo@ still
+-- reports the whole machine, so an available-memory observation that ignored
+-- the cgroup would admit a toolchain account the container cannot fund.
+--
+-- Three outcomes, and the degradation is deliberate rather than hidden. With
+-- both @memory.max@ and @memory.current@ readable the answer is their
+-- difference. With a readable maximum and an unreadable current usage the
+-- answer degrades to the maximum itself — an upper bound on the headroom, not
+-- a measurement of it — because a slice that is bounded at all still bounds
+-- more than the host figure does. With no finite maximum the answer is
+-- 'Nothing', which every caller reads as "no cgroup narrowing" rather than as
+-- "no memory".
+readCgroupMemoryAvailableMib :: IO (Maybe Int)
+readCgroupMemoryAvailableMib = do
+  maybeRelativePath <- readCurrentCgroupPath
+  case maybeRelativePath of
+    Nothing -> pure Nothing
+    Just relativePath -> do
+      maybeLimitMib <-
+        firstFiniteLimit ["/sys/fs/cgroup" </> relativePath </> "memory.max"]
+      case maybeLimitMib of
+        Nothing -> pure Nothing
+        Just limitMib ->
+          Just . cgroupHeadroomMib limitMib
+            <$> readFlooredMib ("/sys/fs/cgroup" </> relativePath </> "memory.current")
+
+-- | The headroom a readable maximum and an optional current usage describe.
+cgroupHeadroomMib :: Int -> Maybe Int -> Int
+cgroupHeadroomMib limitMib maybeCurrentMib =
+  case maybeCurrentMib of
+    Nothing -> limitMib
+    Just currentMib -> max 0 (limitMib - currentMib)
+
+-- | A byte counter floored to MiB.
+--
+-- Separate from 'parseFiniteMib' on purpose: that parser requires an exact MiB
+-- multiple because a cgroup /maximum/ this repository trusts is always written
+-- as one, while a current-usage counter is an arbitrary byte figure and
+-- rejecting it for not dividing evenly would discard the observation.
+readFlooredMib :: FilePath -> IO (Maybe Int)
+readFlooredMib path = do
+  readResult <- try (readFile path)
+  pure $
+    case readResult of
+      Left (_ :: IOException) -> Nothing
+      Right contents ->
+        case reads (trim contents) of
+          [(bytes, "")]
+            | bytes >= (0 :: Integer),
+              let mib = bytes `div` 1048576,
+              mib <= toInteger (maxBound :: Int) ->
+                Just (fromInteger mib)
+          _ -> Nothing
+  where
+    trim =
+      reverse
+        . dropWhile (`elem` [' ', '\t', '\r', '\n'])
+        . reverse
+        . dropWhile (`elem` [' ', '\t', '\r', '\n'])
 
 readCurrentCgroupPath :: IO (Maybe FilePath)
 readCurrentCgroupPath = do

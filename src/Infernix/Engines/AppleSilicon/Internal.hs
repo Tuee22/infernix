@@ -24,6 +24,8 @@ module Infernix.Engines.AppleSilicon.Internal
     appleMaterializerFixtureCandidateRoot,
     appleMaterializerLockContentionForTest,
     retireLegacyAppleMetalRuntimeBridgeForTest,
+    ArtifactHydrationKind (..),
+    hydrationRelocatesCandidateVenvForTest,
     MachOFixturePlan (..),
     inspectMachOFixtureForTest,
     machOInstallNameTargetForTest,
@@ -886,11 +888,9 @@ completeMetalEngineCandidate
     -- so relocating one unconditionally fails closed on an artifact that is
     -- correctly hydrated. The hydration witness, not a tolerant filesystem
     -- probe, decides: an absent venv under a Python candidate is still fatal.
-    case hydration of
-      PythonHydration {} ->
-        relocateCandidateVenvInSession writer installRoot tempRoot
-      HostBinaryHydration {} -> pure ()
-      AudiverisHydration {} -> pure ()
+    when
+      (hydrationRelocatesCandidateVenv (artifactHydrationKind hydration))
+      (relocateCandidateVenvInSession writer installRoot tempRoot)
     metadataSeed <-
       collectHydratedMetadataSeed
         writer
@@ -1032,6 +1032,45 @@ data ArtifactHydration s
       !Text
       !Text
       !(Provisioning.InstalledMachORuntimeClosure s)
+
+-- | Which hydration witness a candidate carries, stripped of the
+-- session-scoped payload that makes 'ArtifactHydration' unconstructible
+-- outside a live provisioning region.
+--
+-- The relocation selection is a decision, and a decision embedded in a
+-- region-indexed value is a decision no fixture can name. This tag is what
+-- makes it nameable.
+data ArtifactHydrationKind
+  = PythonHydrated
+  | HostBinaryHydrated
+  | AudiverisHydrated
+  deriving (Eq, Show)
+
+artifactHydrationKind :: ArtifactHydration s -> ArtifactHydrationKind
+artifactHydrationKind hydration =
+  case hydration of
+    PythonHydration {} -> PythonHydrated
+    HostBinaryHydration {} -> HostBinaryHydrated
+    AudiverisHydration {} -> AudiverisHydrated
+
+-- | Whether this witness owns a @venv@ whose launchers and configuration must
+-- be rewritten to the final root before smoke.
+--
+-- Only a Python-backed candidate does. A native-binary or Audiveris JVM
+-- candidate has no @venv@ directory at all, so relocating one unconditionally
+-- would fail closed on an artifact that is correctly hydrated. The witness
+-- decides rather than a tolerant filesystem probe, which is what keeps an
+-- absent @venv@ under a Python candidate fatal.
+hydrationRelocatesCandidateVenv :: ArtifactHydrationKind -> Bool
+hydrationRelocatesCandidateVenv kind =
+  case kind of
+    PythonHydrated -> True
+    HostBinaryHydrated -> False
+    AudiverisHydrated -> False
+
+-- | The relocation selection, for a fixture.
+hydrationRelocatesCandidateVenvForTest :: ArtifactHydrationKind -> Bool
+hydrationRelocatesCandidateVenvForTest = hydrationRelocatesCandidateVenv
 
 hydrateMetalEngineArtifact ::
   Provisioning.DownloadCacheWriter d s q ->

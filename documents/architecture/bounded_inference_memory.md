@@ -90,10 +90,14 @@ so the related unmanaged states are also unbuildable:
 
 - **The budget names its enforcer.** `InferenceMemoryBudget` is `HostEnforcedBudget HostMemoryPartition
   | SubstrateEnforcedBudget PodMemoryLimit | DualEnforcedBudget PodMemoryLimit PodMemoryLimit` —
-  there is no "enforced by nobody" arm. The budget is **observed, never declared**: physical RAM from
+  there is no "enforced by nobody" arm. The budget's **capacity terms are observed, never declared**:
+  physical RAM from
   the host, the VM pledge from the co-tenant runtime, the pod ceiling from the live cgroup, and the
   device envelope from the accelerator. A capacity an operator can write down is a capacity that can
-  disagree with the machine, and the code would have to re-check it anyway. `apple-silicon` is host-enforced by the grant plus the
+  disagree with the machine, and the code would have to re-check it anyway. Observed capacity is what
+  the machine contains, which is not what it has left: availability is a separate observation, owned
+  by [bounded_host_memory.md](bounded_host_memory.md), and admission of a competing claimant against
+  it belongs there rather than here. `apple-silicon` is host-enforced by the grant plus the
   watchdog; `linux-cpu` is enforced by its process-group RSS watchdog under a verified outer pod
   envelope; `linux-gpu` carries the dual arm, whose pod RAM limit comes first and whose NVIDIA VRAM
   limit comes second. Both halves of a dual budget are required and independently enforced: the
@@ -106,7 +110,10 @@ so the related unmanaged states are also unbuildable:
   **rejects oversubscription and a non-positive inference capacity**,
   and forces `hostHeadroom` to be large enough to cover the OS, the control-plane binary, the routed
   end-to-end browser, and the worst-case inter-poll watchdog overshoot. A partition whose pieces exceed
-  physical, or whose headroom cannot cover its co-tenants, is not a constructible term.
+  physical, or whose headroom cannot cover its co-tenants, is not a constructible term. The headroom
+  covers those co-tenants and not the Haskell toolchain, which draws on the same pool as a competing
+  occupant rather than as a headroom tenant; the exclusive host claim that keeps the two from being
+  resident together is owned by [bounded_host_memory.md](bounded_host_memory.md).
 - **Every model declares a positive footprint.** `ModelDescriptor` carries a `ModelMemoryFootprint`
   (a newtype behind a hidden constructor, rejecting a non-positive value) rather than a bare `Int` that
   decodes to `0` when absent; a model admitted on an absent or zero footprint is unrepresentable.

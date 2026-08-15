@@ -11,8 +11,9 @@ published one bit, because the argv silenced the only channel carrying the reaso
 corrected on the Linux lanes, and the same probable Apple defect is named as
 [Wave Y](cohort-validation-waves.md) work. Sprint 4.34 (machine-local admission and fail-closed
 member identity) has closed the admission move code-side, which unblocks Phase 8 Sprints 8.10 and
-8.11; only the broker-side member claim remains, named in that sprint's `Remaining Work` with its
-behavioural proof owned by the cohort wave. Sprint 4.32 (verified Apple and Linux CPU execution
+8.11; its broker-side member claim is re-homed to Phase 8 Sprint 8.12, which owns the machine
+identity it stamps and the fleet lane that can exclude a second machine, so this phase hands that
+work forward rather than waiting on it. Sprint 4.32 (verified Apple and Linux CPU execution
 enforcers and executable-model routing) has closed its exact-source `linux-cpu` half and waits on
 selected Apple hardware for the observer and adversarial-breach proof. Sprint 4.36 is `Done` by
 supersession and re-home: Phase 1 Sprint 1.23 owns and implements the per-engine Python producer, so
@@ -1572,13 +1573,15 @@ None.
 
 ---
 
-## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Done]
+## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Active]
 
-**Status**: Done — the checked host partition, the required footprint newtype, and the
-budget-that-names-its-enforcer split are the model half of the memory-safety-by-construction reopen;
-implemented on top of Sprint 4.30, code-side closed on the machine-independent gate set, with the
-single-accelerator (apple-silicon) plus `linux-cpu` behavioral sign-off closed under
-[Wave W](cohort-validation-waves.md).
+**Status**: Active — the checked host partition, the required footprint newtype, and the
+budget-that-names-its-enforcer split are implemented on top of Sprint 4.30, and the partition carries
+no term for the other occupant of the pool it divides, so its oversubscription check cannot see a
+concurrent toolchain account.
+**Historical cohort evidence**: [Wave W](cohort-validation-waves.md) closes only the original
+partition, footprint, and enforcer-split scope; it makes no claim about a partition that admits
+against a competing claimant.
 **Supersession note**: this sprint supersedes Sprint 4.26's bare-`Int` `modelRamFootprintMib` (a
 default-0 footprint silently disables admission) with a required `ModelMemoryFootprint` newtype (no
 bare-`Int`, no default-0); supersedes the hard-coded `appleHostReserveMib = 3072` reserve in
@@ -1636,7 +1639,12 @@ Gates (closed under [Wave W](cohort-validation-waves.md)):
 
 ### Remaining Work
 
-None.
+- give the partition a term for the toolchain occupant, so a split whose pieces plus a concurrent
+  toolchain account exceed the pool is not a constructible term rather than an unchecked sum
+- derive the partition and the toolchain account from one claimable-pool quantity, so neither is
+  computed from a figure that is blind to the other
+- keep the resolved inference capacity unchanged on the supported development host, so the recorded
+  admit and typed-refusal outcomes for the catalog do not move
 
 ---
 
@@ -1687,7 +1695,8 @@ unavailable compiled placements.
 - the Linux RSS observer accepts a missing `VmRSS` as terminal evidence only on process
   disappearance or an explicitly terminal `Z`/`X` status, never as enforcer loss for a task that is
   still live, because Linux can discard a task's memory map before procfs exposes a terminal state.
-  The fail-closed recheck loop permits four full 50 ms watchdog intervals before rejecting a stable
+  The fail-closed recheck loop permits four full watchdog intervals — the 50 ms figure is the pause
+  between samples, not the achieved cadence — before rejecting a stable
   live task: three 1 ms rechecks are too short to separate an exit race from a live sample under
   cohort load. Stable live and malformed records still fail closed, and regressions cover vanished,
   terminal, live, and malformed recheck evidence
@@ -1836,8 +1845,10 @@ None.
 
 ## Sprint 4.34: Machine-Local Admission and Fail-Closed Member Identity [Active]
 
-**Status**: Active — the admission move is closed code-side and only the broker-side member claim
-remains, named below rather than implied.
+**Status**: Active — the admission move is closed code-side, and the broker-side member claim this
+sprint used to carry is re-homed to Phase 8 Sprint 8.12, which owns both prerequisites it needs (an
+operator-declared machine identity, and more than one engine machine to exclude). What remains here
+is this sprint's own `apple-silicon` cohort gate.
 **Code-side closure**: the zero-capacity refusal, the at-least-one-admissible-placement check, the
 fail-closed member identity, the removal of the Apple engine-lock waiver, and the
 placement/admission split are implemented and pass the machine-independent gate set
@@ -1952,13 +1963,17 @@ now states the refusal instead of the coexistence.
 
 ### Remaining Work
 
-**The broker-side member claim is not done.** The engine lock is host-local and provably cannot
-exclude a second machine claiming the same member identity; the claim needs the Sprint 6.45 shape —
-stamp the identity into the protected resource and reread it at every authorization — and the only
-resource two machines share is the broker. Its behavioural proof needs a real broker, so it belongs
-to the cohort wave, and the registration surface it stamps into is the per-topic schema property
-that the system/machine contract split introduces. The forward-only DAG forbids naming a later phase
-as a blocker, so this is stated as an ordering requirement rather than as a `Blocked by` edge.
+**The broker-side member claim is re-homed to Phase 8 Sprint 8.12, not open here.** The engine lock
+is host-local and provably cannot exclude a second machine claiming the same member identity; the
+claim needs the Sprint 6.45 shape — stamp the identity into the protected resource and reread it at
+every authorization — and the only resource two machines share is the broker. Two things it needs do
+not exist in this phase and cannot be built here: an operator-declared machine identity to stamp,
+which first exists in Sprint 8.11's machine contract, and more than one engine machine to exclude,
+which needs a fleet validation topology. Leaving it open here would have made this phase wait on a
+later one in substance while the forward-only DAG forbids declaring such an edge at all — a residual
+no work in this phase could ever discharge. The owning sprint adopts it outright, in the same shape
+Sprint 4.36 was re-homed into Phase 1 Sprint 1.23. This phase hands the work forward and waits on
+nothing, so it is not a residual of this sprint.
 
 **One premise this sprint corrected rather than inherited.** The objective describes the coordinator
 vetoing with its own capacity. In the current single-contract world the budget the coordinator held

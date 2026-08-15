@@ -95,7 +95,7 @@
 | `infernix test unit` | own Haskell and PureScript unit coverage, including generated-catalog logic and the protobuf-over-stdio worker boundary |
 | `infernix test integration` | validate cluster lifecycle, publication state, routed auxiliary surfaces, cache flows, service-loop behavior, and every generated active-mode catalog entry — the per-model traversal is bounded by substrate-specific resource admission, classifying an over-budget model as typed `ModelMemoryLimitExceeded` (see Lifecycle Failure Classification) |
 | `infernix test e2e` | validate the routed browser surface and every demo-visible generated catalog entry through Playwright |
-| `infernix test all` | run every supported validation layer in sequence for the active initialized substrate |
+| `infernix test all` | run every supported validation layer in order for the active initialized substrate. The layers are ordered, not mutually isolated: the cluster-owned validation encloses the toolchain-authority stage, so the toolchain account and the inference partition are claimed within one bracket and the exclusive host claim owned by [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md) is what keeps them from being resident together |
 
 ## Validation Obligations
 

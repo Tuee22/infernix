@@ -618,6 +618,18 @@ data ProvisioningCommand
   = InstallPoetryProject
       !FilePath
       ![PoetryInstallGroup]
+  | -- | Create the in-project Poetry environment before the bounded install.
+    -- Poetry chooses its target environment from the running interpreter when
+    -- the project has none, and a sealed run points @PYTHONHOME@ at the sealed
+    -- copy of Poetry's own environment, so a first install lands the engine's
+    -- whole framework payload inside the ephemeral generation instead of the
+    -- project. Creating the project environment first makes that choice the
+    -- project's rather than the snapshot's. The interpreter is the configured
+    -- host Python and the command is deliberately unsealed, because the
+    -- environment it writes records the interpreter it was created from and an
+    -- ephemeral path recorded there outlives the generation that held it.
+    CreatePoetryProjectVenv
+      !FilePath
   | GeneratePythonProto
       !FilePath
       !FilePath
@@ -676,6 +688,7 @@ data ProvisioningCommand
 -- deliberately distinct from cluster operations and test-only fault hooks.
 data ProvisioningOperation
   = PoetryProjectInstallOperation
+  | PoetryProjectVenvCreateOperation
   | PythonProtoGenerationOperation
   | PoetryBootstrapInstallOperation
   | PythonVersionProbeOperation !ApplePythonAdapterId
@@ -698,6 +711,8 @@ provisioningCommandOperation command =
   case command of
     InstallPoetryProject {} ->
       PoetryProjectInstallOperation
+    CreatePoetryProjectVenv {} ->
+      PoetryProjectVenvCreateOperation
     GeneratePythonProto {} ->
       PythonProtoGenerationOperation
     InstallPoetryBootstrap {} ->

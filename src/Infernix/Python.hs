@@ -170,13 +170,22 @@ runPythonProjectProvisioning
                     case poetryResult of
                       Left failure -> pure (Left failure)
                       Right poetry -> do
-                        installOutcome <-
-                          Provisioning.installPoetryProjectWithGroups
+                        environmentOutcome <-
+                          ensurePreparedProjectEnvironment
                             projectWriter
                             grant
-                            poetryInstallDeadline
                             poetry
-                            groups
+                            projectDirectory
+                        installOutcome <-
+                          case provisioningFailure environmentOutcome of
+                            Just _ -> pure environmentOutcome
+                            Nothing ->
+                              Provisioning.installPoetryProjectWithGroups
+                                projectWriter
+                                grant
+                                poetryInstallDeadline
+                                poetry
+                                groups
                         case provisioningFailure installOutcome of
                           Just failure -> pure (Left failure)
                           Nothing
@@ -330,13 +339,22 @@ provisionPreparedPythonEnvironment
                             case poetryResult of
                               Left failure -> pure (Left failure)
                               Right poetry -> do
-                                installOutcome <-
-                                  Provisioning.installPoetryProjectWithGroups
+                                environmentOutcome <-
+                                  ensurePreparedProjectEnvironment
                                     projectWriter
                                     grant
-                                    poetryInstallDeadline
                                     poetry
-                                    groups
+                                    projectDirectory
+                                installOutcome <-
+                                  case provisioningFailure environmentOutcome of
+                                    Just _ -> pure environmentOutcome
+                                    Nothing ->
+                                      Provisioning.installPoetryProjectWithGroups
+                                        projectWriter
+                                        grant
+                                        poetryInstallDeadline
+                                        poetry
+                                        groups
                                 case provisioningFailure installOutcome of
                                   Just failure -> pure (Left failure)
                                   Nothing -> do
@@ -971,6 +989,58 @@ provisioningFailure outcome =
 poetryInstallDeadline :: Provisioning.ProvisioningDeadline
 poetryInstallDeadline =
   requiredDeadline "Poetry install deadline" (30 * 60 * 1000 * 1000)
+
+poetryProjectVenvDeadline :: Provisioning.ProvisioningDeadline
+poetryProjectVenvDeadline =
+  requiredDeadline
+    "Poetry project environment creation deadline"
+    (5 * 60 * 1000 * 1000)
+
+-- | Give the project its own environment before Poetry picks one for it.
+--
+-- Poetry resolves the environment to install into from the running interpreter
+-- when the project has none, and a sealed bounded run points @PYTHONHOME@ at the
+-- sealed copy of Poetry's own environment. Where that environment is itself a
+-- virtual environment, Poetry adopts the sealed copy, and a first install lands
+-- the engine's whole framework payload inside a generation that is about to be
+-- retired: the interpreter the readiness marker requires is never created, and
+-- the retirement walk exceeds the bound its creation fit. Measured on the
+-- @linux-cpu@ launcher image for @python\/engines\/transformers@: a generation
+-- admitted at 10318 entries and 228330624 bytes reached 34080 entries and
+-- 1041364991 bytes.
+--
+-- The step is taken only under that exact condition. A lane whose sealed Python
+-- home is a real installation — the Apple framework Python — is one where Poetry
+-- already creates the project's environment itself, and where the configured
+-- interpreter is not an operating-system platform binary, so creating the
+-- environment through the bounded kernel would run a sealed copy and record its
+-- ephemeral prefix in the environment it wrote.
+ensurePreparedProjectEnvironment ::
+  Provisioning.ProjectWriter p s q ->
+  Provisioning.ProvisioningGrant s ->
+  Provisioning.ResolvedPoetry s ->
+  FilePath ->
+  Provisioning.ProvisioningSession s Provisioning.ProvisioningOutcome
+ensurePreparedProjectEnvironment writer grant poetry projectDirectory = do
+  sealedHomeIsVirtual <-
+    Provisioning.resolvedPoetrySealsAVirtualEnvironment poetry
+  if not sealedHomeIsVirtual
+    then pure skipped
+    else do
+      interpreterReady <-
+        Provisioning.provisioningProjectExecutableReady
+          writer
+          (projectDirectory </> ".venv" </> "bin" </> "python")
+      case interpreterReady of
+        Left failure -> pure (Provisioning.ProvisioningRejected failure)
+        Right True -> pure skipped
+        Right False ->
+          Provisioning.createPoetryProjectVenv
+            writer
+            grant
+            poetryProjectVenvDeadline
+  where
+    skipped = Provisioning.ProvisioningSucceeded ""
 
 protoGenerationDeadline :: Provisioning.ProvisioningDeadline
 protoGenerationDeadline =

@@ -127,32 +127,39 @@ Read first:
   Canonical doctrine:
   [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   and [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
-- bounded host memory: every Haskell toolchain image runs under an authority-derived heap ceiling,
-  and a ceiling is inseparable from the complete claimant arithmetic it participates in. The normal
+- bounded host memory: the governed Cabal invocation runs under an authority-derived heap ceiling,
+  and a ceiling is inseparable from the claimant arithmetic it participates in. The normal
   compiler phase is `jobs × compilerHeap + (jobs + 1) × controlHeap`: one fixed control/helper slot
   per compiler worker plus the live Cabal driver. Native compiler helpers occupy those declared
   slots; on Darwin that reserve is arithmetic and sampled evidence, not a kernel-enforced native
-  heap bound.
+  heap bound. The web dependency install and unit run, the routed end-to-end browser, the Python
+  provisioning and adapter images, and the host inference daemon are started by the same validation
+  surface and carry no toolchain ceiling; they are host-reserve claimants.
   Inference is one claimant on host RAM; the toolchain is another, and an uncapped `cabal build`
   exhausted a 124.94 GiB development host while the kernel, which selects per process
   and ranked the build below every cluster pod, destroyed 111 pod processes and never touched it.
+  Three interactive compiler images this repository never started, holding 44.1, 29.9, and 27.4 GiB,
+  later exhausted a 64 GiB host that no account could see them on.
   The compiler runtime reserves 1024.65 GiB of address space by default, so the built executable
   declares a bounded reservation before any memory limit is installable at all. The mechanism is
   resolved per lane and fails closed when unavailable: an existing cgroup maximum bounds the
-  aggregate on the Linux container lane, while Darwin has neither cgroups nor an enforced
-  address-space limit and gets Haskell heap caps, bounded concurrency, claimant arithmetic, and an
-  opt-in sampled process-group proof. The shipped operator CLI and its fixed observer tools are not
+  aggregate on the Linux container lane, while Darwin has no cgroups and no installable
+  address-space ceiling, so no operating-system bound is engaged on that lane at all and what
+  remains is Haskell heap caps, bounded concurrency, claimant arithmetic, and sampled evidence.
+  The shipped operator CLI and its fixed observer tools are not
   toolchain claimants; they remain in the host reserve and outside the sampled Cabal group. One
-  opaque authority serializes its own package-owned child lifecycles, but this is not a host-global
-  or crash-surviving lease: independent CLI images, checkouts, and stage-0 bootstraps are unsupported
-  concurrent toolchain claimants, the 50% account does not fund their overlap, and governed
-  workflows must serialize them. Normal completion trusts and reaps the Cabal scheduler leader;
+  opaque authority serializes its own package-owned child lifecycles, which is narrower than the
+  host, so the account is admitted against an observation of available host memory and a census
+  finding no toolchain claimant outside this authority's own process tree; either observation
+  failing is a refusal naming what it found, and a claimant the census names is refused rather than
+  killed. Normal completion trusts and reaps the Cabal scheduler leader;
   only exceptional cleanup signals its still-owned process group, so no normal descendant-absence
   or hard-kill-survival proof is claimed. This does **not** make a host out-of-memory condition
   impossible — native-helper growth beyond its measured
   slot, page cache, kernel slab, the OOM-protected container runtime, and every process infernix did
-  not start remain outside the enforced bound — and the doctrine names what it does not bound rather
-  than overstating the guarantee. Canonical doctrine:
+  not start remain outside the enforced bound, a named foreign claimant is attributed rather than
+  measured, and a transient peak between samples is unobserved — and the doctrine names what it does
+  not bound rather than overstating the guarantee. Canonical doctrine:
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - per-machine fleet topology: the supported shape is multiple machines, each running **exactly one**
   engine process, all consuming the same Pulsar `Shared` pool topic, each with its own model cache
@@ -161,7 +168,7 @@ Read first:
   every loaded weight, and each independently admits work against the machine's whole observed
   capacity. Member identity fails closed: a daemon that cannot establish which member it is refuses
   to start rather than adopting a default. Memory admission happens on the machine that will
-  execute, never on the coordinator, and capacity is **observed, never declared**. Delivery is
+  execute, never on the coordinator, and the capacity it admits against is **observed, never declared**; what that observation reports is the machine's capacity, and availability under a competing claimant is a separate observation owned by the host-memory ledger. Delivery is
   **at-least-once with an effectively-once observable outcome**: acknowledgement follows the terminal
   result, so a machine lost mid-inference costs a redelivery and duplicate compute rather than an
   unanswered request — redelivery is the only recovery path the pipeline has, and no change may
@@ -177,8 +184,8 @@ Read first:
   launcher for `linux-cpu` or `linux-gpu`
 - do not use bare host `cabal` commands for validation. Linux and CUDA use the outer-container
   launcher. Apple clean-clone/rebuild uses `./bootstrap/apple-silicon.sh build`, whose fixed stage-0
-  preflight measures physical memory and the active Colima pledge before its exact seed-bound Cabal
-  invocation; after `infernix init`, focused Haskell gates run through the closed CLI toolchain
+  preflight measures physical memory and the active Colima pledge as declared capacity before
+  its exact seed-bound Cabal invocation; after `infernix init`, focused Haskell gates run through the closed CLI toolchain
   vocabulary and live derived authority
   ([documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md))
 - do not install Xcode on the Apple host and do not rely on Tart for new Apple engine work. The

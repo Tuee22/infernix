@@ -7,6 +7,7 @@ module Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     buildWorkerRequest,
     loadWorkerModelCacheConfig,
+    nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
     runExecutableInferenceWorker,
@@ -753,11 +754,44 @@ nativeRunnerResult model engineBinding request maybeModelCacheConfig exitCode st
 nativeArtifactOutputPrefix :: Text
 nativeArtifactOutputPrefix = "infernix-native-artifact-file:"
 
+-- | The artifact marker is a line of the runner's standard output, not the
+-- whole stream.
+--
+-- A native runner is a real upstream program and prints what it prints: the
+-- Core ML basic-pitch runner announces the file it is predicting and the shape
+-- of each tensor before it announces the artifact it wrote. Matching the marker
+-- as a prefix of the entire trimmed stream therefore recognised it only for the
+-- runners that happen to say nothing else, and the ones that do had their marker
+-- carried into the result as if it were an object reference — a local path in a
+-- field whose contract is a bucket key.
+--
+-- Exactly one marker line is the contract. None means the runner returned
+-- inline output. More than one is a runner that produced several artifacts
+-- through a protocol that names one, and that fails closed rather than picking.
+nativeArtifactMarkerPaths :: Text -> [Text]
+nativeArtifactMarkerPaths outputText =
+  [ path
+  | line <- Text.lines outputText,
+    Just path <- [Text.stripPrefix nativeArtifactOutputPrefix (Text.strip line)]
+  ]
+
+-- | Test seam over the pure marker scan above.
+nativeArtifactMarkerPathsForTest :: Text -> [Text]
+nativeArtifactMarkerPathsForTest = nativeArtifactMarkerPaths
+
 nativeRunnerSuccessOutput :: ModelDescriptor -> InferenceRequest -> Maybe WorkerModelCacheConfig -> Text -> IO (Either ErrorResponse Text)
 nativeRunnerSuccessOutput model request maybeModelCacheConfig outputText =
-  case Text.stripPrefix nativeArtifactOutputPrefix outputText of
-    Nothing -> pure (Right outputText)
-    Just artifactPathText ->
+  case nativeArtifactMarkerPaths outputText of
+    [] -> pure (Right outputText)
+    _ : _ : _ ->
+      pure
+        ( Left
+            ErrorResponse
+              { errorCode = "native_artifact_marker_ambiguous",
+                message = "native engine announced more than one artifact file through a protocol that names one."
+              }
+        )
+    [artifactPathText] ->
       case maybeModelCacheConfig of
         Nothing ->
           pure

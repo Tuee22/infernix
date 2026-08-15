@@ -804,7 +804,18 @@ data LoaderWalkState = LoaderWalkState
     walkObjectOrder :: ![FilePath],
     walkResolutions :: ![NativeArtifactLoaderResolutionEvidence],
     walkEdges :: !Int,
-    walkMaximumDepth :: !Int
+    walkMaximumDepth :: !Int,
+    -- | Every ELF object the completeness scan found inside the closed image
+    -- roots, fixed at the start of the walk. A name the search cannot satisfy
+    -- may still be satisfied by one of these, because a runtime that loads each
+    -- object by absolute path puts its SONAME in the namespace before the
+    -- dependent object names it.
+    walkSeedPaths :: ![FilePath],
+    -- | The seeds' SONAMEs, read once on the first name the search cannot
+    -- satisfy and reused for every later one. Inspecting a seed reads and
+    -- digests it, so sweeping the seed list per unresolved name would repeat
+    -- that work as many times as the closure has such names.
+    walkSeedSonames :: !(Maybe (Map FilePath (Maybe FilePath)))
   }
 
 -- | One queued object, with the @DT_RPATH@ stack inherited from the objects
@@ -840,7 +851,10 @@ observeNativeArtifactLoaderEvidence entryObject closureRoots = do
               path /= canonicalEntry
             ]
   finalState <-
-    walkLoaderClosure cacheEntries emptyWalkState seeds
+    walkLoaderClosure
+      cacheEntries
+      (emptyWalkState (List.nub (map queueEntryPath seeds)))
+      seeds
   pure
     NativeArtifactLoaderEvidence
       { loaderEvidenceEntryObject = canonicalEntry,
@@ -874,14 +888,16 @@ walkObservedObjectEvidence state =
     Just observed <- [Map.lookup path (walkObjects state)]
   ]
 
-emptyWalkState :: LoaderWalkState
-emptyWalkState =
+emptyWalkState :: [FilePath] -> LoaderWalkState
+emptyWalkState seedPaths =
   LoaderWalkState
     { walkObjects = Map.empty,
       walkObjectOrder = [],
       walkResolutions = [],
       walkEdges = 0,
-      walkMaximumDepth = 0
+      walkMaximumDepth = 0,
+      walkSeedPaths = seedPaths,
+      walkSeedSonames = Nothing
     }
 
 ldSoCachePath :: FilePath
@@ -1017,14 +1033,56 @@ resolveOneDependency
   entry
   (state, queued)
   needed = do
-    resolution <-
+    -- The third component is the @DT_RPATH@ stack the resolved object's own
+    -- dependencies inherit. It is the requester's stack for an object the
+    -- requester actually loaded, and empty for a seeded rebind: that rule holds
+    -- precisely because something else mapped the provider by absolute path, so
+    -- the requester is not its loader and the runtime would not walk the
+    -- requester's stack for it. Inheriting it there would resolve the provider's
+    -- own edges in a context the runtime never uses, and because the queue is
+    -- processed before the remaining scan seeds, that context would win over the
+    -- provider's own context-free seed entry.
+    (resolvedState, resolution, resolvedInherited) <-
       case resolveAlreadyObservedNeeded state needed of
         Left failure -> ioError (userError failure)
         Right (Just observedPath) ->
-          pure (ResolvedNeeded observedPath False Nothing)
-        Right Nothing ->
-          resolveLoaderNeeded cacheEntries searchOrder needed
-            `catchLoaderResolutionFailure` objectPath
+          pure
+            ( state,
+              ResolvedNeeded observedPath False Nothing,
+              childInherited
+            )
+        Right Nothing -> do
+          searched <-
+            resolveLoaderNeeded cacheEntries searchOrder needed
+              `catchLoaderResolutionFailure` objectPath
+          case searched of
+            Just value -> pure (state, value, childInherited)
+            Nothing -> do
+              -- The search is exhausted, so the only remaining lawful binding is
+              -- an object the generation itself carries. JavaCPP is the measured
+              -- case: it extracts each native library into its own jar directory
+              -- and loads it by absolute path, so `libtesseract` names
+              -- `libleptonica.so.6` with a `$ORIGIN/` runpath that cannot reach
+              -- the sibling jar directory holding it. Declining JavaCPP's
+              -- cross-jar alias makes the payload relocation-invariant and costs
+              -- the JVM nothing, because the provider is already in the
+              -- namespace; it costs this producer the path it was searching for.
+              (widened, seeded) <- resolveSeededNeeded state needed
+              case seeded of
+                Left failure ->
+                  ioError (loaderResolutionRequestedBy failure objectPath)
+                Right (Just seededPath) ->
+                  pure
+                    ( widened,
+                      ResolvedNeeded seededPath False Nothing,
+                      []
+                    )
+                Right Nothing ->
+                  ioError
+                    ( loaderResolutionRequestedBy
+                        ("ELF DT_NEEDED is unresolvable: " <> needed)
+                        objectPath
+                    )
     canonical <- canonicalizePath (resolvedNeededPath resolution)
     let record =
           NativeArtifactLoaderResolutionEvidence
@@ -1039,9 +1097,9 @@ resolveOneDependency
               loaderResolutionCanonicalPath = canonical
             }
         widened =
-          state
-            { walkResolutions = walkResolutions state <> [record],
-              walkEdges = walkEdges state + 1
+          resolvedState
+            { walkResolutions = walkResolutions resolvedState <> [record],
+              walkEdges = walkEdges resolvedState + 1
             }
     unless
       (walkEdges widened <= maximumLoaderEdges)
@@ -1051,7 +1109,7 @@ resolveOneDependency
         queued
           <> [ LoaderQueueEntry
                  canonical
-                 childInherited
+                 resolvedInherited
                  (queueEntryDepth entry + 1)
              ]
       )
@@ -1086,37 +1144,94 @@ resolveAlreadyObservedNeeded state needed =
             <> show paths
         )
 
+-- | The same rule applied to the objects the completeness scan found but the
+-- walk has not reached yet. It is consulted only after the ordinary search is
+-- exhausted, so every edge that resolves by path keeps resolving by path, and
+-- ambiguity fails closed exactly as it does for an already-observed name.
+resolveSeededNeeded ::
+  LoaderWalkState ->
+  FilePath ->
+  IO (LoaderWalkState, Either String (Maybe FilePath))
+resolveSeededNeeded state needed = do
+  (widened, sonames) <-
+    case walkSeedSonames state of
+      Just sonames -> pure (state, sonames)
+      Nothing -> do
+        observed <-
+          mapM
+            (\path -> (,) path <$> seededObjectSoname path)
+            (walkSeedPaths state)
+        let sonames = Map.fromList observed
+        pure (state {walkSeedSonames = Just sonames}, sonames)
+  let matches =
+        [ path
+        | (path, soname) <- Map.toList sonames,
+          soname == Just needed,
+          not (Map.member path (walkObjects widened))
+        ]
+  pure
+    ( widened,
+      case matches of
+        [] -> Right Nothing
+        [path] -> Right (Just path)
+        paths ->
+          Left
+            ( "ELF DT_NEEDED matches multiple seeded SONAME objects: "
+                <> needed
+                <> " -> "
+                <> show paths
+            )
+    )
+
+-- | A seed that cannot be inspected contributes no candidate rather than
+-- failing the walk: it is not on any resolution path unless its SONAME matches,
+-- and the walk reaches it on its own as a scan seed, where an unreadable object
+-- fails closed with its own diagnosis.
+seededObjectSoname :: FilePath -> IO (Maybe FilePath)
+seededObjectSoname path = do
+  observed <- try @IOException (observeLoaderObject path)
+  pure
+    ( either
+        (const Nothing)
+        (elfInspectionSoname . observedObjectInspection)
+        observed
+    )
+
+-- | Attribute a resolution failure to the object whose @DT_NEEDED@ edge it came
+-- from. Without the requester the message names a library and no reason it was
+-- being looked for.
+loaderResolutionRequestedBy :: String -> FilePath -> IOError
+loaderResolutionRequestedBy failure requester =
+  userError (failure <> " (requested by " <> requester <> ")")
+
 catchLoaderResolutionFailure :: IO a -> FilePath -> IO a
 catchLoaderResolutionFailure action requester = do
   outcome <- try @IOException action
   case outcome of
     Right value -> pure value
     Left failure ->
-      ioError
-        ( userError
-            ( show failure
-                <> " (requested by "
-                <> requester
-                <> ")"
-            )
-        )
+      ioError (loaderResolutionRequestedBy (show failure) requester)
 
 -- | Resolve one @DT_NEEDED@ name in the loader's own order. A name carrying a
 -- slash is a path and bypasses the search entirely, exactly as the loader
 -- treats it; such a name must still be absolute, because a sealed generation
 -- fixes no working directory to resolve a relative one against.
+-- | 'Nothing' is an exhausted search rather than a failure: the caller owns the
+-- one remaining binding, an object the generation itself carries, and owns the
+-- refusal when that does not exist either. A name carrying a slash is a path and
+-- has no such fallback, so its own failures stay fatal here.
 resolveLoaderNeeded ::
   [LdSoCacheEntry] ->
   LoaderSearchOrder ->
   FilePath ->
-  IO ResolvedNeeded
+  IO (Maybe ResolvedNeeded)
 resolveLoaderNeeded cacheEntries searchOrder needed
-  | '/' `elem` needed = resolveLoaderNeededAsPath needed
+  | '/' `elem` needed = Just <$> resolveLoaderNeededAsPath needed
   | otherwise = do
       declared <-
         firstExistingLoaderCandidate (loaderSearchDeclared searchOrder) needed
       case declared of
-        Just path -> pure (ResolvedNeeded path False Nothing)
+        Just path -> pure (Just (ResolvedNeeded path False Nothing))
         Nothing -> resolveLoaderNeededAfterDeclared cacheEntries searchOrder needed
 
 -- | The cache is consulted before the architecture defaults, which is the
@@ -1126,7 +1241,7 @@ resolveLoaderNeededAfterDeclared ::
   [LdSoCacheEntry] ->
   LoaderSearchOrder ->
   FilePath ->
-  IO ResolvedNeeded
+  IO (Maybe ResolvedNeeded)
 resolveLoaderNeededAfterDeclared cacheEntries searchOrder needed =
   case List.find (matchesNeeded . snd) (zip [0 ..] cacheEntries) of
     Just (index, cacheEntry) -> do
@@ -1134,7 +1249,13 @@ resolveLoaderNeededAfterDeclared cacheEntries searchOrder needed =
       case present of
         Just _ ->
           pure
-            (ResolvedNeeded (ldSoCacheEntryValue cacheEntry) True (Just index))
+            ( Just
+                ( ResolvedNeeded
+                    (ldSoCacheEntryValue cacheEntry)
+                    True
+                    (Just index)
+                )
+            )
         Nothing -> resolveLoaderNeededFromDefaults searchOrder needed
     Nothing -> resolveLoaderNeededFromDefaults searchOrder needed
   where
@@ -1143,15 +1264,11 @@ resolveLoaderNeededAfterDeclared cacheEntries searchOrder needed =
 resolveLoaderNeededFromDefaults ::
   LoaderSearchOrder ->
   FilePath ->
-  IO ResolvedNeeded
+  IO (Maybe ResolvedNeeded)
 resolveLoaderNeededFromDefaults searchOrder needed = do
   fallback <-
     firstExistingLoaderCandidate (loaderSearchDefaults searchOrder) needed
-  case fallback of
-    Just path -> pure (ResolvedNeeded path False Nothing)
-    Nothing ->
-      ioError
-        (userError ("ELF DT_NEEDED is unresolvable: " <> needed))
+  pure (fmap (\path -> ResolvedNeeded path False Nothing) fallback)
 
 resolveLoaderNeededAsPath :: FilePath -> IO ResolvedNeeded
 resolveLoaderNeededAsPath needed = do

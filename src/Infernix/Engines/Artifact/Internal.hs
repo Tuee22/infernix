@@ -41,6 +41,7 @@ module Infernix.Engines.Artifact.Internal
     ArtifactRuntimeExpectation,
     appleArtifactRuntimeExpectation,
     linuxArtifactRuntimeExpectation,
+    artifactRuntimeExpectationLane,
     currentArtifactRecipeFingerprint,
     engineArtifactGenerationFingerprint,
     rederiveArtifactGenerationFingerprint,
@@ -702,6 +703,32 @@ digestEngineArtifactImageClosure root = do
 digestEngineArtifactImageClosureForTest :: FilePath -> IO Text
 digestEngineArtifactImageClosureForTest = digestEngineArtifactImageClosure
 
+-- | Digest a generation twice and require the two walks to agree.
+--
+-- Each entry is read through a descriptor anchored to its parent and checked
+-- for stability as it is read, which catches a path substituted underneath the
+-- walk. It does not catch an entry mutated /after/ the walk has already read
+-- it: the walk has moved on, and what remained was the enclosing region's
+-- comparison of the parent directory's modification and status-change times.
+--
+-- That comparison is a property of the filesystem rather than of this code.
+-- Replacing an already-read symlink with one of the same length is seen on
+-- APFS and not seen under the @linux-cpu@ launcher image's overlay, so the
+-- guarantee held on the lane that developed it and not on the lane that ships
+-- it. Walking twice replaces the timestamp with evidence: the canonical record
+-- is deterministic in the entry's type, path, permission bits, byte count and
+-- content, so an unchanged generation digests identically, and any mutation
+-- landing between the recording walk's read of an entry and the confirming
+-- walk's read of it changes the second digest.
+--
+-- This costs a second traversal of the generation, bounded by the same
+-- 'maximumArtifactSnapshotBytes' as the first. It is paid on the
+-- materialization, activation, and startup-reconciliation paths that digest a
+-- payload, and on no per-request path: neither the engine runners nor anything
+-- under "Infernix.Runtime" digests a payload at all. It does not make the digest
+-- atomic: a mutation landing entirely before the recording walk or entirely
+-- after the confirming walk is outside the window either walk can observe, and
+-- exclusive ownership of the generation root remains what bounds that.
 digestEngineArtifactPayloadDescriptor ::
   (ArtifactSnapshotBoundary -> IO ()) ->
   Maybe FilePath ->
@@ -709,25 +736,44 @@ digestEngineArtifactPayloadDescriptor ::
   Fd ->
   IO Text
 digestEngineArtifactPayloadDescriptor observeBoundary imageClosureRoot rootPath rootDescriptor = do
-  finalState <-
-    payloadDirectoryContext
-      observeBoundary
-      imageClosureRoot
-      rootDescriptor
-      rootPath
-      ""
-      0
-      ArtifactSnapshotState
-        { snapshotDigestContext =
-            SHA256.update SHA256.init (ByteString8.pack "infernix-engine-payload-v2\0"),
-          snapshotEntryCount = 0,
-          snapshotPayloadBytes = 0
-        }
-  pure
-    ( "sha256:"
-        <> TextEncoding.decodeUtf8
-          (Base16.encode (SHA256.finalize (snapshotDigestContext finalState)))
+  firstDigest <- walkOnce
+  secondDigest <- walkOnce
+  unless
+    (firstDigest == secondDigest)
+    ( ioError
+        ( userError
+            ( "engine artifact payload changed while it was being digested: "
+                <> "the confirming walk of "
+                <> rootPath
+                <> " produced "
+                <> Text.unpack secondDigest
+                <> " against the recording walk's "
+                <> Text.unpack firstDigest
+            )
+        )
     )
+  pure firstDigest
+  where
+    walkOnce = do
+      finalState <-
+        payloadDirectoryContext
+          observeBoundary
+          imageClosureRoot
+          rootDescriptor
+          rootPath
+          ""
+          0
+          ArtifactSnapshotState
+            { snapshotDigestContext =
+                SHA256.update SHA256.init (ByteString8.pack "infernix-engine-payload-v2\0"),
+              snapshotEntryCount = 0,
+              snapshotPayloadBytes = 0
+            }
+      pure
+        ( "sha256:"
+            <> TextEncoding.decodeUtf8
+              (Base16.encode (SHA256.finalize (snapshotDigestContext finalState)))
+        )
 
 payloadDirectoryContext ::
   (ArtifactSnapshotBoundary -> IO ()) ->
@@ -1849,6 +1895,17 @@ linuxArtifactRuntimeExpectation =
         "x86_64" -> "amd64"
         "aarch64" -> "arm64"
         other -> Text.pack other
+
+-- | The substrate and architecture a runtime expectation names. The lane is
+-- constructed everywhere and read back nowhere, which is how a caller that
+-- needs the closed lane of a fixed expectation ends up restating the
+-- architecture mapping instead of asking for it.
+artifactRuntimeExpectationLane ::
+  ArtifactRuntimeExpectation ->
+  (Text, Text)
+artifactRuntimeExpectationLane
+  (ArtifactRuntimeExpectation substrate architecture) =
+    (substrate, architecture)
 
 -- | The current closed recipe for one exact identity/lane pair. Every
 -- materializer writes this value and every reader independently derives it.

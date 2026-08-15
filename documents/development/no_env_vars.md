@@ -209,6 +209,13 @@ and Apple engine work must not add Tart, keychain, Xcode UI, or
 
 Keycloak's upstream image consumes `KC_DB_*` env vars; the Keycloak pod spec retains those
 entries, sourced from a mounted Secret where possible. The lint gates allow them by exception.
+
+The Haskell runtime's build-only options value is the other upstream-consumed name. It is written
+into an explicitly constructed child environment for a toolchain image, never read from an inherited
+one, so it is a declared operand rather than an environment read. Its reach is narrow — the images
+that honour it are the ones linked to accept runtime options, and an upstream setup program linked
+without them refuses to start rather than being capped — and that reach is stated by
+[../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md).
 Document any additional exception in `documents/tools/<tool>.md` and add it to the lint exception
 list in `src/Infernix/Lint/Chart.hs`.
 

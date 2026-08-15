@@ -344,6 +344,10 @@ descriptorSnapshotMutationTest =
         symlinkPath = symlinkRoot </> "current"
     createDirectoryIfMissing True nestedRoot
     writeFile (nestedRoot </> "payload") "original"
+    -- The digest walks the generation twice and requires the two walks to
+    -- agree, so every pause below is one-shot: a confirming walk that blocked
+    -- on the recording walk's resume would deadlock rather than confirm.
+    pauseDirectoryListing <- newIORef True
     directoryEntered <- newEmptyMVar
     directoryResume <- newEmptyMVar
     directoryResult <- newEmptyMVar
@@ -351,8 +355,11 @@ descriptorSnapshotMutationTest =
       forkFinally
         ( digestEngineArtifactPayloadWithObserver
             ( \case
-                ArtifactSnapshotDirectoryListed "nested" ->
-                  putMVar directoryEntered () >> takeMVar directoryResume
+                ArtifactSnapshotDirectoryListed "nested" -> do
+                  shouldPause <-
+                    atomicModifyIORef' pauseDirectoryListing (False,)
+                  when shouldPause $
+                    putMVar directoryEntered () >> takeMVar directoryResume
                 _ -> pure ()
             )
             directoryRoot
@@ -371,6 +378,7 @@ descriptorSnapshotMutationTest =
     writeFile (symlinkPayloadRoot </> "first") "first"
     writeFile (symlinkPayloadRoot </> "second") "second"
     createFileLink "payload/first" symlinkPath
+    pauseSymlinkEntry <- newIORef True
     symlinkEntered <- newEmptyMVar
     symlinkResume <- newEmptyMVar
     symlinkResult <- newEmptyMVar
@@ -378,8 +386,10 @@ descriptorSnapshotMutationTest =
       forkFinally
         ( digestEngineArtifactPayloadWithObserver
             ( \case
-                ArtifactSnapshotEntryOpened "current" ->
-                  putMVar symlinkEntered () >> takeMVar symlinkResume
+                ArtifactSnapshotEntryOpened "current" -> do
+                  shouldPause <- atomicModifyIORef' pauseSymlinkEntry (False,)
+                  when shouldPause $
+                    putMVar symlinkEntered () >> takeMVar symlinkResume
                 _ -> pure ()
             )
             symlinkRoot

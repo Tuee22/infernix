@@ -131,7 +131,8 @@ Budget sources are substrate-specific while admission and error construction sta
 - on `apple-silicon`, the budget is a `HostEnforcedBudget` over a checked `HostMemoryPartition`: host
   physical RAM (`sysctl -n hw.memsize`, via the manifest `HostSysctl` tool) split into the Colima VM
   pledge (`vmReserve`, read-only `colima list --json`, read but never managed), a `minHostHeadroomMib`
-  headroom that covers the OS, the control-plane binary, and the routed end-to-end browser, and the
+  headroom whose co-tenants are enumerated once by
+  [bounded_inference_memory.md](bounded_inference_memory.md), and the
   remaining `inferenceCapacity`, with resource `UnifiedHostRam`
 - on `linux-cpu`, the budget is a `SubstrateEnforcedBudget` whose `PodMemoryLimit` records the
   Kubernetes engine pod memory limit for the active cluster workload, with resource `PodRam`; this is

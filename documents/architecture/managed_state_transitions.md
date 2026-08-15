@@ -210,6 +210,24 @@ evidence:
   provenance is resolved from the candidate, and the actual sorted payload tree is hashed by path,
   type, mode, file bytes, and safe symlink target. The manifest is excluded from that digest to
   avoid a circular hash, then records the resulting digest and resolved provenance.
+- That payload hash walks the generation **twice** and requires the two walks to agree. Each entry is
+  read through a descriptor anchored to its parent and checked for stability as it is read, which
+  catches a path substituted underneath the walk; it does not catch an entry mutated after the walk
+  has already read it. What remained for that case was a comparison of the parent directory's
+  modification and status-change times, and that is a property of the filesystem rather than of the
+  code: replacing an already-read symlink with one of the same length is seen on APFS and not seen
+  under the `linux-cpu` launcher image's overlay, so the guarantee held on the lane that developed it
+  and not on the lane that ships the product. The canonical record carries an entry's type, relative
+  path, permission bits, byte count and content — no timestamp and no inode — so an unchanged
+  generation digests identically and a mutation landing between the recording walk's read of an
+  entry and the confirming walk's read of it changes the second digest whatever the filesystem's
+  timestamp resolution. The cost is a second traversal under the same aggregate byte bound, paid on
+  the materialization, activation, and startup-reconciliation paths that digest a payload and on no
+  per-request path — neither the engine runners nor the runtime tree digests a payload at all. This
+  does **not** make the digest atomic: a
+  mutation landing entirely before the recording walk or entirely after the confirming walk is
+  outside the window either walk can observe, and exclusive ownership of the generation root remains
+  what bounds that.
 - A Cabal-hidden direct-target catalog, rather than manifest command text, owns the executable,
   interpreter/module or JRE/classpath prefix, immutable runtime-closure roots, and target-specific
   invocation grammar. Linux manifests record exact descriptor-derived executable and closure
@@ -291,6 +309,57 @@ leave the operator's runtime config clobbered by the test config. A scoped pre-v
 restores a backup for which no reservation identity was ever recorded; it runs under the lifecycle
 lock and cannot claim activity-quiescence evidence. No other identity-free shape is accepted.
 
+**A reservation identity is namespace-relative, and a foreign namespace is not a dead one.** The
+reservation's owner pid and process group are allocated by a PID namespace, and its `boot-identity`
+is read from `/proc/sys/kernel/random/boot_id`, which is *not* PID-namespaced — inside a launcher
+container that is the host kernel's boot id, identical for every container on one Colima VM. So a
+killed `infernix test all` inside the `linux-cpu` launcher left `pid=7` / `process-group=7` in the
+bind-mounted `.data`, the next container found a live unrelated process at pgid 7, the birth
+identity mismatched, and the slot wedged as unverifiable forever. The record now also carries
+`owner-pid-namespace`, read from `/proc/self/ns/pid` and stored as the parsed nsfs inode. It is an
+additive absence-tolerant field under the existing `version=2` rather than a new version, because
+the same `.data` is read by the Apple host binary and the container binary and an unknown version is
+a hard "unreadable" refusal for every configured command on the older side.
+The rule the discriminator licenses is narrow and composed, and the doctrine states what the
+observation does *not* mean: a recorded namespace that differs from this process's says the recorded
+pid and process group name nothing here — it does **not** say that namespace was destroyed.
+`docker compose run --rm` starts a fresh container per invocation, so a live sibling launcher
+container is also "not mine", and classifying it dead would restore the operator's `./infernix.dhall`
+out from under a running harness and let a concurrent `test all` tear down its live cluster.
+A foreign namespace therefore licenses exactly one thing: discarding the process-group probe,
+whose `ESRCH`/`EPERM` answers are meaningless across the boundary. The *death* comes from a second
+fact — the reservation owner holds a kernel file lock at
+`.data/runtime/locks/harness-cluster-slot.held` for its whole process lifetime, taken before the
+reservation is published and released only after it is removed. The kernel drops that lock when the
+holder dies and it contends across PID namespaces on one kernel, which makes it the only
+cross-namespace liveness fact reachable through the allowed packages; its cross-container
+enforcement is not a new assumption, because `cluster-lifecycle.lock` sits in the same directory and
+every cross-process cluster mutation already depends on it. Only *foreign namespace **and** lock
+unheld* is `HarnessReservationOwnerDefinitelyDead`. A held lock is unverifiable, never
+verified-alive: authorization compares process-group *numbers*, so granting authority across a
+namespace boundary would let a stranger sitting at the recorded pgid act as the harness.
+Same-namespace classification is unchanged and moved verbatim: a mismatched leader in this namespace
+is still unverifiable, because that still-populated group may hold descendants of the old owner.
+Darwin has no PID namespaces, no `setns`, no `unshare`, and no procfs, so its observer returns an
+explicit absence and `RecordedNamespaceIsForeign` is unreachable on that lane *by construction*
+rather than by a runtime guard — which is what keeps the Apple host from retiring a record whose
+owner is alive inside a running container on the shared mount.
+A wedged record already on disk carries no namespace at all, so no discriminator can retire it. That
+is why `infernix cluster reclaim-slot [--force-owner-pid PID]` exists and why the refusal now names
+it and prints every fact it observed. The command is exempt from the pre-dispatch interrupted-state
+reconcile — running that gate first would make it unreachable in the only state it is for. It
+refuses a verified-alive owner, retires a proven-dead one through the same kernel the seizure path
+uses, and otherwise requires the operator to transcribe the pid out of the record. The transcription
+is an operator-asserted premise, not an override: it supplies only the record's identity, and the
+bounded-command quiescence proof and config-transaction reconciliation still run and still fail
+closed.
+Two residuals are named rather than papered over. **(a)** A sibling container whose reservation owner
+died but whose bounded-command descendants are still alive presents a free lock and a foreign
+namespace, so its reservation is retired where today it refuses; that is strictly narrower than the
+permanent wedge it replaces, but it is a real widening. **(b)** The bounded-command activity ledger
+still carries the identical namespace-local assumption, so a pid collision there fails closed with
+its own refusal — the wedge can move one gate downstream rather than disappear.
+
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a
 `5xx` "server not initialized", a `403` before the object layer is ready — is neither "ready" nor "a
@@ -328,7 +397,9 @@ the standard streams it is handed. `close_fds` is a configuration `posix_spawn` 
 `process` falls back to fork/exec and, in the forked child, closes every descriptor from 3 up to
 `sysconf(_SC_OPEN_MAX)` — the soft `RLIMIT_NOFILE` — before `exec`. The walk is linear in a limit the
 process *inherits* rather than chooses, and containerd hands a pod `1073741816`. Measured at that
-exact limit: **313 s per spawn**, against a 5 s observer deadline and a 50 ms sampling cadence. The
+exact limit: **313 s per spawn**, against a 5 s observer deadline and a 50 ms pause between samples.
+On Darwin each of those samples walks the whole host process table, so the achieved cadence is
+governed by sample cost rather than by the pause. The
 same spawn with `close_fds = False` is 0.8 ms at every limit.
 
 The doctrine answer is to bound the resource, not to weaken the isolation.
@@ -345,6 +416,20 @@ preserved, and the hard limit is written back unchanged, so no privilege is requ
 `createProcess`: an unbounded process image is a named refusal identifying the spawning kernel rather
 than a stall that reads as a hang. Because it is an observation at the point of use, it holds when a
 process image fails to establish the bound.
+
+### Diagnosable bounds
+
+A bound that cannot report its own violation is not an enforceable bound; it is an unexplained stop.
+Every bound in these kernels refuses by naming the quantity it exceeded, the value it observed, the
+configured value it compared against, and the object it was working on. Where one bound governs two
+independent quantities, each refuses with its own text, because they have different causes and
+different fixes. Where the walk stops before it can total the quantity, the refusal states the lower
+bound it proved rather than a total nothing observed. Where the producer of the object is still
+present, the refusal also states what that producer declared, so a payload that was always too large
+is distinguishable from one that grew after it was admitted. A refusal that reports only that some
+bound was crossed leaves editing and rebuilding the kernel as the only way to learn why a supported
+lane cannot proceed, which is the same opacity the [realness contract](realness_contract.md) rejects
+on the results side.
 
 Two audit obligations bound the review surface: **probe honesty**
 (each evidence type has exactly one mint, co-located with its hidden constructor, that must consume a

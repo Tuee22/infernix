@@ -185,6 +185,10 @@ effective figure. The Colima observation uses a fixed absolute executable candid
 and a required deadline; unavailable or malformed observation fails closed rather than defaulting
 the pledge to zero. `infernix init` refuses to write a manifest it could not measure, because a
 build ceiling derived from an unmeasured host is a declared number wearing a measurement's clothes.
+What these fields measure is the machine's **capacity**, which is not the memory available at the
+moment a build starts; availability is observed separately at the point of use, and admission
+against it is owned by
+[../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md).
 Both fields feed
 [../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md): the toolchain
 account is a share of `effectiveMemoryMib`, and `infernix init` divides it by a job count into the
@@ -231,6 +235,14 @@ to delete the file and re-run `infernix init`.
 `colima` is deliberately not a manifest field. The shared Darwin build- and inference-memory
 observer may read it through the fixed bootstrap-adjacent `/opt/homebrew/bin/colima` candidate, but
 Infernix never manages it and normal command execution cannot select it from runtime configuration.
+
+`ps` and `vm_stat` are not manifest fields either, for the same reason and with the same shape. The
+toolchain admission observation reads `vm_stat` for available host memory and `ps` for the
+foreign-claimant census through fixed absolute candidates (`/usr/bin/vm_stat`, `/bin/ps`). Both are
+read-only Darwin system probes with fixed argument vectors, neither is managed by this repository,
+and the Linux lane reads `/proc` instead of either, so neither belongs in the schema an operator
+materializes. Canonical doctrine:
+[../architecture/bounded_host_memory.md](../architecture/bounded_host_memory.md).
 
 `protoc` is not a host-manifest field. Ordinary Haskell builds consume the exact tracked
 `src/Proto/` snapshot and Python generation invokes `python -m grpc_tools.protoc` from its governed

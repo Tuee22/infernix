@@ -65,6 +65,7 @@ library
         Infernix.HostConfig
         Infernix.HostMemory
         Infernix.BuildMemory
+        Infernix.HostClaimants
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util
@@ -188,7 +189,7 @@ executable infernix
     hs-source-dirs:   app
     default-language: GHC2021
     ghc-options:
-        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr1024M
+        -Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr16384M
 
     build-depends:
         base >=4.18 && <4.23,
@@ -273,6 +274,7 @@ test-suite infernix-unit
         Infernix.HostConfig
         Infernix.HostMemory
         Infernix.BuildMemory
+        Infernix.HostClaimants
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util
@@ -598,6 +600,7 @@ test-suite infernix-integration
         Infernix.HostConfig
         Infernix.HostMemory
         Infernix.BuildMemory
+        Infernix.HostClaimants
         Infernix.HostPrereqs
         Infernix.HostTools
         Infernix.Internal.Util

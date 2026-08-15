@@ -31,6 +31,7 @@ module Infernix.Engines.Artifact
     ArtifactRuntimeExpectation,
     appleArtifactRuntimeExpectation,
     linuxArtifactRuntimeExpectation,
+    artifactRuntimeExpectationLane,
     currentArtifactRecipeFingerprint,
     engineArtifactGenerationFingerprint,
     rederiveArtifactGenerationFingerprint,

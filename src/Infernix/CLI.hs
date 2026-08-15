@@ -1262,9 +1262,7 @@ spawnDarwinBuildMemoryProcess paths authority scratchRoot invocation = do
       { darwinBuildMemorySpecExecutable = cabalExecutable,
         darwinBuildMemorySpecArguments = arguments,
         darwinBuildMemorySpecWorkingDirectory = repoRoot paths,
-        darwinBuildMemorySpecEnvironment =
-          BuildMemory.darwinBuildMemoryAuthorityEnvironmentEntries authority
-            <> cliSubprocessBaseEnvFor paths,
+        darwinBuildMemorySpecEnvironment = cliSubprocessBaseEnvFor paths,
         darwinBuildMemorySpecLabel =
           BuildMemory.darwinBuildMemoryInvocationLabel invocation
       }
@@ -1856,11 +1854,7 @@ spawnOwnedToolchainProcess paths authority invocation resolvedCommand = do
           resolvedCommand
           (BuildMemory.toolchainInvocationArguments authority invocation)
       )
-        { env =
-            Just
-              ( BuildMemory.toolchainAuthorityEnvironmentEntries authority
-                  <> cliSubprocessBaseEnvFor paths
-              ),
+        { env = Just (cliSubprocessBaseEnvFor paths),
           cwd = Just (repoRoot paths),
           std_in = Inherit,
           std_out = Inherit,

@@ -29,7 +29,7 @@ import Data.ByteString.Short qualified as ShortByteString
 import Data.Char (isHexDigit, isSpace, isUpper)
 import Data.Either (fromRight, isLeft, isRight)
 import Data.IORef qualified as IORef
-import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort)
+import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sort, tails)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
@@ -60,13 +60,14 @@ import Infernix.BuildMemory
         ToolchainTest
       ),
     ToolchainTestSuite,
+    admissionAvailableMib,
+    admitToolchainAccount,
     allToolchainTestSuites,
     buildMemoryBoundCeilingMib,
     checkedToolchainAccountMib,
     committedBuildJobs,
     committedProcessAddressMib,
     committedRtsHeapMib,
-    darwinBuildMemoryAuthorityEnvironmentEntries,
     darwinBuildMemoryInvocationArguments,
     darwinBuildMemorySampleIntervalMicros,
     deriveBuildMemoryPlan,
@@ -98,7 +99,6 @@ import Infernix.BuildMemory
     requireToolchainInvocationProjectState,
     resolveBuildMemoryMechanism,
     toolchainAddressSpaceReservationMib,
-    toolchainAuthorityEnvironmentEntries,
     toolchainControlHeapMib,
     toolchainInvocationArguments,
     toolchainInvocationLabel,
@@ -215,6 +215,7 @@ import Infernix.Engines.Artifact.Target qualified as ArtifactTarget
 import Infernix.Engines.LinuxNative
   ( linuxNativeEngineArtifactAdapterIds,
   )
+import Infernix.Engines.MaterializationLock.Internal qualified as MaterializationLock
 import Infernix.Engines.Provisioning qualified as Provisioning
 import Infernix.Engines.Provisioning.Internal qualified as ProvisioningInternal
 import Infernix.Error
@@ -227,6 +228,15 @@ import Infernix.Evidence.Lease qualified as Lease
 import Infernix.Evidence.Readiness qualified as Readiness
 import Infernix.ExecutionPlan qualified as ExecutionPlan
 import Infernix.ExecutionPlan.Properties qualified as ExecutionPlanProperties
+import Infernix.HostClaimants
+  ( ForeignToolchainClaimant (..),
+    ProcessRow (..),
+    foreignToolchainClaimants,
+    isToolchainImageName,
+    parseDarwinProcessTable,
+    parseDarwinVmStatAvailableMib,
+    parseLinuxMemAvailableMib,
+  )
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostMemory (parseMemTotalMib)
 import Infernix.HostPrereqs (appleDockerBoundaryError, appleHostRequirementIds, decodeDockerInfoArchitecture)
@@ -321,6 +331,7 @@ import Infernix.Runtime.Pulsar.Failover qualified as PulsarFailover
 import Infernix.Runtime.Worker
   ( WorkerModelCacheConfig (..),
     loadWorkerModelCacheConfig,
+    nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
   )
@@ -656,10 +667,12 @@ dispatchBuildMemoryFixture = do
       exitSuccess
     _ -> pure ()
 
--- | Exercise the fixed inherited environment across two Haskell process
--- images. The helper gets no direct RTS arguments, so its observed cap can come
--- only from the driver's authority-derived environment. This is an inheritance
--- regression; the real Cabal driver is proved separately by the bounded gate.
+-- | Exercise the invocation-borne cap across two Haskell process images. The
+-- driver's cap comes from its own @+RTS@ arguments; the helper gets neither RTS
+-- arguments nor an inherited environment cap, so it falls back to the cap its
+-- own component is linked with. This pins the boundary Sprint 1.21 drew: the
+-- caps that bind are the ones passed on the invocation or baked into a
+-- component, and nothing crosses the process boundary by inheritance.
 runToolchainHeapDriverFixture :: IO ()
 runToolchainHeapDriverFixture = do
   driverMaxHeapBlocks <- activeRtsMaxHeapBlocks
@@ -714,6 +727,167 @@ closedDarwinAppleMaterializerTestOptions =
   [ "--darwin-production-audiveris-cancellation",
     "--darwin-installed-python-source-isolation"
   ]
+
+-- | The control cap this test component is linked with
+-- (@-with-rtsopts=-M1024M@ in @infernix.cabal@).
+--
+-- Named here because the driver/helper fixture below is only discriminating if
+-- the cap it passes differs from the one the component already carries.
+unitSuiteLinkedHeapMib :: Int
+unitSuiteLinkedHeapMib = 1024
+
+-- | The reason text of a refusal, or an empty string when the value was not a
+-- refusal at all. Keeps the admission assertions readable without a hanging
+-- @case@ inside an argument position.
+refusalReason :: Either String a -> String
+refusalReason outcome =
+  case outcome of
+    Left reason -> reason
+    Right _ -> ""
+
+-- | The pure half of the Sprint 1.21 admission observations.
+--
+-- Both refusals the spawn boundary can raise are decided on data, so the
+-- malformed, truncated, and populated cases are deterministic here rather than
+-- depending on what happens to be resident on the machine running the suite.
+runToolchainAdmissionObservationFixture :: IO ()
+runToolchainAdmissionObservationFixture = do
+  let vmStatPayload =
+        unlines
+          [ "Mach Virtual Memory Statistics: (page size of 16384 bytes)",
+            "Pages free:                                  1000.",
+            "Pages active:                                2000.",
+            "Pages inactive:                              3000.",
+            "Pages speculative:                             500.",
+            "Pages throttled:                                 0.",
+            "Pages wired down:                              400.",
+            "Pages purgeable:                                24."
+          ]
+  assert
+    (parseDarwinVmStatAvailableMib vmStatPayload == Right 70)
+    "the Darwin availability parser counts free, speculative, purgeable, and reclaimable inactive pages at the reported page size, the same quantity the Linux lane reads from MemAvailable"
+  assert
+    ( isLeft
+        ( parseDarwinVmStatAvailableMib
+            (unlines (filter (not . isInfixOf "Pages inactive") (lines vmStatPayload)))
+        )
+    )
+    "a vm_stat payload missing its inactive counter is a named refusal rather than a smaller availability"
+  assert
+    ( isLeft
+        ( parseDarwinVmStatAvailableMib
+            (unlines (filter (not . isInfixOf "Pages purgeable") (lines vmStatPayload)))
+        )
+    )
+    "a vm_stat payload missing a counter is a named refusal rather than a smaller availability"
+  assert
+    ( isLeft
+        ( parseDarwinVmStatAvailableMib
+            (unlines (drop 1 (lines vmStatPayload)))
+        )
+    )
+    "a vm_stat payload with no page-size header is a named refusal rather than an assumed page size"
+  assert
+    ( parseLinuxMemAvailableMib
+        (unlines ["MemTotal:       65536000 kB", "MemAvailable:    2097152 kB"])
+        == Right 2048
+    )
+    "the Linux availability parser reads MemAvailable in kB"
+  assert
+    (isLeft (parseLinuxMemAvailableMib "MemTotal:       65536000 kB\n"))
+    "a /proc/meminfo payload with no MemAvailable line is a named refusal"
+  let processTablePayload =
+        unlines
+          [ "    1     0  32624 /sbin/launchd",
+            "  100     1  10000 /Users/operator/.ghcup/bin/cabal",
+            "  200   100  20000 ghc-9.12.4",
+            "  300     1  30000 cabal",
+            "  400   300  40000 ghc"
+          ]
+  assert
+    ( fmap (map processRowPid) (parseDarwinProcessTable processTablePayload)
+        == Right [1, 100, 200, 300, 400]
+    )
+    "the Darwin process-table parser reads every row of the fixed ps vector"
+  assert
+    (isLeft (parseDarwinProcessTable "not a process table row\n"))
+    "a malformed process-table row fails the census rather than being skipped"
+  assert
+    ( fmap
+        (foreignToolchainClaimants 100)
+        (parseDarwinProcessTable processTablePayload)
+        == Right
+          [ ForeignToolchainClaimant
+              { claimantPid = 300,
+                claimantImage = "cabal",
+                claimantResidentKib = 30000
+              },
+            ForeignToolchainClaimant
+              { claimantPid = 400,
+                claimantImage = "ghc",
+                claimantResidentKib = 40000
+              }
+          ]
+    )
+    "the census names toolchain images outside this process tree and excludes its own descendants"
+  assert
+    ( fmap
+        (foreignToolchainClaimants 200)
+        (parseDarwinProcessTable processTablePayload)
+        == Right
+          [ ForeignToolchainClaimant
+              { claimantPid = 300,
+                claimantImage = "cabal",
+                claimantResidentKib = 30000
+              },
+            ForeignToolchainClaimant
+              { claimantPid = 400,
+                claimantImage = "ghc",
+                claimantResidentKib = 40000
+              }
+          ]
+    )
+    "the census excludes the toolchain ancestors that started this process, so the account cannot refuse itself"
+  assert
+    ( foreignToolchainClaimants
+        999
+        [ ProcessRow
+            { processRowPid = 10,
+              processRowParentPid = 11,
+              processRowResidentKib = 1,
+              processRowImage = "ghc"
+            },
+          ProcessRow
+            { processRowPid = 11,
+              processRowParentPid = 10,
+              processRowResidentKib = 1,
+              processRowImage = "cabal"
+            }
+        ]
+        == [ ForeignToolchainClaimant
+               { claimantPid = 10,
+                 claimantImage = "ghc",
+                 claimantResidentKib = 1
+               },
+             ForeignToolchainClaimant
+               { claimantPid = 11,
+                 claimantImage = "cabal",
+                 claimantResidentKib = 1
+               }
+           ]
+    )
+    "a cyclic parent map terminates the ancestry walk instead of hanging the gate"
+  assert
+    ( all
+        isToolchainImageName
+        ["cabal", "ghc", "ghc-9.12.4", "ghci", "ghc-pkg", "haddock", "hsc2hs"]
+        && not
+          ( any
+              isToolchainImageName
+              ["ghcup", "clang", "ld", "infernix", "node", "python3.12"]
+          )
+    )
+    "the census recognizes Haskell toolchain images and not the native helpers any build runs"
 
 -- | The whole ceiling story, inside one child that installed it.
 --
@@ -912,15 +1086,13 @@ runBuildMemoryBoundFixture scratchDirectory = do
               ( toolchainInvocationArguments authority
                   . ToolchainDarwinAppleMaterializerTest
               )
-              closedDarwinAppleMaterializerTests,
-            toolchainAuthorityEnvironmentEntries authority
+              closedDarwinAppleMaterializerTests
           )
   let ( postObservationArguments,
         postObservationTestArguments,
         postObservationCabalFormatArguments,
         postObservationCabalFormatLabel,
-        postObservationDarwinArguments,
-        postObservationEnvironment
+        postObservationDarwinArguments
         ) =
           postObservationAuthoritySurface
   assert
@@ -1011,10 +1183,43 @@ runBuildMemoryBoundFixture scratchDirectory = do
     )
     "both Darwin-only Apple materializer gates have exact non-caller-supplied test-option vectors"
   assert
-    ( postObservationEnvironment
-        == [("GHCRTS", "-M" <> show (planControlHeapMib plan) <> "M")]
+    ( admitToolchainAccount plan (planBudgetMib plan - 1) []
+        == Left
+          ( "refusing to start the governed toolchain: the host has "
+              <> show (planBudgetMib plan - 1)
+              <> " MiB of available memory, below the "
+              <> show (planBudgetMib plan)
+              <> " MiB account this plan claims ("
+              <> show (planJobs plan)
+              <> " jobs x "
+              <> show (planRtsHeapMib plan)
+              <> " MiB compiler heap plus "
+              <> show (planJobs plan + 1)
+              <> " x "
+              <> show (planControlHeapMib plan)
+              <> " MiB control/helper claims)"
+          )
     )
-    "the production child environment carries only the authority-derived inherited heap cap"
+    "an account larger than observed available host memory is a named admission refusal"
+  let namedClaimantRefusal =
+        refusalReason
+          ( admitToolchainAccount
+              plan
+              (planBudgetMib plan)
+              ["pid 61617 `cabal` (137 MiB resident, attributed not measured)"]
+          )
+  assert
+    ( all
+        (`isInfixOf` namedClaimantRefusal)
+        ["pid 61617 `cabal`", "did not start", "rather than killed"]
+    )
+    "a foreign toolchain claimant is a named admission refusal that leaves it running"
+  assert
+    ( fmap admissionAvailableMib (admitToolchainAccount plan (planBudgetMib plan) [])
+        == Right (planBudgetMib plan)
+    )
+    "an account exactly funded by observed availability with an empty census is admitted"
+  runToolchainAdmissionObservationFixture
   assert
     ( ("--jobs=" <> show (planJobs sameHeapDifferentJobsPlan))
         `notElem` postObservationArguments
@@ -1022,10 +1227,26 @@ runBuildMemoryBoundFixture scratchDirectory = do
     "a same-heap stale job count cannot enter the production Cabal argument vector"
   writeFile projectPath correctProject
 
-  -- The top-level image receives the cap both directly and through the closed
-  -- environment; its Haskell helper receives no RTS arguments and therefore
-  -- proves that the environment is inherited across a child boundary.
+  -- The top-level image receives the cap on its own invocation. Its Haskell
+  -- helper receives no RTS arguments and — since Sprint 1.21 retired the
+  -- build-only environment cap that does not bind — no inherited environment
+  -- cap either, so it observes the runtime default. That asymmetry is the
+  -- honest statement of the ledger: the worker-associated control/helper claim
+  -- is a declared account slot, not a cap the kernel inherits into the helper.
   executable <- getExecutablePath
+  homeDirectory <- getHomeDirectory
+  temporaryDirectory <- getTemporaryDirectory
+  -- An explicit environment carrying only the two variables a child always
+  -- needs. It is what the authority no longer adds to that matters here: no
+  -- RTS cap reaches either image except the one on the driver's own
+  -- invocation.
+  let childEnvironmentWithoutRtsCap =
+        [("HOME", homeDirectory), ("TMPDIR", temporaryDirectory)]
+  -- Drive the parent at twice the linked cap deliberately. Passing the linked
+  -- value would make an inherited cap and the component's own baked cap
+  -- indistinguishable, which is what let the earlier form of this fixture read
+  -- as an inheritance proof while proving only the linkage.
+  let driverHeapMib = 2 * planControlHeapMib plan
   inheritedHeapCap <-
     timeout
       (30 * 1000000)
@@ -1033,12 +1254,12 @@ runBuildMemoryBoundFixture scratchDirectory = do
           ( proc
               executable
               [ "+RTS",
-                "-M" <> show (planControlHeapMib plan) <> "M",
+                "-M" <> show driverHeapMib <> "M",
                 "-RTS",
                 "__infernix_unit_toolchain_heap_driver_fixture"
               ]
           )
-            { env = Just postObservationEnvironment
+            { env = Just childEnvironmentWithoutRtsCap
             }
           ""
       )
@@ -1046,8 +1267,7 @@ runBuildMemoryBoundFixture scratchDirectory = do
     Nothing ->
       fail "the closed driver/helper heap-cap fixture exceeded its 30-second deadline"
     Just (heapExit, heapOutput, heapError) -> do
-      let expectedMaxHeapBlocks =
-            toInteger (planControlHeapMib plan) * 1024 * 1024 `div` 4096
+      let heapBlocksOf heapMib = toInteger heapMib * 1024 * 1024 `div` 4096
           observedMaxHeapBlocks =
             traverse readMaybe (lines heapOutput) :: Maybe [Integer]
       assert
@@ -1056,8 +1276,10 @@ runBuildMemoryBoundFixture scratchDirectory = do
             <> heapError
         )
       assert
-        (observedMaxHeapBlocks == Just [expectedMaxHeapBlocks, expectedMaxHeapBlocks])
-        "the driver and inherited Haskell helper observe the exact authority heap cap"
+        ( observedMaxHeapBlocks
+            == Just [heapBlocksOf driverHeapMib, heapBlocksOf unitSuiteLinkedHeapMib]
+        )
+        "the driver observes the cap on its own invocation and its helper falls back to its linked cap rather than inheriting one"
 
   darwinEvidenceSurface <-
     withToolchainSpawnAuthority scratchDirectory plan $ \authority ->
@@ -1117,6 +1339,30 @@ runBuildMemoryBoundFixture scratchDirectory = do
           installedCliIsolation <-
             either fail pure $
               mkDarwinInstalledCliIsolationEvidence 0
+          -- The account is a claim that it bounded what the build took, so a
+          -- sampled peak that reaches it must refuse rather than render a
+          -- multiple at or below 1.00x and exit zero.
+          overAccountSamples <-
+            either fail pure $
+              recordDarwinBuildMemorySample
+                (fromIntegral (planToolchainAccountMib plan) * 1024 * 1024)
+                emptyDarwinBuildMemorySamples
+          overAccountInvocation <-
+            either fail pure $
+              mkDarwinBuildMemoryInvocationEvidence
+                DarwinBuildAllWithTests
+                0
+                123
+                overAccountSamples
+          let overAccountSampledPeak =
+                mkDarwinBuildMemoryEvidence
+                  65536
+                  16384
+                  49152
+                  darwinAuthority
+                  darwinBuildMemorySampleIntervalMicros
+                  [overAccountInvocation]
+                  Nothing
           let missingInstalledCliIsolation =
                 mkDarwinBuildMemoryEvidence
                   65536
@@ -1144,12 +1390,12 @@ runBuildMemoryBoundFixture scratchDirectory = do
                 ( buildArguments,
                   installArguments,
                   postObservationBuildArguments,
-                  darwinBuildMemoryAuthorityEnvironmentEntries darwinAuthority,
+                  overAccountSampledPeak,
                   renderDarwinBuildMemoryEvidence evidence
                 )
             )
   case (System.Info.os, darwinEvidenceSurface) of
-    ("darwin", Right (buildArguments, installArguments, postObservationBuildArguments, environmentEntries, report)) -> do
+    ("darwin", Right (buildArguments, installArguments, postObservationBuildArguments, overAccountPeakRefusal, report)) -> do
       let driverRtsArguments =
             [ "+RTS",
               "-M" <> show (planControlHeapMib plan) <> "M",
@@ -1193,8 +1439,10 @@ runBuildMemoryBoundFixture scratchDirectory = do
         (postObservationBuildArguments == buildArguments)
         "Darwin validation arguments cannot change after the final committed-file observation"
       assert
-        (environmentEntries == postObservationEnvironment)
-        "Darwin validation reuses the exact authority-derived inherited heap-cap environment"
+        ( "at or above its 8192 MiB claimant account"
+            `isInfixOf` refusalReason overAccountPeakRefusal
+        )
+        "Darwin evidence whose sampled peak reaches the account is not constructible"
       assert
         ( "sampleMetric: sampled peak aggregate physical footprint" `isInfixOf` report
             && "sampleCount: 3" `isInfixOf` report
@@ -1379,7 +1627,40 @@ runHeapCapOnlyBoundFixture scratchDirectory plan widerPlan = do
 
 runEnforcedAddressSpaceBoundFixture ::
   FilePath -> BuildMemoryPlan -> BuildMemoryPlan -> IO ()
-runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan = do
+runEnforcedAddressSpaceBoundFixture scratchDirectory _callerPlan widerPlan = do
+  -- Phase 1 Sprint 1.37: this fixture does not run in a pristine process image.
+  --
+  -- On the enforced lane the governed toolchain invocation installs its ceiling
+  -- and every descendant inherits it: @infernix test unit@ spawns Cabal inside
+  -- 'withBoundedToolchainChild', so the container lane's committed @-xr14187M@
+  -- reaches this child through two execs, and a soft limit of 14187 MiB is what
+  -- it measurably observes. Stating the negative case against an /unbounded/
+  -- address space therefore asserted a state the lane guarantees it will not be
+  -- in; it could only hold under a bare @cabal test@, which this repository does
+  -- not use for validation. Inheriting the bound is the intended behaviour
+  -- rather than the defect — the caller's own assertion names inheritance as one
+  -- of the things this child proves.
+  --
+  -- So the fixture derives its own floor plan: the tightest ceiling a plan can
+  -- carry, the per-process heap floor times the address-space multiplier. Any
+  -- lane able to host this toolchain installs a limit above that, so the
+  -- refusal, the install, the observation, and the lower-only preservation are
+  -- each exercised against a real inherited bound instead of against its
+  -- absence.
+  plan <-
+    buildMemoryFixturePlan
+      (minimumProcessHeapMib + 2 * toolchainControlHeapMib)
+      1
+  observedLimitMib <- softAddressLimitMib
+  assert
+    (maybe True (> toInteger (planProcessAddressMib plan)) observedLimitMib)
+    ( "the inherited address-space limit leaves room for the floor plan: "
+        <> "observed a soft limit of "
+        <> maybe "unbounded" (\mib -> show mib <> " MiB") observedLimitMib
+        <> " against the floor ceiling of "
+        <> show (planProcessAddressMib plan)
+        <> " MiB, so the refusal case is not representable on this lane"
+    )
   refused <-
     try @IOException
       ( requireBoundedBuildMemory
@@ -1389,7 +1670,14 @@ runEnforcedAddressSpaceBoundFixture scratchDirectory plan widerPlan = do
       )
   assert
     (buildMemoryRefusalNamesSurface refused)
-    "requireBoundedBuildMemory refuses an unbounded address space and names the spawning surface"
+    ( "requireBoundedBuildMemory refuses an address space wider than the "
+        <> "derived ceiling and names the spawning surface; the fixture "
+        <> "observed a soft address limit of "
+        <> maybe "unbounded" (\mib -> show mib <> " MiB") observedLimitMib
+        <> " against a derived per-process ceiling of "
+        <> show (planProcessAddressMib plan)
+        <> " MiB"
+    )
 
   established <- establishBoundedBuildMemory scratchDirectory plan
   assert
@@ -1691,6 +1979,68 @@ descriptorRefusalNamesKernel outcome =
     Left failure ->
       "unit descriptor-space negative case" `isInfixOf` displayException failure
     Right _ -> False
+
+-- | Phase 1 Sprint 1.33: the native artifact marker is a line of the runner's
+-- output, not the whole stream. The measured Core ML basic-pitch shape below is
+-- the one that regressed: real diagnostics ahead of a real marker.
+runNativeArtifactMarkerAssertions :: IO ()
+runNativeArtifactMarkerAssertions = do
+  let marker path = "infernix-native-artifact-file:" <> path
+  assert
+    (nativeArtifactMarkerPathsForTest (marker "/tmp/out.mid") == ["/tmp/out.mid"])
+    "a stream whose only line is the marker names one artifact"
+  assert
+    ( nativeArtifactMarkerPathsForTest
+        ( Text.unlines
+            [ "Predicting MIDI for /models/basic-pitch/input.wav",
+              "isfinite: True",
+              "shape: (1, 43844, 1)",
+              marker "/tmp/basic-pitch/out.mid"
+            ]
+        )
+        == ["/tmp/basic-pitch/out.mid"]
+    )
+    "runner diagnostics ahead of the marker do not hide it"
+  assert
+    (null (nativeArtifactMarkerPathsForTest "isfinite: True\nshape: (1, 43844, 1)\n"))
+    "a stream with no marker stays inline output"
+  assert
+    ( length
+        ( nativeArtifactMarkerPathsForTest
+            (Text.unlines [marker "/tmp/one.mid", marker "/tmp/two.mid"])
+        )
+        == 2
+    )
+    "two marker lines are both seen, so the caller can refuse rather than pick"
+  assert
+    (nativeArtifactMarkerPathsForTest ("  " <> marker "/tmp/out.mid" <> "  ") == ["/tmp/out.mid"])
+    "surrounding whitespace on the marker line is stripped before matching"
+
+-- | Phase 1 Sprint 1.34: a sealed engine artifact is not a cache directory. The
+-- two lists must agree — a rendered name the filter does not know is a name the
+-- ambient environment can still supply.
+runAppleRuntimeEnvironmentAssertions :: IO ()
+runAppleRuntimeEnvironmentAssertions = do
+  let installRoot = "/opt/infernix/engines/apple/basic-pitch"
+      scratchRoot = "/var/folders/scratch"
+      rendered = CappedEngineInternal.appleRuntimeEnvironmentForTest installRoot scratchRoot
+      lookupName name = lookup name rendered
+  assert
+    (all ((`elem` CappedEngineInternal.appleRuntimeEnvironmentNamesForTest) . fst) rendered)
+    "every name the Apple runtime environment renders is one the inherited filter drops"
+  assert
+    (lookupName "NUMBA_CACHE_DIR" == Just (scratchRoot </> "infernix-numba-cache"))
+    "the Numba cache resolves under the supplied scratch root"
+  assert
+    ( maybe
+        False
+        (not . isPrefixOf installRoot)
+        (lookupName "NUMBA_CACHE_DIR")
+    )
+    "the Numba cache is not written inside the sealed install root"
+  assert
+    (lookupName "PYTHONDONTWRITEBYTECODE" == Just "1" && lookupName "PYTHONNOUSERSITE" == Just "1")
+    "the sealed artifact still refuses bytecode writes and user site packages"
 
 runDescriptorSpaceAssertions :: IO ()
 runDescriptorSpaceAssertions = do
@@ -2049,6 +2399,8 @@ main = do
   ProcessIdentitySpec.runProcessIdentityTests
     (unitTestRoot </> "process-identity")
   runDescriptorSpaceAssertions
+  runNativeArtifactMarkerAssertions
+  runAppleRuntimeEnvironmentAssertions
   runBuildMemoryAssertions unitTestRoot
   runLinuxWatchdogBreachAssertions
   runNvidiaWatchdogAssertions
@@ -2323,6 +2675,9 @@ main = do
         ProvisioningInternal.InstallPoetryProject
           "/tmp/infernix-poetry-project"
           [ProvisioningInternal.PoetryAppleSiliconGroup]
+      poetryProjectVenvCommand =
+        ProvisioningInternal.CreatePoetryProjectVenv
+          "/tmp/infernix-poetry-project"
       protoGenerationCommand =
         ProvisioningInternal.GeneratePythonProto
           "/tmp/infernix-proto-project"
@@ -2382,6 +2737,33 @@ main = do
           protoGenerationCommand
           [pythonHomeClosureRole, pythonPathClosureRole, projectSourceClosureRole]
           True
+        -- Sprint 1.27: the project-environment creation is deliberately
+        -- unsealed. A sealed prefix here is what makes Poetry adopt the
+        -- generation as the project's own environment, and a virtual
+        -- environment records the interpreter it was created from, so an
+        -- ephemeral path recorded there outlives the generation that held it.
+        && Subprocess.provisioningRuntimeClosureShapeForTest
+          poetryProjectVenvCommand
+          []
+          False
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              poetryProjectVenvCommand
+              [pythonHomeClosureRole]
+              False
+          )
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              poetryProjectVenvCommand
+              [pythonHomeClosureRole, pythonPathClosureRole]
+              True
+          )
+        && not
+          ( Subprocess.provisioningRuntimeClosureShapeForTest
+              poetryProjectVenvCommand
+              []
+              True
+          )
     )
     "Sprint 1.20: Audiveris extraction admits exactly one artifact-root app closure while sibling provisioning shapes stay closed"
   assert
@@ -2546,12 +2928,75 @@ main = do
         == 2
     )
     "Phase 1 Sprint 1.23: Apple runtime startup and explicit metal materialization both prepare the per-engine plan"
+  -- Sprint 1.30: the shipped image's address reservation is the only thing
+  -- bounding its heap growth, and this binary is what the validation surface
+  -- starts as the host inference daemon. Sized as a toolchain control slot it
+  -- stopped that daemon with `out of memory` on the first routed result, so it
+  -- is sized for the host reserve instead. It remains a bounded reservation:
+  -- two orders of magnitude below the runtime's 1024.65 GiB default, and
+  -- address space rather than resident memory.
+  assert
+    ( "-Wall -Werror -threaded -rtsopts=ignoreAll -with-rtsopts=-xr16384M"
+        `isInfixOf` cabalManifestContents
+        && not
+          ( "-with-rtsopts=-xr1024M"
+              `isInfixOf` cabalManifestContents
+          )
+    )
+    "Phase 1 Sprint 1.30: the shipped operator executable reserves address space for the host reserve its daemons run in, not for a toolchain control slot"
+  integrationHarnessSource <- readFile "test/integration/Spec.hs"
+  -- Sprint 1.29: the host inference daemon is a host-reserve claimant and
+  -- carries no toolchain heap ceiling, while this repository's non-unit test
+  -- components carry a baked 1024 MiB one. Starting the daemon by re-executing
+  -- the integration image gave inference that ceiling, and a real result larger
+  -- than it killed the consumer loop the moment the first model completed. The
+  -- two process images stay apart.
+  assert
+    ( "resolveHostServiceDaemonExecutable paths"
+        `isInfixOf` unwords (words integrationHarnessSource)
+        && "buildRoot paths </> \"infernix\""
+          `isInfixOf` unwords (words integrationHarnessSource)
+        && not
+          ( "infernixExecutable <- resolveInfernixExecutable let logPath = hostServiceDaemonLogPath"
+              `isInfixOf` unwords (words integrationHarnessSource)
+          )
+        -- The marker is a command this suite runs against its own image. The
+        -- operator CLI has none and answers it with usage text rather than with
+        -- a daemon, so the daemon launcher passes its vector as given.
+        && "(proc infernixExecutable args)"
+          `isInfixOf` unwords (words integrationHarnessSource)
+    )
+    "Phase 1 Sprint 1.29: the integration harness starts the host inference daemon from the installed operator CLI, not by re-executing its own capped image"
   pythonProducerSource <- readFile "src/Infernix/Python.hs"
   assert
     ( "preparedPythonEnvironmentMutationMarker\n                        case mutationHook of"
         `isInfixOf` pythonProducerSource
     )
     "Phase 1 Sprint 1.23: the producer durably invalidates readiness before Poetry can mutate an environment"
+  -- Sprint 1.27: both producers give the project its own environment before the
+  -- bounded install, and the creation is guarded on the exact interpreter so an
+  -- existing environment is never cleared. Poetry adopts the running
+  -- interpreter's prefix when the project owns nothing, and under a sealed run
+  -- that prefix is the generation about to be retired.
+  assert
+    ( length
+        ( filter
+            ( isPrefixOf
+                "environmentOutcome<-ensurePreparedProjectEnvironmentprojectWritergrantpoetryprojectDirectory"
+            )
+            (tails (filter (not . isSpace) pythonProducerSource))
+        )
+        == 2
+        && "sealedHomeIsVirtual <- Provisioning.resolvedPoetrySealsAVirtualEnvironment poetry"
+          `isInfixOf` unwords (words pythonProducerSource)
+        && "if not sealedHomeIsVirtual then pure skipped"
+          `isInfixOf` unwords (words pythonProducerSource)
+        && "Right True -> pure skipped"
+          `isInfixOf` unwords (words pythonProducerSource)
+        && "Provisioning.createPoetryProjectVenv"
+          `isInfixOf` pythonProducerSource
+    )
+    "Phase 1 Sprint 1.27: both Python producers create the in-project environment, only where Poetry would adopt the sealed prefix and only when the exact interpreter is absent, before the bounded Poetry install"
   chartValuesContents <- readFile "chart/values.yaml"
   let expectedBasePulsarAutorecoveryBlock =
         unlines
@@ -4930,6 +5375,32 @@ main = do
   assert
     (lookup "HOME" (Subprocess.renderSubprocessEnv subprocessEnv) == Just subprocessRoot)
     "rendered subprocess env carries HOME from the host manifest"
+  -- Sprint 1.27: the closed project-environment rendering. The interpreter is
+  -- the configured host Python rather than the Poetry launcher whose sealed
+  -- prefix Poetry would otherwise adopt as the project's environment, and the
+  -- environment is created in the project rather than beside it.
+  let poetryProjectVenvContract =
+        Subprocess.provisioningContractForTest
+          subprocessHostDefaults
+            { HostConfig.hostToolPaths = subprocessHostToolPaths
+            }
+          ( ProvisioningInternal.CreatePoetryProjectVenv
+              (subprocessRoot </> "poetry-project")
+          )
+          (Subprocess.Timeout 300000000)
+  let poetryProjectVenvRenders observation =
+        Subprocess.provisioningContractExecutable observation
+          == Text.unpack (HostConfig.hostPython3 subprocessHostToolPaths)
+          && Subprocess.provisioningContractArguments observation
+            == ["-m", "venv", "--clear", "--copies", ".venv"]
+          && Subprocess.provisioningContractWorkingDirectory observation
+            == Just (subprocessRoot </> "poetry-project")
+          && Subprocess.provisioningContractInput observation == ""
+  assert
+    (either (const False) poetryProjectVenvRenders poetryProjectVenvContract)
+    ( "the project-environment command renders the configured host interpreter into the project; observed "
+        <> show poetryProjectVenvContract
+    )
   assert
     (isJust (lookup "TMPDIR" (Subprocess.renderSubprocessEnv subprocessEnv)))
     "rendered subprocess env carries TMPDIR"
@@ -6703,6 +7174,201 @@ main = do
     )
   removeTestPathIfPresent unstableRetainedDescriptorPath
   removeTestPathIfPresent recoveryExecutablePath
+  -- Sprint 1.26. The retirement walk's two global bounds are far larger than a
+  -- fixture may materialize, so the walk is driven over a synthetic root under
+  -- crossable bounds. What is pinned is the property the routed `linux-cpu`
+  -- lane needed and did not have: the refusal names which quantity was
+  -- exceeded, what it observed, the configured bound, and the root it walked.
+  let recoveryBoundRoot =
+        subprocessRoot </> "infernix-retirement-walk-fixture-bound"
+      recoveryBoundDirectory =
+        recoveryBoundRoot </> "alpha-directory"
+      prepareRecoveryBoundTree nestedFileBytes rootFileNames = do
+        removeTestPathIfPresent recoveryBoundRoot
+        createDirectory recoveryBoundRoot
+        setFileMode recoveryBoundRoot 0o700
+        createDirectory recoveryBoundDirectory
+        setFileMode recoveryBoundDirectory 0o700
+        let nestedPath = recoveryBoundDirectory </> "nested-payload"
+        writeFile nestedPath (replicate nestedFileBytes 'x')
+        setFileMode nestedPath 0o600
+        mapM_
+          ( \leaf -> do
+              let rootFilePath = recoveryBoundRoot </> leaf
+              writeFile rootFilePath "r"
+              setFileMode rootFilePath 0o600
+          )
+          rootFileNames
+      recoveryBoundDeclaration =
+        "the retiring anchor declared an executable of 4 bytes"
+      recoveryBoundWalk =
+        Subprocess.runExecutableSnapshotRecoveryWalkForTest
+          recoveryBoundRoot
+          (Just recoveryBoundDeclaration)
+      recoveryBoundRefusalMentions expected observed =
+        case observed of
+          Left refusal ->
+            expected `isInfixOf` refusal
+              && recoveryBoundRoot `isInfixOf` refusal
+          Right _ -> False
+  prepareRecoveryBoundTree 8 ["beta-file"]
+  exactEntryBoundOutcome <- recoveryBoundWalk 2 (1024 * 1024)
+  assert
+    ( recoveryBoundRefusalMentions
+        "bounded-command snapshot cleanup exceeds its entry-count bound: observed 3 entries against a bound of 2"
+        exactEntryBoundOutcome
+        && recoveryBoundRefusalMentions
+          recoveryBoundDeclaration
+          exactEntryBoundOutcome
+    )
+    ( "the retirement walk's entry-count breach names its observation and what the anchor declared; observed "
+        <> show exactEntryBoundOutcome
+    )
+  prepareRecoveryBoundTree 8 []
+  exactByteBoundOutcome <- recoveryBoundWalk 1024 4
+  assert
+    ( recoveryBoundRefusalMentions
+        "bounded-command snapshot cleanup exceeds its payload-byte bound: observed 8 bytes against a bound of 4"
+        exactByteBoundOutcome
+        && recoveryBoundRefusalMentions
+          "the walk had reached 2 entries totalling 8 payload bytes under "
+          exactByteBoundOutcome
+    )
+    ( "the retirement walk's payload-byte breach names its observation; observed "
+        <> show exactByteBoundOutcome
+    )
+  prepareRecoveryBoundTree 8 ["beta-file", "gamma-file"]
+  listedEntryBoundOutcome <- recoveryBoundWalk 2 (1024 * 1024)
+  assert
+    ( recoveryBoundRefusalMentions
+        "bounded-command snapshot cleanup exceeds its entry-count bound: observed at least 3 entries against a bound of 2"
+        listedEntryBoundOutcome
+    )
+    ( "a directory that exhausts the remaining entry budget refuses in the walk's own vocabulary; observed "
+        <> show listedEntryBoundOutcome
+    )
+  prepareRecoveryBoundTree 8 ["beta-file"]
+  fundedBoundOutcome <- recoveryBoundWalk 1024 (1024 * 1024)
+  fundedBoundEntries <- listDirectory recoveryBoundRoot
+  removeTestPathIfPresent recoveryBoundRoot
+  assert
+    ( fundedBoundOutcome == Right (3, 9)
+        && null fundedBoundEntries
+    )
+    ( "a funded retirement walk reports its exact totals and empties the root; observed "
+        <> show (fundedBoundOutcome, fundedBoundEntries)
+    )
+  -- Sprint 1.26. The first fixture in this repository that drives a real
+  -- bounded command against a synthetic artifact generation. Until it existed,
+  -- the supervisor's helper-side lane re-derivation was proven only by the
+  -- routed `linux-cpu` lane, which is the lane whose own defect then reached a
+  -- full cohort run before anything observed it.
+  let generationEnginesRoot =
+        subprocessRoot </> "generation-lease-engines"
+      generationArtifactRoot =
+        generationEnginesRoot </> "llama-cpp-cli"
+      generationTargetPath =
+        generationArtifactRoot </> "native" </> "bin" </> "llama-cli"
+  removeTestPathIfPresent generationEnginesRoot
+  createDirectoryIfMissing True (takeDirectory generationTargetPath)
+  writeFile generationTargetPath "#!/bin/sh\nexit 0\n"
+  setFileMode generationTargetPath 0o700
+  generationIdentity <-
+    maybe
+      (fail "the closed native artifact catalog omitted llama-cpp-cli")
+      pure
+      (EngineArtifact.parseNativeArtifactIdentity "llama-cpp-cli")
+  generationPayloadDigest <-
+    EngineArtifact.digestEngineArtifactPayload generationArtifactRoot
+  -- An `apple-silicon` generation identity *is* its payload digest; a
+  -- `linux-native` one binds the recipe, target contract, and observed image
+  -- evidence as well. Minting the Apple identity and then offering the same
+  -- generation under the Linux lane is exactly the substitution the helper must
+  -- refuse rather than accept as its own payload digest.
+  generationLease <-
+    either
+      (fail . ("synthetic generation lease: " <>))
+      pure
+      ( MaterializationLock.artifactGenerationLease
+          generationEnginesRoot
+          generationIdentity
+          generationPayloadDigest
+          generationPayloadDigest
+      )
+  MaterializationLock.withEngineMaterializationLock
+    generationEnginesRoot
+    ( \authority -> do
+        minted <-
+          MaterializationLock.withTryArtifactGenerationMutationLock
+            authority
+            generationLease
+            (const (pure ()))
+        assert
+          (isJust minted)
+          "the synthetic generation sidecar was unexpectedly contended"
+    )
+  generationRootAuthority <-
+    either
+      (\outcome -> fail ("synthetic generation root: " <> show outcome))
+      pure
+      =<< Subprocess.observeProvisioningMutationRoot generationArtifactRoot
+  let linuxGenerationLane =
+        EngineArtifact.artifactRuntimeExpectationLane
+          EngineArtifact.linuxArtifactRuntimeExpectation
+      compileGenerationLeaseCommand lane =
+        Subprocess.compileArtifactGenerationLeaseTestCommand
+          lane
+          generationIdentity
+          generationLease
+          generationRootAuthority
+          subprocessEnv
+          (Subprocess.Timeout 30000000)
+  appleGenerationOutcome <-
+    Subprocess.runBoundedCommand
+      =<< expectRight
+        "compile the apple-silicon generation lease command"
+        (compileGenerationLeaseCommand Subprocess.TestAppleSiliconGenerationLane)
+  assert
+    (appleGenerationOutcome == Subprocess.CommandSucceeded "")
+    ( "a synthetic apple-silicon generation validates helper-side and runs its retained target; observed "
+        <> show appleGenerationOutcome
+    )
+  linuxGenerationOutcome <-
+    Subprocess.runBoundedCommand
+      =<< expectRight
+        "compile the linux-native generation lease command"
+        (compileGenerationLeaseCommand Subprocess.TestLinuxNativeGenerationLane)
+  -- The refusal differs by what the host carries, and the property is the
+  -- contrast with the Apple case above. Where the closed Linux image target is
+  -- absent — every host that is not the launcher image — the supervisor stops
+  -- on that exact catalog path. Where it is present, the walk reaches the
+  -- helper's own re-derivation, which produces an identity that is not the
+  -- Apple one the lease carries. Neither outcome is reachable on the Apple
+  -- branch, whose target lives inside the generation and whose identity is the
+  -- payload digest the lease already names.
+  linuxGenerationTarget <-
+    expectRight
+      "resolve the closed linux-native target"
+      ( ArtifactTarget.nativeArtifactTargetExecutable generationArtifactRoot
+          <$> uncurry
+            (ArtifactTarget.nativeArtifactTarget generationIdentity)
+            linuxGenerationLane
+      )
+  let linuxGenerationRefused =
+        case linuxGenerationOutcome of
+          Subprocess.CommandFailedKernel failure ->
+            linuxGenerationTarget `isInfixOf` failure
+              || "re-derive candidate artifact generation identity"
+                `isInfixOf` failure
+              || "candidate artifact generation fingerprint is not the identity its own lane"
+                `isInfixOf` failure
+          _ -> False
+  assert
+    linuxGenerationRefused
+    ( "the same generation offered under the linux-native lane is refused against the Linux catalog rather than the Apple one; observed "
+        <> show (linuxGenerationOutcome, linuxGenerationTarget)
+    )
+  removeTestPathIfPresent generationEnginesRoot
   let durableFileSyncPath =
         subprocessRoot </> "bounded-durable-file-sync.ready"
       durableDirectorySyncPath =
@@ -10065,7 +10731,7 @@ main = do
     doesFileExist ownershipReservationPath
   assert
     (isLeft forgedReconcileResult && reservationAfterForgedReconcile)
-    "a live numeric PID/PGID with a mismatched birth identity neither authorizes nor permits recovery"
+    "a live numeric PID/PGID with a mismatched birth identity neither authorizes nor permits recovery in the same process namespace"
   writeFile ownershipReservationPath genuineReservation
   writeFile takeoverSignal "take over"
   _ <- requireMarker "harness config takeover" takeoverMarker
@@ -18813,6 +19479,134 @@ runElfImageParseAssertions = do
         (ArtifactLoader.parseElfImageInspection relocatableElf)
     )
     "ELF parse admits a relocatable object with no program-header table"
+  -- Sprint 1.28. A name the search cannot satisfy is still satisfied by a
+  -- unique object the generation itself carries, because a runtime that loads
+  -- each object by absolute path puts its SONAME in the namespace before the
+  -- dependent object names it. JavaCPP is the measured case: each native
+  -- library is extracted into its own jar directory and loaded by absolute
+  -- path, so a dependent's `$ORIGIN/` runpath cannot reach the sibling jar
+  -- directory holding its provider.
+  loaderSeedRoot <- testRootPath "loader-seeded-soname"
+  let seedProviderDirectory =
+        loaderSeedRoot </> "provider.jar" </> "org" </> "fixture"
+      seedRivalDirectory =
+        loaderSeedRoot </> "rival.jar" </> "org" </> "fixture"
+      seedDependentDirectory =
+        loaderSeedRoot </> "dependent.jar" </> "org" </> "fixture"
+      seedProviderName = "libinfernixseedprovider.so.6"
+      seedDependentName = "libinfernixseeddependent.so.5"
+      seedProviderPath = seedProviderDirectory </> seedProviderName
+      seedDependentPath = seedDependentDirectory </> seedDependentName
+      writeSeedObject path neededNames soname = do
+        createDirectoryIfMissing True (takeDirectory path)
+        BS.writeFile
+          path
+          (syntheticSharedObjectImage neededNames soname "$ORIGIN/")
+        setFileMode path 0o600
+  removeTestPathIfPresent loaderSeedRoot
+  writeSeedObject seedProviderPath [] seedProviderName
+  writeSeedObject seedDependentPath [seedProviderName] seedDependentName
+  seededClosure <-
+    try @SomeException
+      ( ArtifactLoader.observeNativeArtifactLoaderEvidence
+          seedDependentPath
+          [loaderSeedRoot]
+      )
+  seededResolution <-
+    case seededClosure of
+      Left failure -> fail ("seeded loader closure failed: " <> show failure)
+      Right evidence ->
+        pure
+          [ ArtifactTarget.loaderResolutionConfiguredPath resolution
+          | resolution <- ArtifactTarget.loaderEvidenceResolutions evidence,
+            ArtifactTarget.loaderResolutionNeeded resolution
+              == seedProviderName
+          ]
+  canonicalSeedProvider <- canonicalizePath seedProviderPath
+  assert
+    (seededResolution == [canonicalSeedProvider])
+    ( "a DT_NEEDED name the search cannot satisfy binds the unique seeded SONAME inside the same closure; observed "
+        <> show (seededResolution, canonicalSeedProvider)
+    )
+  writeSeedObject
+    (seedRivalDirectory </> seedProviderName)
+    []
+    seedProviderName
+  ambiguousClosure <-
+    try @SomeException
+      ( ArtifactLoader.observeNativeArtifactLoaderEvidence
+          seedDependentPath
+          [loaderSeedRoot]
+      )
+  removeTestPathIfPresent loaderSeedRoot
+  let seededAmbiguityRefused failure =
+        "matches multiple seeded SONAME objects" `isInfixOf` show failure
+          && seedDependentPath `isInfixOf` show failure
+  assert
+    (either seededAmbiguityRefused (const False) ambiguousClosure)
+    ( "two seeded objects claiming one SONAME are not interchangeable evidence; observed "
+        <> show ambiguousClosure
+    )
+  -- A seeded rebind is not the requester's dependency — something else mapped
+  -- the provider by absolute path — so the provider's own edges must not be
+  -- resolved through the requester's inherited DT_RPATH. Without that, a decoy
+  -- outside the generation, reachable only through the requester's stack, is
+  -- sealed in place of the object the runtime actually loads.
+  let contextRoot = loaderSeedRoot <> "-context"
+      contextDecoyRoot = contextRoot <> "-decoy"
+      contextRequesterPath =
+        contextRoot </> "requester.jar" </> "org" </> "librequester.so.1"
+      contextProviderPath =
+        contextRoot </> "provider.jar" </> "org" </> "libprovider.so.6"
+      contextSharedName = "libshared.so.1"
+      contextSharedPath =
+        contextRoot </> "shared.jar" </> "org" </> contextSharedName
+      contextDecoyPath = contextDecoyRoot </> contextSharedName
+      writeContextObject path image = do
+        createDirectoryIfMissing True (takeDirectory path)
+        BS.writeFile path image
+        setFileMode path 0o600
+  mapM_ removeTestPathIfPresent [contextRoot, contextDecoyRoot]
+  writeContextObject
+    contextRequesterPath
+    ( syntheticSharedObjectImageWithSearchPath
+        15
+        ["libprovider.so.6"]
+        "librequester.so.1"
+        contextDecoyRoot
+    )
+  writeContextObject
+    contextProviderPath
+    (syntheticSharedObjectImage [contextSharedName] "libprovider.so.6" "$ORIGIN/")
+  writeContextObject
+    contextSharedPath
+    (syntheticSharedObjectImage [] contextSharedName "$ORIGIN/")
+  writeContextObject
+    contextDecoyPath
+    (syntheticSharedObjectImage [] contextSharedName "$ORIGIN/")
+  contextClosure <-
+    try @SomeException
+      ( ArtifactLoader.observeNativeArtifactLoaderEvidence
+          contextRequesterPath
+          [contextRoot]
+      )
+  canonicalContextShared <- canonicalizePath contextSharedPath
+  contextSharedResolution <-
+    case contextClosure of
+      Left failure -> fail ("seeded rebind context closure failed: " <> show failure)
+      Right evidence ->
+        pure
+          [ ArtifactTarget.loaderResolutionConfiguredPath resolution
+          | resolution <- ArtifactTarget.loaderEvidenceResolutions evidence,
+            ArtifactTarget.loaderResolutionNeeded resolution
+              == contextSharedName
+          ]
+  mapM_ removeTestPathIfPresent [contextRoot, contextDecoyRoot]
+  assert
+    (contextSharedResolution == [canonicalContextShared])
+    ( "a seeded rebind resolves the provider's own edges context-free, not through the requester's inherited DT_RPATH; observed "
+        <> show (contextSharedResolution, canonicalContextShared)
+    )
 
 -- | The machine byte is only consulted during expansion, so an unsupported
 -- machine is allowed to parse and must fail at the platform token instead.
@@ -18916,6 +19710,73 @@ runLdSoCacheAssertions = do
     "an unrecognised ld.so.cache magic fails closed"
 
 -- Synthetic ELF and cache fixtures ----------------------------------------
+
+-- | A minimal little-endian AArch64 @ET_DYN@ image carrying exactly the
+-- dependency names, SONAME, and runpath it is given, and no @PT_INTERP@. It
+-- exists so a loader-closure fixture can be walked on any host: a synthetic
+-- object that named an interpreter or a system library would resolve only where
+-- those exist.
+syntheticSharedObjectImage :: [String] -> String -> String -> BS.ByteString
+syntheticSharedObjectImage =
+  syntheticSharedObjectImageWithSearchPath 29
+
+-- | The same image with the search path declared as @DT_RPATH@ (tag 15) rather
+-- than @DT_RUNPATH@ (tag 29). Only @DT_RPATH@ is inherited by the objects an
+-- object loads, which is the difference the seeded-rebind context depends on.
+syntheticSharedObjectImageWithSearchPath ::
+  Integer ->
+  [String] ->
+  String ->
+  String ->
+  BS.ByteString
+syntheticSharedObjectImageWithSearchPath searchPathTag neededNames soname runPath =
+  BS.concat
+    [ elfIdentBytes,
+      elfLe 2 3, -- e_type = ET_DYN
+      elfLe 2 183, -- e_machine = EM_AARCH64
+      elfLe 4 1, -- e_version
+      elfLe 8 0, -- e_entry
+      elfLe 8 64, -- e_phoff
+      elfLe 8 0, -- e_shoff
+      elfLe 4 0, -- e_flags
+      elfLe 2 64, -- e_ehsize
+      elfLe 2 56, -- e_phentsize
+      elfLe 2 2, -- e_phnum
+      elfLe 2 0, -- e_shentsize
+      elfLe 2 0, -- e_shnum
+      elfLe 2 0, -- e_shstrndx
+      elfProgramHeader 1 0 0 totalBytes,
+      elfProgramHeader 2 dynamicOffset dynamicOffset dynamicBytes,
+      dynamicTable,
+      stringTable
+    ]
+  where
+    dynamicOffset = 64 + 2 * 56
+    dynamicBytes = fromIntegral ((length neededNames + 5) * 16)
+    stringTableOffset = dynamicOffset + dynamicBytes
+    strings = neededNames <> [soname, runPath]
+    stringOffsets =
+      scanl
+        (\offset value -> offset + fromIntegral (length value) + 1)
+        1
+        strings
+    dynamicTable =
+      BS.concat
+        ( [ elfDynamicEntry 1 offset
+          | offset <- take (length neededNames) stringOffsets
+          ]
+            <> [ elfDynamicEntry 14 (stringOffsets !! length neededNames),
+                 elfDynamicEntry
+                   searchPathTag
+                   (stringOffsets !! (length neededNames + 1)),
+                 elfDynamicEntry 5 stringTableOffset,
+                 elfDynamicEntry 10 stringTableBytes,
+                 elfDynamicEntry 0 0
+               ]
+        )
+    stringTable = BS.singleton 0 <> BS.concat (map nulTerminated strings)
+    stringTableBytes = fromIntegral (BS.length stringTable)
+    totalBytes = stringTableOffset + stringTableBytes
 
 -- | A complete little-endian AArch64 @ET_DYN@ image. @PT_LOAD@ maps the whole
 -- file at virtual address zero, so a virtual address and a file offset are the

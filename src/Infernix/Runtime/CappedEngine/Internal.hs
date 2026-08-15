@@ -17,6 +17,8 @@ module Infernix.Runtime.CappedEngine.Internal
     NativeArtifactInvocation,
     NativeArtifactLaunchOutcome (..),
     PythonWorkerLaunchOutcome (..),
+    appleRuntimeEnvironmentForTest,
+    appleRuntimeEnvironmentNamesForTest,
     nativeArtifactCache,
     nativeArtifactInvocation,
     missingResidentRecheckForTest,
@@ -642,19 +644,39 @@ closedNativeArtifactEnvironment installRoot invocation processEnvironment =
       unless (isAbsolute installRoot) $
         ioError
           (userError "validated Apple engine artifact has a non-absolute install root")
+      let inherited = Subprocess.renderSubprocessEnv processEnvironment
+      scratchRoot <-
+        case lookup "TMPDIR" inherited of
+          Just value | isAbsolute value -> pure value
+          _ ->
+            ioError
+              ( userError
+                  "the capped engine environment requires an absolute TMPDIR to hold a runtime cache outside the sealed artifact"
+              )
       pure
-        ( appleRuntimeEnvironment installRoot
+        ( appleRuntimeEnvironment installRoot scratchRoot
             <> filter
               ((`notElem` appleRuntimeEnvironmentNames) . fst)
-              (Subprocess.renderSubprocessEnv processEnvironment)
+              inherited
         )
     LinuxCpu ->
       pure (Subprocess.renderSubprocessEnv processEnvironment)
     LinuxGpu ->
       pure (Subprocess.renderSubprocessEnv processEnvironment)
 
-appleRuntimeEnvironment :: FilePath -> [(String, String)]
-appleRuntimeEnvironment installRoot =
+-- | The closed environment a validated Apple engine artifact runs under.
+--
+-- @PYTHONDONTWRITEBYTECODE@ stops the interpreter writing @.pyc@ files into the
+-- sealed payload, but it does not stop every cache a real library keeps: numba,
+-- which librosa imports, writes its compiled-function index and object files
+-- into a @__pycache__@ directory beside the source it compiled, and honours only
+-- its own cache-directory setting. Those writes land inside the generation, so
+-- the payload digest stops matching the manifest and the artifact that served
+-- one request is rejected on the next. The cache is therefore pointed outside
+-- the generation, at the governed scratch root this run already carries, which
+-- keeps the seal exact and still lets the cache do its job across runs.
+appleRuntimeEnvironment :: FilePath -> FilePath -> [(String, String)]
+appleRuntimeEnvironment installRoot scratchRoot =
   [ ("PYTHONHOME", installRoot </> "python-home"),
     ("DYLD_FRAMEWORK_PATH", installRoot </> "python-frameworks"),
     ( "DYLD_LIBRARY_PATH",
@@ -663,8 +685,18 @@ appleRuntimeEnvironment installRoot =
         <> (installRoot </> "native" </> "libexec")
     ),
     ("PYTHONNOUSERSITE", "1"),
-    ("PYTHONDONTWRITEBYTECODE", "1")
+    ("PYTHONDONTWRITEBYTECODE", "1"),
+    ("NUMBA_CACHE_DIR", scratchRoot </> "infernix-numba-cache")
   ]
+
+-- | Test seams. The environment a sealed Apple artifact runs under is pure in
+-- its two roots, and the pair of lists below must agree: a name this renders
+-- that the filter does not know is a name the ambient environment can supply.
+appleRuntimeEnvironmentForTest :: FilePath -> FilePath -> [(String, String)]
+appleRuntimeEnvironmentForTest = appleRuntimeEnvironment
+
+appleRuntimeEnvironmentNamesForTest :: [String]
+appleRuntimeEnvironmentNamesForTest = appleRuntimeEnvironmentNames
 
 appleRuntimeEnvironmentNames :: [String]
 appleRuntimeEnvironmentNames =
@@ -672,7 +704,8 @@ appleRuntimeEnvironmentNames =
     "DYLD_FRAMEWORK_PATH",
     "DYLD_LIBRARY_PATH",
     "PYTHONNOUSERSITE",
-    "PYTHONDONTWRITEBYTECODE"
+    "PYTHONDONTWRITEBYTECODE",
+    "NUMBA_CACHE_DIR"
   ]
 
 artifactProcessOutcome :: EngineOutcome -> Artifact.ArtifactProcessOutcome

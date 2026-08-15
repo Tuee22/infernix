@@ -340,10 +340,15 @@ assertComponentRtsClosure = do
         && not ("infernix" `isInfixOf` cabalFormatComponent)
     )
     (fail "haskell-style-check: the Cabal-format suite must pin Cabal 3.16 without depending on infernix")
+  -- Sprint 1.30: the shipped image's reservation is sized for the host reserve
+  -- its daemons run in, not for a toolchain control slot. It is address space
+  -- rather than resident memory, and it is also the only thing bounding this
+  -- image's heap growth, so a slot-sized value gave the host inference daemon a
+  -- ceiling the ledger says it does not carry.
   assertComponentOption
     cabalSource
     "executable infernix"
-    "-rtsopts=ignoreAll -with-rtsopts=-xr1024M"
+    "-rtsopts=ignoreAll -with-rtsopts=-xr16384M"
   assertComponentOption
     cabalSource
     "test-suite infernix-unit"

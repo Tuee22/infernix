@@ -87,6 +87,9 @@ module Infernix.Engines.Provisioning
     shebangBindsHostInstallationForTest,
     supportedMachOMagicForTest,
     resolveMachOPathsFixtureForTest,
+    resolveExactExecutableIdentityForTest,
+    resolvedExecutableCanonicalIdentityMatchesForTest,
+    resolvedExecutableIdentityMatchesForTest,
     AppleRuntimeVersion,
     appleRuntimeVersionText,
     parseAppleRuntimeVersionForTest,
@@ -180,6 +183,8 @@ module Infernix.Engines.Provisioning
     provisioningReconcileArtifactRoot,
     installPoetryProject,
     installPoetryProjectWithGroups,
+    createPoetryProjectVenv,
+    resolvedPoetrySealsAVirtualEnvironment,
     generatePythonProtoBindings,
     probePythonVersion,
     probePoetryBootstrapPython,
@@ -2297,6 +2302,34 @@ runtimeLibraryIdentityFromResolved leafName identity =
             resolvedExecutableDigest identity
         }
 
+-- | Resolve one executable identity for a fixture.
+--
+-- The identity carries live @stat@ results, so the comparison it feeds cannot
+-- be exercised from synthesized values; a fixture has to resolve real paths.
+-- This is the surface the pure regression block cannot reach.
+resolveExactExecutableIdentityForTest ::
+  FilePath ->
+  IO ResolvedExecutableIdentity
+resolveExactExecutableIdentityForTest = resolveExactExecutableIdentity
+
+-- | The canonical-versus-configured comparison, for a fixture.
+resolvedExecutableCanonicalIdentityMatchesForTest ::
+  ResolvedExecutableIdentity ->
+  ResolvedExecutableIdentity ->
+  Bool
+resolvedExecutableCanonicalIdentityMatchesForTest =
+  resolvedExecutableCanonicalIdentityMatches
+
+-- | The strict configured-path comparison, for a fixture. Exported beside the
+-- canonical form because the distinction between them is the property under
+-- test: the strict form rejects the ordinary symlinked-interpreter case that
+-- the canonical form must accept.
+resolvedExecutableIdentityMatchesForTest ::
+  ResolvedExecutableIdentity ->
+  ResolvedExecutableIdentity ->
+  Bool
+resolvedExecutableIdentityMatchesForTest = resolvedExecutableIdentityMatches
+
 resolveExactExecutableIdentity ::
   FilePath ->
   IO ResolvedExecutableIdentity
@@ -3035,11 +3068,16 @@ walkFixtureGraph images executableDirectory state queue =
                 fmap
                   concat
                   ( mapM
-                      ( resolveMachOFixtureDependency
-                          images
-                          imagePath
-                          executableDirectory
-                          localRpaths
+                      ( \dependency ->
+                          resolveMachOFixtureDependency
+                            images
+                            imagePath
+                            executableDirectory
+                            localRpaths
+                            ( dependency
+                                `elem` machOOptionalDependencies inspection
+                            )
+                            dependency
                       )
                       (machODependencies inspection)
                   )
@@ -3110,11 +3148,21 @@ walkFixtureGraph images executableDirectory state queue =
               root : roots
           | otherwise -> roots
 
+-- | Resolve one fixture dependency the way the production closure does.
+--
+-- The optional flag is what keeps this fixture honest rather than merely
+-- convenient. @dyld@ binds an unresolved @LC_LOAD_WEAK_DYLIB@ or
+-- @LC_LAZY_LOAD_DYLIB@ to null at run time, so 'firstExistingMachOPath' skips
+-- it and fails only on a required dependency. A fixture that treated every
+-- unresolved install name as fatal would model a stricter resolver than the one
+-- that ships, and the divergence would sit in exactly the direction that hides
+-- a real closure gap.
 resolveMachOFixtureDependency ::
   [(FilePath, ByteString.ByteString)] ->
   FilePath ->
   FilePath ->
   [FilePath] ->
+  Bool ->
   FilePath ->
   Either String [FilePath]
 resolveMachOFixtureDependency
@@ -3122,6 +3170,7 @@ resolveMachOFixtureDependency
   loaderPath
   executableDirectory
   rpaths
+  dependencyIsOptional
   dependency
     | isAbsolute dependency =
         requireFixtureImage dependency
@@ -3152,13 +3201,16 @@ resolveMachOFixtureDependency
             Left ("Mach-O fixture dependency resolved unsafely: " <> path)
         | systemMachOPath path = Right []
         | path `elem` map fst images = Right [path]
+        | dependencyIsOptional = Right []
         | otherwise =
             Left ("Mach-O fixture dependency is unresolved: " <> path)
 
       requireFirstFixtureImage candidates =
         case candidates of
-          [] ->
-            Left ("Mach-O fixture @rpath dependency is unresolved: " <> dependency)
+          []
+            | dependencyIsOptional -> Right []
+            | otherwise ->
+                Left ("Mach-O fixture @rpath dependency is unresolved: " <> dependency)
           candidate : remaining
             | candidate `elem` map fst images ->
                 Right [candidate]
@@ -4138,14 +4190,22 @@ resolvePackageClosureIdentityFor verificationTarget role closureRoot =
 -- Chosen against measurement, not raised to unblock one. The scanned source
 -- closure of a PyTorch-class environment is what is large here, not the sealed
 -- artifact: the largest measured activated artifact, @coreml-native@, is
--- 1.345 GiB across 35,166 entries, while its scanned source venv plus Python
+-- 1.353 GiB across 35,260 entries, while its scanned source venv plus Python
 -- home closure is several times that. 12 GiB holds it with room for one more
 -- PyTorch major without becoming an unbounded scan.
+--
+-- All seven artifacts are now measured from one materialization that
+-- pre-extracts the JavaCPP natives into the sealed payload, which is the
+-- condition that previously left @jvm-native@ provisional. Activated payload
+-- bytes and entries: @coreml-native@ 1452756350 \/ 35260, @mlx-native@
+-- 380423504 \/ 9477, @ctranslate2-native@ 262042645 \/ 7285,
+-- @onnx-runtime-native@ 253792784 \/ 7510, @jvm-native@ 146358899 \/ 2806,
+-- @llama-cpp-cli@ 19578868 \/ 24, @whisper-cpp-cli@ 4956903 \/ 19.
 maximumPoetryClosureBytes :: Integer
 maximumPoetryClosureBytes = 12 * 1024 * 1024 * 1024
 
--- | The package-closure entry bound. @coreml-native@ measures 35,166 entries,
--- the largest of the seven artifacts; the next largest, @mlx-native@, is 9,469.
+-- | The package-closure entry bound. @coreml-native@ measures 35,260 entries,
+-- the largest of the seven artifacts; the next largest, @mlx-native@, is 9,477.
 maximumPoetryClosureFiles :: Integer
 maximumPoetryClosureFiles = 100000
 
@@ -12498,6 +12558,56 @@ installPoetryProject writer grant deadline poetry =
     deadline
     poetry
     []
+
+-- | Create the in-project Poetry environment under the held project writer.
+--
+-- Poetry resolves its target environment from the running interpreter when the
+-- project has none of its own, and a sealed bounded run points @PYTHONHOME@ at
+-- the sealed copy of Poetry's environment. A first install therefore writes the
+-- engine's whole framework payload into the ephemeral generation, which both
+-- discards the environment the readiness marker requires and grows the
+-- generation past the bound its retirement walk admits. Creating the project
+-- environment first makes the choice the project's.
+createPoetryProjectVenv ::
+  ProjectWriter p s q ->
+  ProvisioningGrant s ->
+  ProvisioningDeadline ->
+  ProvisioningSession s ProvisioningOutcome
+createPoetryProjectVenv
+  (ProjectWriter _ projectRoot)
+  grant
+  deadline =
+    runProvisioningCommandInWriter
+      projectRoot
+      []
+      grant
+      deadline
+      ( Internal.CreatePoetryProjectVenv
+          (authorizedWriterCanonicalRoot projectRoot)
+      )
+
+-- | Whether the sealed Python home this Poetry runs under is itself a virtual
+-- environment.
+--
+-- This is the exact condition that decides whether Poetry adopts the sealed
+-- prefix as the project's environment instead of creating one for the project.
+-- The @linux-cpu@ image makes Poetry's own environment self-contained so that it
+-- can be sealed, which leaves a @pyvenv.cfg@ in that prefix; the Apple lane
+-- seals a real framework installation, which carries none.
+resolvedPoetrySealsAVirtualEnvironment ::
+  ResolvedPoetry s ->
+  ProvisioningSession s Bool
+resolvedPoetrySealsAVirtualEnvironment
+  (ResolvedPoetry (_identity, closureIdentities, _runtimeLibraries)) =
+    ProvisioningSession $
+      case [ Internal.provisioningPackageClosureRoot closure
+           | closure <- closureIdentities,
+             Internal.provisioningPackageClosureRole closure
+               == Internal.ProvisioningPythonHomeClosure
+           ] of
+        [pythonHome] ->
+          Directory.doesFileExist (pythonHome </> "pyvenv.cfg")
+        _ -> pure False
 
 installPoetryProjectWithGroups ::
   ProjectWriter p s q ->

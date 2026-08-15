@@ -581,16 +581,17 @@ invocation. The bootstrap may reconcile `jq` through Homebrew, but it does not i
 create a profile or VM. On Linux CPU and Linux GPU, build, lifecycle, docs lint, and validation
 commands run through the outer-container launcher.
 
-Every Haskell toolchain invocation runs under authority-derived heap caps and a complete claimant
+The governed Cabal invocation runs under authority-derived heap caps and a claimant
 account: `jobs × compilerHeap + (jobs + 1) × controlHeap`. The extra claims cover the live Cabal
-driver and one worker-associated helper/native-auxiliary slot per compiler. On Darwin the complete
-sum is arithmetic plus sampled evidence, not an enforced aggregate; the operator CLI parent and
-fixed observer tools remain in the non-toolchain host reserve. See
+driver and one worker-associated helper/native-auxiliary slot per compiler. On Darwin that
+sum is arithmetic plus sampled evidence and no operating-system bound is engaged; the operator CLI
+parent, the fixed observer tools, the web and browser surfaces, the Python images, and the host
+inference daemon remain in the non-toolchain host reserve. See
 [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md).
 One authority serializes its own CLI child lifecycles through Cabal-leader reap, with owned-group
-cleanup on exceptions before that reap. It is not a host-global or crash-surviving lease:
-independent CLI images/checkouts and stage-0 bootstrap builds are unsupported concurrent claimants,
-the account does not fund their overlap, and governed workflows must serialize them.
+cleanup on exceptions before that reap. That is narrower than the host, so the account is admitted
+against an observation of available host memory and a census finding no toolchain claimant outside
+this authority's own process tree; either observation failing is a refusal naming what it found.
 
 - `infernix test lint`
 - `infernix test unit`
@@ -624,6 +625,7 @@ Post-build operator/demo commands (rebuild again through the bootstrap, not bare
 ./.build/infernix cluster up
 ./.build/infernix cluster status
 ./.build/infernix cluster down
+./.build/infernix cluster reclaim-slot
 ```
 
 Post-build harness validation, after the operator cluster is down:
@@ -668,6 +670,7 @@ Direct reference commands:
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster up
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster status
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster down
+docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix cluster reclaim-slot
 docker compose --project-name infernix-linux-cpu --file compose.yaml run --rm infernix infernix test all
 ```
 
@@ -745,6 +748,11 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix cluster up`
 - `infernix cluster down`
 - `infernix cluster status`
+- `infernix cluster reclaim-slot [--force-owner-pid PID]` — reports every fact observed about a
+  wedged harness cluster-slot reservation, and retires it when the transcribed pid matches the
+  record. A killed `test all` inside a launcher container leaves a reservation whose pid, process
+  group, and boot identity are all indistinguishable from a fresh container's; this is the
+  supported way out
 - `infernix cache status`
 - `infernix cache evict [--model MODEL_ID]`
 - `infernix cache rebuild [--model MODEL_ID]`
@@ -758,7 +766,10 @@ The canonical supported CLI surface is the single `infernix` binary.
 - `infernix test all`
 - `infernix docs check`
 - `infernix internal generate-purs-contracts`
-- `infernix internal validate-darwin-build-memory`
+- `infernix internal validate-darwin-build-memory` — samples the governed Cabal process group during
+  a scratch-root build and install, and fails when the sampled peak reaches the account. It measures
+  that one process group: processes outside it, including everything else the validation surface
+  starts, are not in the sample
 - `infernix internal validate-darwin-audiveris-cancellation`
 - `infernix internal validate-darwin-installed-python-source-isolation`
 - `infernix internal discover {images,claims,harbor-overlay}`
@@ -914,13 +925,19 @@ this section is an orientation summary.
   capabilities. Even so, these mechanisms are not proof that every resource-exhaustion state is
   unrepresentable
 - host memory has more than one claimant, and inference is only one of them. The host toolchain is
-  the other large one: an uncapped `cabal build` from this checkout reached 109.46 GiB resident on a
+  the other large one this repository starts: an uncapped `cabal build` from this checkout reached
+  109.46 GiB resident on a
   124.94 GiB machine, and the kernel — which selects per process and ranks a build below every
-  cluster pod — destroyed 111 pod processes without ever touching it. The Haskell toolchain
-  carries authority-derived compiler/control heap caps and the complete
-  `jobs × compilerHeap + (jobs + 1) × controlHeap` claimant account. Darwin provides arithmetic and
-  sampled aggregate physical-footprint evidence, not an enforced aggregate; native helper growth,
-  the operator CLI parent, and fixed observer processes stay explicitly outside that enforcement.
+  cluster pod — destroyed 111 pod processes without ever touching it. There is also a third class,
+  which no account can divide: three interactive compiler images this repository never started, at
+  44.1, 29.9, and 27.4 GiB, exhausted a 64 GiB host. The governed Cabal invocation
+  carries authority-derived compiler/control heap caps and the
+  `jobs × compilerHeap + (jobs + 1) × controlHeap` claimant account, admitted against observed host
+  availability and a census that names any toolchain claimant outside its own process tree. Darwin
+  provides arithmetic and
+  sampled aggregate physical-footprint evidence and engages no operating-system bound; native helper
+  growth, the operator CLI parent, fixed observer processes, and every other process the validation
+  surface starts stay explicitly outside that account.
   The ledger, per-lane mechanism, and remaining out-of-memory conditions are owned by
   [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
 - cluster lifecycle and image-publication commands use closed semantic commands with generated
@@ -1088,6 +1105,9 @@ ground and demo webapp provide the shared operator and demo substrate for this m
   for the "evidence, not hope" state-transition doctrine that makes races and flakes unrepresentable
 - read [documents/architecture/bounded_inference_memory.md](documents/architecture/bounded_inference_memory.md)
   for the "memory-safety by construction" invariant and the enforcement surfaces it requires
+- read [documents/architecture/bounded_host_memory.md](documents/architecture/bounded_host_memory.md)
+  for the host-memory capacity ledger, the admission the toolchain account consumes, and the
+  statement of which host out-of-memory conditions remain possible
 - read [documents/architecture/typed_execution_plan.md](documents/architecture/typed_execution_plan.md)
   for the generated-Dhall target, compiled coordinator boundary, and runtime evidence required before
   engine consumption or process launch

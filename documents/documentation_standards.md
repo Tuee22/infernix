@@ -240,7 +240,9 @@ status exception.
   per-lane enforcement mechanism, the victim rank, or the statement of what is not bounded), update
   `documents/architecture/bounded_host_memory.md`, `documents/architecture/bounded_inference_memory.md`,
   `documents/development/local_dev.md`, `documents/development/testing_strategy.md`,
-  `documents/engineering/build_artifacts.md`, the three-way `README.md` / `AGENTS.md` / `CLAUDE.md`
+  `documents/engineering/build_artifacts.md`, `documents/engineering/testing.md`,
+  `documents/engineering/host_tools_manifest.md`, the three-way `README.md` / `AGENTS.md` /
+  `CLAUDE.md`
   mirror with `documents/development/assistant_workflow.md`, and the relevant phase document in the
   same change
 - when the inference-memory-safety contract changes (the `MemoryGrant` / capped-engine chokepoint, the

@@ -2934,12 +2934,16 @@ pulsarSubscriptionConsumerCount subscriptionName statsPayload = do
   Aeson.Array consumersArray <- AesonKeyMap.lookup (AesonKey.fromString "consumers") subscriptionObject
   pure (length consumersArray)
 
+-- | The argument vector is passed as given. The self-exec marker belongs to a
+-- command this suite runs against its own image; the host inference daemon is
+-- the installed operator CLI, which has no such marker and answers the marker
+-- with its usage text rather than with a daemon.
 withLoggedServiceDaemon :: Paths -> FilePath -> [String] -> FilePath -> (ProcessHandle -> FilePath -> IO a) -> IO a
 withLoggedServiceDaemon paths infernixExecutable args logPath action =
   withLoggedProcess
     logPath
     ( pure
-        (proc infernixExecutable (integrationCliSelfExecMarker : args))
+        (proc infernixExecutable args)
           { cwd = Just (repoRoot paths)
           }
     )
@@ -2977,17 +2981,50 @@ stopChildProcess processHandle =
       void (waitForProcess processHandle)
     ]
 
+-- | Start the Apple host engine daemon from the installed operator CLI rather
+-- than by re-executing this suite.
+--
+-- The host inference daemon is a host-reserve claimant and carries no toolchain
+-- heap ceiling; this suite is a non-unit test component and carries a baked
+-- 1024 MiB one. Re-executing this image as the daemon gave inference the test
+-- lane's ceiling, and a real result larger than it killed the consumer loop with
+-- a heap overflow the moment the first model completed. The two process images
+-- are kept apart so that ceiling cannot reach inference again.
 withRuntimeServiceDaemon :: Paths -> IO a -> IO a
 withRuntimeServiceDaemon paths action = do
-  infernixExecutable <- resolveInfernixExecutable
+  infernixExecutable <- resolveHostServiceDaemonExecutable paths
   let logPath = hostServiceDaemonLogPath paths
   reportStep ("apple host service daemon log: " <> logPath)
+  reportStep ("apple host service daemon executable: " <> infernixExecutable)
   withLoggedServiceDaemon
     paths
     infernixExecutable
     ["service"]
     logPath
     (\_processHandle _logPath -> action)
+
+-- | The installed operator CLI under the configured build root. It is a fixed
+-- path rather than a discovered one, and its absence is a named refusal: a
+-- daemon started from anything else is not the image the operator runs.
+resolveHostServiceDaemonExecutable :: Paths -> IO FilePath
+resolveHostServiceDaemonExecutable paths = do
+  let daemonExecutable = buildRoot paths </> "infernix"
+  present <- doesFileExist daemonExecutable
+  runnable <-
+    if present
+      then executable <$> getPermissions daemonExecutable
+      else pure False
+  unless
+    runnable
+    ( ioError
+        ( userError
+            ( "the apple host service daemon requires the installed operator CLI at "
+                <> daemonExecutable
+                <> "; build it through the governed bootstrap before the harness runs"
+            )
+        )
+    )
+  pure daemonExecutable
 
 hostServiceDaemonLogPath :: Paths -> FilePath
 hostServiceDaemonLogPath paths =

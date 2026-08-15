@@ -98,8 +98,12 @@ module Infernix.BuildMemory
     toolchainTestSuiteName,
     DarwinAppleMaterializerTest (..),
     ToolchainSpawnAuthority,
+    ToolchainHostAdmission,
+    admissionAvailableMib,
+    admitToolchainAccount,
+    observeToolchainHostAdmission,
+    toolchainSpawnAuthorityAdmission,
     toolchainInvocationArguments,
-    toolchainAuthorityEnvironmentEntries,
     toolchainInvocationLabel,
     requireToolchainInvocationProjectState,
     toolchainSpawnAuthorityPlan,
@@ -109,6 +113,7 @@ module Infernix.BuildMemory
 
     -- * Darwin build-memory validation
     DarwinBuildMemoryValidationAuthority,
+    darwinBuildMemoryValidationAuthorityAccountMib,
     DarwinBuildMemoryInvocation (..),
     DarwinBuildMemorySamples,
     DarwinBuildMemoryInvocationEvidence,
@@ -118,7 +123,6 @@ module Infernix.BuildMemory
     requireDarwinBuildMemoryValidationAuthority,
     withDarwinBuildMemoryValidationChild,
     darwinBuildMemoryInvocationArguments,
-    darwinBuildMemoryAuthorityEnvironmentEntries,
     darwinBuildMemoryInvocationLabel,
     darwinBuildMemorySampleIntervalMicros,
     emptyDarwinBuildMemorySamples,
@@ -162,6 +166,11 @@ import Data.Char (isDigit)
 import Data.List qualified as List
 import Data.Maybe (isNothing)
 import Data.Word (Word64)
+import Infernix.HostClaimants
+  ( censusForeignToolchainClaimants,
+    observeAvailableHostMemoryMib,
+    renderForeignToolchainClaimants,
+  )
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
 import System.Directory (doesPathExist)
 import System.FilePath (isAbsolute, (</>))
@@ -885,24 +894,18 @@ toolchainInvocationArguments authority invocation =
             "--test-options=" <> darwinAppleMaterializerTestOption darwinTest
           ]
 
--- | The fixed explicit environment entries every toolchain child receives.
+-- Phase 1 Sprint 1.21 retired the build-only @GHCRTS@ environment cap this
+-- boundary used to add to every toolchain child. It was carried as a control
+-- cap for the Cabal driver and system Haskell build tools, and the reason it
+-- is gone is that it does not bind the thing it was aimed at: an RTS image
+-- linked without runtime options does not accept an inherited @GHCRTS@ at all,
+-- it /refuses to start/ under one. A third-party package's own setup program
+-- is exactly such an image, so the environment form converted a capped build
+-- into a failed one while capping nothing. The caps that bind are the
+-- invocation-borne ones below — the leading @+RTS@ segment for the driver
+-- image and the final ordered Cabal option for the compiler images — and both
+-- are derived from the opaque authority rather than from an operator surface.
 --
--- @GHCRTS@ is process control derived solely from the opaque authority, not an
--- operator configuration surface. It gives the already-built Cabal driver and
--- system Haskell build tools the fixed control/helper cap. Repo executables
--- are linked to ignore inherited @GHCRTS@ and tests carry their own baked
--- control cap, so this build-only setting cannot leak into runtime inference.
--- It intentionally omits @-xr@: the supported host Cabal is built with GHC
--- 9.6.7, whose RTS does not implement that option. Compiler images receive the
--- reservation through the explicit, version-compatible Cabal option below.
-toolchainAuthorityEnvironmentEntries ::
-  ToolchainSpawnAuthority s ->
-  [(String, String)]
-toolchainAuthorityEnvironmentEntries authority =
-  [("GHCRTS", "-M" <> show (planControlHeapMib plan) <> "M")]
-  where
-    plan = toolchainSpawnAuthorityPlan authority
-
 -- Keep the driver cap before Cabal's program arguments. These tokens are
 -- consumed by Cabal's own RTS and therefore cannot be mistaken for a Cabal
 -- subcommand or forwarded to GHC.
@@ -984,7 +987,7 @@ toolchainCabalFormatBuildDirectory authority =
 
 toolchainSpawnAuthorityRepoRoot :: ToolchainSpawnAuthority s -> FilePath
 toolchainSpawnAuthorityRepoRoot
-  (ToolchainSpawnAuthority repoRootPath _ _ _ _) = repoRootPath
+  (ToolchainSpawnAuthority repoRootPath _ _ _ _ _) = repoRootPath
 
 -- | Refuse unreviewed sibling project overlays before a toolchain child starts.
 --
@@ -1041,6 +1044,28 @@ requireToolchainInvocationProjectState authority invocation =
 newtype ToolchainSingleFlight
   = ToolchainSingleFlight (MVar ())
 
+-- | Evidence that this host was observed able to fund the toolchain account,
+-- and that no toolchain claimant outside this process's own tree was resident
+-- when the observation was taken.
+--
+-- The constructor is unexported and 'admitToolchainAccount' is the only mint,
+-- so an authority cannot be assembled from arithmetic over installed capacity
+-- alone. That is the whole point of clause 4 of the doctrine: declared capacity
+-- is what the machine contains, availability is what it has left, and the two
+-- differ by whatever else is resident.
+--
+-- What it proves is bounded and is stated rather than implied. It is an
+-- observation at an instant, not a lease: nothing stops a claimant from
+-- starting immediately afterwards, which is why the child boundary re-takes it
+-- rather than trusting the one taken at mint.
+newtype ToolchainHostAdmission
+  = ToolchainHostAdmission Int
+  deriving (Eq, Show)
+
+-- | The available host memory this admission was granted against, in MiB.
+admissionAvailableMib :: ToolchainHostAdmission -> Int
+admissionAvailableMib (ToolchainHostAdmission availableMib) = availableMib
+
 type role ToolchainSpawnAuthority nominal
 
 data ToolchainSpawnAuthority s
@@ -1050,10 +1075,97 @@ data ToolchainSpawnAuthority s
       ResolvedBuildMemoryMechanism
       CommittedToolchainSettings
       ToolchainSingleFlight
+      ToolchainHostAdmission
 
 -- | The plan whose ceiling this authority carries.
 toolchainSpawnAuthorityPlan :: ToolchainSpawnAuthority s -> BuildMemoryPlan
-toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority _ plan _ _ _) = plan
+toolchainSpawnAuthorityPlan (ToolchainSpawnAuthority _ plan _ _ _ _) = plan
+
+-- | The admission observation this authority was minted against.
+toolchainSpawnAuthorityAdmission ::
+  ToolchainSpawnAuthority s ->
+  ToolchainHostAdmission
+toolchainSpawnAuthorityAdmission
+  (ToolchainSpawnAuthority _ _ _ _ _ admission) = admission
+
+-- | Decide admission from a plan and the two observations, purely.
+--
+-- Kept separate from 'observeToolchainHostAdmission' so both refusals are
+-- deterministic test inputs rather than host-dependent ones: the account this
+-- refuses is arithmetic, and the observations it refuses on are data.
+admitToolchainAccount ::
+  BuildMemoryPlan ->
+  Int ->
+  [String] ->
+  Either String ToolchainHostAdmission
+admitToolchainAccount plan availableMib namedClaimants
+  | availableMib < planBudgetMib plan =
+      Left
+        ( "refusing to start the governed toolchain: the host has "
+            <> show availableMib
+            <> " MiB of available memory, below the "
+            <> show (planBudgetMib plan)
+            <> " MiB account this plan claims ("
+            <> show (planJobs plan)
+            <> " jobs x "
+            <> show (planRtsHeapMib plan)
+            <> " MiB compiler heap plus "
+            <> show (planJobs plan + 1)
+            <> " x "
+            <> show (planControlHeapMib plan)
+            <> " MiB control/helper claims)"
+        )
+  | not (null namedClaimants) =
+      Left
+        ( "refusing to start the governed toolchain beside a toolchain "
+            <> "claimant this authority did not start: "
+            <> List.intercalate ", " namedClaimants
+            <> "; the claimant is named and left running rather than killed, "
+            <> "so quiesce it and retry"
+        )
+  | otherwise = Right (ToolchainHostAdmission availableMib)
+
+-- | Take both admission observations and decide on them.
+--
+-- Either observation failing is a refusal that reports what it found. An
+-- unavailable probe is never read as "the host is free": a census that could
+-- not run has found nothing precisely because it did not look.
+observeToolchainHostAdmission ::
+  BuildMemoryPlan ->
+  IO (Either String ToolchainHostAdmission)
+observeToolchainHostAdmission plan = do
+  observedAvailability <- observeAvailableHostMemoryMib
+  case observedAvailability of
+    Left reason ->
+      pure
+        ( Left
+            ( "refusing to start the governed toolchain without an admission "
+                <> "observation: "
+                <> reason
+            )
+        )
+    Right availableMib -> do
+      observedCensus <- censusForeignToolchainClaimants
+      pure $
+        case observedCensus of
+          Left reason ->
+            Left
+              ( "refusing to start the governed toolchain without a "
+                  <> "foreign-claimant census: "
+                  <> reason
+              )
+          Right claimants ->
+            admitToolchainAccount
+              plan
+              availableMib
+              [renderForeignToolchainClaimants claimants | not (null claimants)]
+
+requireToolchainHostAdmission ::
+  BuildMemoryPlan ->
+  IO ToolchainHostAdmission
+requireToolchainHostAdmission plan = do
+  admitted <- observeToolchainHostAdmission plan
+  either (ioError . userError) pure admitted
 
 -- | Enter a region in which toolchain processes may be started under a derived
 -- ceiling.
@@ -1089,6 +1201,7 @@ withToolchainSpawnAuthority repoRootPath plan action
                 )
             )
         Right resolved -> do
+          admission <- requireToolchainHostAdmission plan
           singleFlight <- ToolchainSingleFlight <$> newMVar ()
           action
             ( ToolchainSpawnAuthority
@@ -1097,6 +1210,7 @@ withToolchainSpawnAuthority repoRootPath plan action
                 resolved
                 committed
                 singleFlight
+                admission
             )
 
 -- | Hold one authority's single-flight token and derived per-process ceiling
@@ -1143,6 +1257,7 @@ withBoundedToolchainChild
       resolved
       committedAtMint
       (ToolchainSingleFlight singleFlight)
+      _admissionAtMint
     )
   childLifecycle =
     withMVar singleFlight $ \() -> do
@@ -1152,6 +1267,12 @@ withBoundedToolchainChild
           ( userError
               "generated toolchain settings changed after spawn authority was minted"
           )
+      -- The admission taken at mint is an observation at an instant, not a
+      -- lease. A claimant that started inside the region, or a host that has
+      -- since filled up, must refuse the child rather than ride the earlier
+      -- answer, so the observation is re-taken here immediately before the
+      -- fork the caller's action performs.
+      _admissionAtSpawn <- requireToolchainHostAdmission plan
       case resolved of
         EnforcedLane _ -> bracket acquire restore (const childLifecycle)
         UnenforcedLane _ -> childLifecycle
@@ -1284,7 +1405,7 @@ requireDarwinBuildMemoryValidationAuthority authority
 toolchainSpawnAuthorityMechanism ::
   ToolchainSpawnAuthority s ->
   ResolvedBuildMemoryMechanism
-toolchainSpawnAuthorityMechanism (ToolchainSpawnAuthority _ _ resolved _ _) = resolved
+toolchainSpawnAuthorityMechanism (ToolchainSpawnAuthority _ _ resolved _ _ _) = resolved
 
 -- | Re-observe the exact generated settings at the validation spawn boundary
 -- without exposing the underlying general toolchain authority.
@@ -1296,15 +1417,16 @@ withDarwinBuildMemoryValidationChild
   (DarwinBuildMemoryValidationAuthority authority _) =
     withBoundedToolchainChild authority
 
--- | The same fixed descendant heap-cap environment, exposed through only the
--- Darwin validation authority so that command cannot recover the underlying
--- general spawn capability.
-darwinBuildMemoryAuthorityEnvironmentEntries ::
+-- | The checked complete claimant account this validation authority carries,
+-- in MiB.
+--
+-- Exposed so the evidence constructor can refuse a sampled peak that reaches
+-- it without reconstructing the arithmetic from the plan a second time.
+darwinBuildMemoryValidationAuthorityAccountMib ::
   DarwinBuildMemoryValidationAuthority s ->
-  [(String, String)]
-darwinBuildMemoryAuthorityEnvironmentEntries
-  (DarwinBuildMemoryValidationAuthority authority _) =
-    toolchainAuthorityEnvironmentEntries authority
+  Int
+darwinBuildMemoryValidationAuthorityAccountMib
+  (DarwinBuildMemoryValidationAuthority _ accountMib) = accountMib
 
 -- | Render one validation invocation. The caller supplies only the internally
 -- minted scratch root; the executable remains the manifest's closed HostCabal
@@ -1508,6 +1630,24 @@ mkDarwinBuildMemoryEvidence
           maximum (map darwinBuildMemoryEvidenceSampledPeakBytes invocationEvidence)
     if sampledPeakBytes == 0
       then Left "Darwin build-memory evidence requires a positive sampled aggregate physical footprint"
+      else Right ()
+    -- The multiple this evidence renders is a claim that the account bounded
+    -- what the build actually took, so it is a checked quantity rather than a
+    -- rendered one. A report whose sampled peak reaches or exceeds the account
+    -- is not constructible: the command fails and names both figures instead
+    -- of printing a ratio at or below 1.00x and exiting zero, which is exactly
+    -- the shape that would let an over-account build be filed as proof the
+    -- account held.
+    if toInteger sampledPeakBytes >= toInteger accountMib * bytesPerMib
+      then
+        Left
+          ( "Darwin build-memory evidence refuses a sampled aggregate physical "
+              <> "footprint of "
+              <> show sampledPeakBytes
+              <> " bytes at or above its "
+              <> show accountMib
+              <> " MiB claimant account"
+          )
       else Right ()
     let plan = toolchainSpawnAuthorityPlan authority
     Right

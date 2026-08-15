@@ -112,6 +112,17 @@ module Infernix.Cluster.Subprocess
     -- constructor for 'ActivityProcessIdentity'.
     signalActivityProcessGroupForTest,
     observeRecoverableProcessGroupActiveForTest,
+    -- Sprint 1.26 diagnosable-bound surface. The executable-snapshot retirement
+    -- walk refused without naming which of its two independent quantities it
+    -- exceeded, what it observed, or the root it was walking, so the only way
+    -- to learn why a supported lane could not build was to edit the kernel.
+    -- This drives the same fold under crossable bounds.
+    runExecutableSnapshotRecoveryWalkForTest,
+    -- Sprint 1.26 helper-side generation-lease surface. Nothing drove a real
+    -- bounded command against a synthetic artifact generation, so the
+    -- supervisor's lane re-derivation was proven only on the routed lane.
+    TestArtifactGenerationLane (..),
+    compileArtifactGenerationLeaseTestCommand,
   )
 where
 
@@ -2849,6 +2860,111 @@ compileExactExecutableSnapshotTestCommand
                     }
               }
 
+-- | The closed lane a generation-lease fixture asks the supervisor to re-derive
+-- its catalog entry from. Sprint 1.26: nothing drove a real bounded command
+-- against a synthetic artifact generation, so the helper-side lane
+-- re-derivation was proven only by the routed @linux-cpu@ lane — the lane whose
+-- own defect then reached a full cohort run before anything observed it.
+data TestArtifactGenerationLane
+  = TestAppleSiliconGenerationLane
+  | TestLinuxNativeGenerationLane
+  deriving (Eq, Show)
+
+testArtifactGenerationLaneFields ::
+  TestArtifactGenerationLane ->
+  (Text.Text, Text.Text)
+testArtifactGenerationLaneFields lane =
+  case lane of
+    TestAppleSiliconGenerationLane ->
+      Artifact.artifactRuntimeExpectationLane
+        Artifact.appleArtifactRuntimeExpectation
+    TestLinuxNativeGenerationLane ->
+      Artifact.artifactRuntimeExpectationLane
+        Artifact.linuxArtifactRuntimeExpectation
+
+-- | Compile a bounded command that carries an artifact generation lease for one
+-- closed lane, so the supervisor's own re-derivation runs against a synthetic
+-- generation. The executable and the retained relative-executable shape are
+-- derived from the closed catalog exactly as production derives them, so the
+-- fixture hands the kernel a lane and a lease rather than a process
+-- specification: an @apple-silicon@ lease over an installed generation
+-- validates and runs, and the same generation offered under the
+-- @linux-native@ lane is refused by the Linux branch rather than silently
+-- accepted as its own payload digest.
+compileArtifactGenerationLeaseTestCommand ::
+  TestArtifactGenerationLane ->
+  ArtifactIdentity.NativeArtifactIdentity ->
+  ArtifactGenerationLease ->
+  ProvisioningMutationRoot ->
+  SubprocessEnv ->
+  Timeout ->
+  Either String (BoundedCommand TestCommand)
+compileArtifactGenerationLeaseTestCommand
+  lane
+  identity
+  generationLease
+  artifactRootAuthority
+  environment
+  (Timeout micros)
+    | micros <= 0 =
+        Left
+          "artifact generation lease test requires a positive total deadline"
+    | otherwise = do
+        let (substrate, architecture) = testArtifactGenerationLaneFields lane
+            artifactRoot =
+              provisioningMutationRootPath artifactRootAuthority
+            (enginesRoot, leaseAdapterId, _fingerprint, _payload) =
+              artifactGenerationLeaseFields generationLease
+        unless
+          ( enginesRoot == takeDirectory artifactRoot
+              && leaseAdapterId
+                == ArtifactIdentity.nativeArtifactAdapterId identity
+          )
+          ( Left
+              "artifact generation lease test does not match its exact artifact root and adapter"
+          )
+        target <-
+          ArtifactTarget.nativeArtifactTarget identity substrate architecture
+        let executable =
+              ArtifactTarget.nativeArtifactTargetExecutable artifactRoot target
+            retainedRelativeExecutable =
+              if ArtifactTarget.nativeArtifactTargetIsInstalled target
+                then Just (makeRelative artifactRoot executable)
+                else Nothing
+        bounded <-
+          compileTestCommand
+            (TestEcho "artifact-generation-lease")
+            environment
+        let rendered = boundedRenderedCommand bounded
+        Right
+          bounded
+            { boundedCommandPolicy =
+                CommandPolicy
+                  (PositiveTimeout micros)
+                  NeverRetry
+                  FatalFailure,
+              boundedRenderedCommand =
+                rendered
+                  { renderedExecutable = executable,
+                    renderedArguments = [],
+                    renderedLabel = "test artifact generation lease"
+                  },
+              boundedArtifactGenerationLeaseExpectation =
+                Just
+                  ( artifactGenerationLeaseExpectation
+                      substrate
+                      architecture
+                      generationLease
+                  ),
+              boundedProvisioningMutationWorkingDirectory =
+                Just
+                  ( ProvisioningMutationWorkingDirectory
+                      artifactRootAuthority
+                      []
+                      retainedRelativeExecutable
+                  )
+            }
+
 -- | Compile one package-internal provisioning operation into the same
 -- self-exec anchor/supervisor kernel used by cluster commands. The caller must
 -- supply a positive per-operation total deadline; provisioning never inherits
@@ -3021,6 +3137,15 @@ validProvisioningRuntimeClosureShape command closureRoles hasRuntimeLibraries =
         && projectSourceClosureCount == 0
         && artifactClosureCount == 0
         && hasRuntimeLibraries
+    -- The project-environment creation is deliberately unsealed: it runs the
+    -- configured host interpreter in place so the environment it writes records
+    -- that interpreter rather than a generation that is about to be retired.
+    Provisioning.CreatePoetryProjectVenv {} ->
+      homeClosureCount == 0
+        && pathClosureCount == 0
+        && projectSourceClosureCount == 0
+        && artifactClosureCount == 0
+        && not hasRuntimeLibraries
     Provisioning.GeneratePythonProto {} ->
       homeClosureCount == 1
         && pathClosureCount >= 1
@@ -4270,6 +4395,9 @@ validateProvisioningCommand command =
     Provisioning.InstallPoetryProject projectDirectory _groups ->
       validateProvisioningPaths
         [("Poetry project install directory", projectDirectory)]
+    Provisioning.CreatePoetryProjectVenv projectDirectory ->
+      validateProvisioningPaths
+        [("Poetry project environment directory", projectDirectory)]
     Provisioning.GeneratePythonProto
       projectDirectory
       repositoryRoot -> do
@@ -4346,6 +4474,22 @@ renderProvisioningCommand ::
   Either String RenderedProcess
 renderProvisioningCommand environment command =
   case command of
+    Provisioning.CreatePoetryProjectVenv projectDirectory -> do
+      pythonExecutable <-
+        resolveAvailableConfiguredTool environment HostTools.HostPython3
+      pure
+        ( fixedProvisioningProcess
+            pythonExecutable
+            [ "-m",
+              "venv",
+              "--clear",
+              "--copies",
+              poetryProjectVenvLeaf
+            ]
+            ""
+            "create the in-project Poetry environment"
+            projectDirectory
+        )
     Provisioning.InstallPoetryProject projectDirectory groups -> do
       poetryExecutable <-
         resolveAvailableConfiguredTool environment HostTools.HostPoetry
@@ -4376,7 +4520,7 @@ renderProvisioningCommand environment command =
       repositoryRoot -> do
         pure
           ( fixedProvisioningProcess
-              (projectDirectory </> ".venv" </> "bin" </> "python")
+              (projectDirectory </> poetryProjectVenvLeaf </> "bin" </> "python")
               [ "-m",
                 "grpc_tools.protoc",
                 "-I",
@@ -4833,6 +4977,12 @@ pythonVersionProbeScript adapter =
 -- working directory must therefore be relative to it.
 provisioningVenvLeaf :: FilePath
 provisioningVenvLeaf = "venv"
+
+-- | The in-project Poetry environment leaf. Poetry's @in-project@ configuration
+-- fixes this name, and the producer that creates it and the consumer that runs
+-- from it must not spell it separately.
+poetryProjectVenvLeaf :: FilePath
+poetryProjectVenvLeaf = ".venv"
 
 -- | Re-express one absolute operand as a safe path relative to the command's
 -- descriptor-derived working directory.
@@ -13674,6 +13824,7 @@ withExactExecutableSnapshot plan usePlan =
                 removeAnchorExecutableSnapshotRoot
                   snapshotRoot
                   anchorIdentity
+                  expectation
         ( snapshotExecutable,
           sealedExpectation,
           snapshotEnvironment,
@@ -14098,6 +14249,7 @@ recoverDeadExecutableSnapshotsWithHook ownerlessRecoveryHook snapshotParent =
                               snapshotRoot
                               ownerIdentity
                               observedRootStatus
+                              Nothing
                           Left failure
                             | isDoesNotExistError failure ->
                                 recoverOwnerlessExecutableSnapshot
@@ -14162,7 +14314,7 @@ recoverOwnerlessExecutableSnapshot
             snapshotRoot
             parentDescriptor
             expectedRootStatus
-            maximumExecutableSnapshotRecoveryEntries
+            (executableSnapshotRecoveryBudgetFor snapshotRoot Nothing)
         unless
           (null entries)
           ( ioError
@@ -14181,7 +14333,7 @@ recoverOwnerlessExecutableSnapshot
             snapshotRoot
             parentDescriptor
             expectedRootStatus
-            maximumExecutableSnapshotRecoveryEntries
+            (executableSnapshotRecoveryBudgetFor snapshotRoot Nothing)
         unless
           (null recheckedEntries)
           ( ioError
@@ -14266,13 +14418,13 @@ listExecutableSnapshotRootEntriesFromParent ::
   FilePath ->
   Fd ->
   FileStatus ->
-  Integer ->
+  ExecutableSnapshotRecoveryBudget ->
   IO [FilePath]
 listExecutableSnapshotRootEntriesFromParent
   snapshotRoot
   parentDescriptor
   expectedRootStatus
-  maximumEntries =
+  budget =
     mask $ \restore -> do
       openedDescriptor <-
         try @IOException
@@ -14310,9 +14462,7 @@ listExecutableSnapshotRootEntriesFromParent
               )
               (ioError (userError "bounded-command snapshot root changed before census"))
             entries <-
-              listDirectoryBoundedFromDescriptor
-                descriptor
-                maximumEntries
+              listRecoveryDirectoryEntries budget descriptor
             finalStatus <- getFdStatus descriptor
             finalPathStatus <- getSymbolicLinkStatus snapshotRoot
             unless
@@ -14475,17 +14625,140 @@ maximumExecutableSnapshotRecoveryDepth :: Int
 maximumExecutableSnapshotRecoveryDepth =
   maximumPackageClosureSnapshotDepth + 8
 
-data ExecutableSnapshotRecoveryBudget = ExecutableSnapshotRecoveryBudget
-  { executableSnapshotRecoveryEntries :: !Integer,
-    executableSnapshotRecoveryBytes :: !Integer
+-- | Which of the recovery walk's two independent quantities a refusal names.
+-- They are reported apart because they have different causes and different
+-- fixes: an entry-count breach is a payload with more objects than the walk
+-- admits, a byte breach is a payload larger than the walk admits, and a caller
+-- reading only the message must be able to tell an over-large payload from a
+-- runaway walk.
+data ExecutableSnapshotRecoveryDimension
+  = ExecutableSnapshotEntryCount
+  | ExecutableSnapshotPayloadBytes
+
+-- | Whether the refusal states the quantity it actually reached or only a lower
+-- bound on it. The per-entry checks cross their bound exactly; the bounded
+-- directory listing stops as soon as one directory exhausts the walk's
+-- remaining entry budget, so it can only report that the total is at least one
+-- past the bound. Claiming an exact total there would be a number nothing
+-- observed.
+data ExecutableSnapshotRecoveryMeasurement
+  = MeasuredExactly !Integer
+  | MeasuredAtLeast !Integer
+
+-- | An exceeded recovery bound, carrying everything a caller needs to act on
+-- it without editing the kernel: the quantity, what was observed, the
+-- configured bound, the walk's accumulated totals at the crossing, and the
+-- snapshot root being retired.
+data ExecutableSnapshotRecoveryBreach = ExecutableSnapshotRecoveryBreach
+  { recoveryBreachDimension :: !ExecutableSnapshotRecoveryDimension,
+    recoveryBreachMeasurement :: !ExecutableSnapshotRecoveryMeasurement,
+    recoveryBreachBound :: !Integer,
+    recoveryBreachEntries :: !Integer,
+    recoveryBreachBytes :: !Integer,
+    recoveryBreachRoot :: !FilePath,
+    recoveryBreachDeclared :: !(Maybe String)
   }
+
+-- | The accumulated walk, the root it is retiring, and the bounds it is
+-- retiring under. The bounds travel with the accumulator so a refusal states
+-- the configured value it compared against, and so the bounded listing and the
+-- per-entry check cannot be given two different budgets.
+data ExecutableSnapshotRecoveryBudget = ExecutableSnapshotRecoveryBudget
+  { executableSnapshotRecoveryRoot :: !FilePath,
+    executableSnapshotRecoveryDeclared :: !(Maybe String),
+    executableSnapshotRecoveryEntries :: !Integer,
+    executableSnapshotRecoveryEntryBound :: !Integer,
+    executableSnapshotRecoveryBytes :: !Integer,
+    executableSnapshotRecoveryByteBound :: !Integer
+  }
+
+-- | The only production mint: a fresh walk of one snapshot root under the fixed
+-- global bounds. An anchor retiring its own generation carries what it declared
+-- when it created it; a recovery walk over a dead owner's generation carries
+-- nothing, because the declaration died with the owner, and that absence is
+-- itself part of the diagnosis.
+executableSnapshotRecoveryBudgetFor ::
+  FilePath ->
+  Maybe String ->
+  ExecutableSnapshotRecoveryBudget
+executableSnapshotRecoveryBudgetFor snapshotRoot declared =
+  ExecutableSnapshotRecoveryBudget
+    { executableSnapshotRecoveryRoot = snapshotRoot,
+      executableSnapshotRecoveryDeclared = declared,
+      executableSnapshotRecoveryEntries = 0,
+      executableSnapshotRecoveryEntryBound =
+        maximumExecutableSnapshotRecoveryEntries,
+      executableSnapshotRecoveryBytes = 0,
+      executableSnapshotRecoveryByteBound =
+        maximumExecutableSnapshotRecoveryBytes
+    }
+
+-- | What the anchor admitted before it created the generation. A retirement
+-- that exceeds a bound its own creation fit is a payload that grew while the
+-- target ran, which is a different defect from a payload that was always too
+-- large, and the two are indistinguishable without this.
+renderDeclaredExecutableSnapshotPayload ::
+  ExecutableSnapshotExpectation ->
+  String
+renderDeclaredExecutableSnapshotPayload expectation =
+  "the retiring anchor declared an executable of "
+    <> show (snapshotSize expectation)
+    <> " bytes, "
+    <> show (length (snapshotPackageClosures expectation))
+    <> " package closures totalling "
+    <> show
+      (sum (map closureSnapshotFiles (snapshotPackageClosures expectation)))
+    <> " entries and "
+    <> show
+      (sum (map closureSnapshotBytes (snapshotPackageClosures expectation)))
+    <> " bytes, and "
+    <> show (length (snapshotRuntimeLibraries expectation))
+    <> " runtime libraries totalling "
+    <> show
+      ( sum
+          ( map
+              runtimeLibrarySnapshotSize
+              (snapshotRuntimeLibraries expectation)
+          )
+      )
+    <> " bytes"
+
+renderExecutableSnapshotRecoveryBreach ::
+  ExecutableSnapshotRecoveryBreach ->
+  String
+renderExecutableSnapshotRecoveryBreach breach =
+  "bounded-command snapshot cleanup exceeds its "
+    <> dimensionName
+    <> " bound: observed "
+    <> measurementText
+    <> " "
+    <> unitName
+    <> " against a bound of "
+    <> show (recoveryBreachBound breach)
+    <> "; the walk had reached "
+    <> show (recoveryBreachEntries breach)
+    <> " entries totalling "
+    <> show (recoveryBreachBytes breach)
+    <> " payload bytes under "
+    <> recoveryBreachRoot breach
+    <> maybe "" ("; " <>) (recoveryBreachDeclared breach)
+  where
+    (dimensionName, unitName) =
+      case recoveryBreachDimension breach of
+        ExecutableSnapshotEntryCount -> ("entry-count", "entries")
+        ExecutableSnapshotPayloadBytes -> ("payload-byte", "bytes")
+    measurementText =
+      case recoveryBreachMeasurement breach of
+        MeasuredExactly observed -> show observed
+        MeasuredAtLeast observed -> "at least " <> show observed
 
 removeRecoveredExecutableSnapshot ::
   FilePath ->
   ActivityProcessIdentity ->
   FileStatus ->
+  Maybe String ->
   IO ()
-removeRecoveredExecutableSnapshot snapshotRoot expectedOwner expectedRootStatus =
+removeRecoveredExecutableSnapshot snapshotRoot expectedOwner expectedRootStatus declaredPayload =
   mask_ $ do
     let snapshotParent = takeDirectory snapshotRoot
         snapshotEntry = takeFileName snapshotRoot
@@ -14547,10 +14820,10 @@ removeRecoveredExecutableSnapshot snapshotRoot expectedOwner expectedRootStatus 
                     rootDescriptor
                     rootStatus
                     expectedOwner
-                    ExecutableSnapshotRecoveryBudget
-                      { executableSnapshotRecoveryEntries = 0,
-                        executableSnapshotRecoveryBytes = 0
-                      }
+                    ( executableSnapshotRecoveryBudgetFor
+                        snapshotRoot
+                        declaredPayload
+                    )
                 finalRootStatus <- getFdStatus rootDescriptor
                 finalRootPathStatus <- getSymbolicLinkStatus snapshotRoot
                 unless
@@ -14604,9 +14877,7 @@ removeExecutableSnapshotRootEntries
         snapshotRoot
         parentDescriptor
         expectedRootStatus
-        ( maximumExecutableSnapshotRecoveryEntries
-            - executableSnapshotRecoveryEntries budget
-        )
+        budget
     unless
       (executableSnapshotOwnerFileName `elem` entries)
       (ioError (userError "bounded-command snapshot cleanup owner record is absent"))
@@ -14628,9 +14899,7 @@ removeExecutableSnapshotRootEntries
         snapshotRoot
         parentDescriptor
         expectedRootStatus
-        ( maximumExecutableSnapshotRecoveryEntries
-            - executableSnapshotRecoveryEntries payloadBudget
-        )
+        payloadBudget
     unless
       (remainingEntries == [executableSnapshotOwnerFileName])
       ( ioError
@@ -14660,9 +14929,7 @@ removeExecutableSnapshotRootEntries
         snapshotRoot
         parentDescriptor
         expectedRootStatus
-        ( maximumExecutableSnapshotRecoveryEntries
-            - executableSnapshotRecoveryEntries retiredBudget
-        )
+        retiredBudget
     unless
       (null finalEntries)
       (ioError (userError "bounded-command snapshot cleanup root is not empty"))
@@ -14729,13 +14996,18 @@ removeExecutableSnapshotDirectoryEntries ::
 removeExecutableSnapshotDirectoryEntries directoryPath descriptor depth budget = do
   unless
     (depth <= maximumExecutableSnapshotRecoveryDepth)
-    (ioError (userError "bounded-command snapshot cleanup exceeds its depth bound"))
-  entries <-
-    listDirectoryBoundedFromDescriptor
-      descriptor
-      ( maximumExecutableSnapshotRecoveryEntries
-          - executableSnapshotRecoveryEntries budget
-      )
+    ( ioError
+        ( userError
+            ( "bounded-command snapshot cleanup exceeds its depth bound: observed "
+                <> show depth
+                <> " against a bound of "
+                <> show maximumExecutableSnapshotRecoveryDepth
+                <> " at "
+                <> directoryPath
+            )
+        )
+    )
+  entries <- listRecoveryDirectoryEntries budget descriptor
   foldM
     (removeExecutableSnapshotEntry directoryPath descriptor depth)
     budget
@@ -14920,17 +15192,165 @@ removeExecutableSnapshotLink parentPath parentDescriptor path budget = do
   removeFile path
   pure nextBudget
 
+-- | The two quantities are classified independently and in a fixed order, so a
+-- walk that breaches both still reports the entry count first rather than
+-- whichever the accumulator happened to reach.
+executableSnapshotRecoveryBreach ::
+  ExecutableSnapshotRecoveryBudget ->
+  Maybe ExecutableSnapshotRecoveryBreach
+executableSnapshotRecoveryBreach budget
+  | executableSnapshotRecoveryEntries budget
+      > executableSnapshotRecoveryEntryBound budget =
+      Just
+        (breachFor ExecutableSnapshotEntryCount)
+          { recoveryBreachMeasurement =
+              MeasuredExactly (executableSnapshotRecoveryEntries budget),
+            recoveryBreachBound =
+              executableSnapshotRecoveryEntryBound budget
+          }
+  | executableSnapshotRecoveryBytes budget
+      > executableSnapshotRecoveryByteBound budget =
+      Just
+        (breachFor ExecutableSnapshotPayloadBytes)
+          { recoveryBreachMeasurement =
+              MeasuredExactly (executableSnapshotRecoveryBytes budget),
+            recoveryBreachBound =
+              executableSnapshotRecoveryByteBound budget
+          }
+  | otherwise = Nothing
+  where
+    breachFor dimension =
+      ExecutableSnapshotRecoveryBreach
+        { recoveryBreachDimension = dimension,
+          recoveryBreachMeasurement = MeasuredExactly 0,
+          recoveryBreachBound = 0,
+          recoveryBreachEntries =
+            executableSnapshotRecoveryEntries budget,
+          recoveryBreachBytes =
+            executableSnapshotRecoveryBytes budget,
+          recoveryBreachRoot =
+            executableSnapshotRecoveryRoot budget,
+          recoveryBreachDeclared =
+            executableSnapshotRecoveryDeclared budget
+        }
+
 requireExecutableSnapshotRecoveryBudget ::
   ExecutableSnapshotRecoveryBudget ->
   IO ()
 requireExecutableSnapshotRecoveryBudget budget =
-  unless
-    ( executableSnapshotRecoveryEntries budget
-        <= maximumExecutableSnapshotRecoveryEntries
-        && executableSnapshotRecoveryBytes budget
-          <= maximumExecutableSnapshotRecoveryBytes
+  maybe
+    (pure ())
+    (ioError . userError . renderExecutableSnapshotRecoveryBreach)
+    (executableSnapshotRecoveryBreach budget)
+
+-- | List one directory of the retirement walk under the walk's own remaining
+-- entry budget. A directory that exhausts it refuses in the walk's vocabulary
+-- and names the same root, rather than through the generic listing message,
+-- which named neither the quantity nor the tree it was walking.
+listRecoveryDirectoryEntries ::
+  ExecutableSnapshotRecoveryBudget ->
+  Fd ->
+  IO [FilePath]
+listRecoveryDirectoryEntries budget descriptor =
+  listDirectoryBoundedFromDescriptorRefusing
+    ( \observed ->
+        userError
+          ( renderExecutableSnapshotRecoveryBreach
+              ExecutableSnapshotRecoveryBreach
+                { recoveryBreachDimension = ExecutableSnapshotEntryCount,
+                  recoveryBreachMeasurement =
+                    MeasuredAtLeast
+                      ( executableSnapshotRecoveryEntries budget
+                          + observed
+                      ),
+                  recoveryBreachBound =
+                    executableSnapshotRecoveryEntryBound budget,
+                  recoveryBreachEntries =
+                    executableSnapshotRecoveryEntries budget,
+                  recoveryBreachBytes =
+                    executableSnapshotRecoveryBytes budget,
+                  recoveryBreachRoot =
+                    executableSnapshotRecoveryRoot budget,
+                  recoveryBreachDeclared =
+                    executableSnapshotRecoveryDeclared budget
+                }
+          )
     )
-    (ioError (userError "bounded-command snapshot cleanup exceeds its global bound"))
+    descriptor
+    ( executableSnapshotRecoveryEntryBound budget
+        - executableSnapshotRecoveryEntries budget
+    )
+
+-- | The fixture walk is destructive — it is the production fold — so the root it
+-- is pointed at must declare itself a fixture in its own name. Production never
+-- reaches this entry point, and a caller that does cannot aim it at a tree that
+-- did not opt in.
+executableSnapshotRecoveryWalkFixtureRoot :: FilePath -> Bool
+executableSnapshotRecoveryWalkFixtureRoot snapshotRoot =
+  isAbsolute snapshotRoot
+    && executableSnapshotRecoveryWalkFixtureLeaf
+      `List.isPrefixOf` takeFileName snapshotRoot
+
+executableSnapshotRecoveryWalkFixtureLeaf :: FilePath
+executableSnapshotRecoveryWalkFixtureLeaf =
+  "infernix-retirement-walk-fixture"
+
+-- | Drive the exact production retirement walk over a synthetic root under
+-- caller-chosen bounds, returning the refusal text or the totals the walk
+-- reached. The fixed global bounds are far larger than any fixture may
+-- materialize, so running the same fold under crossable bounds is the only way
+-- to prove that a breach names its observation. The production mint is
+-- untouched and remains the sole source of the fixed bounds.
+runExecutableSnapshotRecoveryWalkForTest ::
+  FilePath ->
+  Maybe String ->
+  Integer ->
+  Integer ->
+  IO (Either String (Integer, Integer))
+runExecutableSnapshotRecoveryWalkForTest snapshotRoot declaredPayload entryBound byteBound
+  | not (executableSnapshotRecoveryWalkFixtureRoot snapshotRoot) =
+      ioError
+        ( userError
+            ( "the retirement-walk fixture refuses a root that does not name itself one: "
+                <> snapshotRoot
+            )
+        )
+  | otherwise = mask $ \restore -> do
+      descriptor <-
+        openFd
+          snapshotRoot
+          ReadOnly
+          defaultFileFlags
+            { nofollow = True,
+              directory = True,
+              cloexec = True
+            }
+      finallyPreservingPrimary
+        ( restore $ do
+            observed <-
+              try @IOException
+                ( removeExecutableSnapshotDirectoryEntries
+                    snapshotRoot
+                    descriptor
+                    0
+                    (executableSnapshotRecoveryBudgetFor snapshotRoot declaredPayload)
+                      { executableSnapshotRecoveryEntryBound = entryBound,
+                        executableSnapshotRecoveryByteBound = byteBound
+                      }
+                )
+            pure
+              ( either
+                  (Left . displayException)
+                  ( \walked ->
+                      Right
+                        ( executableSnapshotRecoveryEntries walked,
+                          executableSnapshotRecoveryBytes walked
+                        )
+                  )
+                  observed
+              )
+        )
+        (ignoreIOException (closeFd descriptor))
 
 reopenSnapshotDirectoryEntryStatus :: Fd -> FilePath -> IO FileStatus
 reopenSnapshotDirectoryEntryStatus parentDescriptor entry =
@@ -14952,8 +15372,9 @@ reopenSnapshotDirectoryEntryStatus parentDescriptor entry =
 removeAnchorExecutableSnapshotRoot ::
   FilePath ->
   ActivityProcessIdentity ->
+  ExecutableSnapshotExpectation ->
   IO ()
-removeAnchorExecutableSnapshotRoot snapshotRoot anchorIdentity = do
+removeAnchorExecutableSnapshotRoot snapshotRoot anchorIdentity expectation = do
   unless
     ( takeFileName snapshotRoot
         == executableSnapshotOwnerName anchorIdentity
@@ -14969,6 +15390,7 @@ removeAnchorExecutableSnapshotRoot snapshotRoot anchorIdentity = do
     snapshotRoot
     anchorIdentity
     observedRootStatus
+    (Just (renderDeclaredExecutableSnapshotPayload expectation))
 
 observeExecutableSnapshotRoot ::
   FilePath ->
@@ -15728,34 +16150,49 @@ listDirectoryBoundedFromDescriptor ::
   Fd ->
   Integer ->
   IO [FilePath]
-listDirectoryBoundedFromDescriptor directoryDescriptor maximumEntries
-  | maximumEntries < 0 =
-      ioError (userError "directory entry budget is already exhausted")
-  | otherwise =
-      mask $ \restore -> do
-        descriptor <- dup directoryDescriptor
-        setFdOption descriptor CloseOnExec True
-        stream <-
-          onExceptionPreservingPrimary
-            (unsafeOpenDirStreamFd descriptor)
-            (ignoreIOException (closeFd descriptor))
-        finallyPreservingPrimary
-          (restore (readEntries stream 0 []))
-          (closeDirStream stream)
-  where
-    readEntries stream observed entries = do
-      entry <- readDirStream stream
-      if null entry
-        then pure (List.sort entries)
-        else
-          if entry == "." || entry == ".."
-            then readEntries stream observed entries
-            else do
-              let nextObserved = observed + 1
-              unless
-                (nextObserved <= maximumEntries)
-                (ioError (userError "directory exceeds its fixed entry budget"))
-              readEntries stream nextObserved (entry : entries)
+listDirectoryBoundedFromDescriptor =
+  listDirectoryBoundedFromDescriptorRefusing
+    (const (userError "directory exceeds its fixed entry budget"))
+
+-- | The bounded listing with a caller-named refusal, applied the observed count
+-- that crossed the bound. A walk that owns a richer vocabulary than "a
+-- directory was too large" states its own.
+listDirectoryBoundedFromDescriptorRefusing ::
+  (Integer -> IOError) ->
+  Fd ->
+  Integer ->
+  IO [FilePath]
+listDirectoryBoundedFromDescriptorRefusing
+  refuse
+  directoryDescriptor
+  maximumEntries
+    | maximumEntries < 0 =
+        ioError (userError "directory entry budget is already exhausted")
+    | otherwise =
+        mask $ \restore -> do
+          descriptor <- dup directoryDescriptor
+          setFdOption descriptor CloseOnExec True
+          stream <-
+            onExceptionPreservingPrimary
+              (unsafeOpenDirStreamFd descriptor)
+              (ignoreIOException (closeFd descriptor))
+          finallyPreservingPrimary
+            (restore (readEntries stream 0 []))
+            (closeDirStream stream)
+    where
+      readEntries stream observed entries = do
+        entry <- readDirStream stream
+        if null entry
+          then pure (List.sort entries)
+          else
+            if entry == "." || entry == ".."
+              then readEntries stream observed entries
+              else do
+                let nextObserved = observed + 1
+                unless
+                  (nextObserved <= maximumEntries)
+                  (ioError (refuse nextObserved))
+                readEntries stream nextObserved (entry : entries)
 
 copyPackageClosureDirectory ::
   Bool ->
@@ -15780,7 +16217,17 @@ copyPackageClosureDirectory
   state = do
     unless
       (depth <= maximumPackageClosureSnapshotDepth)
-      (ioError (userError "package closure copy exceeded its fixed depth bound"))
+      ( ioError
+          ( userError
+              ( "package closure copy exceeds its depth bound: observed "
+                  <> show depth
+                  <> " against a bound of "
+                  <> show maximumPackageClosureSnapshotDepth
+                  <> " at "
+                  <> sourceDirectory
+              )
+          )
+      )
     unless
       (isDirectory listedStatus)
       (ioError (userError ("package closure directory is invalid: " <> sourceDirectory)))
@@ -15875,7 +16322,17 @@ copyPackageClosureEntry
                     snapshotClosureFilesCopied state + 1
               unless
                 (nextEntries <= maximumPackageClosureSnapshotFiles)
-                (ioError (userError "package closure copy exceeded its fixed entry bound"))
+                ( ioError
+                    ( userError
+                        ( "package closure copy exceeds its entry bound: observed "
+                            <> show nextEntries
+                            <> " entries against a bound of "
+                            <> show maximumPackageClosureSnapshotFiles
+                            <> " at "
+                            <> sourcePath
+                        )
+                    )
+                )
               copied <-
                 copyPackageClosureDirectory
                   excludeBaseSitePackages
@@ -15991,10 +16448,31 @@ copyPackageClosureFile
               + fromIntegral (PosixFiles.fileSize listedStatus)
           nextFiles = snapshotClosureFilesCopied state + 1
       unless
-        ( nextBytes <= maximumPackageClosureSnapshotBytes
-            && nextFiles <= maximumPackageClosureSnapshotFiles
+        (nextFiles <= maximumPackageClosureSnapshotFiles)
+        ( ioError
+            ( userError
+                ( "package closure copy exceeds its entry bound: observed "
+                    <> show nextFiles
+                    <> " entries against a bound of "
+                    <> show maximumPackageClosureSnapshotFiles
+                    <> " at "
+                    <> sourcePath
+                )
+            )
         )
-        (ioError (userError "package closure copy exceeded its fixed bound"))
+      unless
+        (nextBytes <= maximumPackageClosureSnapshotBytes)
+        ( ioError
+            ( userError
+                ( "package closure copy exceeds its payload-byte bound: observed "
+                    <> show nextBytes
+                    <> " bytes against a bound of "
+                    <> show maximumPackageClosureSnapshotBytes
+                    <> " at "
+                    <> sourcePath
+                )
+            )
+        )
       openedStatus <- getFdStatus sourceDescriptor
       unless
         (exactFileStatusMatches listedStatus openedStatus)

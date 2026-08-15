@@ -2053,16 +2053,18 @@ None.
 
 ---
 
-## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Done]
+## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Active]
 
-**Status**: Done — unblocked by Phase 4 Sprint 4.26 for the original Apple-only classifier; the
-memory-exhaustion classification is in the integration lane, the **Apple integration never-OOM proof
-is proven** ([Wave R](cohort-validation-waves.md): full 16-model per-model
-`test integration` all `status=completed`, zero OS OOM-kill), and Wave S revalidated the Linux full
-suites for that scope. Sprint 6.38 supersedes this with typed resource-admission validation across
+**Status**: Active — the memory-exhaustion classification is in the integration lane, and the
+recorded Apple result is a lane that completed rather than a bound that held: an absence of host
+exhaustion across one catalog run is a sample, and the run that produced it carried no ceiling on
+the largest images resident beside it.
+**Historical cohort evidence**: [Wave R](cohort-validation-waves.md) and
+[Wave S](cohort-validation-waves.md) close only the fail-closed classification scope — an
+over-budget row is a clean typed refusal rather than a missing result. Sprint 6.38 supersedes this with typed resource-admission validation across
 Apple, Linux CPU, and Linux GPU.
 **Code-side closure**: Complete for the classification. Phase 4 Sprint 4.26's admission control landed, so an over-budget apple-silicon model now publishes a clean `status=failed` instead of OS-OOM-killing the daemon. The integration lane adds `classifyAppleMemoryBoundedResult`: an over-budget model is a clean per-row `AppleMemoryBoundedFailClosed` (its message names the inference RAM budget), distinguishable from a fabricated pass (`status /= completed`) and a real engine failure; a genuinely missing result is named as the OS-OOM-kill / stall symptom. Rows that fit the budget must still complete and honor the per-family real-output contract, so behavior is unchanged on hosts where the whole catalog fits. Verified by `cabal build all` (the integration suite compiles) and `cabal test infernix-haskell-style`.
-**Cohort gate**: Closed by [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux. The full 16-model Apple `test integration` is **proven**: all 16 apple catalog models `status=completed`, **zero** OS OOM-kill, the daemon surviving every model including the heavy diffusion rows. The rebuilt Linux lanes are **proven** for the original fail-closed result-handling scope; Linux CPU pod-memory and Linux GPU VRAM admission are reopened in Sprint 6.38.
+**Cohort gate**: [Wave R](cohort-validation-waves.md) apple-silicon and [Wave S](cohort-validation-waves.md) Linux record that all 16 apple catalog models reached `status=completed` with the daemon surviving every model including the heavy diffusion rows. That is evidence the classification and admission behaved on the lane as run, not evidence that a host bound exists. The rebuilt Linux lanes are **proven** for the original fail-closed result-handling scope; Linux CPU pod-memory and Linux GPU VRAM admission are reopened in Sprint 6.38.
 **Implementation**: `test/integration/Spec.hs`, `web/playwright/inference.spec.js`
 **Docs to update**: `documents/development/testing_strategy.md`, `documents/engineering/testing.md`, `documents/development/demo_app_test_plan.md`, `documents/development/chaos_testing.md`, `documents/operations/apple_silicon_runbook.md`
 
@@ -2094,7 +2096,11 @@ per-model browser matrix either complete or fail-closed per row with **zero** OS
 
 ### Remaining Work
 
-None.
+- restate this lane's criterion so it asserts the ceiling behaving rather than the absence of a
+  failure: every over-budget row is a typed capacity refusal and no admitted row is terminated by
+  the host, on a run whose competing claimants were observed rather than assumed
+- record that the recorded catalog completion was produced beside an unbounded toolchain, so the
+  result stands for the classification scope and not for a host bound
 
 ---
 
@@ -2754,7 +2760,9 @@ is inherited across `fork` and `exec`, so the anchor, supervisor, pin, target, a
 are bounded by their parent without doing anything themselves. The limit is only ever lowered, so a
 host that already imposes a tighter one keeps it, and the hard limit is written back unchanged, so
 establishing the bound needs no privilege. 16384 is chosen from the table above: it costs 4.9 ms,
-which the observer's 50 ms sampling cadence absorbs alongside a ~27 ms `nvidia-smi` query, while the
+which the observer's sampling cadence absorbs alongside a ~27 ms `nvidia-smi` query — the 50 ms
+constant is the pause between samples rather than the achieved cadence, so the margin is wider than
+that constant suggests — while the
 next round value up (65536, 17.5 ms) does not leave that cadence enough room. Nothing this platform
 runs comes within two orders of magnitude of 16384 open descriptors.
 
@@ -3161,11 +3169,15 @@ closed.
 - **Cohort**: selected accelerator plus `linux-cpu`, consumed jointly with Sprint 6.44's wave
   against one frozen source.
 
-## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Done]
+## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Active]
 
-**Status**: Done — the boundary, the lint, the fixtures, the mechanism resolver, and the victim rank
-are implemented and clean on the machine-independent gate set. There is no accelerator-specific
-behaviour here, so there is no cohort gate.
+**Status**: Active — the boundary, the lint, the fixtures, the mechanism resolver, and the victim
+rank are implemented and clean on the machine-independent gate set, and the behaviour is
+accelerator-specific in the way that matters: one resolved arm installs an operating-system limit and
+the other installs none, so a live proof taken on the second arm does not demonstrate a ceiling held
+across a fork.
+**Historical evidence**: the original closure covers the closed invocation vocabulary, the lint, and
+the fixtures; it does not cover a held ceiling on the lane that has no mechanism to hold.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`,
 `src/Infernix/CLI.hs`, `src/Infernix/Lint/HaskellStyle.hs`, `test/compile-fail/`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
@@ -3259,7 +3271,14 @@ doctrine's `What this does not bound` as deferred.
 
 ### Remaining Work
 
-None.
+- state per lane what the boundary actually installs, so the arm that installs no operating-system
+  limit is not described by the arm that does
+- retire the two limit-establishing entry points no production path calls, or give them a caller;
+  a guarantee no supported path can reach is not a guarantee
+- extend the boundary so minting the authority consumes an observation of available host memory and
+  a census finding no toolchain claimant outside its own process tree, and re-take that observation
+  at the child boundary
+- make the sampled peak a checked quantity against the account rather than a rendered ratio
 
 ---
 

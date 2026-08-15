@@ -14,8 +14,11 @@ production surface, Gateway-owned routing, Haskell-owned frontend contracts, sub
 validation, and a daemon-role model where the coordinator owns Pulsar routing while
 substrate-neutral engine pools run inference on Kubernetes workloads or Apple host daemons.
 
-The host toolchain is a declared account on measured physical RAM rather than an unmodelled draw on
-headroom. `Infernix.BuildMemory` makes `deriveBuildMemoryPlan` the only mint of a `BuildMemoryPlan`,
+The host toolchain is an account admitted against the host rather than an unmodelled draw on
+headroom. It is drawn from the same claimable pool the inference partition divides, so the two are
+alternative occupants admitted one at a time rather than independent declarations, and minting the
+account consumes an observation of available host memory plus a census finding no toolchain claimant
+outside its own process tree. `Infernix.BuildMemory` makes `deriveBuildMemoryPlan` the only mint of a `BuildMemoryPlan`,
 so a per-process ceiling has no inhabitant that was not divided by the job count it is multiplied
 by, and the built executable declares a bounded runtime address-space reservation, without which
 lowering the process's own `RLIMIT_AS` succeeds and then kills it on its next allocation. The host

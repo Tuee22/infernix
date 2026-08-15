@@ -39,7 +39,8 @@ import Infernix.Engines.Artifact qualified as Artifact
 import Infernix.Engines.Provisioning qualified as Provisioning
 import Infernix.HostConfig qualified as HostConfig
 import System.Directory
-  ( createDirectory,
+  ( canonicalizePath,
+    createDirectory,
     createDirectoryIfMissing,
     doesFileExist,
     doesPathExist,
@@ -155,6 +156,9 @@ testCases =
     ("Apple runtime smoke parsing is exact for all seven targets", exactAppleRuntimeSmokeParsingTest),
     ("Mach-O fixture copies recursive inherited-rpath closure", recursiveMachOClosureTest),
     ("Mach-O fixture rejects missing, unresolved, and colliding closure input", rejectedMachOClosureTest),
+    ("Mach-O weak and lazy dependencies resolve when present and are skipped when absent", optionalMachODependencyTest),
+    ("canonical executable identity accepts a symlinked tool and rejects a swapped canonical path", canonicalExecutableIdentityTest),
+    ("only a Python hydration witness selects candidate venv relocation", hydrationRelocationSelectionTest),
     ("Mach-O production hard bounds reject every excess dimension", machOClosureBoundsTest),
     ("Mach-O install-name ascent is admitted only inside its package closure", machOInstallNameAscentTest),
     ("only a host-bound shebang leaves the Python home closure", shebangHostBindingTest),
@@ -871,6 +875,166 @@ recursiveMachOClosureTest = do
     0
     (AppleInternal.machOFixturePluginRootCount plan)
 
+-- | The relocation selection is decided by the hydration witness, not by
+-- probing the filesystem for a @venv@ directory.
+--
+-- The distinction is load-bearing in both directions: relocating
+-- unconditionally fails closed on a native-binary or Audiveris candidate that
+-- has no @venv@ at all, while probing tolerantly would let an absent @venv@
+-- under a Python candidate pass instead of failing.
+hydrationRelocationSelectionTest :: IO ()
+hydrationRelocationSelectionTest = do
+  assertEqual
+    "a Python hydration witness selects venv relocation"
+    True
+    ( AppleInternal.hydrationRelocatesCandidateVenvForTest
+        AppleInternal.PythonHydrated
+    )
+  assertEqual
+    "a host-binary hydration witness does not"
+    False
+    ( AppleInternal.hydrationRelocatesCandidateVenvForTest
+        AppleInternal.HostBinaryHydrated
+    )
+  assertEqual
+    "an Audiveris JVM hydration witness does not"
+    False
+    ( AppleInternal.hydrationRelocatesCandidateVenvForTest
+        AppleInternal.AudiverisHydrated
+    )
+
+-- | The canonical-versus-configured identity comparison, on real files.
+--
+-- This surface cannot be reached purely: the identity carries live @stat@
+-- results, so the distinction it draws only exists once a symlink and its
+-- target are on disk. Three properties matter, and the middle one is why the
+-- canonical comparator exists at all rather than being a weaker duplicate of
+-- the strict one.
+canonicalExecutableIdentityTest :: IO ()
+canonicalExecutableIdentityTest =
+  withMaterializerFixture "canonical-identity" $ \_paths fixtureRoot -> do
+    let realDirectory = fixtureRoot </> "real"
+        linkDirectory = fixtureRoot </> "link"
+        realTool = realDirectory </> "tool"
+        linkedTool = linkDirectory </> "tool"
+        decoyTool = realDirectory </> "decoy"
+    createDirectoryIfMissing True realDirectory
+    createDirectoryIfMissing True linkDirectory
+    writeFile realTool "#!/bin/sh\nexit 0\n"
+    writeFile decoyTool "#!/bin/sh\nexit 1\n"
+    Posix.setFileMode realTool 0o755
+    Posix.setFileMode decoyTool 0o755
+    Posix.createSymbolicLink realTool linkedTool
+    -- Resolve the second identity from the canonical path, exactly as
+    -- production does. The temporary root itself sits behind a symlink on
+    -- Darwin, so re-resolving the configured spelling would not be a canonical
+    -- resolution at all.
+    canonicalTool <- canonicalizePath realTool
+    throughSymlink <-
+      Provisioning.resolveExactExecutableIdentityForTest linkedTool
+    fromCanonical <-
+      Provisioning.resolveExactExecutableIdentityForTest canonicalTool
+    assertEqual
+      "the canonical comparator accepts a tool reached through a symlink"
+      True
+      ( Provisioning.resolvedExecutableCanonicalIdentityMatchesForTest
+          throughSymlink
+          fromCanonical
+      )
+    assertEqual
+      "the strict comparator rejects the same pair, which is why the canonical form exists"
+      False
+      ( Provisioning.resolvedExecutableIdentityMatchesForTest
+          throughSymlink
+          fromCanonical
+      )
+    -- Replace the canonical target with a symlink to a different object. The
+    -- re-resolution is no longer genuinely canonical, so a swap performed at
+    -- the canonical path is still rejected.
+    removeFile canonicalTool
+    Posix.createSymbolicLink decoyTool canonicalTool
+    afterSwap <-
+      Provisioning.resolveExactExecutableIdentityForTest canonicalTool
+    assertEqual
+      "a symlink swapped in at the canonical path is rejected"
+      False
+      ( Provisioning.resolvedExecutableCanonicalIdentityMatchesForTest
+          throughSymlink
+          afterSwap
+      )
+
+-- | @dyld@ binds an unresolved weak or lazy dependency to null at run time, so
+-- the closure skips it; a required dependency that no candidate resolves stays
+-- fatal. Both halves are asserted here, along with the case that matters most
+-- for correctness: an optional dependency that /does/ resolve is still sealed
+-- into the artifact rather than quietly dropped because it was optional.
+optionalMachODependencyTest :: IO ()
+optionalMachODependencyTest = do
+  let fixtureRoot = "/infernix-fixture/macho-optional"
+      candidateRoot = fixtureRoot </> "candidate"
+      executable = fixtureRoot </> "bin" </> "tool"
+      presentWeak = fixtureRoot </> "lib" </> "libPresentWeak.dylib"
+      presentLazy = fixtureRoot </> "lib" </> "libPresentLazy.dylib"
+      emptyImage = machOImage [] []
+      resolve =
+        AppleInternal.resolveMachOPathsFixtureForTest
+          candidateRoot
+          executable
+      expectedLibrary leaf =
+        candidateRoot </> "native" </> "lib" </> leaf
+  presentPlan <-
+    requireRight
+      "resolvable weak and lazy dependencies close"
+      ( resolve
+          [ ( executable,
+              machOImageWithOptional [] [presentWeak] [presentLazy] []
+            ),
+            (presentWeak, emptyImage),
+            (presentLazy, emptyImage)
+          ]
+      )
+  let presentCopies = AppleInternal.machOFixturePlannedCopies presentPlan
+  assertEqual
+    "a weak dependency that resolves is sealed into the artifact"
+    (Just (expectedLibrary "libPresentWeak.dylib"))
+    (lookup presentWeak presentCopies)
+  assertEqual
+    "a lazy dependency that resolves is sealed into the artifact"
+    (Just (expectedLibrary "libPresentLazy.dylib"))
+    (lookup presentLazy presentCopies)
+  absentPlan <-
+    requireRight
+      "unresolved weak and lazy dependencies are skipped"
+      ( resolve
+          [ ( executable,
+              machOImageWithOptional
+                []
+                [fixtureRoot </> "lib" </> "libAbsentWeak.dylib"]
+                ["@rpath/libAbsentLazy.dylib"]
+                []
+            )
+          ]
+      )
+  assertEqual
+    "an unresolved optional dependency contributes nothing to the copy plan"
+    []
+    (AppleInternal.machOFixturePlannedCopies absentPlan)
+  assertEqual
+    "an unresolved required dependency is still fatal beside optional ones"
+    True
+    ( isLeft
+        ( resolve
+            [ ( executable,
+                machOImageWithOptional
+                  [fixtureRoot </> "lib" </> "libRequired.dylib"]
+                  [fixtureRoot </> "lib" </> "libAbsentWeak.dylib"]
+                  []
+                  []
+              )
+            ]
+        )
+    )
+
 rejectedMachOClosureTest :: IO ()
 rejectedMachOClosureTest = do
   let fixtureRoot = "/infernix-fixture/macho-rejected"
@@ -1235,9 +1399,21 @@ assertPriorRootMarker marker fixtureRoot boundary = do
     markerContents
 
 machOImage :: [FilePath] -> [FilePath] -> ByteString.ByteString
-machOImage dependencies rpaths =
+machOImage dependencies = machOImageWithOptional dependencies [] []
+
+-- | An image whose dependencies are split across the three load-command
+-- classes @dyld@ treats differently: required, weak, and lazy.
+machOImageWithOptional ::
+  [FilePath] ->
+  [FilePath] ->
+  [FilePath] ->
+  [FilePath] ->
+  ByteString.ByteString
+machOImageWithOptional dependencies weakDependencies lazyDependencies rpaths =
   let commands =
         map machODylibCommand dependencies
+          <> map machOWeakDylibCommand weakDependencies
+          <> map machOLazyDylibCommand lazyDependencies
           <> map machORpathCommand rpaths
    in ByteString.concat
         ( machOHeader
@@ -1249,6 +1425,17 @@ machOImage dependencies rpaths =
 machODylibCommand :: FilePath -> ByteString.ByteString
 machODylibCommand =
   machOStringCommand 0x0000000c 24
+
+-- | @LC_LOAD_WEAK_DYLIB@. Carries the @LC_REQ_DYLD@ high bit, as the loader
+-- writes it.
+machOWeakDylibCommand :: FilePath -> ByteString.ByteString
+machOWeakDylibCommand =
+  machOStringCommand 0x80000018 24
+
+-- | @LC_LAZY_LOAD_DYLIB@.
+machOLazyDylibCommand :: FilePath -> ByteString.ByteString
+machOLazyDylibCommand =
+  machOStringCommand 0x00000020 24
 
 machORpathCommand :: FilePath -> ByteString.ByteString
 machORpathCommand =

@@ -115,9 +115,8 @@ unit suite, and `poetry run check-code`; no bare Cabal command is an operator va
 instruction. The gate runs on whichever machine is present and has two declared prerequisites.
 First, `infernix init` must have written the repo-root
 `./infernix-host.dhall` host manifest. Second, the toolchain runs under a declared memory ceiling
-([bounded_host_memory.md](../architecture/bounded_host_memory.md)): `cabal build all` is the largest
-memory consumer in the set, and the gate asserts that a ceiling exists and is observed rather than
-that no exhaustion occurred.
+([bounded_host_memory.md](../architecture/bounded_host_memory.md)), which owns what that ceiling
+covers, what admits it, and what it leaves unbounded; this document does not restate those terms.
 
 Hardware-specific validation runs on the machine that owns the changed path.
 

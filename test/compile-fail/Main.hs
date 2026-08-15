@@ -34,16 +34,17 @@ main = do
   repositoryRoot <- findRepositoryRoot
   userHome <- currentUserHome
   cabalExecutable <- findCabalExecutable userHome
+  ghcExecutable <- findGhcExecutable userHome
   let childEnvironment = fixtureChildEnvironment userHome cabalExecutable
   let projectFile = repositoryRoot </> "test" </> "compile-fail" </> "cabal.project"
       buildDirectory = repositoryRoot </> ".build" </> "compile-fail"
       logDirectory = buildDirectory </> "logs"
   createDirectoryIfMissing True logDirectory
   mapM_
-    (assertPassingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory)
+    (assertPassingFixture repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory logDirectory)
     passingFixtures
   mapM_
-    (assertFailingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory)
+    (assertFailingFixture repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory logDirectory)
     failingFixtures
   putStrLn
     ( "compile-time capability fixtures passed: "
@@ -406,20 +407,22 @@ readDiagnostics =
 assertPassingFixture ::
   FilePath ->
   FilePath ->
+  FilePath ->
   [(String, String)] ->
   FilePath ->
   FilePath ->
   FilePath ->
   String ->
   IO ()
-assertPassingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory target = do
+assertPassingFixture repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory logDirectory target = do
   (exitCode, diagnostic) <-
-    runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory target
+    runFixtureBuild repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory target
   writeFile (logDirectory </> target <> ".log") diagnostic
   unless (exitCode == ExitSuccess) $
     failWithDiagnostic ("compile-pass fixture failed: " <> target) diagnostic
 
 assertFailingFixture ::
+  FilePath ->
   FilePath ->
   FilePath ->
   [(String, String)] ->
@@ -428,11 +431,12 @@ assertFailingFixture ::
   FilePath ->
   FailingFixture ->
   IO ()
-assertFailingFixture repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory logDirectory fixture = do
+assertFailingFixture repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory logDirectory fixture = do
   (exitCode, diagnostic) <-
     runFixtureBuild
       repositoryRoot
       cabalExecutable
+      ghcExecutable
       childEnvironment
       projectFile
       buildDirectory
@@ -477,7 +481,19 @@ removeAll needle haystack
       | otherwise =
           character : go suffix
 
+-- | The nested fixture build.
+--
+-- The compiler is named by absolute path on the command line, not left to the
+-- project file's @with-compiler:@ to resolve through the child @PATH@. A bare
+-- program name is resolved against whatever search path the child happens to
+-- have, which is exactly the ambient dependency this repository refuses
+-- everywhere else, and it fails on the lane whose deterministic launcher path
+-- does not carry the toolchain: the launcher image has the compiler, and the
+-- nested Cabal still reported that it could not find one. The command line also
+-- takes precedence over the project file, which is the same reason the memory
+-- account is passed here rather than left in @cabal.project@.
 runFixtureBuild ::
+  FilePath ->
   FilePath ->
   FilePath ->
   [(String, String)] ->
@@ -485,7 +501,7 @@ runFixtureBuild ::
   FilePath ->
   String ->
   IO (ExitCode, String)
-runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buildDirectory target = do
+runFixtureBuild repositoryRoot cabalExecutable ghcExecutable childEnvironment projectFile buildDirectory target = do
   let command =
         ( proc
             cabalExecutable
@@ -497,6 +513,7 @@ runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buil
               "--builddir=" <> buildDirectory,
               "infernix-compile-fixtures:exe:" <> target,
               "--jobs=1",
+              "--with-compiler=" <> ghcExecutable,
               "--ghc-options=+RTS -M2048M -xr6144M -RTS"
             ]
         )
@@ -505,6 +522,32 @@ runFixtureBuild repositoryRoot cabalExecutable childEnvironment projectFile buil
           }
   (exitCode, stdoutText, stderrText) <- readCreateProcessWithExitCode command ""
   pure (exitCode, stdoutText <> stderrText)
+
+-- | The compiler the nested project pins, resolved to an absolute path from a
+-- fixed candidate list. The versioned name is preferred so a host carrying
+-- several compilers still gets the pinned one; a plain @ghc@ is accepted after
+-- it because that is what the governed lanes install.
+findGhcExecutable :: FilePath -> IO FilePath
+findGhcExecutable userHome = do
+  maybeExecutable <-
+    firstExistingFile
+      [ userHome </> ".ghcup" </> "bin" </> "ghc-9.12.4",
+        userHome </> ".ghcup" </> "bin" </> "ghc",
+        "/opt/homebrew/bin/ghc-9.12.4",
+        "/opt/homebrew/bin/ghc",
+        "/usr/local/bin/ghc-9.12.4",
+        "/usr/local/bin/ghc",
+        "/usr/bin/ghc-9.12.4",
+        "/usr/bin/ghc"
+      ]
+  case maybeExecutable of
+    Nothing ->
+      fail
+        ( "the nested compile fixtures require the pinned compiler; none of the fixed candidates under "
+            <> userHome
+            <> "/.ghcup/bin, /opt/homebrew/bin, /usr/local/bin, or /usr/bin exists"
+        )
+    Just executable -> pure executable
 
 currentUserHome :: IO FilePath
 currentUserHome =

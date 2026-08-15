@@ -1,11 +1,12 @@
 # Phase 0: Documentation and Governance
 
-**Status**: Done. This phase owns the governed `documents/` suite, the standards that keep the plan
-and those documents aligned, and the enforcement that makes both mechanical. Sprint 0.24 landed
+**Status**: Done. This phase owns the governed `documents/` suite, the standards that keep the
+plan and those documents aligned, and the enforcement that makes both mechanical. Sprint 0.24 landed
 `infernix lint plan`, which implements the Section C, D, I, J, and Q scans the standards had
 declared only in prose, drove the corpus to zero against them, and wired the scans into `runLint`.
-Every sprint in this phase is closed on the machine-independent gate set; the phase is
-machine-independent throughout and carries no accelerator cohort.
+Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger they own; every sprint in this
+phase is closed on the machine-independent gate set. The phase is machine-independent throughout and
+carries no accelerator cohort.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Establish the governed `documents/` suite, the standards that keep the plan and
@@ -882,8 +883,12 @@ None.
 ## Sprint 0.19: Bounded Host Memory Doctrine [Done]
 
 **Status**: Done — the capacity-ledger doctrine, its lint registration, the governed-suite scope
-corrections, and the three-way non-negotiable mirror are landed. Machine-independent (Axis-1 only);
-no accelerator gate.
+corrections, and the three-way non-negotiable mirror are landed, and the serialization claim they
+originally carried is replaced by the one-pool/two-alternative-occupants ledger, the admission
+clause, and the account's declared scope. Machine-independent (Axis-1 only); no accelerator gate.
+**Historical doctrine evidence**: the first closure covers the ledger's structure, its lint
+registration, and the mirror mechanism only; the corrected admission clause and the scope of the
+account are covered by this closure instead.
 **Implementation**: `documents/architecture/bounded_host_memory.md`, `src/Infernix/Lint/Docs.hs`,
 `documents/README.md`, `documents/documentation_standards.md`, the root-document mirror
 **Docs to update**: `documents/architecture/bounded_host_memory.md`,
@@ -935,6 +940,18 @@ for inference, and for everything the repository does not start there is no enfo
   rule extended with the ceiling clause
 - the `Infernix.DescriptorSpace` passage restored to the canonical
   `assistant_workflow.md` list, which the two mirrors carried but their source did not
+- the ledger opening on one claimable pool with two alternative occupants: the toolchain account is
+  a share of the same non-virtual-machine pool the inference partition divides, an exclusive host
+  claim admits one occupant at a time, and a plan that sums both against that pool is a ledger error
+- admission stated as doctrine rather than operator instruction: clause 4 of the invariant and the
+  `Admission` row of the enforcement table require an observation of available host memory
+  sufficient to fund the account plus a census finding no toolchain claimant outside the authority's
+  own process tree, with either failure a refusal that names what it found
+- the account scoped to the governed Cabal invocation, with the web dependency install and unit run,
+  the routed end-to-end browser, the Python provisioning and adapter images, and the host inference
+  daemon named as host-reserve claimants carrying no toolchain ceiling
+- the Apple row of the enforcement table reading `none`: Darwin supplies no cgroup and no
+  installable address-space ceiling, so no operating-system bound is engaged on that lane at all
 
 ### Validation
 
@@ -950,7 +967,7 @@ The doctrine this sprint establishes is implemented by Phase 1 Sprint 1.21 (the 
 kernel, the bounded runtime reservation, and the generated ceiling) and Phase 6 Sprint 6.46 (the
 toolchain spawn boundary, its lint, and the per-lane mechanism resolver). The deferred ledger rows
 — the partition's missing build term, the unchecked sum of cluster pod limits against node
-allocatable, and the uncapped nested builds — are named in the doctrine's `Current Status` so they
+allocatable, and the uncapped nested builds — are named in the doctrine's scope statement so they
 are not mistaken for closed.
 
 ### Remaining Work
@@ -1047,7 +1064,11 @@ None.
 
 ## Sprint 0.21: Name The Co-Resident VM In The Host Memory Doctrine [Done]
 
-**Status**: Done — re-closed after the doctrine correction and the exact-source docs gate.
+**Status**: Done — the co-resident pledge is named and subtracted, and the same argument now runs
+one level up: the toolchain account and the inference partition draw on the one non-virtual-machine
+pool, and the doctrine records the supported-host arithmetic that leaves that pool with no residue.
+**Historical doctrine evidence**: the first closure covers the pledge subtraction and its
+fail-closed observation only; the pool-level argument is covered by this closure instead.
 **Implementation**: `documents/architecture/bounded_host_memory.md`
 **Docs to update**: `documents/architecture/bounded_host_memory.md`
 
@@ -1076,6 +1097,12 @@ VM, so the two lanes are not independent claimants on one host — they are nest
 - The current implementation uses one fixed-path, deadline-bounded Colima producer/parser for both
   accounts. Toolchain effective memory subtracts the conservatively observed active pledge; an
   unavailable, failed, malformed, or exhausting observation fails closed rather than becoming zero.
+- The pledge argument is carried up one level: the toolchain account and the inference partition are
+  shares of the same non-virtual-machine pool, so summing them against that pool is a ledger error
+  rather than two independent declarations, and the exclusive host claim is what keeps them apart.
+- The doctrine records the arithmetic on the supported development host — a `16384 MiB` pool outside
+  the pledge, spent in full by `6144 MiB` of held-back headroom plus `10240 MiB` of inference
+  capacity, leaving no residue the `8192 MiB` toolchain account could be drawn from.
 
 ### Validation
 

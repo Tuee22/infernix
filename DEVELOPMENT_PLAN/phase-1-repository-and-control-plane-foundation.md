@@ -1,8 +1,12 @@
 # Phase 1: Repository and Control-Plane Foundation
 
-**Status**: Active — Sprints 1.1 through 1.19 are closed. Sprints 1.20 through 1.25 remain open
-for Apple engine materialization and runtime evidence, the paired `linux-cpu` cohort, and the
-[Wave Y](cohort-validation-waves.md) attestation. Per-lane attestation lives in
+**Status**: Active — Sprints 1.1 through 1.19 are closed. Sprints 1.20 through 1.39 remain open.
+The machine-independent gate set, the Darwin build-memory measurement, the full Apple engine
+materialization, and both specialized Darwin validators are GREEN on one frozen identity; the
+cohort behind them is blocked by [Sprint 1.38](#sprint-138-a-harness-reservation-cannot-outlive-its-pid-namespace-active),
+which owns the cluster-slot reservation a killed launcher container leaves behind.
+Phase 0 is closed, so the corrected host-memory ledger this phase's build-memory sprints implement
+is settled doctrine. Per-lane attestation lives in
 [cohort-validation-waves.md](cohort-validation-waves.md); superseded surfaces are listed in
 [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md).
 
@@ -15,10 +19,23 @@ for Apple engine materialization and runtime evidence, the paired `linux-cpu` co
 
 ## Phase Status
 
-Sprints 1.1 through 1.19 retain their recorded closure. Sprints 1.20 through 1.25 are Active.
+Sprints 1.1 through 1.19 retain their recorded closure. Sprints 1.20 through 1.39 are Active.
 The closed foundation work establishes the current repository scaffold, the one-binary role
 topology, the typed runtime-config contract, the baked Linux launcher image, the governed
 root-document posture, host-manifest materialization, and the native-only Apple Docker boundary.
+
+Phase 1's head is [Sprint 1.39](#sprint-139-the-harness-completes-its-config-transaction-twice-active).
+Everything ahead of the cohort is GREEN on one frozen identity — the governed Apple build, the whole
+aggregate lint, the full unit suite, the standalone `lint files|docs|chart|proto|plan` and
+`docs check` commands, a repo-wide `git diff --check`, the Darwin build-memory measurement, a
+complete `internal materialize-metal-engines` emitting all seven engine artifacts, and both
+specialized Darwin validators. The chain this paragraph used to describe — the sealed run's
+`PYTHONHOME` naming Poetry's own environment (Sprint 1.27), then the JavaCPP cross-jar the
+loader-closure producer could not resolve (Sprint 1.28) — is closed. The routed `linux-cpu` image
+build now completes end to end, emitting all five linux-native engine artifacts, and the Apple
+cohort reaches per-model inference with twelve of fifteen models returning real output. What remains
+is recorded against the head sprint below rather than here, because a phase-status narrative that
+names a superseded blocker reads as current and is worse than no narrative at all.
 
 **No repo-owned native source.** Repository-owned native implementation is banned in every
 container, including native source embedded in Haskell string literals and compiled with Clang.
@@ -1090,9 +1107,11 @@ closes; NVIDIA per-process accounting remains fail-closed until its later GPU ph
 source: the Audiveris invocation now declines JavaCPP symbolic-link creation, so the extraction cache
 holds no symlink, the sealed payload is relocation-invariant, and neither smoke can perturb it. The
 cache-link normalization subsystem that existed to repair the link is deleted rather than extended.
-Apple engine rematerialization, the fixed production Audiveris cancellation and installed-Python
-source-isolation commands, the installed authoritative smokes, the Apple cohort, and the paired
-source-matched `linux-cpu` cohort remain open.
+Apple engine rematerialization is green on current source, the fixed production Audiveris
+cancellation and installed-Python source-isolation commands both ran green, the closure bounds are
+chosen from all seven measured artifacts, and the five non-pure surfaces the pure regression block
+could not reach now carry coverage. The Apple cohort and the paired source-matched `linux-cpu`
+cohort remain open.
 **Cohort gate**: [Wave Y](cohort-validation-waves.md).
 
 **Implementation**: `src/Infernix/Engines/AppleSilicon.hs`,
@@ -1347,6 +1366,20 @@ packages, without direct FFI, inline native source in another language, or a ren
 
 ### Validation
 
+- the five non-pure surfaces the pure regression block cannot reach now carry coverage. Weak and
+  lazy dylib resolution is exercised through the fixture resolver, which previously modelled a
+  stricter loader than the one that ships: it treated every unresolved install name as fatal, while
+  `firstExistingMachOPath` skips an unresolved `LC_LOAD_WEAK_DYLIB` or `LC_LAZY_LOAD_DYLIB` because
+  `dyld` binds it to null. The fixture now carries the optional witness, and the cases pin that a
+  resolvable optional dependency is still sealed, an unresolved one contributes nothing, and an
+  unresolved required one stays fatal. The canonical-versus-configured comparison is exercised on
+  real files, accepting a tool reached through a symlink, rejecting the same pair under the strict
+  comparator, and rejecting a symlink swapped in at the canonical path. The relocation selection is
+  a named total function over a hydration-kind tag rather than a decision embedded in a
+  region-indexed value no fixture can construct. Closure rpath seeding and the dual
+  executable-authority forms — the `DYLD` and `LD_DEBUG` sealed-run audits sharing one classifier —
+  retain their existing coverage, including the no-provenance, nothing-from-the-generation, and
+  unsealed-non-system-library refusals on both loaders
 - focused unit tests prove the materializer emits no native implementation source and still
   produces complete typed manifests and fail-closed smoke commands
 - `cabal test test:infernix-artifact-transaction --test-show-details=direct` passes the complete
@@ -1399,27 +1432,11 @@ packages, without direct FFI, inline native source in another language, or a ren
 
 ### Remaining Work
 
-- rerun `./.build/infernix internal materialize-metal-engines` to completion so the Apple engine
-  roots and per-engine Python environments are rematerialized from current source
-- run the fixed production Audiveris cancellation command
-  `./.build/infernix internal validate-darwin-audiveris-cancellation`, which is implemented but has
-  never been run; it requires a current valid prior `jvm-native` root created by a green
-  materializer run
-- run the installed-Python source-isolation command and the installed authoritative smokes with the
-  source runtimes unavailable
 - require schema-complete real output for `llm-smollm2-safetensors`, `audio-demucs-htdemucs`,
   `audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`, and `audio-bark-small`,
   and require `image-sdxl-turbo` to return the exact typed refusal derived from the same final
   current-host observation used by `init --force` and `test init`. Changed host facts must change
   the expected `availableMib` rather than preserve a recorded literal
-- choose the final closure-bound values from the measured sizes of all seven artifacts and pin them
-  with positive and overflow tests. The current values were raised to unblock measurement rather
-  than chosen from it, and `jvm-native` is still unmeasured and changes size once the JavaCPP
-  natives are pre-extracted into the artifact, so the bounds remain provisional for one more
-  materialization rather than for lack of measurement
-- cover the surfaces the pure regression block does not reach because they are not pure: the
-  canonical-versus-configured identity comparison, the hydration-witness relocation selection, the
-  dual executable-authority forms, weak and lazy dylib resolution, and closure rpath seeding
 - write helper-side coverage that drives a real bounded command against a synthetic `linux-native`
   generation; until that exists the routed `linux-cpu` lane is the only place the Linux candidate
   re-derivation and a resolver-versus-loader disagreement are actually proven, and they surface
@@ -1432,8 +1449,13 @@ packages, without direct FFI, inline native source in another language, or a ren
 - close the `infernix-unit` load sensitivity rather than attributing it to host load. Every symptom
   is a missed deadline on unchanged source under sustained background CPU load, and whether every
   production cleanup path discharges the Darwin unreaped-zombie-group `EPERM` state correctly has
-  not been proven; a timeout is exactly the path that would expose it
-- complete the Apple `integration`, `e2e`, and `all` gates
+  not been proven; a timeout is exactly the path that would expose it. The current identity's two
+  quiet-host unit runs did not reproduce it, which is absence of the symptom rather than proof of
+  the property
+- complete the Apple `integration`, `e2e`, and `all` gates. These are blocked, not pending: the
+  `integration` gate builds the cluster image, and that build fails inside
+  `internal materialize-linux-native-engines`. [Sprint 1.26](#sprint-126-name-what-the-bounded-command-snapshot-cleanup-bound-observed-active)
+  owns the defect
 - complete the paired source-matched `linux-cpu` cohort and record the
   [Wave Y](cohort-validation-waves.md) attestation
 
@@ -1441,22 +1463,29 @@ packages, without direct FFI, inline native source in another language, or a ren
 
 ## Sprint 1.21: Bounded Host Build Memory Kernel [Active]
 
-**Status**: Active — the bounded-host-build-memory kernel, the complete-claimant account, the
+**Status**: Active — the bounded-host-build-memory kernel, the claimant account, the
 generated per-machine ceiling, the closed Darwin measurement surface, and the authority-local
-single-flight child lifecycle are implemented in current source. What remains is a current-source
-rerun of the Darwin measurement command on the identity Phase 1 closes on.
+single-flight child lifecycle are implemented in current source, and the account is now *admitted*
+against the host rather than only divided from it. The Darwin measurement rerun on the identity
+Phase 1 closes on remains open.
 **Code-side closure**: the kernel, calibration, measured manifest facts, and generated per-machine
 ceiling are implemented. The current source additionally subtracts the active Colima pledge;
-accounts compiler, driver, and worker-helper claims; binds the final Cabal driver/GHC arguments and
-build-only environment to the opaque authority; closes all focused Cabal suite vectors; gives each
+accounts compiler, driver, and worker-helper claims; admits the account against observed
+availability and a foreign-claimant census at mint and again at the child boundary; checks the
+sampled peak against the account; binds the final Cabal driver/GHC arguments to the opaque
+authority and carries no build-only environment cap; closes all focused Cabal suite vectors; gives each
 authority a private serialized child-lifecycle token with nominal region roles; and implements the
 typed Darwin sampler/evidence command. The operator CLI observes the descriptor ceiling, closes
 inherited descriptors, owns a fresh group through exceptional cleanup, and retains the token through
 trusted Cabal-leader reap.
-**Cohort gate**: `apple-silicon` — closed under [Wave AA](cohort-validation-waves.md). Darwin's
-mechanism is a runtime heap cap plus bounded concurrency, and Phase 1 closure does not request
-another Wave AA run.
-**Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`, `infernix.cabal`,
+**Cohort gate**: `apple-silicon` — pending under [Wave Y](cohort-validation-waves.md). Darwin's
+lane engages no operating-system mechanism, so what the gate demonstrates is the account and its
+admission behaving rather than a kernel bound holding.
+**Historical cohort evidence**: [Wave AA](cohort-validation-waves.md) closes only the kernel's
+structure and its generated ceiling; its measurement receipt is withdrawn as a current proof point
+because the command that produced it never compared its sampled peak to the account.
+**Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostClaimants.hs`,
+`src/Infernix/HostTools.hs`, `src/Infernix/HostMemory.hs`, `infernix.cabal`,
 `cabal.project`, `test/compile-fail/cabal.project`, `test/compile-fail/Main.hs`,
 `test/integration/Spec.hs`, `bootstrap/apple-silicon.sh`, `web/package.json`,
 `src/Infernix/HostConfig.hs`,
@@ -1534,8 +1563,8 @@ measurement surface required to validate the otherwise unenforced aggregate.
   DarwinHeapCapMechanism`, consumes the live plan and exact committed jobs/heap/reservation
   observation, checks the complete claimant sum without arithmetic overflow and against the account
   before spawning, and gives fresh scratch-root build/install process groups the exact
-  authority-derived vector. Cabal receives leading `+RTS -M1024M -RTS` and build-only
-  `GHCRTS=-M1024M`; GHC receives final `--jobs` and one ordered
+  authority-derived vector. Cabal receives leading `+RTS -M1024M -RTS`;
+  GHC receives final `--jobs` and one ordered
   `--ghc-options=+RTS -M... -xr... -RTS`. The existing fixed Apple observer samples each owned
   group at a fixed cadence and the typed report names the result **sampled peak aggregate physical
   footprint**, alongside physical/effective memory, active Colima pledge, complete plan/subtotals,
@@ -1556,15 +1585,37 @@ measurement surface required to validate the otherwise unenforced aggregate.
   own exact accounts. Two non-default Apple materializer gates are fixed commands rather than
   caller-supplied Cabal options: `infernix internal validate-darwin-audiveris-cancellation` and
   `infernix internal validate-darwin-installed-python-source-isolation`.
+- **An admitted account, not only a divided one.** `Infernix.HostClaimants` supplies the two
+  observations the doctrine's fourth clause requires, and `ToolchainHostAdmission` is minted only
+  from them: available host memory sufficient to fund the whole account, and a census finding no
+  toolchain claimant outside this authority's own process tree. Availability is conservative per
+  lane — Darwin counts free, speculative, and purgeable pages from the fixed `vm_stat` candidate;
+  Linux takes `MemAvailable` narrowed by the cgroup headroom in force. The census reads `ps` on
+  Darwin and `/proc` on Linux, and its notion of "own tree" runs in **both** directions: a gate
+  invoked through the governed vocabulary observes from inside a Cabal this repository's own CLI
+  started, so its toolchain ancestors are its own and only a process that is neither ancestor nor
+  descendant is foreign. Either observation failing is a refusal that names what it found; a named
+  claimant is left running rather than killed. The observation is re-taken at the child boundary,
+  because the one taken at mint is an instant rather than a lease.
+- **A checked sampled peak.** `mkDarwinBuildMemoryEvidence` refuses a report whose sampled peak
+  reaches or exceeds the account, so the rendered account-to-peak multiple is a checked quantity
+  rather than a number printed beside an exit code of zero.
+- **No build-only environment cap where it does not bind.** The `GHCRTS` environment entry is
+  retired from the toolchain spawn boundary and from the Apple stage-0 build. An RTS image linked
+  without runtime options does not honour an inherited value — it refuses to start under one — so
+  the environment form failed a third-party setup program instead of bounding it. The caps that bind
+  are the invocation-borne ones: the Cabal driver's leading `+RTS` segment and the compiler images'
+  ordered `--ghc-options` segment. The Linux image's pinned proto-plugin steps keep their own
+  per-command value, scoped to commands whose images are built to admit it.
 - **Authority-local single-flight and an owned normal child lifecycle.** The authority and Darwin
   refinement have nominal region roles, and one private token serializes complete package-owned
   lifecycle calls using the same authority. The normal child observes the descriptor bound, uses
   `close_fds` and a fresh process group, retains the token through rank and Cabal-leader reap, and
   kills/reaps the still-owned group on an exception before that reap. This is intentionally not a
   host-global or crash-surviving lease. Independent CLI images, checkouts, and stage-0 bootstraps
-  are unsupported concurrent claimants; the 50% account does not fund overlap and governed
-  workflows must serialize them. Normal success trusts Cabal to await its workers and makes no
-  post-reap descendant/PGID-absence claim.
+  are unsupported concurrent claimants; the 50% account does not fund overlap, and what keeps them
+  apart is the admission census refusing by name rather than a workflow convention. Normal success
+  trusts Cabal to await its workers and makes no post-reap descendant/PGID-absence claim.
 
 Two decisions inside are worth stating rather than leaving implicit.
 
@@ -1637,11 +1688,9 @@ making any ordinary command tolerant.
 
 ### Remaining Work
 
-- rerun the closed `./.build/infernix internal validate-darwin-build-memory` measurement on the
-  source identity Phase 1 closes on, so the sampled aggregate evidence matches that identity rather
-  than an earlier one
 - the named limit stands rather than an unfinished mechanism: Darwin has no enforced aggregate or
-  address-space ceiling, fixed-cadence sampling can miss transient peaks, and every process outside
+  address-space ceiling, fixed-cadence sampling can miss transient peaks, a named foreign claimant
+  is attributed rather than measured and is refused rather than killed, and every process outside
   the measured Cabal group is excluded from both the sample and the account
 
 ---
@@ -1804,6 +1853,14 @@ Inference remains an observer: it never installs or repairs a framework environm
 
 ### Remaining Work
 
+- the producer does not survive its own first routed Linux execution. The `linux-cpu` image build
+  reaches `internal materialize-linux-native-engines` and fails on `python/engines/transformers`
+  with `bounded per-engine Python provisioning failed` whose kernel cause is
+  `runBoundedCommand anchor: user error (bounded-command snapshot cleanup exceeds its global
+  bound)` and an anchor exit of 125. The Apple lane never exercised this: its three Python engine
+  roots hold a readiness marker only, so no large closure ever reached the anchor's snapshot
+  cleanup. [Sprint 1.26](#sprint-126-name-what-the-bounded-command-snapshot-cleanup-bound-observed-active)
+  owns making the refusal diagnosable before the bound itself is touched
 - rematerialize the Apple per-engine Python environments through a completed materializer run
 - require real inference from the exact seven in-budget Apple Python-stdio catalog rows
   (`llm-smollm2-safetensors`, `audio-demucs-htdemucs`, `audio-open-unmix`, `music-mt3-infer`,
@@ -2001,10 +2058,966 @@ operator host-manifest state, temporary manifest rewrites, or unconstrained chil
 
 ### Remaining Work
 
-- rerun the closed `infernix test lint` style gate on the source identity Phase 1 closes on, so the
-  in-process Ormolu/HLint result and the isolated Cabal-format result both belong to that identity
 - no bare host `cabal` vector is a supported validation instruction for this gate; it runs only
   through the closed CLI toolchain vocabulary
+
+---
+
+## Sprint 1.26: Name What The Bounded-Command Snapshot Cleanup Bound Observed [Active]
+
+**Status**: Active — the retirement walk now names its observation, and the first
+measurement it produced shows the bound holding against a real fault rather than against a
+legitimate payload. The routed lane and the Apple cohort gates behind it remain open.
+**Code-side closure**: the refusal carries the exceeded quantity, the observed value, the
+configured bound, the accumulated totals at the crossing, the snapshot root, and what the retiring
+anchor declared when it created the generation; the two quantities refuse with distinct text; the
+sibling closure-copy and depth bounds name their observations too; and focused unit coverage drives
+the production fold over a synthetic root under crossable bounds.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Cluster/Subprocess.hs`, `src/Infernix/Engines/Artifact.hs`,
+`src/Infernix/Engines/Artifact/Internal.hs`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`
+
+### Objective
+
+The bounded-command anchor retires its executable-snapshot root under a global recovery bound over
+two independent quantities — entry count and aggregate bytes. When either is exceeded the kernel
+raises a refusal and the anchor exits 125. That refusal named neither which quantity failed, nor
+what it observed, nor what the bound was.
+
+That is the defect this sprint owns, and it is a doctrine violation before it is an inconvenience.
+The managed-state-transition contract holds that a failed observation is "a refusal naming what it
+found". A refusal that names nothing leaves editing and rebuilding the kernel as the only way to
+learn why a supported lane cannot build. A bound that cannot report its own violation is not an
+enforceable bound; it is an unexplained stop.
+
+Raising the constant first would be the wrong order and is explicitly rejected. The closure bounds
+in this repository are chosen from measured artifacts, and the number that would be raised is
+exactly the number nothing has observed.
+
+### Deliverables
+
+- **The refusal names its observation.** The failure carries which quantity was exceeded, the
+  observed value, the configured bound, the entry and byte totals the walk had reached, and the
+  snapshot root it was walking.
+- **The two quantities are reported independently.** Entry count and aggregate bytes fail with
+  distinct text, because they have different causes and different fixes.
+- **An observation states whether it is exact or a lower bound.** The per-entry checks cross their
+  bound exactly. The bounded directory listing stops as soon as one directory exhausts the walk's
+  remaining entry budget, so it reports that the total is at least one past the bound rather than
+  claiming a total nothing observed. The listing refuses in the walk's own vocabulary instead of
+  through the generic budget message, which named neither the quantity nor the tree.
+- **The bounds travel with the accumulator.** One mint produces the walk's root, its two
+  accumulators, and the two bounds, so the bounded listing and the per-entry check cannot be handed
+  different budgets and a refusal states the configured value it actually compared against.
+- **The retirement states what its own creation admitted.** An anchor retiring its own generation
+  carries the executable size, closure entry and byte totals, and runtime-library totals it declared
+  before creating it. A retirement that exceeds a bound its creation fit is a payload that grew while
+  the target ran, which is a different defect from a payload that was always too large, and the two
+  are otherwise indistinguishable from the message. A recovery walk over a dead owner's generation
+  carries no declaration, because the declaration died with the owner, and that absence is part of
+  the diagnosis.
+- **The sibling creation bounds name their observations too.** The package-closure copy's entry,
+  byte, and depth refusals and the retirement walk's depth refusal state the observed value, the
+  bound, and the path. The same payload reaches both, and leaving a known-undiagnosable neighbour is
+  the debt this sprint exists to pay.
+- **The bound is set from the measurement, not from a guess.** The routed `linux-cpu` lane reports a
+  payload-byte breach at 940574398 bytes against 940572672, at 28134 entries, for a generation whose
+  own creation declared 179 bytes of executable, 2 package closures totalling 10318 entries and
+  228330624 bytes, and 85 retained runtime libraries. The generation's measured peak is 34080 entries
+  and 1041364991 bytes. The constants are therefore **unchanged**: the walk did not stop a legitimate
+  payload, it stopped a generation that grew past what its creation admitted, and raising the bound
+  would discard the observation instead of acting on it.
+  [Sprint 1.27](#sprint-127-give-the-project-its-own-poetry-environment-before-the-sealed-run-chooses-one-active)
+  owns the growth.
+- **The fixture walk names itself.** The retirement walk driven under crossable bounds is the
+  production fold and is therefore destructive, so it refuses a root whose own leaf does not declare
+  it a fixture. Production never reaches that entry point, and a caller that does cannot aim it at a
+  tree that did not opt in.
+- **Helper-side coverage drives a real bounded command against a synthetic generation.** A closed
+  lane value plus a generation lease and an observed mutation root compile into a real bounded
+  command whose executable and retained relative-executable shape are derived from the closed
+  catalog exactly as production derives them, so the fixture supplies a lane rather than a process
+  specification. An `apple-silicon` lease over a synthetic installed generation validates helper-side
+  and runs its retained target; the same generation offered under the `linux-native` lane is refused
+  by the Linux branch. Sprint 1.20 already names this gap; this failure is what the gap costs.
+
+### Validation
+
+- focused unit coverage pins each refusal's text against a synthesized over-bound walk, for both
+  quantities and for the exact and lower-bound forms, driving the same fold production runs rather
+  than a parallel restatement of it, and a funded walk reports its exact totals and empties the root
+- the helper-side fixture is the first in this repository to drive a real bounded command against a
+  synthetic artifact generation, and the property it proves is the contrast between the two lanes
+  over one generation. The Apple lease validates helper-side and runs the generation's own retained
+  target. The `linux-native` lease is refused against the Linux catalog: on a host that does not
+  carry the closed Linux image payload — every host that is not the launcher image — the supervisor
+  stops on that exact catalog path, and where the payload exists the walk reaches the helper's own
+  re-derivation, which produces an identity that is not the Apple one the lease carries. Neither
+  outcome is reachable on the Apple branch, whose target lives inside the generation and whose
+  identity is the payload digest the lease already names. The deeper half is therefore proven on the
+  `linux-cpu` lane, where the same fixture runs inside the launcher image
+- the machine-independent gate set on the corrected identity
+- the routed `linux-cpu` image build reaches and completes
+  `internal materialize-linux-native-engines`
+- the Apple `integration`, `e2e`, and `all` gates, which the current failure blocks
+
+### Remaining Work
+
+- complete the routed `linux-cpu` image build and the Apple `integration`, `e2e`, and `all` gates.
+  Both are blocked behind the corrections this sprint's measurement exposed
+- record the [Wave Y](cohort-validation-waves.md) attestation for both lanes
+
+---
+
+## Sprint 1.27: Give The Project Its Own Poetry Environment Before The Sealed Run Chooses One [Active]
+
+**Status**: Active — code-side landed: the per-engine and shared Python producers create the
+in-project environment through a closed, unsealed provisioning operation before the bounded Poetry
+install, so Poetry's environment choice is the project's rather than the snapshot's. The routed
+`linux-cpu` lane and the Apple cohort remain open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Python.hs`, `src/Infernix/Engines/Provisioning.hs`,
+`src/Infernix/Engines/Provisioning/Internal.hs`, `src/Infernix/Cluster/Subprocess.hs`,
+`test/unit/Spec.hs`
+**Docs to update**: `documents/development/python_policy.md`
+
+### Objective
+
+Poetry resolves the environment it installs into from the running interpreter when the project owns
+none. A sealed bounded run points `PYTHONHOME` at the sealed copy of Poetry's own environment, and
+on the Linux lane that environment *is* a virtual environment, so Poetry adopts the sealed copy as
+the project's environment. A first per-engine install therefore writes the engine's whole framework
+payload — torch, transformers, tokenizers, and the rest — into a generation that is about to be
+retired.
+
+Two consequences follow, and only the second one was visible. The interpreter the readiness marker
+requires is never created, so the environment the lane is building does not exist. And the
+generation grows from the 10318 entries and 228330624 bytes its creation admitted to a measured peak
+of 34080 entries and 1041364991 bytes, so its retirement exceeds the payload-byte bound and the
+image build stops. Raising that bound would have hidden the first consequence behind the second.
+
+The Apple lane never showed it. Its Python home is a real framework installation rather than a
+virtual environment, so Poetry does not adopt it, and its engine environments already exist.
+
+### Deliverables
+
+- **A closed project-environment operation.** `CreatePoetryProjectVenv` renders the configured host
+  interpreter with fixed `-m venv --clear --copies` arguments in the project directory. It is one
+  more closed semantic operation in the provisioning language; no caller supplies an executable,
+  argv, or environment.
+- **It is deliberately unsealed.** The command runs the configured interpreter in place rather than
+  through an executable snapshot, because a virtual environment records the interpreter it was
+  created from, and an ephemeral generation path recorded there outlives the generation that held
+  it. Its closure shape is pinned as carrying no package closures and no runtime libraries, so it
+  cannot acquire a sealed prefix by accident.
+- **Both producers create the environment before the install.** The per-engine producer and the
+  shared-project producer each observe the exact `.venv/bin/python` interpreter under the held
+  project writer and create the environment only when it is absent, so an existing environment is
+  never cleared and the repair path stays idempotent.
+- **The Linux image no longer depends on creating the shared environment itself.** The producer owns
+  the project environment on every lane that consumes one.
+
+### Validation
+
+- unit coverage pins the closed rendering — the configured interpreter, the exact argument vector,
+  and the project working directory — and the closure shape that keeps the command unsealed
+- filesystem coverage proves the producer creates the environment when the interpreter is absent and
+  does not re-create it when it is present
+- the routed `linux-cpu` image build reaches and completes
+  `internal materialize-linux-native-engines`, with the per-engine environments present in the
+  project rather than in a retired generation
+- the Apple `integration`, `e2e`, and `all` gates on the same frozen identity
+
+### Remaining Work
+
+- run the routed `linux-cpu` image build to completion and record its identity
+- complete the Apple cohort and the paired `linux-cpu` cohort under
+  [Wave Y](cohort-validation-waves.md)
+
+---
+
+## Sprint 1.28: Bind A DT_NEEDED Name The Search Cannot Satisfy To The Generation's Own Object [Active]
+
+**Status**: Active — code-side landed: a dependency name the loader search cannot satisfy binds the
+unique object the generation itself carries, and ambiguity fails closed. The routed `linux-cpu` lane
+and the Apple cohort remain open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Engines/Artifact/Loader.hs`, `test/unit/Spec.hs`
+**Docs to update**: none — the declared loader-closure contract is unchanged; this is the closure
+producer matching the loader it models
+
+### Objective
+
+The Linux loader-closure producer resolves each `DT_NEEDED` name through the loader's own search:
+the object's declared `DT_RPATH`/`DT_RUNPATH`, then `ld.so.cache`, then the architecture defaults. It
+also reuses an object already observed in the walk whose `DT_SONAME` matches, because a runtime that
+loads an object by exact path puts that name in the namespace before a later object needs it.
+
+That reuse rule stops one step short. It considers only objects the walk has already reached, not
+the ones the completeness scan has queued but not yet walked. JavaCPP is the measured case:
+Audiveris extracts `libtesseract.so.5.5` and `libleptonica.so.6` into separate jar directories inside
+one configured cache and loads each by absolute path, so `libtesseract` declares
+`DT_NEEDED libleptonica.so.6` under a `$ORIGIN/` runpath that cannot reach the sibling directory
+holding it. Declining JavaCPP's cross-jar alias makes the sealed payload relocation-invariant and
+costs the JVM nothing, because the provider is already in the namespace by the time the dependent
+names it; it costs this producer the path it was searching for.
+
+### Deliverables
+
+- **The seeded objects are part of the namespace the walk models.** When the ordinary search is
+  exhausted, a unique object among the completeness scan's own seeds whose `DT_SONAME` matches the
+  name satisfies the edge, and the resolution is recorded like any other.
+- **Only as a last resort.** The rule is consulted after the declared directories, the cache, and the
+  defaults, so every edge that resolves by path keeps resolving by path and no seeded object can
+  displace a system library the loader would have bound.
+- **Ambiguity fails closed.** Two seeded objects claiming one SONAME are not interchangeable
+  evidence, exactly as for an already-observed name, and the refusal names both paths and the
+  requester.
+- **A seed that cannot be inspected contributes no candidate** rather than failing the walk: it is on
+  no resolution path unless its SONAME matches, and the walk reaches it on its own as a scan seed,
+  where an unreadable object fails closed with its own diagnosis.
+- **A rebound provider is walked context-free.** The rule holds precisely because something else
+  mapped the provider by absolute path, so the requester is not its loader and the runtime does not
+  walk the requester's inherited `DT_RPATH` for it. Queuing the provider with that stack would
+  resolve its own edges in a context the runtime never uses, and because the queue is processed
+  before the remaining scan seeds, that context would win over the provider's own context-free seed
+  entry — sealing a library outside the generation in place of the one the process loads.
+- **The seeds are read once.** Inspecting a seed reads and digests it, so the SONAME index is built
+  on the first name the search cannot satisfy and reused for every later one rather than swept per
+  name.
+
+### Validation
+
+- a filesystem fixture writes two synthetic `ET_DYN` objects into sibling directories under one
+  closure root, with the dependent naming the provider's SONAME under a `$ORIGIN/` runpath that
+  cannot reach it, and proves the edge binds the provider's canonical path. The fixture images carry
+  no `PT_INTERP` and no system dependency, so the walk is machine-independent
+- a second provider claiming the same SONAME makes the same walk fail closed, naming the ambiguity
+  and the requester
+- a third fixture gives the requester an inherited `DT_RPATH` reaching a decoy outside the closure
+  that carries the same SONAME as an object inside it, and proves the rebound provider's own edge
+  binds the object inside the generation. The decoy is reachable only through the context the rebind
+  must not propagate
+- the routed `linux-cpu` image build reaches and completes
+  `internal materialize-linux-native-engines`
+- the Apple `integration`, `e2e`, and `all` gates on the same frozen identity
+
+### Remaining Work
+
+- run the routed `linux-cpu` image build to completion and record its identity
+- complete the Apple cohort and the paired `linux-cpu` cohort under
+  [Wave Y](cohort-validation-waves.md)
+
+---
+
+## Sprint 1.29: Keep The Test Lane's Heap Ceiling Off The Host Inference Daemon [Active]
+
+**Status**: Active — code-side landed: the integration harness starts the Apple host engine daemon
+from the installed operator CLI instead of re-executing its own image, so the daemon no longer
+inherits a non-unit test component's baked heap ceiling. The routed cohort rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `test/integration/Spec.hs`, `test/unit/Spec.hs`
+**Docs to update**: none — [../documents/architecture/bounded_host_memory.md](../documents/architecture/bounded_host_memory.md)
+already declares the host inference daemon a host-reserve claimant carrying no toolchain ceiling;
+this is the harness matching that declaration
+
+### Objective
+
+The declared ledger is explicit that the host inference daemon is started by the validation surface
+and carries no toolchain heap ceiling, because it is a host-reserve claimant rather than a toolchain
+one. The Apple harness nonetheless started it by re-executing itself, and every non-unit test
+component in this package is linked with a baked 1024 MiB heap cap it cannot be talked out of. The
+daemon therefore ran inference under the test lane's ceiling.
+
+The first cohort attempt that got far enough to notice found it exactly where the ledger says it
+must not be: the first model completed, and the consumer loop then died with a heap overflow at
+1024 MiB, leaving every later model without a result. The suite's own diagnosis for a missing result
+names an OS OOM-kill or a stall, so the real cause — an inherited ceiling — was reported as neither.
+
+### Deliverables
+
+- **The daemon and the harness are different process images.** The harness resolves the installed
+  operator CLI under the configured build root and starts that; the operator CLI carries the shipped
+  address reservation and deliberately no toolchain heap cap.
+- **Its absence is a named refusal.** A missing or non-executable operator CLI fails closed naming
+  the path and the governed build that produces it, rather than silently falling back to an image
+  that would run inference under a test ceiling.
+- **The harness reports which image it started**, so a cohort receipt records the daemon's identity
+  rather than leaving it inferred.
+- **A source assertion keeps the two apart.** The unit suite pins that the harness resolves the
+  installed operator CLI and no longer re-executes itself for the daemon.
+
+### Validation
+
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, with per-model results published for every routed
+  model rather than only the first
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.30: Size The Shipped Image's Address Reservation For The Host Reserve [Active]
+
+**Status**: Active — code-side landed: the shipped operator executable reserves address space for the
+host reserve its daemons run in rather than for a toolchain control slot. The routed cohort rerun is
+open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `infernix.cabal`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`
+
+### Objective
+
+The shipped image declares a bounded address-space reservation so it does not take the runtime's
+default 1024.65 GiB, which is what makes an address-space ceiling installable at all. That
+reservation was set to the same 1024 MiB as a toolchain control slot.
+
+Address space is not resident memory, but the reservation is also the only thing bounding this
+image's heap growth: the runtime cannot grow the heap past the address space it reserved. The
+shipped binary is what the validation surface starts as the host inference daemon, and that daemon is
+a host-reserve claimant which the ledger says carries no toolchain ceiling. Sized as a control slot,
+it gave the daemon one anyway: the daemon started, registered its fourteen executable models,
+subscribed, and died with `out of memory` on the first routed result.
+
+### Deliverables
+
+- **The reservation is sized for the host reserve.** The shipped executable reserves 16384 MiB of
+  address space — two orders of magnitude below the runtime default the reservation exists to avoid,
+  and above any request or result payload the daemon holds.
+- **It stays a reservation.** The value bounds address space rather than resident memory, and the
+  resident behaviour of inference remains governed by the memory grant and its enforcer rather than
+  by this number.
+- **A unit assertion pins it** to the host-reserve sizing and rejects a return to the control-slot
+  value.
+
+### Validation
+
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, with the host inference daemon holding routed
+  results rather than stopping on the first one
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.31: Measure The Same Availability On Both Lanes [Active]
+
+**Status**: Active — code-side landed: the Darwin availability observation counts the same quantity
+the Linux lane reads from `MemAvailable`. The routed cohort rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/HostClaimants.hs`, `test/unit/Spec.hs`
+**Docs to update**: `documents/architecture/bounded_host_memory.md`
+
+### Objective
+
+The toolchain account is admitted against an observation of available host memory. Linux takes the
+kernel's own `MemAvailable`, which counts reclaimable page cache. Darwin counted free, speculative,
+and purgeable pages and deliberately excluded inactive ones.
+
+Those are not the same quantity, and the difference is not a margin. Darwin's inactive pages are
+clean or backed, and the kernel hands them over on demand; after any stage that touches the
+filesystem the kernel holds most of the machine as inactive cache. The observation therefore
+collapses toward zero on a host with tens of GiB reclaimable: a multi-stage validation run passes its
+early stages, fills the cache doing so, and is then refused at every later stage on a machine that
+has not run out of anything. Measured on the development host: 946 MiB reported available with
+roughly eighteen GiB of inactive pages resident.
+
+Excluding them was not the conservative direction of one measurement; it was a second measurement.
+
+### Deliverables
+
+- **One quantity, both lanes.** Darwin counts free, speculative, purgeable, and inactive pages, which
+  is `MemAvailable` expressed in the counters `vm_stat` publishes. Active and wired pages stay
+  excluded on both lanes.
+- **The missing-counter refusal covers the new counter.** A `vm_stat` payload without its inactive
+  row is a named refusal rather than a smaller availability, exactly as for the counters already
+  read.
+- **The failure direction is unchanged.** Understating availability refuses a build that would have
+  fitted and overstating it admits one that will not; the foreign-claimant census remains the other
+  half of the admission, and neither half is weakened.
+
+### Validation
+
+- focused unit cases pin the new total against a fixed `vm_stat` payload and the named refusal for a
+  payload missing the inactive counter
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, whose later stages are admitted on a host that has
+  cache but not exhaustion
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.32: An Empty Group Snapshot Is Not An Absent Group [Active]
+
+**Status**: Active — code-side landed: an empty membership snapshot asks the authoritative liveness
+question and resamples inside the same fixed deadline instead of declaring the enforcer unavailable.
+The routed cohort rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Runtime/CappedEngine/FixedObserver.hs`
+**Docs to update**: none — [../documents/architecture/bounded_inference_memory.md](../documents/architecture/bounded_inference_memory.md)
+already requires a live enforcer for every capped run; this is the observation matching the rule it
+serves
+
+### Objective
+
+The capped-engine enforcer samples the inference process group's resident footprint through a
+complete `/usr/bin/top` snapshot. It refuses to run inference without a live enforcer, which is
+correct: an unenforced run is exactly what the memory-safety doctrine forbids.
+
+`top` samples over an interval, and a snapshot can omit a member that is live both before and after
+it. The observer already handles that turnover from one direction — a member that fails between the
+snapshot and its `footprint` call is rechecked through a fresh complete snapshot — but an *initial*
+snapshot with no members at all was terminal. A routed Apple run therefore ended with the enforcer
+declared unavailable and the inference terminated while its process group was alive throughout.
+
+This is the same rule the process-group lifecycle already states from the other side: an absent
+observation is not absence evidence.
+
+### Deliverables
+
+- **An empty snapshot consults liveness rather than concluding from silence.** A group with no live
+  member left is terminal evidence the caller settles; a group that still has one is resampled.
+- **The resample is inside the same fixed deadline.** The deadline is what bounds the retry, so the
+  refusal still arrives, and it now names an emptiness that outlived the group's own liveness rather
+  than one sample that missed it.
+- **There is no pause between attempts and none is needed.** Each attempt is a complete `top`
+  snapshot and a liveness probe, so the loop is paced by the observations it makes rather than by a
+  wait this kernel is not allowed to take: raw delays outside the readiness kernel are exactly what
+  the style gate forbids, because a poll that waits is a readiness wait wearing another name.
+
+### Validation
+
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, with every routed model reaching a terminal result
+  rather than one ending on an enforcer the sampler could not see
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.33: The Native Artifact Marker Is A Line, Not The Whole Stream [Active]
+
+**Status**: Active — code-side landed: the artifact marker is recognised as a line of the runner's
+standard output, exactly one is the contract, and more than one fails closed. The routed cohort
+rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Runtime/Worker.hs`
+**Docs to update**: none — the realness contract already requires a real output or a refusal; this is
+the consumer reading the protocol the runners actually speak
+
+### Objective
+
+A native runner announces the artifact it wrote through a fixed marker. The consumer matched that
+marker as a prefix of the entire trimmed standard-output stream, which recognises it only for the
+runners that say nothing else.
+
+A native runner is a real upstream program and prints what it prints. The Core ML basic-pitch runner
+announces the file it is predicting and the shape of each tensor before it announces the artifact, so
+its marker was never recognised: the whole stream, marker included, was carried into the result as
+though it were an object reference. The routed lane caught it as what it is — a local filesystem path
+in a field whose contract is a bucket key — after the artifact families that upload correctly had
+already passed.
+
+### Deliverables
+
+- **The marker is a line.** The consumer scans the runner's standard-output lines for the fixed
+  prefix rather than requiring the stream to begin with it, so a runner's own diagnostics no longer
+  hide the artifact it produced.
+- **Exactly one marker is the contract.** None means the runner returned inline output, which is
+  unchanged. More than one is a runner producing several artifacts through a protocol that names
+  one, and that fails closed with a named refusal rather than picking one.
+
+### Validation
+
+- focused `unit` fixtures over the marker scan: one marker line, real runner diagnostics ahead of
+  it (the measured Core ML basic-pitch shape), no marker at all, two markers, and surrounding
+  whitespace
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, with every artifact family returning an
+  `infernix-demo-objects` object reference rather than a local path
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.34: A Sealed Artifact Is Not A Cache Directory [Active]
+
+**Status**: Active — code-side landed: the runtime cache a real library keeps is pointed outside the
+sealed generation, so an artifact that served one request is still the artifact its manifest names.
+The routed cohort rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Runtime/CappedEngine/Internal.hs`
+**Docs to update**: none — the artifact contract already requires the generation's payload to match
+its manifest; this is the runtime honouring it
+
+### Objective
+
+A validated engine artifact is sealed: its payload digest is recorded in its manifest and rechecked
+before every use. The closed Apple runtime environment already sets `PYTHONDONTWRITEBYTECODE`, so the
+interpreter writes no `.pyc` into the payload.
+
+That is not every cache a real library keeps. numba, which librosa imports, writes its
+compiled-function index and object files into a `__pycache__` directory beside the source it
+compiled and honours only its own cache-directory setting. Running one Core ML request therefore
+left `.nbi` and `.nbc` files inside the generation, and the next request rejected the artifact
+because its payload no longer matched its manifest. The artifact was effectively single-use, and the
+routed lane found it on the second pass through the same model.
+
+### Deliverables
+
+- **The cache lives outside the generation.** The closed Apple runtime environment points numba's
+  cache at the governed scratch root the run already carries, so the seal stays exact and the cache
+  still does its job across runs.
+- **It is part of the closed vocabulary.** The name is rendered by the kernel alongside the
+  interpreter's own settings and is stripped from the inherited environment like the rest, so it is a
+  declared value rather than an ambient one.
+
+### Validation
+
+- focused `unit` fixtures over the rendered environment: the names it renders agree with the list
+  the inherited filter drops, the Numba cache resolves under the supplied scratch root and not
+  under the sealed install root, and the bytecode and user-site refusals survive
+- the machine-independent gate set on the corrected identity
+- the Apple `integration`, `e2e`, and `all` gates, with an artifact serving repeated requests and
+  still validating
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- a generation already mutated by a previous run cannot be repaired by re-running the materializer:
+  it refuses, correctly, on the digest mismatch it observes, and the invalid root has to be removed
+  before a fresh one is built. Whether that refusal should offer a replacement path is not settled
+  here
+- rerun the Apple cohort and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the paired `linux-cpu` cohort on the same frozen identity
+
+---
+
+## Sprint 1.35: The Nested Fixture Compiler Is Named, Not Searched For [Active]
+
+**Status**: Active — code-side landed: the nested compile-fixture build names its compiler by
+absolute path on the command line instead of leaving the project file's `with-compiler:` to resolve
+through the child search path. The routed `linux-cpu` rerun is open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `test/compile-fail/Main.hs`
+**Docs to update**: none — [../documents/development/no_env_vars.md](../documents/development/no_env_vars.md)
+already forbids resolving a tool by bare name through an ambient search path; this is the nested
+surface obeying it
+
+### Objective
+
+The compile-fixture suite already resolves `cabal` to an absolute path from a fixed candidate list,
+because a bare program name is resolved against whatever search path a child happens to have. It
+then left the compiler to the nested project file's `with-compiler: ghc-9.12.4`, which is exactly
+that ambient resolution under another name.
+
+It worked on the Apple lane and failed in the `linux-cpu` launcher image, where the nested Cabal
+reported that it could not find a compiler that the image demonstrably carries. Which search path
+the child ended up with is the wrong question: depending on one here is the defect, and naming the
+compiler removes the dependency rather than explaining it.
+
+### Deliverables
+
+- **The compiler is named on the command line.** `--with-compiler` carries an absolute path resolved
+  from a fixed candidate list, preferring the pinned version so a host with several compilers still
+  gets the one the project pins, and the command line takes precedence over the project file for the
+  same reason the memory account is passed there.
+- **Its absence is a named refusal** listing the fixed roots that were searched, rather than a
+  downstream complaint from a nested tool about a program name.
+
+### Validation
+
+- `infernix test unit` on the Apple lane, whose compile-fail suite exercises every positive and
+  negative fixture through the changed invocation
+- the same suite inside the `linux-cpu` launcher image, which is where the ambient dependency
+  actually bit
+- the paired `linux-cpu` cohort on the same frozen identity
+
+### Remaining Work
+
+- rerun the `linux-cpu` lane and record its [Wave Y](cohort-validation-waves.md) attestation
+- complete the Apple cohort on the same frozen identity
+
+---
+
+## Sprint 1.36: A Snapshot Confirms Its Own Payload Instead Of Trusting A Timestamp [Active]
+
+**Status**: Active — corrected and confirmed on both lanes. The payload digest walks the generation
+twice and requires the two walks to agree, replacing a filesystem timestamp comparison that held on
+APFS and not under the `linux-cpu` launcher image's overlay. `PASS: descriptor snapshot rejects
+directory and symlink mutation` now holds inside the `linux-cpu` launcher image, where it failed, and
+the Apple suite still passes. The remaining cohort legs are open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Engines/Artifact/Internal.hs`, `test/artifact-transaction/Spec.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`
+
+### Objective
+
+The artifact payload snapshot walks a generation and digests it. Each entry is read through a
+descriptor anchored to its parent and checked for stability as it is read, which catches a path
+substituted underneath the walk. It does not catch an entry mutated *after* the walk has already
+read it — the walk has moved on, and what remained was the enclosing region's comparison of the
+parent directory's modification and status-change times.
+
+That comparison is a property of the filesystem rather than of the code. The `linux-cpu` launcher
+image proved it: a fixture replaces an already-read symlink with one pointing elsewhere, same length
+and so the same `st_size`, and the walk accepts the snapshot. The Apple lane rejects it because
+replacing a directory entry moves the parent's timestamps far enough to be seen; the container's
+overlay does not. The guarantee held on the lane that developed it and not on the lane that ships
+the product.
+
+The observer that the fixture pauses on fires *after* the symlink has been read and validated, which
+is what settles the question: this is not the fixture depending on an incidental timestamp, it is a
+real gap in a guarantee the doctrine implies.
+
+### Deliverables
+
+- `digestEngineArtifactPayloadDescriptor` walks the generation twice and requires the two digests to
+  agree, refusing with a message naming both and the root when they do not. The canonical record is
+  deterministic in an entry's type, relative path, permission bits, byte count and content — it
+  carries no timestamp and no inode — so an unchanged generation digests identically, and a mutation
+  landing between the recording walk's read of an entry and the confirming walk's read of it changes
+  the second digest whatever the filesystem's timestamp resolution
+- the three descriptor-snapshot fixtures pause one-shot, matching the growth fixture that already
+  did: a confirming walk that blocked on the recording walk's resume would deadlock rather than
+  confirm
+
+The cost is a second traversal, bounded by the same `maximumArtifactSnapshotBytes` as the first. It
+is paid on the materialization, activation, and startup-reconciliation paths that digest a payload
+and on no per-request path — neither the engine runners nor the runtime tree digests a payload at
+all. It is worth stating what this still does not buy: the digest is not atomic. A mutation landing entirely before the recording walk or entirely
+after the confirming walk is outside the window either walk can observe, and exclusive ownership of
+the generation root remains what bounds that.
+
+### Validation
+
+- the `artifact-transaction` suite inside the `linux-cpu` launcher image, which is where the case
+  failed and where the timestamp path demonstrably cannot catch it
+- the same suite on the Apple lane, which must still pass and must no longer depend on APFS
+  timestamp resolution to do so
+- the machine-independent gate set on the corrected identity
+- the paired cohort on the same frozen identity
+
+### Remaining Work
+
+- confirmed: the full `infernix-artifact-transaction` suite passes inside the `linux-cpu` launcher
+  image, and the Apple suite is unchanged. Worth recording that the Apple lane never exercised the
+  new mechanism — an instrumented run showed walk 1 throwing before the comparison is reached, so
+  APFS catches the mutation by the older path and only the container lane proves the correction
+- the paired `linux-cpu` cohort beyond the `unit` gate is not yet run
+
+---
+
+## Sprint 1.37: The Bounded-Build-Memory Fixture Assumes A Process Image It Can Never Have [Active]
+
+**Status**: Active — corrected and confirmed. The enforced-lane address-space fixture derives its own
+floor plan and states its cases against the limit the lane actually installs, rather than against an
+unbounded address space that the governed entrypoint guarantees it will not have. The `linux-cpu`
+`unit` gate now passes end to end — all six Haskell suites plus 83/83 web tests. The remaining cohort
+legs are open.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `test/unit/Spec.hs`
+**Docs to update**: none — [../documents/architecture/bounded_host_memory.md](../documents/architecture/bounded_host_memory.md) already states the inheritance this corrects to
+
+### Objective
+
+The `linux-cpu` `unit` suite fails its bounded build-memory child:
+
+```
+requireBoundedBuildMemory refuses an unbounded address space and names the spawning surface
+```
+
+The fixture expects `requireBoundedBuildMemory` to refuse before a ceiling is installed. It does not,
+and the measured reason is that the process image is already bounded when the fixture starts. Made to
+name what it observed, the assertion reports a soft address limit of **14187 MiB** against a derived
+per-process ceiling of 18432 MiB — and the container lane's generated `cabal.project.local` commits
+exactly `-xr14187M`, `-M4729M`, `jobs: 4`.
+
+The chain is the intended one. `infernix test unit` runs the governed toolchain through
+`withToolchainSpawnAuthority` and `withBoundedToolchainChild`
+(`src/Infernix/CLI.hs:1788`, `:1808`), which installs the derived ceiling on the CLI process and
+spawns Cabal inside that bracket; Cabal's test binary and the binary's own self-exec'd fixture child
+each inherit it across `exec`. Inheritance is the doctrine working, not failing — the caller's outer
+assertion names inheritance as one of the properties this child proves.
+
+So the defect is the fixture's, and it is a defect of the kind worth naming: an assertion that can
+only hold when the code under test is run in a way the repository forbids. A bare `cabal test` gives
+the pristine unbounded image the negative case wants; the supported entrypoint never can. The same
+assumption sits under the three assertions after it — the install, the observation, and the
+lower-only preservation all compare against a plan ceiling wider than the inherited limit, so each
+would have failed in turn.
+
+### Deliverables
+
+- the enforced-lane fixture derives its own **floor plan** — the per-process heap floor times the
+  address-space multiplier, the tightest ceiling a plan can carry — instead of the caller's wider
+  plan. Any lane able to host this toolchain installs a limit above that floor, so the refusal, the
+  install, the observation, and the lower-only preservation are each exercised against a real
+  inherited bound rather than against its absence
+- a guard assertion states the relationship the rest of the fixture needs, naming the observed limit
+  and the floor ceiling, so a lane too small to represent the case fails by saying so
+- the refusal and guard assertions name the observed quantity and the bound they compared it
+  against, which is what [managed state transitions](../documents/architecture/managed_state_transitions.md)
+  asks of every bound and what this assertion should have done from the start
+
+### Validation
+
+- the `unit` suite inside the `linux-cpu` launcher image, which is the only lane that resolves the
+  enforced branch and therefore the only one that runs this fixture at all
+- the Apple `unit` gate, which resolves the unenforced branch and must stay green
+- the paired cohort on the same frozen identity
+
+### Remaining Work
+
+- confirmed: the `linux-cpu` `unit` gate passes end to end (`compile-fail`, `artifact-transaction`,
+  `apple-materializer`, `capped-engine-observer`, `execution-plan-internal`, `unit`, and 83/83 web)
+- the paired `linux-cpu` cohort beyond the `unit` gate is not yet run, so the integration and
+  end-to-end surfaces may hold more
+
+---
+
+## Sprint 1.38: A Harness Reservation Cannot Outlive Its PID Namespace [Active]
+
+**Status**: Active — diagnosed and reproduced; a correction was designed, implemented, adversarially
+reviewed, and **reverted unbuilt**. A killed launcher container leaves a cluster-slot reservation
+that the next container can neither verify nor retire, so the slot wedges with no supported recovery
+command. The design below survived review and is worth building; the implementation of it did not,
+and no host gate could be run against it while the paired-lane cohort held the host. Nothing from
+that attempt remains in the tree.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Cluster.hs`, `src/Infernix/ProcessIdentity/Internal.hs`
+**Docs to update**: `documents/architecture/managed_state_transitions.md`
+
+### Objective
+
+A killed `infernix test all` inside the `linux-cpu` launcher container left this reservation in the
+mounted `.data`:
+
+```
+version=2
+boot-identity=87b8d539-195c-42b9-87f9-1fa4600cef1f
+process-start-time=1638891
+owner=harness
+pid=7
+process-group=7
+authorized-child-group=26555
+config-transaction=restore-pending
+```
+
+Every subsequent command refused:
+
+```
+refusing cluster-slot mutation because the reservation owner identity cannot be verified at
+/workspace/.data/runtime/locks/harness-cluster-slot.reserved; wait for its process group to exit or
+inspect the reservation before retrying
+```
+
+`inspectHarnessReservationOwner` probes the recorded process group and treats only `ESRCH` as
+evidence that recovery is safe, because within one PID namespace a mismatched leader may still have
+live descendants in that group. That reasoning is correct on a host and wrong across a container
+boundary. The recorded `pid`/`process-group` are namespace-local, and a fresh launcher container
+almost always has a live process at the same small PGID, so the probe succeeds; the birth identity
+then mismatches, which yields `HarnessReservationOwnerUnverifiable` rather than
+`HarnessReservationOwnerDefinitelyDead`. The safe-recovery branch is unreachable on this lane.
+
+The `boot-identity` field cannot break the tie either. It comes from
+`/proc/sys/kernel/random/boot_id` (`src/Infernix/ProcessIdentity/Internal.hs:1156`), which inside a
+container is the *host kernel's* boot id — the same value for every launcher container on the same
+Colima VM. So the triple that fences the slot is identical in shape across containers and
+discriminates only by `process-start-time`, which proves the leader differs but never proves the old
+group is gone.
+
+The old group *is* gone in the case observed. But **the objective's own premise above is too strong,
+and the correction deliberately does not implement it.** "Its PID namespace was destroyed with the
+container" is true of the container that was killed; it is *not* implied by the observation
+"the recorded namespace is not mine". `bootstrap/linux-cpu.sh` drives the launcher with
+`docker compose run --rm`, which creates a **new container per invocation** — no name conflict, no
+serialization — so two launcher containers on one checkout are trivially concurrent (`test all` in
+one terminal, `cluster status` in another). Under the literal rule the second container would
+classify the **live** first container's reservation as definitely dead; `reconcileInterruptedHarnessState`
+runs before dispatch, so it would restore `./infernix.dhall` from `.harness-backup` while the first
+run is still using it, and a concurrent `test all` would then seize the slot and tear down the live
+cluster. A foreign namespace is not a dead namespace. This is recorded so a later reader does not
+"simplify" the composed rule back to the one stated here.
+
+### Deliverables
+
+The record was missing the PID namespace, which Linux exposes as an nsfs inode on
+`/proc/self/ns/pid`. What that discriminator licenses is exactly one thing — discarding the
+process-group probe, whose `ESRCH`/`EPERM` answers are meaningless across the boundary. The death
+comes from a second, composed fact:
+
+- record `owner-pid-namespace` on the reservation (parsed nsfs inode; three-valued
+  unrecorded/unavailable/observed), observed once at seizure and constant for the owner's lifetime
+- the reservation owner additionally holds a kernel file lock at
+  `.data/runtime/locks/harness-cluster-slot.held` for its whole process lifetime — taken before the
+  reservation is published, released only after it is removed. The kernel drops it when the holder
+  dies and it contends across PID namespaces on one kernel, which is the only cross-namespace
+  liveness fact reachable through the allowed packages
+- **foreign namespace *and* lock unheld** is `HarnessReservationOwnerDefinitelyDead`. A held lock is
+  unverifiable, never verified-alive: authorization compares process-group *numbers*, so granting
+  authority across a namespace boundary would let a stranger at the recorded pgid act as the harness
+- same-namespace behaviour is unchanged and moved *verbatim* into
+  `inspectOwnerWithinRecordedNamespace`, so "unchanged" is checkable by diff. Darwin's namespace
+  observer is an explicit absence, so the foreign arm is unreachable on that lane by construction
+- `infernix cluster reclaim-slot [--force-owner-pid PID]`, exempt from the pre-dispatch
+  interrupted-state reconcile, with the refusal now printing every observed fact and naming it
+
+Three alternatives were considered and rejected, recorded so they are not retried:
+
+- **bumping the reservation to `version=3`** — `parseHarnessReservation`'s version dispatch makes an
+  unknown version a hard "unreadable" `ioError` for *every* configured command, and `.data` is
+  bind-mounted between the Apple host binary and the container binary, so a bump breaks the older
+  side of the shared mount. The namespace is an additive absence-tolerant field under `version=2`
+- **`getFileStatus`/`getSymbolicLinkStatus` on the magic link** — this repository's dominant idiom,
+  and wrong here: it returns the *procfs* link's own inode, a PID-namespaced number, not the nsfs
+  namespace identity. `readSymbolicLink` and the kernel's own `pid:[<inode>]` token are used instead
+- **stamping the namespace onto bounded-command activity leases** — deferred. It is a second on-disk
+  format, and that ledger already fails closed with a specific message on a pid collision
+
+The already-wedged `version=2` record quoted above carries no namespace at all, so **no
+discriminator can retire it**. `reclaim-slot` is the only recovery path for records already on disk;
+its `--force-owner-pid` is transcribed out of the record so stale muscle memory cannot fire it, and
+it supplies only the record's identity — the bounded-command quiescence proof and the
+config-transaction reconciliation still run and still fail closed.
+
+### Validation
+
+- kill a `test all` inside the launcher image, then prove the next container retires the reservation
+  and reports the dirty cluster instead of refusing
+- the same fixture on the Apple host lane, where the namespace is stable and the existing
+  `ESRCH`-only rule must still hold
+- the held-lock fixture: an alien `owner-pid-namespace` on a reservation whose owner still holds the
+  lifetime lock must **not** be retired — this is the sibling-container guard
+- the alien-record fixture on Darwin: a record carrying `owner-pid-namespace=pid:[1]`, a token no
+  Darwin process could have written, must classify exactly as it does today and must never be retired
+- the paired cohort on the same frozen identity
+
+### Remaining Work
+
+- reproduced by hand and cleared by hand: the stale reservation was removed manually after
+  inspection, after which `cluster status` reported the dirty cluster correctly
+  (`clusterOwner: harness`, `lifecycleStatus: in-progress`, `lifecyclePhase: publish-harbor-images`)
+- **the correction is not in the tree.** It was written with its unit fixtures, reviewed by three
+  independent adversarial passes, and reverted whole after they returned one critical and three
+  major findings. The critical one: the implementation folded "one side recorded a namespace and the
+  other did not" into the same bucket as "cannot compare", which routes to the namespace-local
+  `ESRCH` probe — and because `compose.yaml` bind-mounts `.data`, an Apple host record read inside a
+  container (or the reverse) takes that path and classifies a **live** owner dead, deletes its
+  reservation, and leaves the operator's `./infernix.dhall` clobbered with an orphaned
+  `.harness-backup`. The reverted diff is kept outside the tree at
+  a session-local scratchpad outside the repository, which does not survive the session — the
+  design in Deliverables above is the durable record, and it is deliberately complete enough to
+  rebuild from without that diff
+- the first design this sprint recorded was worse still and is kept in Deliverables as a rejected
+  alternative: treating "the recorded namespace is not mine" as death is unsafe on its own, because
+  `docker compose run --rm` starts a fresh container per invocation, so a live sibling launcher is
+  also "not mine"
+- two residuals, named rather than papered over: **(a)** a sibling container whose reservation owner
+  died but whose bounded-command descendants are still alive presents a free lock and a foreign
+  namespace, so its reservation is retired where today it refuses — strictly narrower than the
+  permanent wedge it replaces, but a real widening; **(b)** the bounded-command activity ledger still
+  carries the identical namespace-local assumption, so the wedge can move one gate downstream rather
+  than disappear. Reproduce (b) by leaving a lease whose recorded owner group collides with a live
+  pid in a fresh container
+- worth recording that the rest of the machinery behaved exactly as designed around this: the dirty
+  cluster was detectable and reconcilable, and `cluster down` refused to retire a harness-owned
+  cluster through the operator path
+
+---
+
+## Sprint 1.39: The Harness Completes Its Config Transaction Twice [Active]
+
+**Status**: Active — reproduced with full evidence, not corrected. Every gate in the `linux-cpu`
+cohort passed and the run still exited non-zero, in the harness's own exit path after all validation
+was already complete.
+**Cohort gate**: [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`
+**Docs to update**: none yet — the correction decides whether
+[../documents/architecture/managed_state_transitions.md](../documents/architecture/managed_state_transitions.md) needs a line
+
+### Objective
+
+A full `linux-cpu` `infernix test all` passed every gate it contains — the aggregate lint, all seven
+Haskell suites, 83/83 web unit tests, the integration suite, and 16/16 Playwright end-to-end tests
+including the per-model smoke matrix over the whole catalog — then tore the cluster down cleanly and
+exited **1**:
+
+```
+16 passed (5.9m)
+cluster-down phase: delete-kind-cluster - deleting the Kind cluster after retained runtime data handling is complete
+cluster down complete
+cluster down complete
+user error (refusing to complete a harness config transaction from state HarnessConfigRestored)
+```
+
+The doubled `cluster down complete` is the evidence. The integration suite legitimately cycles the
+cluster three times earlier in the run, and each of those emits the line exactly once; only the final
+teardown emits it twice, and only there does the refusal follow.
+
+`completeHarnessConfigTransaction` accepts `HarnessConfigRestorePending` or
+`HarnessConfigRemovePending` and writes `HarnessConfigRestored`. Reaching it a second time finds the
+state it just wrote and refuses. The refusal is the state machine working: an already-completed
+transaction is not completable again, and saying so is better than restoring a second time over
+whatever is now on disk. What is wrong is that the exit path arrives there twice.
+
+`src/Infernix/CLI.hs:494` calls it exactly once, through
+`finallyPreservingPrimary`, so the second arrival comes from somewhere else. Two candidates, neither
+yet eliminated:
+
+- the harness wrapper is entered twice at teardown, so its `finally` fires twice
+- a reconcile path completed the transaction first, and the wrapper's own completion then found it
+  already restored — `recoverHarnessConfigTransaction` also writes `HarnessConfigRestored`
+
+### Deliverables
+
+Not yet written. The correction is not simply widening the accepted states: making
+`HarnessConfigRestored` acceptable would turn a real double-completion into a silent one and lose the
+guard that a restore does not run twice over the operator's config. The exit path should arrive once,
+and if two arrivals are legitimate then the second must be a proven no-op rather than a second
+attempt.
+
+### Validation
+
+- a `linux-cpu` `infernix test all` from a clean slot that exits **0**, which is also the run Wave Y
+  needs, so the fix and the attestation are the same run
+- the Apple lane, which runs the same harness wrapper and must not regress
+- the operator's `./infernix.dhall` intact and no `.harness-backup` left behind afterwards
+
+### Remaining Work
+
+- the failure is recorded but not attributed to one of the two candidates; the log distinguishes them
+  and has not yet been read closely enough to say which
+- one confounder must be ruled out rather than assumed away: a stale reservation from an earlier
+  killed run was removed by hand before this run (see
+  [Sprint 1.38](#sprint-138-a-harness-reservation-cannot-outlive-its-pid-namespace-active)), and
+  although this run minted its own reservation from a clean slot, that intervention has not been
+  proven irrelevant. A clean re-run settles it
+- **the `linux-cpu` leg of Wave Y is not attested.** Every gate inside the cohort passed, and the
+  cohort command still failed; a non-zero exit is not an attestation, and recording one here because
+  the interesting parts were green would be exactly the kind of receipt this plan exists to prevent
 
 ---
 

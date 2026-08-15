@@ -358,10 +358,14 @@ Playwright browser, and worst-case watchdog overshoot), and the remaining `infer
 physical − vmReserve − headroom. The smart constructor **rejects** oversubscription (capacity < 0) and
 a headroom below `minHostHeadroomMib`, so an over-pledged host or a browser-starving headroom is not
 constructible. A fixed reserve that omits the routed browser does not satisfy this contract.
-`headroom` covers the four co-tenants named above and **not** the Haskell toolchain, which is a
-separate declared account under
+`headroom` covers the four co-tenants named above and **not** the Haskell toolchain. The toolchain is
+not a headroom tenant and is not an additional slice of this partition: it draws its account from the
+same non-virtual-machine pool this partition already divides, so the two are alternative occupants
+admitted one at a time by the exclusive host claim under
 [bounded host memory](../architecture/bounded_host_memory.md). On
-a 64 GiB host with a 48 GiB Colima pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB, so
+a 64 GiB host with a 48 GiB Colima pledge, `inferenceCapacity` = 65536 − 49152 − 6144 = 10240 MiB —
+which with the 6144 MiB headroom accounts for the whole 16384 MiB pool, leaving no residue a
+concurrent toolchain account could be drawn from — so
 the heavy diffusion rows (`image-*` footprint 12288, `video-*` footprint 28672) fail-close cleanly at
 admission rather than racing the watchdog.
 

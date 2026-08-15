@@ -232,15 +232,13 @@ The formatter libraries are not host commands and have no
 tracked `src/Proto/` snapshot, Python generation uses its venv's `grpc_tools.protoc` module, and the
 standalone pinned compiler exists only inside the Linux image-build regeneration gate.
 
-It carries one record that is **measured rather than declared**: `memory`
-(`physicalMemoryMib` / `effectiveMemoryMib`), observed from `/proc/meminfo` intersected with the
-cgroup maximum on Linux. On Darwin, physical memory comes from `hw.memsize` and effective memory
-subtracts the conservatively observed aggregate active Colima pledge. The fixed-path Colima probe
-and parser are shared with the inference-memory partition; unavailable or malformed observation
-fails closed rather than becoming a zero pledge. This record is the input the bounded host build
-ceiling is derived from ([bounded_host_memory.md](bounded_host_memory.md)), and a manifest that could
-not be measured is not written, because a ceiling derived from an unmeasured host only looks derived
-from physical RAM.
+It carries one record whose values are observed rather than declared: `memory`
+(`physicalMemoryMib` / `effectiveMemoryMib`). The observation, its fixed-path probes, and its
+fail-closed behavior are owned by
+[../engineering/host_tools_manifest.md](../engineering/host_tools_manifest.md); this record is the
+input the bounded host build ceiling is derived from
+([bounded_host_memory.md](bounded_host_memory.md)), which owns what that ceiling covers and what
+admits it.
 
 It additionally carries the **`node` block** — this machine's role, its member id, the pools it
 serves, and its model-cache quota — plus a pinned projection of the system contract. That makes it

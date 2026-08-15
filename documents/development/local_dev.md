@@ -152,8 +152,10 @@ Apple materializer, capped observer, execution-plan, and unit; no focused suite 
 Cabal instruction. First, `infernix init` must have written the repo-root
 `./infernix-host.dhall` host manifest. Second, the toolchain runs under a declared memory ceiling
 ([bounded_host_memory.md](../architecture/bounded_host_memory.md)): `cabal build all` is the largest
-memory consumer in the set, and the gate asserts that a ceiling exists and is observed rather than
-that no exhaustion occurred.
+consumer among the images that ceiling covers, and the gate asserts that a ceiling exists, that the
+host was observed able to fund it, and that no competing toolchain claimant was present — not that
+no exhaustion occurred. The browser, the web and Python images, and the inference daemon are outside
+that ceiling and are host-reserve claimants.
 
 The two prerequisites are the same command. `infernix init` measures this host's memory into the
 manifest and then derives the per-machine ceiling into the untracked repo-root

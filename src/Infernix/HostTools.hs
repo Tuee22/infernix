@@ -22,6 +22,15 @@
 -- (which fails closed without a manifest) cannot compile a closed command
 -- there. Both therefore carry a required total deadline instead; see
 -- 'hostProbeDeadlineMicros'.
+--
+-- Phase 1 Sprint 1.21 keeps 'readHostToolFallback' on one further surface that
+-- is not pre-manifest but is the same /class/ of probe: the memory
+-- observations the toolchain account is derived from and admitted against
+-- ('Infernix.DemoConfig.Colima' and 'Infernix.HostClaimants'). Those are fixed
+-- read-only system probes with fixed argument vectors, they are deliberately
+-- not manifest-owned, and they must run at the point of use rather than at
+-- @init@ time — an observation taken when the manifest was written cannot see
+-- what is resident now.
 module Infernix.HostTools
   ( HostTool (..),
     hostToolName,
@@ -93,6 +102,8 @@ data HostTool
   | HostHostname
   | HostSysctl
   | HostColima
+  | HostPs
+  | HostVmStat
   deriving (Bounded, Enum, Eq, Show)
 
 -- | The supported short name for a tool, used in lint messages and
@@ -138,6 +149,8 @@ hostToolName tool = case tool of
   HostHostname -> "hostname"
   HostSysctl -> "sysctl"
   HostColima -> "colima"
+  HostPs -> "ps"
+  HostVmStat -> "vm_stat"
 
 -- | Every external command name, derived from the 'HostTool' enum. The
 -- bare-name @proc@ lint in @Infernix.Lint.HaskellStyle@ reuses this so its
@@ -197,6 +210,8 @@ hostToolFallbackCandidates tool = case tool of
   HostHostname -> ["/bin/hostname", "/usr/bin/hostname"]
   HostSysctl -> ["/usr/sbin/sysctl", "/sbin/sysctl"]
   HostColima -> ["/opt/homebrew/bin/colima"]
+  HostPs -> ["/bin/ps", "/usr/bin/ps"]
+  HostVmStat -> ["/usr/bin/vm_stat"]
 
 -- | Deterministic absolute fallback for pure call sites that cannot
 -- check the filesystem before constructing a process description.
@@ -322,6 +337,14 @@ pickToolPath tool paths = case tool of
   -- so it has no 'HostToolPaths' entry and resolves through its fixed fallback
   -- candidate instead.
   HostColima -> ""
+  -- The same shape, for the same reason: the Darwin half of the toolchain
+  -- admission observation in 'Infernix.HostClaimants' reads @vm_stat@ for
+  -- available memory and @ps@ for the foreign-claimant census. Both are
+  -- read-only Darwin system probes, neither is managed by this repository, and
+  -- the Linux lane reads @\/proc@ instead of either, so neither belongs in the
+  -- manifest schema an operator materializes.
+  HostPs -> ""
+  HostVmStat -> ""
 
 -- | Build a 'CreateProcess' for a tool invocation. The returned value
 -- can be customized further by callers that need stdin/stdout/stderr

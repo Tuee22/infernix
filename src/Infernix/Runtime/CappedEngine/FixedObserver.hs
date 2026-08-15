@@ -404,13 +404,44 @@ verifyNvidiaVramObserver = do
 
 #if defined(darwin_HOST_OS)
 
+-- | Discover the group's members for a sample.
+--
+-- An empty snapshot is not absence. @top@ samples over an interval and can
+-- publish one that omits a member which is live both before and after it —
+-- the same turnover the failed-member recheck already handles from the other
+-- direction. Converting that into an unavailable enforcer terminates a healthy
+-- inference run, so an empty snapshot asks the authoritative liveness question
+-- instead: a group with no live member left is terminal evidence the caller
+-- settles, and a group that still has one is resampled inside the same fixed
+-- deadline. The deadline is what bounds this, so the refusal still arrives, and
+-- it now names an emptiness that outlived the group's own liveness. There is no
+-- pause between attempts and none is needed: each attempt is a complete @top@
+-- snapshot and a liveness probe, so the loop is paced by the observations it
+-- makes rather than by a wait this kernel is not allowed to take.
 discoverProcessGroupMembers ::
   ObserverDeadline ->
   CPid ->
   IO (Either Text [CPid])
 discoverProcessGroupMembers deadline processGroup = do
   observed <- observeProcessGroupMembers deadline processGroup
-  pure (observed >>= requireProcessGroupSamplingMembers)
+  case observed of
+    Left reason -> pure (Left reason)
+    Right members
+      | not (null members) -> pure (Right members)
+      | otherwise -> do
+          absent <- processGroupHasNoLiveMembers processGroup
+          case absent of
+            Left reason -> pure (Left reason)
+            Right True -> pure (Right members)
+            Right False -> do
+              remaining <- remainingDeadlineMicros deadline
+              if remaining <= 0
+                then
+                  pure
+                    ( Left
+                        "Apple top output omitted every live process-group member for the whole observation deadline while the group remained live"
+                    )
+                else discoverProcessGroupMembers deadline processGroup
 
 -- Keep the empty membership shape available to a failed-member recheck: it is
 -- terminal evidence for the caller to settle alongside relay closure, never a

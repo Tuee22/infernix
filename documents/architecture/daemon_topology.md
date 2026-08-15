@@ -215,16 +215,37 @@ per machine, and horizontal scale is adding a machine, not adding a replica.
 None of these costs translate to throughput gain on the supported adapters, and a second engine
 additionally asserts the machine's whole observed capacity twice — each process resolves the same
 physical RAM and admits against it independently, so both can pass admission for work that together
-exceeds the box. The rule is therefore a correctness rule, not a scheduling preference, and it is
-enforced by the machine contract naming exactly one engine identity rather than by Kubernetes
-placement.
+exceeds the box. The rule is therefore a correctness rule, not a scheduling preference.
+
+**What enforces the rule on the deployed topology, and what does not.** Be exact here, because the
+mechanism a reader assumes decides what they may safely change. The deployed platform is
+single-node: `kindWorkerCount` is `1` for every runtime mode, and the engine workload's replica
+count in the *generated* Helm overlay — `repoEngineReplicaCount`, which supersedes
+`chart/values.yaml` on every render — is `1`. One engine per machine holds today because the
+cluster has one machine and the overlay asks for one engine pod, and that pairing is pinned by the
+`overReplicatedRoles` property over every count the overlay emits. That is a placement-and-count
+mechanism, and naming it plainly is what lets a reader see that raising a replica count is a
+correctness defect rather than a capacity knob.
+
+The host-local engine lock is a second, narrower guard: it excludes a second engine process
+started from the *same repository checkout*, because it is `runtimeRoot </> "engine.lock"`. It is
+repo-local, not machine-global, so it does not exclude two checkouts on one host and it cannot
+exclude a second machine.
 
 **Member identity fails closed.** A daemon that cannot establish which member it is refuses to
 start. It does not adopt a default, and it does not select the first entry of a catalog: two
 machines that both resolved the same identity would each assert the other's capacity as their own,
 and nothing downstream would detect it — the broker sees two ordinary `Shared` consumers with
-distinct process-qualified names. Identity is asserted by the machine's own contract and claimed
-against the broker, because a host-local lock cannot exclude a second machine.
+distinct process-qualified names.
+
+**A fleet of more than one engine machine is bounded by a different mechanism than a single-node
+deployment.** The two enforcement mechanisms above are both local to one machine: a replica count
+is a property of one cluster's overlay, and the engine lock is a property of one checkout's runtime
+root. Neither can see a second machine, so neither scales past the single-node topology. The
+mechanism this doctrine specifies for a fleet is a machine contract naming exactly one engine
+identity, plus a claim for that identity registered against the broker — the broker being the only
+place N machines meet. Which of those is in force is what the deployed topology decides, and the
+supported fleet size is whatever the mechanism actually in force can bound.
 
 **Linux GPU per-engine images.** Framework-specific Linux GPU pools may still render as
 `infernix-engine-<engine>` Deployments whose image contains exactly one isolated framework venv.
@@ -509,8 +530,11 @@ The three-role contract is validated by:
 - a production-shape test that deploys `demo_ui = false` and asserts the coordinator plus engine-pool
   workloads are present while demo-only workloads and routes are absent
 - a scheduling check that every deployed workload is fully scheduled, with no `Pending` workload in
-  the `platform` namespace. One-engine-per-machine is enforced by the machine contract and the
-  host-local engine lock, not by a placement constraint
+  the `platform` namespace. This check does not establish one-engine-per-machine: with the engine
+  anti-affinity retired, a second engine pod schedules onto the one worker without going `Pending`,
+  so a passing run and a violated rule are indistinguishable from here. The rule is carried instead
+  by the `overReplicatedRoles` property over the generated overlay's counts, which is a unit
+  assertion rather than a cluster observation
 
 `infernix lint docs` enforces the metadata block and cross-link
 resolution of this doc.

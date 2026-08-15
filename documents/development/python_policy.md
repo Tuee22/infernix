@@ -120,6 +120,13 @@ own isolated in-project venv:
   CPU base image prepares `transformers` and `pytorch` with `linux-cpu`. Linux GPU remains
   engine-image-owned and selects `cuda` in `docker/engine.Dockerfile`; the shared base materializer
   is intentionally a no-op for that lane.
+- The producer gives each project its own environment before the bounded install runs. Poetry
+  resolves the environment it installs into from the running interpreter when the project owns
+  none, and a sealed bounded run points `PYTHONHOME` at the sealed copy of Poetry's own environment,
+  so an unguarded first install lands the whole framework payload in a generation that is about to
+  be retired. Creating `<project>/.venv` first through a closed, deliberately unsealed provisioning
+  operation makes the choice the project's. The creation is guarded on the exact
+  `.venv/bin/python` interpreter, so an existing environment is never cleared.
 - `internal materialize-substrate`, Apple runtime startup, and the explicit Apple native-artifact
   materializer invoke that same producer before inference. Each install runs through the closed,
   deadline-bounded provisioning language under the engine project's mutation lock. Only after a
