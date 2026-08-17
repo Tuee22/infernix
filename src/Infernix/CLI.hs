@@ -182,7 +182,9 @@ main = do
     (False, Right command)
       | commandRequiresConfiguredStartup command -> do
           syncBuildRootExecutable
-          reconcileInterruptedHarnessState
+          unless
+            (commandOwnsInterruptedHarnessRecovery command)
+            reconcileInterruptedHarnessState
           resolvedRuntimeMode <- validateCommandExecutionContext command
           ensureAppleHostPrerequisites resolvedRuntimeMode command
           dispatch command
@@ -200,6 +202,15 @@ commandRequiresConfiguredStartup command =
     InitCommand {} -> False
     TestInitCommand {} -> False
     _ -> True
+
+-- The recovery command must remain reachable in the exact unverifiable state
+-- that makes ordinary pre-dispatch reconciliation refuse. It still loads the
+-- host manifest and runs its own lifecycle-locked recovery kernel.
+commandOwnsInterruptedHarnessRecovery :: Command -> Bool
+commandOwnsInterruptedHarnessRecovery command =
+  case command of
+    ClusterReclaimSlotCommand _ -> True
+    _ -> False
 
 dispatchInternalSubprocessMode :: IO ()
 dispatchInternalSubprocessMode =
@@ -220,6 +231,8 @@ dispatch command =
     ClusterUpCommand -> clusterUp Nothing
     ClusterDownCommand -> clusterDown Nothing
     ClusterStatusCommand -> clusterStatus Nothing
+    ClusterReclaimSlotCommand maybeForcedOwnerPid ->
+      reclaimHarnessClusterSlot maybeForcedOwnerPid
     CacheStatusCommand -> runCacheStatus Nothing
     CacheEvictCommand maybeModelId -> runCacheEvict Nothing (Text.pack <$> maybeModelId)
     CacheRebuildCommand maybeModelId -> runCacheRebuild Nothing (Text.pack <$> maybeModelId)
@@ -441,11 +454,7 @@ runDarwinAppleMaterializerTest darwinTest
 -- check, so an operator that wins the slot after seizure is never torn down by
 -- harness cleanup.
 runClusterOwnedValidation :: Maybe RuntimeMode -> IO a -> IO a
-runClusterOwnedValidation maybeRuntimeMode action =
-  bracketPreservingPrimary
-    (seizeHarnessClusterSlot maybeRuntimeMode)
-    (const (releaseHarnessClusterSlot maybeRuntimeMode))
-    (const action)
+runClusterOwnedValidation = withHarnessClusterSlot
 
 -- | Phase 8 Sprint 8.6: the test harness owns @./infernix.dhall@ for the
 -- duration of a run. It reads @./infernix.test.dhall@ (failing fast with an

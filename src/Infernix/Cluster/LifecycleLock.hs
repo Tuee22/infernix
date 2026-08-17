@@ -1,12 +1,24 @@
 module Infernix.Cluster.LifecycleLock
-  ( withLifecycleFileLock,
+  ( kernelFileLockIsHeld,
+    withLifecycleFileLock,
     withKernelFileLock,
   )
 where
 
+import Data.Maybe (isNothing)
 import Infernix.Error (bracketPreservingPrimary)
 import System.FileLock qualified as FileLock
 import System.FilePath (normalise)
+
+-- | Observe whether a kernel lock is currently held. A successful probe is
+-- released inside the same exception-safe bracket; the persistent sidecar is
+-- only a rendezvous path and is never treated as ownership evidence.
+kernelFileLockIsHeld :: FilePath -> IO Bool
+kernelFileLockIsHeld lockPath =
+  bracketPreservingPrimary
+    (FileLock.tryLockFile lockPath FileLock.Exclusive)
+    (maybe (pure ()) FileLock.unlockFile)
+    (pure . isNothing)
 
 -- | Run an action only when a non-blocking, kernel-managed exclusive lock can
 -- be acquired. The package lock token and its raw acquire/release operations

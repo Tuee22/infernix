@@ -13,66 +13,31 @@ govern this plan.
 
 ## Current execution gate
 
-Phase 1 is the sole open implementation gate. Sprints 1.1 through 1.19 retain their recorded
-closure; Sprints 1.20 through 1.29 are `Active`. Every gate ahead of the cohort is GREEN on one
-frozen identity: the governed Apple build, the whole aggregate lint, the full unit suite, the
-standalone `lint files`, `lint docs`, `lint chart`, `lint proto`, `lint plan`, and `docs check`
-commands, a repo-wide `git diff --check`, the Darwin build-memory measurement, a complete
-`internal materialize-metal-engines` emitting all seven engine artifacts, and the fixed
-`internal validate-darwin-audiveris-cancellation` and
-`internal validate-darwin-installed-python-source-isolation` validators.
+Phases 0 through 3 are `Done`. Phases 1 and 2 closed on 2026-08-16 under
+[Wave Y](cohort-validation-waves.md) with one current-source Apple accelerator cohort plus its
+required paired native `linux-cpu` cohort. The Apple full suite used source fingerprint
+`bf22a3ad…` and runtime image
+`sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400`; the paired Linux
+launcher rebuilt the current worktree as
+`sha256:4f46299ee0b45b9c3a5ecc2b7543d8174c5323e57ea6eac7b7355a5edcee155f`. Both complete
+`test` cohorts exited 0, including aggregate lint, every unit/web gate, live integration, and
+16/16 Playwright. Both final teardowns left absent idle clusters with zero live nodes and pods and
+no harness backup. Phase 2's explicit post-prerequisite `test lint` and `test unit` aggregates also
+exited 0 on the unchanged source, closing Sprints 2.14–2.16.
+Phase 3 then consumed the same current-source `linux-cpu` lifecycle receipt: its integration suite
+proved exactly one running engine pod, no `Pending` platform workload, and clean final teardown,
+closing Sprint 3.16.
 
-The cohort behind them is blocked rather than pending. `test all` reaches its `integration` stage
-and the cluster image build fails while preparing the per-engine Python environment for
-`python/engines/transformers`. Sprint 1.26 made that refusal name its observation, and the
-measurement it produced identified the fault rather than a number to raise: a sealed bounded run
-points `PYTHONHOME` at the sealed copy of Poetry's own environment, Poetry adopts that copy as the
-project's environment, and the engine's whole framework payload lands in a generation that is about
-to be retired — so the interpreter the readiness marker requires is never created and the retirement
-exceeds the bound its creation fit. Sprint 1.27 gives the project its own environment before the
-sealed run can choose one. With that correction the lane reaches
-`internal materialize-linux-native-engines`, where the loader-closure producer cannot resolve a
-JavaCPP cross-jar dependency that the runtime satisfies from its own namespace, which Sprint 1.28
-binds. With that correction the routed image build completes and the Apple cohort reaches its
-per-model inference stage, where the host engine daemon died of a heap overflow because the harness
-started it by re-executing its own image, and every non-unit test component carries a baked
-1024 MiB heap cap the declared ledger says that daemon must not have. Sprint 1.29 keeps the two
-process images apart. Each sprint's own section in
-[phase-1-repository-and-control-plane-foundation.md](phase-1-repository-and-control-plane-foundation.md)
-owns the detail.
+Phase 4 is now the first execution gate. Its document owns the exact implementation residual and
+validation order; Phases 5 through 9 remain blocked in strict numerical order until their immediate
+predecessor closes. Historical wave evidence remains source-scoped and does not substitute for a
+current owning-phase gate.
 
-Phase 0 is `Done`. Its final sprint landed `infernix lint plan`, which implements the Section C,
-D, I, J, and Q scans the standards had declared only in prose, drove the corpus to zero against
-them, and wired the scans into `infernix test lint` so a plan change cannot close with them unread.
-Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger: the toolchain account and the
-inference partition are alternative occupants of one claimable pool, and the account is admitted
-against observed availability and a foreign-claimant census rather than against declared capacity
-alone. Phase 1 Sprint 1.21 owns the implementation of that admission clause.
-
-Phase 1's machine-independent gate set — the governed Apple build, `infernix test lint`,
-`infernix test unit`, the standalone `lint files`, `lint docs`, `lint chart`, `lint proto`,
-`lint plan`, and `docs check` commands, and a repo-wide `git diff --check` — passes on current
-source. The defect that blocked `internal materialize-metal-engines` is closed and the materializer
-run itself is now GREEN: the Audiveris invocation declines JavaCPP symbolic-link creation, so the
-extraction cache holds no symlink and the sealed payload is relocation-invariant, which no repair
-pass could make it, and the run emits all seven engine artifacts including the previously refused
-`jvm-native`. Both specialized Darwin validators and the Darwin build-memory measurement are GREEN
-on the same identity. The cohort behind them is blocked by Sprint 1.29.
-
-Phase 1 closes on one frozen source identity, gated in this order: the governed Apple build, the
-whole aggregate lint, the full unit suite, the standalone `lint files`, `lint docs`, `lint chart`,
-`lint proto`, and `docs check` commands, a repo-wide `git diff --check`, then
-`internal materialize-metal-engines` with the specialized Darwin validators, then the cohort.
-[Wave Y](cohort-validation-waves.md) owns that cohort: schema-complete Apple and paired
-source-matched `linux-cpu` real-output records for `llm-smollm2-safetensors`,
-`audio-demucs-htdemucs`, `audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`,
-and `audio-bark-small`, with Apple additionally owning the typed `image-sdxl-turbo` refusal and the
-full `integration`, `e2e`, and `all` receipts. [Wave AA](cohort-validation-waves.md) is closed for
-Sprint 1.21's Stage 1 and its Darwin build-memory proof, and is not rerun.
-
-Phases 2 through 9 are blocked in strict numerical order, each by its immediate predecessor. Each
-retains the implementation state its own phase document records behind that blocker.
-
+**Pause receipt (2026-08-16):** no Phase 4 implementation has started after the Phase 3 closure.
+Resume at Sprint 4.31, followed by 4.32, 4.34, and 4.35, validating each completed surface before
+advancing. Wave Y's current Apple/`linux-cpu` results are candidate evidence for the latter three,
+but Phase 4 has not yet reconciled their sprint-specific acceptance criteria and makes no closure
+claim. The broker-side member claim remains re-homed to Phase 8 Sprint 8.12.
 ## Document Index
 
 | Document | Purpose |
@@ -127,11 +92,11 @@ contract.
 
 ## Current Repo Assessment
 
-Phase 0 owns the governed `documents/` suite, the plan standards, and the validators that enforce
-both, and is `Done` with no open sprint. Phase 1 is the sole open implementation gate, at Sprints
-1.20 through 1.26, and [Wave Y](cohort-validation-waves.md) owns its remaining Apple and paired
-`linux-cpu` attestation. Phases 2 through 9 are blocked in strict numerical order behind it, each
-keeping the implementation and evidence state its own phase document records.
+Phases 0 through 3 are `Done` with no open sprint. [Wave Y](cohort-validation-waves.md) owns Phases
+1 and 2's completed Apple and paired `linux-cpu` attestation; the current-source Linux leg also
+closes Phase 3's single-node topology observation. Phase 4 is the first open execution gate;
+Phases 5 through 9 remain blocked in strict numerical order, each retaining the implementation and
+evidence state its own phase document records.
 
 The repository implements the explicit-init runtime-config architecture, the baked Linux
 outer-container launcher, the single-instance platform services, the Gateway-owned routed edge, the

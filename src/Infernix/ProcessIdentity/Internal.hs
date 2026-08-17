@@ -2,6 +2,7 @@
 
 module Infernix.ProcessIdentity.Internal
   ( ProcessBirthIdentity (..),
+    ProcessNamespaceIdentity,
     PublicationTestPoint (..),
     RegisteredProcessIdentity,
     registerOwnedChildProcessIdentity,
@@ -10,8 +11,10 @@ module Infernix.ProcessIdentity.Internal
     dropInheritedProcessIdentity,
     maximumRegistryBasenameLengthForTest,
     maximumRegistryEntriesForTest,
+    observeCurrentProcessNamespaceIdentity,
     observeProcessIdentityForTest,
     parseProcessBirthIdentity,
+    parseProcessNamespaceIdentity,
     prepareProcessIdentityRegistryForTest,
     publishProcessIdentityCandidateForTest,
     publishProcessIdentityCandidateWithHookForTest,
@@ -23,6 +26,7 @@ module Infernix.ProcessIdentity.Internal
     releaseProcessIdentityForTest,
     renderPendingRegistryEntryForTest,
     renderProcessBirthIdentity,
+    renderProcessNamespaceIdentity,
     renderRegistryEntryForTest,
     withCurrentProcessIdentityRegistryLockForTest,
   )
@@ -109,6 +113,7 @@ import Data.ByteString (ByteString)
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.Char (isSpace)
 import Data.List qualified as List
+import System.Posix.Files (readSymbolicLink)
 import System.Posix.Process (getProcessID)
 import Text.Read (readMaybe)
 #endif
@@ -245,6 +250,44 @@ data ProcessBirthIdentity = ProcessBirthIdentity
     processBirthStartTime :: Word64
   }
   deriving (Eq, Show)
+
+-- | The kernel identity of a Linux PID namespace. The constructor stays
+-- hidden so reservation records can contain only the bounded token parsed
+-- from @/proc/self/ns/pid@ (for example @pid:[4026531836]@). Darwin has no
+-- PID namespaces and therefore observes an explicit absence.
+newtype ProcessNamespaceIdentity = ProcessNamespaceIdentity Word64
+  deriving (Eq, Show)
+
+renderProcessNamespaceIdentity :: ProcessNamespaceIdentity -> String
+renderProcessNamespaceIdentity (ProcessNamespaceIdentity namespaceInode) =
+  "pid:[" <> show namespaceInode <> "]"
+
+parseProcessNamespaceIdentity :: String -> Maybe ProcessNamespaceIdentity
+parseProcessNamespaceIdentity value = do
+  namespaceWithClosingBracket <- List.stripPrefix "pid:[" value
+  namespaceText <-
+    case reverse namespaceWithClosingBracket of
+      ']' : reversedNamespace -> Just (reverse reversedNamespace)
+      _ -> Nothing
+  namespaceInode <- readMaybeWord64 namespaceText
+  if namespaceInode > 0
+    then Just (ProcessNamespaceIdentity namespaceInode)
+    else Nothing
+
+-- | Observe the current process's PID namespace without treating an
+-- unavailable observation as a namespace identity. In particular, the
+-- procfs magic link must be read: statting it returns the procfs link inode,
+-- not the nsfs identity carried by the kernel token.
+observeCurrentProcessNamespaceIdentity :: IO (Maybe ProcessNamespaceIdentity)
+#if defined(linux_HOST_OS)
+observeCurrentProcessNamespaceIdentity = do
+  observed <-
+    try (readSymbolicLink "/proc/self/ns/pid") ::
+      IO (Either IOException FilePath)
+  pure (either (const Nothing) parseProcessNamespaceIdentity observed)
+#else
+observeCurrentProcessNamespaceIdentity = pure Nothing
+#endif
 
 renderProcessBirthIdentity :: ProcessBirthIdentity -> String
 renderProcessBirthIdentity identity =

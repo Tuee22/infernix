@@ -562,7 +562,8 @@ descriptorForMode runtimeMode row = do
 -- exceeds the active 'InferenceMemoryBudget', so an under-estimate is the
 -- only unsafe direction. Bark shares the 8 GiB heavy-PyTorch audio tier after
 -- live Apple evidence proved that its former 5 GiB declaration was below peak
--- resident memory.
+-- resident memory; its adapter also closes semantic generation at 100 tokens,
+-- because the upstream 768-token default is not bounded by that declaration.
 -- | Phase 4 Sprint 4.31 — the catalog footprint as a required
 -- 'ModelMemoryFootprint'. Every 'conservativeRamFootprintMibForRow' branch is a
 -- positive constant, so the smart-constructor rejection is statically

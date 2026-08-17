@@ -1,12 +1,11 @@
 # Phase 3: Platform Services and Edge Routing
 
-**Status**: Blocked — strict numerical execution waits for Phase 2.
-**Blocked by**: Phase 2
-**Implementation state behind the blocker**: Active — Sprint 3.16 is code-side closed and owns only
-its `linux-cpu` lifecycle cohort gate. Single-node topology is enforced against the text that
+**Status**: Done — all 16 sprints are implemented and validated.
+**Current state**: Sprint 3.16's current-source `linux-cpu` lifecycle cohort is complete.
+Single-node topology is enforced against the text that
 actually deploys: chart defaults of 1 are not sufficient, because a generated Helm overlay can
 reassert a replicated count, so the rule is pinned by a negative-tested unit guard on the generated
-overlay; see [Sprint 3.16](#sprint-316-single-node-platform-topology-active). The Bounded-Command
+overlay; see [Sprint 3.16](#sprint-316-single-node-platform-topology-done). The Bounded-Command
 Application & Bounded-HTTP reopen (Sprint 3.15) and the Managed-State-Transition Doctrine reopen
 (Sprint 3.14) are closed by [Wave V](cohort-validation-waves.md)
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
@@ -46,9 +45,11 @@ Sprint 3.13 de-exposes the `/minio/s3` external gateway route so the `infernix-d
 object-proxy (Phase 7 Sprint 7.25), never through a gateway route or a presigned MinIO URL. This
 realizes the
 [../documents/architecture/object_access_doctrine.md](../documents/architecture/object_access_doctrine.md).
-Sprints 3.1–3.13 are `Done`; Sprint 3.13 is cohort-closed by
+Sprints 3.1–3.16 are `Done`; Sprint 3.13 is cohort-closed by
 [Wave M](cohort-validation-waves.md) with the selected `linux-gpu` accelerator plus `linux-cpu`
-full-suite evidence. The route-inventory prose below reflects the de-exposed surface (no
+full-suite evidence. Sprint 3.16 closed on the 2026-08-16 current-source `linux-cpu` full lifecycle,
+which proved exactly one running engine pod and no `Pending` platform workload. The route-inventory
+prose below reflects the de-exposed surface (no
 `/minio/s3` route, no `presignPublicEndpoint`).
 
 ## Single-Instance Reconcile Surface
@@ -80,8 +81,8 @@ full-suite evidence. The route-inventory prose below reflects the de-exposed sur
 
 ## Current Repo Assessment
 
-The supported cluster path runs the HA platform services and the optional demo HTTP host on the
-Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, exposes
+The supported cluster path runs the single-instance platform services and optional demo HTTP host
+on the Kind substrate. Publication metadata originates from `./.data/runtime/publication.json`, exposes
 the active substrate through current `runtimeMode` fields, derives the route inventory from one
 Haskell-owned registry plus one data-driven HTTPRoute template, and reports
 `inferenceDispatchMode` beside the routed demo API upstream. The Apple publication contract
@@ -95,6 +96,21 @@ Sprint 3.12 replaces the previous `LinuxCpu -> "amd64"` publication hardcode wit
 host-architecture selection from `InfernixHost.dhall`, mapping native Linux amd64 to `amd64` and
 native Linux arm64 to `arm64` while keeping `linux-gpu` amd64-only. [Wave F](cohort-validation-waves.md)
 validated the native arm64 publication path through the selected native arm64 Docker daemon.
+
+## Current Closure Receipt (2026-08-16)
+
+- the settled-source review found Sprint 3.16 code-side complete; only its named `linux-cpu`
+  lifecycle observation remained
+- the post-Phase-2 governed lint/unit aggregates remained green on the unchanged source, including
+  the generated-overlay guard for all emitted replica counts
+- current-source launcher image
+  `sha256:4f46299ee0b45b9c3a5ecc2b7543d8174c5323e57ea6eac7b7355a5edcee155f` completed the full
+  `./bootstrap/linux-cpu.sh test` with integration assertions that exactly one engine pod was
+  running and no platform workload was `Pending`
+- the same cohort completed retained/fresh topology cycles, Playwright 16/16, and clean teardown;
+  governed status reported cluster-absent/idle with zero nodes, pods, results, and cache entries
+- the MinIO layout migration remains an explicitly operator-owned teardown-and-rebuild boundary,
+  and Phase 6 Sprint 6.47 owns deletion of retired chaos/HA assertions; neither is Phase 3 work
 
 ## Sprint 3.1: HA MinIO Deployment [Done]
 
@@ -783,8 +799,8 @@ uses a bounded authenticated platform-selected skopeo copy from the Harbor API a
 fresh birth-identity-owned mode-0700 `dir:` store, forcing reads of the selected manifest, config,
 and layers; protected cleanup preserves the primary failure, dead-owner auth directories reconcile,
 and focused command/redaction/path unit coverage is landed. This
-sprint remains `Done` for its recorded Wave V scope; Phase 2 remains blocked by Phase 1 and has no
-post-correction Apple or `linux-cpu` evidence.
+sprint remains `Done` for its recorded Wave V scope; Phase 2's post-correction machine-independent,
+Apple, and paired `linux-cpu` evidence closed on 2026-08-16 under Wave Y.
 **Implementation**: `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/Cluster/Command.hs`
 **Blocked by**: Sprint 1.16, 3.14
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, `documents/tools/harbor.md`,
@@ -844,7 +860,7 @@ None.
 
 ## Remaining Work
 
-None. Sprints 3.1-3.13 are `Done`; Sprint 3.13 closed in
+None. Sprints 3.1-3.16 are `Done`; Sprint 3.13 closed in
 [Wave M](cohort-validation-waves.md) with the selected `linux-gpu` accelerator plus `linux-cpu`.
 Apple cohort validation for earlier Phase 3 work closed in Waves A/A.2, CUDA Linux cohort validation
 closed in Wave C, and native arm64 `linux-cpu` validation closed in Wave F.
@@ -856,17 +872,19 @@ Application & Bounded-HTTP reopen work that bounds the Harbor publish exec and m
 evidence, are both closed by [Wave V](cohort-validation-waves.md) with apple-silicon plus
 linux-cpu full-suite `test all` clean.
 
+Sprint 3.16 closed on the current-source `linux-cpu` lifecycle receipt above.
+
 ---
 
-## Sprint 3.16: Single-Node Platform Topology [Active]
+## Sprint 3.16: Single-Node Platform Topology [Done]
 
-**Status**: Active — code-side closed; the cohort lifecycle run is the only item left.
+**Status**: Done — code-side closure and the current-source `linux-cpu` lifecycle cohort are complete.
 **Code-side closure**: the chart, the generated overlay, Kind topology, repair-path deletion, and
 the inverted scheduling case are implemented and clean on the machine-independent gate set
 (`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
 `infernix lint files|chart|proto|docs`).
-**Cohort gate**: `linux-cpu` — a full lifecycle on the one-worker topology, sharing the wave with
-Sprint 6.47.
+**Cohort gate**: `linux-cpu` — complete on the 2026-08-16 current-source full lifecycle; the
+integration suite proved exactly one running engine pod and no `Pending` workload.
 **Implementation**: `chart/values.yaml`, `chart/templates/deployment-{coordinator,engine}.yaml`,
 `chart/templates/keycloak/deployment.yaml`, `chart/templates/minio/statefulset.yaml`,
 `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/Command.hs`, `kind/cluster-linux-cpu.yaml`,
@@ -983,12 +1001,14 @@ in its own comment rather than implying wider coverage.
   requires the reader to have found at least one real count, so the guard cannot pass vacuously if
   the rendered shape changes. Reintroducing `repoEngineReplicaCount (FinalPhase, LinuxCpu) -> 2`
   alone fails it by name.
-- **Cohort gate (pending):** a full `linux-cpu` lifecycle on the one-worker topology, in which
-  every workload schedules without a `Pending` replica. That is the observable proof the
-  anti-affinity constraint is gone rather than merely unsatisfied, and no machine-independent gate
-  can produce it.
+- **Cohort gate (complete):** the current-source full `linux-cpu` lifecycle ran on the one-worker
+  topology; exactly one engine pod ran and every workload scheduled without a `Pending` replica.
 
 ### Remaining Work
+
+- None.
+
+### Closure Notes
 
 The MinIO layout migration is operator-facing and cannot be automated by this sprint: an existing
 cluster must be torn down and rebuilt, and demo-bucket contents do not survive. That is a reduction

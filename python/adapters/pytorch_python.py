@@ -146,6 +146,12 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
     # model storage and breached the capped Apple engine's 8 GiB resident
     # ceiling. CPU retains fp32. Move every tensor input to the selected device,
     # leaving non-tensor processor entries (e.g. voice presets) intact.
+    #
+    # Transformers otherwise permits 768 semantic tokens. A live MPS run at
+    # 256 tokens peaked near 11 GiB while the upstream-documented 100-token
+    # generation completed with real audio at about 6.02 GiB. Keep that bound
+    # inside the adapter so arbitrary prompt length cannot escape the model's
+    # declared 8 GiB execution ceiling.
     device = _preferred_torch_device(torch)
     dtype = torch.float16 if device in {"cuda", "mps"} else torch.float32
     processor = AutoProcessor.from_pretrained(str(weights_dir), local_files_only=True)
@@ -162,7 +168,7 @@ def _generate_bark(context: AdapterContext) -> ArtifactResult:
         for key, value in inputs.items()
     }
     with torch.inference_mode():
-        audio = model.generate(**inputs)
+        audio = model.generate(**inputs, semantic_max_new_tokens=100)
     sample_rate = int(model.generation_config.sample_rate)
     buffer = io.BytesIO()
     audio_array = audio.to(device="cpu", dtype=torch.float32).numpy().squeeze()

@@ -153,8 +153,13 @@ aggregate concurrent overcommit is unrepresentable. The browser renders
 the model footprint and available memory in MiB.
 
 Linux CPU refinement probes the process-group RSS sampler and exact larger cgroup envelope under the
-same opaque serialization authority. CUDA OOM classification is not proof of an installed VRAM
-limit, so Linux GPU refinement requires independent live NVIDIA accounting.
+same opaque serialization authority. At run time, terminal procfs tasks are excluded from the live
+group; a no-live-member observation receives four fresh 50 ms observations and then requires a
+terminal or absent leader before it can settle as ordinary completion. Reappearance resumes the
+watchdog, while stable-live or unreadable evidence fails closed without competing for the engine
+action's `ProcessHandle` reap. CUDA OOM classification is not proof of an installed VRAM limit, so
+Linux GPU refinement requires independent live NVIDIA accounting and uses the same bounded group
+settlement discipline.
 Engine members do not become ready until the selected enforcer has been verified against the compiled
 execution plan.
 

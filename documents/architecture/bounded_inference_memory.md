@@ -80,10 +80,16 @@ pairs that grant with a live `Enforcer` for the same resource and therefore has 
   and Python reserve large virtual ranges unrelated to resident memory. On `linux-cpu`, a verified
   `/proc` sampler conservatively sums RSS for every process in the fresh child process group and
   kills only that group on breach; the pod cgroup remains a larger outer envelope for the daemon,
-  admitted child ceiling, and sampling overshoot. A bare exit `137` / `SIGKILL` is not classified as
-  a memory breach without watchdog evidence. On `linux-gpu`, the same resident-RAM proof is paired
-  with independent NVIDIA process-group VRAM accounting. Every substrate returns one total outcome,
-  and the daemon remains outside the child execution group.
+  admitted child ceiling, and sampling overshoot. Terminal procfs tasks are not live members. If a
+  complete sample sees no live member, four fresh observations at the 50 ms watchdog interval bound
+  the exit window; reappearance resumes the full loop, while persistent absence is ordinary
+  completion only when the leader is terminal or absent. A stable live leader or unreadable
+  evidence terminates the group as typed enforcement loss. The watchdog never waits on the engine's
+  `ProcessHandle`, so the engine action remains its sole reaper. A bare exit `137` / `SIGKILL` is not
+  classified as a memory breach without watchdog evidence. On `linux-gpu`, the same resident-RAM
+  proof and settlement discipline are paired with independent NVIDIA process-group VRAM accounting.
+  Every substrate returns one total outcome, and the daemon remains outside the child execution
+  group.
 
 The budget these grants draw from is itself a checked partition, and the model's footprint is required,
 so the related unmanaged states are also unbuildable:
@@ -190,6 +196,13 @@ process groups and resources the kernel does not attribute to a process.
 With the checked `minHostHeadroomMib` partition on a 64 GiB / 48 GiB-Colima-pledge host, the
 resolved inference capacity is 10240 MiB, so the heavy diffusion rows remain explicit unavailable
 models rather than invalidating the whole catalog.
+
+Generation shape is part of a model's bounded execution kernel, not an unaccounted caller choice.
+The Bark adapter therefore fixes `semantic_max_new_tokens` at 100 instead of inheriting
+Transformers' 768-token default. On the governed Apple host, a diagnostic 256-token MPS generation
+produced real audio but peaked near 11 GiB; the 100-token generation produced 48,000 real samples
+and peaked near 6.02 GiB. The catalog's 8 GiB Bark footprint remains conservative only with that
+closed generation bound in place.
 
 ## Validation
 

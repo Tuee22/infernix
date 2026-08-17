@@ -1,8 +1,10 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Blocked — strict numerical execution waits for Phase 3.
-**Blocked by**: Phase 3
-**Implementation state behind the blocker**: Active — three sprints carry open work.
+**Status**: Active — Phase 3 closed on 2026-08-16, so strict numerical execution now reaches this
+phase.
+**Current implementation state**: Four sprints carry open work: Sprints 4.31, 4.32, 4.34, and
+4.35. No Phase 4 implementation or closure decision was made after Phase 3 closed; the next work
+session resumes with Sprint 4.31.
 Sprint 4.35 (native runner front-end correction and failure diagnosability) was opened by a
 `linux-cpu` cohort failure found while executing Phase 3 Sprint 3.16's gate: llama.cpp b9704 split
 `llama-cli` into an interactive chat front-end, so a *successful* Linux run published chat chrome as
@@ -28,6 +30,17 @@ sprint in this phase is `Done`.
 > make the runtime model honest and durable.
 
 ## Phase Status
+
+> **Execution pause receipt (2026-08-16).** Phases 0–3 are closed and their plan/document gates are
+> green. Phase 4 is unblocked but not closed. Inventory identified Sprint 4.31's shared
+> claimable-pool/toolchain-occupant model, Sprint 4.32's Apple observer and adversarial breach
+> proof, Sprint 4.34's Apple cohort gate, and Sprint 4.35's Apple runner/front-end residual as the
+> four detailed open surfaces. Resume in that numerical sprint order; validate each completed
+> surface before advancing. The broker-side member claim remains explicitly re-homed to Phase 8
+> Sprint 8.12 and is not a Phase 4 residual. Wave Y's current Apple/`linux-cpu` receipts are
+> available candidate evidence for Sprints 4.32, 4.34, and 4.35, but their phase-specific acceptance
+> criteria have not yet been reconciled against those receipts; this pause records no inherited
+> closure.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -1650,11 +1663,12 @@ Gates (closed under [Wave W](cohort-validation-waves.md)):
 
 ## Remaining Work
 
-Sprints 4.1 through 4.31, Sprint 4.33, and Sprint 4.36 are closed; their per-lane attestations are
-recorded in [cohort-validation-waves.md](cohort-validation-waves.md). The open work is Sprint 4.32
-(verified Apple and Linux CPU execution enforcers), Sprint 4.34 (the broker-side member claim), and
-Sprint 4.35 (the Apple half of the native runner front-end correction). Each names what remains in
-its own `Remaining Work`.
+Sprints 4.1 through 4.30, Sprint 4.33, and Sprint 4.36 are closed; their per-lane attestations are
+recorded in [cohort-validation-waves.md](cohort-validation-waves.md). The open work is Sprint 4.31
+(the claimable-pool/toolchain-occupant correction), Sprint 4.32 (verified Apple and Linux CPU
+execution enforcers), Sprint 4.34 (its Apple cohort gate; the broker-side member claim is re-homed
+to Phase 8 Sprint 8.12), and Sprint 4.35 (the Apple half of the native runner front-end correction).
+Each names what remains in its own `Remaining Work`.
 
 ---
 
@@ -1669,9 +1683,13 @@ observer over fixed `/usr/bin/top` and `/usr/bin/footprint` commands. Phase 1 ow
 resource-indexed compiler and the live-enforcer refinement boundary: coordinators project compiled
 placements and daemon capabilities, engine subscription and launch receive `RuntimePlan` /
 `ExecutableModel`, and raw presentation decoders, routing constructors, and process commands are
-hidden. This phase's opaque single-flight authority, Linux sampler-loss fail-closed path, and live
-adversarial Linux breach regression are implemented and source-matched, and the exact-source
-`linux-cpu` cohort has passed. Only the selected Apple hardware proof remains.
+hidden. This phase's opaque single-flight authority, Linux sampler-loss fail-closed path, bounded
+terminal settlement, and live adversarial Linux breach regression are implemented and
+source-matched. The terminal-settlement identity's governed image build, focused unit gate, and
+complete clean-slot `linux-cpu` cohort are GREEN: image
+`sha256:1923aaace03050ba0b75954731376557f24531d6b498f9badcd87a0430ff3cbd` crossed the former
+Audiveris exit race and completed aggregate lint, unit, integration, and routed browser validation
+before clean teardown on 2026-08-16. The selected Apple hardware proof remains.
 **Cohort gate**: selected `apple-silicon` plus `linux-cpu`, on a new typed-execution-plan wave
 **Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
@@ -1718,10 +1736,14 @@ unavailable compiled placements.
   admitted models exceed the budget their admission was decided against. The authority stays one per
   plan rather than one per executable, deliberately: per-model tokens would reintroduce that
   overrun. `fail-cannot-construct-engine-topic-capability` pins the private constructor
-- `runLinuxWatchdog`'s no-live-member observation discharges through `failSamplerIfRunning` rather
-  than returning and silently ending enforcement for the rest of the execution: it returns quietly
-  if the engine really exited and fails closed with a typed `EnforcementUnavailable` if it has not,
-  matching what the startup probe already did with the same observation
+- `runLinuxWatchdog` and the NVIDIA watchdog treat a no-live-member observation as a bounded
+  settlement window rather than silently ending enforcement or racing the engine action's
+  `ProcessHandle` reaper. Four fresh observations at the normal 50 ms interval bound the window;
+  group reappearance resumes the complete sampling loop. Persistent absence is accepted only when
+  the leader is terminal or absent in procfs. A stable live leader, malformed evidence, or an
+  observation error terminates the group and records typed `EnforcementUnavailable`. Terminal
+  tasks (`Z`, `X`, and `x`) are excluded from RSS/VRAM totals, so a zombie is never mistaken for a
+  live enforceable member
 - child-cgroup delegation is unavailable and is not claimed: the launcher sees the unified cgroup-v2
   hierarchy mounted read-only, and a one-model pod would leave the Haskell daemon inside the same
   OOM-kill domain. The selected construction keeps the daemon outside a fresh child group, sums
@@ -1734,19 +1756,26 @@ unavailable compiled placements.
 - unit and integration tests reject ineffective/mismatched enforcers and chart/plan drift
 - adversarial Apple and Linux CPU executions exceed the declared ceiling, return typed terminal
   failure, and leave the host, daemon, and subsequent smaller inference alive
-- the adversarial Linux CPU ceiling-breach survival regression self-execs a grouped child that
-  allocates and touches 64 MiB, applies the production `/proc` process-group watchdog under a 16 MiB
-  ceiling, and proves the typed `EngineExceededCeiling 16` result plus a non-successful child reap;
+- the adversarial Linux CPU ceiling-breach survival regression forks a grouped child that allocates
+  and touches 64 MiB, applies the production `/proc` process-group watchdog under a 16 MiB ceiling,
+  and proves the typed `EngineExceededCeiling 16` result plus a bounded non-successful POSIX reap;
   a smaller child under a 512 MiB ceiling then succeeds, establishing daemon and test-process
-  survival after the breach. It runs in the supported `linux-cpu` image with that image's required
-  `/usr/bin/tini` entrypoint preserved — a launcher that replaces the entrypoint has a process 1
-  that does not reap orphan descendants, and that topology is not closure evidence
+  survival after the breach. The fixture owns its child directly and does not introduce a second
+  `ProcessHandle` waiter. It runs in the supported `linux-cpu` image with that image's required
+  `/usr/bin/tini` entrypoint preserved
+- deterministic settlement regressions cover group reappearance, terminal/absent leader evidence,
+  persistent absence with a live leader, group observation failure, and leader observation failure
 - selected `apple-silicon` plus `linux-cpu` full-suite gate passes against one frozen state
 
 ### Remaining Work
 
-The exact-source `linux-cpu` half is complete and must not be rerun merely to compensate for absent
-Apple hardware. What is open is Apple:
+The corrected `linux-cpu` half is complete on its frozen identity. The governed launcher build and
+exact focused unit gate are GREEN (compile-fail 6 positive/92 negative, artifact transaction 48,
+Apple materializer 16, capped observer, execution-plan internal, main Haskell, and web 83/83).
+The source-matched full `./bootstrap/linux-cpu.sh test` also exited 0 on 2026-08-16: aggregate lint,
+the complete unit and integration suites, and 16/16 Playwright cases passed, including every one of
+the twelve configured model rows; final status was absent and idle with no runtime residue. What
+remains is Apple:
 
 - **The adversarial Apple ceiling-breach survival test.** An execution that exceeds its declared
   ceiling must return a typed terminal failure and leave the host, the daemon, and a subsequent
@@ -1772,8 +1801,9 @@ Apple hardware. What is open is Apple:
   state on [Wave Y](cohort-validation-waves.md).
 
 Every Apple footprint or watchdog result produced by the superseded FFI sampler is historical
-evidence only and discharges none of the above. This phase's strict numerical execution begins after
-Phase 2 Sprint 2.16 closes.
+evidence only and discharges none of the above. This phase's strict numerical execution is now
+active after Phase 3 closed; the current Wave Y receipts must be audited against these exact
+acceptance criteria before any item is marked complete.
 
 ---
 

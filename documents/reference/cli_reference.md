@@ -21,6 +21,7 @@
 - `infernix cluster up` - requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state
 - `infernix cluster down` - tears the cluster down while leaving durable repo-local state under `./.data/` intact
 - `infernix cluster status` - reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation
+- `infernix cluster reclaim-slot [--force-owner-pid PID]` - reports the typed evidence for an interrupted harness cluster-slot reservation and retires it only after owner-death or an exact operator-transcribed PID premise, bounded-command quiescence, and config-transaction recovery
 
 ### `cache`
 
@@ -84,14 +85,19 @@
   The Apple hardware gate requires the upstream MLX GPU operation, coremltools device observation,
   materialized-artifact load, and routed real-output evidence named in
   [../engineering/apple_silicon_metal_headless_builds.md](../engineering/apple_silicon_metal_headless_builds.md)
-- `cluster up`, `cluster down`, `cluster status`, `cache ...`, `lint ...`, `test ...`,
-  `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service` is the
-  long-running daemon entrypoint for the Coordinator, Engine, and Webapp roles
+- `cluster up`, `cluster down`, `cluster status`, `cluster reclaim-slot`, `cache ...`, `lint ...`,
+  `test ...`, `docs check`, and `internal ...` are declarative CLI entrypoints; `infernix service`
+  is the long-running daemon entrypoint for the Coordinator, Engine, and Webapp roles
 - `cluster status` does not mutate Kubernetes resources, publication state, or authoritative
   repo-local state; reporting the persisted `clusterOwner` or a `mutation-incomplete` phase is an
   owner/state read, not a mutation; on the Linux outer-container path it may idempotently run
   `docker network connect kind <launcher-container>` so the fresh launcher can observe the Kind
   control plane over Docker's private `kind` network
+- `cluster reclaim-slot` is the explicit interrupted-harness recovery boundary. It reports the
+  recorded PID, process group, birth identity, PID-namespace relation, lifetime-lock observation,
+  and resulting owner classification. An exact `--force-owner-pid` supplies only the operator's
+  owner-death premise; it cannot bypass the kernel lifetime lock, bounded-command quiescence proof,
+  or config-transaction recovery.
 - operator config is created explicitly by `infernix init` at repo-root `./infernix.dhall`;
   ordinary substrate-aware entrypoints such as `cluster up`, `service`, `cache ...`, `kubectl ...`,
   frontend-contract generation, and aggregate `infernix test ...` commands do not auto-materialize

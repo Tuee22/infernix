@@ -1,12 +1,10 @@
 # Phase 2: Kind Cluster Storage and Lifecycle
 
-**Status**: Blocked — Phase 1 Sprints 1.20–1.25 remain Active.
-**Blocked by**: Phase 1 Sprints 1.20–1.25
-**Current state**: Sprints 2.1–2.13 retain their recorded closure. Sprints 2.14–2.16 retain landed
-implementation, but Phase 2 may not begin its current-source closure while Phase 1 Sprints
-1.20–1.25 remain Active. After Phase 1 is `Done`, Phase 2 must perform its own settled-source review
-and machine-independent gates before freezing one identity for Apple Silicon and then the paired
-`linux-cpu` cohort. No current Phase 2 gate or cohort has started.
+**Status**: Done — all 16 sprints are implemented and validated.
+**Current state**: Sprints 2.1–2.16 are `Done`. After Phase 1 closed, Phase 2's settled-source review
+found no implementation residual. The explicit post-prerequisite governed lint and unit aggregates
+exited 0, and the already-frozen current-source Apple Silicon plus paired `linux-cpu` Wave Y
+cohorts supply the required behavioral evidence for the same source identity.
 
 The landed correction set is a global cross-runtime cluster inventory, lifecycle-region-indexed
 owner/runtime teardown authority, a harness reservation established before config takeover,
@@ -16,9 +14,10 @@ for every Kind deletion, collision-safe target-exec provenance, detached parent-
 parent-side process-group termination, real monotonic readiness deadlines, stale-state mutation
 publication, claim-permission repair, operator-kubectl mutation-bypass refusal, closed operand
 validation at the subprocess compiler, single-deadline generated retries, observed post-failure
-absence, and stdin/protected-file credential transport. Phase 2 remains open until Phase 1 closes,
-its own review and machine-independent gates pass, and one uninterrupted Apple Silicon `test all`
-plus the source-matched `linux-cpu` build and uninterrupted `test` both pass in that order.
+absence, and stdin/protected-file credential transport. Phase 2 closed on 2026-08-16 after its
+explicit review and machine-independent gates, using the uninterrupted Apple Silicon `test all`
+plus the source-matched `linux-cpu` build and uninterrupted `test` already recorded by
+[Wave Y](cohort-validation-waves.md).
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md)
 
 > **Purpose**: Define the supported Kind bootstrap path, the manual storage doctrine, the Helm
@@ -28,11 +27,10 @@ plus the source-matched `linux-cpu` build and uninterrupted `test` both pass in 
 
 ## Phase Status
 
-Sprints 2.1–2.13 are closed. Sprints 2.14–2.16 are blocked by the current Phase 1 closure. Their
-implementation remains landed, but no current Phase 2 review, machine-independent gate, or cohort
-may start until Phase 1 is `Done`; Phase 2 then runs those gates before Apple Silicon and the paired
-`linux-cpu` lane. Fresh review and a complete Stage 1 precede the uninterrupted Apple `test all`;
-the source-matched `linux-cpu` build and uninterrupted `test` run only after Apple.
+Sprints 2.1–2.16 are closed. The reopened lifecycle, ownership, retained-state, and bounded-command
+implementation passed its settled-source review and explicit post-Phase-1 machine-independent
+gates. The frozen Wave Y Apple cohort and its source-matched paired `linux-cpu` cohort had already
+run in the required order and both exited 0, so no Phase 2 validation residual remains.
 
 The Kind bootstrap, manual PV doctrine, Harbor-first image flow,
 shared substrate publication path, Linux outer-container launcher contract, lifecycle progress
@@ -46,9 +44,8 @@ through the `HostConfig`-backed HostTool resolver. The Apple setup path in
 Poetry setup entrypoint with an explicit `--install-root` argument and an empty process
 environment. [Wave A](cohort-validation-waves.md) and [Wave C](cohort-validation-waves.md) retain
 historical evidence for that Sprint 2.13 source, but do not close the reopened Phase 2 correction.
-The obsolete C/Cabal boundary is removed. Current Phase 2 closure remains blocked by Phase 1; once
-unblocked it requires focused proof of the implemented all-Haskell replacement, renewed review,
-fresh machine-independent gates, and its ordered Apple/`linux-cpu` cohorts.
+The obsolete C/Cabal boundary is removed. The focused all-Haskell replacement proofs, renewed
+review, fresh machine-independent gates, and ordered Apple/`linux-cpu` cohorts are complete.
 
 ## Storage Doctrine
 
@@ -109,7 +106,28 @@ Harbor-first, retained-state, and lifecycle-progress source identity. Reopened P
 landed implementation only: the registry-only Harbor verification correction is implemented with
 closed-command, redaction, and path coverage; the all-Haskell lifecycle correction and the
 bounded-subprocess replacement are implemented; and the obsolete C/Cabal boundary is removed.
-Phase 2's ordered closure after Phase 1 and both Wave Y behavioral lanes remain before `Done`.
+Phase 2's ordered closure after Phase 1 and both Wave Y behavioral lanes completed on 2026-08-16.
+
+## Current Closure Receipt (2026-08-16)
+
+- settled-source review found the Sprint 2.14–2.16 implementation present and no remaining code or
+  documentation residual
+- the explicit post-Phase-1 `./.build/infernix test lint` exited 0: Haskell style/policy, isolated
+  Cabal formatting, Python typing/format/lint, and the bounded all-component build passed
+- the explicit post-Phase-1 `./.build/infernix test unit` exited 0: compile-time capabilities passed
+  6 positive/92 negative fixtures; artifact transactions passed 48 cases; Apple materialization
+  passed 16 cases; capped-observer, execution-plan, and main Haskell suites passed; web passed 83/83
+- the frozen Apple full suite used source fingerprint `bf22a3ad…` and runtime image
+  `sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400`; real inference,
+  registry-only publication, lifecycle/recovery variants, and Playwright 16/16 passed before clean
+  teardown
+- the paired current-source `linux-cpu` launcher image
+  `sha256:4f46299ee0b45b9c3a5ecc2b7543d8174c5323e57ea6eac7b7355a5edcee155f` passed the complete
+  bootstrap test: aggregate gates, live integration, real inference and typed pod-memory refusals,
+  retained-state/topology cycles, and Playwright 16/16; governed status then reported an absent idle
+  cluster with zero nodes, pods, results, and cache entries
+- current `lint plan`, `lint docs`, `docs check`, and repo-wide diff validation are rerun after the
+  closure-record edits below; Phase 3 does not begin until they are green
 
 ## Sprint 2.1: Kind Bootstrap and StorageClass Reset [Done]
 
@@ -627,16 +645,17 @@ None.
 
 ## Reopened Work
 
-Sprints 2.1–2.13 are `Done`. The reopened Sprint 2.14–2.16 implementation remains landed and carries
-no closure evidence of its own. Harbor publication verification is registry-only: cached host Docker
+Sprints 2.1–2.16 are `Done`. The reopened Sprint 2.14–2.16 implementation passed its current-source
+review, explicit machine-independent gates, and the closing Wave Y behavioral cohorts. Harbor
+publication verification is registry-only: cached host Docker
 content could satisfy the former `PublishVerifyPull` without proving remote blob servability, so the
 verifier now runs a bounded authenticated platform-selected `skopeo copy` from Harbor's API
 authority into a fresh empty `dir:` store under a birth-identity-owned mode-0700 directory, reads
 the selected manifest, config, and every layer, and preserves primary failures while removing
 protected auth and verification paths; dead-owner auth-directory reconciliation remains in force,
 with focused closed-command, credential-redaction, and absolute-path unit coverage. The obsolete
-C/Cabal boundary is removed. Phase 2 remains blocked by Phase 1, after which its own closure, Apple,
-and the source-matched `linux-cpu` lane run in that order.
+C/Cabal boundary is removed. Phase 2's own ordered closure, Apple, and source-matched `linux-cpu`
+evidence are complete.
 
 Sprint 2.13 closed the env reads and HostTool routing:
 5 env reads retired in `Cluster.hs`, 1 `getEnvironment` read retired in `ProcessMonitor.hs`, the
@@ -665,24 +684,20 @@ ownership. Phase 6 Sprint 6.43 is the harness half. The superseded ownerless
 
 ---
 
-## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Blocked]
+## Sprint 2.14: Typed ClusterLifecycle and Lease-Gated Teardown [Done]
 
-**Status**: Blocked — implementation remains landed, but current Phase 2 validation cannot begin
-until Phase 1 Sprints 1.20–1.25 are `Done`. The all-Haskell lifecycle implementation and the
+**Status**: Done — implementation and current-source validation are complete. The all-Haskell lifecycle implementation and the
 nested-custody self-exec anchor/supervisor/pin implementation are present, and the obsolete C/Cabal
 boundary is removed. The raw
 live-container scrub is gone. `WriterQuiesced` is minted under the lifecycle lock, shared
 runtime-root cleanup requires an all-runtime absence witness, and Apple/non-bind teardown pauses
 every workload-capable Kind worker, rechecks the PVC/node binding map, stages and atomically swaps
 one complete snapshot, and holds the frozen-source lease through Kind deletion.
-**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
-machine-independent gate exists for it, and every earlier gate belongs to a superseded executable
-identity.
+**Implementation status**: closed on the current reviewed source with the Phase 2 lint/unit receipt
+and Wave Y Apple/`linux-cpu` behavioral evidence.
 **Prior cohort evidence**: [Wave V](cohort-validation-waves.md) closed the earlier scope.
-**Current cohort gate**: none. After Phase 1 closes, pass Phase 2's own ordered closure before
-freezing a new identity for Apple Silicon and then `linux-cpu`.
+**Current cohort gate**: [Wave Y](cohort-validation-waves.md), complete.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`
-**Blocked by**: Phase 1 Sprints 1.20–1.25 current-source closure
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
 engineering/reference docs
 
@@ -774,24 +789,21 @@ at [../documents/architecture/managed_state_transitions.md](../documents/archite
 
 ### Remaining Work
 
-Wait for Phase 1 Sprints 1.20–1.25 to become `Done`. Then run Phase 2's settled-source review and
-machine-independent gates before freezing one current identity for Apple Silicon and the paired
-`linux-cpu` lane, and complete both cohort lanes against that frozen identity.
+- None.
 
 ---
 
-## Sprint 2.15: Cluster Ownership and Mutation-Position [Blocked]
+## Sprint 2.15: Cluster Ownership and Mutation-Position [Done]
 
-**Status**: Blocked — implementation remains landed, but current Phase 2 validation cannot begin
-until Phase 1 Sprints 1.20–1.25 are `Done` and Sprint 2.14's ordered current-source closure is
-available. The owner/effect-adjacent correction, stale-state mutation-helper fix,
+**Status**: Done — implementation and current-source validation are complete. The
+owner/effect-adjacent correction, stale-state mutation-helper fix,
 independent region fixtures, and preserving/exhaustive synchronous and asynchronous cleanup are
 implemented, as is the registry-only Harbor verification correction. The lifecycle C/FFI/Cabal
 boundary is removed code-side. The all-Haskell bounded-subprocess correction is implemented after
 rejection of the forked candidate's descriptor-inheritance window; its nested exact-identity
 custody-handshake redesign is present, and the obsolete subprocess C file/Cabal declaration is
-removed. Phase 2's own closure after Phase 1,
-Apple Silicon, and `linux-cpu` remain in that order. Every create,
+removed. Phase 2's own closure after Phase 1, Apple Silicon, and `linux-cpu` completed in that
+order. Every create,
 teardown, recovery delete, cleanup, and operator-kubectl authorization is made under the
 cross-process lifecycle lock against the global three-runtime Kind inventory. The private
 `ClusterTeardownAuthority s`, `PreWorkloadKindRecovery s`, and `KindDeleteAuthorization s` carry the
@@ -843,8 +855,8 @@ live inventory, owner, and reservation before publishing `ClusterMutating`. Its 
 that fresh state, and `ClusterReady` is restored from it only after the dirty marker, inventory, and
 reservation are revalidated; stale, absent, already-dirty, or unauthorized owner cases leave the
 persisted record unchanged.
-**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
-machine-independent gate exists for it. The landed
+**Implementation status**: closed on the current reviewed source with the Phase 2 lint/unit receipt
+and Wave Y Apple/`linux-cpu` behavioral evidence. The landed
 typed-state foundation is in
 `src/Infernix/Types.hs`: `ClusterOwner`
 (`OperatorOwned | HarnessOwned`, text JSON, fail-closed decode) plus a `clusterOwner` field on
@@ -872,11 +884,8 @@ renders the owner and a `ClusterMutating` as an in-progress (dirty) phase never 
 `cluster up` (the following chart re-apply scales over-scaled deployments back).
 **Prior cohort evidence**: [Wave X](cohort-validation-waves.md) proved the earlier typed
 owner/mutation-position and config-recovery scope. It does not prove the owner-atomic correction.
-**Current cohort gate**: none. After Phase 1 closes, Phase 2 must pass its own ordered
-closure before a new source identity is frozen for Apple Silicon and then `linux-cpu`.
+**Current cohort gate**: [Wave Y](cohort-validation-waves.md), complete.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Storage.hs`, `src/Infernix/Cluster.hs`, `src/Infernix/CLI.hs`
-**Blocked by**: Phase 1 Sprints 1.20–1.25 current-source closure; Sprint 2.14 (typed
-`ClusterLifecycle` + fail-closed persistence)
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/reference/cli_reference.md`, `documents/reference/cli_surface.md`,
 `documents/engineering/storage_and_state.md`, `documents/operations/apple_silicon_runbook.md`,
@@ -927,26 +936,23 @@ operator or harness cannot invalidate the proof between check and use. See the d
 
 ### Remaining Work
 
-Wait for Phase 1 Sprints 1.20–1.25 and Sprint 2.14's ordered current-source closure. Then include
-this sprint in Phase 2's settled-source review and machine-independent gates before Apple Silicon
-and the paired `linux-cpu` cohort run. Earlier green results remain historical only.
+- None.
 
 ---
 
-## Sprint 2.16: Bounded Semantic Command Plan [Blocked]
+## Sprint 2.16: Bounded Semantic Command Plan [Done]
 
-**Status**: Blocked — implementation remains landed, but current Phase 2 validation cannot begin
-until Phase 1 Sprints 1.20–1.25 are `Done` and Sprints 2.14–2.15 reach their ordered current-source
-closure. Command-kernel exec provenance, supervision, forced cleanup, real readiness
+**Status**: Done — implementation and current-source validation are complete. Command-kernel exec
+provenance, supervision, forced cleanup, real readiness
 deadlines, and the claim-permission postcondition are implemented, as is the final publication
 audit's registry-only `BlobServable` correction with focused unit coverage. The all-Haskell
 self-exec anchor/supervisor/pin topology is implemented and compiles. The subprocess C shim, FFI
 spawn boundary, numbered-FD topology, obsolete C file, and Cabal `c-sources:` entry are removed.
 The review-required prewrite recovery and protocol-bound corrections are implemented. Phase 2's own
-closure after Phase 1, Apple, and `linux-cpu` remain in that order.
-**Implementation status**: the reopened source is landed but unfrozen; no current-source review or
-machine-independent gate exists for it. The forked target-group candidate is rejected for its
-descriptor-inheritance window and supplies no evidence.
+closure after Phase 1, Apple, and `linux-cpu` completed in that order.
+**Implementation status**: closed on the current reviewed source with the Phase 2 lint/unit receipt
+and Wave Y Apple/`linux-cpu` behavioral evidence. The forked target-group candidate is rejected for
+its descriptor-inheritance window and supplies no evidence.
 `Infernix.Cluster.Command` and
 `Infernix.Cluster.Subprocess` are library-internal `other-modules`, so external callers cannot compose
 the destructive builders, compiler, and runner around the lifecycle evidence boundary. The unit
@@ -973,7 +979,7 @@ is post-durability and post-retained-pin acknowledgement; a private inner gate r
 the supervisor-owned target PID and containing pin group are observed. A bounded version-4
 distinct-boot incoming-intent filename, paired with the bounded version-3 common-boot encoding,
 preserves those helper identities even before a payload write.
-Phase 2's own ordered closure and cohort proof do not yet exist.
+Phase 2's own ordered closure and cohort proof are complete.
 The finite
 claim-directory chmod missing-path repair loop and the Kind/nvkind host-port reselection loops remain
 higher-level workflows because they repair state or change generated command operands; every
@@ -1030,7 +1036,6 @@ removed `cbits/infernix_subprocess.c`,
 `src/Infernix/Cluster.hs`, `src/Infernix/Cluster/PublishImages.hs`, `src/Infernix/HostConfig.hs`,
 `src/Infernix/CLI.hs`, `src/Infernix/Storage.hs`, `test/compile-fail/`, `test/integration/Spec.hs`,
 `test/unit/Spec.hs`
-**Blocked by**: Phase 1 Sprints 1.20–1.25 current-source closure; Sprints 2.14–2.15
 **Docs to update**: `documents/architecture/typed_execution_plan.md`,
 `documents/architecture/managed_state_transitions.md`,
 `documents/architecture/configuration_doctrine.md`, `documents/engineering/host_tools_manifest.md`
@@ -1089,9 +1094,7 @@ so no cluster lifecycle path can invoke a raw or unbounded process.
 
 ### Remaining Work
 
-Wait for Phase 1 Sprints 1.20–1.25 and Sprints 2.14–2.15. Then include this sprint in Phase 2's
-settled-source review and machine-independent gates before Apple Silicon and the paired `linux-cpu`
-cohort run. Earlier focused, aggregate, and cohort results remain historical only.
+- None.
 
 ---
 

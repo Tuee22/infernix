@@ -149,19 +149,22 @@ evidence:
   exact PID, process group, and process birth identity before publishing activity. The opaque
   `SessionProgram` admits only the linear, rank-2 sequence `AnchorReady -> SupervisorReady ->
   LeaseDurable -> TargetRunning`; its constructors are hidden, and the session token cannot escape,
-  be reused, or skip durable publication. A version-3 activity lease is fsynced and renamed under a
-  directory fsync before the one-shot start authority can be spent. It persists the anchor under
+  be reused, or skip durable publication. A version-4 activity lease is fsynced and renamed under a
+  directory fsync before the one-shot start authority can be spent. It persists the execution PID
+  namespace plus the anchor under
   legacy `command*` keys, the supervisor under legacy `watchdog*` keys, and the exact pin under
   compatibility `targetGroupLeader*` keys; those keys name the retained group leader, not the
   arbitrary target. Recovery continues to decode version-1 command-only and version-2 dual-group
-  records. It reads at most 64 KiB per final activity document and rejects an oversized or
+  records. Version 1–3 records remain decodable. It reads at most 64 KiB per final activity document
+  and rejects an oversized or
   structurally invalid document before acting on it. Before any payload byte is written, the kernel
   fsyncs a bounded incoming-intent
   basename that encodes the exact owner/anchor/supervisor/pin identities. The common-boot encoding
-  uses `.incoming-activity-v3.*`; the fixed-width distinct-boot encoding uses
-  `.incoming-activity-v4.i*`. Recovery parses and validates that filename, refuses malformed,
-  colliding, or oversized entries, and can clean an empty or truncated prewrite without PID-only
-  inference.
+  used by legacy Linux records uses `.incoming-activity-v3.*`; current Linux publication adds the
+  parsed nsfs token under `.incoming-activity-v5.*`. Darwin's fixed-width distinct-registry-token
+  encoding remains `.incoming-activity-v4.i*`, whose shape itself identifies the non-namespaced
+  host lane. Recovery parses and validates that filename, refuses malformed, colliding, or
+  oversized entries, and can clean an empty or truncated prewrite without PID-only inference.
 - Only after the durable transition and retained-pin acknowledgement may the supervisor use the
   kernel's sole public `System.Posix` fork/exec boundary. The target child begins inside the
   supervisor group behind a private inner gate; both child and supervisor attempt the atomic move
@@ -194,11 +197,15 @@ evidence:
   each attempt, bracketed cleanup closes the parent protocol endpoint, forcibly terminates and boundedly
   reaps every owned child, proves the anchor, supervisor, and pin-led target groups absent, and
   only then removes its activity lease after success, failure, exception, or timeout. Dead-owner
-  recovery accepts legacy version-1 command-only, version-2 dual-group, and current version-3
-  three-group leases and
+  recovery accepts legacy version-1 command-only, version-2 dual-group, and version-3 three-group
+  leases plus current namespace-indexed version 4 and
   cannot restore config or release the reservation until every recorded group is proven absent;
-  malformed or unverifiable leases fail closed. The compatibility field names do not describe the
-  current helper roles.
+  malformed or same-namespace-unverifiable leases fail closed. A version-4 lease from a different
+  PID namespace is left untouched without probing its namespace-local PIDs or groups. On Darwin, a
+  legacy three-group lease whose four birth identities carry the one UUID-shaped Linux kernel boot
+  token is likewise quarantined rather than interpreted against host PIDs; legacy Darwin registry
+  tokens remain recoverable. The compatibility field names do not describe the current helper
+  roles.
 - The Apple artifact facade is the only exposed engine-materialization module. Its raw artifact
   transaction, provisioning facade, provisioning command constructors, and per-artifact installer
   remain package-internal. A caller submits one closed materialization request to a runner-owned
@@ -353,12 +360,14 @@ uses, and otherwise requires the operator to transcribe the pid out of the recor
 is an operator-asserted premise, not an override: it supplies only the record's identity, and the
 bounded-command quiescence proof and config-transaction reconciliation still run and still fail
 closed.
-Two residuals are named rather than papered over. **(a)** A sibling container whose reservation owner
+One reservation residual remains named rather than papered over. A sibling container whose reservation owner
 died but whose bounded-command descendants are still alive presents a free lock and a foreign
 namespace, so its reservation is retired where today it refuses; that is strictly narrower than the
-permanent wedge it replaces, but it is a real widening. **(b)** The bounded-command activity ledger
-still carries the identical namespace-local assumption, so a pid collision there fails closed with
-its own refusal — the wedge can move one gate downstream rather than disappear.
+permanent wedge it replaces, but it is a real widening. The formerly named bounded-command
+activity-ledger residual is closed: current leases and Linux incoming intents carry their PID
+namespace, foreign leases are ignored without PID/group probes, and legacy Linux UUID-shaped
+leases are quarantined on Darwin. Foreign activity is not deleted or declared dead; only a process
+inside the recorded namespace may turn its exact birth/group evidence into cleanup authority.
 
 Readiness **observation** is itself three-valued, because a probe that reads a remote system does not
 always get to observe it. A transport fault — a reset idle NodePort keep-alive, a HEAD timeout, a

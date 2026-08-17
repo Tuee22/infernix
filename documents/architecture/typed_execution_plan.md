@@ -218,7 +218,11 @@ Per-substrate enforcement is:
 - `linux-cpu`: the `/proc` process-group RSS watchdog sums every member conservatively and
   kills only the child execution group on breach; the pod cgroup is a larger verified outer
   envelope covering the daemon, admitted child ceiling, and polling overshoot, never the
-  per-request breach classifier;
+  per-request breach classifier. Terminal tasks are excluded. A no-live-member sample receives
+  four fresh observations at the normal 50 ms interval; reappearance resumes enforcement, and
+  persistent absence completes normally only when the leader is terminal or absent in procfs.
+  Stable-live or unreadable evidence remains typed fail-closed. The watchdog does not wait on the
+  engine `ProcessHandle`, leaving one owner for reap;
 - `linux-gpu`: RAM enforcement is paired with per-process-group NVIDIA VRAM accounting. A
   device-using model compiles two independently indexed grants from a
   `DualEnforcedBudget`, refinement requires a live NVIDIA sampler plus a device envelope large enough

@@ -33,7 +33,7 @@ import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, sor
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Map.Strict qualified as MapStrict
-import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe)
+import Data.Maybe (fromMaybe, isJust, isNothing, listToMaybe, mapMaybe)
 import Data.ProtoLens.Field (field)
 import Data.Text qualified as Text
 import Data.Text.Encoding qualified as TextEncoding
@@ -120,7 +120,7 @@ import Infernix.CLI
     runtimeConfigRestorePlan,
     writeGeneratedPursContracts,
   )
-import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
+import Infernix.Cluster (ClusterOwnershipRefusal (..), ClusterOwnershipRefusalReason (..), ClusterSlotAdmission (..), ClusterSlotIdentity (..), HelmDeployPhase (..), KindKubeconfigRecoveryPlan (..), RetainedReplayPlan (..), SnapshotRecoveryAction (..), WorkerPauseState (..), authorizeClusterOwnership, authorizeHarnessReservationAccess, authorizeRuntimeConfigWriteAccess, beginHarnessConfigTransaction, classifyWorkerPauseObservation, cleanupHarnessRuntimeState, clusterCheckoutIdentityFromHostRoot, clusterWorkloadArchitectureForHostArchitecture, kindControlPlaneNodeName, kindKubeconfigRecoveryPlan, linuxGpuNvkindConfigMapBug, loadClusterState, preWorkloadRecoveryIntentMatches, pulsarBootstrapLogIndicatesDirtyState, reclaimHarnessClusterSlotAt, reconcileInterruptedHarnessStateAt, releaseHarnessClusterSlotAt, renderHelmValues, retainedReplayPending, retainedReplayPlan, seizeHarnessClusterSlotAt, snapshotClaimNodeBindingsForPausedWorkers, snapshotRecoveryPlan, uncordonResultsProveReady, withClusterLifecycleLock, withHarnessClusterSlotAt, withPersistedClusterMutation, withRuntimeConfigWriteAccessAt, writeGeneratedKindConfig)
 import Infernix.Cluster.ClaimPermissions qualified as ClaimPermissions
 import Infernix.Cluster.Command qualified as ClusterCommand
 import Infernix.Cluster.Discover
@@ -144,6 +144,7 @@ import Infernix.Cluster.PublishImages
     writeHarborOverridesFile,
   )
 import Infernix.Cluster.Subprocess qualified as Subprocess
+import Infernix.Cluster.Subprocess.Activity qualified as SubprocessActivity
 import Infernix.ClusterConfig
   ( ClusterConfig (..),
     CoordinatorWiring (..),
@@ -268,10 +269,13 @@ import Infernix.Objects.Sts qualified as ObjSts
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
     dropInheritedProcessIdentity,
+    observeCurrentProcessNamespaceIdentity,
     parseProcessBirthIdentity,
+    parseProcessNamespaceIdentity,
     readProcessBirthIdentity,
     registerCurrentProcessIdentity,
     renderProcessBirthIdentity,
+    renderProcessNamespaceIdentity,
   )
 import Infernix.ProcessIdentity.Internal
   ( withCurrentProcessIdentityRegistryLockForTest,
@@ -356,7 +360,7 @@ import System.Info qualified
 import System.Posix.Files (createNamedPipe, createSymbolicLink, fileMode, getFileStatus, removeLink, setFileMode)
 import System.Posix.IO qualified as PosixIO
 import System.Posix.IO.ByteString qualified as PosixByteString
-import System.Posix.Process (ProcessStatus (Exited, Stopped), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
+import System.Posix.Process (ProcessStatus (..), createProcessGroupFor, exitImmediately, forkProcess, getProcessGroupID, getProcessID, getProcessStatus, joinProcessGroup)
 import System.Posix.Resource
   ( Resource (ResourceOpenFiles, ResourceTotalMemory),
     ResourceLimit (ResourceLimit, ResourceLimitInfinity, ResourceLimitUnknown),
@@ -549,17 +553,21 @@ dispatchCappedEngineMemoryFixture :: IO ()
 dispatchCappedEngineMemoryFixture = do
   arguments <- getArgs
   case arguments of
-    ["__infernix_unit_linux_memory_breach_fixture"] -> do
-      let payload = BS.replicate (64 * 1024 * 1024) 65
-      BS.length payload `seq` threadDelay (60 * 1000000)
-      BS.length payload `seq` exitSuccess
-    ["__infernix_unit_linux_memory_small_fixture"] -> do
-      threadDelay 250000
-      exitSuccess
-    ["__infernix_unit_nvidia_no_context_fixture"] -> do
-      threadDelay 250000
-      exitSuccess
+    ["__infernix_unit_linux_memory_breach_fixture"] -> runLinuxMemoryBreachFixture
+    ["__infernix_unit_linux_memory_small_fixture"] -> runSmallMemoryFixture
+    ["__infernix_unit_nvidia_no_context_fixture"] -> runSmallMemoryFixture
     _ -> pure ()
+
+runLinuxMemoryBreachFixture :: IO ()
+runLinuxMemoryBreachFixture = do
+  let payload = BS.replicate (64 * 1024 * 1024) 65
+  BS.length payload `seq` threadDelay (60 * 1000000)
+  BS.length payload `seq` exitSuccess
+
+runSmallMemoryFixture :: IO ()
+runSmallMemoryFixture = do
+  threadDelay 250000
+  exitSuccess
 
 -- | Phase 1 Sprint 1.21 — the bounded host build-memory kernel.
 --
@@ -2082,49 +2090,117 @@ runDescriptorSpaceAssertions = do
       (descriptorSpaceBoundLimit preserved == tighter)
       "establishBoundedDescriptorSpace preserves a tighter host-imposed soft limit"
 
+reapCappedEngineFixture :: String -> CPid -> IO ProcessStatus
+reapCappedEngineFixture fixtureLabel processId = poll 80
+  where
+    poll :: Int -> IO ProcessStatus
+    poll retriesRemaining = do
+      maybeStatus <- getProcessStatus False False processId
+      case maybeStatus of
+        Just processStatus -> pure processStatus
+        Nothing
+          | retriesRemaining <= 0 ->
+              fail (fixtureLabel <> " was not reapable within four seconds")
+          | otherwise -> do
+              threadDelay 50000
+              poll (retriesRemaining - 1)
+
+startGroupedCappedEngineFixture :: String -> IO () -> IO CPid
+startGroupedCappedEngineFixture fixtureLabel fixtureAction = do
+  (readyReader, readyWriter) <- PosixIO.createPipe
+  childPid <-
+    forkProcess $ do
+      PosixIO.closeFd readyReader
+      processId <- getProcessID
+      _ <- createProcessGroupFor processId
+      _ <- PosixByteString.fdWrite readyWriter "ready"
+      PosixIO.closeFd readyWriter
+      fixtureAction
+  PosixIO.closeFd readyWriter
+  ready <- PosixByteString.fdRead readyReader 5
+  PosixIO.closeFd readyReader
+  if ready == "ready"
+    then pure childPid
+    else do
+      _ <- getProcessStatus True False childPid
+      fail (fixtureLabel <> " did not establish its process group")
+
 runLinuxWatchdogBreachAssertions :: IO ()
 runLinuxWatchdogBreachAssertions =
   unless (System.Info.os == "darwin") $ do
-    executable <- getExecutablePath
-    (_, _, _, breachHandle) <-
-      createProcess
-        (proc executable ["__infernix_unit_linux_memory_breach_fixture"])
-          { create_group = True
-          }
     breachPid <-
-      getPid breachHandle >>= maybe (fail "memory-breach fixture exposed no pid") pure
-    breachReaped <- MVar.newEmptyMVar
-    _ <- forkIO (waitForProcess breachHandle >>= MVar.putMVar breachReaped)
+      startGroupedCappedEngineFixture
+        "memory-breach fixture"
+        runLinuxMemoryBreachFixture
     breachOutcome <-
       CappedEngineInternal.linuxWatchdogOutcomeForTest
         16
-        breachHandle
         breachPid
-    breachExit <- MVar.takeMVar breachReaped
+    breachExit <- reapCappedEngineFixture "memory-breach fixture" breachPid
     assert
       ( breachOutcome == Just (CappedEngineInternal.EngineExceededCeiling 16)
-          && breachExit /= ExitSuccess
+          && breachExit /= Exited ExitSuccess
       )
       "Sprint 4.32: Linux live RSS breach returns the typed ceiling outcome and reaps the grouped engine"
 
-    (_, _, _, smallHandle) <-
-      createProcess
-        (proc executable ["__infernix_unit_linux_memory_small_fixture"])
-          { create_group = True
-          }
     smallPid <-
-      getPid smallHandle >>= maybe (fail "small-memory fixture exposed no pid") pure
-    smallReaped <- MVar.newEmptyMVar
-    _ <- forkIO (waitForProcess smallHandle >>= MVar.putMVar smallReaped)
+      startGroupedCappedEngineFixture
+        "small-memory fixture"
+        runSmallMemoryFixture
     smallOutcome <-
       CappedEngineInternal.linuxWatchdogOutcomeForTest
         512
-        smallHandle
         smallPid
-    smallExit <- MVar.takeMVar smallReaped
+    smallExit <- reapCappedEngineFixture "small-memory fixture" smallPid
     assert
-      (isNothing smallOutcome && smallExit == ExitSuccess)
+      (isNothing smallOutcome && smallExit == Exited ExitSuccess)
       "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
+
+runMissingProcessGroupSettlementAssertions :: IO ()
+runMissingProcessGroupSettlementAssertions = do
+  resumed <-
+    CappedEngineInternal.missingProcessGroupSettlementForTest
+      [Right False, Right True]
+      [Right False]
+  assert
+    (resumed == Right True)
+    "Sprint 4.32: a process group that reappears during bounded settlement resumes full measurement"
+
+  exited <-
+    CappedEngineInternal.missingProcessGroupSettlementForTest
+      (replicate 4 (Right False))
+      [Right True]
+  assert
+    (exited == Right False)
+    "Sprint 4.32: a process exit published during bounded settlement completes without enforcement failure"
+
+  let persistentReason =
+        "process group remained absent while the engine handle remained live"
+  unavailable <-
+    CappedEngineInternal.missingProcessGroupSettlementForTest
+      (replicate 4 (Right False))
+      [Right False]
+  assert
+    (unavailable == Left persistentReason)
+    "Sprint 4.32: persistent process-group absence for a live engine remains a typed enforcement failure"
+
+  let observationFailure = "synthetic /proc observation failure"
+  failedObservation <-
+    CappedEngineInternal.missingProcessGroupSettlementForTest
+      [Left observationFailure]
+      []
+  assert
+    (failedObservation == Left observationFailure)
+    "Sprint 4.32: a settlement recheck observation failure remains terminal and exact"
+
+  let terminalObservationFailure = "synthetic leader observation failure"
+  failedTerminalObservation <-
+    CappedEngineInternal.missingProcessGroupSettlementForTest
+      (replicate 4 (Right False))
+      [Left terminalObservationFailure]
+  assert
+    (failedTerminalObservation == Left terminalObservationFailure)
+    "Sprint 4.32: a terminal-state observation failure remains terminal and exact"
 
 -- | Phase 6 Sprint 6.44 — the NVIDIA VRAM watchdog against a real device. A
 -- grouped child that holds no CUDA context must sample cleanly to zero
@@ -2146,24 +2222,17 @@ runNvidiaWatchdogAssertions =
         putStrLn
           "skipping the live NVIDIA VRAM watchdog assertions: /usr/bin/nvidia-smi is absent on this host"
       else do
-        executable <- getExecutablePath
-        (_, _, _, handle) <-
-          createProcess
-            (proc executable ["__infernix_unit_nvidia_no_context_fixture"])
-              { create_group = True
-              }
         childPid <-
-          getPid handle >>= maybe (fail "NVIDIA fixture exposed no pid") pure
-        reaped <- MVar.newEmptyMVar
-        _ <- forkIO (waitForProcess handle >>= MVar.putMVar reaped)
+          startGroupedCappedEngineFixture
+            "NVIDIA no-context fixture"
+            runSmallMemoryFixture
         outcome <-
           CappedEngineInternal.nvidiaWatchdogOutcomeForTest
             512
-            handle
             childPid
-        childExit <- MVar.takeMVar reaped
+        childExit <- reapCappedEngineFixture "NVIDIA no-context fixture" childPid
         assert
-          (isNothing outcome && childExit == ExitSuccess)
+          (isNothing outcome && childExit == Exited ExitSuccess)
           ( "Sprint 6.44: a live NVIDIA VRAM sample of a group holding no CUDA context "
               <> "completes without a breach or an enforcement failure; observed "
               <> show outcome
@@ -2314,19 +2383,16 @@ runLiveNvidiaVramBreachAssertions = do
         ( "skipping the live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture produced no gate line within its bound"
         )
-    Just (breachHandle, breachPid, "allocated") -> do
-      breachReaped <- MVar.newEmptyMVar
-      _ <- forkIO (waitForProcess breachHandle >>= MVar.putMVar breachReaped)
+    Just (_, breachPid, "allocated") -> do
       breachOutcome <-
         CappedEngineInternal.nvidiaWatchdogOutcomeForTest
           cudaBreachCeilingMib
-          breachHandle
           breachPid
-      breachExit <- MVar.takeMVar breachReaped
+      breachExit <- reapCappedEngineFixture "CUDA breach fixture" breachPid
       assert
         ( breachOutcome
             == Just (CappedEngineInternal.EngineExceededCeiling cudaBreachCeilingMib)
-            && breachExit /= ExitSuccess
+            && breachExit /= Exited ExitSuccess
         )
         ( "Sprint 6.44: a live CUDA allocation past the declared ceiling returns the "
             <> "typed ceiling outcome and reaps the grouped engine non-successfully; observed "
@@ -2335,8 +2401,8 @@ runLiveNvidiaVramBreachAssertions = do
             <> show breachExit
         )
       runNvidiaVramCleanAllocationAssertion
-    Just (breachHandle, _, gate) -> do
-      _ <- forkIO (void (waitForProcess breachHandle))
+    Just (_, breachPid, gate) -> do
+      void (reapCappedEngineFixture "unavailable CUDA fixture" breachPid)
       putStrLn
         ( "skipping the live CUDA ceiling-breach assertions: the device "
             <> "allocation fixture reported "
@@ -2349,17 +2415,14 @@ runNvidiaVramCleanAllocationAssertion :: IO ()
 runNvidiaVramCleanAllocationAssertion = do
   started <- startCudaAllocationFixture cudaCleanAllocationMib 1
   case started of
-    Just (cleanHandle, cleanPid, "allocated") -> do
-      cleanReaped <- MVar.newEmptyMVar
-      _ <- forkIO (waitForProcess cleanHandle >>= MVar.putMVar cleanReaped)
+    Just (_, cleanPid, "allocated") -> do
       cleanOutcome <-
         CappedEngineInternal.nvidiaWatchdogOutcomeForTest
           cudaCleanCeilingMib
-          cleanHandle
           cleanPid
-      cleanExit <- MVar.takeMVar cleanReaped
+      cleanExit <- reapCappedEngineFixture "CUDA clean fixture" cleanPid
       assert
-        (isNothing cleanOutcome && cleanExit == ExitSuccess)
+        (isNothing cleanOutcome && cleanExit == Exited ExitSuccess)
         ( "Sprint 6.44: a smaller live CUDA allocation after a breach completes under the "
             <> "same enforcer without a breach or an enforcement failure; observed "
             <> show cleanOutcome
@@ -2402,6 +2465,7 @@ main = do
   runNativeArtifactMarkerAssertions
   runAppleRuntimeEnvironmentAssertions
   runBuildMemoryAssertions unitTestRoot
+  runMissingProcessGroupSettlementAssertions
   runLinuxWatchdogBreachAssertions
   runNvidiaWatchdogAssertions
   runNvidiaVramBreachAssertions
@@ -2483,6 +2547,15 @@ main = do
   assert
     (parseCommand ["cluster", "status"] == Right ClusterStatusCommand)
     "the structured command registry parses cluster commands without a runtime-mode prefix"
+  assert
+    ( parseCommand ["cluster", "reclaim-slot"]
+        == Right (ClusterReclaimSlotCommand Nothing)
+        && parseCommand ["cluster", "reclaim-slot", "--force-owner-pid", "17"]
+          == Right (ClusterReclaimSlotCommand (Just 17))
+        && isLeft (parseCommand ["cluster", "reclaim-slot", "--force-owner-pid", "0"])
+        && isLeft (parseCommand ["cluster", "reclaim-slot", "--force-owner-pid", "not-a-pid"])
+    )
+    "the cluster-slot recovery command accepts only an optional positive bounded PID premise"
   assert
     (parseCommand ["internal", "discover", "images", "rendered-chart.yaml"] == Right (InternalDiscoverImagesCommand "rendered-chart.yaml"))
     "the structured command registry parses internal discovery commands from the same definition used by the docs"
@@ -4527,9 +4600,10 @@ main = do
             && "torch_dtype=dtype" `isInfixOf` pytorchAdapter
             && "model.eval()" `isInfixOf` pytorchAdapter
             && "with torch.inference_mode():" `isInfixOf` pytorchAdapter
+            && "model.generate(**inputs, semantic_max_new_tokens=100)" `isInfixOf` pytorchAdapter
             && "audio.to(device=\"cpu\", dtype=torch.float32).numpy().squeeze()" `isInfixOf` pytorchAdapter
         )
-        "Bark loads accelerator weights in fp16 under inference mode and converts output to fp32 for WAV encoding"
+        "Bark bounds real semantic generation under the 8 GiB ceiling, loads accelerator weights in fp16 under inference mode, and converts output to fp32 for WAV encoding"
       persistInferenceResult paths textPayloadResult
       reloadedResult <- loadInferenceResult paths "req-unit-text"
       assert
@@ -8828,10 +8902,11 @@ main = do
         case Aeson.decode activityContents of
           Just (Aeson.Object activityObject) ->
             KeyMap.lookup (Key.fromString "version") activityObject
-              == Just (Aeson.Number 3)
+              == Just (Aeson.Number 4)
               && all
                 ((`KeyMap.member` activityObject) . Key.fromString)
-                [ "watchdogProcessId",
+                [ "processNamespaceIdentity",
+                  "watchdogProcessId",
                   "watchdogProcessGroup",
                   "watchdogBirthIdentity",
                   "targetGroupLeaderProcessId",
@@ -8872,7 +8947,7 @@ main = do
         && killedParentTargetGroupAbsent
         && killedParentActivitiesQuiescent
     )
-    ( "the version-3 activity lease records exact helper identities and drives owner-death cleanup; observed "
+    ( "the version-4 activity lease records the execution namespace and exact helper identities and drives owner-death cleanup; observed "
         <> show
           ( killedParentAnchorAbsent,
             killedParentSupervisorAbsent,
@@ -9136,6 +9211,29 @@ main = do
             terminalFirstSupervisorAbsent
           )
     )
+  let publicationBoundaryActivityPath =
+        subprocessActivityRoot </> "publication-boundary.lease.json"
+      publicationBoundaryIncomingName =
+        ".incoming-activity-v5.pid:[1].publication-boundary"
+  _ <-
+    SubprocessActivity.publishActivityPublication
+      ( SubprocessActivity.planActivityPublication
+          subprocessActivityRoot
+          publicationBoundaryActivityPath
+          publicationBoundaryIncomingName
+          "{}"
+          Nothing
+          []
+      )
+  publicationBoundaryFinalExists <-
+    doesFileExist publicationBoundaryActivityPath
+  publicationBoundaryIncomingExists <-
+    doesFileExist
+      (subprocessActivityRoot </> publicationBoundaryIncomingName)
+  removeFile publicationBoundaryActivityPath
+  assert
+    (publicationBoundaryFinalExists && not publicationBoundaryIncomingExists)
+    "the durable publication interpreter accepts the current namespaced v5 incoming activity prefix"
   let legacyActivityDocument =
         Aeson.object
           [ "version" Aeson..= (1 :: Int),
@@ -9192,7 +9290,106 @@ main = do
   versionTwoActivityRetained <- doesFileExist versionTwoActivityPath
   assert
     (not versionTwoActivityRetained)
-    "recovery preserves version-2 decoder compatibility while version 3 is current"
+    "recovery preserves version-2 decoder compatibility while version 4 is current"
+  currentProcessNamespace <- observeCurrentProcessNamespaceIdentity
+  foreignProcessNamespace <-
+    maybe
+      (fail "the activity namespace regression could not construct a foreign namespace")
+      pure
+      ( find
+          (\namespace -> Just namespace /= currentProcessNamespace)
+          (mapMaybe parseProcessNamespaceIdentity ["pid:[1]", "pid:[2]"])
+      )
+  let namespaceOwnerProcessId = 2147483644 :: Integer
+      namespaceCommandProcessId = 2147483643 :: Integer
+      namespaceSupervisorProcessId = 2147483642 :: Integer
+      namespaceTargetProcessId = 2147483641 :: Integer
+      foreignNamespaceActivityDocument =
+        Aeson.object
+          [ "version" Aeson..= (4 :: Int),
+            "processNamespaceIdentity"
+              Aeson..= renderProcessNamespaceIdentity foreignProcessNamespace,
+            "ownerProcessId" Aeson..= namespaceOwnerProcessId,
+            "ownerProcessGroup" Aeson..= ownerProcessGroup,
+            "ownerBirthIdentity" Aeson..= ("foreign-owner:1" :: String),
+            "commandProcessId" Aeson..= namespaceCommandProcessId,
+            "commandProcessGroup" Aeson..= namespaceCommandProcessId,
+            "commandBirthIdentity" Aeson..= ("foreign-command:1" :: String),
+            "watchdogProcessId" Aeson..= namespaceSupervisorProcessId,
+            "watchdogProcessGroup" Aeson..= namespaceSupervisorProcessId,
+            "watchdogBirthIdentity"
+              Aeson..= ("foreign-supervisor:1" :: String),
+            "targetGroupLeaderProcessId" Aeson..= namespaceTargetProcessId,
+            "targetGroup" Aeson..= namespaceTargetProcessId,
+            "targetGroupLeaderBirthIdentity"
+              Aeson..= ("foreign-target:1" :: String)
+          ]
+      foreignNamespaceActivityContents =
+        Aeson.encode foreignNamespaceActivityDocument
+      foreignNamespaceActivityPath =
+        subprocessActivityRoot
+          </> ( "activity-"
+                  <> ByteString8.unpack
+                    (Base16.encode (SHA256.hashlazy foreignNamespaceActivityContents))
+                  <> ".lease.json"
+              )
+  Lazy.writeFile
+    foreignNamespaceActivityPath
+    foreignNamespaceActivityContents
+  setFileMode foreignNamespaceActivityPath 0o600
+  _ <-
+    Subprocess.proveBoundedCommandActivitiesQuiescent
+      subprocessPaths
+      ownerProcessGroup
+  foreignNamespaceActivityRetained <-
+    doesFileExist foreignNamespaceActivityPath
+  removeFile foreignNamespaceActivityPath
+  assert
+    foreignNamespaceActivityRetained
+    "bounded-command recovery leaves a foreign PID namespace lease untouched without probing colliding PIDs"
+  when (System.Info.os == "darwin") $ do
+    let linuxLegacyBootIdentity =
+          "87b8d539-195c-42b9-87f9-1fa4600cef1f" :: String
+        legacyLinuxActivityDocument =
+          Aeson.object
+            [ "version" Aeson..= (3 :: Int),
+              "ownerProcessId" Aeson..= namespaceOwnerProcessId,
+              "ownerProcessGroup" Aeson..= ownerProcessGroup,
+              "ownerBirthIdentity"
+                Aeson..= (linuxLegacyBootIdentity <> ":1"),
+              "commandProcessId" Aeson..= namespaceCommandProcessId,
+              "commandProcessGroup" Aeson..= namespaceCommandProcessId,
+              "commandBirthIdentity"
+                Aeson..= (linuxLegacyBootIdentity <> ":2"),
+              "watchdogProcessId" Aeson..= namespaceSupervisorProcessId,
+              "watchdogProcessGroup" Aeson..= namespaceSupervisorProcessId,
+              "watchdogBirthIdentity"
+                Aeson..= (linuxLegacyBootIdentity <> ":3"),
+              "targetGroupLeaderProcessId" Aeson..= namespaceTargetProcessId,
+              "targetGroup" Aeson..= namespaceTargetProcessId,
+              "targetGroupLeaderBirthIdentity"
+                Aeson..= (linuxLegacyBootIdentity <> ":4")
+            ]
+        legacyLinuxActivityContents =
+          Aeson.encode legacyLinuxActivityDocument
+        legacyLinuxActivityPath =
+          subprocessActivityRoot
+            </> ( "activity-"
+                    <> ByteString8.unpack
+                      (Base16.encode (SHA256.hashlazy legacyLinuxActivityContents))
+                    <> ".lease.json"
+                )
+    Lazy.writeFile legacyLinuxActivityPath legacyLinuxActivityContents
+    setFileMode legacyLinuxActivityPath 0o600
+    _ <-
+      Subprocess.proveBoundedCommandActivitiesQuiescent
+        subprocessPaths
+        ownerProcessGroup
+    legacyLinuxActivityRetained <- doesFileExist legacyLinuxActivityPath
+    removeFile legacyLinuxActivityPath
+    assert
+      legacyLinuxActivityRetained
+      "Darwin recovery quarantines a legacy Linux-kernel activity lease instead of interpreting its PIDs in the host namespace"
   let oversizedFinalActivityPath =
         subprocessActivityRoot </> "oversized.lease.json"
   BS.writeFile
@@ -9917,7 +10114,7 @@ main = do
   incomingTemporaryContents <- Lazy.readFile incomingTemporaryPath
   incomingActivity <-
     maybe
-      (fail "incoming-activity temporary document did not contain exact version-3 identities")
+      (fail "incoming-activity temporary document did not contain exact version-4 identities")
       pure
       ( decodeCurrentCommandActivity
           (fromIntegral incomingOwnerPid)
@@ -10543,6 +10740,19 @@ main = do
   ownershipRoot <- testRootPath "harness-ownership-process-matrix"
   removeTestPathIfPresent ownershipRoot
   createDirectoryIfMissing True ownershipRoot
+  currentPidNamespace <- observeCurrentProcessNamespaceIdentity
+  assert
+    ( maybe
+        (System.Info.os == "darwin")
+        ( \namespaceIdentity ->
+            System.Info.os == "linux"
+              && parseProcessNamespaceIdentity
+                (renderProcessNamespaceIdentity namespaceIdentity)
+                == Just namespaceIdentity
+        )
+        currentPidNamespace
+    )
+    "PID namespace observation is an explicit Darwin absence or a round-trippable Linux nsfs token"
   let ownershipDataRoot = ownershipRoot </> ".data"
       ownershipRuntimeRoot = ownershipDataRoot </> "runtime"
       ownershipPaths =
@@ -10623,6 +10833,10 @@ main = do
       forgeProbeSignal = ownershipRoot </> "probe-forged-identity"
       forgedIdentityRejectedMarker =
         ownershipRoot </> "forged-identity-rejected"
+      foreignNamespaceProbeSignal =
+        ownershipRoot </> "probe-foreign-namespace"
+      foreignNamespaceRejectedMarker =
+        ownershipRoot </> "foreign-namespace-rejected"
       takeoverSignal = ownershipRoot </> "begin-config-takeover"
       takeoverMarker = ownershipRoot </> "config-taken"
       releaseRejectedMarker =
@@ -10641,64 +10855,80 @@ main = do
   reservationOwnerPid <-
     forkProcess $ do
       ownerResult <-
-        try @SomeException $ do
-          seizeHarnessClusterSlotAt ownershipPaths (Just AppleSilicon)
-          authorizedDescendantPid <-
-            forkProcess $ do
-              authorizationResult <-
-                try @IOException
-                  ( withRuntimeConfigWriteAccessAt
-                      ownershipPaths
-                      (writeFile descendantAuthorizedMarker "authorized")
-                  )
-              exitImmediately $
-                case authorizationResult of
-                  Right () -> ExitSuccess
-                  Left _ -> ExitFailure 1
-          authorizedDescendantStatus <-
-            getProcessStatus True False authorizedDescendantPid
-          unless
-            (authorizedDescendantStatus == Just (Exited ExitSuccess))
-            (fail "same-cohort descendant did not receive reservation authority")
-          writeFile seizedMarker "seized"
-          _ <- requireMarker "forged-identity probe signal" forgeProbeSignal
-          forgedProbePid <-
-            forkProcess $ do
-              forgedProbeResult <-
-                try @IOException
-                  (withRuntimeConfigWriteAccessAt ownershipPaths (pure ()))
-              exitImmediately $
-                case forgedProbeResult of
-                  Left _ -> ExitSuccess
-                  Right () -> ExitFailure 1
-          forgedProbeStatus <-
-            getProcessStatus True False forgedProbePid
-          unless
-            (forgedProbeStatus == Just (Exited ExitSuccess))
-            (fail "a forged reservation birth identity authorized a same-PGID descendant")
-          writeFile forgedIdentityRejectedMarker "rejected"
-          _ <- requireMarker "config-takeover signal" takeoverSignal
-          beginHarnessConfigTransaction ownershipPaths True $ do
-            renameFile ownershipRuntimeConfig ownershipBackupConfig
-            writeFile ownershipRuntimeConfig harnessConfigContents
-          nonOwnerReleasePid <-
-            forkProcess $ do
-              releaseResult <-
-                try @IOException
-                  (releaseHarnessClusterSlotAt ownershipPaths (Just AppleSilicon))
-              exitImmediately $
-                case releaseResult of
-                  Left _ -> ExitSuccess
-                  Right () -> ExitFailure 1
-          nonOwnerReleaseStatus <-
-            getProcessStatus True False nonOwnerReleasePid
-          unless
-            (nonOwnerReleaseStatus == Just (Exited ExitSuccess))
-            (fail "a same-cohort non-owner process released the reservation")
-          writeFile releaseRejectedMarker "rejected"
-          writeFile takeoverMarker "taken"
-          _ <- Subprocess.runBoundedCommand ownershipParentDeathCommand
-          fail "the bounded parent-death command returned before its reservation owner was killed"
+        try @SomeException $
+          withHarnessClusterSlotAt ownershipPaths (Just AppleSilicon) $ do
+            authorizedDescendantPid <-
+              forkProcess $ do
+                authorizationResult <-
+                  try @IOException
+                    ( withRuntimeConfigWriteAccessAt
+                        ownershipPaths
+                        (writeFile descendantAuthorizedMarker "authorized")
+                    )
+                exitImmediately $
+                  case authorizationResult of
+                    Right () -> ExitSuccess
+                    Left _ -> ExitFailure 1
+            authorizedDescendantStatus <-
+              getProcessStatus True False authorizedDescendantPid
+            unless
+              (authorizedDescendantStatus == Just (Exited ExitSuccess))
+              (fail "same-cohort descendant did not receive reservation authority")
+            writeFile seizedMarker "seized"
+            _ <- requireMarker "forged-identity probe signal" forgeProbeSignal
+            forgedProbePid <-
+              forkProcess $ do
+                forgedProbeResult <-
+                  try @IOException
+                    (withRuntimeConfigWriteAccessAt ownershipPaths (pure ()))
+                exitImmediately $
+                  case forgedProbeResult of
+                    Left _ -> ExitSuccess
+                    Right () -> ExitFailure 1
+            forgedProbeStatus <-
+              getProcessStatus True False forgedProbePid
+            unless
+              (forgedProbeStatus == Just (Exited ExitSuccess))
+              (fail "a forged reservation birth identity authorized a same-PGID descendant")
+            writeFile forgedIdentityRejectedMarker "rejected"
+            _ <- requireMarker "foreign-namespace probe signal" foreignNamespaceProbeSignal
+            foreignNamespaceProbePid <-
+              forkProcess $ do
+                foreignNamespaceProbeResult <-
+                  try @IOException
+                    (withRuntimeConfigWriteAccessAt ownershipPaths (pure ()))
+                exitImmediately $
+                  case foreignNamespaceProbeResult of
+                    Left _ -> ExitSuccess
+                    Right () -> ExitFailure 1
+            foreignNamespaceProbeStatus <-
+              getProcessStatus True False foreignNamespaceProbePid
+            unless
+              (foreignNamespaceProbeStatus == Just (Exited ExitSuccess))
+              (fail "a foreign-namespace reservation authorized a live sibling process")
+            writeFile foreignNamespaceRejectedMarker "rejected"
+            _ <- requireMarker "config-takeover signal" takeoverSignal
+            beginHarnessConfigTransaction ownershipPaths True $ do
+              renameFile ownershipRuntimeConfig ownershipBackupConfig
+              writeFile ownershipRuntimeConfig harnessConfigContents
+            nonOwnerReleasePid <-
+              forkProcess $ do
+                releaseResult <-
+                  try @IOException
+                    (releaseHarnessClusterSlotAt ownershipPaths (Just AppleSilicon))
+                exitImmediately $
+                  case releaseResult of
+                    Left _ -> ExitSuccess
+                    Right () -> ExitFailure 1
+            nonOwnerReleaseStatus <-
+              getProcessStatus True False nonOwnerReleasePid
+            unless
+              (nonOwnerReleaseStatus == Just (Exited ExitSuccess))
+              (fail "a same-cohort non-owner process released the reservation")
+            writeFile releaseRejectedMarker "rejected"
+            writeFile takeoverMarker "taken"
+            _ <- Subprocess.runBoundedCommand ownershipParentDeathCommand
+            fail "the bounded parent-death command returned before its reservation owner was killed"
       exitImmediately $
         case ownerResult of
           Right () -> ExitSuccess
@@ -10711,9 +10941,15 @@ main = do
     ( "version=2" `isInfixOf` genuineReservation
         && "boot-identity=" `isInfixOf` genuineReservation
         && "process-start-time=" `isInfixOf` genuineReservation
+        && ( System.Info.os /= "linux"
+               || "owner-pid-namespace=pid:[" `isInfixOf` genuineReservation
+           )
+        && ( System.Info.os /= "darwin"
+               || not ("owner-pid-namespace=" `isInfixOf` genuineReservation)
+           )
         && configBeforeTakeover == operatorConfigContents
     )
-    "the birth-verified reservation is durable before harness config takeover begins"
+    "the birth-verified reservation carries the platform's PID-namespace observation before harness config takeover begins"
   let forgedReservation =
         unlines
           [ if "process-start-time=" `isPrefixOf` reservationLine
@@ -10732,6 +10968,26 @@ main = do
   assert
     (isLeft forgedReconcileResult && reservationAfterForgedReconcile)
     "a live numeric PID/PGID with a mismatched birth identity neither authorizes nor permits recovery in the same process namespace"
+  writeFile ownershipReservationPath genuineReservation
+  let foreignNamespaceReservation =
+        unlines
+          ( [ reservationLine
+            | reservationLine <- lines genuineReservation,
+              not ("owner-pid-namespace=" `isPrefixOf` reservationLine)
+            ]
+              <> ["owner-pid-namespace=pid:[1]"]
+          )
+  writeFile ownershipReservationPath foreignNamespaceReservation
+  writeFile foreignNamespaceProbeSignal "probe"
+  _ <- requireMarker "foreign-namespace rejection" foreignNamespaceRejectedMarker
+  foreignNamespaceReconcileResult <-
+    try @IOException
+      (reconcileInterruptedHarnessStateAt ownershipPaths)
+  reservationAfterForeignNamespaceReconcile <-
+    doesFileExist ownershipReservationPath
+  assert
+    (isLeft foreignNamespaceReconcileResult && reservationAfterForeignNamespaceReconcile)
+    "a foreign or incomparable PID namespace cannot retire a live sibling harness while its cross-namespace lifetime lock is held"
   writeFile ownershipReservationPath genuineReservation
   writeFile takeoverSignal "take over"
   _ <- requireMarker "harness config takeover" takeoverMarker
@@ -10803,6 +11059,41 @@ main = do
         && not reservationAfterRecovery
     )
     "dead-cohort recovery restores the operator config and clears the reservation only after whole-group exit"
+  writeFile ownershipReservationPath foreignNamespaceReservation
+  foreignDeadOwnerRecovery <-
+    try @IOException
+      (reconcileInterruptedHarnessStateAt ownershipPaths)
+  reservationAfterForeignDeadOwnerRecovery <-
+    doesFileExist ownershipReservationPath
+  case System.Info.os of
+    "linux" ->
+      assert
+        (isRight foreignDeadOwnerRecovery && not reservationAfterForeignDeadOwnerRecovery)
+        "a foreign PID namespace plus an unheld lifetime lock retires a dead launcher reservation"
+    "darwin" -> do
+      assert
+        (isLeft foreignDeadOwnerRecovery && reservationAfterForeignDeadOwnerRecovery)
+        "Darwin treats an alien recorded PID namespace as incomparable and never auto-retires it"
+      wrongForcedReclaim <-
+        try @IOException
+          ( reclaimHarnessClusterSlotAt
+              ownershipPaths
+              (Just (fromIntegral reservationOwnerPid + 1))
+          )
+      reservationAfterWrongForcedReclaim <-
+        doesFileExist ownershipReservationPath
+      assert
+        (isLeft wrongForcedReclaim && reservationAfterWrongForcedReclaim)
+        "cluster-slot reclaim rejects a forced PID that does not exactly match the reservation"
+      reclaimHarnessClusterSlotAt
+        ownershipPaths
+        (Just (fromIntegral reservationOwnerPid))
+      reservationAfterForcedReclaim <-
+        doesFileExist ownershipReservationPath
+      assert
+        (not reservationAfterForcedReclaim)
+        "an exact operator-transcribed PID can retire an incomparable legacy reservation only after the remaining recovery proofs"
+    _ -> fail "the harness reservation matrix supports only Darwin and Linux"
   withRuntimeConfigWriteAccessAt
     ownershipPaths
     (writeFile ownershipRuntimeConfig "operator after recovery\n")
@@ -12553,8 +12844,10 @@ main = do
         == Just UnidentifiedClusterSlot
         && authorizeFrom mstCheckout ClusterSlotUnidentified OperatorOwned mstState
           == Right ClusterSlotAdoptable
+        && authorizeFrom mstCheckout ClusterSlotUnidentified OperatorOwned harnessState
+          == Right ClusterSlotAdoptable
     )
-    "a cluster created before the identity existed is adoptable by the operator and refused to the harness"
+    "an unidentified cluster is adoptable by the explicit operator even after interrupted harness ownership, and is always refused to the harness"
   assert
     ( authorizeClusterOwnership HarnessOwned mstRuntimeMode [] (Just harnessState) secondCheckout ClusterSlotUnidentified
         == Right ClusterSlotAbsent
@@ -13909,7 +14202,7 @@ decodeCurrentCommandActivity ownerProcessGroup document = do
     activityBirthIdentityField
       "targetGroupLeaderBirthIdentity"
       activityObject
-  if version == 3 && recordedOwner == ownerProcessGroup
+  if version `elem` [3, 4] && recordedOwner == ownerProcessGroup
     then
       Just
         CurrentCommandActivity

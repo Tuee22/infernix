@@ -17,6 +17,7 @@ import Data.Maybe (mapMaybe)
 import Data.Text qualified as Text
 import Infernix.DhallSchema (DhallSchema, parseDhallSchema)
 import Infernix.Types (DaemonRole, RuntimeMode, parseDaemonRole, parseRuntimeMode)
+import Text.Read (readMaybe)
 
 data Command
   = ShowRootHelp
@@ -27,6 +28,7 @@ data Command
   | ClusterUpCommand
   | ClusterDownCommand
   | ClusterStatusCommand
+  | ClusterReclaimSlotCommand (Maybe Integer)
   | CacheStatusCommand
   | CacheEvictCommand (Maybe String)
   | CacheRebuildCommand (Maybe String)
@@ -261,9 +263,25 @@ clusterCommandFamily =
       familyCommands =
         [ simpleCommand "cluster up" "requires the initialized repo-root runtime config, then reconciles Kind, Harbor-first bootstrap, its cluster deployment mirror, and routed publication state" ClusterUpCommand,
           simpleCommand "cluster down" "tears the cluster down while leaving durable repo-local state under `./.data/` intact" ClusterDownCommand,
-          simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand
+          simpleCommand "cluster status" "reports cluster presence, lifecycle phase, active substrate, publication state, build paths, and route inventory; on Linux outer-container paths it may attach the launcher to Docker's `kind` network for observation" ClusterStatusCommand,
+          CommandSpec
+            { commandUsageSuffix = "cluster reclaim-slot [--force-owner-pid PID]",
+              commandDescription = "reports the typed evidence for an interrupted harness cluster-slot reservation and retires it only after owner-death or an exact operator-transcribed PID premise, bounded-command quiescence, and config-transaction recovery",
+              commandParse = parseClusterReclaimSlotCommand
+            }
         ]
     }
+
+parseClusterReclaimSlotCommand :: [String] -> Maybe Command
+parseClusterReclaimSlotCommand = \case
+  ["cluster", "reclaim-slot"] ->
+    Just (ClusterReclaimSlotCommand Nothing)
+  ["cluster", "reclaim-slot", "--force-owner-pid", rawOwnerPid]
+    | Just ownerPid <- readMaybe rawOwnerPid,
+      ownerPid > 0,
+      ownerPid <= 2147483647 ->
+        Just (ClusterReclaimSlotCommand (Just ownerPid))
+  _ -> Nothing
 
 cacheCommandFamily :: CommandFamily
 cacheCommandFamily =

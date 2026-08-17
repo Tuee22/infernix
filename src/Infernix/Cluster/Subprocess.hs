@@ -219,11 +219,15 @@ import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools qualified as HostTools
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
+    ProcessNamespaceIdentity,
     dropInheritedProcessIdentity,
+    observeCurrentProcessNamespaceIdentity,
     parseProcessBirthIdentity,
+    parseProcessNamespaceIdentity,
     readProcessBirthIdentity,
     registerCurrentProcessIdentity,
     renderProcessBirthIdentity,
+    renderProcessNamespaceIdentity,
   )
 import Infernix.ProcessIdentity.Internal qualified as ProcessIdentityInternal
 import Infernix.Types (RuntimeMode)
@@ -6313,8 +6317,14 @@ data CommandActivityIdentities
       !ActivityProcessIdentity
   deriving (Eq, Show)
 
+data CommandActivityProcessNamespace
+  = LegacyCommandActivityProcessNamespace
+  | ExplicitCommandActivityProcessNamespace !(Maybe ProcessNamespaceIdentity)
+  deriving (Eq, Show)
+
 data CommandActivityLeaseDocument = CommandActivityLeaseDocument
-  { activityOwnerProcessGroup :: !Integer,
+  { activityProcessNamespace :: !CommandActivityProcessNamespace,
+    activityOwnerProcessGroup :: !Integer,
     activityCommandIdentity :: !ActivityProcessIdentity,
     activityIdentities :: !CommandActivityIdentities
   }
@@ -6360,7 +6370,8 @@ instance Aeson.ToJSON CommandActivityLeaseDocument where
           )
       CommandActivityDurable ownerIdentity supervisorIdentity targetIdentity ->
         Aeson.object
-          ( activityJsonFields 3 activity
+          ( activityJsonFields (activityDocumentVersion activity) activity
+              <> activityNamespaceJsonFields activity
               <> ownerIdentityJsonFields ownerIdentity
               <> supervisorIdentityJsonFields supervisorIdentity
               <> [ "targetGroupLeaderProcessId"
@@ -6384,40 +6395,92 @@ instance Aeson.FromJSON CommandActivityLeaseDocument where
           "commandProcessId"
           "commandProcessGroup"
           "commandBirthIdentity"
-      identities <-
+      (processNamespace, identities) <-
         case version :: Int of
-          1 -> pure CommandActivityCommandOnly
+          1 ->
+            pure
+              ( LegacyCommandActivityProcessNamespace,
+                CommandActivityCommandOnly
+              )
           2 -> do
             decodedSupervisor <- parseSupervisorIdentity value
-            pure (CommandActivityWithSupervisor decodedSupervisor)
-          3 -> do
-            decodedOwner <-
-              parseActivityIdentity
-                value
-                "ownerProcessId"
-                "ownerProcessGroup"
-                "ownerBirthIdentity"
-            decodedSupervisor <- parseSupervisorIdentity value
-            decodedTarget <-
-              parseActivityProcessIdentity
-                value
-                "targetGroupLeaderProcessId"
-                "targetGroup"
-                "targetGroupLeaderBirthIdentity"
             pure
-              ( CommandActivityDurable
-                  decodedOwner
-                  decodedSupervisor
-                  decodedTarget
+              ( LegacyCommandActivityProcessNamespace,
+                CommandActivityWithSupervisor decodedSupervisor
+              )
+          3 -> do
+            decodedIdentities <- parseDurableActivityIdentities value
+            pure
+              ( LegacyCommandActivityProcessNamespace,
+                decodedIdentities
+              )
+          4 -> do
+            decodedNamespace <-
+              parseActivityProcessNamespace
+                =<< value Aeson..: "processNamespaceIdentity"
+            decodedIdentities <- parseDurableActivityIdentities value
+            pure
+              ( ExplicitCommandActivityProcessNamespace decodedNamespace,
+                decodedIdentities
               )
           _ -> fail "unsupported bounded-command activity lease version"
       let activity =
             CommandActivityLeaseDocument
-              { activityOwnerProcessGroup = ownerProcessGroup,
+              { activityProcessNamespace = processNamespace,
+                activityOwnerProcessGroup = ownerProcessGroup,
                 activityCommandIdentity = commandIdentity,
                 activityIdentities = identities
               }
       either fail (const (pure activity)) (validateCommandActivityTopology activity)
+    where
+      parseDurableActivityIdentities value = do
+        decodedOwner <-
+          parseActivityIdentity
+            value
+            "ownerProcessId"
+            "ownerProcessGroup"
+            "ownerBirthIdentity"
+        decodedSupervisor <- parseSupervisorIdentity value
+        decodedTarget <-
+          parseActivityProcessIdentity
+            value
+            "targetGroupLeaderProcessId"
+            "targetGroup"
+            "targetGroupLeaderBirthIdentity"
+        pure
+          ( CommandActivityDurable
+              decodedOwner
+              decodedSupervisor
+              decodedTarget
+          )
+
+activityDocumentVersion :: CommandActivityLeaseDocument -> Int
+activityDocumentVersion activity =
+  case activityProcessNamespace activity of
+    LegacyCommandActivityProcessNamespace -> 3
+    ExplicitCommandActivityProcessNamespace _ -> 4
+
+activityNamespaceJsonFields :: CommandActivityLeaseDocument -> [Pair]
+activityNamespaceJsonFields activity =
+  case activityProcessNamespace activity of
+    LegacyCommandActivityProcessNamespace -> []
+    ExplicitCommandActivityProcessNamespace processNamespace ->
+      [ "processNamespaceIdentity"
+          Aeson..= renderActivityProcessNamespace processNamespace
+      ]
+
+renderActivityProcessNamespace :: Maybe ProcessNamespaceIdentity -> String
+renderActivityProcessNamespace =
+  maybe "darwin-host" renderProcessNamespaceIdentity
+
+parseActivityProcessNamespace :: String -> Parser (Maybe ProcessNamespaceIdentity)
+parseActivityProcessNamespace value
+  | value == "darwin-host" = pure Nothing
+  | otherwise =
+      maybe
+        (fail "invalid bounded-command activity process namespace")
+        (pure . Just)
+        (parseProcessNamespaceIdentity value)
 
 validateCommandActivityTopology ::
   CommandActivityLeaseDocument ->
@@ -6695,11 +6758,31 @@ commandActivityRoot :: FilePath -> FilePath
 commandActivityRoot activeRuntimeRoot =
   activeRuntimeRoot </> "bounded-command-activity"
 
+requireCurrentCommandActivityProcessNamespace ::
+  IO (Maybe ProcessNamespaceIdentity)
+requireCurrentCommandActivityProcessNamespace = do
+  processNamespace <- observeCurrentProcessNamespaceIdentity
+  if
+    | SystemInfo.os == "linux" && isNothing processNamespace ->
+        ioError
+          ( userError
+              "bounded-command activity requires the current Linux PID namespace identity"
+          )
+    | SystemInfo.os == "darwin" && isJust processNamespace ->
+        ioError
+          ( userError
+              "bounded-command activity observed an unexpected Darwin PID namespace identity"
+          )
+    | otherwise -> pure processNamespace
+
 incomingActivityRecoveryPrefix :: String
 incomingActivityRecoveryPrefix = ".incoming-activity-v3."
 
 incomingActivityDistinctRecoveryPrefix :: String
 incomingActivityDistinctRecoveryPrefix = ".incoming-activity-v4.i"
+
+incomingActivityNamespacedRecoveryPrefix :: String
+incomingActivityNamespacedRecoveryPrefix = ".incoming-activity-v5."
 
 incomingCommandActivityFileName ::
   CommandActivityLeaseDocument ->
@@ -6742,23 +6825,47 @@ incomingCommandActivityFileName activity = do
         leaderIdentities
     )
     $ Left "bounded-command incoming intent identities are structurally invalid"
-  case bootIdentities of
-    commonBoot : remainingBoots
-      | all (== commonBoot) remainingBoots,
-        not (null commonBoot),
-        '.' `notElem` commonBoot ->
-          renderCommonBootIntent
-            commonBoot
-            ownerIdentity
-            anchorIdentity
-            supervisorIdentity
-            pinIdentity
-    _ ->
+  case activityProcessNamespace activity of
+    ExplicitCommandActivityProcessNamespace (Just processNamespace) ->
+      case bootIdentities of
+        commonBoot : remainingBoots
+          | all (== commonBoot) remainingBoots,
+            not (null commonBoot),
+            '.' `notElem` commonBoot ->
+              renderNamespacedCommonBootIntent
+                processNamespace
+                commonBoot
+                ownerIdentity
+                anchorIdentity
+                supervisorIdentity
+                pinIdentity
+        _ ->
+          Left
+            "a Linux bounded-command incoming intent requires one kernel boot identity"
+    ExplicitCommandActivityProcessNamespace Nothing ->
       renderDistinctBootIntent
         ownerIdentity
         anchorIdentity
         supervisorIdentity
         pinIdentity
+    LegacyCommandActivityProcessNamespace ->
+      case bootIdentities of
+        commonBoot : remainingBoots
+          | all (== commonBoot) remainingBoots,
+            not (null commonBoot),
+            '.' `notElem` commonBoot ->
+              renderCommonBootIntent
+                commonBoot
+                ownerIdentity
+                anchorIdentity
+                supervisorIdentity
+                pinIdentity
+        _ ->
+          renderDistinctBootIntent
+            ownerIdentity
+            anchorIdentity
+            supervisorIdentity
+            pinIdentity
   where
     renderHex value = showHex value ""
     renderCommonBootIntent
@@ -6797,6 +6904,48 @@ incomingCommandActivityFileName activity = do
          in if length encoded <= 255
               then Right encoded
               else Left "bounded-command incoming intent filename exceeds its size limit"
+
+    renderNamespacedCommonBootIntent
+      processNamespace
+      commonBoot
+      ownerIdentity
+      anchorIdentity
+      supervisorIdentity
+      pinIdentity =
+        let encoded =
+              incomingActivityNamespacedRecoveryPrefix
+                <> renderProcessNamespaceIdentity processNamespace
+                <> "."
+                <> List.intercalate
+                  "."
+                  [ commonBoot,
+                    renderHex (activityProcessId ownerIdentity),
+                    renderHex (activityProcessGroup ownerIdentity),
+                    renderHex
+                      ( processBirthStartTime
+                          (activityProcessBirthIdentity ownerIdentity)
+                      ),
+                    renderHex (activityProcessId anchorIdentity),
+                    renderHex
+                      ( processBirthStartTime
+                          (activityProcessBirthIdentity anchorIdentity)
+                      ),
+                    renderHex (activityProcessId supervisorIdentity),
+                    renderHex
+                      ( processBirthStartTime
+                          (activityProcessBirthIdentity supervisorIdentity)
+                      ),
+                    renderHex (activityProcessId pinIdentity),
+                    renderHex
+                      ( processBirthStartTime
+                          (activityProcessBirthIdentity pinIdentity)
+                      )
+                  ]
+         in if length encoded <= 255
+              then Right encoded
+              else
+                Left
+                  "bounded-command namespaced incoming intent filename exceeds its size limit"
 
     renderDistinctBootIntent
       ownerIdentity
@@ -6865,15 +7014,36 @@ commandActivityFromIncomingFileName ::
   FilePath ->
   Either String CommandActivityLeaseDocument
 commandActivityFromIncomingFileName entry =
-  case List.stripPrefix incomingActivityRecoveryPrefix entry of
-    Just encoded -> parseCommonBootIntent encoded
+  case List.stripPrefix incomingActivityNamespacedRecoveryPrefix entry of
+    Just encoded -> parseNamespacedCommonBootIntent encoded
     Nothing ->
-      case List.stripPrefix incomingActivityDistinctRecoveryPrefix entry of
-        Just encoded -> parseDistinctBootIntent encoded
+      case List.stripPrefix incomingActivityRecoveryPrefix entry of
+        Just encoded -> parseCommonBootIntent encoded
         Nothing ->
-          Left "bounded-command incoming intent has an unsupported filename"
+          case List.stripPrefix incomingActivityDistinctRecoveryPrefix entry of
+            Just encoded -> parseDistinctBootIntent encoded
+            Nothing ->
+              Left "bounded-command incoming intent has an unsupported filename"
   where
+    parseNamespacedCommonBootIntent encoded =
+      case splitOnDot encoded of
+        processNamespaceText : commonBootFields -> do
+          processNamespace <-
+            maybe
+              (Left "bounded-command incoming intent has an invalid process namespace")
+              Right
+              (parseProcessNamespaceIdentity processNamespaceText)
+          parseCommonBootIntentWithNamespace
+            (ExplicitCommandActivityProcessNamespace (Just processNamespace))
+            commonBootFields
+        _ -> Left "bounded-command incoming intent is missing its process namespace"
+
     parseCommonBootIntent encoded = do
+      parseCommonBootIntentWithNamespace
+        LegacyCommandActivityProcessNamespace
+        (splitOnDot encoded)
+
+    parseCommonBootIntentWithNamespace processNamespace fields = do
       ( bootIdentity,
         ownerProcessId,
         ownerProcessGroup,
@@ -6885,7 +7055,7 @@ commandActivityFromIncomingFileName entry =
         pinProcessId,
         pinStartTime
         ) <-
-        case splitOnDot encoded of
+        case fields of
           [ boot,
             ownerPid,
             ownerGroup,
@@ -6910,6 +7080,7 @@ commandActivityFromIncomingFileName entry =
                 <*> parsePositiveHex "pin start" pinStart
           _ -> Left "bounded-command incoming intent filename is malformed"
       buildIncomingActivity
+        processNamespace
         bootIdentity
         ownerProcessId
         ownerProcessGroup
@@ -6964,6 +7135,7 @@ commandActivityFromIncomingFileName entry =
       pinProcessId <- parsePositiveHex "pin pid" pinPid
       pinStartTime <- parsePositiveHex "pin start" pinStart
       buildIncomingActivity
+        (ExplicitCommandActivityProcessNamespace Nothing)
         ownerBoot
         ownerProcessId
         ownerProcessGroup
@@ -6979,6 +7151,7 @@ commandActivityFromIncomingFileName entry =
         pinStartTime
 
     buildIncomingActivity
+      processNamespace
       ownerBoot
       ownerProcessId
       ownerProcessGroup
@@ -7028,7 +7201,8 @@ commandActivityFromIncomingFileName entry =
               ]
             activity =
               CommandActivityLeaseDocument
-                { activityOwnerProcessGroup = ownerProcessGroup,
+                { activityProcessNamespace = processNamespace,
+                  activityOwnerProcessGroup = ownerProcessGroup,
                   activityCommandIdentity = anchorIdentity,
                   activityIdentities =
                     CommandActivityDurable
@@ -7480,6 +7654,8 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
             )
         )
   | otherwise = do
+      currentProcessNamespace <-
+        requireCurrentCommandActivityProcessNamespace
       let activityRoot = commandActivityRoot (runtimeRoot paths)
       rootStatus <-
         try (getSymbolicLinkStatus activityRoot) ::
@@ -7505,11 +7681,11 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
                     descriptor
                     maximumActivityLeaseEntries
                 mapM_
-                  (proveEntryQuiescent activityRoot)
+                  (proveEntryQuiescent currentProcessNamespace activityRoot)
                   entries
               pure (BoundedCommandActivitiesQuiescent ownerProcessGroup)
   where
-    proveEntryQuiescent activityRoot entry
+    proveEntryQuiescent currentProcessNamespace activityRoot entry
       | ".incoming-activity-" `List.isPrefixOf` entry = do
           let incomingPath = activityRoot </> entry
           activity <-
@@ -7518,13 +7694,21 @@ proveBoundedCommandActivitiesQuiescent paths ownerProcessGroup
               pure
               (commandActivityFromIncomingFileName entry)
           when
-            (activityOwnerProcessGroup activity == ownerProcessGroup)
+            ( activityOwnerProcessGroup activity == ownerProcessGroup
+                && commandActivityMatchesCurrentProcessNamespace
+                  currentProcessNamespace
+                  activity
+            )
             (reconcileIncomingActivity incomingPath activity)
       | ".lease.json" `List.isSuffixOf` entry = do
           let activityPath = activityRoot </> entry
           activity <- readCommandActivityLease activityPath
           when
-            (activityOwnerProcessGroup activity == ownerProcessGroup)
+            ( activityOwnerProcessGroup activity == ownerProcessGroup
+                && commandActivityMatchesCurrentProcessNamespace
+                  currentProcessNamespace
+                  activity
+            )
             (proveActivityQuiescent activityPath activity)
       | otherwise =
           ioError
@@ -7549,6 +7733,8 @@ recoverAbandonedBoundedCommandActivities ::
   Paths ->
   IO AbandonedActivitiesRecovered
 recoverAbandonedBoundedCommandActivities paths = do
+  currentProcessNamespace <-
+    requireCurrentCommandActivityProcessNamespace
   let activeRuntimeRoot = runtimeRoot paths
       activityRoot = commandActivityRoot activeRuntimeRoot
   rootStatus <-
@@ -7574,10 +7760,12 @@ recoverAbandonedBoundedCommandActivities paths = do
               listDirectoryBoundedFromDescriptor
                 descriptor
                 maximumActivityLeaseEntries
-            mapM_ (recoverEntry activityRoot) entries
+            mapM_
+              (recoverEntry currentProcessNamespace activityRoot)
+              entries
           pure (AbandonedActivitiesRecovered activeRuntimeRoot)
   where
-    recoverEntry activityRoot entry
+    recoverEntry currentProcessNamespace activityRoot entry
       | ".incoming-activity-" `List.isPrefixOf` entry = do
           let activityPath = activityRoot </> entry
           activity <-
@@ -7585,11 +7773,17 @@ recoverAbandonedBoundedCommandActivities paths = do
               (ioError . userError)
               pure
               (commandActivityFromIncomingFileName entry)
-          recoverIfOwnerAbandoned activityPath activity
+          recoverIfOwnerAbandoned
+            currentProcessNamespace
+            activityPath
+            activity
       | ".lease.json" `List.isSuffixOf` entry = do
           let activityPath = activityRoot </> entry
           activity <- readCommandActivityLease activityPath
-          recoverIfOwnerAbandoned activityPath activity
+          recoverIfOwnerAbandoned
+            currentProcessNamespace
+            activityPath
+            activity
       | otherwise =
           ioError
             ( userError
@@ -7598,9 +7792,74 @@ recoverAbandonedBoundedCommandActivities paths = do
                 )
             )
 
-    recoverIfOwnerAbandoned activityPath activity = do
-      exactOwnerLive <- activityExactOwnerIsLive activity
-      unless exactOwnerLive (proveActivityQuiescent activityPath activity)
+    recoverIfOwnerAbandoned currentProcessNamespace activityPath activity =
+      when
+        ( commandActivityMatchesCurrentProcessNamespace
+            currentProcessNamespace
+            activity
+        )
+        ( do
+            exactOwnerLive <- activityExactOwnerIsLive activity
+            unless exactOwnerLive (proveActivityQuiescent activityPath activity)
+        )
+
+commandActivityMatchesCurrentProcessNamespace ::
+  Maybe ProcessNamespaceIdentity ->
+  CommandActivityLeaseDocument ->
+  Bool
+commandActivityMatchesCurrentProcessNamespace currentProcessNamespace activity =
+  case activityProcessNamespace activity of
+    ExplicitCommandActivityProcessNamespace recordedProcessNamespace ->
+      recordedProcessNamespace == currentProcessNamespace
+    LegacyCommandActivityProcessNamespace
+      | SystemInfo.os == "darwin" ->
+          not (legacyCommandActivityHasLinuxBirthIdentities activity)
+      | SystemInfo.os == "linux" ->
+          not (legacyCommandActivityHasDarwinBirthIdentities activity)
+      | otherwise -> True
+
+legacyCommandActivityHasLinuxBirthIdentities ::
+  CommandActivityLeaseDocument ->
+  Bool
+legacyCommandActivityHasLinuxBirthIdentities activity =
+  case commandActivityBootIdentities activity of
+    [] -> False
+    bootIdentity : remainingBootIdentities ->
+      linuxKernelBootIdentity bootIdentity
+        && all (== bootIdentity) remainingBootIdentities
+
+legacyCommandActivityHasDarwinBirthIdentities ::
+  CommandActivityLeaseDocument ->
+  Bool
+legacyCommandActivityHasDarwinBirthIdentities =
+  all darwinRegistryBirthToken . commandActivityBootIdentities
+
+commandActivityBootIdentities ::
+  CommandActivityLeaseDocument ->
+  [String]
+commandActivityBootIdentities activity =
+  map
+    ( processBirthBootIdentity
+        . activityProcessBirthIdentity
+    )
+    ( maybe [] pure (activityOwnerIdentity activity)
+        <> map snd (activityProcessGroups activity)
+    )
+
+linuxKernelBootIdentity :: String -> Bool
+linuxKernelBootIdentity value =
+  length value == 36
+    && all
+      ( \(index, character) ->
+          if index `elem` [8, 13, 18, 23]
+            then character == '-'
+            else isHexDigit character
+      )
+      (zip [0 :: Int ..] value)
+
+darwinRegistryBirthToken :: String -> Bool
+darwinRegistryBirthToken value =
+  length value == 32 && all isHexDigit value
 
 proveActivityQuiescent ::
   FilePath ->
@@ -11268,6 +11527,8 @@ runSupervisorProtocolSession command session deadline = do
                   )
               )
               pure
+        ownerProcessNamespace <-
+          requireCurrentCommandActivityProcessNamespace
         let ownerIdentity =
               ActivityProcessIdentity
                 { activityProcessId = ownerProcessId,
@@ -11276,7 +11537,10 @@ runSupervisorProtocolSession command session deadline = do
                 }
         let activityDocument =
               CommandActivityLeaseDocument
-                { activityOwnerProcessGroup = ownerProcessGroup,
+                { activityProcessNamespace =
+                    ExplicitCommandActivityProcessNamespace
+                      ownerProcessNamespace,
+                  activityOwnerProcessGroup = ownerProcessGroup,
                   activityCommandIdentity =
                     trackedHelperIdentity (supervisedAnchor session),
                   activityIdentities =

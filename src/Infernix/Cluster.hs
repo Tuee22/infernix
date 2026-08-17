@@ -34,10 +34,12 @@ module Infernix.Cluster
     WorkerPauseState (..),
     classifyWorkerPauseObservation,
     snapshotClaimNodeBindingsForPausedWorkers,
-    seizeHarnessClusterSlot,
+    withHarnessClusterSlot,
+    withHarnessClusterSlotAt,
     seizeHarnessClusterSlotAt,
-    releaseHarnessClusterSlot,
     releaseHarnessClusterSlotAt,
+    reclaimHarnessClusterSlot,
+    reclaimHarnessClusterSlotAt,
     authorizeClusterOwnership,
     ClusterCheckoutIdentity (..),
     clusterCheckoutIdentityFromHostRoot,
@@ -93,7 +95,11 @@ import Infernix.Cluster.Invoke
     renderBoundedCommandOutcome,
     tryClusterCommand,
   )
-import Infernix.Cluster.LifecycleLock (withLifecycleFileLock)
+import Infernix.Cluster.LifecycleLock
+  ( kernelFileLockIsHeld,
+    withKernelFileLock,
+    withLifecycleFileLock,
+  )
 import Infernix.Cluster.MutationRecovery
   ( InterruptedMutationRecoveryEffects (..),
     runInterruptedMutationRecovery,
@@ -124,8 +130,12 @@ import Infernix.HostConfig qualified as HostConfig
 import Infernix.Models
 import Infernix.ProcessIdentity
   ( ProcessBirthIdentity (..),
+    ProcessNamespaceIdentity,
+    observeCurrentProcessNamespaceIdentity,
+    parseProcessNamespaceIdentity,
     readProcessBirthIdentity,
     registerCurrentProcessIdentity,
+    renderProcessNamespaceIdentity,
   )
 import Infernix.Routes (routeHelmValues)
 import Infernix.Runtime.Pulsar (WarmModelCacheOutcome (..), waitForEagerModelCacheReady)
@@ -170,6 +180,10 @@ harnessReservationPath :: Paths -> FilePath
 harnessReservationPath paths =
   runtimeRoot paths </> "locks" </> "harness-cluster-slot.reserved"
 
+harnessLifetimeLockPath :: Paths -> FilePath
+harnessLifetimeLockPath paths =
+  runtimeRoot paths </> "locks" </> "harness-cluster-slot.held"
+
 data ClusterMutationLocked = ClusterMutationLocked
 
 data HarnessConfigTransaction
@@ -183,6 +197,7 @@ data HarnessReservation = HarnessReservation
   { harnessReservationOwnerPid :: Integer,
     harnessReservationProcessGroup :: Integer,
     harnessReservationOwnerBirthIdentity :: Maybe ProcessBirthIdentity,
+    harnessReservationOwnerPidNamespace :: Maybe ProcessNamespaceIdentity,
     harnessReservationConfigTransaction :: HarnessConfigTransaction,
     -- | The process group of the one toolchain child the reservation owner is
     -- currently running, when that child was placed in a group of its own.
@@ -214,6 +229,19 @@ data HarnessReservationOwnerStatus
   | HarnessReservationOwnerDefinitelyDead
   | HarnessReservationOwnerUnverifiable
   deriving (Eq, Show)
+
+data RecordedNamespaceRelation
+  = RecordedNamespaceMatches
+  | RecordedNamespaceIsForeign
+  | RecordedNamespaceCannotBeCompared
+  deriving (Eq, Show)
+
+data HarnessReservationOwnerInspection = HarnessReservationOwnerInspection
+  { inspectedOwnerStatus :: HarnessReservationOwnerStatus,
+    inspectedCurrentPidNamespace :: Maybe ProcessNamespaceIdentity,
+    inspectedNamespaceRelation :: RecordedNamespaceRelation,
+    inspectedLifetimeLockHeld :: Bool
+  }
 
 -- | Serialize every cluster mutation across CLI processes and threads. The
 -- non-blocking exclusive file lock makes independent acquisitions contend
@@ -1560,14 +1588,24 @@ authorizeClusterOwnership ::
 authorizeClusterOwnership requestedOwner requestedRuntimeMode presentRuntimeModes maybeState localIdentity slotIdentity =
   case presentRuntimeModes of
     [] -> Right ClusterSlotAbsent
-    [presentRuntimeMode] ->
-      case maybeState of
-        Just state
-          | presentRuntimeMode == requestedRuntimeMode,
-            clusterRuntimeMode state == presentRuntimeMode,
-            clusterOwner state == requestedOwner ->
-              admitIdentifiedSlot
-        _ -> Left (refusal OwnerRecordMismatch)
+    [presentRuntimeMode]
+      | presentRuntimeMode == requestedRuntimeMode ->
+          case (requestedOwner, slotIdentity) of
+            -- An explicit operator command is the recovery authority for a
+            -- pre-identity cluster. This arm must precede the persisted-owner
+            -- comparison: an interrupted harness can leave a real cluster and
+            -- a HarnessOwned state record before the identity stamp, and
+            -- requiring OperatorOwned first would make the documented
+            -- adoption/removal path unreachable.
+            (OperatorOwned, ClusterSlotUnidentified) -> Right ClusterSlotAdoptable
+            _ ->
+              case maybeState of
+                Just state
+                  | clusterRuntimeMode state == presentRuntimeMode,
+                    clusterOwner state == requestedOwner ->
+                      admitIdentifiedSlot
+                _ -> Left (refusal OwnerRecordMismatch)
+      | otherwise -> Left (refusal OwnerRecordMismatch)
     _ -> Left (refusal OwnerRecordMismatch)
   where
     admitIdentifiedSlot =
@@ -1998,7 +2036,7 @@ requireReservationAccess paths requestedOwner = do
       ownerStatus <-
         maybe
           (pure HarnessReservationOwnerDefinitelyDead)
-          inspectHarnessReservationOwner
+          (fmap inspectedOwnerStatus . inspectHarnessReservationOwner paths)
           maybePresentReservation
       let maybeReservationProcessGroup =
             harnessReservationProcessGroup <$> maybePresentReservation
@@ -2113,7 +2151,7 @@ withRuntimeConfigWriteAccessAt paths action = do
     ownerStatus <-
       maybe
         (pure HarnessReservationOwnerDefinitelyDead)
-        inspectHarnessReservationOwner
+        (fmap inspectedOwnerStatus . inspectHarnessReservationOwner paths)
         maybeReservation
     currentProcessGroup <- fromIntegral <$> getProcessGroupID
     case authorizeRuntimeConfigWriteAccess
@@ -2176,6 +2214,13 @@ parseHarnessReservation reservationContents = do
               )
           else Nothing
       _ -> Nothing
+  ownerPidNamespace <-
+    case version of
+      "1" -> pure Nothing
+      "2" ->
+        optionalUniqueField "owner-pid-namespace"
+          >>= traverse parseProcessNamespaceIdentity
+      _ -> Nothing
   configTransaction <- uniqueField "config-transaction" >>= parseConfigTransaction
   authorizedChildGroup <-
     uniqueField "authorized-child-group" >>= parseAuthorizedChildGroup
@@ -2189,6 +2234,7 @@ parseHarnessReservation reservationContents = do
           { harnessReservationOwnerPid = ownerPid,
             harnessReservationProcessGroup = processGroup,
             harnessReservationOwnerBirthIdentity = ownerBirthIdentity,
+            harnessReservationOwnerPidNamespace = ownerPidNamespace,
             harnessReservationConfigTransaction = configTransaction,
             harnessReservationAuthorizedChildGroup = authorizedChildGroup
           }
@@ -2208,6 +2254,14 @@ parseHarnessReservation reservationContents = do
              Just fieldValue <- [List.stripPrefix (fieldName <> "=") lineValue]
            ] of
         [fieldValue] -> Just fieldValue
+        _ -> Nothing
+    optionalUniqueField fieldName =
+      case [ fieldValue
+           | lineValue <- lines reservationContents,
+             Just fieldValue <- [List.stripPrefix (fieldName <> "=") lineValue]
+           ] of
+        [] -> Just Nothing
+        [fieldValue] -> Just (Just fieldValue)
         _ -> Nothing
     parseConfigTransaction value =
       case value of
@@ -2242,6 +2296,14 @@ renderHarnessReservation reservation =
             "boot-identity=" <> processBirthBootIdentity birthIdentity,
             "process-start-time=" <> show (processBirthStartTime birthIdentity)
           ]
+            <> maybe
+              []
+              ( \namespaceIdentity ->
+                  [ "owner-pid-namespace="
+                      <> renderProcessNamespaceIdentity namespaceIdentity
+                  ]
+              )
+              (harnessReservationOwnerPidNamespace reservation)
             <> commonFields
         )
   where
@@ -2291,9 +2353,54 @@ writeHarnessReservation paths reservation = mask $ \restore -> do
         ]
 
 inspectHarnessReservationOwner ::
+  Paths ->
+  HarnessReservation ->
+  IO HarnessReservationOwnerInspection
+inspectHarnessReservationOwner paths reservation = do
+  currentPidNamespace <- observeCurrentProcessNamespaceIdentity
+  lifetimeLockHeld <- kernelFileLockIsHeld (harnessLifetimeLockPath paths)
+  let namespaceRelation =
+        classifyRecordedNamespace
+          (harnessReservationOwnerPidNamespace reservation)
+          currentPidNamespace
+  ownerStatus <-
+    case namespaceRelation of
+      RecordedNamespaceMatches ->
+        inspectOwnerWithinRecordedNamespace reservation
+      RecordedNamespaceIsForeign
+        | lifetimeLockHeld ->
+            pure HarnessReservationOwnerUnverifiable
+        | otherwise ->
+            pure HarnessReservationOwnerDefinitelyDead
+      RecordedNamespaceCannotBeCompared ->
+        pure HarnessReservationOwnerUnverifiable
+  pure
+    HarnessReservationOwnerInspection
+      { inspectedOwnerStatus = ownerStatus,
+        inspectedCurrentPidNamespace = currentPidNamespace,
+        inspectedNamespaceRelation = namespaceRelation,
+        inspectedLifetimeLockHeld = lifetimeLockHeld
+      }
+
+classifyRecordedNamespace ::
+  Maybe ProcessNamespaceIdentity ->
+  Maybe ProcessNamespaceIdentity ->
+  RecordedNamespaceRelation
+classifyRecordedNamespace recordedNamespace currentNamespace =
+  case (recordedNamespace, currentNamespace) of
+    (Nothing, Nothing) -> RecordedNamespaceMatches
+    (Just recorded, Just current)
+      | recorded == current -> RecordedNamespaceMatches
+      | otherwise -> RecordedNamespaceIsForeign
+    _ -> RecordedNamespaceCannotBeCompared
+
+-- Kept as the exact namespace-local rule: only an absent process group proves
+-- death, while a reused leader identity leaves the old group's descendants
+-- unverifiable.
+inspectOwnerWithinRecordedNamespace ::
   HarnessReservation ->
   IO HarnessReservationOwnerStatus
-inspectHarnessReservationOwner reservation = do
+inspectOwnerWithinRecordedNamespace reservation = do
   groupProbe <-
     try
       ( signalProcessGroup
@@ -2404,42 +2511,50 @@ reconcileInterruptedHarnessStateAt paths = do
             Nothing -> reconcileLegacyHarnessBackup paths
             Just _ -> pure ()
     Just reservation -> do
-      ownerStatus <- inspectHarnessReservationOwner reservation
-      case ownerStatus of
+      ownerInspection <- inspectHarnessReservationOwner paths reservation
+      case inspectedOwnerStatus ownerInspection of
         HarnessReservationOwnerVerifiedAlive -> pure ()
         HarnessReservationOwnerUnverifiable ->
-          refuseUnverifiableHarnessReservation paths
+          refuseUnverifiableHarnessReservation paths reservation ownerInspection
         HarnessReservationOwnerDefinitelyDead ->
           withClusterLifecycleLock paths $ \_ -> do
             currentReservation <- readHarnessReservation paths
             case currentReservation of
               Nothing -> reconcileLegacyHarnessBackup paths
               Just lockedReservation -> do
-                lockedOwnerStatus <-
-                  inspectHarnessReservationOwner lockedReservation
-                case lockedOwnerStatus of
+                lockedOwnerInspection <-
+                  inspectHarnessReservationOwner paths lockedReservation
+                case inspectedOwnerStatus lockedOwnerInspection of
                   HarnessReservationOwnerVerifiedAlive -> pure ()
                   HarnessReservationOwnerUnverifiable ->
-                    refuseUnverifiableHarnessReservation paths
-                  HarnessReservationOwnerDefinitelyDead -> do
-                    activitiesQuiescent <-
-                      Subprocess.proveBoundedCommandActivitiesQuiescent
-                        paths
-                        (harnessReservationProcessGroup lockedReservation)
-                    restoredReservation <-
-                      recoverHarnessConfigTransaction
-                        activitiesQuiescent
-                        paths
-                        lockedReservation
-                    presentRuntimeModes <- presentClusterRuntimeModes paths
-                    recordedState <- loadClusterState paths
-                    if deadReservationCanBeRemoved restoredReservation presentRuntimeModes recordedState
-                      then
-                        removeHarnessReservation
-                          activitiesQuiescent
-                          paths
-                          lockedReservation
-                      else writeHarnessReservation paths restoredReservation
+                    refuseUnverifiableHarnessReservation
+                      paths
+                      lockedReservation
+                      lockedOwnerInspection
+                  HarnessReservationOwnerDefinitelyDead ->
+                    withKernelFileLock
+                      "harness cluster-slot recovery"
+                      (harnessLifetimeLockPath paths)
+                      ( do
+                          activitiesQuiescent <-
+                            Subprocess.proveBoundedCommandActivitiesQuiescent
+                              paths
+                              (harnessReservationProcessGroup lockedReservation)
+                          restoredReservation <-
+                            recoverHarnessConfigTransaction
+                              activitiesQuiescent
+                              paths
+                              lockedReservation
+                          presentRuntimeModes <- presentClusterRuntimeModes paths
+                          recordedState <- loadClusterState paths
+                          if deadReservationCanBeRemoved restoredReservation presentRuntimeModes recordedState
+                            then
+                              removeHarnessReservation
+                                activitiesQuiescent
+                                paths
+                                lockedReservation
+                            else writeHarnessReservation paths restoredReservation
+                      )
 
 deadReservationCanBeRemoved ::
   HarnessReservation ->
@@ -2518,8 +2633,8 @@ ensureHarnessReservationAvailable paths = do
   case maybeReservation of
     Nothing -> pure ()
     Just reservation -> do
-      ownerStatus <- inspectHarnessReservationOwner reservation
-      case ownerStatus of
+      ownerInspection <- inspectHarnessReservationOwner paths reservation
+      case inspectedOwnerStatus ownerInspection of
         HarnessReservationOwnerVerifiedAlive ->
           ioError
             ( userError
@@ -2528,30 +2643,35 @@ ensureHarnessReservationAvailable paths = do
                 )
             )
         HarnessReservationOwnerUnverifiable ->
-          refuseUnverifiableHarnessReservation paths
-        HarnessReservationOwnerDefinitelyDead -> do
-          activitiesQuiescent <-
-            Subprocess.proveBoundedCommandActivitiesQuiescent
-              paths
-              (harnessReservationProcessGroup reservation)
-          recoveredReservation <-
-            recoverHarnessConfigTransaction
-              activitiesQuiescent
-              paths
-              reservation
-          unless
-            ( harnessReservationConfigTransaction recoveredReservation
-                `elem` [HarnessConfigUntouched, HarnessConfigRestored]
+          refuseUnverifiableHarnessReservation paths reservation ownerInspection
+        HarnessReservationOwnerDefinitelyDead ->
+          withKernelFileLock
+            "harness cluster-slot recovery"
+            (harnessLifetimeLockPath paths)
+            ( do
+                activitiesQuiescent <-
+                  Subprocess.proveBoundedCommandActivitiesQuiescent
+                    paths
+                    (harnessReservationProcessGroup reservation)
+                recoveredReservation <-
+                  recoverHarnessConfigTransaction
+                    activitiesQuiescent
+                    paths
+                    reservation
+                unless
+                  ( harnessReservationConfigTransaction recoveredReservation
+                      `elem` [HarnessConfigUntouched, HarnessConfigRestored]
+                  )
+                  ( ioError
+                      ( userError
+                          "test harness cluster-slot seizure refused: the interrupted config transaction could not be reconciled"
+                      )
+                  )
+                removeHarnessReservation
+                  activitiesQuiescent
+                  paths
+                  reservation
             )
-            ( ioError
-                ( userError
-                    "test harness cluster-slot seizure refused: the interrupted config transaction could not be reconciled"
-                )
-            )
-          removeHarnessReservation
-            activitiesQuiescent
-            paths
-            reservation
 
 requireBoundedCommandQuiescenceEvidence ::
   Subprocess.BoundedCommandActivitiesQuiescent ->
@@ -2579,15 +2699,50 @@ removeHarnessReservation activitiesQuiescent paths reservation = do
     reservation
   removeFileIfExists (harnessReservationPath paths)
 
-refuseUnverifiableHarnessReservation :: Paths -> IO a
-refuseUnverifiableHarnessReservation paths =
+refuseUnverifiableHarnessReservation ::
+  Paths ->
+  HarnessReservation ->
+  HarnessReservationOwnerInspection ->
+  IO a
+refuseUnverifiableHarnessReservation paths reservation inspection =
   ioError
     ( userError
         ( "refusing cluster-slot mutation because the reservation owner identity cannot be verified at "
-            <> harnessReservationPath paths
-            <> "; wait for its process group to exit or inspect the reservation before retrying"
+            <> renderHarnessReservationInspection paths reservation inspection
+            <> "; run `infernix cluster reclaim-slot --force-owner-pid "
+            <> show (harnessReservationOwnerPid reservation)
+            <> "` after verifying that recorded owner is gone"
         )
     )
+
+renderHarnessReservationInspection ::
+  Paths ->
+  HarnessReservation ->
+  HarnessReservationOwnerInspection ->
+  String
+renderHarnessReservationInspection paths reservation inspection =
+  harnessReservationPath paths
+    <> "; recorded-pid="
+    <> show (harnessReservationOwnerPid reservation)
+    <> "; recorded-process-group="
+    <> show (harnessReservationProcessGroup reservation)
+    <> "; recorded-birth-identity="
+    <> show (harnessReservationOwnerBirthIdentity reservation)
+    <> "; recorded-pid-namespace="
+    <> renderOptionalNamespace
+      (harnessReservationOwnerPidNamespace reservation)
+    <> "; current-pid-namespace="
+    <> renderOptionalNamespace
+      (inspectedCurrentPidNamespace inspection)
+    <> "; namespace-relation="
+    <> show (inspectedNamespaceRelation inspection)
+    <> "; lifetime-lock-held="
+    <> show (inspectedLifetimeLockHeld inspection)
+    <> "; owner-status="
+    <> show (inspectedOwnerStatus inspection)
+  where
+    renderOptionalNamespace =
+      maybe "unavailable-or-unrecorded" renderProcessNamespaceIdentity
 
 createHarnessReservation :: Paths -> IO ClusterReservationAccess
 createHarnessReservation paths = do
@@ -2603,11 +2758,13 @@ createHarnessReservation paths = do
           "test harness cluster-slot seizure refused: the reservation owner did not become its process-group leader"
       )
   ownerBirthIdentity <- registerCurrentProcessIdentity
+  ownerPidNamespace <- observeCurrentProcessNamespaceIdentity
   let reservation =
         HarnessReservation
           { harnessReservationOwnerPid = fromIntegral ownerPid,
             harnessReservationProcessGroup = fromIntegral ownerProcessGroup,
             harnessReservationOwnerBirthIdentity = Just ownerBirthIdentity,
+            harnessReservationOwnerPidNamespace = ownerPidNamespace,
             harnessReservationConfigTransaction = HarnessConfigUntouched,
             harnessReservationAuthorizedChildGroup = Nothing
           }
@@ -2659,15 +2816,32 @@ clusterDown = clusterDownForOwner "tear down the operator cluster" SOperatorOwne
 clusterDownHarness :: Maybe RuntimeMode -> IO ()
 clusterDownHarness = clusterDownForOwner "tear down the harness cluster" SHarnessOwned
 
--- | Sprint 6.43 — the test harness's evidence-gated seizure of the single
--- cluster slot. The presence and owner observations, authorization, and
--- teardown all occur under the same lifecycle lock. The reservation is
--- published before the harness swaps the operator's runtime configuration.
-seizeHarnessClusterSlot :: Maybe RuntimeMode -> IO ()
-seizeHarnessClusterSlot maybeRuntimeMode = do
+-- | Enclose the complete harness lifecycle in the cross-namespace lifetime
+-- lock. Interrupted-state recovery happens before acquisition; after the lock
+-- is held, reservation publication and cleanup remain the only supported
+-- production path and the kernel drops the liveness token on process death.
+withHarnessClusterSlot :: Maybe RuntimeMode -> IO a -> IO a
+withHarnessClusterSlot maybeRuntimeMode action = do
   paths <- discoverClusterCommandPaths
-  seizeHarnessClusterSlotAt paths maybeRuntimeMode
+  withHarnessClusterSlotAt paths maybeRuntimeMode action
 
+withHarnessClusterSlotAt :: Paths -> Maybe RuntimeMode -> IO a -> IO a
+withHarnessClusterSlotAt paths maybeRuntimeMode action = do
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \_ ->
+    ensureHarnessReservationAvailable paths
+  withKernelFileLock
+    "harness cluster-slot lifetime"
+    (harnessLifetimeLockPath paths)
+    ( bracketPreservingPrimary
+        (seizeHarnessClusterSlotAt paths maybeRuntimeMode)
+        (const (releaseHarnessClusterSlotAt paths maybeRuntimeMode))
+        (const action)
+    )
+
+-- | Unit-test seam for the transition inside 'withHarnessClusterSlotAt'.
+-- Production callers cannot retain the lifetime lock across a returned raw
+-- seizure and therefore use the enclosing bracket above.
 seizeHarnessClusterSlotAt :: Paths -> Maybe RuntimeMode -> IO ()
 seizeHarnessClusterSlotAt paths maybeRuntimeMode = do
   Config.ensureRepoLayout paths
@@ -2717,11 +2891,6 @@ preauthorizeHarnessClusterSlot paths maybeRuntimeMode = do
 -- | Finish a harness reservation. Teardown must succeed before the reservation
 -- is removed; otherwise operator mutations remain fenced from a possibly live
 -- harness writer.
-releaseHarnessClusterSlot :: Maybe RuntimeMode -> IO ()
-releaseHarnessClusterSlot maybeRuntimeMode = do
-  paths <- discoverClusterCommandPaths
-  releaseHarnessClusterSlotAt paths maybeRuntimeMode
-
 releaseHarnessClusterSlotAt :: Paths -> Maybe RuntimeMode -> IO ()
 releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
   Config.ensureRepoLayout paths
@@ -2758,6 +2927,80 @@ releaseHarnessClusterSlotAt paths maybeRuntimeMode = do
       activitiesQuiescent
       paths
       reservation
+
+-- | Recover an interrupted harness reservation without running the ordinary
+-- pre-dispatch reconciliation that would make this command unreachable for an
+-- unverifiable legacy record. A forced PID is an operator-asserted premise
+-- transcribed from the record; it never bypasses the lifetime lock, bounded
+-- command quiescence proof, or config-transaction recovery.
+reclaimHarnessClusterSlot :: Maybe Integer -> IO ()
+reclaimHarnessClusterSlot maybeForcedOwnerPid = do
+  paths <- discoverClusterCommandPaths
+  reclaimHarnessClusterSlotAt paths maybeForcedOwnerPid
+
+reclaimHarnessClusterSlotAt :: Paths -> Maybe Integer -> IO ()
+reclaimHarnessClusterSlotAt paths maybeForcedOwnerPid = do
+  Config.ensureRepoLayout paths
+  withClusterLifecycleLock paths $ \_ -> do
+    maybeReservation <- readHarnessReservation paths
+    case maybeReservation of
+      Nothing ->
+        putStrLn "harness cluster-slot reservation is already absent"
+      Just reservation -> do
+        inspection <- inspectHarnessReservationOwner paths reservation
+        putStrLn (renderHarnessReservationInspection paths reservation inspection)
+        case inspectedOwnerStatus inspection of
+          HarnessReservationOwnerVerifiedAlive ->
+            ioError
+              ( userError
+                  "refusing to reclaim the harness cluster slot from its verified-live owner"
+              )
+          HarnessReservationOwnerDefinitelyDead ->
+            retireHarnessReservation paths reservation
+          HarnessReservationOwnerUnverifiable ->
+            case maybeForcedOwnerPid of
+              Just forcedOwnerPid
+                | forcedOwnerPid == harnessReservationOwnerPid reservation ->
+                    retireHarnessReservation paths reservation
+                | otherwise ->
+                    ioError
+                      ( userError
+                          ( "refusing to reclaim the harness cluster slot: --force-owner-pid "
+                              <> show forcedOwnerPid
+                              <> " does not match recorded owner pid "
+                              <> show (harnessReservationOwnerPid reservation)
+                          )
+                      )
+              Nothing ->
+                refuseUnverifiableHarnessReservation paths reservation inspection
+
+retireHarnessReservation :: Paths -> HarnessReservation -> IO ()
+retireHarnessReservation paths reservation =
+  withKernelFileLock
+    "harness cluster-slot recovery"
+    (harnessLifetimeLockPath paths)
+    ( do
+        activitiesQuiescent <-
+          Subprocess.proveBoundedCommandActivitiesQuiescent
+            paths
+            (harnessReservationProcessGroup reservation)
+        recoveredReservation <-
+          recoverHarnessConfigTransaction
+            activitiesQuiescent
+            paths
+            reservation
+        unless
+          ( harnessReservationConfigTransaction recoveredReservation
+              `elem` [HarnessConfigUntouched, HarnessConfigRestored]
+          )
+          ( ioError
+              ( userError
+                  "harness cluster-slot reclaim refused: the config transaction did not reach a terminal state"
+              )
+          )
+        removeHarnessReservation activitiesQuiescent paths reservation
+        putStrLn "harness cluster-slot reservation reclaimed"
+    )
 
 -- | The raw ownership-gated teardown. Forces its 'ClusterTeardownAuthority' (a
 -- data-constructor match is strict to WHNF), so an @undefined@-forged authority

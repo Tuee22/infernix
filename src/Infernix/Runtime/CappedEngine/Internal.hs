@@ -1,6 +1,7 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE DataKinds #-}
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE ScopedTypeVariables #-}
@@ -21,6 +22,7 @@ module Infernix.Runtime.CappedEngine.Internal
     appleRuntimeEnvironmentNamesForTest,
     nativeArtifactCache,
     nativeArtifactInvocation,
+    missingProcessGroupSettlementForTest,
     missingResidentRecheckForTest,
     linuxWatchdogOutcomeForTest,
     nvidiaWatchdogOutcomeForTest,
@@ -56,6 +58,7 @@ import Data.ByteString.Char8 qualified as ByteString8
 import Data.IORef (IORef, atomicModifyIORef', newIORef, readIORef)
 import Data.List (elemIndices)
 import Data.List qualified as List
+import Data.Maybe qualified as Maybe
 import Data.Text (Text)
 import Data.Text qualified as Text
 import Data.Word (Word64)
@@ -1389,32 +1392,43 @@ runLinuxWatchdog _ processHandle processGroup terminationRef =
     terminationRef
     "Linux /proc process-group RSS enforcement is unavailable on this platform"
 #else
-runLinuxWatchdog ceilingMib processHandle processGroup terminationRef = loop
+runLinuxWatchdog ceilingMib _processHandle =
+  runLinuxWatchdogForGroup ceilingMib
+
+runLinuxWatchdogForGroup ::
+  Int ->
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  IO ()
+runLinuxWatchdogForGroup ceilingMib processGroup terminationRef = loop
   where
     ceilingBytes = mibToBytes ceilingMib
     loop = do
       sample <- processGroupRssBytes processGroup
       case sample of
         Left reason ->
-          failSamplerIfRunning processHandle processGroup terminationRef reason
+          failLinuxSamplerIfTargetLive processGroup terminationRef reason
         Right Nothing ->
-          -- No live group member was observed. If the engine has actually
-          -- exited this is the ordinary end of enforcement and
-          -- 'failSamplerIfRunning' returns quietly. If it has *not* exited, the
-          -- sampler cannot account for a process that is still running, which is
-          -- the same class of loss as a `Left` and must fail closed. Returning
-          -- unconditionally here — as this did — silently disabled enforcement
-          -- for the rest of an execution that was still going, and the startup
-          -- probe already treats the same observation as a failure.
-          failSamplerIfRunning
-            processHandle
+          -- A complete /proc walk can race a leader's terminal transition.
+          -- Require bounded repeated absence before calling that a lost
+          -- enforcer; a group that becomes visible again resumes measurement,
+          -- while an absent or terminal leader proves ordinary completion.
+          settleMissingProcessGroup
             processGroup
             terminationRef
+            (do
+               observed <- processGroupRssBytes processGroup
+               pure $
+                 case observed of
+                   Left reason -> Left reason
+                   Right Nothing -> Right False
+                   Right (Just _) -> Right True
+            )
+            loop
             "Linux /proc process-group RSS sampler observed no live group member for a running engine"
         Right (Just footprint)
           | footprint > ceilingBytes ->
-              terminateForWatchdog
-                processHandle
+              terminateForLinuxWatchdog
                 processGroup
                 terminationRef
                 (CeilingBreached ceilingMib)
@@ -1437,29 +1451,39 @@ runNvidiaWatchdog _ processHandle processGroup terminationRef =
     terminationRef
     "NVIDIA per-process-group VRAM enforcement is unavailable on this platform"
 #else
-runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef = loop
+runNvidiaWatchdog ceilingMib _processHandle =
+  runNvidiaWatchdogForGroup ceilingMib
+
+runNvidiaWatchdogForGroup ::
+  Int ->
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  IO ()
+runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef = loop
   where
     ceilingBytes = mibToBytes ceilingMib
     loop = do
       sample <- processGroupVramBytes processGroup
       case sample of
         Left reason ->
-          failSamplerIfRunning processHandle processGroup terminationRef reason
+          failLinuxSamplerIfTargetLive processGroup terminationRef reason
         Right Nothing ->
-          -- No live group member was observed. If the engine has exited this is
-          -- the ordinary end of enforcement and 'failSamplerIfRunning' returns
-          -- quietly; if it has not, the sampler cannot account for a process
-          -- that is still running, which is the same loss class as a 'Left' and
-          -- must fail closed rather than silently disable the VRAM ceiling.
-          failSamplerIfRunning
-            processHandle
+          settleMissingProcessGroup
             processGroup
             terminationRef
+            (do
+               observed <- processGroupMembers processGroup
+               pure $
+                 case observed of
+                   Left reason -> Left reason
+                   Right [] -> Right False
+                   Right (_ : _) -> Right True
+            )
+            loop
             "NVIDIA VRAM sampler observed no live group member for a running engine"
         Right (Just vramBytes)
           | vramBytes > ceilingBytes ->
-              terminateForWatchdog
-                processHandle
+              terminateForLinuxWatchdog
                 processGroup
                 terminationRef
                 (CeilingBreached ceilingMib)
@@ -1473,12 +1497,20 @@ runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef = loop
 -- only the typed terminal classification after the production loop returns.
 linuxWatchdogOutcomeForTest ::
   Int ->
-  ProcessHandle ->
   CPid ->
   IO (Maybe EngineOutcome)
-linuxWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
+#if defined(darwin_HOST_OS)
+linuxWatchdogOutcomeForTest _ _ =
+  pure
+    ( Just
+        ( EngineEnforcementUnavailable
+            "Linux /proc process-group RSS enforcement is unavailable on this platform"
+        )
+    )
+#else
+linuxWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
-  runLinuxWatchdog ceilingMib processHandle processGroup terminationRef
+  runLinuxWatchdogForGroup ceilingMib processGroup terminationRef
   termination <- readIORef terminationRef
   pure $
     case termination of
@@ -1491,18 +1523,27 @@ linuxWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
       Just (OutputCaptureFailed outputStream reason) ->
         Just (EngineOutputCaptureFailed outputStream reason)
       Nothing -> Nothing
+#endif
 
 -- | Package-test seam for the real NVIDIA VRAM watchdog, mirroring
 -- 'linuxWatchdogOutcomeForTest': an already-created grouped child in, the typed
 -- terminal classification out, no execution authority minted.
 nvidiaWatchdogOutcomeForTest ::
   Int ->
-  ProcessHandle ->
   CPid ->
   IO (Maybe EngineOutcome)
-nvidiaWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
+#if defined(darwin_HOST_OS)
+nvidiaWatchdogOutcomeForTest _ _ =
+  pure
+    ( Just
+        ( EngineEnforcementUnavailable
+            "NVIDIA per-process-group VRAM enforcement is unavailable on this platform"
+        )
+    )
+#else
+nvidiaWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
-  runNvidiaWatchdog ceilingMib processHandle processGroup terminationRef
+  runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef
   termination <- readIORef terminationRef
   pure $
     case termination of
@@ -1515,6 +1556,7 @@ nvidiaWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
       Just (OutputCaptureFailed outputStream reason) ->
         Just (EngineOutputCaptureFailed outputStream reason)
       Nothing -> Nothing
+#endif
 
 #if defined(darwin_HOST_OS)
 continueIfRunning :: ProcessHandle -> IO () -> IO ()
@@ -1525,6 +1567,150 @@ continueIfRunning processHandle continue = do
     Nothing -> do
       threadDelay watchdogIntervalMicros
       continue
+#endif
+
+#if !defined(darwin_HOST_OS)
+-- | Settle the only ambiguous process-group observation: a complete sample saw
+-- no live member, but the leader may only just have entered a terminal state.
+-- Four fresh observations at the normal watchdog interval bound the ambiguity
+-- to 200 ms. Reappearance resumes the caller's full measurement loop; repeated
+-- absence with a still-running leader is enforcement loss and remains terminal.
+settleMissingProcessGroup ::
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  IO (Either Text Bool) ->
+  IO () ->
+  Text ->
+  IO ()
+settleMissingProcessGroup processGroup terminationRef observePresence continue =
+  settleMissingProcessGroupWith
+    (threadDelay watchdogIntervalMicros)
+    missingProcessGroupSettlementRetries
+    observePresence
+    (processLeaderIsTerminal processGroup)
+    continue
+    (failLinuxSamplerIfTargetLive processGroup terminationRef)
+
+-- | Observe the process-group leader without touching its 'ProcessHandle'.
+-- The engine action is the sole process reaper; a watchdog that also calls
+-- 'getProcessExitCode' can contend with 'waitForProcess' exactly while the
+-- leader is a zombie. Procfs terminal state or disappearance is sufficient
+-- evidence that memory enforcement no longer has a live target.
+processLeaderIsTerminal :: CPid -> IO (Either Text Bool)
+processLeaderIsTerminal processGroup = do
+  let leaderPath = "/proc/" <> show (fromIntegral processGroup :: Integer) <> "/stat"
+  statResult <- readProcFile leaderPath
+  pure $
+    case statResult of
+      Left reason -> Left reason
+      Right Nothing -> Right True
+      Right (Just statContents) ->
+        processStateIsTerminal . fst <$> parseProcessStateAndGroup statContents
+#endif
+
+-- | Shared bounded settlement state machine. Production supplies the real
+-- watchdog delay, process-group observation, leader-terminal evidence, and
+-- terminal callbacks; the package-test seam below supplies deterministic
+-- sequences to cover every branch without racing two waiters on one
+-- 'ProcessHandle'.
+settleMissingProcessGroupWith ::
+  IO () ->
+  Int ->
+  IO (Either Text Bool) ->
+  IO (Either Text Bool) ->
+  IO () ->
+  (Text -> IO ()) ->
+  Text ->
+  IO ()
+settleMissingProcessGroupWith delay retries observePresence processTerminated continue failWith reason =
+  recheck retries
+  where
+    recheck retriesRemaining = do
+      delay
+      observed <- observePresence
+      case observed of
+        Left observationFailure -> failWith observationFailure
+        Right True -> continue
+        Right False
+          | retriesRemaining > 1 -> recheck (retriesRemaining - 1)
+          | otherwise -> do
+              terminalEvidence <- processTerminated
+              case terminalEvidence of
+                Left terminalObservationFailure -> failWith terminalObservationFailure
+                Right True -> pure ()
+                Right False -> failWith reason
+
+missingProcessGroupSettlementRetries :: Int
+missingProcessGroupSettlementRetries = 4
+
+-- | Deterministic seam over the production settlement state machine. @Right
+-- True@ means the group reappeared and measurement resumed; @Right False@
+-- means the process exit became visible; @Left reason@ is the exact terminal
+-- enforcement failure.
+missingProcessGroupSettlementForTest ::
+  [Either Text Bool] ->
+  [Either Text Bool] ->
+  IO (Either Text Bool)
+missingProcessGroupSettlementForTest observations exitStates = do
+  observationsRef <- newIORef observations
+  exitStatesRef <- newIORef exitStates
+  outcomeRef <- newIORef Nothing
+  settleMissingProcessGroupWith
+    (pure ())
+    missingProcessGroupSettlementRetries
+    ( atomicModifyIORef' observationsRef $ \case
+        [] -> ([], Left "test observation sequence exhausted")
+        observation : rest -> (rest, observation)
+    )
+    ( atomicModifyIORef' exitStatesRef $ \case
+        [] -> ([], Right False)
+        terminalEvidence : rest -> (rest, terminalEvidence)
+    )
+    (atomicModifyIORef' outcomeRef (const (Just (Right True), ())))
+    (\failure -> atomicModifyIORef' outcomeRef (const (Just (Left failure), ())))
+    "process group remained absent while the engine handle remained live"
+  Maybe.fromMaybe (Right False) <$> readIORef outcomeRef
+
+#if !defined(darwin_HOST_OS)
+-- | Fail closed without consulting the concurrently reaped 'ProcessHandle'.
+-- A terminal or absent leader means there is no live target. Otherwise the
+-- package-owned group is terminated without racing the action's handle reaper.
+failLinuxSamplerIfTargetLive ::
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  Text ->
+  IO ()
+failLinuxSamplerIfTargetLive processGroup terminationRef reason = do
+  terminalResult <- processLeaderIsTerminal processGroup
+  case terminalResult of
+    Right True -> pure ()
+    Right False ->
+      terminateForLinuxWatchdog
+        processGroup
+        terminationRef
+        (EnforcementUnavailable reason)
+    Left terminalObservationFailure ->
+      terminateForLinuxWatchdog
+        processGroup
+        terminationRef
+        ( EnforcementUnavailable
+            (reason <> "; leader observation failed: " <> terminalObservationFailure)
+        )
+
+terminateForLinuxWatchdog ::
+  CPid ->
+  IORef (Maybe EnforcementTermination) ->
+  EnforcementTermination ->
+  IO ()
+terminateForLinuxWatchdog processGroup terminationRef termination = do
+  firstTermination <- recordFirstTermination terminationRef termination
+  when firstTermination $ do
+    groupKill <- try @IOException (signalProcessGroup sigKILL processGroup)
+    case groupKill of
+      Right () -> pure ()
+      Left failure
+        | isMissingProcessGroup failure -> pure ()
+        | otherwise -> throwIO failure
 #endif
 
 failSamplerIfRunning ::
@@ -1551,20 +1737,26 @@ terminateForWatchdog ::
   EnforcementTermination ->
   IO ()
 terminateForWatchdog processHandle processGroup terminationRef termination = do
-  firstTermination <-
-    atomicModifyIORef'
-      terminationRef
-      ( \current ->
-          case current of
-            Nothing -> (Just termination, True)
-            Just _ -> (current, False)
-      )
+  firstTermination <- recordFirstTermination terminationRef termination
   when firstTermination $ do
     groupKill <- try (signalProcessGroup sigKILL processGroup)
     case groupKill of
       Right () -> pure ()
       Left (_ :: SomeException) ->
         terminateProcess processHandle `catch` \(_ :: SomeException) -> pure ()
+
+recordFirstTermination ::
+  IORef (Maybe EnforcementTermination) ->
+  EnforcementTermination ->
+  IO Bool
+recordFirstTermination terminationRef termination =
+  atomicModifyIORef'
+    terminationRef
+    ( \current ->
+        case current of
+          Nothing -> (Just termination, True)
+          Just _ -> (current, False)
+    )
 
 killEngineProcessGroup :: CPid -> IO ()
 killEngineProcessGroup processGroup = do
@@ -1708,9 +1900,9 @@ processGroupVramBytes processGroup = do
             Just <$> FixedObserver.nvidiaComputeAppGroupBytes members computeApps
 
 -- | Enumerate the live members of a process group from @\/proc@. Terminal
--- (zombie or dead) tasks still count as members — the group has not gone away
--- — but they hold no device memory. Enumeration, read, and parse failures are
--- enforcement failures, never an empty result.
+-- (zombie or dead) tasks are completion evidence, not enforceable members.
+-- Enumeration, read, and parse failures are enforcement failures, never an
+-- empty result.
 processGroupMembers :: CPid -> IO (Either Text [CPid])
 processGroupMembers processGroup = do
   procEntriesResult <- try (Directory.listDirectory "/proc")
@@ -1736,8 +1928,10 @@ processGroupMembers processGroup = do
         Right (Just statContents) ->
           case parseProcessStateAndGroup statContents of
             Left reason -> pure (Left (procParseError pidText "stat" reason))
-            Right (_, processGroupValue)
+            Right (processState, processGroupValue)
               | processGroupValue /= targetGroup ->
+                  foldProcessEntries remaining members
+              | processStateIsTerminal processState ->
                   foldProcessEntries remaining members
               | otherwise ->
                   -- The directory name is only known to be all digits, so an
@@ -1766,26 +1960,26 @@ processGroupRssBytes processGroup = do
   where
     targetGroup = fromIntegral processGroup :: Integer
 
-    foldProcessEntries [] foundMember totalBytes =
-      pure (Right (if foundMember then Just totalBytes else Nothing))
-    foldProcessEntries (pidText : remaining) foundMember totalBytes = do
+    foldProcessEntries [] foundLiveMember totalBytes =
+      pure (Right (if foundLiveMember then Just totalBytes else Nothing))
+    foldProcessEntries (pidText : remaining) foundLiveMember totalBytes = do
       statResult <- readProcFile ("/proc/" <> pidText <> "/stat")
       case statResult of
         Left reason -> pure (Left reason)
-        Right Nothing -> foldProcessEntries remaining foundMember totalBytes
+        Right Nothing -> foldProcessEntries remaining foundLiveMember totalBytes
         Right (Just statContents) ->
           case parseProcessStateAndGroup statContents of
             Left reason -> pure (Left (procParseError pidText "stat" reason))
             Right (processState, processGroupValue)
               | processGroupValue /= targetGroup ->
-                  foldProcessEntries remaining foundMember totalBytes
+                  foldProcessEntries remaining foundLiveMember totalBytes
               | processStateIsTerminal processState ->
-                  foldProcessEntries remaining True totalBytes
+                  foldProcessEntries remaining foundLiveMember totalBytes
               | otherwise -> do
                   statusResult <- readProcFile ("/proc/" <> pidText <> "/status")
                   case statusResult of
                     Left reason -> pure (Left reason)
-                    Right Nothing -> foldProcessEntries remaining foundMember totalBytes
+                    Right Nothing -> foldProcessEntries remaining foundLiveMember totalBytes
                     Right (Just statusContents) -> do
                       residentResult <- readResidentBytes pidText statusContents
                       case residentResult of
