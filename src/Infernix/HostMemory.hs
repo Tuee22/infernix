@@ -24,6 +24,7 @@
 module Infernix.HostMemory
   ( observeHostMemoryFacts,
     buildMemoryPlanForHost,
+    claimablePoolForFacts,
     resolveLiveBuildMemoryPlan,
     parseMemTotalMib,
   )
@@ -33,7 +34,7 @@ import Control.Exception (SomeException, try)
 import Data.Char (isDigit, isSpace)
 import Infernix.BuildMemory
   ( BuildMemoryPlan,
-    buildMemoryBudgetForPhysicalMib,
+    buildMemoryBudgetForPool,
     deriveBuildMemoryPlan,
     resolveBuildConcurrency,
   )
@@ -42,6 +43,7 @@ import Infernix.HostConfig (HostConfig, HostMemoryFacts (..))
 import Infernix.HostConfig qualified as HostConfig
 import Infernix.HostTools qualified as HostTools
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
+import Infernix.Types qualified as Types
 import Numeric.Natural (Natural)
 import System.Info (os)
 
@@ -78,17 +80,37 @@ observeHostMemoryFacts hostConfig =
 -- The effective figure is the one the account is a share of, because it is
 -- what a build on this lane actually gets. An unmeasured manifest — the
 -- 'Infernix.HostConfig.unmeasuredHostMemoryFacts' zero shape — is refused by
--- 'buildMemoryBudgetForPhysicalMib' by name, so a ceiling can never be derived
--- from a host nobody looked at.
+-- 'claimablePoolForFacts' by name, so a ceiling can never be derived from a
+-- host nobody looked at.
 buildMemoryPlanForHost :: HostConfig -> Either String BuildMemoryPlan
 buildMemoryPlanForHost hostConfig = do
-  budget <- buildMemoryBudgetForPhysicalMib effectiveMib
+  pool <- claimablePoolForFacts (HostConfig.hostMemory hostConfig)
+  budget <- buildMemoryBudgetForPool pool
   concurrency <- resolveBuildConcurrency budget
   deriveBuildMemoryPlan budget concurrency
+
+-- | Phase 4 Sprint 4.31 — the one claimable pool both host occupants draw from,
+-- minted from a measured pair of facts.
+--
+-- The reserve is the difference between what the machine contains and what this
+-- lane actually offers: the active Colima pledge on Darwin, whatever the cgroup
+-- maximum withholds on Linux. Minting the pool here rather than handing the
+-- effective figure straight to the account is what keeps the toolchain account
+-- and the checked inference partition derived from the same quantity.
+claimablePoolForFacts :: HostMemoryFacts -> Either String Types.HostClaimablePool
+claimablePoolForFacts facts
+  | effectiveMib > physicalMib =
+      Left
+        ( "measured effective host memory of "
+            <> show effectiveMib
+            <> " MiB exceeds measured physical memory of "
+            <> show physicalMib
+            <> " MiB; a lane cannot offer more than the machine contains"
+        )
+  | otherwise = Types.mkHostClaimablePool physicalMib (physicalMib - effectiveMib)
   where
-    effectiveMib =
-      fromIntegral
-        (hostEffectiveMemoryMib (HostConfig.hostMemory hostConfig))
+    physicalMib = fromIntegral (hostPhysicalMemoryMib facts) :: Int
+    effectiveMib = fromIntegral (hostEffectiveMemoryMib facts) :: Int
 
 -- | Derive this machine's build ceiling from a live measurement.
 --
@@ -103,8 +125,8 @@ resolveLiveBuildMemoryPlan hostConfig = do
   observed <- observeHostMemoryFacts hostConfig
   pure $ do
     facts <- observed
-    budget <-
-      buildMemoryBudgetForPhysicalMib (fromIntegral (hostEffectiveMemoryMib facts))
+    pool <- claimablePoolForFacts facts
+    budget <- buildMemoryBudgetForPool pool
     concurrency <- resolveBuildConcurrency budget
     deriveBuildMemoryPlan budget concurrency
 

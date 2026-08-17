@@ -33,7 +33,7 @@ data AppleHostRequirement
   | AppleNode
   | ApplePython
   | ApplePython311
-  | AppleLlamaCli
+  | AppleLlamaCompletion
   | AppleWhisperCli
   | ApplePoetry
   deriving (Eq, Show)
@@ -135,7 +135,7 @@ pythonToolRequirements runtimeMode command
         TestE2ECommand -> [ApplePython, ApplePoetry]
         TestAllCommand -> [ApplePython, ApplePoetry]
         InternalMaterializeMetalEnginesCommand ->
-          [ AppleLlamaCli,
+          [ AppleLlamaCompletion,
             AppleWhisperCli,
             ApplePython,
             ApplePython311,
@@ -347,7 +347,7 @@ homebrewFormula = \case
   AppleNode -> "node"
   ApplePython -> "python@3.12"
   ApplePython311 -> "python@3.11"
-  AppleLlamaCli -> "llama.cpp"
+  AppleLlamaCompletion -> "llama.cpp"
   AppleWhisperCli -> "whisper-cpp"
   ApplePoetry -> "poetry"
 
@@ -360,7 +360,7 @@ providedCommand = \case
   AppleNode -> "node"
   ApplePython -> "python3.12"
   ApplePython311 -> "python3.11"
-  AppleLlamaCli -> "llama-cli"
+  AppleLlamaCompletion -> "llama-completion"
   AppleWhisperCli -> "whisper-cli"
   ApplePoetry -> "poetry"
 
@@ -373,7 +373,7 @@ requirementId = \case
   AppleNode -> "node"
   ApplePython -> "python"
   ApplePython311 -> "python3.11"
-  AppleLlamaCli -> "llama-cli"
+  AppleLlamaCompletion -> "llama-completion"
   AppleWhisperCli -> "whisper-cli"
   ApplePoetry -> "poetry"
 

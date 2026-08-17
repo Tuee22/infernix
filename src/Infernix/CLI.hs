@@ -2037,7 +2037,7 @@ hostToolForCliCommand command =
     "poetry" -> Just HostPoetry
     "python3" -> Just HostPython3
     "python3.11" -> Just HostPython311
-    "llama-cli" -> Just HostLlamaCli
+    "llama-completion" -> Just HostLlamaCompletion
     "whisper-cli" -> Just HostWhisperCli
     "git" -> Just HostGit
     _ -> Nothing
@@ -2146,7 +2146,7 @@ cliHostToolParentDirs hostConfig =
           HostCurl,
           HostPython3,
           HostPython311,
-          HostLlamaCli,
+          HostLlamaCompletion,
           HostWhisperCli,
           HostPoetry,
           HostGit

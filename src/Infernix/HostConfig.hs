@@ -73,7 +73,7 @@ data HostToolPaths = HostToolPaths
     hostNode :: Text,
     hostPython3 :: Text,
     hostPython311 :: Text,
-    hostLlamaCli :: Text,
+    hostLlamaCompletion :: Text,
     hostWhisperCli :: Text,
     hostPoetry :: Text,
     hostGit :: Text,
@@ -466,7 +466,7 @@ renderHostConfig hostConfig =
             <> renderText "node" hostNode
             <> renderText "python3" hostPython3
             <> renderText "python311" hostPython311
-            <> renderText "llamaCli" hostLlamaCli
+            <> renderText "llamaCompletion" hostLlamaCompletion
             <> renderText "whisperCli" hostWhisperCli
             <> renderText "poetry" hostPoetry
             <> renderText "git" hostGit
@@ -627,7 +627,7 @@ defaultLinuxOuterContainerHostConfigForArchitecture homeDir architecture =
             hostNode = "/usr/bin/node",
             hostPython3 = "/usr/bin/python3",
             hostPython311 = "",
-            hostLlamaCli = "",
+            hostLlamaCompletion = "",
             hostWhisperCli = "",
             hostPoetry = "/opt/poetry/bin/poetry",
             hostGit = "/usr/bin/git",
@@ -693,7 +693,7 @@ defaultAppleHostNativeHostConfig repoRoot homeDir =
             hostNode = "/opt/homebrew/bin/node",
             hostPython3 = "/opt/homebrew/bin/python3.12",
             hostPython311 = "/opt/homebrew/bin/python3.11",
-            hostLlamaCli = "/opt/homebrew/bin/llama-cli",
+            hostLlamaCompletion = "/opt/homebrew/bin/llama-completion",
             hostWhisperCli = "/opt/homebrew/bin/whisper-cli",
             hostPoetry =
               homeDir <> "/.local/share/pypoetry/venv/bin/poetry",

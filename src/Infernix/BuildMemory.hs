@@ -65,7 +65,7 @@ module Infernix.BuildMemory
     BuildMemoryBudget,
     buildMemoryBudgetMib,
     mkBuildMemoryBudget,
-    buildMemoryBudgetForPhysicalMib,
+    buildMemoryBudgetForPool,
     BuildConcurrency,
     buildConcurrencyJobs,
     mkBuildConcurrency,
@@ -155,7 +155,6 @@ module Infernix.BuildMemory
     minimumProcessHeapMib,
     toolchainAddressSpaceReservationMib,
     toolchainReservationFitsEveryPlan,
-    toolchainSharePercent,
   )
 where
 
@@ -172,6 +171,7 @@ import Infernix.HostClaimants
     renderForeignToolchainClaimants,
   )
 import Infernix.Runtime.Enforcer.Internal (readCgroupMemoryLimitMib)
+import Infernix.Types qualified as Types
 import System.Directory (doesPathExist)
 import System.FilePath (isAbsolute, (</>))
 import System.IO (readFile')
@@ -189,7 +189,7 @@ import Text.Read (readMaybe)
 -- | The toolchain account's total claim on host memory, in MiB.
 --
 -- The constructor is unexported: a budget is either minted from a measured
--- physical-memory fact ('buildMemoryBudgetForPhysicalMib') or checked
+-- claimable pool ('buildMemoryBudgetForPool') or checked
 -- explicitly ('mkBuildMemoryBudget'). There is no way to write one down.
 newtype BuildMemoryBudget = BuildMemoryBudget Int
   deriving (Eq, Show)
@@ -313,15 +313,6 @@ renderBuildMemoryBound bound =
         <> " MiB derived ceiling with no address-space enforcement; bounded by "
         <> renderBuildMemoryMechanism mechanism
 
--- | The toolchain account's share of measured host memory, as a percentage.
---
--- Half. The other half covers the Kind cluster this repository also runs on
--- the development host, the operator's desktop session, and the memory the
--- doctrine names as attributable to no process at all. It is a declared policy
--- number, not a measured one, and it is the only such number here.
-toolchainSharePercent :: Int
-toolchainSharePercent = 50
-
 -- | The largest job count this module will mint.
 --
 -- Bounded rather than @\$ncpus@ on purpose: the job count is what the memory
@@ -432,25 +423,18 @@ minimumToolchainAccountMib :: Int
 minimumToolchainAccountMib =
   minimumProcessHeapMib + 2 * toolchainControlHeapMib
 
--- | Mint the account budget from a measured host memory fact, in MiB.
+-- | Mint the account budget from the measured claimable pool.
 --
--- The argument is the effective memory the host actually offers — physical
--- memory intersected with any cgroup limit in force — never a declared one.
-buildMemoryBudgetForPhysicalMib :: Int -> Either String BuildMemoryBudget
-buildMemoryBudgetForPhysicalMib effectiveMib
-  | effectiveMib <= 0 =
-      Left
-        ( "measured host memory must be positive, not "
-            <> show effectiveMib
-            <> " MiB; a toolchain ceiling derived from an unmeasured host is a "
-            <> "declared number wearing a measurement's clothes"
-        )
-  | budgetInteger > toInteger (maxBound :: Int) =
-      Left "measured host memory produced a toolchain budget that overflowed Int"
-  | otherwise = mkBuildMemoryBudget (fromInteger budgetInteger)
-  where
-    budgetInteger =
-      toInteger effectiveMib * toInteger toolchainSharePercent `div` 100
+-- Phase 4 Sprint 4.31 replaced the bare @Int@ effective-memory argument with
+-- 'Types.HostClaimablePool'. The account and the inference partition are the
+-- two occupants of one pool, and the retired signature let each be computed
+-- from its own figure: the partition divided physical RAM less the virtual
+-- machine pledge, this function took whatever effective figure its caller
+-- happened to hold, and nothing checked that the two described the same
+-- quantity. The pool is now minted once and both occupants are derived from it.
+buildMemoryBudgetForPool :: Types.HostClaimablePool -> Either String BuildMemoryBudget
+buildMemoryBudgetForPool pool =
+  mkBuildMemoryBudget (Types.hostClaimablePoolToolchainAccountMib pool)
 
 -- | Check an explicit job count.
 mkBuildConcurrency :: Int -> Either String BuildConcurrency
@@ -549,6 +533,18 @@ deriveBuildMemoryPlan budget concurrency
 -- cap — rather than minting evidence from the caller's own argument. A bound
 -- that witnessed nothing would be worse than no bound at all: it would carry the
 -- module's authority with none of its content.
+-- Phase 6 Sprint 6.46: this is the validation-only installer, and saying so is
+-- the correction. It lowers the hard limit as well as the soft one, which is
+-- one-way and unprivileged, so it is safe only in a process image whose whole
+-- purpose is the build it is about to run. No such production image exists here:
+-- the authority is held by the long-lived operator CLI, which also starts
+-- @kubectl@, @helm@, and a routed end-to-end browser, and bounding those would
+-- be a defect. The production boundary is 'withBoundedToolchainChild', which
+-- lowers the soft limit for the lifetime of one child and then observes the
+-- bound through 'requireBoundedBuildMemory'. Presenting this function as a
+-- supported production path would claim a guarantee no supported path can reach;
+-- its real caller is the enforced-lane fixture, which constructs a genuine
+-- inherited bound to assert inheritance and lower-only preservation against.
 establishBoundedBuildMemory ::
   FilePath ->
   BuildMemoryPlan ->
@@ -661,8 +657,9 @@ requireEnforcedAddressSpaceBound label plan mechanism = do
                 <> show ceilingMib
                 <> " MiB. A compiler process in this checkout reached "
                 <> "109.46 GiB resident on a 124.94 GiB host and was never "
-                <> "selected by the kernel. Call establishBoundedBuildMemory "
-                <> "before the first toolchain spawn in this process image."
+                <> "selected by the kernel. Start toolchain children through "
+                <> "withBoundedToolchainChild, which installs this ceiling for "
+                <> "the lifetime of the child."
             )
         )
   where
@@ -1274,10 +1271,61 @@ withBoundedToolchainChild
       -- fork the caller's action performs.
       _admissionAtSpawn <- requireToolchainHostAdmission plan
       case resolved of
-        EnforcedLane _ -> bracket acquire restore (const childLifecycle)
-        UnenforcedLane _ -> childLifecycle
+        EnforcedLane _ ->
+          bracket acquire restore (const (withObservedBound requireEnforcedArm))
+        UnenforcedLane _ -> withObservedBound requireUnenforcedArm
     where
       ceilingMib = planProcessAddressMib plan
+      -- Phase 6 Sprint 6.46: the point-of-use observation runs here, on the
+      -- production path, rather than only in a fixture.
+      --
+      -- Installing a limit and trusting the write is the weaker half of what
+      -- this module can do. `requireBoundedBuildMemory` reads the bound back —
+      -- a `getrlimit(2)` call on the enforced lane, the complete committed
+      -- `jobs`/heap/reservation triple on the unenforced one — and returns it as
+      -- a `BuildMemoryBound` indexed by the enforcement its lane actually has.
+      -- That index is the point: it is what keeps an unenforced observation from
+      -- being read as an enforced ceiling, and until this call site existed no
+      -- supported path produced the value the index protects.
+      --
+      -- The arm is cross-checked against the mechanism this region resolved.
+      -- Resolving a lane and then acting on a differently-shaped observation is
+      -- the error this module already names in its authority comment; between
+      -- the two calls a cgroup maximum can appear or vanish, and disagreement is
+      -- a refusal rather than a preference for one answer.
+      withObservedBound checkArm = do
+        observed <- requireBoundedBuildMemory repoRootPath toolchainSpawnLabel plan
+        checkArm observed
+        childLifecycle
+      requireEnforcedArm observed =
+        case observed of
+          Right _enforcedBound -> pure ()
+          Left unenforcedBound ->
+            ioError
+              ( userError
+                  ( toolchainSpawnLabel
+                      <> " resolved an address-space-enforcing lane but observed "
+                      <> renderBuildMemoryBound unenforcedBound
+                      <> "; refusing to start a toolchain child against a bound "
+                      <> "whose mechanism disagrees with the one this region "
+                      <> "established"
+                  )
+              )
+      requireUnenforcedArm observed =
+        case observed of
+          Left _unenforcedBound -> pure ()
+          Right enforcedBound ->
+            ioError
+              ( userError
+                  ( toolchainSpawnLabel
+                      <> " resolved a lane with no address-space enforcement but "
+                      <> "observed "
+                      <> renderBuildMemoryBound enforcedBound
+                      <> "; refusing to start a toolchain child against a bound "
+                      <> "whose mechanism disagrees with the one this region "
+                      <> "established"
+                  )
+              )
       acquire = do
         limits <- getResourceLimit ResourceTotalMemory
         case boundedAddressLimit ceilingMib (softLimit limits) of
@@ -1287,6 +1335,14 @@ withBoundedToolchainChild
             setResourceLimit ResourceTotalMemory limits {softLimit = target}
             pure limits
       restore = setResourceLimit ResourceTotalMemory
+
+-- | The spawning surface named in a point-of-use refusal.
+--
+-- One fixed string rather than a caller-supplied label: this is the only
+-- production spawn boundary, so an unbounded or mechanism-disagreeing process
+-- image is attributable from this name alone.
+toolchainSpawnLabel :: String
+toolchainSpawnLabel = "withBoundedToolchainChild"
 
 -- | Raise the spawned child's out-of-memory victim rank.
 --

@@ -10,6 +10,7 @@ module Infernix.Runtime.Worker
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
+    requireHydratedNativeModelCache,
     runExecutableInferenceWorker,
     workerRequestModelCacheConfig,
   )
@@ -17,7 +18,7 @@ where
 
 import Control.Concurrent (threadDelay)
 import Control.Exception (SomeException, displayException, throwIO, try)
-import Control.Monad (unless, when)
+import Control.Monad (filterM, unless, when)
 import Crypto.Hash.SHA256 qualified as SHA256
 import Data.ByteString qualified as ByteString
 import Data.ByteString.Base16 qualified as Base16
@@ -400,8 +401,11 @@ runNativeWorker paths executableModel request _cacheObservation = do
     engineBinding = executableModelEngine executableModel
     prepareNativeArtifactInvocation = do
       maybeModelCacheConfig <- loadWorkerModelCacheConfig paths modelRuntimeMode
-      ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
-      inputFileResult <- nativeRunnerInputFile model request maybeModelCacheConfig
+      cacheReady <- ensureNativeRunnerContractCacheReady model maybeModelCacheConfig
+      inputFileResult <-
+        case cacheReady of
+          Left cacheError -> pure (Left cacheError)
+          Right () -> nativeRunnerInputFile model request maybeModelCacheConfig
       case inputFileResult of
         Left inputError -> pure (Left inputError)
         Right maybeInputFile -> do
@@ -435,8 +439,32 @@ runNativeWorker paths executableModel request _cacheObservation = do
 -- invocation reports a cache miss, the coordinator populates MinIO, and the
 -- retry hydrates local model files before strict native execution. Keep MinIO
 -- credentials in this Haskell worker, not in native process argv.
-ensureNativeRunnerContractCacheReady :: ModelDescriptor -> Maybe WorkerModelCacheConfig -> IO ()
-ensureNativeRunnerContractCacheReady _ Nothing = pure ()
+--
+-- Phase 4 Sprint 4.35: this ends in one of two states, and silently proceeding
+-- is no longer one of them. A native runner is the /only/ reporter of its own
+-- cache miss, because unlike the Python adapters it has no exit-75 protocol:
+-- a missing payload reaches @llama-completion@ or @whisper-cli@ as an ordinary
+-- open failure, which classifies as @worker_failed@ and is therefore not
+-- retryable, so the bootstrap-and-retry path never fires for it. The retired
+-- form made that reachable: when the upstream @.ready@ sentinel was absent it
+-- hydrated nothing, wrote no marker, raised nothing, and returned — and the
+-- engine was then invoked against a payload that does not exist. Observed on
+-- the @apple-silicon@ cohort as @whisper_init_from_file_with_params_no_state:
+-- failed to open '…\/speech-whisper-small\/payload'@ after the coordinator's
+-- eager sweep had skipped that one model and logged that "the lazy
+-- per-inference fallback still covers this model". It did not: the fallback is
+-- conditioned on the very sentinel the failed staging never wrote.
+--
+-- Proving hydration here instead is what makes the sweep's claim true. The
+-- refusal is the classified @model_cache_not_populated@ code the retry path
+-- already recognizes, so an eager-staging miss now publishes a bootstrap
+-- request, waits for the durable sentinel, and hydrates on retry — the exact
+-- protocol this function's contract describes.
+ensureNativeRunnerContractCacheReady ::
+  ModelDescriptor ->
+  Maybe WorkerModelCacheConfig ->
+  IO (Either ErrorResponse ())
+ensureNativeRunnerContractCacheReady _ Nothing = pure (Right ())
 ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
   let readyPath = nativeRunnerContractReadyPath modelCacheConfig (modelId model)
   localReady <- doesFileExist readyPath
@@ -446,6 +474,76 @@ ensureNativeRunnerContractCacheReady model (Just modelCacheConfig) = do
       createDirectoryIfMissing True (takeDirectory readyPath)
       hydrateNativeModelCache model modelCacheConfig
       writeFile readyPath "native-model-cache-ready\n"
+  requireHydratedNativeModelCache model modelCacheConfig
+
+-- | Prove every local file this model's native runner will open is present and
+-- non-empty, or report the classified cache miss naming exactly what is absent.
+--
+-- A zero-byte entry counts as absent for the same reason the hydration staging
+-- refuses one: it is never a valid model file, and treating it as present is
+-- how an interrupted write became a permanently poisoned cache.
+requireHydratedNativeModelCache ::
+  ModelDescriptor ->
+  WorkerModelCacheConfig ->
+  IO (Either ErrorResponse ())
+requireHydratedNativeModelCache model modelCacheConfig = do
+  requiredKeys <- requiredNativeModelCacheKeys model modelCacheConfig
+  missing <- filterM (fmap not . nativeModelCacheEntryPresent) (map localPath requiredKeys)
+  pure $
+    if null missing
+      then Right ()
+      else
+        Left
+          ErrorResponse
+            { errorCode = "model_cache_not_populated",
+              message =
+                "native engine model cache is not populated for "
+                  <> modelId model
+                  <> "; absent or empty local "
+                  <> (if length missing == 1 then "file" else "files")
+                  <> ": "
+                  <> Text.intercalate ", " (map Text.pack missing)
+            }
+  where
+    localPath relativeKey =
+      Text.unpack (workerModelCacheRoot modelCacheConfig)
+        </> Text.unpack (modelId model)
+        </> Text.unpack relativeKey
+
+-- | The local relative paths hydration is expected to have produced.
+--
+-- Snapshot-backed models enumerate their own file set, so the index is
+-- required first and its contents are required with it; a present index whose
+-- listed files are absent is exactly the half-hydrated state this check exists
+-- to catch. A model that declares no cache objects requires none.
+requiredNativeModelCacheKeys ::
+  ModelDescriptor ->
+  WorkerModelCacheConfig ->
+  IO [Text]
+requiredNativeModelCacheKeys model modelCacheConfig
+  | modelId model `elem` nativeSnapshotModelIds = do
+      let indexPath =
+            Text.unpack (workerModelCacheRoot modelCacheConfig)
+              </> Text.unpack (modelId model)
+              </> Text.unpack nativeSnapshotIndexName
+      indexPresent <- nativeModelCacheEntryPresent indexPath
+      if not indexPresent
+        then pure [nativeSnapshotIndexName]
+        else do
+          indexPayload <- readFile indexPath
+          pure
+            ( nativeSnapshotIndexName
+                : [ Text.pack relativeKey
+                  | relativeKey <- lines indexPayload,
+                    not (null relativeKey)
+                  ]
+            )
+  | otherwise = pure (nativeModelCacheObjectKeys model)
+
+nativeModelCacheEntryPresent :: FilePath -> IO Bool
+nativeModelCacheEntryPresent path = do
+  observed <- observedFileSize path
+  pure (maybe False (> 0) observed)
 
 hydrateNativeModelCache :: ModelDescriptor -> WorkerModelCacheConfig -> IO ()
 hydrateNativeModelCache model modelCacheConfig =

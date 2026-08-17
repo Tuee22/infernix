@@ -15,9 +15,9 @@ import Data.ByteString.Base64 qualified as Base64
 import Data.ByteString.Char8 qualified as ByteString8
 import Data.ByteString.Lazy qualified as LazyByteString
 import Data.ByteString.Lazy.Char8 qualified as LazyByteStringChar8
-import Data.Char (isAsciiUpper)
+import Data.Char (isAsciiUpper, isSpace)
 import Data.FileEmbed (embedFile)
-import Data.List (find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort)
+import Data.List (dropWhileEnd, find, intercalate, isInfixOf, isPrefixOf, isSuffixOf, nub, partition, sort)
 import Data.List.NonEmpty qualified as NonEmpty
 import Data.Map.Strict qualified as Map
 import Data.Maybe (isJust, isNothing, mapMaybe)
@@ -86,7 +86,7 @@ import Network.Socket
 import Network.WebSockets qualified as WebSockets
 import System.Directory
 import System.Environment (getArgs, getExecutablePath, withArgs)
-import System.Exit (ExitCode (ExitSuccess))
+import System.Exit (ExitCode (ExitFailure, ExitSuccess))
 import System.FilePath ((</>))
 import System.IO (BufferMode (LineBuffering), IOMode (WriteMode), hClose, hFlush, hSetBuffering, openFile, stdout)
 import System.IO.Error (catchIOError, isAlreadyInUseError, isDoesNotExistError)
@@ -2067,27 +2067,66 @@ httpGetWithStatus url = do
     Just (body, statusCodeValue) -> pure (statusCodeValue, body)
     Nothing -> fail ("failed to parse curl status output for " <> url)
 
+-- | One routed probe, retried while the peer is merely not listening yet.
+--
+-- Phase 4 Sprint 4.35: this helper retried nothing. It ran `curl` through
+-- `readProcess`, which inherits the child's standard error, and then classified
+-- the raised `IOError` by searching `show err` for curl's own diagnostics
+-- ("Failed to connect", "Connection refused", …). Those strings are never in
+-- that value: `readProcess` raises `readCreateProcess: curl … (exit 7): failed`
+-- and curl's message goes to the suite's stderr instead. So the predicate was
+-- constantly `False`, every routed probe in this suite was single-shot behind a
+-- name and a 20-attempt envelope that promised otherwise, and a cold-start race
+-- on any published route failed the whole lane. Observed on the `linux-cpu`
+-- cohort: the @demo_ui=false@ scenario's @/harbor@ probe hit the edge NodePort
+-- ~1 s before Harbor's portal accepted connections, and the suite failed with
+-- `exit 7` rather than waiting the ten seconds it already claimed to wait.
+--
+-- Classifying on curl's **exit code** is both correct and stronger than the
+-- string match it replaces: the code is curl's own typed answer to "why did this
+-- fail", it survives capture, and it distinguishes "not listening yet" from "the
+-- server answered and said no". A 4xx/5xx response is exit 22 and is *not*
+-- retried, which the absent-route assertions depend on — they expect a fast
+-- refusal, not a ten-second wait.
 readProcessWithTransientCurlRetry :: [String] -> IO String
 readProcessWithTransientCurlRetry args = go (20 :: Int)
   where
-    go attemptsRemaining =
-      catchIOError
-        (readProcess "curl" args "")
-        ( \err ->
-            if attemptsRemaining > 1 && isTransientCurlConnectionError err
-              then do
-                threadDelay 500000
-                go (attemptsRemaining - 1)
-              else ioError err
-        )
+    go attemptsRemaining = do
+      (exitCode, standardOutput, standardError) <-
+        readProcessWithExitCode "curl" args ""
+      case exitCode of
+        ExitSuccess -> pure standardOutput
+        ExitFailure failureCode
+          | attemptsRemaining > 1 && isTransientCurlExitCode failureCode -> do
+              threadDelay 500000
+              go (attemptsRemaining - 1)
+          | otherwise ->
+              -- The retired form discarded curl's diagnostic entirely, so a
+              -- failed probe reported only that the child exited non-zero.
+              ioError
+                ( userError
+                    ( "curl "
+                        <> unwords args
+                        <> " failed with exit code "
+                        <> show failureCode
+                        <> ( if null (trimWhitespaceString standardError)
+                               then ""
+                               else ": " <> trimWhitespaceString standardError
+                           )
+                    )
+                )
 
-isTransientCurlConnectionError :: IOError -> Bool
-isTransientCurlConnectionError err =
-  let message = show err
-   in "Connection refused" `isInfixOf` message
-        || "Failed to connect" `isInfixOf` message
-        || "Connection reset by peer" `isInfixOf` message
-        || "Empty reply from server" `isInfixOf` message
+-- | The curl exit codes that mean "the peer was not reachable yet" rather than
+-- "the peer answered and the answer was a failure".
+--
+-- 7 could not connect, 28 operation timed out, 52 empty reply, 56 receive
+-- error. Everything else — notably 22, an HTTP status `-f` rejected — is a real
+-- answer and is never retried.
+isTransientCurlExitCode :: Int -> Bool
+isTransientCurlExitCode failureCode = failureCode `elem` [7, 28, 52, 56]
+
+trimWhitespaceString :: String -> String
+trimWhitespaceString = dropWhile isSpace . dropWhileEnd isSpace
 
 parseCurlBodyAndStatus :: String -> Maybe (String, Int)
 parseCurlBodyAndStatus payload =

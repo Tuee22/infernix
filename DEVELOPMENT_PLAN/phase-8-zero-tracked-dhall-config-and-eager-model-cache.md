@@ -1,8 +1,13 @@
 # Phase 8: Zero-Tracked-Dhall Config and Eager Model Cache
 
-**Status**: Blocked — strict numerical execution waits for Phase 7.
-**Blocked by**: Phase 7
-**Implementation state behind the blocker**: Active. Sprint 8.9 and Sprint 8.10 are both
+**Status**: Active — Phase 7 closed on 2026-08-17, so strict numerical execution reaches this phase.
+Its three open sprints split cleanly by what blocks them. Sprint 8.11 is `Planned`, carries no blocker,
+and is implementable on a single engine machine — it is the only open work in this phase that current
+hardware can complete. Sprints 8.9 and 8.10 are code-side closed and hold a **supported-lane
+validation blocker**: both consume Phase 6 Sprint 6.44's `linux-gpu` plus `linux-cpu` wave, which needs
+a CUDA-capable Linux host. Sprint 8.12 holds a different blocker again — a fleet validation topology of
+more than one engine machine — which no single-host cohort can supply.
+**Historical implementation state (superseded by the header above).** Active. Sprint 8.9 and Sprint 8.10 are both
 validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.10 (delete the derivable
 wire fields) is code-side closed: Phase 4 Sprint 4.34's admission move discharged its blocker, and
 the reflected substrate schema went from 110 lines to 54 with every retired field absent rather than

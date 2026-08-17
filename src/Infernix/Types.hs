@@ -24,6 +24,8 @@ module Infernix.Types
     InferenceRequest (..),
     InferenceResult (..),
     HostMemoryPartition,
+    HostClaimablePool,
+    ConcurrentHostPoolClaim,
     ModelMemoryFootprint,
     PodMemoryLimit (..),
     PodMemoryLimitSource (..),
@@ -57,6 +59,13 @@ module Infernix.Types
     hostPartitionInferenceCapacityMib,
     hostPartitionPhysicalMib,
     hostPartitionVmReserveMib,
+    hostPartitionClaimablePoolMib,
+    hostPartitionToolchainAccountMib,
+    mkHostClaimablePool,
+    hostClaimablePoolMib,
+    hostClaimablePoolToolchainAccountMib,
+    toolchainSharePercent,
+    mkConcurrentHostPoolClaim,
     inferenceMemoryBudgetCapacityMib,
     inferenceMemoryBudgetPodLimits,
     inferenceMemoryBudgetResource,
@@ -671,13 +680,143 @@ instance FromJSON InferenceMemoryResource where
 -- pieces exceed physical, or whose headroom cannot cover its co-tenants, is not
 -- a constructible term. See
 -- 'documents/architecture/bounded_inference_memory.md'.
+--
+-- The partition additionally carries the /other occupant/ of the pool it
+-- divides. Splitting physical RAM says what inference may hold; it says nothing
+-- about the Haskell toolchain account drawn from the same non-virtual-machine
+-- pool, and a ledger blind to that account is how a fully-assigned pool gets
+-- spent twice. 'hostPartitionToolchainAccountMib' is that term, and
+-- 'mkConcurrentHostPoolClaim' is the only way to assert the two are fundable at
+-- once — an assertion the arithmetic refuses on every host whose partition
+-- spends its pool. Canonical doctrine:
+-- 'documents/architecture/bounded_host_memory.md'.
 data HostMemoryPartition = HostMemoryPartition
   { hostPartitionPhysicalMib :: Int,
     hostPartitionVmReserveMib :: Int,
     hostPartitionHeadroomMib :: Int,
-    hostPartitionInferenceCapacityMib :: Int
+    hostPartitionInferenceCapacityMib :: Int,
+    -- | The one claimable pool this split divides, in MiB: physical RAM less
+    -- the virtual-machine reserve. Both occupants are derived from this single
+    -- quantity, so neither is computed from a figure blind to the other.
+    hostPartitionClaimablePoolMib :: Int,
+    -- | The toolchain account the same pool funds, in MiB — the pool's other
+    -- occupant, recorded here so the sum is checkable rather than unchecked.
+    hostPartitionToolchainAccountMib :: Int
   }
   deriving (Eq, Show)
+
+-- | Phase 4 Sprint 4.31 — the one non-virtual-machine pool both host occupants
+-- draw from, in MiB.
+--
+-- The constructor is hidden and 'mkHostClaimablePool' is the only mint, because
+-- the defect this type closes is two modules each computing "the memory this
+-- host offers" from its own figure. The checked inference partition and the
+-- Haskell toolchain account are now both derived from one value of this type.
+newtype HostClaimablePool = HostClaimablePool Int
+  deriving (Eq, Ord, Show)
+
+-- | The toolchain account's share of the claimable pool, as a percentage.
+--
+-- Half. The other half covers the Kind cluster this repository also runs on the
+-- development host, the operator's desktop session, and the memory the doctrine
+-- names as attributable to no process at all. It is a declared policy number,
+-- not a measured one, and it is the only such number in the ledger.
+toolchainSharePercent :: Int
+toolchainSharePercent = 50
+
+-- | The only 'HostClaimablePool' mint: physical RAM less the memory reserved
+-- away from it.
+--
+-- On Darwin the reserve is the active Colima pledge; on Linux it is whatever
+-- the cgroup maximum withholds from installed physical memory. Both lanes
+-- therefore describe the same quantity — what this machine actually offers a
+-- host-native claimant — rather than two figures that happen to agree.
+mkHostClaimablePool :: Int -> Int -> Either String HostClaimablePool
+mkHostClaimablePool physicalMib reservedMib
+  | physicalMib <= 0 =
+      Left
+        ( "host claimable pool requires positive physical RAM, got "
+            <> show physicalMib
+            <> " MiB"
+        )
+  | reservedMib < 0 =
+      Left
+        ( "host claimable pool reserve must be non-negative, got "
+            <> show reservedMib
+            <> " MiB"
+        )
+  | poolMib <= 0 =
+      Left
+        ( "host claimable pool is empty: a reserve of "
+            <> show reservedMib
+            <> " MiB meets or exceeds physical "
+            <> show physicalMib
+            <> " MiB, leaving nothing for either occupant"
+        )
+  | otherwise = Right (HostClaimablePool (fromInteger poolMib))
+  where
+    poolMib = toInteger physicalMib - toInteger reservedMib
+
+-- | The pool, in MiB.
+hostClaimablePoolMib :: HostClaimablePool -> Int
+hostClaimablePoolMib (HostClaimablePool poolMib) = poolMib
+
+-- | The toolchain account this pool funds, in MiB.
+hostClaimablePoolToolchainAccountMib :: HostClaimablePool -> Int
+hostClaimablePoolToolchainAccountMib (HostClaimablePool poolMib) =
+  fromInteger (toInteger poolMib * toInteger toolchainSharePercent `div` 100)
+
+-- | Phase 4 Sprint 4.31 — evidence that a claimable pool funds /both/ of its
+-- occupants at the same time.
+--
+-- There is no exported constructor and 'mkConcurrentHostPoolClaim' is the only
+-- mint, so a caller cannot assume concurrency; it has to obtain it, and the
+-- arithmetic refuses whenever the split plus the toolchain account exceed the
+-- pool. On the supported development host it always refuses: a 64 GiB machine
+-- under a 48 GiB Colima pledge has a 16384 MiB pool that the partition spends
+-- entirely — 6144 MiB of headroom plus 10240 MiB of inference capacity — so the
+-- 8192 MiB account would have to come out of a pool with no residue. The
+-- occupants are alternatives, admitted one at a time against a held host claim,
+-- and this type is what makes the alternative-versus-addend distinction a
+-- compile-time one rather than a comment.
+data ConcurrentHostPoolClaim = ConcurrentHostPoolClaim
+  { concurrentClaimPoolMib :: Int,
+    concurrentClaimResidueMib :: Int
+  }
+  deriving (Eq, Show)
+
+-- | The only 'ConcurrentHostPoolClaim' mint.
+mkConcurrentHostPoolClaim ::
+  HostMemoryPartition -> Either String ConcurrentHostPoolClaim
+mkConcurrentHostPoolClaim partition
+  | claimedMib > toInteger poolMib =
+      Left
+        ( "the host claimable pool of "
+            <> show poolMib
+            <> " MiB cannot fund both occupants at once: headroom "
+            <> show (hostPartitionHeadroomMib partition)
+            <> " MiB + inference capacity "
+            <> show (hostPartitionInferenceCapacityMib partition)
+            <> " MiB + toolchain account "
+            <> show accountMib
+            <> " MiB overcommit it by "
+            <> show (claimedMib - toInteger poolMib)
+            <> " MiB; the occupants are alternatives admitted one at a time, "
+            <> "not addends"
+        )
+  | otherwise =
+      Right
+        ConcurrentHostPoolClaim
+          { concurrentClaimPoolMib = poolMib,
+            concurrentClaimResidueMib = fromInteger (toInteger poolMib - claimedMib)
+          }
+  where
+    poolMib = hostPartitionClaimablePoolMib partition
+    accountMib = hostPartitionToolchainAccountMib partition
+    claimedMib =
+      toInteger (hostPartitionHeadroomMib partition)
+        + toInteger (hostPartitionInferenceCapacityMib partition)
+        + toInteger accountMib
 
 -- | The minimum host headroom (MiB) a 'HostMemoryPartition' must hold back for
 -- the host's inference co-tenants: the OS (~2 GiB), the host-native
@@ -701,40 +840,61 @@ minHostHeadroomMib = 6144
 -- footprint exceeds it. Refusing to construct it is the same argument the
 -- headroom floor already makes one line above.
 mkHostMemoryPartition :: Int -> Int -> Int -> Either String HostMemoryPartition
-mkHostMemoryPartition physicalMib vmReserveMib headroomMib
-  | physicalMib <= 0 =
-      Left ("host memory partition requires positive physical RAM, got " <> show physicalMib <> " MiB")
-  | vmReserveMib < 0 || headroomMib < 0 =
-      Left "host memory partition vmReserve and headroom must be non-negative"
-  | headroomMib < minHostHeadroomMib =
-      Left
-        ( "host memory partition headroom "
-            <> show headroomMib
-            <> " MiB cannot cover the OS + control-plane + routed-E2E browser co-tenants (minimum "
-            <> show minHostHeadroomMib
-            <> " MiB)"
-        )
-  | reservedMib >= toInteger physicalMib =
-      Left
-        ( "host memory partition leaves no inference capacity: vmReserve "
-            <> show vmReserveMib
-            <> " MiB + headroom "
-            <> show headroomMib
-            <> " MiB meet or exceed physical "
-            <> show physicalMib
-            <> " MiB"
-        )
-  | otherwise =
-      Right
-        HostMemoryPartition
-          { hostPartitionPhysicalMib = physicalMib,
-            hostPartitionVmReserveMib = vmReserveMib,
-            hostPartitionHeadroomMib = headroomMib,
-            hostPartitionInferenceCapacityMib = fromInteger inferenceCapacityMib
-          }
+mkHostMemoryPartition physicalMib vmReserveMib headroomMib = do
+  checkPositivePhysical
+  checkNonNegativeSplit
+  checkHeadroomFloor
+  checkRemainingCapacity
+  -- The single claimable-pool quantity both occupants are derived from. The
+  -- inference capacity is this pool less the held-back headroom, and the
+  -- toolchain account is this pool's declared share, so neither is computed
+  -- from a figure that is blind to the other.
+  pool <- mkHostClaimablePool physicalMib vmReserveMib
+  pure
+    HostMemoryPartition
+      { hostPartitionPhysicalMib = physicalMib,
+        hostPartitionVmReserveMib = vmReserveMib,
+        hostPartitionHeadroomMib = headroomMib,
+        hostPartitionInferenceCapacityMib = hostClaimablePoolMib pool - headroomMib,
+        hostPartitionClaimablePoolMib = hostClaimablePoolMib pool,
+        hostPartitionToolchainAccountMib = hostClaimablePoolToolchainAccountMib pool
+      }
   where
+    checkPositivePhysical
+      | physicalMib > 0 = Right ()
+      | otherwise =
+          Left
+            ( "host memory partition requires positive physical RAM, got "
+                <> show physicalMib
+                <> " MiB"
+            )
+    checkNonNegativeSplit
+      | vmReserveMib >= 0 && headroomMib >= 0 = Right ()
+      | otherwise =
+          Left "host memory partition vmReserve and headroom must be non-negative"
+    checkHeadroomFloor
+      | headroomMib >= minHostHeadroomMib = Right ()
+      | otherwise =
+          Left
+            ( "host memory partition headroom "
+                <> show headroomMib
+                <> " MiB cannot cover the OS + control-plane + routed-E2E browser co-tenants (minimum "
+                <> show minHostHeadroomMib
+                <> " MiB)"
+            )
+    checkRemainingCapacity
+      | reservedMib < toInteger physicalMib = Right ()
+      | otherwise =
+          Left
+            ( "host memory partition leaves no inference capacity: vmReserve "
+                <> show vmReserveMib
+                <> " MiB + headroom "
+                <> show headroomMib
+                <> " MiB meet or exceed physical "
+                <> show physicalMib
+                <> " MiB"
+            )
     reservedMib = toInteger vmReserveMib + toInteger headroomMib
-    inferenceCapacityMib = toInteger physicalMib - reservedMib
 
 instance ToJSON HostMemoryPartition where
   toJSON partition =

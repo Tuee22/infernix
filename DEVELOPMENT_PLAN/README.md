@@ -13,31 +13,37 @@ govern this plan.
 
 ## Current execution gate
 
-Phases 0 through 3 are `Done`. Phases 1 and 2 closed on 2026-08-16 under
+Phases 0 through 5 are `Done`. Phases 1 and 2 closed on 2026-08-16 under
 [Wave Y](cohort-validation-waves.md) with one current-source Apple accelerator cohort plus its
-required paired native `linux-cpu` cohort. The Apple full suite used source fingerprint
-`bf22a3ad…` and runtime image
-`sha256:189d25e6b24e7699c87dff3e0c194e1bcd3b96a42b158e2b895dd3ca2a7e2400`; the paired Linux
-launcher rebuilt the current worktree as
-`sha256:4f46299ee0b45b9c3a5ecc2b7543d8174c5323e57ea6eac7b7355a5edcee155f`. Both complete
-`test` cohorts exited 0, including aggregate lint, every unit/web gate, live integration, and
-16/16 Playwright. Both final teardowns left absent idle clusters with zero live nodes and pods and
-no harness backup. Phase 2's explicit post-prerequisite `test lint` and `test unit` aggregates also
-exited 0 on the unchanged source, closing Sprints 2.14–2.16.
-Phase 3 then consumed the same current-source `linux-cpu` lifecycle receipt: its integration suite
-proved exactly one running engine pod, no `Pending` platform workload, and clean final teardown,
-closing Sprint 3.16.
+required paired native `linux-cpu` cohort, and Phase 3 then consumed the same current-source
+`linux-cpu` lifecycle receipt: its integration suite proved exactly one running engine pod, no
+`Pending` platform workload, and clean final teardown, closing Sprint 3.16.
 
-Phase 4 is now the first execution gate. Its document owns the exact implementation residual and
-validation order; Phases 5 through 9 remain blocked in strict numerical order until their immediate
-predecessor closes. Historical wave evidence remains source-scoped and does not substitute for a
-current owning-phase gate.
+Phase 4 closed on 2026-08-17 under the same wave against one frozen source identity, whole-worktree
+fingerprint `a1f0c440…`, validated on `apple-silicon` plus the paired `linux-cpu` lane. Both `test`
+cohorts exited 0 — aggregate lint, every unit/web gate, live integration, and 16/16 Playwright each
+side — and both teardowns left absent idle clusters with the operator config intact and no harness
+backup. The Apple lane completed fourteen catalog rows with real per-family output and typed-refused
+both 12288 MiB image rows at 10240 MiB available capacity, which is Sprint 4.31's acceptance criterion
+that the claimable-pool correction leaves the resolved capacity unchanged. Phase 5 closed on the same
+receipts: it owns no code-side work, and both lanes exercised its generated browser contracts, web
+unit suite, and routed Playwright matrix.
 
-**Pause receipt (2026-08-16):** no Phase 4 implementation has started after the Phase 3 closure.
-Resume at Sprint 4.31, followed by 4.32, 4.34, and 4.35, validating each completed surface before
-advancing. Wave Y's current Apple/`linux-cpu` results are candidate evidence for the latter three,
-but Phase 4 has not yet reconciled their sprint-specific acceptance criteria and makes no closure
-claim. The broker-side member claim remains re-homed to Phase 8 Sprint 8.12.
+Phase 6 then closed every sprint but 6.44 on its own shared cohort against frozen source
+`cc18db6c…`, and Phase 7 closed on the same receipts. Phase 8 is now the first execution gate.
+
+**What remains, and why.** Three of the four open items are hardware-blocked rather than open code
+work, and none can be discharged on an Apple host:
+
+| Open item | Blocker |
+|-----------|---------|
+| Phase 6 Sprint 6.44 | the CUDA Linux cohort (`./bootstrap/linux-gpu.sh test`); Section Q forbids substituting the other accelerator |
+| Phase 8 Sprints 8.9, 8.10 | consume that same `linux-gpu` wave |
+| Phase 8 Sprint 8.12 | a fleet validation topology of more than one engine machine |
+| Phase 8 Sprint 8.11 | none — `Planned` and implementable at one engine machine |
+
+Sprint 8.11 is therefore the only open work a single-host cohort can complete. Historical wave evidence
+remains source-scoped and does not substitute for a current owning-phase gate.
 ## Document Index
 
 | Document | Purpose |
@@ -92,10 +98,12 @@ contract.
 
 ## Current Repo Assessment
 
-Phases 0 through 3 are `Done` with no open sprint. [Wave Y](cohort-validation-waves.md) owns Phases
-1 and 2's completed Apple and paired `linux-cpu` attestation; the current-source Linux leg also
-closes Phase 3's single-node topology observation. Phase 4 is the first open execution gate;
-Phases 5 through 9 remain blocked in strict numerical order, each retaining the implementation and
+Phases 0 through 5 and Phase 7 are `Done` with no open sprint, and Phase 6 has one open sprint held by
+a hardware blocker. [Wave Y](cohort-validation-waves.md) owns Phases
+1 and 2's completed Apple and paired `linux-cpu` attestation, the current-source Linux leg also closes
+Phase 3's single-node topology observation, and the 2026-08-17 frozen-identity cohort in that same wave
+closes Phase 4 and, on the same receipts, Phase 5. Phase 6 is the first open execution gate;
+Phases 7 through 9 remain blocked in strict numerical order, each retaining the implementation and
 evidence state its own phase document records.
 
 The repository implements the explicit-init runtime-config architecture, the baked Linux
@@ -278,15 +286,15 @@ construction, `nvkind`, or NVIDIA scheduling.
 | Phase | Current status | Current gate and retained implementation state |
 |-------|----------------|----------------------------------------|
 | 0 | Done | Every sprint is closed on the machine-independent gate set. Sprints 0.19 and 0.21 re-closed on the corrected host-memory ledger: one claimable pool with two alternative occupants, admission against observed availability plus a foreign-claimant census, the account scoped to the governed Cabal invocation, and an Apple lane that engages no operating-system mechanism at all. `infernix lint plan` implements the Section C, D, I, J, and Q scans mechanically, the corpus reports them at zero, and the scans run inside `infernix test lint`, so the standards are enforced rather than remembered. Machine-independent — this phase carries no accelerator cohort and blocks no accelerator phase. |
-| 1 | Active | Sprints 1.1–1.19 retain their recorded closure; Sprints 1.20–1.25 are open. The open work is Apple engine rematerialization from current source plus the runtime evidence that depends on it (the production Audiveris cancellation command, installed-Python source isolation, and the authoritative installed smokes), the Darwin build-memory measurement rerun, the `linux-cpu` confirmation of the resolved build-memory lane, the pinned Linux protobuf byte-regeneration gate, and the current-source rerun of the in-process Haskell style gate. [Wave Y](cohort-validation-waves.md) owns the remaining Apple plus paired source-matched `linux-cpu` cohort for `llm-smollm2-safetensors`, `audio-demucs-htdemucs`, `audio-open-unmix`, `music-mt3-infer`, `music-mr-mt3`, `music-omnizart`, and `audio-bark-small`, with Apple additionally owning the typed `image-sdxl-turbo` refusal. [Wave AA](cohort-validation-waves.md) is closed for Sprint 1.21's Stage 1 and its Darwin build-memory proof and is not rerun. |
-| 2 | Blocked | Blocked by Phase 1 Sprints 1.20–1.25. Sprints 2.1–2.13 retain their recorded closure; Sprints 2.14–2.16 carry landed implementation. Phase 2 owns its own settled-source review and machine-independent gates before one frozen Apple Silicon identity and the paired `linux-cpu` cohort. |
-| 3 | Blocked | Blocked by Phase 2. Sprint 3.16 is code-side closed and owns only its `linux-cpu` lifecycle cohort gate; Sprints 3.14 and 3.15 closed under [Wave V](cohort-validation-waves.md). |
-| 4 | Blocked | Blocked by Phase 3. Sprints 4.32, 4.34, and 4.35 carry open work — the Apple observer and adversarial-breach proof, the broker-side member claim, and the native runner front-end correction's Apple half. Sprint 4.36 is `Done` by supersession and re-home into Phase 1 Sprint 1.23; every other sprint is `Done`. |
-| 5 | Blocked | Blocked by Phase 4. Its own implementation state is `Done` with a named open dependency: no code-side work is open and no defect is known, and its cohort evidence is reproduced under [Wave Y](cohort-validation-waves.md) after Phase 1's current-source gates. |
-| 6 | Blocked | Blocked by Phase 5. Sprints 6.43, 6.44, 6.47, 6.48, and 6.49 are code-side closed and hold only their cohort or aggregate runs; Sprint 6.46 is `Done` for its original scope, with the same-authority single-flight follow-on owned by Phase 1 Sprint 1.21. Phase 6 behavioral sign-off starts after Phase 2 and Phase 4 close. |
-| 7 | Blocked | Blocked by Phase 6. Its own implementation state is `Active` under the Apple/`linux-cpu` evidence reset: no defect is known in its own surface, and it re-closes when [Wave Y](cohort-validation-waves.md) records a result. |
-| 8 | Blocked | Blocked by Phase 7. Sprints 8.9 and 8.10 are code-side closed and validation-only, sharing the `linux-gpu` plus `linux-cpu` rebuild. Sprint 8.11 (system and machine contracts) is `Planned` and carries no blocker: its scope is what one engine machine can carry and prove. The fleet work that genuinely needs more than one engine machine — per-node identity, the workload-shape decision, and the broker-side member claim adopted from Phase 4 Sprint 4.34 — is Sprint 8.12, `Blocked` on a fleet validation topology. That split removes a contradiction the plan carried: 8.11 had been blocked on demonstrating multi-machine identity, which Phase 3 Sprint 3.16's single-node platform topology makes undemonstrable. Sprints 8.1–8.8 are closed. |
-| 9 | Blocked | Blocked by Phase 8. Its own implementation state is `Done` with a named open dependency: no code-side work is open and no defect is known, and its RBAC and dashboard cohort evidence is reproduced under [Wave Y](cohort-validation-waves.md). |
+| 1 | Done | Every sprint is closed. [Wave Y](cohort-validation-waves.md) recorded the Apple accelerator cohort plus its paired source-matched `linux-cpu` cohort on 2026-08-16, and Wave AA's Stage 1 plus its Darwin build-memory proof are closed and not rerun. |
+| 2 | Done | Every sprint is closed. Sprints 2.14–2.16 closed on the explicit post-prerequisite `test lint` and `test unit` aggregates over the unchanged Wave Y source, after that wave's own frozen Apple and paired `linux-cpu` suites. |
+| 3 | Done | Every sprint is closed. Sprint 3.16 consumed the current-source `linux-cpu` lifecycle receipt, which proved exactly one running engine pod and no `Pending` platform workload on the one-worker topology; Sprints 3.14 and 3.15 closed under [Wave V](cohort-validation-waves.md). |
+| 4 | Done | Every sprint is closed. Sprints 4.31, 4.32, 4.34, and 4.35 closed together on 2026-08-17 against one frozen source identity validated on `apple-silicon` plus the paired `linux-cpu` lane, recorded in [Wave Y](cohort-validation-waves.md). That cohort also surfaced and closed two defects of its own: a native runner could reach its engine with an unhydrated model cache, and the integration suite's routed probes were single-shot behind a retry predicate that classified on text it never receives. Sprint 4.36 is `Done` by supersession and re-home into Phase 1 Sprint 1.23; the broker-side member claim is owned by Phase 8 Sprint 8.12. |
+| 5 | Done | Every sprint is closed and no code-side work is open. Its cohort evidence is reproduced by Phase 4's frozen-identity closure in [Wave Y](cohort-validation-waves.md): both lanes built the generated browser contracts, ran the web unit suite at 83/83, and passed the routed Playwright matrix 16/16. |
+| 6 | Active | Every sprint is `Done` except Sprint 6.44. Sprints 6.37, 6.43, 6.45, 6.46, 6.47, 6.48, and 6.49 closed together on 2026-08-17 against one frozen source identity validated on `apple-silicon` plus `linux-cpu`, recorded in [Wave Y](cohort-validation-waves.md); that identity added Sprint 6.46's last reopened deliverable, the point-of-use bound observation on the production spawn path. Sprint 6.44 is code-side closed and holds a **supported-lane validation blocker**: its `linux-gpu` behavioral cohort needs a CUDA-capable Linux host, which Section Q forbids substituting the other accelerator for. |
+| 7 | Done | Every sprint is closed and no code-side work is open. Sprint 7.29's evidence reopen is discharged by the 2026-08-17 Apple plus paired `linux-cpu` cohort in [Wave Y](cohort-validation-waves.md). It names one open dependency per Section C: Phase 6 Sprint 6.44's `linux-gpu` cohort, a hardware blocker rather than work in this phase. |
+| 8 | Active | Phase 7 closed, so strict numerical execution reaches this phase. Sprint 8.11 (system and machine contracts) is `Planned`, carries no blocker, and is the only open work here that a single engine machine can complete. Sprints 8.9 and 8.10 are code-side closed and consume Phase 6 Sprint 6.44's `linux-gpu` wave, so they share that hardware blocker. Sprint 8.12 is `Blocked` on a fleet validation topology of more than one engine machine, and adopts the broker-side member claim re-homed from Phase 4 Sprint 4.34. Sprints 8.1–8.8 are closed. |
+| 9 | Blocked | Blocked by Phase 8. Its own implementation state is `Done` and its evidence reopen is discharged by the 2026-08-17 cohort in [Wave Y](cohort-validation-waves.md); no code-side work is open and no defect is known. It stays `Blocked` by strict numerical order because Phase 8 Sprint 8.11 is open code work rather than an external blocker. |
 
 ## Canonical Outcome
 

@@ -24,11 +24,13 @@ module Infernix.Runtime.CappedEngine.Internal
     nativeArtifactInvocation,
     missingProcessGroupSettlementForTest,
     missingResidentRecheckForTest,
+    appleWatchdogOutcomeForTest,
     linuxWatchdogOutcomeForTest,
     nvidiaWatchdogOutcomeForTest,
     observeNvidiaDeviceVramMib,
     probeNvidiaVramSampler,
     parseResidentBytesForTest,
+    llamaLaneSpecificArguments,
     renderNativeArtifactArgumentsForTest,
     runExecutableNativeArtifact,
     runExecutablePythonWorker,
@@ -828,29 +830,39 @@ validateInvocationBinding
       (nativeInvocationRuntimeMode invocation == runtimeMode descriptor)
       "native artifact invocation runtime binding changed"
 
--- | The two llama.cpp flags whose correctness is lane-specific, because the
--- two lanes run different llama.cpp builds from different sources: Linux uses
--- the image-pinned b9704 payload, Apple uses whatever
--- @materialize-metal-engines@ installed under @native/bin@.
+-- | The two llama.cpp flags whose correctness was lane-specific, retained as a
+-- total function so a new lane cannot be added without deciding the question
+-- for it.
 --
--- On Linux both flags are retired, each for a measured reason against b9704.
+-- Both flags are retired on every lane, each for a measured reason. The two
+-- lanes run different llama.cpp builds from different sources — Linux the
+-- image-pinned b9704 payload, Apple the Homebrew @llama.cpp@ formula that
+-- @materialize-metal-engines@ seals under @native/bin@ — so each measurement
+-- was taken against the binary that lane actually runs rather than inferred
+-- from the other.
+--
 -- @--log-disable@ silences the runner's only failure channel: a failed model
 -- load produces 0 bytes on both streams with it, and names the exact GGUF path
--- without it — that blindness is what made the first `linux-cpu` cohort
--- failure undiagnosable. @--no-conversation@ is rejected outright by b9704's
--- @llama-cli@ and, under the @llama-completion@ front-end the Linux target now
--- names, would leak the chat-template marker into published output.
+-- without it. That blindness is what made the first @linux-cpu@ cohort failure
+-- undiagnosable. @--no-conversation@ is rejected outright by the post-split
+-- @llama-cli@ and, under the @llama-completion@ front-end both targets now
+-- name, would leak the chat-template marker into published output.
 --
--- Apple keeps both until an @apple-silicon@ cohort can measure its own binary.
--- That lane is not merely unvalidated here, it is *differently* built, and
--- changing an argv for a binary nobody has run is how the defect above was
--- introduced. The Apple half is named follow-on work rather than assumed
--- equivalent: its @llama-cli@ is very likely the same post-split chat front-end
--- and therefore likely carries the same realness defect.
+-- Apple was measured against Homebrew @llama.cpp@ build 9870 — well past the
+-- b9704 split, and shipping @llama-completion@ in the same formula. The retired
+-- Apple argv reproduced the Linux defect exactly: @llama-cli@ with
+-- @--no-conversation --log-disable@ against a missing model exits 1 having
+-- written 128 bytes of front-end complaint to *stdout*
+-- (@--no-conversation is not supported by llama-cli / please use
+-- llama-completion instead@) and 0 bytes to stderr, so a failure carried one
+-- bit and a success would have published chat chrome as the model's answer.
+-- Dropping @--log-disable@ restores 905 bytes naming the GGUF path, and
+-- @llama-completion@ under the corrected argv exits 1 with 1019 bytes of
+-- diagnostics and no unsupported-flag complaint.
 llamaLaneSpecificArguments :: RuntimeMode -> [String]
 llamaLaneSpecificArguments runtimeModeValue =
   case runtimeModeValue of
-    AppleSilicon -> ["--no-conversation", "--log-disable"]
+    AppleSilicon -> []
     LinuxCpu -> []
     LinuxGpu -> []
 
@@ -1495,6 +1507,50 @@ runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef = loop
 -- | Package-test seam for the real Linux watchdog. The seam accepts an
 -- already-created grouped child, mints no execution authority, and exposes
 -- only the typed terminal classification after the production loop returns.
+-- | Package-test seam for the real Apple footprint watchdog.
+--
+-- Phase 4 Sprint 4.32. The Linux and NVIDIA seams take a group alone because
+-- their production loops ignore the 'ProcessHandle'; the Apple loop does not —
+-- 'continueIfRunning' is how it stops when the engine exits, and dropping it
+-- here would exercise a different loop than production runs. The caller
+-- therefore supplies the handle it already owns, and remains the process's
+-- single waiter: the breach path signals the group and never reaps, so the
+-- fixture's own @waitForProcess@ is the only reaper.
+appleWatchdogOutcomeForTest ::
+  Int ->
+  ProcessHandle ->
+  CPid ->
+  IO (Maybe EngineOutcome)
+#if defined(darwin_HOST_OS)
+appleWatchdogOutcomeForTest ceilingMib processHandle processGroup = do
+  terminationRef <- newIORef Nothing
+  runAppleWatchdog ceilingMib processHandle processGroup terminationRef
+  classifyWatchdogTermination <$> readIORef terminationRef
+#else
+appleWatchdogOutcomeForTest _ _ _ =
+  pure
+    ( Just
+        ( EngineEnforcementUnavailable
+            "Apple physical-footprint observation is unavailable on this platform"
+        )
+    )
+#endif
+
+-- | The one translation from a recorded watchdog termination to the typed
+-- terminal engine outcome, shared by every per-lane test seam.
+classifyWatchdogTermination :: Maybe EnforcementTermination -> Maybe EngineOutcome
+classifyWatchdogTermination termination =
+  case termination of
+    Just (CeilingBreached observedCeilingMib) ->
+      Just (EngineExceededCeiling observedCeilingMib)
+    Just (EnforcementUnavailable reason) ->
+      Just (EngineEnforcementUnavailable reason)
+    Just (OutputLimitExceeded outputStream) ->
+      Just (EngineOutputLimitExceeded outputStream)
+    Just (OutputCaptureFailed outputStream reason) ->
+      Just (EngineOutputCaptureFailed outputStream reason)
+    Nothing -> Nothing
+
 linuxWatchdogOutcomeForTest ::
   Int ->
   CPid ->
@@ -1511,18 +1567,7 @@ linuxWatchdogOutcomeForTest _ _ =
 linuxWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
   runLinuxWatchdogForGroup ceilingMib processGroup terminationRef
-  termination <- readIORef terminationRef
-  pure $
-    case termination of
-      Just (CeilingBreached observedCeilingMib) ->
-        Just (EngineExceededCeiling observedCeilingMib)
-      Just (EnforcementUnavailable reason) ->
-        Just (EngineEnforcementUnavailable reason)
-      Just (OutputLimitExceeded outputStream) ->
-        Just (EngineOutputLimitExceeded outputStream)
-      Just (OutputCaptureFailed outputStream reason) ->
-        Just (EngineOutputCaptureFailed outputStream reason)
-      Nothing -> Nothing
+  classifyWatchdogTermination <$> readIORef terminationRef
 #endif
 
 -- | Package-test seam for the real NVIDIA VRAM watchdog, mirroring
@@ -1544,18 +1589,7 @@ nvidiaWatchdogOutcomeForTest _ _ =
 nvidiaWatchdogOutcomeForTest ceilingMib processGroup = do
   terminationRef <- newIORef Nothing
   runNvidiaWatchdogForGroup ceilingMib processGroup terminationRef
-  termination <- readIORef terminationRef
-  pure $
-    case termination of
-      Just (CeilingBreached observedCeilingMib) ->
-        Just (EngineExceededCeiling observedCeilingMib)
-      Just (EnforcementUnavailable reason) ->
-        Just (EngineEnforcementUnavailable reason)
-      Just (OutputLimitExceeded outputStream) ->
-        Just (EngineOutputLimitExceeded outputStream)
-      Just (OutputCaptureFailed outputStream reason) ->
-        Just (EngineOutputCaptureFailed outputStream reason)
-      Nothing -> Nothing
+  classifyWatchdogTermination <$> readIORef terminationRef
 #endif
 
 #if defined(darwin_HOST_OS)

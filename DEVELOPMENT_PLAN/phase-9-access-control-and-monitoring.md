@@ -2,12 +2,14 @@
 
 **Status**: Blocked — strict numerical execution waits for Phase 8.
 **Blocked by**: Phase 8
-**Implementation state behind the blocker**: Done — with a named open dependency, per Section C of
-[development_plan_standards.md](development_plan_standards.md). The Apple/`linux-cpu`
-[evidence reset](cohort-validation-waves.md) means the routed Playwright and `cluster up` evidence
-this phase rests on is not current-source proof. The phase owns no known current defect and no open
-code-side work, so it stays `Done` while naming the dependency; its cohort evidence is reproduced
-under [Wave Y](cohort-validation-waves.md) after Phase 1's complete current-source gates and cohorts.
+**Implementation state behind the blocker**: Done. The Apple/`linux-cpu`
+[evidence reset](cohort-validation-waves.md) had left the routed Playwright and `cluster up` evidence
+this phase rests on without current-source proof; that reopen is discharged by the 2026-08-17 Apple
+plus paired `linux-cpu` cohort recorded in [Wave Y](cohort-validation-waves.md), whose integration and
+routed browser stages exercised the admin-gated surfaces and the auth lifecycle on both lanes. The
+phase owns no known current defect and no open code-side work. It remains `Blocked` only by strict
+numerical order: Phase 8 Sprint 8.11 is open *code* work rather than an external blocker, so Section C's
+allowance for a later phase to close ahead of an earlier one does not apply here.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/access_control_doctrine.md](../documents/architecture/access_control_doctrine.md), [../documents/architecture/tenant_isolation_doctrine.md](../documents/architecture/tenant_isolation_doctrine.md), [../documents/architecture/daemon_topology.md](../documents/architecture/daemon_topology.md), [cohort-validation-waves.md](cohort-validation-waves.md)
 
 > **Purpose**: Define the supported role-based access-control contract for the durable-context demo —

@@ -132,15 +132,22 @@ on the Darwin build path. The runtime degrades gracefully rather than
 failing: under a 4 GiB address-space limit it clamps its reservation to 3.12 GiB and compiles
 normally, and usable resident memory tracks the limit linearly at roughly a third of it, because
 the runtime reserves about three quarters of the limit and its copying collector needs two
-semispaces. The stronger dedicated-image path lowers both soft and hard limits; the production CLI
-spawn boundary documents the weaker soft-only inheritance explicitly. Both forms belong to the
+semispaces. The production CLI spawn boundary lowers the soft limit only, for the lifetime of one
+child, because the authority is held by a long-lived image that also starts `kubectl`, `helm`, and a
+routed end-to-end browser. The stronger form that lowers both limits is one-way and therefore belongs
+only to a process image dedicated to a single build; no supported production path is such an image, so
+it is a validation-only installer rather than a second production guarantee. Both forms belong to the
 enforced lane, and the unenforced lane installs no limit at all.
 
 The fail-closed half is an observation at the point of use: a toolchain spawn that cannot resolve a
 ceiling, cannot observe host availability sufficient to fund its account, or finds a foreign
 toolchain claimant refuses by name rather than proceeding unbounded, so a process image that forgets
 to establish the bound is a loud, attributable failure instead of a machine that stops responding.
-Because it is checked where the spawn happens, it holds even if a future entry point forgets. On
+Because it is checked where the spawn happens, it holds even if a future entry point forgets. The
+spawn boundary reads the bound back rather than trusting its own write, and the value it reads is
+indexed by the enforcement its lane actually has, so an unenforced observation cannot be consumed
+where an enforced ceiling is required; an observation whose mechanism disagrees with the one the
+region resolved is a refusal rather than a choice between the two answers. On
 Darwin the observation is the complete generated `cabal.project.local` triple — exactly one
 `jobs:` row, one `-M` heap cap, and one `-xr` runtime reservation, all equal to the live plan — not
 the heap cap alone. The fixed control cap is carried by the same plan. This distinction is

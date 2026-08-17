@@ -4095,9 +4095,17 @@ sweepEagerModelCacheModels transport systemNamespace compiledPlan modelDescripto
       Left err ->
         hPutStrLn
           stderr
+          -- The lazy per-inference fallback does cover this model, but only
+          -- because the engine-side precondition proves hydration and reports
+          -- the classified `model_cache_not_populated` miss that drives
+          -- bootstrap-and-retry. Before Phase 4 Sprint 4.35 that was true of
+          -- the Python adapters alone: a native runner opened the absent
+          -- payload directly and failed unretryably, so this line named a
+          -- fallback that could not fire for it.
           ( "eager model-cache staging failed for "
               <> Text.unpack (modelId model)
-              <> " (the lazy per-inference fallback still covers this model):\n"
+              <> " (the first inference for this model reports a cache miss "
+              <> "and drives the bootstrap-and-retry path):\n"
               <> displayException err
           )
   putStrLn "serviceEagerModelCacheSweep: complete"

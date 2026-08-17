@@ -980,7 +980,7 @@ searchPathForHost config =
           HostConfig.hostNode toolPaths,
           HostConfig.hostPython3 toolPaths,
           HostConfig.hostPython311 toolPaths,
-          HostConfig.hostLlamaCli toolPaths,
+          HostConfig.hostLlamaCompletion toolPaths,
           HostConfig.hostWhisperCli toolPaths,
           HostConfig.hostPoetry toolPaths,
           HostConfig.hostGit toolPaths,
@@ -3214,7 +3214,7 @@ resolveProvisioningHostNativeCli ::
 resolveProvisioningHostNativeCli adapter environment =
   case adapter of
     Provisioning.LlamaCppCliAdapter ->
-      resolveAvailableConfiguredTool environment HostTools.HostLlamaCli
+      resolveAvailableConfiguredTool environment HostTools.HostLlamaCompletion
     Provisioning.WhisperCppCliAdapter ->
       resolveAvailableConfiguredTool environment HostTools.HostWhisperCli
     _ ->
@@ -12513,7 +12513,7 @@ validateInstalledRunnerLoaderEvidence
 -- | Validate a retained generation's loader provenance and return the runner's
 -- own diagnostics — the stderr lines that are not @dyld@ frames at all.
 --
--- A runner that writes its version banner to stderr (as @llama-cli --version@
+-- A runner that writes its version banner to stderr (as @llama-completion --version@
 -- does) leaves an empty stdout, so the caller needs those lines to read the
 -- exact runtime version. Loader frames, including the delayed-initialization
 -- scheduling frames, are excluded: they are loader output, not the runner's.
@@ -17426,7 +17426,7 @@ artifactSnapshotRuntimeEnvironment ::
 artifactSnapshotRuntimeEnvironment artifactRoot relativeExecutable =
   case splitPathComponents relativeExecutable of
     ["native", "bin", executableLeaf]
-      | executableLeaf `elem` ["llama-cli", "whisper-cli"] ->
+      | executableLeaf `elem` ["llama-completion", "whisper-cli"] ->
           [ ( "DYLD_FRAMEWORK_PATH",
               artifactRoot </> "native" </> "frameworks"
             ),

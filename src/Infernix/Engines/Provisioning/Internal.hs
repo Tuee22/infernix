@@ -321,7 +321,7 @@ pinnedPythonRequirements adapter =
 installedSmokeExecutableRelativePath :: AppleAdapterId -> FilePath
 installedSmokeExecutableRelativePath adapter =
   case adapter of
-    LlamaCppCliAdapter -> "native/bin/llama-cli"
+    LlamaCppCliAdapter -> "native/bin/llama-completion"
     WhisperCppCliAdapter -> "native/bin/whisper-cli"
     CTranslate2Adapter -> fixedVenvPythonRelativePath
     OnnxRuntimeAdapter -> fixedVenvPythonRelativePath

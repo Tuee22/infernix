@@ -338,6 +338,7 @@ import Infernix.Runtime.Worker
     nativeArtifactMarkerPathsForTest,
     nativeModelCacheObjectKeys,
     pythonEngineBootstrapManifestRequiredForTest,
+    requireHydratedNativeModelCache,
   )
 import Infernix.Service (serviceDemoConfigPath)
 import Infernix.Storage (edgePortPath, readEdgePortMaybe, writeClusterStateFile)
@@ -556,6 +557,11 @@ dispatchCappedEngineMemoryFixture = do
     ["__infernix_unit_linux_memory_breach_fixture"] -> runLinuxMemoryBreachFixture
     ["__infernix_unit_linux_memory_small_fixture"] -> runSmallMemoryFixture
     ["__infernix_unit_nvidia_no_context_fixture"] -> runSmallMemoryFixture
+    -- The Apple cases re-exec this image rather than forking it, because the
+    -- Apple watchdog loop consumes a `ProcessHandle` and driving it without one
+    -- would exercise a different loop than production runs.
+    ["__infernix_unit_apple_memory_breach_fixture"] -> runAppleMemoryBreachFixture
+    ["__infernix_unit_apple_memory_small_fixture"] -> runAppleSmallMemoryFixture
     _ -> pure ()
 
 runLinuxMemoryBreachFixture :: IO ()
@@ -564,9 +570,30 @@ runLinuxMemoryBreachFixture = do
   BS.length payload `seq` threadDelay (60 * 1000000)
   BS.length payload `seq` exitSuccess
 
+-- | The Apple breach child. Darwin's @phys_footprint@ counts dirty anonymous
+-- pages, so the payload is written rather than merely reserved, and it is held
+-- live across the sleep so the watchdog samples it rather than racing a
+-- collection. 512 MiB clears this image's own resident baseline by a wide
+-- enough margin that the breach is attributable to the allocation.
+runAppleMemoryBreachFixture :: IO ()
+runAppleMemoryBreachFixture = do
+  let payload = BS.replicate (512 * 1024 * 1024) 65
+  BS.length payload `seq` threadDelay (60 * 1000000)
+  BS.length payload `seq` exitSuccess
+
 runSmallMemoryFixture :: IO ()
 runSmallMemoryFixture = do
   threadDelay 250000
+  exitSuccess
+
+-- | The Apple non-breaching child. One Apple sample spawns @top@ once and
+-- @footprint@ once per group member, so it costs far more wall clock than a
+-- @\/proc@ walk; a 250 ms child could exit before the first complete sample and
+-- turn "no breach" into "never looked". Three seconds guarantees the sampler
+-- observes this image's real resident baseline.
+runAppleSmallMemoryFixture :: IO ()
+runAppleSmallMemoryFixture = do
+  threadDelay 3000000
   exitSuccess
 
 -- | Phase 1 Sprint 1.21 — the bounded host build-memory kernel.
@@ -2156,6 +2183,156 @@ runLinuxWatchdogBreachAssertions =
       (isNothing smallOutcome && smallExit == Exited ExitSuccess)
       "Sprint 4.32: a smaller execution succeeds after a live Linux ceiling breach"
 
+-- | Phase 4 Sprint 4.35 — a native runner never reaches its engine with an
+-- unhydrated cache.
+--
+-- The precondition is the native lane's only cache-miss reporter: unlike the
+-- Python adapters it has no exit-75 protocol, so an absent payload reaches the
+-- runner as an ordinary open failure that classifies as `worker_failed` and is
+-- therefore never retried. These cases pin the three outcomes that matter — a
+-- populated cache proceeds, an absent one reports the classified miss that
+-- drives bootstrap-and-retry, and a zero-byte entry counts as absent rather
+-- than as a cache hit — plus the package-backed model that legitimately
+-- requires no payload at all.
+runNativeModelCacheHydrationAssertions :: FilePath -> ModelDescriptor -> IO ()
+runNativeModelCacheHydrationAssertions unitTestRoot packageBackedModel = do
+  let cacheRoot = unitTestRoot </> "native-model-cache"
+      cacheConfig = nativeModelCacheFixtureConfig cacheRoot
+  removeTestPathIfPresent cacheRoot
+
+  whisperModel <-
+    maybe (fail "expected apple-silicon whisper row") pure (findModel AppleSilicon "speech-whisper-small")
+
+  absent <- requireHydratedNativeModelCache whisperModel cacheConfig
+  assert
+    ( either
+        ( \failure ->
+            errorCode failure == "model_cache_not_populated"
+              && "speech-whisper-small" `Text.isInfixOf` message failure
+              && "payload" `Text.isInfixOf` message failure
+        )
+        (const False)
+        absent
+    )
+    "an absent native model payload is the classified cache miss that drives bootstrap-and-retry, naming the model and the file"
+
+  let payloadPath = cacheRoot </> "speech-whisper-small" </> "payload"
+  createDirectoryIfMissing True (takeDirectory payloadPath)
+  writeFile payloadPath ""
+  empty <- requireHydratedNativeModelCache whisperModel cacheConfig
+  assert
+    (isLeft empty)
+    "a zero-byte native model payload counts as absent rather than as a populated cache"
+
+  writeFile payloadPath "ggml"
+  populated <- requireHydratedNativeModelCache whisperModel cacheConfig
+  assert
+    (isRight populated)
+    "a populated native model payload satisfies the precondition"
+
+  packageBacked <- requireHydratedNativeModelCache packageBackedModel cacheConfig
+  assert
+    (isRight packageBacked)
+    "a package-backed native tool requires no payload and is never blocked by the precondition"
+
+nativeModelCacheFixtureConfig :: FilePath -> WorkerModelCacheConfig
+nativeModelCacheFixtureConfig cacheRoot =
+  WorkerModelCacheConfig
+    { workerModelCacheRoot = Text.pack cacheRoot,
+      workerModelCacheQuotaBytes = 1024 * 1024 * 1024,
+      workerMinioEndpoint = "http://127.0.0.1:9000",
+      workerMinioModelsBucket = "infernix-models",
+      workerMinioDemoArtifactsBucket = "infernix-demo-objects",
+      workerMinioRegion = "us-east-1",
+      workerMinioAccessKey = "fixture-access-key",
+      workerMinioSecretKey = "fixture-secret-key"
+    }
+
+-- | Phase 4 Sprint 4.32 — the adversarial Apple ceiling-breach survival test.
+--
+-- The Apple twin of 'runLinuxWatchdogBreachAssertions', and it needs no special
+-- hardware: the fixed public-tool observer over @\/usr\/bin\/top@ plus
+-- @\/usr\/bin\/footprint@ is available on any supported Apple host, so this is a
+-- machine-independent regression on that lane rather than cohort-only evidence.
+--
+-- Three cases in order, because the first is what keeps the second from being
+-- vacuous. A child that allocates nothing must /not/ breach the ceiling — which
+-- proves this image's own resident baseline sits below it, so the breach that
+-- follows is attributable to the allocation rather than to the runtime that
+-- carries it. Then the breach itself returns the typed ceiling outcome and the
+-- group is reaped non-successfully. Then a second small execution succeeds,
+-- establishing that the host, this process, and subsequent smaller work all
+-- survive the breach.
+--
+-- The child is re-exec'd rather than forked because the Apple watchdog consumes
+-- a 'ProcessHandle'; the breach path signals the group without reaping, so
+-- 'waitForProcess' here is the process's only waiter.
+runAppleWatchdogBreachAssertions :: IO ()
+runAppleWatchdogBreachAssertions =
+  when (System.Info.os == "darwin") $ do
+    baselineOutcome <-
+      runAppleCappedEngineFixture
+        "apple baseline fixture"
+        "__infernix_unit_apple_memory_small_fixture"
+        appleBreachCeilingMib
+    assert
+      (isNothing (fst baselineOutcome) && snd baselineOutcome == ExitSuccess)
+      ( "Sprint 4.32: an Apple execution that allocates nothing stays under the "
+          <> show appleBreachCeilingMib
+          <> " MiB ceiling, so the breach case below is not vacuous"
+      )
+
+    breachOutcome <-
+      runAppleCappedEngineFixture
+        "apple memory-breach fixture"
+        "__infernix_unit_apple_memory_breach_fixture"
+        appleBreachCeilingMib
+    assert
+      ( fst breachOutcome
+          == Just (CappedEngineInternal.EngineExceededCeiling appleBreachCeilingMib)
+          && snd breachOutcome /= ExitSuccess
+      )
+      "Sprint 4.32: Apple live footprint breach returns the typed ceiling outcome and reaps the grouped engine"
+
+    survivorOutcome <-
+      runAppleCappedEngineFixture
+        "apple post-breach fixture"
+        "__infernix_unit_apple_memory_small_fixture"
+        appleBreachCeilingMib
+    assert
+      (isNothing (fst survivorOutcome) && snd survivorOutcome == ExitSuccess)
+      "Sprint 4.32: a smaller Apple execution succeeds after a live ceiling breach"
+
+-- | 256 MiB: above this image's own resident baseline (proved by the first
+-- case) and well below the 512 MiB the breach child dirties.
+appleBreachCeilingMib :: Int
+appleBreachCeilingMib = 256
+
+-- | Start one grouped re-exec of this image, drive the production Apple
+-- watchdog against it, and reap it exactly once.
+runAppleCappedEngineFixture ::
+  String ->
+  String ->
+  Int ->
+  IO (Maybe CappedEngineInternal.EngineOutcome, ExitCode)
+runAppleCappedEngineFixture fixtureLabel fixtureArgument ceilingMib = do
+  selfPath <- getExecutablePath
+  (_, _, _, processHandle) <-
+    createProcess (proc selfPath [fixtureArgument]) {create_group = True}
+  maybeChildPid <- getPid processHandle
+  childPid <-
+    maybe
+      (fail (fixtureLabel <> " did not report a process id"))
+      pure
+      maybeChildPid
+  outcome <-
+    CappedEngineInternal.appleWatchdogOutcomeForTest
+      ceilingMib
+      processHandle
+      childPid
+  childExit <- waitForProcess processHandle
+  pure (outcome, childExit)
+
 runMissingProcessGroupSettlementAssertions :: IO ()
 runMissingProcessGroupSettlementAssertions = do
   resumed <-
@@ -2467,6 +2644,7 @@ main = do
   runBuildMemoryAssertions unitTestRoot
   runMissingProcessGroupSettlementAssertions
   runLinuxWatchdogBreachAssertions
+  runAppleWatchdogBreachAssertions
   runNvidiaWatchdogAssertions
   runNvidiaVramBreachAssertions
   assert (length (catalogForMode AppleSilicon) == 16) "apple-silicon runnable catalog count matches the revised matrix"
@@ -3153,7 +3331,7 @@ main = do
     "apple host prerequisite planning does not install unrelated tools for docs-only commands"
   assert
     ( appleHostRequirementIds AppleSilicon InternalMaterializeMetalEnginesCommand
-        == ["llama-cli", "whisper-cli", "python", "python3.11", "poetry"]
+        == ["llama-completion", "whisper-cli", "python", "python3.11", "poetry"]
     )
     "Sprint 1.20: Apple engine materialization reconciles the two native CLIs, both Python toolchains, and Poetry"
   assert
@@ -3742,6 +3920,58 @@ main = do
       assert
         (either (const False) ((== 65536 - 49152 - minHostHeadroomMib) . hostPartitionInferenceCapacityMib) (mkHostMemoryPartition 65536 49152 minHostHeadroomMib))
         "mkHostMemoryPartition derives inference capacity as physical - vmReserve - headroom"
+      -- Phase 4 Sprint 4.31 — one claimable pool, two occupants. The pool is
+      -- minted once and both occupants are derived from it, so neither is
+      -- computed from a figure that is blind to the other, and the resolved
+      -- inference capacity on the supported development host is unchanged.
+      assert
+        (isLeft (mkHostClaimablePool 0 0))
+        "mkHostClaimablePool refuses an unmeasured host rather than deriving a pool from zero"
+      assert
+        (isLeft (mkHostClaimablePool 65536 (-1)))
+        "mkHostClaimablePool refuses a negative reserve"
+      assert
+        (isLeft (mkHostClaimablePool 65536 65536))
+        "mkHostClaimablePool refuses a reserve that leaves no pool for either occupant"
+      assert
+        (either (const False) ((== 16384) . hostClaimablePoolMib) (mkHostClaimablePool 65536 49152))
+        "the claimable pool is physical RAM less the virtual-machine reserve"
+      assert
+        ( either
+            (const False)
+            ((== 8192) . hostClaimablePoolToolchainAccountMib)
+            (mkHostClaimablePool 65536 49152)
+        )
+        "the toolchain account is the declared share of that same pool"
+      assert
+        ( either
+            (const False)
+            ( \partition ->
+                hostPartitionClaimablePoolMib partition == 16384
+                  && hostPartitionToolchainAccountMib partition == 8192
+                  && hostPartitionInferenceCapacityMib partition == 10240
+            )
+            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+        )
+        "the partition carries the pool and the toolchain occupant beside an unchanged 10240 MiB capacity"
+      assert
+        ( either
+            (const False)
+            (isLeft . mkConcurrentHostPoolClaim)
+            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+        )
+        "a concurrent claim over both occupants of one fully-assigned pool is not constructible"
+      assert
+        ( either
+            (const False)
+            ( either
+                (isInfixOf "overcommit it by 8192 MiB")
+                (const False)
+                . mkConcurrentHostPoolClaim
+            )
+            (mkHostMemoryPartition 65536 49152 minHostHeadroomMib)
+        )
+        "the concurrent-claim refusal names the overcommitment rather than reporting a bare failure"
       assert
         (isLeft (mkModelMemoryFootprint 0) && isLeft (mkModelMemoryFootprint (-1)))
         "mkModelMemoryFootprint rejects a non-positive footprint"
@@ -4702,6 +4932,7 @@ main = do
       assert
         (null (nativeModelCacheObjectKeys audiverisModel))
         "worker hydration treats package-backed Audiveris as installed state, not a payload download"
+      runNativeModelCacheHydrationAssertions unitTestRoot audiverisModel
       assert
         ( pythonEngineBootstrapManifestRequiredForTest AppleSilicon
             && not (pythonEngineBootstrapManifestRequiredForTest LinuxCpu)
@@ -7342,7 +7573,7 @@ main = do
       generationArtifactRoot =
         generationEnginesRoot </> "llama-cpp-cli"
       generationTargetPath =
-        generationArtifactRoot </> "native" </> "bin" </> "llama-cli"
+        generationArtifactRoot </> "native" </> "bin" </> "llama-completion"
   removeTestPathIfPresent generationEnginesRoot
   createDirectoryIfMissing True (takeDirectory generationTargetPath)
   writeFile generationTargetPath "#!/bin/sh\nexit 0\n"
@@ -13480,7 +13711,7 @@ hermeticHostToolPaths stubRoot configured = do
   node <- stub "node" HostConfig.hostNode
   python3 <- stub "python3.12" HostConfig.hostPython3
   python311 <- stub "python3.11" HostConfig.hostPython311
-  llamaCli <- stub "llama-cli" HostConfig.hostLlamaCli
+  llamaCompletion <- stub "llama-completion" HostConfig.hostLlamaCompletion
   whisperCli <- stub "whisper-cli" HostConfig.hostWhisperCli
   poetry <- stub "poetry" HostConfig.hostPoetry
   git <- stub "git" HostConfig.hostGit
@@ -13519,7 +13750,7 @@ hermeticHostToolPaths stubRoot configured = do
         HostConfig.hostNode = node,
         HostConfig.hostPython3 = python3,
         HostConfig.hostPython311 = python311,
-        HostConfig.hostLlamaCli = llamaCli,
+        HostConfig.hostLlamaCompletion = llamaCompletion,
         HostConfig.hostWhisperCli = whisperCli,
         HostConfig.hostPoetry = poetry,
         HostConfig.hostGit = git,
@@ -14370,7 +14601,7 @@ runSealedArtifactEnvironmentRegressionAssertions repoRootPath = do
       nativeEnvironment =
         Subprocess.sealedArtifactRuntimeEnvironmentForTest
           artifactRoot
-          "native/bin/llama-cli"
+          "native/bin/llama-completion"
       audiverisEnvironment =
         Subprocess.sealedArtifactRuntimeEnvironmentForTest
           artifactRoot
@@ -18810,14 +19041,14 @@ assertHostConfig repoRootPath testRoot = do
     (HostTools.hostToolPath linuxConfig HostTools.HostPython311 == "")
     "HostTools marks the Core ML Python 3.11 tool unavailable in the Linux outer-container"
   assert
-    ( HostTools.hostToolPath appleConfig HostTools.HostLlamaCli
-        == "/opt/homebrew/bin/llama-cli"
+    ( HostTools.hostToolPath appleConfig HostTools.HostLlamaCompletion
+        == "/opt/homebrew/bin/llama-completion"
         && HostTools.hostToolPath appleConfig HostTools.HostWhisperCli
           == "/opt/homebrew/bin/whisper-cli"
     )
     "HostTools resolves both Apple native engine CLIs from explicit Homebrew paths"
   assert
-    ( HostTools.hostToolPath linuxConfig HostTools.HostLlamaCli == ""
+    ( HostTools.hostToolPath linuxConfig HostTools.HostLlamaCompletion == ""
         && HostTools.hostToolPath linuxConfig HostTools.HostWhisperCli == ""
     )
     "HostTools marks Apple native engine CLIs unavailable in the Linux outer-container"
@@ -18828,7 +19059,7 @@ assertHostConfig repoRootPath testRoot = do
     ( "/root/.ghcup/bin/cabal" `elem` HostTools.hostToolFallbackCandidates HostTools.HostCabal
         && "/root/.ghcup/bin/ghc" `elem` HostTools.hostToolFallbackCandidates HostTools.HostGhc
         && "/opt/homebrew/bin/python3.11" `elem` HostTools.hostToolFallbackCandidates HostTools.HostPython311
-        && "/opt/homebrew/bin/llama-cli" `elem` HostTools.hostToolFallbackCandidates HostTools.HostLlamaCli
+        && "/opt/homebrew/bin/llama-completion" `elem` HostTools.hostToolFallbackCandidates HostTools.HostLlamaCompletion
         && "/opt/homebrew/bin/whisper-cli" `elem` HostTools.hostToolFallbackCandidates HostTools.HostWhisperCli
         && "/opt/homebrew/bin/poetry" `elem` HostTools.hostToolFallbackCandidates HostTools.HostPoetry
     )
@@ -19113,7 +19344,7 @@ assertHostConfig repoRootPath testRoot = do
   assert
     ( HostTools.hostToolName HostTools.HostKubectl == "kubectl"
         && HostTools.hostToolName HostTools.HostPython311 == "python3.11"
-        && HostTools.hostToolName HostTools.HostLlamaCli == "llama-cli"
+        && HostTools.hostToolName HostTools.HostLlamaCompletion == "llama-completion"
         && HostTools.hostToolName HostTools.HostWhisperCli == "whisper-cli"
     )
     "HostTools reports the supported short name for each tool, including the pinned Apple engine tools"
@@ -19273,7 +19504,7 @@ assertHostConfig repoRootPath testRoot = do
         ( ArtifactTarget.nativeArtifactTargetExecutable
             llamaInstallRoot
             appleLlamaTarget
-            == llamaInstallRoot </> "native" </> "bin" </> "llama-cli"
+            == llamaInstallRoot </> "native" </> "bin" </> "llama-completion"
             && null
               ( ArtifactTarget.nativeArtifactTargetLeadingArguments
                   llamaInstallRoot
@@ -20827,6 +21058,19 @@ runNativeArtifactArgumentAssertions = do
         && notElem "--no-conversation" llamaArgumentList
     )
     "llama.cpp argv carries neither --log-disable (silences the only failure channel) nor --no-conversation (leaks chat-template markers into published output)"
+  -- Phase 4 Sprint 4.35 Apple half. The lane-specific function is total over
+  -- `RuntimeMode` under -Wall -Werror, so a new lane cannot be added without
+  -- deciding this question for it; asserting every constructor is empty pins
+  -- the decision itself rather than one lane's rendering of it. Measured
+  -- against Homebrew llama.cpp 9870: the retired Apple argv reproduced the
+  -- Linux defect exactly, exiting 1 with the front-end's unsupported-flag
+  -- complaint on stdout and zero bytes of diagnostics.
+  assert
+    ( all
+        (null . CappedEngineInternal.llamaLaneSpecificArguments)
+        [AppleSilicon, LinuxCpu, LinuxGpu]
+    )
+    "no lane reinstates --log-disable or --no-conversation, including apple-silicon"
   assert
     ( whisperArguments
         == Right

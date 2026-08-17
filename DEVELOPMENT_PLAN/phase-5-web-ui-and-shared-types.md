@@ -1,16 +1,14 @@
 # Phase 5: Web UI and Shared Types
 
-**Status**: Blocked — strict numerical execution waits for Phase 4.
-**Blocked by**: Phase 4
-**Implementation state behind the blocker**: Done — with a named open dependency, per Section C of
-[development_plan_standards.md](development_plan_standards.md). The
-[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) invalidated the Wave T and Wave V
-attestations this phase cites. This phase owns no known current defect and no code-side work is open
-in it,
-so it stays `Done` while naming the dependency: its cohort evidence is reproduced under
-[Wave Y](cohort-validation-waves.md) after Phase 1's complete current-source gates and cohorts. The
-former Sprint 1.20 bounded-command environment defect is corrected and is historical context, not
-the current blocker. Sprint 5.11 is closed for typed inference errors in browser contracts and the
+**Status**: Done — Phase 4 closed on 2026-08-17, and this phase's cohort evidence is reproduced by
+that closure's `apple-silicon` plus paired `linux-cpu` receipts in
+[Wave Y](cohort-validation-waves.md): both lanes built the generated browser contracts, ran the web
+unit suite at 83/83, and passed the routed Playwright matrix 16/16 against the published edge, with
+the typed `ModelMemoryLimitExceeded` capacity path rendered in the browser on the Apple lane. No
+code-side work is open in this phase and no defect is known in its own surface. The
+[Apple/`linux-cpu` evidence reset](cohort-validation-waves.md) had invalidated the Wave T and Wave V
+attestations this phase cites; that dependency is discharged. The former Sprint 1.20 bounded-command
+environment defect is corrected and is historical context. Sprint 5.11 is closed for typed inference errors in browser contracts and the
 demo UI. Sprints 5.1-5.10 remain closed for their original PureScript, generated-contract, and
 no-env scopes. [Wave T](cohort-validation-waves.md) closed with `linux-cpu` plus the selected
 `linux-gpu` accelerator. Sprint 5.12 (Managed-State-Transition Doctrine reopen) is closed by

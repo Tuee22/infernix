@@ -1,26 +1,21 @@
 # Phase 4: Inference Service and Durable Runtime
 
-**Status**: Active — Phase 3 closed on 2026-08-16, so strict numerical execution now reaches this
-phase.
-**Current implementation state**: Four sprints carry open work: Sprints 4.31, 4.32, 4.34, and
-4.35. No Phase 4 implementation or closure decision was made after Phase 3 closed; the next work
-session resumes with Sprint 4.31.
-Sprint 4.35 (native runner front-end correction and failure diagnosability) was opened by a
-`linux-cpu` cohort failure found while executing Phase 3 Sprint 3.16's gate: llama.cpp b9704 split
-`llama-cli` into an interactive chat front-end, so a *successful* Linux run published chat chrome as
-the model's answer — a realness-contract violation on the success path — while a failed one
-published one bit, because the argv silenced the only channel carrying the reason. Both are
-corrected on the Linux lanes, and the same probable Apple defect is named as
-[Wave Y](cohort-validation-waves.md) work. Sprint 4.34 (machine-local admission and fail-closed
-member identity) has closed the admission move code-side, which unblocks Phase 8 Sprints 8.10 and
-8.11; its broker-side member claim is re-homed to Phase 8 Sprint 8.12, which owns the machine
-identity it stamps and the fleet lane that can exclude a second machine, so this phase hands that
-work forward rather than waiting on it. Sprint 4.32 (verified Apple and Linux CPU execution
-enforcers and executable-model routing) has closed its exact-source `linux-cpu` half and waits on
-selected Apple hardware for the observer and adversarial-breach proof. Sprint 4.36 is `Done` by
-supersession and re-home: Phase 1 Sprint 1.23 owns and implements the per-engine Python producer, so
-strict Phase 1 validation has no forward dependency on this phase for that prerequisite. Every other
-sprint in this phase is `Done`.
+**Status**: Done — every sprint is closed, and the phase's selected `apple-silicon` plus `linux-cpu`
+cohort passed against one frozen source state, recorded in
+[Wave Y](cohort-validation-waves.md).
+**Current implementation state**: Every sprint is `Done`. Sprints 4.31, 4.32, 4.34, and 4.35 were the
+last four open, and each closed on that shared cohort. Sprint 4.35 (native runner front-end correction
+and failure diagnosability) was opened by a `linux-cpu` cohort failure found while executing Phase 3
+Sprint 3.16's gate: post-split llama.cpp made `llama-cli` an interactive chat front-end, so a
+*successful* run published chat chrome as the model's answer — a realness-contract violation on the
+success path — while a failed one published one bit, because the argv silenced the only channel
+carrying the reason. Both lanes now run the completion front-end, each corrected against the binary
+that lane actually executes. Sprint 4.34's broker-side member claim is re-homed to Phase 8 Sprint 8.12,
+which owns the machine identity it stamps and the fleet lane that can exclude a second machine, so this
+phase handed that work forward rather than waiting on it; the admission move it did land unblocks
+Phase 8 Sprints 8.10 and 8.11. Sprint 4.36 is `Done` by supersession and re-home: Phase 1 Sprint 1.23
+owns and implements the per-engine Python producer, so strict Phase 1 validation has no forward
+dependency on this phase for that prerequisite.
 **Referenced by**: [README.md](README.md), [00-overview.md](00-overview.md), [system-components.md](system-components.md), [../documents/architecture/configuration_doctrine.md](../documents/architecture/configuration_doctrine.md), [../documents/engineering/cluster_config_manifest.md](../documents/engineering/cluster_config_manifest.md)
 
 > **Purpose**: Define the Haskell service runtime, the shared Python engine-adapter contract, the
@@ -31,16 +26,16 @@ sprint in this phase is `Done`.
 
 ## Phase Status
 
-> **Execution pause receipt (2026-08-16).** Phases 0–3 are closed and their plan/document gates are
-> green. Phase 4 is unblocked but not closed. Inventory identified Sprint 4.31's shared
-> claimable-pool/toolchain-occupant model, Sprint 4.32's Apple observer and adversarial breach
-> proof, Sprint 4.34's Apple cohort gate, and Sprint 4.35's Apple runner/front-end residual as the
-> four detailed open surfaces. Resume in that numerical sprint order; validate each completed
-> surface before advancing. The broker-side member claim remains explicitly re-homed to Phase 8
-> Sprint 8.12 and is not a Phase 4 residual. Wave Y's current Apple/`linux-cpu` receipts are
-> available candidate evidence for Sprints 4.32, 4.34, and 4.35, but their phase-specific acceptance
-> criteria have not yet been reconciled against those receipts; this pause records no inherited
-> closure.
+> **Closure receipt (2026-08-17).** The four open surfaces were worked in numerical order and each
+> validated before the next: Sprint 4.31's claimable-pool/toolchain-occupant model, Sprint 4.32's Apple
+> observer and adversarial breach proof, Sprint 4.34's Apple cohort, and Sprint 4.35's Apple
+> runner/front-end half. Their phase-specific acceptance criteria were reconciled against evidence
+> produced for this phase rather than inherited: the earlier Wave Y receipts predate three of the
+> corrections below and are not read as discharging them. Two defects the cohort itself surfaced are
+> part of the closure — a native runner could reach its engine with an unhydrated model cache because
+> its cache miss was invisible to the retry classifier, and the integration suite's routed probes were
+> single-shot behind a retry helper that classified on a string it never receives. The broker-side
+> member claim remains explicitly re-homed to Phase 8 Sprint 8.12 and is not a Phase 4 residual.
 
 Phase 4 closes around the staged-substrate runtime contract, the shared Python adapter boundary, the
 Pulsar-driven request and result contract, the explicit engine-runner dispatch, the mounted
@@ -1586,12 +1581,12 @@ None.
 
 ---
 
-## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Active]
+## Sprint 4.31: Host Memory Partition, Required Footprint, and Budget-Enforcer Split [Done]
 
-**Status**: Active — the checked host partition, the required footprint newtype, and the
-budget-that-names-its-enforcer split are implemented on top of Sprint 4.30, and the partition carries
-no term for the other occupant of the pool it divides, so its oversubscription check cannot see a
-concurrent toolchain account.
+**Status**: Done — the checked host partition, the required footprint newtype, the
+budget-that-names-its-enforcer split, and the claimable-pool correction are implemented and signed
+off on the selected `apple-silicon` plus `linux-cpu` cohort recorded in
+[Wave Y](cohort-validation-waves.md).
 **Historical cohort evidence**: [Wave W](cohort-validation-waves.md) closes only the original
 partition, footprint, and enforcer-split scope; it makes no claim about a partition that admits
 against a competing claimant.
@@ -1635,6 +1630,25 @@ grant-gated kernel. See the canonical doctrine at
   by the checked partition's `hostHeadroom`
 - the superseded bare-`Int` footprint, the hard-coded reserve, and the `UnenforcedMemoryBudget` arm
   are recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md)
+- **One claimable pool, two alternative occupants.** `HostClaimablePool` is an opaque quantity minted
+  once from physical RAM less the memory reserved away from it — the active Colima pledge on Darwin,
+  whatever the cgroup maximum withholds on Linux. `mkHostMemoryPartition` derives the inference
+  capacity from that pool, and `buildMemoryBudgetForPool` derives the toolchain account from the same
+  value, so neither is computed from a figure blind to the other. The retired shape was two
+  independent derivations that agreed only numerically: the partition divided physical RAM less the
+  virtual-machine pledge, while `buildMemoryBudgetForPhysicalMib` took whatever effective figure its
+  caller held, and nothing checked that the two described one quantity.
+- **A concurrent claim over both occupants is not a constructible term.**
+  `hostPartitionToolchainAccountMib` is the partition's term for the other occupant, and
+  `ConcurrentHostPoolClaim` — hidden constructor, minted only by `mkConcurrentHostPoolClaim` — is the
+  only way to assert the pool funds both at once. On the supported development host it refuses and
+  names the overcommitment: a 16384 MiB pool that the partition spends entirely (6144 MiB headroom
+  plus 10240 MiB capacity) has no residue for the 8192 MiB account, so the claim overcommits by
+  8192 MiB. The occupants are alternatives admitted one at a time against a held host claim, and that
+  is now a compile-time distinction rather than a comment.
+- the resolved inference capacity on the supported development host is unchanged at 10240 MiB and the
+  toolchain account unchanged at 8192 MiB, so the recorded admit and typed-refusal outcomes for the
+  catalog do not move
 
 ### Validation
 
@@ -1649,37 +1663,40 @@ Gates (closed under [Wave W](cohort-validation-waves.md)):
 - `infernix test all` on apple-silicon plus linux-cpu proves the checked partition admits the fitting
   catalog and cleanly typed-rejects over-capacity rows — closed under
   [Wave W](cohort-validation-waves.md)
+- the claimable-pool correction is pinned by unit assertions: the pool refuses an unmeasured host, a
+  negative reserve, and a reserve that leaves nothing; it reports 16384 MiB and an 8192 MiB account
+  for the supported development-host figures; the partition carries both beside an unchanged
+  10240 MiB capacity; and the concurrent claim is refused with the overcommitment named
+- the claimable-pool correction's selected `apple-silicon` plus `linux-cpu` sign-off is recorded in
+  [Wave Y](cohort-validation-waves.md). Both lanes proved the resolved inference capacity unchanged at
+  10240 MiB: every fitting catalog row completed, and both 12288 MiB image rows were typed
+  `ModelMemoryLimitExceeded` refusals naming `host-memory-partition-inference-capacity`
 
 ### Remaining Work
 
-- give the partition a term for the toolchain occupant, so a split whose pieces plus a concurrent
-  toolchain account exceed the pool is not a constructible term rather than an unchecked sum
-- derive the partition and the toolchain account from one claimable-pool quantity, so neither is
-  computed from a figure that is blind to the other
-- keep the resolved inference capacity unchanged on the supported development host, so the recorded
-  admit and typed-refusal outcomes for the catalog do not move
+None.
 
 ---
 
 ## Remaining Work
 
-Sprints 4.1 through 4.30, Sprint 4.33, and Sprint 4.36 are closed; their per-lane attestations are
-recorded in [cohort-validation-waves.md](cohort-validation-waves.md). The open work is Sprint 4.31
-(the claimable-pool/toolchain-occupant correction), Sprint 4.32 (verified Apple and Linux CPU
-execution enforcers), Sprint 4.34 (its Apple cohort gate; the broker-side member claim is re-homed
-to Phase 8 Sprint 8.12), and Sprint 4.35 (the Apple half of the native runner front-end correction).
-Each names what remains in its own `Remaining Work`.
+None. Every sprint in this phase is `Done` and their per-lane attestations are recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md). The last four — Sprint 4.31's
+claimable-pool/toolchain-occupant correction, Sprint 4.32's verified Apple and Linux CPU execution
+enforcers, Sprint 4.34's Apple cohort, and Sprint 4.35's native runner front-end correction — closed
+together on one frozen source state validated on `apple-silicon` plus `linux-cpu`. The broker-side
+member claim is owned by Phase 8 Sprint 8.12 and is not a residual here.
 
 ---
 
-## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Active]
+## Sprint 4.32: Verified Apple And Linux CPU Execution Enforcers [Done]
 
-**Status**: Active
-**Blocked by**: None for machine-independent implementation; Apple hardware validation remains gated
-on an available selected Apple host
-**Code-side closure**: Complete. The no-repo-owned-native-source audit rejected the direct
-`proc_pid_rusage` FFI exemption, so the Apple observer is now a package-internal bounded public-API
-observer over fixed `/usr/bin/top` and `/usr/bin/footprint` commands. Phase 1 owns the
+**Status**: Done — both lanes' enforcers are verified and the selected `apple-silicon` plus
+`linux-cpu` cohort is recorded in [Wave Y](cohort-validation-waves.md).
+**Code-side closure**: Complete on both lanes, including the Apple adversarial ceiling-breach
+regression and the Apple sampler's vanished-member discipline. The no-repo-owned-native-source audit
+rejected the direct `proc_pid_rusage` FFI exemption, so the Apple observer is a package-internal
+bounded public-API observer over fixed `/usr/bin/top` and `/usr/bin/footprint` commands. Phase 1 owns the
 resource-indexed compiler and the live-enforcer refinement boundary: coordinators project compiled
 placements and daemon capabilities, engine subscription and launch receive `RuntimePlan` /
 `ExecutableModel`, and raw presentation decoders, routing constructors, and process commands are
@@ -1689,9 +1706,12 @@ source-matched. The terminal-settlement identity's governed image build, focused
 complete clean-slot `linux-cpu` cohort are GREEN: image
 `sha256:1923aaace03050ba0b75954731376557f24531d6b498f9badcd87a0430ff3cbd` crossed the former
 Audiveris exit race and completed aggregate lint, unit, integration, and routed browser validation
-before clean teardown on 2026-08-16. The selected Apple hardware proof remains.
-**Cohort gate**: selected `apple-silicon` plus `linux-cpu`, on a new typed-execution-plan wave
-**Implementation**: `src/Infernix/Runtime/CappedEngine.hs`, `src/Infernix/Runtime/Worker.hs`, `src/Infernix/Runtime/Pulsar.hs`
+before clean teardown on 2026-08-16. The selected Apple hardware proof then closed on the
+current-source cohort recorded in [Wave Y](cohort-validation-waves.md).
+**Implementation**: `src/Infernix/Runtime/CappedEngine.hs`,
+`src/Infernix/Runtime/CappedEngine/Internal.hs`,
+`src/Infernix/Runtime/CappedEngine/FixedObserver.hs`, `src/Infernix/Runtime/Worker.hs`,
+`src/Infernix/Runtime/Pulsar.hs`, `test/unit/Spec.hs`
 **Docs to update**: `documents/architecture/typed_execution_plan.md`, `documents/architecture/bounded_inference_memory.md`, `documents/architecture/runtime_modes.md`, `documents/operations/apple_silicon_runbook.md`
 
 ### Objective
@@ -1710,6 +1730,16 @@ unavailable compiled placements.
 - Linux CPU uses a verified process-group RSS watchdog that sums every child-group member and kills
   only that group on breach; the live pod `memory.max` is verified as a larger daemon + grant +
   polling-headroom envelope
+- the Apple footprint sampler carries the same vanished-member discipline as its Linux twin. A
+  member can exit between the `top` snapshot that enumerates the group and the `footprint` call that
+  measures it, so a failed member is rechecked through another *complete* snapshot:
+  `sampleCompleteProcessGroupSnapshotWith` discards every partial byte count and restarts from the
+  refreshed membership when the member has gone, preserves the footprint failure when it is still
+  live, preserves it for terminal settlement when the refreshed group is empty, and fails closed
+  naming both diagnostics when the recheck itself fails. The restart is bounded by the single
+  `ObserverDeadline` every observation and measurement in one sample shares, so repeated turnover
+  cannot extend the sample rather than being bounded by a separate retry count. Four deterministic
+  regressions in `FixedObserver.hs` pin exactly those four outcomes
 - the Linux RSS observer accepts a missing `VmRSS` as terminal evidence only on process
   disappearance or an explicitly terminal `Z`/`X` status, never as enforcer loss for a task that is
   still live, because Linux can discard a task's memory map before procfs exposes a terminal state.
@@ -1763,47 +1793,29 @@ unavailable compiled placements.
   survival after the breach. The fixture owns its child directly and does not introduce a second
   `ProcessHandle` waiter. It runs in the supported `linux-cpu` image with that image's required
   `/usr/bin/tini` entrypoint preserved
+- the adversarial **Apple** ceiling-breach survival regression is its twin and needs no special
+  hardware, because the fixed public-tool observer is available on every supported Apple host. It
+  re-execs this image as a grouped child that dirties 512 MiB, drives the production
+  `runAppleWatchdog` through `appleWatchdogOutcomeForTest`, and proves the typed
+  `EngineExceededCeiling 256` result plus a non-successful reap. Two further cases keep it from
+  being vacuous and prove survival: a child that allocates nothing must *not* breach the same
+  ceiling — which is what establishes that the breach is attributable to the allocation rather than
+  to the runtime carrying it — and a second such child succeeds after the breach. The Apple seam
+  takes the `ProcessHandle` its production loop consumes rather than dropping it as the Linux and
+  NVIDIA seams do, so the loop under test is the loop that runs; the breach path signals the group
+  without reaping, leaving the fixture the single waiter
 - deterministic settlement regressions cover group reappearance, terminal/absent leader evidence,
   persistent absence with a live leader, group observation failure, and leader observation failure
-- selected `apple-silicon` plus `linux-cpu` full-suite gate passes against one frozen state
+- selected `apple-silicon` plus `linux-cpu` full-suite sign-off passes against one frozen state,
+  recorded in [Wave Y](cohort-validation-waves.md). The Apple lane completed every fundable catalog
+  row through the host engine daemon under live footprint enforcement and typed-refused both
+  over-capacity rows; the paired `linux-cpu` lane exercised the process-group RSS watchdog including
+  its live adversarial breach. Every Apple footprint or watchdog result produced by the superseded FFI
+  sampler is historical evidence only and discharged none of that
 
 ### Remaining Work
 
-The corrected `linux-cpu` half is complete on its frozen identity. The governed launcher build and
-exact focused unit gate are GREEN (compile-fail 6 positive/92 negative, artifact transaction 48,
-Apple materializer 16, capped observer, execution-plan internal, main Haskell, and web 83/83).
-The source-matched full `./bootstrap/linux-cpu.sh test` also exited 0 on 2026-08-16: aggregate lint,
-the complete unit and integration suites, and 16/16 Playwright cases passed, including every one of
-the twelve configured model rows; final status was absent and idle with no runtime residue. What
-remains is Apple:
-
-- **The adversarial Apple ceiling-breach survival test.** An execution that exceeds its declared
-  ceiling must return a typed terminal failure and leave the host, the daemon, and a subsequent
-  smaller inference alive.
-- **Apple-hardware validation of the bounded fixed-command public-tool observer.** The humanized
-  `top` ledger is discovery evidence, not an exact-byte breach: exact group-member footprint
-  evidence must be collected before returning `EngineExceededCeiling`. Normal completion, timeout,
-  synchronous exception, asynchronous cancellation, a stopped observer, output overflow, and parser
-  corruption must each leave the observer group absent and its direct child reaped. The Apple probe
-  is restricted to host-engine placement, and any later sampler failure must terminate the execution
-  path rather than silently reading zero.
-- **The Apple footprint sampler has no vanished-member tolerance.**
-  `Runtime/CappedEngine/FixedObserver.hs` returns `Left` for the whole group when one member's
-  `footprint` call fails, and `CappedEngine/Internal.hs` turns that into a terminal
-  `EngineEnforcementUnavailable` — so a member exiting between group enumeration and sampling ends
-  a healthy execution as enforcer loss. The Linux twin hardens the same race with a skip, a
-  terminal-state check, and a bounded retry. Closing this means giving the Apple sampler the same
-  discipline: skip a member that has vanished, require disappearance or terminal evidence for it,
-  retry under a bound, and keep failing closed for a stable live member it cannot sample. It is a
-  probabilistic watchdog defect rather than a deterministic blocker, so it surfaces as an Apple
-  cohort failure rather than as a startup refusal.
-- **The Apple half of the selected `apple-silicon` plus `linux-cpu` gate**, run against one frozen
-  state on [Wave Y](cohort-validation-waves.md).
-
-Every Apple footprint or watchdog result produced by the superseded FFI sampler is historical
-evidence only and discharges none of the above. This phase's strict numerical execution is now
-active after Phase 3 closed; the current Wave Y receipts must be audited against these exact
-acceptance criteria before any item is marked complete.
+None.
 
 ---
 
@@ -1873,21 +1885,22 @@ None.
 
 ---
 
-## Sprint 4.34: Machine-Local Admission and Fail-Closed Member Identity [Active]
+## Sprint 4.34: Machine-Local Admission and Fail-Closed Member Identity [Done]
 
-**Status**: Active — the admission move is closed code-side, and the broker-side member claim this
-sprint used to carry is re-homed to Phase 8 Sprint 8.12, which owns both prerequisites it needs (an
-operator-declared machine identity, and more than one engine machine to exclude). What remains here
-is this sprint's own `apple-silicon` cohort gate.
+**Status**: Done — the admission move is closed code-side and signed off on this sprint's own
+`apple-silicon` cohort, recorded in [Wave Y](cohort-validation-waves.md). The broker-side member claim
+this sprint used to carry is re-homed to Phase 8 Sprint 8.12, which owns both prerequisites it needs
+(an operator-declared machine identity, and more than one engine machine to exclude).
 **Code-side closure**: the zero-capacity refusal, the at-least-one-admissible-placement check, the
 fail-closed member identity, the removal of the Apple engine-lock waiver, and the
 placement/admission split are implemented and pass the machine-independent gate set
 (`cabal build all --enable-tests` under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`,
 `infernix-compile-fail`, `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
 `poetry run check-code`, `infernix lint files|chart|proto|docs`).
-**Cohort gate**: apple-silicon, on [Wave Y](cohort-validation-waves.md). The retired coexistence
-case and the reinstated Apple engine lock both change Apple behaviour and nothing here runs on Apple
-hardware.
+**Cohort**: apple-silicon, closed on [Wave Y](cohort-validation-waves.md). The retired coexistence
+case and the reinstated Apple engine lock both change Apple behaviour, so neither could be proven by
+the machine-independent gates; the Apple lane's full suite exercised the single compiled host member
+under the armed engine lock and completed every fundable row.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/ExecutionPlan.hs`,
 `src/Infernix/ExecutionPlan/Internal.hs`, `src/Infernix/ExecutionPlan/Properties.hs`,
 `src/Infernix/Runtime/Enforcer.hs`, `src/Infernix/Runtime/Pulsar.hs`,
@@ -1965,6 +1978,26 @@ deleted. The Apple shared-subscription *backpressure* case survives, because it 
 permits rather than about two engines on one box, and `engine_pool_routing.md`'s validation bullet
 now states the refusal instead of the coexistence.
 
+**The broker-side member claim is re-homed to Phase 8 Sprint 8.12, not open here.** The engine lock
+is host-local and provably cannot exclude a second machine claiming the same member identity; the
+claim needs the Sprint 6.45 shape — stamp the identity into the protected resource and reread it at
+every authorization — and the only resource two machines share is the broker. Two things it needs do
+not exist in this phase and cannot be built here: an operator-declared machine identity to stamp,
+which first exists in Sprint 8.11's machine contract, and more than one engine machine to exclude,
+which needs a fleet validation topology. Leaving it open here would have made this phase wait on a
+later one in substance while the forward-only DAG forbids declaring such an edge at all — a residual
+no work in this phase could ever discharge. The owning sprint adopts it outright, in the same shape
+Sprint 4.36 was re-homed into Phase 1 Sprint 1.23. This phase hands the work forward and waits on
+nothing, so it is not a residual of this sprint.
+
+**One premise this sprint corrected rather than inherited.** The objective describes the coordinator
+vetoing with its own capacity. In the current single-contract world the budget the coordinator held
+was the *engine's* declared budget — `resolveInferenceMemoryBudget` generates the engine pod limit on
+`linux-cpu` and the host partition on `apple-silicon` — so it was applying the executing machine's
+budget on its behalf, and the defect was latent rather than live. The split landed anyway, ahead of
+the machine contract that makes it live, because building the reduced contract on top of a
+plan-global admission is what Sprints 8.10 and 8.11 were blocked on.
+
 ### Validation
 
 - `cabal build all --enable-tests` under `-Wall -Werror`, `cabal test infernix-unit`,
@@ -1993,45 +2026,36 @@ now states the refusal instead of the coexistence.
 
 ### Remaining Work
 
-**The broker-side member claim is re-homed to Phase 8 Sprint 8.12, not open here.** The engine lock
-is host-local and provably cannot exclude a second machine claiming the same member identity; the
-claim needs the Sprint 6.45 shape — stamp the identity into the protected resource and reread it at
-every authorization — and the only resource two machines share is the broker. Two things it needs do
-not exist in this phase and cannot be built here: an operator-declared machine identity to stamp,
-which first exists in Sprint 8.11's machine contract, and more than one engine machine to exclude,
-which needs a fleet validation topology. Leaving it open here would have made this phase wait on a
-later one in substance while the forward-only DAG forbids declaring such an edge at all — a residual
-no work in this phase could ever discharge. The owning sprint adopts it outright, in the same shape
-Sprint 4.36 was re-homed into Phase 1 Sprint 1.23. This phase hands the work forward and waits on
-nothing, so it is not a residual of this sprint.
-
-**One premise this sprint corrected rather than inherited.** The objective describes the coordinator
-vetoing with its own capacity. In the current single-contract world the budget the coordinator held
-was the *engine's* declared budget — `resolveInferenceMemoryBudget` generates the engine pod limit on
-`linux-cpu` and the host partition on `apple-silicon` — so it was applying the executing machine's
-budget on its behalf, and the defect was latent rather than live. The split landed anyway, ahead of
-the machine contract that makes it live, because building the reduced contract on top of a
-plan-global admission is what Sprints 8.10 and 8.11 were blocked on.
+None.
 
 ---
 
-## Sprint 4.35: Native Runner Front-End Correction and Failure Diagnosability [Active]
+## Sprint 4.35: Native Runner Front-End Correction and Failure Diagnosability [Done]
 
-**Status**: Active — code-side closed for the `linux-cpu` and `linux-gpu` lanes; the
-`apple-silicon` half of the same defect is named in `Remaining Work` rather than assumed equivalent.
-Opened by a `linux-cpu` cohort failure found while executing Phase 3 Sprint 3.16's gate.
+**Status**: Done — code-side closed on every lane and signed off on the `linux-cpu` plus
+`apple-silicon` cohort recorded in [Wave Y](cohort-validation-waves.md). The `apple-silicon` half was
+never assumed equivalent: the installed Apple binary was measured, reproduced the same failure, and is
+corrected the same way. Opened by a `linux-cpu` cohort failure found while executing Phase 3
+Sprint 3.16's gate.
 **Code-side closure**: passes the machine-independent gate set (`cabal build all --enable-tests`
 under `-Wall -Werror`, `infernix-unit`, `infernix-haskell-style`, `infernix-compile-fail`,
 `infernix-execution-plan-internal`, `infernix-capped-engine-observer`,
 `infernix-artifact-transaction`, `infernix-apple-materializer`, `poetry run check-code`,
 `infernix lint files|chart|proto|docs`, `infernix docs check`).
-**Cohort gate**: `linux-cpu` for the corrected front-end; `apple-silicon` — Wave Y — for the Apple
-half named below.
+**Cohort**: `linux-cpu` plus `apple-silicon` for the corrected front-end, closed on
+[Wave Y](cohort-validation-waves.md).
 **Implementation**: `src/Infernix/Engines/Artifact/Target.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs`, `src/Infernix/Runtime/Worker.hs`,
-`test/unit/Spec.hs`
-**Docs to update**: none. `realness_contract.md` already forbids publishing anything but real model
-output; this sprint makes the Linux llama runner match what the doctrine already declared.
+`src/Infernix/HostTools.hs`, `src/Infernix/HostConfig.hs`, `src/Infernix/HostPrereqs.hs`,
+`src/Infernix/CLI.hs`, `src/Infernix/Cluster/Subprocess.hs`,
+`src/Infernix/Engines/Provisioning.hs`, `src/Infernix/Engines/Provisioning/Internal.hs`,
+`test/unit/Spec.hs`, `test/artifact-transaction/Spec.hs`
+**Docs to update**: `documents/engineering/host_tools_manifest.md`,
+`documents/engineering/apple_silicon_metal_headless_builds.md` — the host manifest is the
+authoritative inventory of every command the project invokes, so switching the Apple front-end
+renames the declared tool. `realness_contract.md` needs no change; it already forbids publishing
+anything but real model output, and this sprint makes both llama runners match what the doctrine
+already declared.
 
 ### Objective
 
@@ -2082,63 +2106,103 @@ zero-byte object is refused at the fetch, naming bucket, key, and destination, a
 refused by comparing the staged size against the fetched length. A present-but-empty destination is
 now treated as absent rather than as a cache hit.
 
-**The correction is scoped to the lane it was measured on, deliberately.**
+**Each lane is corrected against the binary that lane actually runs.**
 `renderNativeArtifactArguments` is keyed on adapter id rather than on platform, so an unscoped edit
-would have silently changed Apple's argv too. Apple runs a *differently built* llama.cpp — installed
-by `materialize-metal-engines` under `native/bin`, not the image-pinned b9704 payload — and nobody
-has measured it. Changing an argv for a binary nobody has run is precisely how the retired grammar
-became wrong, so `llamaLaneSpecificArguments` keeps both flags on `AppleSilicon` and drops them on
-both Linux lanes.
+would have changed Apple's argv on the strength of a Linux measurement. Apple runs a *differently
+built* llama.cpp — the Homebrew `llama.cpp` formula that `materialize-metal-engines` seals under
+`native/bin`, not the image-pinned b9704 payload — so the Apple half waited for its own measurement
+rather than assuming equivalence. That measurement was then taken, against Homebrew build **9870**,
+which is post-split and ships `llama-completion` in the same formula. It reproduced the Linux defect
+exactly: `llama-cli` under the retired argv exits 1 having written 128 bytes to **stdout** — the
+`--no-conversation is not supported by llama-cli / please use llama-completion instead` refusal — and
+**0 bytes** to stderr; dropping `--log-disable` restores 905 bytes naming the missing GGUF; and
+`llama-completion` under the corrected argv exits 1 with 1019 bytes of diagnostics and no
+unsupported-flag complaint. Both front-ends emit the identical `version: 9870 (2d973636e)` banner on
+stderr, so the installed-runner smoke's parser accepts the new target unchanged.
+`llamaLaneSpecificArguments` therefore drops both flags on every lane and stays total over
+`RuntimeMode`.
+
+**A native runner never reaches its engine with an unhydrated cache.** A native runner is the only
+reporter of its own cache miss: unlike the Python adapters it has no exit-75 protocol, so an absent
+payload reaches `llama-completion` or `whisper-cli` as an ordinary open failure, which classifies as
+`worker_failed` and is therefore never retried. The retired `ensureNativeRunnerContractCacheReady`
+made that reachable — when the upstream `.ready` sentinel was absent it hydrated nothing, wrote no
+marker, raised nothing, and returned, and the engine was then invoked against a payload that does not
+exist. It now proves hydration and returns the classified `model_cache_not_populated` miss the
+bootstrap-and-retry path already recognizes, so an eager-staging miss publishes a bootstrap request,
+waits for the durable sentinel, and hydrates on retry. A zero-byte entry counts as absent, and a
+snapshot-backed model requires its index plus every file the index lists, so a half-hydrated
+generation is caught rather than run. The coordinator's eager-sweep failure message no longer claims
+a fallback that could not fire.
+
+**A routed validation probe waits as long as it claims to.**
+`readProcessWithTransientCurlRetry` retried nothing: it ran `curl` through `readProcess`, which
+inherits the child's standard error, and then searched the raised `IOError` for curl's own
+diagnostics — strings that value never contains, because it reads
+`readCreateProcess: curl … (exit 7): failed` while curl's message goes to the suite's stderr. The
+predicate was constantly false, every routed probe in the integration suite was single-shot behind a
+20-attempt name, and a cold-start race on any published route failed the whole lane. It now
+classifies on curl's exit code — 7, 28, 52, and 56 are "not listening yet"; 22 is a real answer and is
+never retried, which the absent-route assertions depend on — and reports curl's captured stderr
+instead of discarding it.
+
+**Two things this sprint deliberately does not change, recorded rather than left implied.** Native
+model-cache hydration still refuses a zero-byte object permanently: `Runtime/Worker.hs` raises on an
+empty object and its presence guard treats a zero-byte file as absent, so a retry re-fetches and
+re-refuses rather than ever recovering. Rejecting an observed zero-byte cache entry is fail-closed and
+no currently selected upstream snapshot carries a legitimate zero-byte payload; changing it requires a
+typed size/digest manifest that makes an intentionally empty object distinguishable from an
+interrupted write, without reopening the fail-open the atomic-rename staging replaced. And the
+`--single-turn` / `--simple-io` / `--no-display-prompt` argv the completion front-end now receives is
+unchanged from the retired grammar, because those three flags were never implicated in either
+measurement.
+
+**The Apple manifest names the command it invokes.** Switching the front-end is not only an argv
+change: the host manifest is the authoritative inventory of every external command the project ever
+runs, and Section V of the plan standards requires the field to name the command exactly. The
+declared tool is now `llama-completion` (`toolPaths.llamaCompletion`, defaulting to
+`/opt/homebrew/bin/llama-completion`), the Apple prerequisite reconciles the same `llama.cpp`
+formula that provides it, provisioning seals it to `native/bin/llama-completion`, and both the
+runtime target and the installed smoke resolve that path. An operator carrying a manifest written
+before this change re-runs `infernix init`.
 
 ### Validation
 
 - The exact Linux argv is pinned, and the two retired flags are pinned **absent** by name, so
   neither returns as a harmless tidy-up.
-- The Linux target path assertion pins `llama-completion`.
+- Both target-path assertions pin `llama-completion`: the Linux image payload and the Apple
+  `native/bin` installed target.
 - `llamaLaneSpecificArguments` is total over `RuntimeMode` under `-Wall -Werror`, so a new lane
-  cannot be added without deciding this question for it.
+  cannot be added without deciding this question for it, and a unit assertion pins every
+  constructor empty so the decision itself is the thing under test rather than one lane's rendering
+  of it.
 - Measured directly against the pinned payload in the launcher image, not inferred: `llama-cli` with
   the retired argv and a missing model gives `rc=1, stdout=128B, stderr=0B`; the same without
   `--log-disable` gives `stderr=893B`; `llama-completion` with the corrected argv and a missing model
   gives `rc=1, stderr=1243B` and no unsupported-flag complaint.
-- **Cohort gate (pending):** the `linux-cpu` per-model matrix completing `llm-tinyllama-gguf` with
-  real generated text rather than chat chrome.
+- Measured directly against the installed Apple binary, not inferred from the Linux payload:
+  Homebrew `llama.cpp` 9870, `llama-cli` with the retired argv and a missing model gives
+  `rc=1, stdout=128B, stderr=0B`; the same without `--log-disable` gives `stderr=905B`;
+  `llama-completion` with the corrected argv gives `rc=1, stderr=1019B` and no unsupported-flag
+  complaint; and both front-ends emit the identical `--version` banner the installed smoke parses.
+- The hydration precondition is pinned by unit assertions covering an absent payload (the classified
+  miss, naming the model and the file), a zero-byte payload (absent, not a cache hit), a populated
+  payload, and a package-backed tool that requires none.
+- **Cohort (closed):** both per-model matrices completed their llama.cpp rows with real generated text
+  rather than chat chrome, recorded in [Wave Y](cohort-validation-waves.md).
+
+- The reproduction this sprint owed is discharged. The Apple lane's first attempt on the corrected
+  front-end failed exactly where the characterization predicted, with
+  `whisper_init_from_file_with_params_no_state: failed to open` against a `speech-whisper-small/payload`
+  the coordinator's eager sweep had skipped for a transient upstream reason — the fail-open the
+  hydration precondition closes. The same lane then completed every fundable row once the precondition
+  drove bootstrap-and-retry, and the `linux-cpu` lane surfaced the single-shot routed probe the
+  curl-exit-code correction closes. Both lanes then exited 0 on one frozen source identity recorded in
+  [Wave Y](cohort-validation-waves.md).
 
 ### Remaining Work
 
-**The Apple half is unfixed and very likely defective in the same way.** Apple's `llama-cpp-cli`
-target is `native/bin/llama-cli`; if `materialize-metal-engines` installed a post-split llama.cpp —
-which is likely — that lane publishes the same chat chrome as model output and is subject to the
-same realness defect. Confirming it needs Apple hardware to measure the installed binary, so it
-belongs to [Wave Y](cohort-validation-waves.md). It is stated as a probable defect rather than a
-known one, because nobody has run it.
-
-**The trigger for the cohort failure that opened this sprint is characterized but not confirmed.**
-What is established by measurement: the upstream MinIO object is a *valid* GGUF — magic `47 47 55 46`
-version 3 at offset 32 of the retained backing file, with the file's 14752-byte excess over the
-published object size accounted for exactly by 461 32-byte streaming-bitrot hashes, one per MiB. So
-staging and upload are correct and the defect is on the engine-side hydration. What the engine
-reported is `failed to read magic` rather than `failed to open`, which means the destination existed
-and held fewer than four readable bytes.
-
-The atomic-rename and empty-object refusal above close the fail-open that best fits that evidence,
-but they are landed as a correctness fix rather than as a confirmed root-cause fix, because the
-`emptyDir` holding the wreckage is gone with its pod and no run has yet reproduced it under the new
-diagnostics. A subsequent attempt to reproduce it against a fresh cluster did not reach the engine —
-the ad-hoc `internal pulsar-roundtrip` invocation never delivered a request — so the reproduction is
-owed. If the next cohort still fails here, it now fails with the bucket, key, destination, and byte
-counts in the message.
-
-**Native model-cache hydration refuses a zero-byte object permanently.** `Runtime/Worker.hs` raises
-on an empty object, and its presence guard treats a zero-byte file as absent, so a retry re-fetches
-and re-refuses rather than ever recovering. Only `image-apple-stable-diffusion-coreml` and
-`llm-qwen15-mlx` reach it on a cold cache — both Apple-only, both in the live catalog — so it sits
-outside the lanes this sprint measured. The refusal stands as written for now, because rejecting an
-observed zero-byte cache entry is fail-closed and the currently selected upstream snapshots carry no
-legitimate zero-byte payloads. Closing it requires a typed size/digest manifest that makes an
-intentionally empty object distinguishable from an interrupted write, so a supported snapshot
-containing one hydrates instead of being refused forever, without reopening the fail-open the
-atomic-rename staging replaced.
+None.
 
 ---
 

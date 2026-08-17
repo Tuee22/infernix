@@ -112,7 +112,7 @@ The materializer writes this manifest only after candidate hydration and authori
 smoke. Executable paths and argv are never decoded from it. Python provenance is parsed from the
 exact frozen environment, the interpreter version is queried from the candidate venv, host tools
 derive their engine/runtime versions from real smoke output, and the copied
-`llama-cli`/`whisper-cli` bytes carry their own SHA-256 provenance within the whole-tree content
+`llama-completion`/`whisper-cli` bytes carry their own SHA-256 provenance within the whole-tree content
 digest. Audiveris is accepted only after the pinned
 `sha256:727c46b4ca4766349be1f582b67cc5aa0d7306113dcf4a18be169d75959f4288`
 release image is observed. A mount is treated as live only when its kernel device id differs from

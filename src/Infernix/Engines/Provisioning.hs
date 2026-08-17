@@ -1254,7 +1254,7 @@ materializeResolvedHostNativeCli
         candidateRoot
     cliName <-
       case adapter of
-        Internal.LlamaCppCliAdapter -> pure "llama-cli"
+        Internal.LlamaCppCliAdapter -> pure "llama-completion"
         Internal.WhisperCppCliAdapter -> pure "whisper-cli"
         _ ->
           failProvisioningSession
@@ -6216,13 +6216,13 @@ parseLlamaRuntimeVersion outputLines =
       | not (any (Text.isPrefixOf "version: ") remaining) ->
           parseLlamaVersionPair versionLine buildLine
     _ ->
-      Left "llama-cli smoke did not emit exactly one version and build-provenance line pair"
+      Left "llama-completion smoke did not emit exactly one version and build-provenance line pair"
 
 parseLlamaVersionPair :: Text -> Text -> Either String Text
 parseLlamaVersionPair versionLine buildLine = do
   payload <-
     maybe
-      (Left "llama-cli smoke omitted its exact version line")
+      (Left "llama-completion smoke omitted its exact version line")
       Right
       (Text.stripPrefix "version: " versionLine)
   unlessEither
@@ -6231,12 +6231,12 @@ parseLlamaVersionPair versionLine buildLine = do
         validLlamaBuildProvenance
         (Text.stripPrefix "built with " buildLine)
     )
-    "llama-cli smoke has an invalid build-provenance line"
+    "llama-completion smoke has an invalid build-provenance line"
   case Text.words payload of
     [build, parenthesizedHash] -> do
       commit <-
         maybe
-          (Left "llama-cli smoke version has an invalid commit hash")
+          (Left "llama-completion smoke version has an invalid commit hash")
           Right
           ( Text.stripSuffix ")"
               =<< Text.stripPrefix "(" parenthesizedHash
@@ -6247,10 +6247,10 @@ parseLlamaVersionPair versionLine buildLine = do
             && Text.length commit <= 64
             && Text.all isAsciiLowerHexDigit commit
         )
-        "llama-cli smoke version has an invalid build or commit"
+        "llama-completion smoke version has an invalid build or commit"
       pure ("llama.cpp-b" <> build <> "-" <> commit)
     _ ->
-      Left "llama-cli smoke version has an invalid token cardinality"
+      Left "llama-completion smoke version has an invalid token cardinality"
 
 -- | As with llama.cpp, whisper.cpp reports each ggml backend it loads before
 -- its version banner, so exactly one banner line is located within the runner's
@@ -8236,7 +8236,7 @@ validateHydratedCandidate adapter installRoot candidateRoot
       payloadOkay <-
         case adapter of
           Internal.LlamaCppCliAdapter ->
-            hostBinaryPayloadOkay "llama-cli"
+            hostBinaryPayloadOkay "llama-completion"
           Internal.WhisperCppCliAdapter ->
             hostBinaryPayloadOkay "whisper-cli"
           Internal.CTranslate2Adapter -> pythonPayloadOkay

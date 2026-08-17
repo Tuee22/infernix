@@ -49,7 +49,7 @@ let ToolPaths =
       , node : HostTool
       , python3 : HostTool
       , python311 : HostTool
-      , llamaCli : HostTool
+      , llamaCompletion : HostTool
       , whisperCli : HostTool
       , poetry : HostTool
       , git : HostTool
@@ -214,7 +214,7 @@ to delete the file and re-run `infernix init`.
 | node | `toolPaths.node` | `/opt/homebrew/bin/node` | baked: `/usr/local/bin/node` |
 | python3 | `toolPaths.python3` | `/opt/homebrew/bin/python3.12` | `/usr/bin/python3` |
 | python3.11 | `toolPaths.python311` | `/opt/homebrew/bin/python3.11` | unavailable (empty) |
-| llama-cli | `toolPaths.llamaCli` | `/opt/homebrew/bin/llama-cli` | unavailable (empty) |
+| llama-completion | `toolPaths.llamaCompletion` | `/opt/homebrew/bin/llama-completion` | unavailable (empty) |
 | whisper-cli | `toolPaths.whisperCli` | `/opt/homebrew/bin/whisper-cli` | unavailable (empty) |
 | poetry | `toolPaths.poetry` | `${HOME}/.local/share/pypoetry/venv/bin/poetry` | baked: `/opt/poetry/bin/poetry`; the Apple default is created by the kernel-locked bounded bootstrap, while manifestless fallback checks fixed Homebrew/image/system absolute paths only |
 | git | `toolPaths.git` | `/usr/bin/git` | `/usr/bin/git` |
@@ -411,7 +411,7 @@ When a sprint introduces a new external CLI:
   matches a `ToolPaths` field, and rejects `findExecutable` / `findExecutables` outside the lint
   module's own token list. Adding a new command without adding the schema field first fails this
   check.
-- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|python3\.11|llama-cli|whisper-cli|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches, and
+- `grep -rEn '\bproc "(docker|kubectl|helm|kind|cabal|ghc|ghcup|npm|node|python3|python3\.11|llama-completion|whisper-cli|poetry|protoc|git|tar|curl|apt-get|brew|skopeo|sudo|systemctl)"' src/ test/` returns zero matches, and
   `rg -n 'findExecutable|findExecutables' app src test` returns only the lint module's forbidden-token
   list.
 

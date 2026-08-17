@@ -597,7 +597,7 @@ manifestMismatchTest =
       "the manifest must bind the closed direct-target contract"
       (validateEngineArtifactRootAt expectedRoot actualRoot)
     writeManifest actualRoot validManifest
-    removeFile (actualRoot </> "native" </> "bin" </> "llama-cli")
+    removeFile (actualRoot </> "native" </> "bin" </> "llama-completion")
     assertIOException
       "the closed direct target must remain present"
       (validateEngineArtifactRootAt expectedRoot actualRoot)
@@ -644,9 +644,9 @@ exactManifestContractTest =
 
     _ <- writeExactArtifactRoot modeRoot modeRoot "mode"
     targetPermissions <-
-      getPermissions (modeRoot </> "native" </> "bin" </> "llama-cli")
+      getPermissions (modeRoot </> "native" </> "bin" </> "llama-completion")
     setPermissions
-      (modeRoot </> "native" </> "bin" </> "llama-cli")
+      (modeRoot </> "native" </> "bin" </> "llama-completion")
       (setOwnerExecutable False targetPermissions)
     assertIOException
       "the direct target must remain executable"
@@ -2174,7 +2174,7 @@ writeExactArtifactRoot ::
   IO EngineArtifactManifest
 writeExactArtifactRoot expectedInstallRoot actualRoot payload = do
   let binRoot = actualRoot </> "native" </> "bin"
-      entrypointPath = binRoot </> "llama-cli"
+      entrypointPath = binRoot </> "llama-completion"
   createDirectoryIfMissing True binRoot
   writeFile entrypointPath "#!/bin/sh\nexit 0\n"
   permissions <- getPermissions entrypointPath
@@ -2223,7 +2223,7 @@ writeLegacyArtifactRoot ::
   IO ()
 writeLegacyArtifactRoot expectedInstallRoot actualRoot payload = do
   let binRoot = actualRoot </> "native" </> "bin"
-      entrypointPath = binRoot </> "llama-cli"
+      entrypointPath = binRoot </> "llama-completion"
   createDirectoryIfMissing True binRoot
   writeFile entrypointPath "#!/bin/sh\nexit 0\n"
   permissions <- getPermissions entrypointPath

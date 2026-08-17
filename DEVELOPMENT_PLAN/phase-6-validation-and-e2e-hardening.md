@@ -1,8 +1,13 @@
 # Phase 6: Validation, E2E, and Hardening
 
-**Status**: Blocked — strict numerical execution waits for Phase 5.
-**Blocked by**: Phase 5
-**Implementation state behind the blocker**: Active. Sprint 6.49's code-side correction is present:
+**Status**: Active — Phase 5 closed on 2026-08-17, so strict numerical execution reaches this phase.
+Every sprint is `Done` except Sprint 6.44, whose `linux-gpu` behavioral cohort requires a CUDA-capable
+Linux host. That is a named supported-lane validation blocker rather than open code work: Section Q
+forbids substituting the other accelerator for it, so no Apple host can discharge it.
+**Cohort**: `apple-silicon` plus `linux-cpu`, closed on one frozen source identity recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md); it discharged Sprints 6.37, 6.43, 6.45,
+6.46, 6.47, 6.48, and 6.49 together.
+**Historical implementation state (superseded by the closures above).** Active. Sprint 6.49's code-side correction is present:
 the closed toolchain vocabulary includes `CappedEngineObserverSuite` and `infernix test unit`
 selects it; its aggregate current-source and Apple/paired-Linux evidence remains open. Sprint 6.46
 (toolchain spawn boundary and capability-gating lint) is `Done` for its original scope; Phase 1
@@ -2053,12 +2058,13 @@ None.
 
 ---
 
-## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Active]
+## Sprint 6.37: Apple-Silicon Memory-Bounded Validation Lane [Done]
 
-**Status**: Active — the memory-exhaustion classification is in the integration lane, and the
-recorded Apple result is a lane that completed rather than a bound that held: an absence of host
-exhaustion across one catalog run is a sample, and the run that produced it carried no ceiling on
-the largest images resident beside it.
+**Status**: Done — the memory-exhaustion classification is in the integration lane, and this sprint's
+criterion is restated below so it asserts the ceiling behaving rather than the absence of a failure.
+The recorded Apple result remains a lane that completed rather than a bound that held: an absence of
+host exhaustion across one catalog run is a sample, and the run that produced it carried no ceiling on
+the largest images resident beside it. That scope limit is now recorded rather than implied.
 **Historical cohort evidence**: [Wave R](cohort-validation-waves.md) and
 [Wave S](cohort-validation-waves.md) close only the fail-closed classification scope — an
 over-budget row is a clean typed refusal rather than a missing result. Sprint 6.38 supersedes this with typed resource-admission validation across
@@ -2094,13 +2100,34 @@ per-model browser matrix either complete or fail-closed per row with **zero** OS
   `linux-cpu` and `linux-gpu` full `./bootstrap/* test` lanes passed integration and routed
   Playwright.
 
+### Restated Criterion
+
+Phase 4 Sprint 4.31's claimable-pool correction and Phase 1 Sprint 1.21's claimant census made the
+restatement below checkable, so this lane's criterion is now stated as the ceiling behaving rather
+than as the absence of a failure:
+
+> **Every over-budget row is a typed capacity refusal, and no admitted row is terminated by the host,
+> on a run whose competing claimants were observed rather than assumed.**
+
+Both halves are asserted rather than inferred. An over-budget row must publish
+`ModelMemoryLimitExceeded` carrying `requiredMib`, `availableMib`, and the enforcer source that
+refused it; a missing result remains named as the OS-OOM-kill / stall symptom rather than folded into
+the refusal case. And the claimant half is what the earlier wording could not express: the toolchain
+account and the inference partition are two occupants of one claimable pool, the account is admitted
+against an observation of available host memory plus a census that refuses by name when it finds a
+foreign toolchain claimant, and the partition's own term for that occupant makes a concurrent
+two-occupant claim non-constructible.
+
+**What the historically recorded catalog completion does and does not stand for.** Waves R and S
+recorded every apple catalog model reaching `status=completed` beside an *unbounded* toolchain: at that
+time no ceiling was installed on the largest images resident next to the run, and no census could have
+named a competing claimant. That result therefore stands for the classification scope — an over-budget
+row is a clean typed refusal rather than a missing result — and not for a host bound. It is retained as
+classification evidence and is not read as evidence that the host was bounded while it ran.
+
 ### Remaining Work
 
-- restate this lane's criterion so it asserts the ceiling behaving rather than the absence of a
-  failure: every over-budget row is a typed capacity refusal and no admitted row is terminated by
-  the host, on a run whose competing claimants were observed rather than assumed
-- record that the recorded catalog completion was produced beside an unbounded toolchain, so the
-  result stands for the classification scope and not for a host bound
+None.
 
 ---
 
@@ -2447,11 +2474,19 @@ None.
 
 ---
 
-## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Blocked]
+## Sprint 6.43: Cluster-Ownership Harness Seizure and Crash-Safe Config [Done]
 
-**Status**: Blocked by active Phase 1, then Phases 2 and 4 in numerical order. The doctrine and
-governance landed first (Phase 0 Sprint 0.16, `Done`), and Wave X remains valid for the typed
-owner/mutation-position and crash-safe config scope. An execution audit found a remaining TOCTOU:
+**Status**: Done — its prerequisites are discharged and its own `apple-silicon` plus `linux-cpu`
+behavioral cohort passed against one frozen source identity, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md). Phases 1, 2, and 4 are closed, and the three
+findings the final cross-phase review carried out of this sprint's scope are landed by Sprint 6.45:
+`ClusterTeardownAuthority` is indexed by a promoted `ClusterOwner` as well as its lock region, with
+`CannotSubstituteClusterTeardownOwner` pinning the substitution, and the machine-global cluster slot
+carries the creating checkout's identity at `/etc/infernix/cluster-checkout-identity`, which every
+authorization rereads. Two of those findings contradicted a deliverable this sprint states, which is
+why it was `Blocked` while they were open; the deliverable text below says what the code does. The
+doctrine and governance landed first (Phase 0 Sprint 0.16, `Done`), and Wave X remains valid for the
+typed owner/mutation-position and crash-safe config scope. An execution audit found a remaining TOCTOU:
 harness seizure authorized teardown while holding the lifecycle lock, then released that lock before
 the `finally` cleanup invoked the generic `clusterDown`. An operator could acquire the shared cluster
 slot in that interval and then be torn down by the harness. The correction makes teardown
@@ -2475,11 +2510,11 @@ validation remain ordered after Phase 2 and Phase 4.
 `linux-cpu`) closes only the original proof that `infernix test all` fails closed on a running
 operator cluster, that a killed run leaves a mutation-incomplete cluster for the next `cluster up`,
 and that a leftover `.harness-backup` is restored on the next `test`.
-**Current cohort gate**: pending. Phase 6 owner-atomic validation is ordered after Phase 2 closes
-under Wave Y and Phase 4 closes.
+**Cohort**: `apple-silicon` plus `linux-cpu`, closed. Phase 6 owner-atomic validation was ordered
+after Phase 2 closed under Wave Y and Phase 4 closed, and both are now closed.
 **Implementation**: `src/Infernix/CLI.hs`, `src/Infernix/Cluster.hs`, `test/integration/Spec.hs`,
 `test/unit/Spec.hs`
-**Blocked by**: Phase 2 Wave Y closure, Phase 4 Sprint 4.32
+
 **Docs to update**: `documents/architecture/managed_state_transitions.md`,
 `documents/development/testing_strategy.md`, `documents/development/chaos_testing.md`,
 `documents/engineering/testing.md`, `documents/architecture/configuration_doctrine.md`,
@@ -2501,12 +2536,16 @@ unconditionally, the chaos mutations (drain / scale / cordon) leave the lifecycl
   up at `<identity>`; `infernix cluster down` it before running tests"), tearing down only a
   `HarnessOwned` cluster; the harness brings up its cluster as `HarnessOwned`. The established
   property is narrower than a type-level guarantee: the refusal is a checked value comparison that
-  raises under the held lifecycle lock, because `ClusterTeardownAuthority` type-indexes its lock
-  region alone and an authority minted against an `OperatorOwned` cluster still typechecks. The fence
-  is also repo-local, since the lifecycle lock, the harness reservation, and the persisted state all
-  live in one checkout while the Kind cluster slot is machine-global, so a process rooted at a
-  different checkout neither observes nor honours it. Sprint 6.45 owns the machine-scoped cluster-slot
-  correction and the owner-indexed teardown authority that close both gaps
+  raises under the held lifecycle lock, and ownership of a *live* cluster is decided there rather than
+  by the compiler. When this sprint was written the authority type-indexed its lock region alone and the
+  fence was repo-local, since the lifecycle lock, the harness reservation, and the persisted state all
+  live in one checkout while the Kind cluster slot is machine-global, so a process rooted at a different
+  checkout neither observed nor honoured it. Sprint 6.45 closed both gaps and its implementation is
+  landed: `ClusterTeardownAuthority` is now indexed by a promoted `ClusterOwner` as well as its lock
+  region, so an authority minted for the harness is not the same type as one minted for the operator
+  (`CannotSubstituteClusterTeardownOwner` pins it), and the cluster slot carries the creating checkout's
+  identity inside the control-plane node for every authorization to reread. The index still decides
+  nothing about who owns a live cluster; that remains the checked value comparison under the held lease
 - chaos-mutation `ClusterMutating` transitions: each mutation in `test/integration/Spec.hs` (node drain,
   deployment over-scale, cordon) persists `ClusterMutating <phase>` before the `kubectl` mutation and
   restores `ClusterReady` only from a fresh exact live ready-state match after revalidating the
@@ -2567,36 +2606,25 @@ path aborts every subsequent command without reconciling.
 
 ### Remaining Work
 
-- the three findings the final cross-phase review carried out of this sprint's scope are open, and
-  are owned by a later sprint in this phase that records them as its own deliverables; two of them
-  contradict a deliverable this sprint states, so this sprint stays `Blocked` while they are open
-- after Phase 2 closes under Wave Y and Phase 4 closes, rerun the machine-independent gates and the
-  Phase 6 apple-silicon plus `linux-cpu` behavioral cohort; record the new evidence without
-  rewriting Wave X's narrower historical claim
+None.
 
 ---
 
 ## Remaining Work
 
-Sprints 6.39, 6.40, and 6.41 are code-side closed (machine-independent, adversarially reviewed) and
-their single-accelerator (apple-silicon) plus `linux-cpu` full-suite cohort sign-off is closed by
-[Wave V](cohort-validation-waves.md); no remaining work exists for those reopen sprints. Sprint 6.38
-is closed for typed resource admission validation across Apple, Linux CPU, and Linux GPU by Wave T's
-`linux-cpu` plus selected `linux-gpu` evidence. Sprint 6.35 is closed, proven by
-[Wave P](cohort-validation-waves.md). Sprint 6.36 (real-output and matrix validation hardening) and
-Sprint 6.37 (apple-silicon memory-bounded validation lane) are closed by
-[Wave R](cohort-validation-waves.md) and [Wave S](cohort-validation-waves.md) for their original
-scopes. Sprint 6.42 — the enforcement half of the memory-safety-by-construction reopen, the
-`unboundedEngineSpawnViolations` lint that keeps new engine-spawn call sites off the raw process
-primitives and on the Phase 4 Sprint 4.30 grant-gated capped-engine kernel — is closed under
-[Wave W](cohort-validation-waves.md) with apple-silicon plus `linux-cpu` behavioral sign-off. For
-Sprint 6.43, Wave X historically closes only the original evidence-gated cluster seizure, the
-chaos-mutation `ClusterMutating` transitions, and the crash-safe `withTestHarnessConfig` backup
-reconcile on apple-silicon plus `linux-cpu`; the owner-atomic reservation/teardown implementation is
-landed with [Phase 2 Sprint 2.15](phase-2-kind-cluster-storage-and-lifecycle.md), Phase 0's
-correction review and Stage 1 pass, and Phase 6's own final review plus its
-machine-independent/behavioral gates remain, ordered after Phase 2 closes under Wave Y and Phase 4
-closes.
+**Sprint 6.44's `linux-gpu` behavioral cohort, and nothing else.** Every other sprint in this phase is
+`Done`. Sprints 6.37, 6.43, 6.45, 6.46, 6.47, 6.48, and 6.49 closed together on one frozen source
+identity validated on `apple-silicon` plus `linux-cpu`, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md); the earlier per-sprint waves (V for
+6.39-6.41, T for 6.38, P for 6.35, R and S for 6.36-6.37's original scopes, W for 6.42, X for 6.43's
+narrower original scope) remain valid for the scopes they exercised.
+
+Sprint 6.44 is code-side closed and its residual is a **supported-lane validation blocker, not open
+code work**: it needs `./bootstrap/linux-gpu.sh test` on a CUDA-capable Linux host, and Section Q
+forbids substituting the other accelerator for it, so the `apple-silicon` lane this phase's other
+sprints closed on cannot discharge it. Phase 8 Sprints 8.9 and 8.10 consume the same wave. Per
+Section C this named external blocker is what permits later phases to close while this one stays
+`Active`, provided each names the dependency explicitly.
 
 ## Sprint 6.44: Verified NVIDIA Enforcement And Capability-Gate Closure [Active]
 
@@ -2924,9 +2952,11 @@ cohort is unaffected because it enters through the launcher entrypoint.
 
 ---
 
-## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Active]
+## Sprint 6.45: Machine-Scoped Cluster-Slot Ownership And Type-Indexed Teardown Owner [Done]
 
-**Status**: Active — this sprint owns the three findings carried out of Sprint 6.43's final
+**Status**: Done — its selected accelerator plus `linux-cpu` cohort passed against one frozen source
+identity, recorded in [cohort-validation-waves.md](cohort-validation-waves.md). This sprint owns the
+three findings carried out of Sprint 6.43's final
 cross-phase review, which confirmed them against deliverables that sprint claims are already closed:
 the machine-global cluster slot, the unpromoted teardown owner, and the teardown compile-fail
 fixtures that exercise only the region parameter. **All four deliverables are code-side closed**:
@@ -3166,16 +3196,20 @@ closed.
 
 ### Remaining Work
 
-- **Cohort**: selected accelerator plus `linux-cpu`, consumed jointly with Sprint 6.44's wave
-  against one frozen source.
+None.
 
-## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Active]
+---
 
-**Status**: Active — the boundary, the lint, the fixtures, the mechanism resolver, and the victim
-rank are implemented and clean on the machine-independent gate set, and the behaviour is
-accelerator-specific in the way that matters: one resolved arm installs an operating-system limit and
-the other installs none, so a live proof taken on the second arm does not demonstrate a ceiling held
-across a fork.
+## Sprint 6.46: Toolchain Spawn Boundary And Capability-Gating Lint [Done]
+
+**Status**: Done — the boundary, the lint, the fixtures, the mechanism resolver, the victim rank, and
+all four reopened deliverables are implemented, and the shared `apple-silicon` plus `linux-cpu`
+behavioral cohort passed against one frozen source identity, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md). The `linux-cpu` lane is the one that
+exercises the enforced arm of the new point-of-use observation, and it passed with no boundary
+refusal. The behaviour remains accelerator-specific in the way that
+matters: one resolved arm installs an operating-system limit and the other installs none, so a live
+proof taken on the second arm does not demonstrate a ceiling held across a fork.
 **Historical evidence**: the original closure covers the closed invocation vocabulary, the lint, and
 the fixtures; it does not cover a held ceiling on the lane that has no mechanism to hold.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `src/Infernix/HostMemory.hs`,
@@ -3269,23 +3303,57 @@ doctrine's `What this does not bound` as deferred.
   measurement, holding the ceiling across the fork, and raising the child's victim rank — and the
   suite passed.
 
+### Reopened Deliverables
+
+All four are landed.
+
+- **Per-lane honesty.** `resolveBuildMemoryMechanism` returns the mechanism the lane actually has and
+  `buildMemoryMechanismBoundsAggregate` is the honesty half: only the cgroup arm bounds the *sum* of a
+  build tree, and the other two are `jobs × cap` arithmetic this repository performs. The doctrine now
+  states per lane what is installed, and the Darwin arm is described as engaging no operating-system
+  bound rather than being covered by the arm that does.
+- **Neither limit-establishing entry point is an unreachable guarantee.** The two were resolved
+  separately, because they are not the same kind of thing.
+  `requireBoundedBuildMemory` — the point-of-use observation — now has its **production caller**:
+  `withBoundedToolchainChild` reads the bound back immediately before running the child, on both lanes,
+  rather than installing a limit and trusting the write. That is what the doctrine already declared
+  ("because it is checked where the spawn happens"), and it makes the indexed `BuildMemoryBound`
+  reachable from production for the first time — the index is what stops an unenforced observation being
+  consumed where an enforced ceiling is required, and until this call site existed no supported path
+  produced the value it protects. The observed arm is cross-checked against the mechanism the region
+  resolved, so a cgroup maximum appearing or vanishing between the two calls is a refusal naming both
+  answers rather than a silent preference for one.
+  `establishBoundedBuildMemory` — the stronger both-limits installer — is **not** given a production
+  caller, and the claim is narrowed instead of the code being deleted. Lowering the hard limit is
+  one-way and unprivileged, so it is safe only in a process image whose whole purpose is the build it is
+  about to run, and no supported production path is such an image: the authority is held by the
+  long-lived operator CLI, which also starts `kubectl`, `helm`, and a routed browser. It is therefore
+  recorded in code and doctrine as the validation-only installer whose real caller is the enforced-lane
+  fixture, which needs a genuine inherited bound to assert inheritance and lower-only preservation
+  against. Deleting it and hand-rolling a weaker installer inside that fixture would have removed a
+  working post-write-verified installer to satisfy the letter of the finding while reducing what the
+  suite proves.
+- **Admission at the boundary.** `withToolchainSpawnAuthority` consumes
+  `observeToolchainHostAdmission` when the authority is minted — an observation of available host memory
+  plus a census of foreign toolchain claimants, either failing being a refusal that reports what it
+  found — and `withBoundedToolchainChild` re-takes it immediately before the fork, because the mint-time
+  answer is an observation at an instant rather than a lease.
+- **The sampled peak is a checked quantity.** `mkDarwinBuildMemoryEvidence` refuses to construct a
+  report whose sampled peak meets or exceeds the account, so the account-to-peak multiple cannot be a
+  rendered ratio below one; a build that yields no positive sample is explicit
+  terminal-before-first-probe evidence rather than a fabricated footprint.
+
 ### Remaining Work
 
-- state per lane what the boundary actually installs, so the arm that installs no operating-system
-  limit is not described by the arm that does
-- retire the two limit-establishing entry points no production path calls, or give them a caller;
-  a guarantee no supported path can reach is not a guarantee
-- extend the boundary so minting the authority consumes an observation of available host memory and
-  a census finding no toolchain claimant outside its own process tree, and re-take that observation
-  at the child boundary
-- make the sampled peak a checked quantity against the account rather than a rendered ratio
+None.
 
 ---
 
-## Sprint 6.47: Retire The Chaos And HA Validation Surface [Active]
+## Sprint 6.47: Retire The Chaos And HA Validation Surface [Done]
 
-**Status**: Active — code-side closed; the `linux-cpu` integration run on the collapsed topology is
-the only item left, shared with Phase 3 Sprint 3.16's cohort gate.
+**Status**: Done — code-side closed, and the `linux-cpu` integration run on the collapsed topology
+passed in this phase's shared cohort, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md).
 **Blocked by**: Sprint 3.16
 **Implementation**: `test/integration/Spec.hs`, `test/unit/Spec.hs`,
 `web/playwright/inference.spec.js`, `src/Infernix/Cluster.hs`, `src/Infernix/CommandRegistry.hs`,
@@ -3331,6 +3399,11 @@ the collapsed topology does not invalidate what they assert — broker-native pe
 across pool members. The sprint's own principle is that what is not HA stays; the enumeration
 described where the block sat rather than what each case tested.
 
+**What this sprint removes is coverage, and that is stated rather than presented as a coverage-neutral
+cleanup.** The reduction is recorded in
+[legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and restated in
+`testing_strategy.md` and `demo_app_test_plan.md`.
+
 ### Validation
 
 - `infernix lint docs` and `infernix docs check` pass with the retired document deregistered
@@ -3344,18 +3417,16 @@ described where the block sat rather than what each case tested.
 
 ### Remaining Work
 
-None beyond the shared cohort run. What this sprint removes is coverage, and the reduction is
-recorded in [legacy-tracking-for-deletion.md](legacy-tracking-for-deletion.md) and restated in
-`testing_strategy.md` and `demo_app_test_plan.md` rather than presented as a coverage-neutral
-cleanup.
+None.
 
 ---
 
-## Sprint 6.48: Make The Command-Shim Root Reclaimable [Active]
+## Sprint 6.48: Make The Command-Shim Root Reclaimable [Done]
 
-**Status**: Active — code and unit coverage landed. The former Darwin address-space-limit defect is
-corrected in current Phase 1 source; this sprint remains open for the aggregate current-source host
-gate and paired lane evidence.
+**Status**: Done — code and unit coverage landed, and the aggregate current-source host gate plus
+paired lane evidence passed in this phase's shared cohort, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md). The former Darwin address-space-limit defect
+is corrected in current Phase 1 source.
 **Implementation**: `src/Infernix/Cluster/Subprocess.hs`, `test/unit/Spec.hs`,
 `src/Infernix/Runtime/CappedEngine/Internal.hs` (adjacent build fix, below)
 **Docs to update**: `documents/architecture/managed_state_transitions.md`
@@ -3410,6 +3481,12 @@ Linux-only block. They have no platform dependency, so this **restores** the cov
 instead of skipping it. `checkedAdd` and `procParseError` stay guarded: they are consumed only by
 the Linux sampling kernel and would be unused on Darwin, which `-Wall -Werror` rejects.
 
+**What this sprint does not fix, recorded rather than left implied.** The shim root is prepended to
+`searchPathForHost` rather than substituted for it, so roughly 2400 binaries in the host's ordinary
+tool directories stay resolvable behind the ~35 the manifest pins. The `0500` directory modes on the
+anchor-snapshot root and package-closure destination are untouched — none exist on disk, and unlike the
+shim mode that seal has a live function. The verify-to-`execve` window is unchanged.
+
 ### Validation
 
 - `cabal build infernix-unit` compiles and links clean under `-Wall -Werror`, `Infernix.Cluster.Subprocess`
@@ -3425,20 +3502,16 @@ the Linux sampling kernel and would be unused on Darwin, which `-Wall -Werror` r
 
 ### Remaining Work
 
-- Run the aggregate current-source host gate and paired lane evidence after Phase 1's current style
-  gate closes. The former `setResourceLimit ResourceTotalMemory` Darwin failure is corrected by
-  Phase 1 Sprint 1.21; the rejected local skip remains historical and is not in the tree.
-- What this sprint does **not** fix, recorded rather than left implied: the shim root is prepended
-  to `searchPathForHost`, not substituted for it, so ~2400 binaries in the host's ordinary tool
-  directories stay resolvable behind the ~35 the manifest pins; the `0500` directory modes on the
-  anchor-snapshot root and package-closure destination are untouched (none exist on disk, and unlike
-  the shim mode that seal has a live function); and the verify-to-`execve` window is unchanged.
+None.
 
-## Sprint 6.49: A Suite No Gate Can Select Is Not Coverage [Active]
+---
 
-**Status**: Active — the code-side correction is present. `CappedEngineObserverSuite` is part of the
-closed `ToolchainTestSuite` vocabulary and `infernix test unit` selects it; aggregate
-current-source execution on Apple and the paired Linux lane remains.
+## Sprint 6.49: A Suite No Gate Can Select Is Not Coverage [Done]
+
+**Status**: Done — the code-side correction is present and its aggregate current-source execution on
+Apple and the paired Linux lane passed in this phase's shared cohort, recorded in
+[cohort-validation-waves.md](cohort-validation-waves.md). `CappedEngineObserverSuite` is part of the
+closed `ToolchainTestSuite` vocabulary and `infernix test unit` selects it.
 **Implementation**: `src/Infernix/BuildMemory.hs`, `infernix.cabal`
 **Docs to update**: none
 
@@ -3468,8 +3541,7 @@ unselectable. A guarantee nobody can run is not a guarantee.
 
 ### Remaining Work
 
-Run the aggregate current-source gate on Apple and the paired Linux lane, then record the result in
-[Wave Y](cohort-validation-waves.md). No code-side deliverable remains.
+None.
 
 ---
 

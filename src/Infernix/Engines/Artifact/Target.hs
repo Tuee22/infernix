@@ -385,7 +385,13 @@ nativeArtifactTarget ::
 nativeArtifactTarget identity substrate architecture =
   case (substrate, architecture, nativeArtifactAdapterId identity) of
     ("apple-silicon", "arm64", "llama-cpp-cli") ->
-      appleTarget identity (InstalledTarget "native/bin/llama-cli") NoTargetArgumentPrefix
+      -- The Apple lane runs the completion front-end for the same measured
+      -- reason the Linux lane does. Homebrew `llama.cpp` 9870 is post-split:
+      -- its `llama-cli` rejects `--no-conversation` on stdout and continues in
+      -- chat mode, so the retired target published chat chrome as the model's
+      -- answer. `llama-completion` ships in the same formula and is sealed into
+      -- the same generation by `materialize-metal-engines`.
+      appleTarget identity (InstalledTarget "native/bin/llama-completion") NoTargetArgumentPrefix
     ("apple-silicon", "arm64", "whisper-cpp-cli") ->
       appleTarget identity (InstalledTarget "native/bin/whisper-cli") NoTargetArgumentPrefix
     ("apple-silicon", "arm64", adapterId)

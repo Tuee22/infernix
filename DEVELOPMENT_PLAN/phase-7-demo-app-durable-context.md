@@ -1,8 +1,13 @@
 # Phase 7: Demo App Multi-User Durable Context
 
-**Status**: Blocked — strict numerical execution waits for Phase 6.
-**Blocked by**: Phase 6
-**Implementation state behind the blocker**: Active — reopened by the
+**Status**: Done — with a named open dependency, per Section C of
+[development_plan_standards.md](development_plan_standards.md). Every sprint in this phase is closed,
+and the evidence reopen below is discharged by the 2026-08-17 Apple plus paired `linux-cpu` cohort in
+[Wave Y](cohort-validation-waves.md). The dependency it names is Phase 6 Sprint 6.44, whose
+`linux-gpu` behavioral cohort needs a CUDA-capable Linux host and cannot be discharged on the hardware
+this closure ran on; that is a supported-lane validation blocker rather than open work in this phase,
+and no defect is known in this phase's own surface.
+**Historical implementation state (superseded by the closure above).** Active — reopened by the
 [Apple/`linux-cpu` evidence reset](cohort-validation-waves.md). Sprint 7.29's closure rests
 explicitly on the [Wave V](cohort-validation-waves.md) apple-silicon plus linux-cpu full-suite
 `test all` pass, and that attestation predates a large body of subsequently landed work that carries
@@ -2118,18 +2123,21 @@ None.
 
 ---
 
-## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Active]
+## Sprint 7.29: ClusterState Field Retirement and Object-Proxy Evidence [Done]
 
-**Status**: Active — the typed transition-evidence retirement of the
+**Status**: Done — the typed transition-evidence retirement of the
 `ClusterState`/`LifecycleProgress` stringly fields, the `DemoBucketsProvisioned`-gated object-proxy
-routes, and the proven `.ready` sentinel gate are landed, but the
-[Wave V](cohort-validation-waves.md) Apple plus `linux-cpu` sign-off was reset as current proof and
-must be reproduced in [Wave Y](cohort-validation-waves.md) after Phase 1.
+routes, and the proven `.ready` sentinel gate are landed, and the
+[Wave V](cohort-validation-waves.md) sign-off that was reset as current proof is reproduced: the
+2026-08-17 Apple plus paired `linux-cpu` cohort in [Wave Y](cohort-validation-waves.md) ran both
+lanes' full `test all` on one frozen source identity, exercising the routed object-proxy surface and
+the lifecycle transitions this sprint retyped.
 **Code-side closure**: closed — `cabal build all` (`-Wall -Werror`, clean),
 `cabal test infernix-unit`, `cabal test infernix-haskell-style`, `infernix lint docs`, and
 `poetry run check-code` all pass on the apple-silicon lane.
-**Cohort gate**: closed by [Wave V](cohort-validation-waves.md) — apple-silicon plus
-linux-cpu full-suite `test all` passed, and that attestation is superseded as current proof.
+**Cohort**: closed on the 2026-08-17 apple-silicon plus `linux-cpu` full-suite `test all` pair
+recorded in [Wave Y](cohort-validation-waves.md). [Wave V](cohort-validation-waves.md)'s earlier pass
+remains historical and is not read as current proof.
 **Implementation**: `src/Infernix/Types.hs`, `src/Infernix/Demo/Api.hs`, `src/Infernix/Runtime/Pulsar.hs`
 **Blocked by**: Sprint 2.14, 4.28
 **Docs to update**: `documents/architecture/managed_state_transitions.md`, and the phase's existing
@@ -2188,11 +2196,7 @@ not hope. It generalizes the results-side realness contract to state transitions
 
 ### Remaining Work
 
-- Reproduce the Apple plus paired `linux-cpu` cohort evidence in
-  [Wave Y](cohort-validation-waves.md) after Phase 1's current-source closure. This sprint's own
-  surface is landed and validated by `cabal build all`, `cabal test infernix-unit`,
-  `cabal test infernix-haskell-style`, `infernix lint files/docs/proto/chart`, and
-  `poetry run check-code`; no code-side work is claimed here and the remainder is validation only.
+None.
 
 ---
 

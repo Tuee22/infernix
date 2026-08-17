@@ -75,7 +75,7 @@ data HostTool
   | HostNode
   | HostPython3
   | HostPython311
-  | HostLlamaCli
+  | HostLlamaCompletion
   | HostWhisperCli
   | HostPoetry
   | HostGit
@@ -122,7 +122,7 @@ hostToolName tool = case tool of
   HostNode -> "node"
   HostPython3 -> "python3"
   HostPython311 -> "python3.11"
-  HostLlamaCli -> "llama-cli"
+  HostLlamaCompletion -> "llama-completion"
   HostWhisperCli -> "whisper-cli"
   HostPoetry -> "poetry"
   HostGit -> "git"
@@ -183,7 +183,7 @@ hostToolFallbackCandidates tool = case tool of
   HostNode -> ["/opt/homebrew/bin/node", "/usr/local/bin/node", "/usr/bin/node"]
   HostPython3 -> ["/opt/homebrew/bin/python3.12", "/opt/homebrew/bin/python3", "/usr/bin/python3"]
   HostPython311 -> ["/opt/homebrew/bin/python3.11"]
-  HostLlamaCli -> ["/opt/homebrew/bin/llama-cli"]
+  HostLlamaCompletion -> ["/opt/homebrew/bin/llama-completion"]
   HostWhisperCli -> ["/opt/homebrew/bin/whisper-cli"]
   HostPoetry -> ["/opt/homebrew/bin/poetry", "/opt/poetry/bin/poetry", "/usr/local/bin/poetry", "/usr/bin/poetry"]
   HostGit -> ["/opt/homebrew/bin/git", "/usr/bin/git"]
@@ -305,7 +305,7 @@ pickToolPath tool paths = case tool of
   HostNode -> hostNode paths
   HostPython3 -> hostPython3 paths
   HostPython311 -> hostPython311 paths
-  HostLlamaCli -> hostLlamaCli paths
+  HostLlamaCompletion -> hostLlamaCompletion paths
   HostWhisperCli -> hostWhisperCli paths
   HostPoetry -> hostPoetry paths
   HostGit -> hostGit paths

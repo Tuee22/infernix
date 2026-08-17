@@ -335,7 +335,7 @@ RUN printf '%s\n' \
     '    , node = "/usr/bin/node"' \
     '    , python3 = "/usr/bin/python3"' \
     '    , python311 = ""' \
-    '    , llamaCli = ""' \
+    '    , llamaCompletion = ""' \
     '    , whisperCli = ""' \
     '    , poetry = "/opt/poetry/bin/poetry"' \
     '    , git = "/usr/bin/git"' \

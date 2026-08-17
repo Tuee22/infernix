@@ -208,6 +208,78 @@
 > of Wave AB: its required checks proved exactly one running engine pod and no `Pending` platform
 > workload on the one-worker topology, then the full suite and clean teardown completed.
 >
+> **Phase 4 closure (2026-08-17; the current Wave Y state).** Phase 4's last four sprints — 4.31,
+> 4.32, 4.34, and 4.35 — closed together against one frozen source identity, whole-worktree
+> fingerprint `a1f0c440…`, on `apple-silicon` plus the paired `linux-cpu` lane. The receipts above
+> for Phases 1–3 predate three of the corrections in this bundle and were deliberately not read as
+> discharging them.
+> Machine-independent gates on that identity: governed `./bootstrap/apple-silicon.sh build` exit 0;
+> `infernix test lint` exit 0 across Haskell style/policy, isolated Cabal formatting, and every Python
+> check; `infernix test unit` exit 0 with compile-fail 6 positive/92 negative, artifact transaction 48,
+> Apple materializer 16, capped-engine observer, execution-plan internal, main Haskell, and web 83/83;
+> and standalone `lint files|docs|chart|proto|plan` plus `docs check` all exit 0.
+> `internal materialize-metal-engines` exit 0 emitting all seven artifact markers, with the llama
+> artifact now sealing `native/bin/llama-completion`.
+> **Apple lane, GREEN.** `infernix test all` exit 0. Six cluster lifecycle cycles completed,
+> integration passed, and Playwright passed 16/16 in 6.7 minutes. Fourteen catalog rows reached
+> `status=completed` with real per-family output — `llm-smollm2-safetensors`, `llm-tinyllama-gguf`,
+> `llm-qwen15-mlx`, `speech-whisper-small`, `speech-faster-whisper-ct2`, `audio-demucs-htdemucs`,
+> `audio-open-unmix`, `audio-basic-pitch-coreml`, `audio-basic-pitch-onnx`, `music-mt3-infer`,
+> `music-mr-mt3`, `music-omnizart`, `audio-bark-small`, and `tool-audiveris` — while `image-sdxl-turbo`
+> and `image-apple-stable-diffusion-coreml` were typed `ModelMemoryLimitExceeded` refusals reporting
+> `requiredMib` 12288 against `availableMib` 10240 from source
+> `host-memory-partition-inference-capacity`. That pair of figures is the Sprint 4.31 acceptance
+> criterion: the claimable-pool correction left the resolved inference capacity unchanged, so the
+> admit and typed-refusal outcomes for the catalog did not move. Final teardown left an absent idle
+> cluster with zero containers, the operator `./infernix.dhall` present, and no `.harness-backup`.
+> **Paired `linux-cpu` lane, GREEN.** Governed `./bootstrap/linux-cpu.sh build` exit 0, and the rebuilt
+> launcher image was verified to carry the frozen source before the run. `./bootstrap/linux-cpu.sh
+> test` exit 0: aggregate lint, every unit suite, web 83/83, full live integration, and fresh
+> Playwright 16/16 in 6.7 minutes. Six rows were typed pod-limit refusals under
+> `cluster-engine-pod-memory-limit` — `audio-bark-small`, `audio-demucs-htdemucs`, `audio-open-unmix`,
+> `music-mr-mt3`, `music-mt3-infer`, and `music-omnizart`. Teardown completed once and governed status
+> reported an absent idle cluster.
+> **Two defects this cohort surfaced and closed, both on the first attempt against the frozen
+> identity.** The Apple lane failed at `speech-whisper-small` with
+> `whisper_init_from_file_with_params_no_state: failed to open` against a `payload` the coordinator's
+> eager sweep had skipped for a transient upstream reason; the sweep had logged that the lazy
+> per-inference fallback still covered the model, and it could not, because a native runner has no
+> exit-75 cache-miss protocol and its absent payload classified as an unretryable `worker_failed`.
+> The engine-side precondition now proves hydration and reports the classified
+> `model_cache_not_populated` miss that drives bootstrap-and-retry. The `linux-cpu` lane then failed
+> at the `demo_ui=false` scenario's `/harbor` edge probe with curl exit 7 about a second before the
+> portal accepted connections: the suite's transient-curl retry helper classified on `show err`, which
+> carries only `readCreateProcess: curl … (exit 7): failed` while curl's own diagnostic goes to
+> inherited stderr, so the predicate was constantly false and every routed probe was single-shot
+> behind a 20-attempt name. It now classifies on curl's exit code and reports the captured stderr.
+> Both corrections were made, both lanes were rebuilt, and both re-ran to exit 0 on the frozen
+> identity recorded here.
+>
+> **Phase 6 behavioral cohort (2026-08-17; the current Wave Y state).** Phase 6's code-side-closed
+> sprints — 6.37, 6.43, 6.45, 6.46, 6.47, 6.48, and 6.49 — took their shared `apple-silicon` plus
+> `linux-cpu` behavioral cohort against one frozen source identity, whole-worktree fingerprint
+> `cc18db6c…`. That identity adds Sprint 6.46's reopened deliverable: the point-of-use bound
+> observation now runs on the production spawn path, so `withBoundedToolchainChild` reads the bound
+> back through `requireBoundedBuildMemory` on both lanes and refuses when the observed arm disagrees
+> with the mechanism its region resolved.
+> Machine-independent gates on that identity: governed Apple build exit 0; `infernix test lint` exit 0;
+> `infernix test unit` exit 0 with web 83/83; `lint files|docs|chart|proto|plan` and `docs check` all
+> exit 0. `internal materialize-metal-engines` exit 0 across all seven artifacts.
+> **Paired `linux-cpu` lane, GREEN.** `./bootstrap/linux-cpu.sh build` then `test` exited 0. This lane
+> is the one that exercises the *enforced* arm of the new observation — the launcher container runs
+> under a finite cgroup maximum — and the style gate, every unit suite including the enforced-lane
+> address-space fixture, full live integration, and Playwright 16/16 in 6.1 minutes all passed with no
+> boundary refusal. Teardown completed once.
+> **Apple lane, GREEN.** `infernix test all` exited 0: aggregate lint, every unit suite, web 83/83,
+> integration PASS, and Playwright 16/16 in 6.9 minutes. Sixteen of eighteen engine dispatches reached
+> `status=completed`; the two that did not are the expected typed diffusion capacity refusals. Final
+> teardown left zero containers, the operator `./infernix.dhall` present, and no `.harness-backup`.
+> This is the joint cohort Sprint 6.43's owner-atomic correction, Sprint 6.45's machine-scoped
+> cluster-slot ownership, Sprint 6.47's collapsed-topology integration, Sprint 6.48's aggregate host
+> gate, and Sprint 6.49's selectable-suite coverage were each waiting on. Sprint 6.44's `linux-gpu`
+> half is **not** covered by it and remains open: it requires a CUDA-capable Linux host, which this
+> cohort's hardware is not, and Section Q forbids substituting the other accelerator for it.
+>
 > Wave AA Stage 1 and the Darwin build-memory proof are closed and are not rerun. Wave Y retains the
 > whole Apple and paired source-matched `linux-cpu` behavioral closure for
 > `llm-smollm2-safetensors`, `audio-demucs-htdemucs`, `audio-open-unmix`, `music-mt3-infer`,
